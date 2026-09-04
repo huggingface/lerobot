@@ -21,23 +21,30 @@ import os
 import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from .reader import (
-    _RESERVED_COLUMNS,
+from lerobot.utils.import_utils import _pyarrow_available
+
+from .schema import (
+    RESERVED_COLUMNS,
     SCORING_FORMAT,
     SCORING_SCHEMA_VERSION,
-    _canonical_json,
-    _metadata,
-    _require_pyarrow,
-    _validate_new_artifact,
-    get_signal_descriptors,
-    pa,
-    pq,
+    attach_metadata,
+    canonical_json,
+    decode_signal_descriptors,
+    require_pyarrow,
+    validate_frame_signal_table,
 )
 from .types import SignalDescriptor
+
+if TYPE_CHECKING or _pyarrow_available:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+else:
+    pa = None  # type: ignore[assignment]
+    pq = None  # type: ignore[assignment]
 
 _MANIFEST_FILENAME = "manifest.json"
 
@@ -64,7 +71,7 @@ def _manifest_payload(provenance: Mapping[str, Any], episode_indices: Sequence[i
 
 
 def _atomic_write_json(payload: Mapping[str, Any], path: Path) -> None:
-    serialized = _canonical_json(dict(payload), label="scoring manifest")
+    serialized = canonical_json(dict(payload), label="scoring manifest")
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path: Path | None = None
     try:
@@ -82,7 +89,7 @@ def _atomic_write_json(payload: Mapping[str, Any], path: Path) -> None:
 
 
 def _atomic_write_table(table: pa.Table, path: Path) -> None:
-    _require_pyarrow()
+    require_pyarrow()
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path: Path | None = None
     try:
@@ -108,14 +115,14 @@ class _FrameSignalsWriter:
         episode_indices: Sequence[int],
         resume: bool,
     ) -> None:
-        _require_pyarrow()
+        require_pyarrow()
         self.output_path = Path(output_path)
         self.provenance = dict(provenance)
         self.episode_indices = tuple(int(index) for index in episode_indices)
         manifest = _manifest_payload(self.provenance, self.episode_indices)
         # Validate and normalize tuples or other JSON-compatible containers
         # before comparing a resumed run with the on-disk JSON manifest.
-        self._expected_manifest = json.loads(_canonical_json(manifest, label="scoring manifest"))
+        self._expected_manifest = json.loads(canonical_json(manifest, label="scoring manifest"))
         self.provenance = self._expected_manifest["provenance"]
         self._prepare(resume=resume)
 
@@ -169,7 +176,7 @@ class _FrameSignalsWriter:
         descriptors: dict[str, SignalDescriptor] | None = None
         for episode_index in sorted(self.completed_episode_indices):
             table = pq.read_table(_part_path(self.output_path, episode_index))
-            current = get_signal_descriptors(table)
+            current = decode_signal_descriptors(table)
             if descriptors is None:
                 descriptors = current
             elif current != descriptors:
@@ -185,7 +192,7 @@ class _FrameSignalsWriter:
             current = {
                 name: table.schema.field(name).type
                 for name in table.column_names
-                if name not in _RESERVED_COLUMNS
+                if name not in RESERVED_COLUMNS
             }
             if signal_types is None:
                 signal_types = current
@@ -204,17 +211,16 @@ class _FrameSignalsWriter:
         path = _part_path(self.output_path, episode_index)
         if path.exists():
             raise FileExistsError(f"Scoring part already exists: {path}")
-        table = table.replace_schema_metadata(
-            _metadata(
-                descriptors=descriptors,
-                provenance=self.provenance,
-                episode_indices=(episode_index,),
-            )
+        table = attach_metadata(
+            table,
+            descriptors=descriptors,
+            provenance=self.provenance,
+            episode_indices=(episode_index,),
         )
-        _validate_new_artifact(table)
+        validate_frame_signal_table(table)
         _atomic_write_table(table, path)
 
-    def finalize(self, descriptors: Mapping[str, SignalDescriptor]) -> Path:
+    def finalize(self, descriptors: Mapping[str, SignalDescriptor]) -> tuple[Path, int]:
         completed = self.completed_episode_indices
         missing = [index for index in self.episode_indices if index not in completed]
         if missing:
@@ -236,13 +242,12 @@ class _FrameSignalsWriter:
                     **{name: np.asarray([], dtype=np.float32) for name in sorted(descriptors)},
                 }
             )
-        table = table.replace_schema_metadata(
-            _metadata(
-                descriptors=descriptors,
-                provenance=self.provenance,
-                episode_indices=self.episode_indices,
-            )
+        table = attach_metadata(
+            table,
+            descriptors=descriptors,
+            provenance=self.provenance,
+            episode_indices=self.episode_indices,
         )
-        _validate_new_artifact(table)
+        validate_frame_signal_table(table)
         _atomic_write_table(table, self.output_path)
-        return self.output_path
+        return self.output_path, table.num_rows

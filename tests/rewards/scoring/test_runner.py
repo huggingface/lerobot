@@ -25,7 +25,6 @@ from lerobot.rewards.scoring import (
     get_signal_descriptors,
     read_frame_signals,
     score_dataset,
-    score_dataset_with_reward_model,
 )
 
 pq = pytest.importorskip("pyarrow.parquet")
@@ -33,10 +32,7 @@ pq = pytest.importorskip("pyarrow.parquet")
 PROGRESS_NAME = "reward.test.progress"
 PROGRESS_DESCRIPTOR = SignalDescriptor(
     description="Normalized task progress.",
-    unit=None,
     direction="higher",
-    comparison_scope="task",
-    missing_values="forbidden",
     bounds=(0.0, 1.0),
 )
 
@@ -90,13 +86,11 @@ def test_score_dataset_writes_dense_and_sparse_signals_with_roundtripped_metadat
         resume=True,
     )
 
-    assert summary.artifact_path == output_path
+    assert summary.output_path == output_path
     assert summary.episode_count == 2
     assert summary.new_episode_count == 2
     assert summary.resumed_episode_count == 0
     assert summary.frame_count == 5
-    assert summary.signal_nan_counts == {PROGRESS_NAME: 0}
-    assert summary.observed_ranges == {PROGRESS_NAME: (0.0, 1.0)}
 
     table = read_frame_signals(output_path)
     assert table.column_names == ["index", "episode_index", "frame_index", PROGRESS_NAME]
@@ -217,7 +211,7 @@ def test_resume_rejects_changed_schema_version(tmp_path):
     [
         (np.asarray([0, 0]), np.asarray([0.1, 0.2]), "strictly increasing"),
         (np.asarray([0, 2]), np.asarray([0.1, 0.2]), "must be in"),
-        (np.asarray([0]), np.asarray([np.nan]), "forbids missing"),
+        (np.asarray([0]), np.asarray([np.nan]), "forbidden NaN"),
         (np.asarray([0]), np.asarray([1.5]), "outside its semantic bounds"),
     ],
 )
@@ -240,13 +234,52 @@ def test_score_dataset_rejects_invalid_frame_signals(tmp_path, frame_indices, va
         )
 
 
-def test_score_dataset_reports_allowed_nan_without_inventing_values(tmp_path):
+@pytest.mark.parametrize(
+    ("descriptor", "error"),
+    [
+        (SignalDescriptor(description="", direction="higher"), "non-empty description"),
+        (
+            SignalDescriptor(description="Progress.", direction="sideways"),  # type: ignore[arg-type]
+            "Invalid direction",
+        ),
+        (
+            SignalDescriptor(
+                description="Progress.",
+                direction="higher",
+                missing_values="optional",  # type: ignore[arg-type]
+            ),
+            "Invalid missing_values",
+        ),
+        (
+            SignalDescriptor(description="Progress.", direction="higher", bounds=(1.0, 0.0)),
+            "finite and ordered",
+        ),
+    ],
+)
+def test_score_dataset_rejects_invalid_signal_descriptors(tmp_path, descriptor, error):
+    dataset = FakeDataset([1])
+
+    def scorer(dataset: FakeDataset, episode_index: int) -> FrameSignals:
+        return FrameSignals(
+            frame_indices=np.asarray([0], dtype=np.int64),
+            signals={PROGRESS_NAME: np.asarray([0.5], dtype=np.float32)},
+            descriptors={PROGRESS_NAME: descriptor},
+        )
+
+    with pytest.raises(ValueError, match=error):
+        score_dataset(
+            dataset,
+            scorer,
+            output_path=tmp_path / "signals.parquet",
+            provenance={"model": "test"},
+        )
+
+
+def test_score_dataset_preserves_explicitly_allowed_nan_values(tmp_path):
     dataset = FakeDataset([3])
     descriptor = SignalDescriptor(
         description="Sparse handled-frame signal.",
-        unit=None,
         direction="higher",
-        comparison_scope="episode",
         missing_values="nan",
         bounds=(0.0, 1.0),
     )
@@ -265,65 +298,9 @@ def test_score_dataset_reports_allowed_nan_without_inventing_values(tmp_path):
         provenance={"model": "test"},
     )
 
-    assert summary.signal_nan_counts == {PROGRESS_NAME: 1}
-    assert summary.observed_ranges[PROGRESS_NAME] == pytest.approx((0.2, 0.8))
-
-
-def test_score_dataset_with_reward_model_builds_reproducible_robometer_provenance(monkeypatch, tmp_path):
-    import lerobot.rewards.robometer.modeling_robometer as modeling_robometer
-    import lerobot.rewards.robometer.scoring_robometer as scoring_robometer
-    import lerobot.rewards.scoring.runner as runner
-
-    class FakeRobometerRewardModel:
-        def __init__(self) -> None:
-            self.config = SimpleNamespace(
-                type="robometer",
-                pretrained_path="model/default",
-                pretrained_revision="config-revision",
-            )
-
-    fake_scorer = SimpleNamespace(options={"batch_size": 4, "sampling": "test"})
-    captured: dict[str, object] = {}
-    expected_summary = SimpleNamespace(artifact_path=tmp_path / "signals.parquet")
-
-    def fake_make_scorer(model, config, **kwargs):
-        captured["make_scorer"] = (model, config, kwargs)
-        return fake_scorer
-
-    def fake_score_dataset(dataset, scorer, **kwargs):
-        captured["score_dataset"] = (dataset, scorer, kwargs)
-        return expected_summary
-
-    monkeypatch.setattr(modeling_robometer, "RobometerRewardModel", FakeRobometerRewardModel)
-    monkeypatch.setattr(scoring_robometer, "make_robometer_frame_scorer", fake_make_scorer)
-    monkeypatch.setattr(runner, "score_dataset", fake_score_dataset)
-
-    dataset = SimpleNamespace(repo_id="user/dataset", revision="dataset-commit")
-    model = FakeRobometerRewardModel()
-    output_path = tmp_path / "signals.parquet"
-    summary = score_dataset_with_reward_model(
-        dataset,
-        model,
-        output_path=output_path,
-        model_id="user/robometer",
-        model_revision="model-commit",
-        episode_indices=[2, 1],
-        batch_size=4,
-        num_subsampled_frames=8,
-    )
-
-    assert summary is expected_summary
-    _, _, score_kwargs = captured["score_dataset"]
-    assert score_kwargs["output_path"] == output_path
-    assert score_kwargs["episode_indices"] == [2, 1]
-    assert score_kwargs["provenance"] == {
-        "schema_version": 1,
-        "lerobot_version": __import__("lerobot").__version__,
-        "dataset": {"repo_id": "user/dataset", "revision": "dataset-commit"},
-        "model": {"type": "robometer", "id": "user/robometer", "revision": "model-commit"},
-        "adapter": {
-            "id": "lerobot.robometer.frame_prefix",
-            "version": 1,
-            "options": fake_scorer.options,
-        },
-    }
+    assert summary.frame_count == 3
+    table = read_frame_signals(summary.output_path)
+    values = table[PROGRESS_NAME].to_numpy(zero_copy_only=False)
+    np.testing.assert_allclose(values[[0, 2]], [0.2, 0.8])
+    assert np.isnan(values[1])
+    assert get_signal_descriptors(table)[PROGRESS_NAME] == descriptor

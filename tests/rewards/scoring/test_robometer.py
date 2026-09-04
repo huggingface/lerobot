@@ -26,6 +26,7 @@ from lerobot.rewards.robometer.scoring_robometer import (
     RobometerFrameScorer,
     build_subsample_indices,
     make_robometer_scoring_encoder,
+    score_robometer_dataset,
 )
 from lerobot.rewards.scoring import read_frame_signals, score_dataset
 
@@ -230,7 +231,7 @@ def test_robometer_vertical_slice_preserves_legacy_progress_values_and_adds_succ
         provenance={"model": "fake/robometer"},
     )
 
-    table = read_frame_signals(summary.artifact_path)
+    table = read_frame_signals(summary.output_path)
     # The old progress_sparse fixture produced [0.0, 0.5, 1.0] for these
     # processed frames. The new artifact preserves those values exactly.
     assert table[PROGRESS_SIGNAL].to_pylist() == [0.0, 0.5, 1.0]
@@ -244,3 +245,67 @@ def test_robometer_vertical_slice_preserves_legacy_progress_values_and_adds_succ
         PROGRESS_SIGNAL,
         SUCCESS_PROBABILITY_SIGNAL,
     ]
+
+
+def test_score_robometer_dataset_builds_reproducible_provenance(monkeypatch, tmp_path):
+    import lerobot.rewards.robometer.scoring_robometer as scoring_robometer
+
+    config = SimpleNamespace(
+        type="robometer",
+        pretrained_path="model/default",
+        pretrained_revision="config-revision",
+    )
+    model = SimpleNamespace(config=config)
+    dataset = SimpleNamespace(repo_id="user/dataset", revision="dataset-commit")
+    fake_scorer = SimpleNamespace(options={"batch_size": 4, "sampling": "test"})
+    expected_summary = SimpleNamespace(output_path=tmp_path / "signals.parquet")
+    captured: dict[str, object] = {}
+
+    def fake_make_scorer(received_model, received_config, **kwargs):
+        captured["make_scorer"] = (received_model, received_config, kwargs)
+        return fake_scorer
+
+    def fake_score_dataset(received_dataset, scorer, **kwargs):
+        captured["score_dataset"] = (received_dataset, scorer, kwargs)
+        return expected_summary
+
+    monkeypatch.setattr(scoring_robometer, "make_robometer_frame_scorer", fake_make_scorer)
+    monkeypatch.setattr(scoring_robometer, "score_dataset", fake_score_dataset)
+
+    output_path = tmp_path / "signals.parquet"
+    summary = score_robometer_dataset(
+        dataset,
+        model,
+        output_path=output_path,
+        model_id="user/robometer",
+        model_revision="model-commit",
+        episode_indices=[2, 1],
+        batch_size=4,
+        num_subsampled_frames=8,
+    )
+
+    assert summary is expected_summary
+    assert captured["make_scorer"] == (
+        model,
+        config,
+        {"batch_size": 4, "num_subsampled_frames": 8},
+    )
+    assert captured["score_dataset"] == (
+        dataset,
+        fake_scorer,
+        {
+            "output_path": output_path,
+            "provenance": {
+                "lerobot_version": __import__("lerobot").__version__,
+                "dataset": {"repo_id": "user/dataset", "revision": "dataset-commit"},
+                "model": {"type": "robometer", "id": "user/robometer", "revision": "model-commit"},
+                "adapter": {
+                    "id": "lerobot.robometer.frame_prefix",
+                    "version": 1,
+                    "options": fake_scorer.options,
+                },
+            },
+            "episode_indices": [2, 1],
+            "resume": True,
+        },
+    )

@@ -22,18 +22,12 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from .reader import SCORING_SCHEMA_VERSION, _require_pyarrow, pa, read_frame_signals
+from .schema import RESERVED_COLUMNS, build_episode_table, validate_signal_descriptor
 from .types import FrameSignals, ScoringSummary, SignalDescriptor
 from .writer import _FrameSignalsWriter
 
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDataset
-    from lerobot.rewards.pretrained import PreTrainedRewardModel
-
-_DIRECTIONS = {"higher", "lower", "none"}
-_COMPARISON_SCOPES = {"episode", "task", "dataset", "global", "none"}
-_MISSING_VALUES = {"forbidden", "nan"}
-_RESERVED_COLUMNS = {"index", "episode_index", "frame_index"}
 
 
 def _episode_count(dataset: LeRobotDataset) -> int:
@@ -78,27 +72,6 @@ def _episode_bounds(dataset: LeRobotDataset, episode_index: int) -> tuple[int, i
     return start, end
 
 
-def _validate_descriptor(name: str, descriptor: SignalDescriptor) -> None:
-    if not isinstance(descriptor, SignalDescriptor):
-        raise TypeError(f"Descriptor for signal {name!r} must be a SignalDescriptor")
-    if not descriptor.description.strip():
-        raise ValueError(f"Descriptor for signal {name!r} must have a non-empty description")
-    if descriptor.unit is not None and not descriptor.unit.strip():
-        raise ValueError(f"Descriptor unit for signal {name!r} must be non-empty or None")
-    if descriptor.direction not in _DIRECTIONS:
-        raise ValueError(f"Invalid direction for signal {name!r}: {descriptor.direction!r}")
-    if descriptor.comparison_scope not in _COMPARISON_SCOPES:
-        raise ValueError(f"Invalid comparison_scope for signal {name!r}: {descriptor.comparison_scope!r}")
-    if descriptor.missing_values not in _MISSING_VALUES:
-        raise ValueError(f"Invalid missing_values for signal {name!r}: {descriptor.missing_values!r}")
-    if descriptor.bounds is not None:
-        if len(descriptor.bounds) != 2:
-            raise ValueError(f"Bounds for signal {name!r} must contain exactly two values")
-        lower, upper = descriptor.bounds
-        if not np.isfinite(lower) or not np.isfinite(upper) or lower > upper:
-            raise ValueError(f"Bounds for signal {name!r} must be finite and ordered")
-
-
 def _validate_frame_signals(
     frame_signals: FrameSignals,
     *,
@@ -137,7 +110,7 @@ def _validate_frame_signals(
             "FrameSignals signals and descriptors must have identical names: "
             f"signals={sorted(signal_names)}, descriptors={sorted(descriptor_names)}"
         )
-    conflicting = signal_names.intersection(_RESERVED_COLUMNS)
+    conflicting = signal_names.intersection(RESERVED_COLUMNS)
     if conflicting:
         raise ValueError(f"Signal names conflict with reserved columns: {sorted(conflicting)}")
 
@@ -145,7 +118,7 @@ def _validate_frame_signals(
     descriptors: dict[str, SignalDescriptor] = {}
     for name in sorted(signal_names):
         descriptor = frame_signals.descriptors[name]
-        _validate_descriptor(name, descriptor)
+        validate_signal_descriptor(name, descriptor)
         descriptors[name] = descriptor
 
         values = frame_signals.signals[name]
@@ -160,74 +133,22 @@ def _validate_frame_signals(
 
         if values.dtype.kind == "f":
             if np.isinf(values).any():
-                raise ValueError(f"Signal {name!r} contains infinite values")
+                raise ValueError(f"Signal {name!r} must not contain infinite values")
             if descriptor.missing_values == "forbidden" and np.isnan(values).any():
-                raise ValueError(f"Signal {name!r} contains NaN but its descriptor forbids missing values")
-            finite_values = values[np.isfinite(values)]
+                raise ValueError(f"Signal {name!r} contains forbidden NaN values")
+            values_for_bounds = values[np.isfinite(values)]
         else:
-            finite_values = values
+            values_for_bounds = values
 
-        if descriptor.bounds is not None and finite_values.size:
+        if descriptor.bounds is not None and values_for_bounds.size:
             lower, upper = descriptor.bounds
-            if np.any(finite_values < lower) or np.any(finite_values > upper):
+            if np.any(values_for_bounds < lower) or np.any(values_for_bounds > upper):
                 raise ValueError(
                     f"Signal {name!r} contains values outside its semantic bounds [{lower}, {upper}]"
                 )
         signals[name] = values
 
     return frame_indices, signals, descriptors
-
-
-def _to_episode_table(
-    *,
-    episode_index: int,
-    episode_start: int,
-    frame_indices: np.ndarray,
-    signals: Mapping[str, np.ndarray],
-) -> pa.Table:
-    _require_pyarrow()
-    return pa.table(
-        {
-            "index": episode_start + frame_indices,
-            "episode_index": np.full(frame_indices.shape, episode_index, dtype=np.int64),
-            "frame_index": frame_indices,
-            **dict(sorted(signals.items())),
-        }
-    )
-
-
-def _summary(
-    artifact_path: Path,
-    *,
-    episode_count: int,
-    new_episode_count: int,
-    resumed_episode_count: int,
-) -> ScoringSummary:
-    table = read_frame_signals(artifact_path)
-    signal_names = [name for name in table.column_names if name not in _RESERVED_COLUMNS]
-    nan_counts: dict[str, int] = {}
-    observed_ranges: dict[str, tuple[float, float] | None] = {}
-    for name in signal_names:
-        values = table[name].to_numpy(zero_copy_only=False)
-        if np.issubdtype(values.dtype, np.floating):
-            nan_counts[name] = int(np.isnan(values).sum())
-            finite_values = values[np.isfinite(values)]
-        else:
-            nan_counts[name] = 0
-            finite_values = values
-        observed_ranges[name] = (
-            (float(finite_values.min()), float(finite_values.max())) if finite_values.size else None
-        )
-
-    return ScoringSummary(
-        artifact_path=artifact_path,
-        episode_count=episode_count,
-        new_episode_count=new_episode_count,
-        resumed_episode_count=resumed_episode_count,
-        frame_count=table.num_rows,
-        signal_nan_counts=nan_counts,
-        observed_ranges=observed_ranges,
-    )
 
 
 def score_dataset(
@@ -239,7 +160,7 @@ def score_dataset(
     episode_indices: Sequence[int] | None = None,
     resume: bool = True,
 ) -> ScoringSummary:
-    """Score selected episodes and atomically build one frame-signal artifact.
+    """Score selected episodes and atomically build one frame-signal output.
 
     A scorer failure leaves only fully committed earlier episode parts. Calling
     the function again with identical provenance and selection resumes from
@@ -273,16 +194,14 @@ def score_dataset(
         elif current_descriptors != descriptors:
             raise ValueError(f"Signal descriptors for episode {episode_index} differ from earlier episodes")
 
-        table = _to_episode_table(
+        table = build_episode_table(
             episode_index=episode_index,
             episode_start=episode_start,
             frame_indices=frame_indices,
             signals=signals,
         )
         current_types = {
-            name: table.schema.field(name).type
-            for name in table.column_names
-            if name not in _RESERVED_COLUMNS
+            name: table.schema.field(name).type for name in table.column_names if name not in RESERVED_COLUMNS
         }
         if signal_types is None:
             signal_types = current_types
@@ -296,76 +215,11 @@ def score_dataset(
 
     if descriptors is None:
         raise RuntimeError("Scoring produced no signal descriptors")
-    artifact_path = writer.finalize(descriptors)
-    return _summary(
-        artifact_path,
+    output_path, frame_count = writer.finalize(descriptors)
+    return ScoringSummary(
+        output_path=output_path,
         episode_count=len(selected),
         new_episode_count=new_episode_count,
         resumed_episode_count=len(completed_before),
-    )
-
-
-def score_dataset_with_reward_model(
-    dataset: LeRobotDataset,
-    reward_model: PreTrainedRewardModel,
-    *,
-    output_path: Path,
-    model_id: str | None = None,
-    model_revision: str | None = None,
-    episode_indices: Sequence[int] | None = None,
-    resume: bool = True,
-    batch_size: int = 32,
-    num_subsampled_frames: int = 4,
-) -> ScoringSummary:
-    """Score a dataset with the standard adapter for a loaded reward model.
-
-    PR-2 intentionally supports only RoboMeter. Additional model adapters are
-    added as complete vertical slices instead of through a speculative generic
-    model-output contract.
-    """
-    from lerobot import __version__
-    from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
-    from lerobot.rewards.robometer.scoring_robometer import make_robometer_frame_scorer
-
-    if not isinstance(reward_model, RobometerRewardModel):
-        raise ValueError(
-            f"Offline scoring does not yet support reward model {type(reward_model).__name__}; "
-            "PR-2 supports RoboMeter"
-        )
-
-    config = reward_model.config
-    resolved_model_id = model_id or config.pretrained_path
-    if resolved_model_id is None:
-        raise ValueError("model_id is required when the reward-model config has no pretrained_path")
-    scorer = make_robometer_frame_scorer(
-        reward_model,
-        config,
-        batch_size=batch_size,
-        num_subsampled_frames=num_subsampled_frames,
-    )
-    provenance = {
-        "schema_version": SCORING_SCHEMA_VERSION,
-        "lerobot_version": __version__,
-        "dataset": {
-            "repo_id": dataset.repo_id,
-            "revision": dataset.revision,
-        },
-        "model": {
-            "type": config.type,
-            "id": resolved_model_id,
-            "revision": model_revision if model_revision is not None else config.pretrained_revision,
-        },
-        "adapter": {
-            "id": "lerobot.robometer.frame_prefix",
-            "version": 1,
-            "options": scorer.options,
-        },
-    }
-    return score_dataset(
-        dataset,
-        scorer,
-        output_path=output_path,
-        provenance=provenance,
-        episode_indices=episode_indices,
-        resume=resume,
+        frame_count=frame_count,
     )

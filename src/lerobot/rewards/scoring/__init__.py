@@ -15,13 +15,15 @@
 """Reusable offline scoring for frame-aligned reward-model signals."""
 
 from .reader import (
-    SCORING_FORMAT,
-    SCORING_SCHEMA_VERSION,
     get_scoring_provenance,
     get_signal_descriptors,
     read_frame_signals,
 )
-from .runner import score_dataset, score_dataset_with_reward_model
+from .runner import score_dataset
+from .schema import (
+    SCORING_FORMAT,
+    SCORING_SCHEMA_VERSION,
+)
 from .types import FrameSignals, ScoringSummary, SignalDescriptor
 
 __all__ = [
@@ -34,5 +36,4 @@ __all__ = [
     "get_signal_descriptors",
     "read_frame_signals",
     "score_dataset",
-    "score_dataset_with_reward_model",
 ]
