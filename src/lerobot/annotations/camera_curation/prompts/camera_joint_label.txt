@@ -121,16 +121,19 @@ position/scale/angle), the camera is moving -> wrist. BEWARE a blank backdrop
 while the camera swings; track the concrete OBJECTS, not the blank background, and
 do not infer fixed from an unchanging blank backdrop.
 
-LOOKING OUT PAST YOUR OWN GRIPPER (decisive wrist cue): the wrist signature is the
-gripper's JAWS / OPENING anchored in the near foreground and FACING AWAY from the
-camera INTO the workspace — you are mounted behind the gripper, looking forward at
-what it will grasp. Seen clearly, that is a wrist even without background drift.
-Merely SEEING a gripper is NOT it: a fixed camera sees the gripper from the side /
-at changing angles as the arm passes, an overhead view sees it reach DOWN onto the
-workspace, and a base / bracket / arm-link anchored in a corner over a STATIC
-background is a FIXED camera bolted next to the robot. So: gripper opening forward
-into the scene -> wrist; any other anchored robot part -> not decisive, fall back
-to the background-drift test.
+A GRIPPER FIXED IN THE FOREGROUND, ALIGNED WITH THE VIEW (decisive wrist cue): the
+wrist signature is the robot's own gripper parked in the NEAR FOREGROUND, pointing
+FORWARD along the camera's viewing direction and staying in the SAME place /
+orientation in EVERY frame — as if camera and gripper are bolted together (Pi-robot:
+dark jaws at the bottom edge reaching up into the scene, frame after frame). This
+is decisive on its own: the gripper need NOT open (it may stay closed) and the
+background need NOT drift. What matters is a gripper LOCKED to the camera in the
+foreground. Merely SEEING a gripper is NOT it: a fixed camera sees the gripper
+TRAVEL through the frame at changing positions/angles as the arm moves, an overhead
+sees it reach DOWN onto the workspace, and a base / bracket / arm-link in a corner
+over a static background is a fixed camera bolted next to the robot. So: gripper
+parked in the foreground aligned with the view, same place every frame -> wrist;
+otherwise not decisive, fall back to the background-drift test.
 
 Robot motion alone is NOT sufficient.
 
