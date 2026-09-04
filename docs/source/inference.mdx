@@ -197,6 +197,58 @@ Teleop is optional — if omitted the robot holds its position during the reset 
 | `--strategy.smooth_leader_to_follower_handover` | Whether to turn on or off the leader -> follower smooth handover behavior.                                                                                 |
 | `--strategy.smooth_handover`                    | Smoothly hand control to the teleop at reset start (default: true). Disable for clutch-style teleops that re-reference at the current robot pose on engage |
 
+### Bring your own strategy
+
+`--strategy.type` accepts any strategy registered in the environment, not only the built-ins above. A strategy is two classes in a pip-installable package: a config registered on `RolloutStrategyConfig`, and a `RolloutStrategy` subclass named after it without the `Config` suffix — the same `SomethingConfig`/`Something` convention as [custom hardware](./integrate_hardware#the-4-core-conventions), resolved from the config's module or package.
+
+```python
+from dataclasses import dataclass
+from typing import ClassVar
+
+from lerobot.rollout import RolloutContext, RolloutStrategy, RolloutStrategyConfig
+
+
+@RolloutStrategyConfig.register_subclass("patrol")
+@dataclass
+class PatrolStrategyConfig(RolloutStrategyConfig):
+    dataset_mode: ClassVar[str] = "required"  # the engine creates the dataset for you
+    legs: int = 2  # becomes --strategy.legs
+
+
+class PatrolStrategy(RolloutStrategy):
+    def run(self, ctx: RolloutContext) -> None:
+        ...  # the paced control loop: see the contract on RolloutStrategy.run
+
+    def teardown(self, ctx: RolloutContext) -> None:
+        ctx.data.dataset.finalize()
+        self._teardown_hardware(ctx.hardware, ctx.runtime.cfg.return_to_initial_position)
+```
+
+The config declares what the engine arranges on the strategy's behalf, so nothing in LeRobot needs to know its type:
+
+| Declaration                     | Effect                                                                                                                                     |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `dataset_mode`                  | `"none"` (default) rejects `--dataset.*` flags, `"optional"` records when they are given, `"required"` makes `--dataset.repo_id` mandatory |
+| `requires_teleop`               | Makes `--teleop.type` mandatory                                                                                                            |
+| `supports_interactive`          | Allows `--interactive=true`; `run()` must then honour the restartable contract documented on `RolloutStrategy`                             |
+| `requires_streaming_encoding()` | Return `True` when frames are written from inside the control loop: `--dataset.streaming_encoding` is forced on                            |
+| `extra_dataset_features()`      | Strategy-owned dataset columns (DAgger's `intervention`, for instance); every recorded frame must carry them                               |
+
+Name the distribution `lerobot_strategy_<name>` and `lerobot-rollout` imports the package before parsing the CLI — only its `__init__.py` runs, so import the config there. A package with any other name is loaded, submodules included, with `--strategy.discover_packages_path=<package>`. The strategy's dataclass fields become `--strategy.*` flags:
+
+```bash
+lerobot-rollout \
+    --strategy.type=patrol \
+    --strategy.legs=3 \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --dataset.repo_id=${HF_USER}/rollout_patrol \
+    --dataset.single_task="patrol the aisle"
+```
+
+`SentryStrategy` (recording, interactive-safe) and `BaseStrategy` (no recording) are the reference implementations to copy from; `send_next_action`, `safe_push_to_hub` and `estimate_max_episode_seconds` from `lerobot.rollout.strategies` are the helpers they build on.
+
 ---
 
 ## Inference Backends
