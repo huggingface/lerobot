@@ -42,20 +42,6 @@ def test_dataset_config_derives_streaming_decoder_limit_by_default():
     assert DatasetConfig(repo_id="user/repo").streaming_max_open_decoders is None
 
 
-def test_local_episode_loading_is_opt_in():
-    assert DatasetConfig(repo_id="user/repo").local_episode_loading is False
-
-
-def test_local_episode_loading_rejects_streaming():
-    with pytest.raises(ValueError, match="local_episode_loading.*streaming"):
-        DatasetConfig(repo_id="user/repo", root="dataset", local_episode_loading=True, streaming=True)
-
-
-def test_local_episode_loading_requires_root():
-    with pytest.raises(ValueError, match="local_episode_loading requires root"):
-        DatasetConfig(repo_id="user/repo", local_episode_loading=True)
-
-
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
@@ -72,3 +58,29 @@ def test_local_episode_loading_requires_root():
 def test_dataset_config_rejects_invalid_streaming_resource_limits(field, value, message):
     with pytest.raises(ValueError, match=message):
         DatasetConfig(repo_id="user/repo", **{field: value})
+
+
+def test_dataset_config_ignores_negative_excluded_episodes(caplog):
+    config = DatasetConfig(repo_id="user/repo", exclude_episodes=[-2, 1, -1, 3])
+
+    assert config.exclude_episodes == [1, 3]
+    assert "Ignoring negative exclude_episodes entries: [-2, -1]" in caplog.text
+
+
+def test_dataset_config_bucket_ok():
+    # Both allowed at config level. The dataset factory raises for storage
+    # formats that only support streaming access on buckets.
+    DatasetConfig(repo_id="user/repo", repo_type="bucket", streaming=True)
+    DatasetConfig(repo_id="user/repo", repo_type="bucket")
+
+
+def test_dataset_config_invalid_repo_type():
+    with pytest.raises(ValueError, match="repo_type"):
+        DatasetConfig(repo_id="user/repo", repo_type="model")
+
+
+def test_dataset_config_eval_split():
+    # map-style access on a bucket is fine; streaming access is not, anywhere
+    DatasetConfig(repo_id="user/repo", repo_type="bucket", eval_split=0.1)
+    with pytest.raises(ValueError, match="streaming"):
+        DatasetConfig(repo_id="user/repo", streaming=True, eval_split=0.1)

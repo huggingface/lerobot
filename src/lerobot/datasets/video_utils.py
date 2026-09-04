@@ -124,7 +124,8 @@ def decode_video_frames_pyav(
     video can be adjusted at encoding time to trade off decoding speed against file size.
 
     Args:
-        video_path: Path to the video file or a seekable binary file object.
+        video_path: Path to the video file, or a seekable binary file-like object
+            (supporting ``read``/``seek``) — e.g. a buffered remote source.
         timestamps: List of timestamps (in seconds) to extract frames for.
         tolerance_s: Allowed deviation in seconds between a queried timestamp and the closest
             decoded frame.
@@ -137,8 +138,9 @@ def decode_video_frames_pyav(
         torch.Tensor of shape (len(timestamps), C, H, W).
     """
     # TODO(rcadene): also load audio stream at the same time
-    video_source = str(video_path) if isinstance(video_path, (Path, str)) else video_path
-    video_label = str(video_path) if isinstance(video_path, (Path, str)) else "<in-memory video>"
+    if isinstance(video_path, (str, Path)):
+        video_path = str(video_path)
+    # else: a file-like object (e.g. a buffered remote source) passes to av.open as-is.
 
     # set the first and last requested timestamps
     # Note: previous timestamps are usually loaded, since we need to access the previous key frame
@@ -152,7 +154,7 @@ def decode_video_frames_pyav(
     # av.time_base units (microseconds). `backward=True` lands us on the nearest keyframe at or
     # before `first_ts`, so we can then decode forward until we cover `last_ts`. See:
     # https://pyav.basswood-io.com/docs/stable/api/container.html#av.container.InputContainer.seek
-    with av.open(video_source) as container:
+    with av.open(video_path) as container:
         stream = container.streams.video[0]
         # Seek to the nearest keyframe at or before `first_ts` with a 1 frame margin
         container.seek(
@@ -181,26 +183,27 @@ def decode_video_frames_pyav(
 
     if not loaded_frames:
         raise FrameTimestampError(
-            f"No frames could be decoded from {video_label} in the timestamp range [{first_ts}, {last_ts}]."
+            f"No frames could be decoded from {video_path} in the timestamp range [{first_ts}, {last_ts}]."
         )
 
-    query_ts = torch.tensor(timestamps)
-    loaded_ts_t = torch.tensor(loaded_ts)
+    # float64: hour-scale timestamps quantize past tolerance_s in float32.
+    query_ts = torch.tensor(timestamps, dtype=torch.float64)
+    loaded_ts_t = torch.tensor(loaded_ts, dtype=torch.float64)
 
     # compute distances between each query timestamp and timestamps of all loaded frames
     dist = torch.cdist(query_ts[:, None], loaded_ts_t[:, None], p=1)
     min_, argmin_ = dist.min(1)
 
-    is_within_tol = min_ < tolerance_s
+    is_within_tol = min_ <= tolerance_s
     if not is_within_tol.all():
         raise FrameTimestampError(
-            f"One or several query timestamps unexpectedly violate the tolerance ({min_[~is_within_tol]} > {tolerance_s=})."
+            f"One or several query timestamps unexpectedly violate the tolerance ({min_[~is_within_tol]} >= {tolerance_s=})."
             " It means that the closest frame that can be loaded from the video is too far away in time."
             " This might be due to synchronization issues with timestamps during data collection."
             " To be safe, we advise to ignore this item during training."
             f"\nqueried timestamps: {query_ts}"
             f"\nloaded timestamps: {loaded_ts_t}"
-            f"\nvideo: {video_label}"
+            f"\nvideo: {video_path}"
             f"\nbackend: pyav"
         )
 
@@ -378,34 +381,34 @@ def decode_video_frames_torchcodec(
     # Use cached decoder instead of creating new one each time
     decoder = decoder_cache.get_decoder(str(video_path))
 
-    loaded_ts = []
-    loaded_frames = []
-
     # get metadata for frame information
     metadata = decoder.metadata
     average_fps = metadata.average_fps
     # convert timestamps to frame indices
-    frame_indices = [round(ts * average_fps) for ts in timestamps]
-    # retrieve frames based on indices
+    num_frames = metadata.num_frames
+    if num_frames is None:
+        duration = max(metadata.end_stream_seconds, 1e-9)
+        num_frames = round(duration * average_fps)
+    last_index = max(0, int(num_frames) - 1)
+    frame_indices = [min(max(round(ts * average_fps), 0), last_index) for ts in timestamps]
+    # retrieve frames based on indices: get_frames_at returns exactly one frame per
+    # requested index, in order, so frame i already corresponds to timestamps[i] --
+    # no nearest-match/re-stack needed (that redundant copy dominates decode overhead).
     frames_batch = decoder.get_frames_at(indices=frame_indices)
+    closest_frames = frames_batch.data
 
-    for frame, pts in zip(frames_batch.data, frames_batch.pts_seconds, strict=True):
-        loaded_frames.append(frame)
-        loaded_ts.append(pts.item())
-        if log_loaded_timestamps:
-            logger.info(f"Frame loaded at timestamp={pts:.4f}")
+    # float64: hour-scale timestamps quantize past tolerance_s in float32.
+    query_ts = torch.tensor(timestamps, dtype=torch.float64)
+    loaded_ts = frames_batch.pts_seconds.to(torch.float64)
 
-    query_ts = torch.tensor(timestamps)
-    loaded_ts = torch.tensor(loaded_ts)
+    if log_loaded_timestamps:
+        logger.info(f"{loaded_ts=}")
 
-    # compute distances between each query timestamp and loaded timestamps
-    dist = torch.cdist(query_ts[:, None], loaded_ts[:, None], p=1)
-    min_, argmin_ = dist.min(1)
-
-    is_within_tol = min_ < tolerance_s
+    dist = (query_ts - loaded_ts).abs()
+    is_within_tol = dist <= tolerance_s
     if not is_within_tol.all():
         raise FrameTimestampError(
-            f"One or several query timestamps unexpectedly violate the tolerance ({min_[~is_within_tol]} > {tolerance_s=})."
+            f"One or several query timestamps unexpectedly violate the tolerance ({dist[~is_within_tol]} >= {tolerance_s=})."
             " It means that the closest frame that can be loaded from the video is too far away in time."
             " This might be due to synchronization issues with timestamps during data collection."
             " To be safe, we advise to ignore this item during training."
@@ -414,24 +417,11 @@ def decode_video_frames_torchcodec(
             f"\nvideo: {video_path}"
         )
 
-    # get closest frames to the query timestamps
-    closest_frames = torch.stack([loaded_frames[idx] for idx in argmin_])
-    closest_ts = loaded_ts[argmin_]
-
-    if log_loaded_timestamps:
-        logger.info(f"{closest_ts=}")
-
-    if not len(timestamps) == len(closest_frames):
-        raise FrameTimestampError(
-            f"Retrieved timestamps differ from queried {set(closest_frames) - set(timestamps)}"
-        )
-
     if return_uint8:
         return closest_frames
 
     # convert to float32 in [0,1] range
-    closest_frames = (closest_frames / 255.0).type(torch.float32)
-    return closest_frames
+    return (closest_frames / 255.0).type(torch.float32)
 
 
 def encode_video_frames(
@@ -500,8 +490,9 @@ def encode_video_frames(
         # "While less efficient, it is generally preferable to modify logging with Python's logging"
         logging.getLogger("libav").setLevel(log_level)
 
-    # Create and open output file (overwrite by default)
-    with av.open(str(video_path), "w") as output:
+    # Create and open output file (overwrite by default).
+    # faststart moves the moov atom to the front so decoders can seek without reading the whole file.
+    with av.open(str(video_path), "w", options={"movflags": "faststart"}) as output:
         output_stream = output.add_stream(vcodec, fps, options=video_options)
         output_stream.pix_fmt = pix_fmt
         output_stream.width = width
@@ -813,7 +804,7 @@ class _CameraEncoderThread(threading.Thread):
                 if container is None:
                     height, width = frame_data.shape[:2]
                     Path(self.video_path).parent.mkdir(parents=True, exist_ok=True)
-                    container = av.open(str(self.video_path), "w")
+                    container = av.open(str(self.video_path), "w", options={"movflags": "faststart"})
                     output_stream = container.add_stream(
                         self.video_encoder.vcodec,
                         self.fps,

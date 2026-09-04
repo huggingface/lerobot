@@ -36,6 +36,21 @@ class PI05Config(PreTrainedConfig):
     chunk_size: int = 50  # Number of action steps to predict, in openpi called "action_horizon"
     n_action_steps: int = 50  # Number of action steps to execute
 
+    # MEM short-horizon observation memory (https://arxiv.org/abs/2603.03596).
+    # Historical image tokens are fused inside SigLIP and dropped before the
+    # language backbone. Historical proprioceptive states become one continuous
+    # backbone token per frame. Both paths are opt-in and independent.
+    #
+    # MEM pre-trains on six observations spaced one second apart. `memory_stride` is
+    # counted in dataset frames, so the default matches that spacing only at 30 fps,
+    # the usual LeRobot recording rate. Scale it with the dataset: a 10 fps dataset
+    # such as `lerobot/robomme` needs `memory_stride=10` for the same one second.
+    use_visual_memory: bool = False
+    use_proprioceptive_memory: bool = False
+    memory_frames: int = 6
+    memory_stride: int = 30
+    memory_temporal_attention_every: int = 4
+
     # Shorter state and action vectors will be padded to these dimensions
     max_state_dim: int = 32
     max_action_dim: int = 32
@@ -58,6 +73,8 @@ class PI05Config(PreTrainedConfig):
 
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
+    # Maximum clean action-prefix length sampled during training. Zero disables trained RTC.
+    rtc_training_max_delay: int = 0
 
     image_resolution: tuple[int, int] = (
         DEFAULT_IMAGE_SIZE,
@@ -101,8 +118,6 @@ class PI05Config(PreTrainedConfig):
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 2.5e-6
 
-    tokenizer_max_length: int = 200  # see openpi `__post_init__`
-
     def __post_init__(self):
         super().__post_init__()
 
@@ -110,6 +125,11 @@ class PI05Config(PreTrainedConfig):
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
                 f"n_action_steps ({self.n_action_steps}) cannot be greater than chunk_size ({self.chunk_size})"
+            )
+        if not 0 <= self.rtc_training_max_delay < self.chunk_size:
+            raise ValueError(
+                "rtc_training_max_delay must satisfy "
+                f"0 <= delay < chunk_size ({self.chunk_size}), got {self.rtc_training_max_delay}"
             )
 
         if self.paligemma_variant not in ["gemma_300m", "gemma_2b"]:
@@ -120,6 +140,13 @@ class PI05Config(PreTrainedConfig):
 
         if self.dtype not in ["bfloat16", "float32"]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
+
+        if self.memory_frames < 1:
+            raise ValueError("memory_frames must be at least 1")
+        if self.memory_stride < 1:
+            raise ValueError("memory_stride must be at least 1")
+        if self.memory_temporal_attention_every < 1:
+            raise ValueError("memory_temporal_attention_every must be at least 1")
 
     def validate_features(self) -> None:
         """Validate and set up input/output features."""
@@ -165,6 +192,20 @@ class PI05Config(PreTrainedConfig):
     @property
     def observation_delta_indices(self) -> None:
         return None
+
+    @property
+    def image_observation_delta_indices(self) -> list[int] | None:
+        if not self.use_visual_memory:
+            return None
+        horizon = (self.memory_frames - 1) * self.memory_stride
+        return list(range(-horizon, 1, self.memory_stride))
+
+    @property
+    def state_observation_delta_indices(self) -> list[int] | None:
+        if not self.use_proprioceptive_memory:
+            return None
+        horizon = (self.memory_frames - 1) * self.memory_stride
+        return list(range(-horizon, 1, self.memory_stride))
 
     @property
     def action_delta_indices(self) -> list:

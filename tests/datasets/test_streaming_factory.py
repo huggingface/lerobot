@@ -27,7 +27,11 @@ def test_factory_wires_production_streaming_settings(monkeypatch):
             captured["kwargs"] = kwargs
             self.meta = SimpleNamespace(camera_keys=[], depth_keys=[], stats={})
 
-    monkeypatch.setattr(factory, "LeRobotDatasetMetadata", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        factory,
+        "load_dataset_metadata",
+        lambda *args, **kwargs: SimpleNamespace(storage_format="lerobot", total_episodes=1),
+    )
     monkeypatch.setattr(factory, "resolve_delta_timestamps", lambda *args, **kwargs: {"action": [0.0]})
     monkeypatch.setattr(factory, "StreamingLeRobotDataset", DummyStreamingDataset)
     dataset_config = DatasetConfig(
@@ -49,6 +53,7 @@ def test_factory_wires_production_streaming_settings(monkeypatch):
         trainable_config=object(),
         num_workers=0,
         tolerance_s=1e-4,
+        rename_map={},
     )
 
     dataset = factory.make_dataset(cfg)
@@ -68,45 +73,3 @@ def test_factory_wires_production_streaming_settings(monkeypatch):
     assert captured["kwargs"]["video_backend"] == "pyav"
     assert captured["kwargs"]["return_uint8"] is True
     assert captured["kwargs"]["repeat"] is True
-
-
-def test_factory_wires_local_episode_loading(monkeypatch):
-    captured = {}
-
-    class DummyDataset:
-        def __init__(self, *args, **kwargs):
-            captured["kwargs"] = kwargs
-            self.meta = SimpleNamespace(camera_keys=[], depth_keys=[], stats={})
-
-    monkeypatch.setattr(factory, "LeRobotDatasetMetadata", lambda *args, **kwargs: object())
-    monkeypatch.setattr(factory, "resolve_delta_timestamps", lambda *args, **kwargs: None)
-    monkeypatch.setattr(factory, "LeRobotDataset", DummyDataset)
-    cfg = SimpleNamespace(
-        dataset=DatasetConfig(repo_id="owner/dataset", root="dataset", local_episode_loading=True),
-        trainable_config=object(),
-        num_workers=2,
-        tolerance_s=1e-4,
-    )
-
-    factory.make_dataset(cfg)
-
-    assert captured["kwargs"]["local_episode_loading"] is True
-
-
-def test_train_eval_split_is_per_task_and_honors_selection():
-    meta = SimpleNamespace(
-        total_episodes=6,
-        episodes=[
-            {"tasks": ["a"]},
-            {"tasks": ["b"]},
-            {"tasks": ["a"]},
-            {"tasks": ["b"]},
-            {"tasks": ["a"]},
-            {"tasks": ["b"]},
-        ],
-    )
-
-    train, evaluation = factory.resolve_train_eval_episode_indices(meta, [0, 1, 2, 3], 0.5)
-
-    assert train == [0, 1]
-    assert evaluation == [2, 3]

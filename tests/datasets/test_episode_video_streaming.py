@@ -289,7 +289,7 @@ def test_releasing_episode_allows_immediate_eviction(monkeypatch, tmp_path):
         assert (1, "camera") in cache._cache
 
 
-def test_local_range_fetcher_uses_positional_reads_without_persistent_handles(tmp_path):
+def test_range_fetcher_closes_handles_from_all_worker_threads(tmp_path):
     (tmp_path / "video.mp4").write_bytes(b"0123456789")
     fetcher = ThreadLocalRangeFetcher(tmp_path)
     barrier = threading.Barrier(2)
@@ -302,8 +302,12 @@ def test_local_range_fetcher_uses_positional_reads_without_persistent_handles(tm
         futures = [pool.submit(read_from_worker, offset) for offset in range(2)]
         assert [future.result() for future in futures] == [b"0", b"1"]
 
-    assert not fetcher._all_handles
+        handles = list(fetcher._all_handles.values())
+    assert len(handles) == 2
     fetcher.close()
+
+    assert not fetcher._all_handles
+    assert all(handle.closed for handle in handles)
 
 
 def test_http_failure_log_does_not_write_credentials(tmp_path, monkeypatch):

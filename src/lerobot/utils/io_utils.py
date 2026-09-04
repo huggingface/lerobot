@@ -32,21 +32,21 @@ def load_json(fpath: Path) -> Any:
     Returns:
         Any: The data loaded from the JSON file.
     """
-    with open(fpath) as f:
+    with open(fpath, encoding="utf-8") as f:
         return json.load(f)
 
 
-def write_json(data: dict, fpath: Path) -> None:
-    """Write data to a JSON file.
+def write_json(data: JsonLike, fpath: Path) -> None:
+    """Write JSON-serializable data to a file.
 
     Creates parent directories if they don't exist.
 
     Args:
-        data (dict): The dictionary to write.
+        data: JSON-serializable data to write.
         fpath (Path): The path to the output JSON file.
     """
     fpath.parent.mkdir(exist_ok=True, parents=True)
-    with open(fpath, "w") as f:
+    with open(fpath, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
 
@@ -63,7 +63,7 @@ def write_video(video_path: str | Path, stacked_frames: list, fps: int) -> None:
     require_package("av", extra="av-dep")
     import av
 
-    with av.open(str(video_path), mode="w") as container:
+    with av.open(str(video_path), mode="w", options={"movflags": "faststart"}) as container:
         orig_height, orig_width = stacked_frames[0].shape[:2]
         # yuv420p requires even dimensions; crop by one pixel if needed
         height = orig_height if orig_height % 2 == 0 else orig_height - 1

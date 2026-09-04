@@ -294,6 +294,19 @@ def test__sync_read(addr, length, ids_values, mock_motors, dummy_motors):
     assert read_values == ids_values
 
 
+def test__sync_read_retries_after_transient_failure(mock_motors, dummy_motors):
+    addr, length, ids_values = (10, 4, {1: 1337})
+    stub = mock_motors.build_sync_read_stub(addr, length, ids_values, num_invalid_try=1)
+    bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
+    bus.connect(handshake=False)
+
+    read_values, read_comm = bus._sync_read(addr, length, list(ids_values), num_retry=1)
+
+    assert read_comm == scs.COMM_SUCCESS
+    assert read_values == ids_values
+    assert mock_motors.stubs[stub].calls == 2
+
+
 @pytest.mark.parametrize("raise_on_error", (True, False))
 def test__sync_read_comm(raise_on_error, mock_motors, dummy_motors):
     addr, length, ids_values = (10, 4, {1: 1337})

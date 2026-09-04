@@ -23,6 +23,7 @@ require_package("av", extra="dataset")
 from .aggregate import aggregate_datasets
 from .compute_stats import DEFAULT_QUANTILES, aggregate_stats, get_feature_stats
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
+from .dataset_reader import BaseDatasetReader
 from .dataset_tools import (
     add_features,
     convert_image_to_video_dataset,
@@ -35,12 +36,7 @@ from .dataset_tools import (
     remove_feature,
     split_dataset,
 )
-from .factory import (
-    make_dataset,
-    make_train_eval_datasets,
-    resolve_delta_timestamps,
-    resolve_train_eval_episode_indices,
-)
+from .factory import make_dataset, make_train_eval_datasets, resolve_delta_timestamps
 from .image_writer import safe_stop_image_writer
 from .io_utils import load_episodes, write_stats
 from .language import (
@@ -55,9 +51,10 @@ from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
 from .pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from .pyav_utils import check_video_encoder_parameters_pyav, detect_available_encoders_pyav
-from .sampler import EpisodeAwareSampler, balanced_episode_shards, compute_sampler_state
+from .sampler import EpisodeAwareSampler, compute_sampler_state
+from .storage import register_dataset_reader
 from .streaming_dataset import StreamingLeRobotDataset
-from .utils import DEFAULT_EPISODES_PATH, create_lerobot_dataset_card
+from .utils import DEFAULT_EPISODES_PATH, create_lerobot_dataset_card, resolve_episode_indices
 from .video_utils import VideoEncodingManager
 
 # NOTE: Low-level I/O functions (cast_stats_to_numpy, get_parquet_file_size_in_mb, etc.)
@@ -65,6 +62,7 @@ from .video_utils import VideoEncodingManager
 # Import directly: ``from lerobot.datasets.io_utils import ...``
 
 __all__ = [
+    "BaseDatasetReader",
     "CODEBASE_VERSION",
     "DEFAULT_EPISODES_PATH",
     "DEFAULT_QUANTILES",
@@ -79,6 +77,7 @@ __all__ = [
     "STYLE_REGISTRY",
     "StreamingLeRobotDataset",
     "VideoEncodingManager",
+    "register_dataset_reader",
     "check_video_encoder_parameters_pyav",
     "detect_available_encoders_pyav",
     "add_features",
@@ -88,7 +87,6 @@ __all__ = [
     "convert_image_to_video_dataset",
     "create_initial_features",
     "compute_sampler_state",
-    "balanced_episode_shards",
     "create_lerobot_dataset_card",
     "column_for_style",
     "delete_episodes",
@@ -103,7 +101,7 @@ __all__ = [
     "reencode_dataset",
     "remove_feature",
     "resolve_delta_timestamps",
-    "resolve_train_eval_episode_indices",
+    "resolve_episode_indices",
     "safe_stop_image_writer",
     "split_dataset",
     "write_stats",

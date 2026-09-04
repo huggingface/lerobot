@@ -266,6 +266,8 @@ def test_streaming_reads_episode_parquet_from_configured_fsspec_root(
         data_root=remote_root,
         shuffle=False,
         buffer_size=2,
+        video_backend="pyav",
+        decode_threads=1,
     )
 
     assert sorted(_indices(streaming)) == list(range(len(map_dataset)))
@@ -280,8 +282,9 @@ def test_streaming_reads_video_bytes_from_configured_fsspec_root(
         repo_id=DUMMY_REPO_ID,
         total_episodes=2,
         total_frames=10,
+        video_backend="pyav",
     )
-    namespace = f"streaming-video-{tmp_path.name}"
+    namespace = f"streaming-video-{tmp_path.parent.name}-{tmp_path.name}"
     remote_root = f"memory://{namespace}"
     filesystem = fsspec.filesystem("memory")
     for path in [*(root / "data").glob("*/*.parquet"), *(root / "videos").glob("*/*/*.mp4")]:
@@ -294,6 +297,8 @@ def test_streaming_reads_video_bytes_from_configured_fsspec_root(
         data_root=remote_root,
         shuffle=False,
         buffer_size=2,
+        video_backend="pyav",
+        decode_threads=1,
     )
 
     sample = next(iter(streaming))

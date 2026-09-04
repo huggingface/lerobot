@@ -16,9 +16,10 @@
 import io
 import os
 from collections import deque
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
+from typing import Literal
 
 import datasets
 import numpy as np
@@ -36,7 +37,6 @@ from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .depth_utils import MM_PER_METRE, dequantize_depth
 from .feature_utils import check_delta_timestamps, get_delta_indices, get_hf_features_from_features
 from .io_utils import hf_transform_to_torch
-from .sampler import balanced_episode_shards as _balanced_episode_shards
 from .streaming_sidecar import (
     ensure_dataset_mp4_sidecar,
     range_backend_for_root,
@@ -44,6 +44,24 @@ from .streaming_sidecar import (
 )
 from .utils import check_version_compatibility
 from .video_utils import decode_video_frames_pyav
+
+
+def _balanced_episode_shards(
+    episode_indices: list[int],
+    episode_frame_counts: Mapping[int, int],
+    *,
+    world_size: int,
+) -> list[list[int]]:
+    """Assign whole episodes deterministically with greedy frame-count balancing."""
+    if world_size <= 0:
+        raise ValueError("world_size must be positive")
+    shards: list[list[int]] = [[] for _ in range(world_size)]
+    shard_frames = [0] * world_size
+    for episode in sorted(episode_indices, key=lambda item: (-episode_frame_counts[item], item)):
+        rank = min(range(world_size), key=lambda item: (shard_frames[item], item))
+        shards[rank].append(episode)
+        shard_frames[rank] += episode_frame_counts[episode]
+    return shards
 
 
 class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
@@ -105,6 +123,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         byte_budget_gb: float = 8.0,
         repeat: bool = False,
         *,
+        repo_type: Literal["dataset", "bucket"] = "dataset",
         token: str | bool | None = None,
         decode_threads: int = 2,
         decoded_queue_size: int = 8,
@@ -152,6 +171,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             repeat (bool, optional): Repeat rank-local exact-coverage epochs without yielding a
                 short final training batch. The training factory enables this; direct iteration is
                 finite by default.
+            repo_type: "dataset" (default) or "bucket" for an HF Storage Bucket.
             token: Authentication token used while streaming this dataset from
                 the Hub. Pass a string token, ``True`` to require the locally
                 stored token, ``False`` to disable authentication, or ``None``
@@ -159,10 +179,13 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 on the dataset instance after initialization.
         """
         super().__init__()
+        if repo_type not in ("dataset", "bucket"):
+            raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {repo_type!r}")
         self.repo_id = repo_id
+        self.repo_type = repo_type
         self._requested_root = Path(root) if root else None
         self.root = self._requested_root if self._requested_root is not None else HF_LEROBOT_HOME / repo_id
-        self.streaming_from_local = root is not None
+        self.streaming_from_local = root is not None and repo_type == "dataset"
 
         self.image_transforms = image_transforms
         self.episodes = episodes
@@ -226,6 +249,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             self._requested_root,
             self.revision,
             force_cache_sync=force_cache_sync,
+            repo_type=repo_type,
             token=token,
         )
         self.root = self.meta.root

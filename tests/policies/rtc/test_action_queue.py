@@ -110,6 +110,35 @@ def test_get_returns_actions_sequentially(action_queue_rtc_enabled, sample_actio
     assert torch.equal(action2, sample_actions["processed"][1])
 
 
+def test_get_with_task_preserves_provenance_when_non_rtc_queue_drains(
+    action_queue_rtc_disabled, sample_actions
+):
+    """New task chunks append behind old actions without relabeling the old tail."""
+    actions_a = sample_actions["processed"][:2]
+    actions_b = sample_actions["processed"][2:4]
+    action_queue_rtc_disabled.merge(actions_a, actions_a, real_delay=0, task="task A")
+
+    first = action_queue_rtc_disabled.get_with_task()
+    assert first is not None
+    assert first[1] == "task A"
+
+    action_queue_rtc_disabled.merge(actions_b, actions_b, real_delay=0, task="task B")
+    remaining = [action_queue_rtc_disabled.get_with_task() for _ in range(3)]
+
+    assert [item[1] for item in remaining if item is not None] == ["task A", "task B", "task B"]
+
+
+def test_get_with_task_tracks_replacement_chunk_provenance(action_queue_rtc_enabled, sample_actions):
+    """RTC replacement changes provenance only when the new chunk enters the queue."""
+    actions_a = sample_actions["processed"][:2]
+    actions_b = sample_actions["processed"][2:4]
+    action_queue_rtc_enabled.merge(actions_a, actions_a, real_delay=0, task="task A")
+    assert action_queue_rtc_enabled.get_with_task()[1] == "task A"
+
+    action_queue_rtc_enabled.merge(actions_b, actions_b, real_delay=0, task="task B")
+    assert action_queue_rtc_enabled.get_with_task()[1] == "task B"
+
+
 def test_get_returns_none_after_exhaustion(action_queue_rtc_enabled, sample_actions):
     """Test get() returns None after all actions are consumed."""
     # Use short action sequence
@@ -438,7 +467,7 @@ def test_merge_validates_delay_consistency(action_queue_rtc_enabled, sample_acti
     """Test merge() validates that real_delay matches action index difference."""
     import logging
 
-    caplog.set_level(logging.WARNING)
+    caplog.set_level(logging.INFO)
 
     # Initialize queue
     action_queue_rtc_enabled.merge(sample_actions["short"], sample_actions["short"], real_delay=0)
@@ -447,7 +476,7 @@ def test_merge_validates_delay_consistency(action_queue_rtc_enabled, sample_acti
     for _ in range(5):
         action_queue_rtc_enabled.get()
 
-    # Merge with mismatched delay (should log warning)
+    # Merge with mismatched delay (should log the mismatch)
     # We consumed 5 actions, so index is 5. If we pass action_index_before_inference=0,
     # then indexes_diff=5, but if real_delay=3, it will warn
     action_queue_rtc_enabled.merge(
@@ -457,15 +486,17 @@ def test_merge_validates_delay_consistency(action_queue_rtc_enabled, sample_acti
         action_index_before_inference=0,
     )
 
-    # Check warning was logged
+    # Check the mismatch was logged
     assert "Indexes diff is not equal to real delay" in caplog.text
+    # A mismatch is routine bookkeeping: it must not compete with the loop's real warnings.
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
-def test_merge_no_warning_when_delays_match(action_queue_rtc_enabled, sample_actions, caplog):
-    """Test merge() doesn't warn when delays are consistent."""
+def test_merge_no_log_when_delays_match(action_queue_rtc_enabled, sample_actions, caplog):
+    """Test merge() doesn't report a mismatch when delays are consistent."""
     import logging
 
-    caplog.set_level(logging.WARNING)
+    caplog.set_level(logging.INFO)
 
     # Initialize queue
     action_queue_rtc_enabled.merge(sample_actions["short"], sample_actions["short"], real_delay=0)
@@ -482,7 +513,7 @@ def test_merge_no_warning_when_delays_match(action_queue_rtc_enabled, sample_act
         action_index_before_inference=0,
     )
 
-    # Should not have warning
+    # Should not report a mismatch
     assert "Indexes diff is not equal to real delay" not in caplog.text
 
 
@@ -490,7 +521,7 @@ def test_merge_skips_validation_when_action_index_none(action_queue_rtc_enabled,
     """Test merge() skips delay validation when action_index_before_inference is None."""
     import logging
 
-    caplog.set_level(logging.WARNING)
+    caplog.set_level(logging.INFO)
 
     action_queue_rtc_enabled.merge(sample_actions["short"], sample_actions["short"], real_delay=0)
 
@@ -505,7 +536,7 @@ def test_merge_skips_validation_when_action_index_none(action_queue_rtc_enabled,
         action_index_before_inference=None,
     )
 
-    # Should not warn (validation skipped)
+    # Should not log a mismatch (validation skipped)
     assert "Indexes diff is not equal to real delay" not in caplog.text
 
 
@@ -665,8 +696,8 @@ def test_get_left_over_is_thread_safe(action_queue_rtc_enabled, sample_actions):
     # Should not have errors
     assert len(errors) == 0
 
-    # Leftovers should be monotonically decreasing or stable
-    # (as actions are consumed, leftover size decreases)
+    # Only liveness: concurrent appends make the snapshot order nondeterministic, so
+    # monotonicity cannot be checked.
     assert len(leftovers) > 0
 
 

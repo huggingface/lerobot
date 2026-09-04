@@ -13,7 +13,6 @@ from __future__ import annotations
 import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -76,19 +75,6 @@ def test_sidecar_cache_path_is_revision_keyed(tmp_path: Path) -> None:
 
     assert first != second
     assert first.parent == second.parent
-
-
-def test_sidecar_cache_path_is_local_source_fingerprint_keyed(tmp_path: Path) -> None:
-    first = sidecar_cache_path(tmp_path, replace(_spec(), source_fingerprint="a"))
-    second = sidecar_cache_path(tmp_path, replace(_spec(), source_fingerprint="b"))
-
-    assert first != second
-
-
-def test_sidecar_without_fingerprint_remains_compatible() -> None:
-    original = _spec()
-
-    assert SidecarSpec.from_dict(original.to_dict()) == original
 
 
 def test_ensure_reuses_valid_local_sidecar(tmp_path: Path) -> None:

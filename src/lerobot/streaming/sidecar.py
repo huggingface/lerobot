@@ -38,7 +38,6 @@ class SidecarSpec:
     data_root: str
     source_files: tuple[tuple[str, int | None], ...]
     schema_version: int = SIDECAR_SCHEMA_VERSION
-    source_fingerprint: str | None = None
 
     def __post_init__(self) -> None:
         if not self.repo_id:
@@ -53,16 +52,13 @@ class SidecarSpec:
         object.__setattr__(self, "source_files", normalized)
 
     def to_dict(self) -> dict[str, object]:
-        payload = {
+        return {
             "schema_version": self.schema_version,
             "repo_id": self.repo_id,
             "revision": self.revision,
             "data_root": self.data_root,
             "source_files": [{"path": path, "size": size} for path, size in self.source_files],
         }
-        if self.source_fingerprint is not None:
-            payload["source_fingerprint"] = self.source_fingerprint
-        return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> SidecarSpec:
@@ -81,9 +77,6 @@ class SidecarSpec:
             revision=str(data["revision"]),
             data_root=str(data["data_root"]),
             source_files=tuple(parsed_files),
-            source_fingerprint=(
-                str(data["source_fingerprint"]) if data.get("source_fingerprint") is not None else None
-            ),
         )
 
     def with_source_files(self, source_files: tuple[tuple[str, int], ...]) -> SidecarSpec:
@@ -92,7 +85,6 @@ class SidecarSpec:
             revision=self.revision,
             data_root=self.data_root,
             source_files=source_files,
-            source_fingerprint=self.source_fingerprint,
             schema_version=self.schema_version,
         )
 
@@ -102,8 +94,6 @@ class SidecarSpec:
             or self.repo_id != candidate.repo_id
             or self.revision != candidate.revision
             or self.data_root != candidate.data_root
-            or self.source_fingerprint is not None
-            and self.source_fingerprint != candidate.source_fingerprint
         ):
             return False
         expected = dict(self.source_files)
@@ -118,16 +108,13 @@ SidecarDownloader = Callable[[Path, SidecarSpec], bool]
 
 
 def sidecar_cache_path(cache_root: str | Path, spec: SidecarSpec) -> Path:
-    identity_data = {
-        "schema_version": spec.schema_version,
-        "repo_id": spec.repo_id,
-        "revision": spec.revision,
-        "data_root": spec.data_root,
-    }
-    if spec.source_fingerprint is not None:
-        identity_data["source_fingerprint"] = spec.source_fingerprint
     identity = json.dumps(
-        identity_data,
+        {
+            "schema_version": spec.schema_version,
+            "repo_id": spec.repo_id,
+            "revision": spec.revision,
+            "data_root": spec.data_root,
+        },
         sort_keys=True,
         separators=(",", ":"),
     )

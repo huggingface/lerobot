@@ -75,6 +75,43 @@ from .inference import (
 logger = logging.get_logger(__name__)
 
 
+def _cast_to_autocast_dtype(tensor: torch.Tensor) -> torch.Tensor:
+    """Cast non-autocast ops, such as embedding lookup, to the active AMP dtype."""
+    device_type = tensor.device.type
+    if torch.is_autocast_enabled(device_type):
+        return tensor.to(dtype=torch.get_autocast_dtype(device_type))
+    return tensor
+
+
+def _next_decode_position_ids(
+    attention_mask: torch.Tensor | None,
+    *,
+    past_length: int,
+    batch_size: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Return the logical RoPE position of the next token in each row.
+
+    KV caches use physical tensor offsets, including left padding. RoPE must use
+    the count of valid tokens instead so a shorter prompt has the same positions
+    whether it is decoded alone or in a padded batch.
+    """
+    if attention_mask is None:
+        return torch.full((batch_size, 1), int(past_length), device=device, dtype=torch.long)
+    if attention_mask.ndim != 2 or int(attention_mask.shape[0]) != int(batch_size):
+        raise ValueError(
+            "MolmoAct2 cached decoding requires a 2D attention mask with matching batch size, "
+            f"got shape {tuple(attention_mask.shape)} for batch_size={batch_size}."
+        )
+    return attention_mask.to(device=device, dtype=torch.long).sum(dim=-1, keepdim=True)
+
+
+def _decode_span_position_ids(next_position_ids: torch.Tensor, token_ids: torch.Tensor) -> torch.Tensor:
+    width = 1 if token_ids.ndim == 1 else int(token_ids.shape[1])
+    offsets = torch.arange(width, device=next_position_ids.device, dtype=torch.long).unsqueeze(0)
+    return next_position_ids + offsets
+
+
 ACTION_START_TOKEN = "<action_start>"  # nosec B105
 ACTION_END_TOKEN = "<action_end>"  # nosec B105
 ACTION_OUTPUT_TOKEN = "<action_output>"  # nosec B105
@@ -166,10 +203,9 @@ class ActionExpertRMSNorm(nn.Module):
             x_float = x.to(torch.float32)
             variance = x_float.pow(2).mean(dim=-1, keepdim=True)
             out = x_float * torch.rsqrt(variance + self.eps)
-            out = out.to(dtype)
-        if self.weight is not None:
-            out = out * self.weight
-        return out
+            if self.weight is not None:
+                out = out * self.weight.to(dtype=torch.float32)
+            return out.to(dtype)
 
     def reset_parameters(self) -> None:
         if self.weight is not None:
@@ -701,23 +737,27 @@ class ActionExpert(nn.Module):
                 "MolmoAct2 HF action expert supports only discrete state tokens. "
                 "Continuous state embeddings are not supported."
             )
+        kv_contexts = self._prepare_kv_context(encoder_kv_states)
+        # Parameter storage dtype is not necessarily the runtime attention
+        # dtype under autocast. Build masks and RoPE from an actual projected
+        # activation, matching the native ActionExpert behavior.
+        runtime_dtype = kv_contexts[0][0].dtype if kv_contexts else dtype
         valid_action = None
         if action_attention_mask is not None:
-            valid_action = action_attention_mask.to(device=device, dtype=dtype).unsqueeze(-1)
+            valid_action = action_attention_mask.to(device=device, dtype=runtime_dtype).unsqueeze(-1)
         rope_cache = None
         if len(self.blocks) > 0 and self.blocks[0].self_attn.rope is not None:
             rope_cache = self.blocks[0].self_attn.rope.build_cache(
                 seq_len=seq_len,
                 device=device,
-                dtype=dtype,
+                dtype=runtime_dtype,
             )
-        kv_contexts = self._prepare_kv_context(encoder_kv_states)
         cross_mask = self._build_cross_attention_mask(
             encoder_attention_mask,
             batch_size,
-            dtype,
+            runtime_dtype,
         )
-        self_mask = self._build_self_attention_mask(action_attention_mask, seq_len, device, dtype)
+        self_mask = self._build_self_attention_mask(action_attention_mask, seq_len, device, runtime_dtype)
         return ActionExpertContext(
             kv_contexts=kv_contexts,
             cross_mask=cross_mask,
@@ -1801,7 +1841,7 @@ class MolmoAct2VisionBackbone(nn.Module):
         valid = pooled_patches_idx >= 0
         valid_token = torch.any(valid, -1)
 
-        # Use `pooled_patches_idx` to arange the features for image pooling
+        # Use `pooled_patches_idx` to arrange the features for image pooling
         batch_idx = torch.arange(
             pooled_patches_idx.shape[0],
             dtype=torch.long,
@@ -1863,11 +1903,17 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-    cos = cos.unsqueeze(unsqueeze_dim)
-    sin = sin.unsqueeze(unsqueeze_dim)
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
-    return q_embed, k_embed
+    del position_ids
+    q_dtype = q.dtype
+    k_dtype = k.dtype
+    with torch.autocast(device_type=q.device.type, enabled=False):
+        q_float = q.to(dtype=torch.float32)
+        k_float = k.to(dtype=torch.float32)
+        cos_float = cos.to(dtype=torch.float32).unsqueeze(unsqueeze_dim)
+        sin_float = sin.to(dtype=torch.float32).unsqueeze(unsqueeze_dim)
+        q_embed = (q_float * cos_float) + (rotate_half(q_float) * sin_float)
+        k_embed = (k_float * cos_float) + (rotate_half(k_float) * sin_float)
+    return q_embed.to(dtype=q_dtype), k_embed.to(dtype=k_dtype)
 
 
 class MolmoAct2RotaryEmbedding(nn.Module):
@@ -2018,13 +2064,12 @@ class MolmoAct2RMSNorm(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         with torch.autocast(enabled=False, device_type=x.device.type):
-            og_dtype = x.dtype
+            dtype = x.dtype
             x = x.to(torch.float32)
             variance = x.pow(2).mean(-1, keepdim=True)
             x = x * torch.rsqrt(variance + self.eps)
-            x = x.to(og_dtype)
-
-        return self.weight * x
+            x = self.weight.to(dtype=torch.float32) * x
+            return x.to(dtype)
 
     def extra_repr(self):
         return f"{tuple(self.weight.shape)}, eps={self.eps}"
@@ -2055,18 +2100,26 @@ def eager_attention_forward(
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
+    output_dtype = query.dtype
 
-    attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
-    if attention_mask is not None:
-        causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-        attn_weights = attn_weights + causal_mask
+    # Native MolmoAct2 keeps QK scores and softmax in fp32, then returns to the
+    # value/residual dtype for the weighted-value matmul and layer output.
+    with torch.autocast(device_type=query.device.type, enabled=False):
+        query_float = query.to(dtype=torch.float32)
+        key_float = key_states.to(dtype=torch.float32)
+        attn_weights = torch.matmul(query_float, key_float.transpose(2, 3)) * scaling
+        if attention_mask is not None:
+            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+            attn_weights = attn_weights + causal_mask.to(dtype=torch.float32)
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32)
 
-    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
-    attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
-    attn_output = torch.matmul(attn_weights, value_states)
+    attn_probs = nn.functional.dropout(attn_weights, p=dropout, training=module.training).to(
+        dtype=value_states.dtype
+    )
+    attn_output = torch.matmul(attn_probs, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
 
-    return attn_output, attn_weights
+    return attn_output.to(dtype=output_dtype), attn_weights
 
 
 class MolmoAct2Attention(nn.Module):
@@ -2171,6 +2224,9 @@ class MolmoAct2Attention(nn.Module):
         ):
             key_states = repeat_kv(key_states, self.num_key_value_groups)
             value_states = repeat_kv(value_states, self.num_key_value_groups)
+            # Keep Q/K/V in the autocast activation dtype so BF16 Flash/cuDNN
+            # SDPA remains available. Fused SDPA performs its sensitive
+            # reductions internally without materializing an fp32 QKV copy.
             attn_output = F.scaled_dot_product_attention(
                 query_states,
                 key_states,
@@ -2505,6 +2561,10 @@ class MolmoAct2TextModel(MolmoAct2PreTrainedModel):
         if inputs_embeds is None:
             input_ids = input_ids * (input_ids != -1).to(input_ids.dtype)
             inputs_embeds = self.wte(input_ids)
+        # Embedding lookup is not autocast eligible. Without this boundary, an
+        # fp32-stored embedding keeps the whole residual stream in fp32 even
+        # under the official bf16 AMP profile.
+        inputs_embeds = _cast_to_autocast_dtype(inputs_embeds)
 
         # torch.jit.trace() doesn't support cache objects in the output
         if use_cache and past_key_values is None and not torch.jit.is_tracing():
@@ -2519,7 +2579,16 @@ class MolmoAct2TextModel(MolmoAct2PreTrainedModel):
             )
 
         if position_ids is None:
-            position_ids = cache_position.unsqueeze(0)
+            if torch.is_tensor(attention_mask) and attention_mask.ndim == 2:
+                position_ids = torch.clamp(
+                    torch.cumsum(attention_mask.to(torch.long), dim=-1) - 1,
+                    min=0,
+                )
+                # During cached generation the attention mask covers the full
+                # prefix while inputs_embeds contains only the uncached suffix.
+                position_ids = position_ids[:, -inputs_embeds.shape[1] :]
+            else:
+                position_ids = cache_position.unsqueeze(0)
 
         # It may already have been prepared by e.g. `generate`
         if torch.is_tensor(attention_mask) and attention_mask.ndim == 4:
@@ -3008,6 +3077,7 @@ class MolmoAct2Model(MolmoAct2PreTrainedModel):
         video_token_pooling: torch.Tensor | None = None,
         video_grids: torch.Tensor | None = None,
         attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
         token_type_ids: torch.LongTensor | None = None,
         states: torch.Tensor | None = None,
         action_dim_is_pad: torch.Tensor | None = None,
@@ -3029,11 +3099,18 @@ class MolmoAct2Model(MolmoAct2PreTrainedModel):
                 video_token_pooling=video_token_pooling,
                 video_grids=video_grids,
                 attention_mask=attention_mask,
+                position_ids=position_ids,
                 token_type_ids=token_type_ids,
                 use_cache=True,
             )
             encoder_kv_states = self._extract_kv_states(outputs.past_key_values)
-            encoder_attention_mask = self._get_encoder_attention_mask(input_ids, attention_mask)
+            # A policy wrapper may supply the action-mode mask recorded by a
+            # fine-tuned checkpoint.  The released base can retain
+            # ``action_mode='both'`` even when the outer LeRobot checkpoint was
+            # trained continuous-only, so do not overwrite an explicit mask
+            # after the VLM prefill.
+            if encoder_attention_mask is None:
+                encoder_attention_mask = self._get_encoder_attention_mask(input_ids, attention_mask)
         elif encoder_attention_mask is None:
             encoder_attention_mask = self._get_encoder_attention_mask(input_ids, attention_mask)
 
@@ -3408,11 +3485,13 @@ class MolmoAct2Model(MolmoAct2PreTrainedModel):
         # Get embeddings of input.
         # shape: (batch_size, seq_len, d_model)
         input_ids = input_ids * (input_ids != -1).to(input_ids.dtype)
-        x = self.transformer.wte(input_ids)
+        x = _cast_to_autocast_dtype(self.transformer.wte(input_ids))
 
         image_features: torch.FloatTensor | None = None
         if images is not None:
-            image_features = self.vision_backbone(images, token_pooling).to(x.device)
+            # Normalize the modality boundary to the text activation dtype;
+            # parameter storage and autocast can otherwise make them differ.
+            image_features = self.vision_backbone(images, token_pooling).to(device=x.device, dtype=x.dtype)
             is_image_patch = input_ids.reshape(-1) == self.config.image_patch_id
             if is_image_patch.sum() != len(image_features):
                 raise RuntimeError(
@@ -3837,6 +3916,7 @@ class MolmoAct2ForConditionalGeneration(MolmoAct2PreTrainedModel, GenerationMixi
         *,
         past_key_values: Cache,
         attention_bias: torch.Tensor,
+        position_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, Cache]:
         if token_ids.ndim == 1:
             next_input_ids = token_ids.unsqueeze(1)
@@ -3846,22 +3926,43 @@ class MolmoAct2ForConditionalGeneration(MolmoAct2PreTrainedModel, GenerationMixi
             raise ValueError(f"Expected token_ids to have rank 1 or 2, got {tuple(token_ids.shape)}.")
         past_length = _cache_seq_len_int(past_key_values)
         end = past_length + int(next_input_ids.shape[1])
+        if position_ids is None:
+            position_ids = (
+                torch.arange(
+                    past_length,
+                    end,
+                    device=next_input_ids.device,
+                    dtype=torch.long,
+                )
+                .unsqueeze(0)
+                .expand(next_input_ids.shape[0], -1)
+            )
+        else:
+            position_ids = position_ids.to(device=next_input_ids.device, dtype=torch.long)
+            if position_ids.shape != next_input_ids.shape:
+                raise ValueError(
+                    "MolmoAct2 cached decode position_ids must match token_ids shape, "
+                    f"got {tuple(position_ids.shape)} and {tuple(next_input_ids.shape)}."
+                )
         if self.depth_decode_cuda_graph_manager.can_use(
             next_input_ids,
             past_key_values=past_key_values,
             attention_bias=attention_bias,
+            position_ids=position_ids,
         ):
             return self.depth_decode_cuda_graph_manager.run(
                 next_input_ids,
                 past_key_values=past_key_values,
                 attention_bias=attention_bias,
                 past_length=past_length,
+                position_ids=position_ids,
             )
         cache_position = torch.arange(past_length, end, device=next_input_ids.device, dtype=torch.long)
         attention_bias = attention_bias[:, :, past_length:end, :end]
         inputs_embeds = self._embed_base_tokens(next_input_ids)
         outputs = self.model.transformer(
             attention_mask=attention_bias,
+            position_ids=position_ids,
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
             use_cache=True,
@@ -3877,11 +3978,13 @@ class MolmoAct2ForConditionalGeneration(MolmoAct2PreTrainedModel, GenerationMixi
         *,
         past_key_values: Cache,
         attention_bias: torch.Tensor,
+        position_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, Cache]:
         return self._run_ar_decode_step(
             token_ids,
             past_key_values=past_key_values,
             attention_bias=attention_bias,
+            position_ids=position_ids,
         )
 
     def _project_depth_logits(self, last_hidden: torch.Tensor) -> torch.Tensor:
@@ -3925,6 +4028,12 @@ class MolmoAct2ForConditionalGeneration(MolmoAct2PreTrainedModel, GenerationMixi
         current_output = initial_output
         current_past_key_values = past_key_values
         current_attention_mask = attention_mask
+        next_position_ids = _next_decode_position_ids(
+            current_attention_mask,
+            past_length=_cache_seq_len_int(current_past_key_values),
+            batch_size=int(current_output.logits.shape[0]),
+            device=current_output.logits.device,
+        )
         hit_end = False
         for _ in range(int(max_steps)):
             next_token = torch.argmax(current_output.logits[:, -1, :], dim=-1)
@@ -3940,11 +4049,14 @@ class MolmoAct2ForConditionalGeneration(MolmoAct2PreTrainedModel, GenerationMixi
                 )
                 current_past_key_values = current_output.past_key_values
             else:
+                step_position_ids = _decode_span_position_ids(next_position_ids, next_token)
                 last_hidden, current_past_key_values = self._run_ar_decode_step(
                     next_token,
                     past_key_values=current_past_key_values,
                     attention_bias=attention_bias,
+                    position_ids=step_position_ids,
                 )
+                next_position_ids = next_position_ids + 1
                 current_output = MolmoAct2CausalLMOutputWithPast(
                     logits=self.lm_head(last_hidden),
                     past_key_values=current_past_key_values,
@@ -3977,6 +4089,25 @@ class MolmoAct2ForConditionalGeneration(MolmoAct2PreTrainedModel, GenerationMixi
         current_output = output
         current_past_key_values = output.past_key_values
         current_attention_mask = inputs.get("attention_mask")
+        next_position_ids = _next_decode_position_ids(
+            current_attention_mask,
+            past_length=_cache_seq_len_int(current_past_key_values),
+            batch_size=batch_size,
+            device=inputs["input_ids"].device,
+        )
+
+        def run_depth_decode(token_ids: torch.Tensor) -> tuple[torch.Tensor, Cache]:
+            nonlocal next_position_ids
+            step_position_ids = _decode_span_position_ids(next_position_ids, token_ids)
+            result = self._run_depth_decode_step(
+                token_ids,
+                past_key_values=current_past_key_values,
+                attention_bias=depth_attention_bias,
+                position_ids=step_position_ids,
+            )
+            next_position_ids = next_position_ids + int(step_position_ids.shape[1])
+            return result
+
         generated_tokens: list[torch.Tensor] = []
 
         if not enable_adaptive_depth:
@@ -4028,11 +4159,7 @@ class MolmoAct2ForConditionalGeneration(MolmoAct2PreTrainedModel, GenerationMixi
         )
         depth_attention_bias = self._make_depth_decode_attention_bias(inputs, current_past_key_values)
         generated_tokens.append(depth_start)
-        last_hidden, current_past_key_values = self._run_depth_decode_step(
-            depth_start,
-            past_key_values=current_past_key_values,
-            attention_bias=depth_attention_bias,
-        )
+        last_hidden, current_past_key_values = run_depth_decode(depth_start)
         previous_image = None
         previous_bins = None
         if depth_cache is not None:
@@ -4078,11 +4205,7 @@ class MolmoAct2ForConditionalGeneration(MolmoAct2PreTrainedModel, GenerationMixi
                 depth_bins[:, depth_idx] = predicted_bins
                 chosen_token_ids = code_token_ids[predicted_bins]
                 generated_tokens.append(chosen_token_ids)
-                last_hidden, current_past_key_values = self._run_depth_decode_step(
-                    chosen_token_ids,
-                    past_key_values=current_past_key_values,
-                    attention_bias=depth_attention_bias,
-                )
+                last_hidden, current_past_key_values = run_depth_decode(chosen_token_ids)
         else:
             for start_idx, end_idx, should_generate in _build_depth_update_spans(update_mask):
                 if should_generate:
@@ -4092,32 +4215,20 @@ class MolmoAct2ForConditionalGeneration(MolmoAct2PreTrainedModel, GenerationMixi
                         depth_bins[:, depth_idx] = predicted_bins
                         chosen_token_ids = code_token_ids[predicted_bins]
                         generated_tokens.append(chosen_token_ids)
-                        last_hidden, current_past_key_values = self._run_depth_decode_step(
-                            chosen_token_ids,
-                            past_key_values=current_past_key_values,
-                            attention_bias=depth_attention_bias,
-                        )
+                        last_hidden, current_past_key_values = run_depth_decode(chosen_token_ids)
                     continue
                 replay_bins = previous_buffer_t[:, start_idx:end_idx].expand(batch_size, -1)
                 depth_bins[:, start_idx:end_idx] = replay_bins
                 replay_token_ids = code_token_ids[replay_bins]
                 generated_tokens.extend(replay_token_ids.unbind(dim=1))
-                last_hidden, current_past_key_values = self._run_depth_decode_step(
-                    replay_token_ids,
-                    past_key_values=current_past_key_values,
-                    attention_bias=depth_attention_bias,
-                )
+                last_hidden, current_past_key_values = run_depth_decode(replay_token_ids)
         hit_depth_end = False
         max_depth_end_steps = max(8, self.model._resolve_action_horizon())
         full_logits = self.lm_head(last_hidden)
         for _ in range(max_depth_end_steps):
             next_token = full_logits.squeeze(1).argmax(dim=-1)
             generated_tokens.append(next_token)
-            last_hidden, current_past_key_values = self._run_depth_decode_step(
-                next_token,
-                past_key_values=current_past_key_values,
-                attention_bias=depth_attention_bias,
-            )
+            last_hidden, current_past_key_values = run_depth_decode(next_token)
             full_logits = self.lm_head(last_hidden)
             if bool((next_token == int(self.config.depth_end_token_id)).all()):
                 hit_depth_end = True

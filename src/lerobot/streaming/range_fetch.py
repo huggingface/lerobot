@@ -159,23 +159,6 @@ class ThreadLocalRangeFetcher:
         return int(self.fs.info(self._url(relative_path))["size"])
 
     def read_range(self, relative_path: str, offset: int, length: int) -> bytes:
-        if self._is_local and hasattr(os, "pread"):
-            open_start = time.perf_counter()
-            fd = os.open(self._url(relative_path), os.O_RDONLY)
-            open_s = time.perf_counter() - open_start
-            read_start = time.perf_counter()
-            try:
-                data = os.pread(fd, length, offset)
-            finally:
-                os.close(fd)
-            self._record_timing(
-                range_jobs=1.0,
-                range_bytes=float(len(data)),
-                range_open_s=open_s,
-                range_seek_s=0.0,
-                range_read_s=time.perf_counter() - read_start,
-            )
-            return data
         open_start = time.perf_counter()
         handle = self._handle(relative_path)
         open_s = time.perf_counter() - open_start
