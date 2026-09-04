@@ -73,3 +73,32 @@ def test_factory_wires_production_streaming_settings(monkeypatch):
     assert captured["kwargs"]["video_backend"] == "pyav"
     assert captured["kwargs"]["return_uint8"] is True
     assert captured["kwargs"]["repeat"] is True
+
+
+def test_factory_wires_local_episode_loading_to_map_dataset(monkeypatch):
+    captured = {}
+
+    class DummyDataset:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+            self.meta = SimpleNamespace(camera_keys=[], depth_keys=[], stats={})
+
+    monkeypatch.setattr(
+        factory,
+        "load_dataset_metadata",
+        lambda *args, **kwargs: SimpleNamespace(storage_format="lerobot", total_episodes=1),
+    )
+    monkeypatch.setattr(factory, "resolve_delta_timestamps", lambda *args, **kwargs: None)
+    monkeypatch.setattr(factory, "LeRobotDataset", DummyDataset)
+    cfg = SimpleNamespace(
+        dataset=DatasetConfig(repo_id="owner/dataset", root="/dataset", local_episode_loading=True),
+        trainable_config=object(),
+        num_workers=0,
+        tolerance_s=1e-4,
+        rename_map={},
+    )
+
+    dataset = factory.make_dataset(cfg)
+
+    assert isinstance(dataset, DummyDataset)
+    assert captured["local_episode_loading"] is True

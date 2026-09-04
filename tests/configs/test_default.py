@@ -84,3 +84,11 @@ def test_dataset_config_eval_split():
     DatasetConfig(repo_id="user/repo", repo_type="bucket", eval_split=0.1)
     with pytest.raises(ValueError, match="streaming"):
         DatasetConfig(repo_id="user/repo", streaming=True, eval_split=0.1)
+
+
+def test_dataset_config_local_episode_loading_requires_local_non_streaming_root():
+    DatasetConfig(repo_id="user/repo", root="/dataset", local_episode_loading=True)
+    with pytest.raises(ValueError, match="requires root"):
+        DatasetConfig(repo_id="user/repo", local_episode_loading=True)
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        DatasetConfig(repo_id="user/repo", root="/dataset", local_episode_loading=True, streaming=True)

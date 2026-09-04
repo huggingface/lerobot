@@ -15,6 +15,7 @@
 # limitations under the License.
 """Private reader component for LeRobotDataset. Handles random-access reading (HF dataset, delta indices, video decoding)."""
 
+import io
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -28,6 +29,8 @@ from lerobot.configs import (
     DEPTH_METER_UNIT,
     DepthEncoderConfig,
 )
+from lerobot.streaming.episode_cache import EpisodeByteCache
+from lerobot.streaming.manifest import EpisodeVideoManifest
 
 from .dataset_metadata import LeRobotDatasetMetadata
 from .depth_utils import MM_PER_METRE, dequantize_depth
@@ -40,8 +43,9 @@ from .io_utils import (
     hf_transform_to_torch,
     load_nested_dataset,
 )
+from .streaming_sidecar import ensure_dataset_mp4_sidecar
 from .utils import resolve_episode_indices
-from .video_utils import decode_video_frames
+from .video_utils import decode_video_frames, decode_video_frames_pyav
 
 
 class BaseDatasetReader(ABC):
@@ -123,6 +127,7 @@ class DatasetReader(BaseDatasetReader):
         image_transforms: Callable | None,
         return_uint8: bool = False,
         depth_output_unit: str = DEFAULT_DEPTH_UNIT,
+        local_episode_loading: bool = False,
     ):
         """Initialize the reader with metadata, filtering, and transform config.
 
@@ -144,6 +149,7 @@ class DatasetReader(BaseDatasetReader):
                 instead of normalized float32.
             depth_output_unit: Physical unit depth maps are dequantized to
                 (``"m"`` or ``"mm"``). Defaults to ``"mm"``.
+            local_episode_loading: Decode sidecar-indexed episode slices instead of complete MP4 files.
         """
         self._meta = meta
         self.root = root
@@ -153,6 +159,9 @@ class DatasetReader(BaseDatasetReader):
         self.set_image_transforms(image_transforms)
         self._return_uint8 = return_uint8
         self._depth_output_unit = depth_output_unit
+        self._local_episode_loading = local_episode_loading
+        self._local_sidecar_path: Path | None = None
+        self._local_video_cache: EpisodeByteCache | None = None
 
         self.hf_dataset: datasets.Dataset | None = None
         self._absolute_to_relative_idx: dict[int, int] | None = None
@@ -189,12 +198,63 @@ class DatasetReader(BaseDatasetReader):
             self.hf_dataset = None
             return False
         self._build_index_mapping()
+        self._resolve_local_sidecar()
         return True
 
     def load_and_activate(self) -> None:
         """Load HF dataset from disk and build index mapping. Call after data is on disk."""
         self.hf_dataset = self._load_hf_dataset()
         self._build_index_mapping()
+        self._resolve_local_sidecar()
+
+    def _resolve_local_sidecar(self) -> None:
+        if self._local_episode_loading and self._meta.video_keys:
+            self._local_sidecar_path = ensure_dataset_mp4_sidecar(
+                self._meta,
+                str(self.root),
+                workers=max(1, len(self._meta.video_keys)),
+                range_backend="fsspec",
+            )
+
+    def _get_local_video_cache(self) -> EpisodeByteCache:
+        if self._local_sidecar_path is None:
+            raise RuntimeError("Local episode loading requires a resolved MP4 sidecar")
+        if self._local_video_cache is None:
+            episodes = self.episodes if self.episodes is not None else range(self._meta.total_episodes)
+            workers = max(1, len(self._meta.video_keys))
+            manifest = EpisodeVideoManifest.build(
+                self._meta,
+                self.root,
+                episode_indices=episodes,
+                range_backend="fsspec",
+                workers=workers,
+                sidecar_path=self._local_sidecar_path,
+            )
+            self._local_video_cache = EpisodeByteCache(
+                manifest,
+                self.root,
+                byte_budget=8 * 1024**3,
+                workers=workers,
+                range_backend="fsspec",
+                max_open_decoders=64,
+                video_backend=self._video_backend,
+                tolerance_s=self._tolerance_s,
+            )
+        return self._local_video_cache
+
+    def close(self) -> None:
+        cache = getattr(self, "_local_video_cache", None)
+        if cache is not None:
+            cache.close()
+            self._local_video_cache = None
+
+    def __getstate__(self) -> dict:
+        state = self.__dict__.copy()
+        state["_local_video_cache"] = None
+        return state
+
+    def __del__(self) -> None:
+        self.close()
 
     def _build_index_mapping(self) -> None:
         """Build absolute-to-relative index mapping from loaded hf_dataset."""
@@ -432,7 +492,7 @@ class DatasetReader(BaseDatasetReader):
     def _query_videos(
         self, query_timestamps_per_item: list[dict[str, list[float]]], ep_idxs: list[int]
     ) -> list[dict[str, torch.Tensor]]:
-        """Decode video frames for a batch, grouped by physical MP4 file.
+        """Decode video frames for a batch, grouped by physical MP4 file or local episode slice.
 
         All (file, timestamp) requests across the batch are grouped so each file
         is opened/seeked once (amortizing decode when consecutive samples share
@@ -442,32 +502,53 @@ class DatasetReader(BaseDatasetReader):
         Note: When using data workers (e.g. DataLoader with num_workers>0), do not
         call this in the main process. It will result in a Segmentation Fault.
         """
-        # Group the queried timestamps by physical MP4 files.
-        group_ts: dict[str, list[float]] = {}
-        group_meta: dict[str, str] = {}  # path -> vid_key
-        segments: list[tuple[int, str, int, int]] = []  # (item, path, start, length)
+        local_cache = self._get_local_video_cache() if self._local_episode_loading else None
+        group_ts: dict[tuple[int | None, str], list[float]] = {}
+        group_meta: dict[tuple[int | None, str], str] = {}
+        segments: list[tuple[int, tuple[int | None, str], int, int]] = []
         for i, (query_ts_per_key, ep_idx) in enumerate(zip(query_timestamps_per_item, ep_idxs, strict=True)):
             ep = self._meta.episodes[ep_idx]
             for vid_key, query_ts in query_ts_per_key.items():
                 from_timestamp = ep[f"videos/{vid_key}/from_timestamp"]
-                path = str(self.root / self._meta.get_video_file_path(ep_idx, vid_key))
-                buf = group_ts.setdefault(path, [])
+                source = (
+                    vid_key
+                    if local_cache is not None
+                    else str(self.root / self._meta.get_video_file_path(ep_idx, vid_key))
+                )
+                group = (ep_idx if local_cache is not None else None, source)
+                buf = group_ts.setdefault(group, [])
                 start = len(buf)
                 buf.extend(from_timestamp + ts for ts in query_ts)
-                segments.append((i, path, start, len(query_ts)))
-                group_meta[path] = vid_key
+                segments.append((i, group, start, len(query_ts)))
+                group_meta[group] = vid_key
 
-        def _decode(path: str) -> tuple[str, torch.Tensor]:
-            vid_key = group_meta[path]
-            frames = decode_video_frames(
-                path,
-                group_ts[path],
-                self._tolerance_s,
-                self._video_backend,
-                return_uint8=self._return_uint8,
-                is_depth=vid_key in self._meta.depth_keys,
-            )
-            if vid_key in self._meta.depth_keys:
+        def _decode(group: tuple[int | None, str]) -> tuple[tuple[int | None, str], torch.Tensor]:
+            ep_idx, source = group
+            vid_key = group_meta[group]
+            is_depth = vid_key in self._meta.depth_keys
+            if local_cache is None or ep_idx is None:
+                frames = decode_video_frames(
+                    source,
+                    group_ts[group],
+                    self._tolerance_s,
+                    self._video_backend,
+                    return_uint8=self._return_uint8,
+                    is_depth=is_depth,
+                )
+            elif is_depth:
+                span = local_cache.manifest.lookup(ep_idx, vid_key)
+                frames = decode_video_frames_pyav(
+                    io.BytesIO(local_cache.get_bytes(ep_idx, vid_key)),
+                    [timestamp - span.source_start_pts for timestamp in group_ts[group]],
+                    self._tolerance_s,
+                    return_uint8=False,
+                    is_depth=True,
+                )
+            else:
+                frames = local_cache.get_frames(ep_idx, vid_key, group_ts[group])
+                if not self._return_uint8:
+                    frames = frames.to(torch.float32) / 255.0
+            if is_depth:
                 depth_encoder = self._depth_encoder_configs[vid_key]
                 frames = dequantize_depth(
                     frames,
@@ -477,19 +558,18 @@ class DatasetReader(BaseDatasetReader):
                     use_log=depth_encoder.use_log,
                     output_unit=self._depth_output_unit,
                 )
-            return path, frames
+            return group, frames
 
-        # Decode each physical MP4 file in parallel.
-        paths = list(group_ts)
-        if len(paths) <= 1:
-            decoded = dict(_decode(p) for p in paths)
+        groups = list(group_ts)
+        if len(groups) <= 1:
+            decoded = dict(_decode(group) for group in groups)
         else:
-            with ThreadPoolExecutor(max_workers=min(len(paths), 8)) as pool:
-                decoded = dict(pool.map(_decode, paths))
+            with ThreadPoolExecutor(max_workers=min(len(groups), 8)) as pool:
+                decoded = dict(pool.map(_decode, groups))
 
         result: list[dict[str, torch.Tensor]] = [{} for _ in query_timestamps_per_item]
-        for i, path, start, length in segments:
-            result[i][group_meta[path]] = decoded[path][start : start + length].squeeze(0)
+        for i, group, start, length in segments:
+            result[i][group_meta[group]] = decoded[group][start : start + length].squeeze(0)
         return result
 
     def get_item(self, idx) -> dict:

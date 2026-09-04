@@ -154,6 +154,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 video_backend=cfg.dataset.video_backend,
                 return_uint8=True,
                 depth_output_unit=cfg.dataset.depth_output_unit,
+                local_episode_loading=cfg.dataset.local_episode_loading,
                 tolerance_s=cfg.tolerance_s,
                 repo_type=cfg.dataset.repo_type,
             )

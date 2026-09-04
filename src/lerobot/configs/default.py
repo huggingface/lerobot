@@ -53,6 +53,8 @@ class DatasetConfig:
     # Has no effect on datasets without depth cameras.
     depth_output_unit: str = DEFAULT_DEPTH_UNIT
     streaming: bool = False
+    # Keep map-style loading while decoding sidecar-indexed episode slices from local MP4 files.
+    local_episode_loading: bool = False
     # Optional data-plane root used by training-time streaming. Metadata still resolves from repo_id/root.
     streaming_data_root: str | None = None
     # Number of complete episodes mixed by the rank-level exact-coverage sampler.
@@ -75,6 +77,10 @@ class DatasetConfig:
     def __post_init__(self) -> None:
         if self.repo_type not in ("dataset", "bucket"):
             raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {self.repo_type!r}")
+        if self.local_episode_loading and self.streaming:
+            raise ValueError("local_episode_loading and streaming are mutually exclusive")
+        if self.local_episode_loading and self.root is None:
+            raise ValueError("local_episode_loading requires root to point to a local dataset")
         if self.eval_split != 0.0 and self.streaming:
             raise ValueError(
                 "eval_split requires map-style datasets and is not supported with dataset.streaming=true."

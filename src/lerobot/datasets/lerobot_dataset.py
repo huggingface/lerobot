@@ -72,6 +72,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
         *,
+        local_episode_loading: bool = False,
         repo_type: str = "dataset",
         token: str | bool | None = None,
     ):
@@ -207,6 +208,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 instead of writing PNG images first. This makes save_episode() near-instant. Defaults to False.
             encoder_queue_maxsize (int, optional): Maximum number of frames to buffer per camera when using
                 streaming encoding. Defaults to 30 (~1s at 30fps).
+            local_episode_loading (bool, optional): Keep batched map-style loading while decoding
+                sidecar-indexed episode slices from local MP4 files. Defaults to False.
             repo_type (str, optional): "dataset" (default) or "bucket" for an HF
                 Storage Bucket. With "bucket" and no ``root``, the dataset is read
                 in place from ``hf://buckets/{repo_id}`` (map-style access requires
@@ -243,6 +246,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._video_backend = video_backend if video_backend else get_safe_default_video_backend()
         self._return_uint8 = return_uint8
         self._depth_output_unit = depth_output_unit
+        self._local_episode_loading = local_episode_loading
         self._batch_encoding_size = batch_encoding_size
         self._encoder_threads = encoder_threads
 
@@ -297,8 +301,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
             "depth_output_unit": depth_output_unit,
         }
         if is_default_format:
-            reader_kwargs.update(root=self.root, video_backend=self._video_backend)
+            reader_kwargs.update(
+                root=self.root,
+                video_backend=self._video_backend,
+                local_episode_loading=local_episode_loading,
+            )
         else:
+            if local_episode_loading:
+                raise ValueError("local_episode_loading only supports the default parquet/MP4 format")
             # non-default formats read the data in place at its root
             reader_kwargs.update(root=self._storage_root or root, revision=revision, token=token)
         self.reader: BaseDatasetReader | None = make_dataset_reader(self.meta.storage_format, **reader_kwargs)
@@ -394,6 +404,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 image_transforms=self.image_transforms,
                 return_uint8=self._return_uint8,
                 depth_output_unit=self._depth_output_unit,
+                local_episode_loading=self._local_episode_loading,
             )
         return self.reader
 
@@ -823,6 +834,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj._video_backend = video_backend if video_backend is not None else get_safe_default_video_backend()
         obj._return_uint8 = False
         obj._depth_output_unit = DEFAULT_DEPTH_UNIT
+        obj._local_episode_loading = False
         obj._batch_encoding_size = batch_encoding_size
         obj._encoder_threads = encoder_threads
         obj._storage_root = None
@@ -927,6 +939,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj._video_backend = video_backend if video_backend else get_safe_default_video_backend()
         obj._return_uint8 = False
         obj._depth_output_unit = DEFAULT_DEPTH_UNIT
+        obj._local_episode_loading = False
         obj._batch_encoding_size = batch_encoding_size
 
         if obj._requested_root is not None:
