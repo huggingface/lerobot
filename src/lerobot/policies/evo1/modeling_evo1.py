@@ -26,6 +26,7 @@ from torch import Tensor
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+from lerobot.utils.device_utils import is_amp_available
 
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_evo1 import Evo1Config
@@ -159,14 +160,14 @@ class Evo1Policy(PreTrainedPolicy):
 
     @property
     def _amp_enabled(self) -> bool:
-        return bool(self.config.use_amp) and self._device.type == "cuda"
+        return bool(self.config.use_amp) and is_amp_available(self._device.type)
 
     def _maybe_autocast(self):
         # EVO1 manages its own mixed precision: an explicit bf16 autocast that also overrides any
         # outer autocast context (e.g. lerobot-eval's fp16 default), keeping train and eval
         # numerics identical.
         if self._amp_enabled:
-            return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+            return torch.autocast(device_type=self._device.type, dtype=torch.bfloat16)
         return nullcontext()
 
     def get_optim_params(self) -> list[dict]:

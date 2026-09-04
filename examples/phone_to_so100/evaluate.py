@@ -40,6 +40,7 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
     InverseKinematicsEEToJoints,
 )
 from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.device_utils import is_amp_available
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
 from lerobot.utils.keyboard_input import init_keyboard_listener
 from lerobot.utils.robot_utils import precise_sleep
@@ -179,7 +180,7 @@ def main():
                     device=policy.config.device,
                     preprocessor=preprocessor,
                     postprocessor=postprocessor,
-                    use_amp=policy.config.device.type == "cuda",
+                    use_amp=is_amp_available(policy.config.device.type),
                     task=TASK_DESCRIPTION,
                     robot_type=robot.name,
                 )

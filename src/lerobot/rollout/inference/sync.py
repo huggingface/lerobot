@@ -26,6 +26,7 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import make_robot_action, prepare_observation_for_inference
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.utils.constants import OBS_STR
+from lerobot.utils.device_utils import is_amp_available
 from lerobot.utils.feature_utils import build_dataset_frame
 
 from .base import InferenceEngine, PolicyQuery
@@ -108,7 +109,7 @@ class SyncInferenceEngine(InferenceEngine):
         observation = copy(obs_frame)
         autocast_ctx = (
             torch.autocast(device_type=self._device.type)
-            if self._device.type == "cuda" and self._policy.config.use_amp
+            if self._policy.config.use_amp and is_amp_available(self._device.type)
             else nullcontext()
         )
         task, task_changed = self._take_task()
@@ -152,7 +153,7 @@ class SyncInferenceEngine(InferenceEngine):
         obs_frame = build_dataset_frame(self._dataset_features, obs_processed, prefix=OBS_STR)
         autocast_ctx = (
             torch.autocast(device_type=self._device.type)
-            if self._device.type == "cuda" and self._policy.config.use_amp
+            if self._policy.config.use_amp and is_amp_available(self._device.type)
             else nullcontext()
         )
         # Live task, read without consuming the task-changed edge (the action path needs it).
