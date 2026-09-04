@@ -40,13 +40,11 @@ def test_run_score_dataset_loads_robometer_and_calls_shared_workflow(monkeypatch
         revision="dataset-revision",
     )
     expected_summary = ScoringSummary(
-        artifact_path=tmp_path / "signals.parquet",
+        output_path=tmp_path / "signals.parquet",
         episode_count=1,
         new_episode_count=1,
         resumed_episode_count=0,
         frame_count=3,
-        signal_nan_counts={},
-        observed_ranges={},
     )
     captured: dict[str, object] = {}
 
@@ -65,7 +63,7 @@ def test_run_score_dataset_loads_robometer_and_calls_shared_workflow(monkeypatch
     monkeypatch.setattr(lerobot_score_dataset.RewardModelConfig, "from_pretrained", fake_from_pretrained)
     monkeypatch.setattr(lerobot.datasets, "LeRobotDataset", fake_dataset_class)
     monkeypatch.setattr(lerobot_score_dataset, "make_reward_model", lambda config: fake_model)
-    monkeypatch.setattr(lerobot_score_dataset, "score_dataset_with_reward_model", fake_score)
+    monkeypatch.setattr(lerobot_score_dataset, "score_robometer_dataset", fake_score)
 
     cfg = ScoreDatasetConfig(
         dataset_repo_id="user/dataset",

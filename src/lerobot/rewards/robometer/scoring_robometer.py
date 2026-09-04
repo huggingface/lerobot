@@ -16,14 +16,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
 
 from lerobot.lerobot_types import TransitionKey
-from lerobot.rewards.scoring import FrameSignals, SignalDescriptor
+from lerobot.rewards.scoring.runner import score_dataset
+from lerobot.rewards.scoring.types import FrameSignals, ScoringSummary, SignalDescriptor
 
 from .configuration_robometer import RobometerConfig
 from .modeling_robometer import RobometerPrediction, RobometerRewardModel
@@ -39,18 +42,12 @@ SUCCESS_PROBABILITY_SIGNAL = "reward.robometer.success_probability"
 ROBOMETER_SIGNAL_DESCRIPTORS = {
     PROGRESS_SIGNAL: SignalDescriptor(
         description="RoboMeter task progress for the trajectory prefix ending at this frame.",
-        unit=None,
         direction="higher",
-        comparison_scope="task",
-        missing_values="forbidden",
         bounds=(0.0, 1.0),
     ),
     SUCCESS_PROBABILITY_SIGNAL: SignalDescriptor(
         description="RoboMeter success probability for the trajectory prefix ending at this frame.",
-        unit=None,
         direction="higher",
-        comparison_scope="task",
-        missing_values="forbidden",
         bounds=(0.0, 1.0),
     ),
 }
@@ -224,4 +221,57 @@ def make_robometer_frame_scorer(
         use_per_frame_progress_token=config.use_per_frame_progress_token,
         batch_size=batch_size,
         num_subsampled_frames=num_subsampled_frames,
+    )
+
+
+def score_robometer_dataset(
+    dataset: LeRobotDataset,
+    model: RobometerRewardModel,
+    *,
+    output_path: Path,
+    model_id: str | None = None,
+    model_revision: str | None = None,
+    episode_indices: Sequence[int] | None = None,
+    resume: bool = True,
+    batch_size: int = 32,
+    num_subsampled_frames: int = DEFAULT_NUM_SUBSAMPLED_FRAMES,
+) -> ScoringSummary:
+    """Score a dataset with RoboMeter using the shared offline runner."""
+    from lerobot import __version__
+
+    config = model.config
+    resolved_model_id = model_id or config.pretrained_path
+    if resolved_model_id is None:
+        raise ValueError("model_id is required when the RoboMeter config has no pretrained_path")
+
+    scorer = make_robometer_frame_scorer(
+        model,
+        config,
+        batch_size=batch_size,
+        num_subsampled_frames=num_subsampled_frames,
+    )
+    provenance = {
+        "lerobot_version": __version__,
+        "dataset": {
+            "repo_id": dataset.repo_id,
+            "revision": dataset.revision,
+        },
+        "model": {
+            "type": config.type,
+            "id": resolved_model_id,
+            "revision": model_revision if model_revision is not None else config.pretrained_revision,
+        },
+        "adapter": {
+            "id": "lerobot.robometer.frame_prefix",
+            "version": 1,
+            "options": scorer.options,
+        },
+    }
+    return score_dataset(
+        dataset,
+        scorer,
+        output_path=output_path,
+        provenance=provenance,
+        episode_indices=episode_indices,
+        resume=resume,
     )

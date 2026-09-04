@@ -15,10 +15,12 @@
 from .configuration_robometer import RobometerConfig
 from .modeling_robometer import RobometerPrediction, RobometerRewardModel
 from .processor_robometer import make_robometer_pre_post_processors
+from .scoring_robometer import score_robometer_dataset
 
 __all__ = [
     "RobometerConfig",
     "RobometerPrediction",
     "RobometerRewardModel",
     "make_robometer_pre_post_processors",
+    "score_robometer_dataset",
 ]

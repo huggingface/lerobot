@@ -26,7 +26,8 @@ from lerobot.configs import parser
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.rewards.factory import make_reward_model
 from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
-from lerobot.rewards.scoring import ScoringSummary, score_dataset_with_reward_model
+from lerobot.rewards.robometer.scoring_robometer import score_robometer_dataset
+from lerobot.rewards.scoring import ScoringSummary
 from lerobot.utils.import_utils import require_package
 
 logger = logging.getLogger(__name__)
@@ -89,7 +90,7 @@ def run_score_dataset(cfg: ScoreDatasetConfig) -> ScoringSummary:
     reward_model = make_reward_model(reward_config)
     output_path = cfg.output_path or Path(dataset.root) / "reward_signals" / "robometer.parquet"
 
-    summary = score_dataset_with_reward_model(
+    summary = score_robometer_dataset(
         dataset,
         reward_model,
         output_path=output_path,
@@ -101,23 +102,23 @@ def run_score_dataset(cfg: ScoreDatasetConfig) -> ScoringSummary:
         num_subsampled_frames=cfg.num_subsampled_frames,
     )
     logger.info(
-        "Scored %d episode(s), %d frame(s); new=%d resumed=%d; artifact=%s",
+        "Scored %d episode(s), %d frame(s); new=%d resumed=%d; output=%s",
         summary.episode_count,
         summary.frame_count,
         summary.new_episode_count,
         summary.resumed_episode_count,
-        summary.artifact_path,
+        summary.output_path,
     )
     if cfg.push_to_hub:
         HfApi().upload_file(
-            path_or_fileobj=str(summary.artifact_path),
+            path_or_fileobj=str(summary.output_path),
             path_in_repo=cfg.hub_path,
             repo_id=cfg.dataset_repo_id,
             repo_type="dataset",
             commit_message="Add reward-model frame signals (lerobot-score-dataset)",
         )
         logger.info(
-            "Uploaded scoring artifact to hf://datasets/%s/%s",
+            "Uploaded scoring output to hf://datasets/%s/%s",
             cfg.dataset_repo_id,
             cfg.hub_path,
         )

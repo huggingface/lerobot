@@ -22,7 +22,6 @@ from typing import Literal
 import numpy as np
 
 SignalDirection = Literal["higher", "lower", "none"]
-ComparisonScope = Literal["episode", "task", "dataset", "global", "none"]
 MissingValues = Literal["forbidden", "nan"]
 
 
@@ -30,16 +29,16 @@ MissingValues = Literal["forbidden", "nan"]
 class SignalDescriptor:
     """Stable semantics attached to one named signal.
 
-    ``bounds`` describes theoretical or semantic bounds. Values observed in a
-    particular scoring run are reported separately in :class:`ScoringSummary`.
+    ``bounds`` describes theoretical or semantic bounds. ``missing_values`` is
+    strict by default; ``"nan"`` exists for signals such as legacy SARM output
+    where some frames were intentionally not scored.
     """
 
     description: str
-    unit: str | None
     direction: SignalDirection
-    comparison_scope: ComparisonScope
-    missing_values: MissingValues
     bounds: tuple[float, float] | None = None
+    unit: str | None = None
+    missing_values: MissingValues = "forbidden"
 
 
 @dataclass(frozen=True)
@@ -59,10 +58,8 @@ class FrameSignals:
 class ScoringSummary:
     """Small result describing one completed dataset-scoring run."""
 
-    artifact_path: Path
+    output_path: Path
     episode_count: int
     new_episode_count: int
     resumed_episode_count: int
     frame_count: int
-    signal_nan_counts: Mapping[str, int]
-    observed_ranges: Mapping[str, tuple[float, float] | None]
