@@ -23,6 +23,7 @@ from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
     load_training_batch_size,
+    load_training_data_state,
     load_training_num_processes,
     load_training_num_workers,
     load_training_state,
@@ -99,6 +100,19 @@ def test_save_training_state_records_num_workers(tmp_path, optimizer, scheduler)
 def test_load_training_num_workers_absent_returns_none(tmp_path, optimizer, scheduler):
     save_training_state(tmp_path, 10, optimizer, scheduler)
     assert load_training_num_workers(tmp_path) is None
+
+
+def test_save_training_state_records_local_data_state(tmp_path, optimizer, scheduler):
+    data_state = {
+        "partition": "episode-lpt-v1",
+        "world_size": 8,
+        "sampler": {"epoch": 3, "start_index": 16},
+        "sidecar": "abc123",
+    }
+
+    save_training_state(tmp_path, 10, optimizer, scheduler, data_state=data_state)
+
+    assert load_training_data_state(tmp_path) == data_state
 
 
 def test_update_last_checkpoint(tmp_path):

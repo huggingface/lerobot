@@ -25,7 +25,7 @@ from datasets import Dataset  # noqa: E402
 from lerobot.datasets.io_utils import (
     hf_transform_to_torch,
 )
-from lerobot.datasets.sampler import EpisodeAwareSampler
+from lerobot.datasets.sampler import EpisodeAwareSampler, balanced_episode_shards
 
 
 def calculate_episode_data_index(hf_dataset: Dataset) -> dict[str, torch.Tensor]:
@@ -150,6 +150,41 @@ def test_partial_episode_drop_warns(caplog):
     # Episode 0 is skipped (1 frame, drop 1), Episode 1 keeps frames 2-5
     assert sampler.indices == [2, 3, 4, 5]
     assert "Episode 0" in caplog.text
+
+
+def test_balanced_episode_shards_are_deterministic_and_complete():
+    episodes = [0, 1, 2, 3, 4]
+    counts = {0: 100, 1: 90, 2: 20, 3: 10, 4: 5}
+
+    first = balanced_episode_shards(episodes, counts, world_size=2)
+    second = balanced_episode_shards(episodes, counts, world_size=2)
+
+    assert first == second
+    assert {episode for shard in first for episode in shard} == set(episodes)
+    assert set(first[0]).isdisjoint(first[1])
+    totals = [sum(counts[episode] for episode in shard) for shard in first]
+    assert max(totals) - min(totals) <= 15
+
+
+def test_sampler_padding_preserves_exact_coverage_before_repeats():
+    sampler = EpisodeAwareSampler([0], [3], shuffle=False, pad_to_num_frames=5)
+
+    assert sampler.indices == [0, 1, 2]
+    assert len(sampler) == 5
+    assert list(sampler) == [0, 1, 2, 0, 1]
+
+
+def test_sampler_padding_repeats_the_seeded_epoch_prefix():
+    sampler = EpisodeAwareSampler([0], [5], shuffle=True, seed=42, pad_to_num_frames=8)
+
+    epoch = list(sampler)
+    assert sorted(epoch[:5]) == list(range(5))
+    assert epoch[5:] == epoch[:3]
+
+
+def test_sampler_rejects_padding_shorter_than_coverage_epoch():
+    with pytest.raises(ValueError, match="pad_to_num_frames"):
+        EpisodeAwareSampler([0], [5], pad_to_num_frames=4)
 
 
 # --- seeded (seed, epoch) shuffling, resume, and state ---

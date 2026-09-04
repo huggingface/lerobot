@@ -42,6 +42,15 @@ def test_dataset_config_derives_streaming_decoder_limit_by_default():
     assert DatasetConfig(repo_id="user/repo").streaming_max_open_decoders is None
 
 
+def test_local_episode_loading_is_opt_in():
+    assert DatasetConfig(repo_id="user/repo").local_episode_loading is False
+
+
+def test_local_episode_loading_rejects_streaming():
+    with pytest.raises(ValueError, match="local_episode_loading.*streaming"):
+        DatasetConfig(repo_id="user/repo", local_episode_loading=True, streaming=True)
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
