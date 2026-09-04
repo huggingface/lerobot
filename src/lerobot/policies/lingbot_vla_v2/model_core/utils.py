@@ -236,7 +236,8 @@ def our_eager_attention_forward(
         query_states: Query tensor of shape [batch_size, seq_len, num_attention_heads, head_dim].
         key_states: Key tensor of shape [batch_size, seq_len, num_key_value_heads, head_dim].
         value_states: Value tensor of shape [batch_size, seq_len, num_key_value_heads, head_dim].
-        attention_mask: Attention mask tensor, typically [batch_size, 1, seq_len, seq_len] or [batch_size, seq_len, seq_len].
+        attention_mask: Bool attention mask (True = attend) of shape [batch_size, seq_len, seq_len]
+            or [batch_size, 1, seq_len, seq_len]. None applies no mask.
 
     Returns:
         Output tensor of shape [batch_size, seq_len, num_attention_heads * head_dim].
@@ -255,9 +256,12 @@ def our_eager_attention_forward(
     att_weights *= head_dim**-0.5
 
     big_neg = -2.3819763e38
-    masked_att_weights = torch.where(attention_mask[:, None, :, :], att_weights, big_neg)
+    if attention_mask is not None:
+        if attention_mask.dim() == 3:  # [B, L, L] -> [B, 1, L, L] to broadcast over heads
+            attention_mask = attention_mask[:, None, :, :]
+        att_weights = torch.where(attention_mask, att_weights, big_neg)
 
-    probs = nn.functional.softmax(masked_att_weights, dim=-1)
+    probs = nn.functional.softmax(att_weights, dim=-1)
     probs = probs.to(dtype=value_states.dtype)
 
     value_states_permuted = torch.einsum("blhd->bhld", value_states)  # [B, H, L_v, D]
@@ -273,6 +277,7 @@ def our_sdpa_attention_forward(
     key_states: torch.Tensor,
     value_states: torch.Tensor,
     attention_mask: torch.Tensor,
+    sdpa_backend: str | None = None,
 ):
     """SDPA attention with the SAME (b, l, h, d) in / (b, l, h*d) out contract as
     ``our_eager_attention_forward``.
@@ -289,6 +294,8 @@ def our_sdpa_attention_forward(
         query_states: ``[batch, seq, num_att_heads, head_dim]``.
         key_states / value_states: ``[batch, seq, num_kv_heads, head_dim]``.
         attention_mask: bool tensor, ``True`` = attend; ``[batch, seq, seq]`` or ``[batch, 1, seq, seq]``.
+        sdpa_backend: optional ``SDPBackend`` enum name (e.g. "CUDNN_ATTENTION") to force a
+            specific kernel backend instead of torch auto-selection.
     """
     bsize, seq_len, num_att_heads, head_dim = query_states.shape
     num_kv_heads = key_states.shape[2]
@@ -305,17 +312,78 @@ def our_sdpa_attention_forward(
         if mask.dtype != torch.bool:
             mask = mask.bool()
 
-    att_output = nn.functional.scaled_dot_product_attention(
-        q,
-        k,
-        v,
-        attn_mask=mask,  # bool: True keeps, False masks (matches the eager where-mask)
-        enable_gqa=num_kv_heads != num_att_heads,
-    )
+    if sdpa_backend is not None:
+        from torch.nn.attention import SDPBackend, sdpa_kernel
+
+        backend_ctx = sdpa_kernel([getattr(SDPBackend, sdpa_backend)])
+    else:
+        import contextlib
+
+        backend_ctx = contextlib.nullcontext()
+    with backend_ctx:
+        att_output = nn.functional.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=mask,  # bool: True keeps, False masks (matches the eager where-mask)
+            enable_gqa=num_kv_heads != num_att_heads,
+        )
 
     # (b, h, l, d) -> (b, l, h*d)
     att_output = att_output.transpose(1, 2).reshape(bsize, seq_len, num_att_heads * head_dim)
     return att_output
+
+
+def flash_varlen_prefix_attention(query_states, key_states, value_states, attention_mask):
+    """Prefix-block self-attention via flash_attn varlen over the unpadded tokens.
+
+    Same (b, l, h, d) in / (b, l, h*d) out contract as ``our_sdpa_attention_forward``.
+    The prefix block of the dual-stream 2D mask is bidirectional over the valid
+    (non-padding) tokens — the att-mask cumsum is constant across the prefix — so
+    packing the valid tokens per sample (any order) reproduces the joint call's
+    prefix rows exactly, at kernel-reassociation precision. Padding rows come back
+    as zeros; downstream they are quarantined just like the garbage the joint call
+    leaves there (pad rows are masked out as keys and excluded from the loss).
+    GQA (num_kv_heads < num_att_heads) is handled natively by the varlen kernel.
+
+    No host syncs: cu_seqlens stays on device, allocation sizes come from the
+    kernel output shape.
+
+    Args:
+        query_states / key_states / value_states: ``[batch, prefix_len, heads, head_dim]``.
+        attention_mask: bool ``[batch, prefix_len, prefix_len]``, True = attend.
+    """
+    from flash_attn import flash_attn_varlen_func
+
+    bsize, seq_len, num_att_heads, head_dim = query_states.shape
+
+    # Valid-token set per sample: a column is a valid key iff some row attends it,
+    # a row is a valid query iff it attends anything. In the prefix block these are
+    # the same set (bidirectional over valid tokens; pad rows/cols all-False).
+    valid = attention_mask.any(dim=1) & attention_mask.any(dim=2)  # [b, s]
+    lens = valid.sum(dim=1).to(torch.int32)  # [b]
+    cu_seqlens = torch.zeros(bsize + 1, dtype=torch.int32, device=query_states.device)
+    cu_seqlens[1:] = torch.cumsum(lens, dim=0)
+
+    batch_idx, pos_idx = valid.nonzero(as_tuple=True)  # row-major: grouped by batch
+    q_u = query_states[batch_idx, pos_idx]  # [total, hq, d]
+    k_u = key_states[batch_idx, pos_idx]
+    v_u = value_states[batch_idx, pos_idx]
+
+    out_u = flash_attn_varlen_func(
+        q_u,
+        k_u,
+        v_u,
+        cu_seqlens_q=cu_seqlens,
+        cu_seqlens_k=cu_seqlens,
+        max_seqlen_q=seq_len,
+        max_seqlen_k=seq_len,
+        causal=False,
+    )  # [total, hq, d]
+
+    att_output = query_states.new_zeros(bsize, seq_len, num_att_heads, head_dim)
+    att_output[batch_idx, pos_idx] = out_u
+    return att_output.reshape(bsize, seq_len, num_att_heads * head_dim)
 
 
 # @torch.jit.script

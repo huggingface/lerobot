@@ -36,12 +36,43 @@ from transformers.models.qwen3_vl.modeling_qwen3_vl import (
 logger = logging.get_logger(__name__)
 
 
+def _apply_patch_embed_gemm():
+    """GB10 (sm_121) + torch 2.9: the Qwen3-VL patch-embed Conv3d misses cuDNN's
+    fast path and runs ``aten::slow_conv_dilated3d`` — a per-output-slice loop of
+    vol2col+gemv (~100ms per forward, the single largest fixed cost measured on
+    this SoC). The conv is degenerate — kernel == stride == input extent — so it
+    is exactly one GEMM over the flattened patch. Replace with the identical
+    ``addmm``. Idempotent; patched onto the HF class so every instantiation
+    (ours or transformers') picks it up."""
+    from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionPatchEmbed
+
+    if getattr(Qwen3VLVisionPatchEmbed.forward, "_is_gemm_patch", False):
+        return
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        target_dtype = self.proj.weight.dtype
+        w = self.proj.weight  # [embed_dim, C, T, p, p]
+        x = hidden_states.reshape(-1, w[0].numel()).to(dtype=target_dtype)
+        return torch.addmm(self.proj.bias, x, w.reshape(w.shape[0], -1).t()).view(-1, w.shape[0])
+
+    forward._is_gemm_patch = True
+    Qwen3VLVisionPatchEmbed.forward = forward
+
+
 def _qwen3vl_no_init_weights(self, module):
     return
 
 
-_Qwen3VLPreTrainedModel._init_weights = _qwen3vl_no_init_weights
 Qwen3VLPreTrainedModel = _Qwen3VLPreTrainedModel
+
+
+@torch.compiler.disable
+def _cu_seqlens_lengths(cu_seqlens: torch.Tensor) -> list[int]:
+    """Per-image window lengths as a host list. Must stay outside dynamo graphs:
+    the implicit sync in ``.tolist()`` raises an inductor backend-compiler
+    exception (aten._local_scalar_dense) on torch 2.9, which falls the whole
+    attention frame back to eager instead of a clean graph break."""
+    return (cu_seqlens[1:] - cu_seqlens[:-1]).tolist()
 
 
 class Qwen3VLVisionAttention(nn.Module):
@@ -109,9 +140,21 @@ class Qwen3VLVisionAttention(nn.Module):
             if out_fp32_atten:
                 attn_output = attn_output.to(torch.float32)
         else:
-            lengths = cu_seqlens[1:] - cu_seqlens[:-1]
+            # Host-sync hoist: the per-image split sizes are a pure function of
+            # cu_seqlens (fixed for a fixed grid). Cache the derived python list keyed
+            # by the tensor's shape+device so CUDA-graph capture replays the cached
+            # lengths instead of hitting ``.tolist()`` mid-capture (which is illegal).
+            # Content changes at fixed shape are impossible here — cu_seqlens comes
+            # from the capture-time grid cache.
+            cache_key = (tuple(cu_seqlens.shape), str(cu_seqlens.device))
+            cached = getattr(self, "_vit_lengths_cache", None)
+            if cached is not None and cached[0] == cache_key:
+                lengths_list = cached[1]
+            else:
+                lengths_list = _cu_seqlens_lengths(cu_seqlens)
+                self._vit_lengths_cache = (cache_key, lengths_list)
             splits = [
-                torch.split(tensor, lengths.tolist(), dim=2)
+                torch.split(tensor, lengths_list, dim=2)
                 for tensor in (query_states, key_states, value_states)
             ]
             attn_outputs = [
@@ -131,7 +174,9 @@ class Qwen3VLVisionAttention(nn.Module):
             attn_output = torch.cat(attn_outputs, dim=1)
 
         attn_output = attn_output.reshape(seq_length, -1).contiguous()
-        attn_output = self.proj(attn_output)
+        # The flash fp32->bf16->fp32 round-trip above can leave attn_output in fp32
+        # while proj's weights are bf16; outside autocast that dtype mix raises.
+        attn_output = self.proj(attn_output.to(self.proj.weight.dtype))
         return attn_output
 
 
@@ -245,6 +290,7 @@ class Qwen3VLTextModel(_Qwen3VLTextModel):
 
 class Qwen3VLModel(_Qwen3VLModel):
     def __init__(self, config: Qwen3VLConfig):
+        _apply_patch_embed_gemm()
         Qwen3VLPreTrainedModel.__init__(self, config)
         self.visual = Qwen3VLVisionModel._from_config(config.vision_config)
         self.language_model = Qwen3VLTextModel._from_config(config.text_config)
@@ -281,7 +327,12 @@ def preprcess_grid_thw(self, grid_thw: torch.Tensor):
     cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0)
     split_sizes = (grid_thw.prod(-1) // self.spatial_merge_size**2).tolist()
     max_seqlen = int((cu_seqlens[1:] - cu_seqlens[:-1]).max().item())
-    return None, position_embeddings, cu_seqlens, split_sizes, max_seqlen
+    # Also materialize pos_embeds here so callers that cache the return values
+    # (precompute_grid_thw=True) get a complete set — otherwise pos_embeds=None
+    # would retrigger this host-syncing function on every forward even when the
+    # rest is cached, which also breaks CUDA graph capture.
+    pos_embeds = self.fast_pos_embed_interpolate(grid_thw)
+    return pos_embeds, position_embeddings, cu_seqlens, split_sizes, max_seqlen
 
 
 def forward_without_grid_thw(
@@ -298,8 +349,14 @@ def forward_without_grid_thw(
 
     if pos_embeds is None or position_embeddings is None or cu_seqlens is None or max_seqlen is None:
         pos_embeds, position_embeddings, cu_seqlens, _, max_seqlen = self.preprcess_grid_thw(grid_thw)
-    if pos_embeds is None:
-        pos_embeds = self.fast_pos_embed_interpolate(grid_thw)
+    else:
+        # Cached (precompute_grid_thw) metadata must match this batch's token
+        # stream; on a token-count mismatch, recompute from the current
+        # grid_thw instead. Sync-free shape check only — reading cu_seqlens[-1]
+        # here would force a host sync per chunk, which is exactly what the
+        # precompute path exists to avoid.
+        if pos_embeds.shape[0] != hidden_states.shape[0]:
+            pos_embeds, position_embeddings, cu_seqlens, _, max_seqlen = self.preprcess_grid_thw(grid_thw)
 
     hidden_states = hidden_states + pos_embeds
     seq_len, _ = hidden_states.size()
@@ -324,8 +381,16 @@ def forward_without_grid_thw(
     return hidden_states, deepstack_feature_lists
 
 
+_lingbot_qwen3vl_patch_applied = False
+
+
 def apply_lingbot_qwen3_vl_patch():
+    global _lingbot_qwen3vl_patch_applied
+    if _lingbot_qwen3vl_patch_applied:
+        return
+    _lingbot_qwen3vl_patch_applied = True
     logger.info("apply Qwen3-VL Lingbot patch")
+    _Qwen3VLPreTrainedModel._init_weights = _qwen3vl_no_init_weights
     hf_qwen3vl.Qwen3VLPreTrainedModel = Qwen3VLPreTrainedModel
     hf_qwen3vl.Qwen3VLTextDecoderLayer = Qwen3VLTextDecoderLayer
     hf_qwen3vl.Qwen3VLTextModel = Qwen3VLTextModel

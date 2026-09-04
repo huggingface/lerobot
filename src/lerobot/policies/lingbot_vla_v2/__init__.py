@@ -12,10 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Only the config is imported eagerly: the modeling module pulls in heavy
-# optional dependencies (transformers>=5.5 with Qwen3-VL, qwen-vl-utils) that are
-# installed via `pip install 'lerobot[lingbot_vla2]'`. The policy class is loaded
-# lazily by the policy factory.
+# Importing the processor module here is what registers the LingBot
+# `ProcessorStep`s in the registry on `import lerobot.policies` — the same path
+# every other policy takes (the outer `policies/__init__.py` stays config-only,
+# which keeps `import lerobot` free of the heavy optional deps: transformers,
+# qwen-vl-utils etc. arrive via `pip install 'lerobot[lingbot_vla2]'`).
 from .configuration_lingbot_vla_v2 import LingbotVLAV2Config
+from .modeling_lingbot_vla_v2 import LingbotVLAV2Policy
+from .processor_lingbot_vla_v2 import make_lingbot_vla_v2_pre_post_processors
 
-__all__ = ["LingbotVLAV2Config"]
+__all__ = [
+    "LingbotVLAV2Config",
+    "LingbotVLAV2Policy",
+    "make_lingbot_vla_v2_pre_post_processors",
+]

@@ -1,55 +1,54 @@
 from __future__ import annotations
 
+import functools
+import os
 from collections import deque
 
 import einops
 import torch
+import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
-import torch.nn.functional as F
-from typing import List, Optional, Tuple, Union
-
+from torch.utils.checkpoint import checkpoint as torch_checkpoint
 from transformers import AutoConfig, AutoTokenizer, PretrainedConfig, PreTrainedModel
-from transformers.models.auto import CONFIG_MAPPING
 from transformers.cache_utils import Cache
+from transformers.models.auto import CONFIG_MAPPING
 from transformers.utils import logging
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE
 
-from .configuration_lingbot_vla_v2 import LingbotVLAV2Config as LeRobotLingbotVLAV2Config
-from .configuration_lingbot_vla_v2 import resolve_robot_config_and_stats
-from .configuration_lingbot_vla_v2_internal import LingbotVLAV2Config
-from .qwen3vl_in_vla import (
+from .configuration_lingbot_vla_v2 import (
+    LingbotVLAV2Config as LeRobotLingbotVLAV2Config,
+    resolve_robot_config_and_stats,
+)
+from .model_core.flex_attention import (
+    build_block_mask,
+    flex_attention_forward,
+    flex_attention_with_block_mask,
+)
+from .model_core.modeling_lingbot_vla_v2_base import (
+    FlowMatching as FlowMatchingV1,
+    replace_lnorm_with_adanorm,
+)
+from .model_core.moe_loss import sequence_wise_balance_loss as triton_sequence_wise_balance_loss
+from .model_core.qwen2_action_expert import (
+    Qwen2ForCausalLM,
+    Qwen2TokenMoeBlock,
+)
+from .model_core.qwen3vl_in_vla import (
     Qwen3VLForConditionalGeneration,
-    Qwen3VLTextModel,
-    Qwen3VLPreTrainedModel,
+    apply_lingbot_qwen3_vl_patch,
     apply_rotary_pos_emb,
 )
-from .modeling_lingbot_vla_v2_base import (
-    AdaRMSNorm,
-    FixAdaRMSNorm,
-    replace_lnorm_with_adanorm,
-    FlowMatching as FlowMatchingV1,
-)
-from .utils import (
+from .model_core.utils import (
     block_suffix_to_fv_,
-    create_sinusoidal_pos_embedding,
+    flash_varlen_prefix_attention,
     make_att_2d_masks,
     our_eager_attention_forward,
     our_sdpa_attention_forward,
     prefix_query_segments,
     prefix_query_token_spans,
-    sample_beta,
-)
-from .flex_attention import build_block_mask, flex_attention_forward, flex_attention_with_block_mask
-
-from .moe_loss import sequence_wise_balance_loss as triton_sequence_wise_balance_loss
-from .qwen2_action_expert import (
-    Qwen2ForCausalLM,
-    Qwen2TokenMoeBlock,
-    Qwen2FusedExperts,
-    FixQwen2RMSNorm,
 )
 
 try:
@@ -137,6 +136,10 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
     def __init__(self, config: QwenvlWithExpertV2Config, eval=False):
         super().__init__(config=config)
         self.config = config
+        # The model relies on the patched Qwen3-VL classes (custom text decoder
+        # layer / vision forward signature); apply the patch idempotently here so
+        # building the model directly (without the processor) works as well.
+        apply_lingbot_qwen3_vl_patch()
         # Map our attention_implementation to a transformers-valid attn class for the
         # HF model instantiation. "fa2" -> flash_attention_2; everything else (eager /
         # flex / flex_cached) builds with "eager" — the flex paths override attention in
@@ -177,6 +180,10 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
         self.cu_seqlens = None
         self.visual_split_sizes = None
         self.visual_max_seqlen = None
+        # Capture-context flag: set by the full-prefix CUDA-graph wrapper so the vision
+        # grid metadata (pos_embeds / cu_seqlens / split_sizes / max_seqlen) is hoisted
+        # out of the per-call host-sync path and cached once. See ``_prefix_graphed``.
+        self._capture_grid_cache = False
 
         del self.qwen_expert.model.embed_tokens
         if self.config.enable_expert_vision:
@@ -214,6 +221,8 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
             )
             token_config.bias_update_speed = bias_update_speed
             token_config._moe_implementation = _moe_impl
+            token_config.moe_dense_max_tokens = getattr(self.config, "moe_dense_max_tokens", 512)
+            token_config.moe_backend = getattr(self.config, "moe_backend", "sparse_static")
             token_config.router_activation = getattr(self.config, "router_activation", "softmax")
             token_config.routed_scaling_factor = getattr(self.config, "routed_scaling_factor", 1.0)
             token_config.use_shared_expert_gate = getattr(self.config, "use_shared_expert_gate", True)
@@ -243,7 +252,16 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
         image_grid_thw: torch.LongTensor,
     ):
         precompute_grid_thw = getattr(self.config, "precompute_grid_thw", False)
-        if precompute_grid_thw and self.position_embeddings is None:
+        # Hoist the host-syncing grid preprocess when (a) the precompute flag wants it
+        # cached and it is not yet, or (b) the capture grid cache is armed but empty
+        # (first warm-up pass of a vision-graph capture). Once populated, subsequent
+        # calls — including the CUDA-graph capture itself — skip preprcess_grid_thw
+        # entirely, which is what makes the tower capturable (its .item()/.tolist()
+        # host syncs cannot be captured).
+        grid_cache_ready = self.position_embeddings is not None
+        if (precompute_grid_thw and not grid_cache_ready) or (
+            self._capture_grid_cache and not grid_cache_ready
+        ):
             (
                 self.pos_embeds,
                 self.position_embeddings,
@@ -313,8 +331,9 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
             position_ids = position_ids.masked_fill(pad.expand_as(position_ids), 1)
         return position_ids
 
-    def apply_mrope(self, query_states, key_states, position_ids):
-        position_embeddings = self.qwenvl.model.language_model.rotary_emb(query_states, position_ids)
+    def apply_mrope(self, query_states, key_states, position_ids=None, position_embeddings=None):
+        if position_embeddings is None:
+            position_embeddings = self.qwenvl.model.language_model.rotary_emb(query_states, position_ids)
         return apply_rotary_pos_emb(query_states, key_states, *position_embeddings, unsqueeze_dim=2)
 
     def handle_kv_cache(
@@ -337,16 +356,22 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
         return key_states, value_states, past_key_values
 
     def _apply_deepstack(self, hidden_states, layer_idx, visual_pos_masks, deepstack_visual_embeds):
+        """Add the level's dense deepstack delta.
+
+        The embeds arrive pre-laid-out over the full prefix length (zeros at
+        non-visual positions; see :meth:`embed_prefix`), so the injection is a
+        plain shape-static add — no bool indexing, hence no nonzero()/host sync
+        and CUDA-graph capturable. ``visual_pos_masks`` is kept for signature
+        compatibility; its nonzero rows agree with the dense layout by
+        construction. Numerically identical to the transformers
+        ``_deepstack_process`` scatter it replaces (x + 0.0 == x).
+        """
         if (
             deepstack_visual_embeds is not None
             and visual_pos_masks is not None
             and layer_idx < len(deepstack_visual_embeds)
         ):
-            hidden_states = self.qwenvl.model.language_model._deepstack_process(
-                hidden_states,
-                visual_pos_masks,
-                deepstack_visual_embeds[layer_idx],
-            )
+            hidden_states = hidden_states + deepstack_visual_embeds[layer_idx].to(hidden_states.dtype)
         return hidden_states
 
     def forward(
@@ -361,6 +386,8 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
         ada_cond: list[torch.FloatTensor] = None,
         visual_pos_masks: torch.Tensor | None = None,
         deepstack_visual_embeds: list[torch.Tensor] | None = None,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
+        block_mask=None,
     ):
         models = [self.qwenvl.model.language_model, self.qwen_expert.model]
         num_layers = self.qwenvl.config.text_config.num_hidden_layers
@@ -372,76 +399,74 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
             f"(got action={action_num_layers}, vlm={num_layers})."
         )
 
-        for layer_idx in range(num_layers):
-            query_states = []
-            key_states = []
-            value_states = []
-            for i, hidden_states in enumerate(inputs_embeds):
-                if hidden_states is None:
-                    continue
-                if i == 1:
-                    q, k, v = models[i].layers[layer_idx](hidden_states, compute_kqv=True, ada_cond=ada_cond)
-                else:
-                    q, k, v = models[i].layers[layer_idx](hidden_states, compute_kqv=True)
-                query_states.append(q.float())
-                key_states.append(k.float())
-                value_states.append(v.float())
+        # Attention runs in the model (half) dtype by default; attention_fp32=True
+        # restores the original fp32 upcast used for bit-exact parity checks.
+        attn_fp32 = getattr(self.config, "attention_fp32", False)
 
-            query_states = torch.cat(query_states, dim=1)
-            key_states = torch.cat(key_states, dim=1)
-            value_states = torch.cat(value_states, dim=1)
-            query_states, key_states = self.apply_mrope(query_states, key_states, position_ids)
-            key_states, value_states, past_key_values = self.handle_kv_cache(
-                key_states,
-                value_states,
-                layer_idx,
-                past_key_values=past_key_values,
-                use_cache=use_cache,
-                fill_kv_cache=fill_kv_cache,
+        # mrope cos/sin depend only on position_ids (and dtype/device) — compute once
+        # per forward instead of once per layer. Callers with a loop-invariant
+        # position_ids (e.g. the flow-matching denoise loop) can pass a precomputed
+        # ``position_embeddings`` to skip this entirely.
+        if position_embeddings is None:
+            rep = next(h for h in inputs_embeds if h is not None)
+            # rotary_emb casts cos/sin to the representative tensor's dtype; under
+            # attention_fp32 keep the old fp32 cos/sin for bit-exact parity.
+            if attn_fp32:
+                rep = rep.float()
+            position_embeddings = self.qwenvl.model.language_model.rotary_emb(rep, position_ids)
+
+        _full_block_mask = block_mask
+        if _full_block_mask is None and self.config.attention_implementation == "flex_cached":
+            # Build once per forward (not per layer). q_len is the concatenated stream
+            # length; with a filled KV cache the kv side additionally covers the prefix.
+            q_len = sum(h.shape[1] for h in inputs_embeds if h is not None)
+            kv_len = q_len
+            if use_cache and not fill_kv_cache and past_key_values:
+                kv_len += past_key_values[0]["key_states"].shape[1]
+            _full_block_mask = build_block_mask(
+                attention_mask,
+                self.qwenvl.config.text_config.num_attention_heads,
+                q_len,
+                kv_len,
             )
-            if self.config.attention_implementation == "flex_cached":
-                if layer_idx == 0:
-                    _full_len = query_states.shape[1]
-                    _full_block_mask = build_block_mask(
-                        attention_mask,
-                        self.qwenvl.config.text_config.num_attention_heads,
-                        _full_len,
-                        _full_len,
-                    )
-                att_output = flex_attention_with_block_mask(
-                    query_states, key_states, value_states, _full_block_mask, query_states.shape[1]
-                )
-            else:
-                att_output = self.attention_interface(query_states, key_states, value_states, attention_mask)
 
-            outputs_embeds = []
-            start = 0
-            for i, hidden_states in enumerate(inputs_embeds):
-                if hidden_states is None:
-                    outputs_embeds.append(None)
-                    continue
-                end = start + hidden_states.shape[1]
-                if i == 1:
-                    out_emb, router_logits = models[i].layers[layer_idx](
-                        hidden_states,
-                        att_output,
-                        start,
-                        end,
-                        output_atten=True,
-                        ada_cond=ada_cond,
-                    )
-                    if router_logits is not None:
-                        router_logits_list.append(router_logits)
-                else:
-                    out_emb = models[i].layers[layer_idx](
-                        hidden_states, att_output, start, end, output_atten=True
-                    )
-                    out_emb = self._apply_deepstack(
-                        out_emb, layer_idx, visual_pos_masks, deepstack_visual_embeds
-                    )
-                outputs_embeds.append(out_emb)
-                start = end
-            inputs_embeds = outputs_embeds
+        use_gradient_checkpointing = (
+            getattr(self.config, "gradient_checkpointing", False)
+            and self.training
+            and torch.is_grad_enabled()
+            and not use_cache
+        )
+
+        for layer_idx in range(num_layers):
+            if use_gradient_checkpointing:
+                inputs_embeds, layer_router_logits = self._checkpointed_layer(
+                    layer_idx,
+                    inputs_embeds,
+                    attention_mask,
+                    position_embeddings,
+                    ada_cond,
+                    visual_pos_masks,
+                    deepstack_visual_embeds,
+                    _full_block_mask,
+                    attn_fp32,
+                )
+                router_logits_list.extend(layer_router_logits)
+                continue
+            inputs_embeds, layer_router_logits, _full_block_mask, past_key_values = self._layer_forward(
+                layer_idx,
+                inputs_embeds,
+                attention_mask,
+                position_embeddings,
+                past_key_values,
+                use_cache,
+                fill_kv_cache,
+                ada_cond,
+                visual_pos_masks,
+                deepstack_visual_embeds,
+                _full_block_mask,
+                attn_fp32,
+            )
+            router_logits_list.extend(layer_router_logits)
 
         outputs_embeds = []
         for i, hidden_states in enumerate(inputs_embeds):
@@ -454,6 +479,182 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
                 outputs_embeds.append(models[i].norm(hidden_states))
         return outputs_embeds, past_key_values, router_logits_list
 
+    def _layer_forward(
+        self,
+        layer_idx,
+        inputs_embeds,
+        attention_mask,
+        position_embeddings,
+        past_key_values,
+        use_cache,
+        fill_kv_cache,
+        ada_cond,
+        visual_pos_masks,
+        deepstack_visual_embeds,
+        block_mask,
+        attn_fp32,
+    ):
+        """One dual-stream layer: per-stream QKV -> joint attention -> per-stream out/MLP."""
+        models = [self.qwenvl.model.language_model, self.qwen_expert.model]
+        router_logits_list = []
+        query_states = []
+        key_states = []
+        value_states = []
+        for i, hidden_states in enumerate(inputs_embeds):
+            if hidden_states is None:
+                continue
+            if i == 1:
+                q, k, v = models[i].layers[layer_idx](hidden_states, compute_kqv=True, ada_cond=ada_cond)
+            else:
+                q, k, v = models[i].layers[layer_idx](hidden_states, compute_kqv=True)
+            if attn_fp32:
+                q, k, v = q.float(), k.float(), v.float()
+            query_states.append(q)
+            key_states.append(k)
+            value_states.append(v)
+
+        query_states = torch.cat(query_states, dim=1)
+        key_states = torch.cat(key_states, dim=1)
+        value_states = torch.cat(value_states, dim=1)
+        query_states, key_states = self.apply_mrope(
+            query_states, key_states, position_embeddings=position_embeddings
+        )
+        key_states, value_states, past_key_values = self.handle_kv_cache(
+            key_states,
+            value_states,
+            layer_idx,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
+            fill_kv_cache=fill_kv_cache,
+        )
+        if self.config.attention_implementation == "flex_cached":
+            if block_mask is None:
+                block_mask = build_block_mask(
+                    attention_mask,
+                    self.qwenvl.config.text_config.num_attention_heads,
+                    query_states.shape[1],
+                    key_states.shape[1],
+                )
+            att_output = flex_attention_with_block_mask(
+                query_states,
+                key_states,
+                value_states,
+                block_mask,
+                query_states.shape[1],
+                force_fp32=attn_fp32,
+            )
+        elif self.config.attention_implementation == "flex":
+            att_output = flex_attention_forward(
+                query_states, key_states, value_states, attention_mask, force_fp32=attn_fp32
+            )
+        else:
+            split = (
+                getattr(self.config, "attn_split_prefix_suffix", False)
+                and inputs_embeds
+                and inputs_embeds[0] is not None
+                and attention_mask is not None
+                and attention_mask.dim() == 3
+            )
+            if split:
+                prefix_len = inputs_embeds[0].shape[1]
+                # The prefix (VLM) stream must have NO trainable params (expert-only
+                # LoRA): detach its Q/K/V so autograd never tracks the frozen VLM
+                # activations (the joint call tracks them spuriously via the
+                # concatenated Q/K/V and the gradient dies at the frozen params).
+                # Guard: if any VLM param is trainable (A-arm regex / full FT), keep
+                # the graph — the prefix path then carries real adapter gradients.
+                models_local = [self.qwenvl.model.language_model, self.qwen_expert.model]
+                detach_prefix = not inputs_embeds[0].requires_grad and not any(
+                    p.requires_grad for p in models_local[0].parameters()
+                )
+                q_p, k_p, v_p = (
+                    query_states[:, :prefix_len],
+                    key_states[:, :prefix_len],
+                    value_states[:, :prefix_len],
+                )
+                if detach_prefix:
+                    q_p, k_p, v_p = q_p.detach(), k_p.detach(), v_p.detach()
+                mask_p = attention_mask[:, :prefix_len, :prefix_len]
+                if (
+                    getattr(self.config, "attn_split_prefix_backend", "flash") == "flash"
+                    and q_p.dtype in (torch.bfloat16, torch.float16)
+                ):
+                    att_p = flash_varlen_prefix_attention(q_p, k_p, v_p, mask_p)
+                else:
+                    att_p = self.attention_interface(q_p, k_p, v_p, mask_p)
+                att_s = self.attention_interface(
+                    query_states[:, prefix_len:], key_states, value_states, attention_mask[:, prefix_len:, :]
+                )
+                att_output = torch.cat([att_p, att_s], dim=1)
+            else:
+                att_output = self.attention_interface(query_states, key_states, value_states, attention_mask)
+
+        outputs_embeds = []
+        start = 0
+        for i, hidden_states in enumerate(inputs_embeds):
+            if hidden_states is None:
+                outputs_embeds.append(None)
+                continue
+            end = start + hidden_states.shape[1]
+            if i == 1:
+                out_emb, router_logits = models[i].layers[layer_idx](
+                    hidden_states,
+                    att_output,
+                    start,
+                    end,
+                    output_atten=True,
+                    ada_cond=ada_cond,
+                )
+                if router_logits is not None:
+                    router_logits_list.append(router_logits)
+            else:
+                # Under the split with a grad-free prefix stream, hand the VLM
+                # stream a detached att_output: without this, cat([no-grad prefix,
+                # grad suffix]) re-couples gradients into the prefix rows and the
+                # whole frozen-VLM backward keeps running. Values are identical;
+                # the prefix gradient is discarded at frozen params anyway.
+                att_output_stream = (
+                    att_output.detach() if (i == 0 and split and detach_prefix) else att_output
+                )
+                out_emb = models[i].layers[layer_idx](
+                    hidden_states, att_output_stream, start, end, output_atten=True
+                )
+                out_emb = self._apply_deepstack(out_emb, layer_idx, visual_pos_masks, deepstack_visual_embeds)
+            outputs_embeds.append(out_emb)
+            start = end
+        return outputs_embeds, router_logits_list, block_mask, past_key_values
+
+    def _checkpointed_layer(
+        self,
+        layer_idx,
+        inputs_embeds,
+        attention_mask,
+        position_embeddings,
+        ada_cond,
+        visual_pos_masks,
+        deepstack_visual_embeds,
+        block_mask,
+        attn_fp32,
+    ):
+        """Gradient-checkpointed layer step (training only, KV cache disabled)."""
+        outputs_embeds, router_logits_list, _, _ = torch_checkpoint(
+            self._layer_forward,
+            layer_idx,
+            inputs_embeds,
+            attention_mask,
+            position_embeddings,
+            None,  # past_key_values
+            False,  # use_cache
+            False,  # fill_kv_cache
+            ada_cond,
+            visual_pos_masks,
+            deepstack_visual_embeds,
+            block_mask,
+            attn_fp32,
+            use_reentrant=False,
+        )
+        return outputs_embeds, router_logits_list
+
     def get_attention_interface(self):
         if self.config.attention_implementation == "flex":
             logger.debug("Using Flex attention")
@@ -462,6 +663,21 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
             logger.debug("Using Flex Cached attention with prebuilt BlockMask")
             return flex_attention_forward
         if self.config.attention_implementation == "sdpa":
+            sdpa_backend = getattr(self.config, "sdpa_backend", None)
+            # cuDNN SDPA's backward kernel produces NaN gradients for this model
+            # (bf16, these seq lens / head dims) on torch 2.8 / cuDNN: every step's
+            # forward is fine but step 1's backward writes NaN into the weights and
+            # the whole run goes NaN. It is a *forward/inference-only* fast path —
+            # silently fall back to torch auto-selection under autograd so training
+            # can never enable it.
+            if sdpa_backend is not None and torch.is_grad_enabled():
+                logger.warning(
+                    f"sdpa_backend={sdpa_backend} is inference-only (cuDNN SDPA backward "
+                    f"returns NaN grads); using torch auto-selected SDPA backend for training."
+                )
+                sdpa_backend = None
+            if sdpa_backend is not None:
+                return functools.partial(our_sdpa_attention_forward, sdpa_backend=sdpa_backend)
             return our_sdpa_attention_forward
         if self.config.attention_implementation == "eager":
             logger.debug("Using Eager attention")
@@ -494,6 +710,11 @@ class FlowMatchingV2(FlowMatchingV1):
             "final_norm_adanorm",
             "precompute_grid_thw",
             "vit_attn_implementation",
+            "attention_fp32",
+            "sdpa_backend",
+            "attn_split_prefix_suffix",
+            "attn_split_prefix_backend",
+            "gradient_checkpointing",
             "use_moe",
             "bias_update_speed",
             "token_moe_layers",
@@ -505,6 +726,8 @@ class FlowMatchingV2(FlowMatchingV1):
             "routed_scaling_factor",
             "use_shared_expert_gate",
             "_moe_implementation",
+            "moe_dense_max_tokens",
+            "moe_backend",
         ]:
             if hasattr(config, name):
                 setattr(qwenvl_with_export_config, name, getattr(config, name))
@@ -548,12 +771,12 @@ class FlowMatchingV2(FlowMatchingV1):
         lang_tokens,
         lang_masks,
         image_grid_thw=None,
+        vision_outputs=None,
     ):
         if image_grid_thw is None:
             raise ValueError("LingbotVLAV2Policy requires image_grid_thw from the Qwen3-VL image processor.")
         bsize = images.shape[0]
         device = images.device
-        dtype = images.dtype
         if images.ndim == 3:
             bsize = 1
             num_images = images.shape[0]
@@ -568,10 +791,16 @@ class FlowMatchingV2(FlowMatchingV1):
         else:
             flat_grid_thw = image_grid_thw
 
-        img_emb, deepstack_embs = self.qwenvl_with_expert.embed_image(
-            images,
-            flat_grid_thw,
-        )
+        if vision_outputs is None:
+            img_emb, deepstack_embs = self.qwenvl_with_expert.embed_image(
+                images,
+                flat_grid_thw,
+            )
+        else:
+            # Pre-computed vision tower outputs (e.g. from the captured vision graph in
+            # the use_cudagraph_prefix_full path) — skip the eager ViT pass. Same
+            # ``(b n) l d`` flat layout as embed_image returns.
+            img_emb, deepstack_embs = vision_outputs
         embed_dtype = img_emb.dtype
         num_patch = img_emb.shape[1]
         img_emb = einops.rearrange(img_emb, "(b n) l d -> b n l d", b=bsize, n=num_images)
@@ -766,10 +995,28 @@ class FlowMatchingV2(FlowMatchingV1):
             image_grid_thw=rope_grid_thw,
             video_grid_thw=None,
         )
-        filtered_deepstack = []
+        # Dense (capture-safe) deepstack layout: zero-masked per-camera embeds
+        # laid out over the full prefix length instead of bool-filtered rows.
+        # _apply_deepstack then does a plain shape-static add; the old filtered
+        # form fed transformers' _deepstack_process, whose bool indexing
+        # (nonzero -> device/host sync) breaks CUDA-graph capture and graph-
+        # breaks torch.compile. x + 0.0 == x keeps the injection numerically
+        # identical (only -0.0 can flip to +0.0), verified bitwise in
+        # bench/deepstack_dense_parity.py.
         img_visual_only = einops.repeat(img_masks, "b n -> b n l", l=num_patch)
+        img_len = img_emb.shape[1]  # boundary-wrapped image part, [b, n*l, d]
+        tail_len = embs.shape[1] - img_len
+        dense_deepstack = []
         for deepstack in deepstack_embs:
-            filtered_deepstack.append(deepstack[img_visual_only])
+            level = deepstack * img_visual_only.unsqueeze(-1).to(deepstack.dtype)
+            if image_token_len != num_patch:  # vision boundaries: patches sit at [1 : 1+num_patch]
+                wrapped = level.new_zeros(bsize, num_images, image_token_len, level.shape[-1])
+                wrapped[:, :, 1 : 1 + num_patch] = level
+                level = wrapped
+            level = einops.rearrange(level, "b n l d -> b (n l) d")
+            if tail_len > 0:  # language (and depth-align query) tail stays zero
+                level = torch.cat([level, level.new_zeros(bsize, tail_len, level.shape[-1])], dim=1)
+            dense_deepstack.append(level.to(embed_dtype))
 
         result = (
             embs,
@@ -777,7 +1024,7 @@ class FlowMatchingV2(FlowMatchingV1):
             att_masks,
             prefix_position_ids,
             full_visual_pos_masks,
-            filtered_deepstack,
+            dense_deepstack,
         )
         return result
 
@@ -824,6 +1071,7 @@ class FlowMatchingV2(FlowMatchingV1):
         future_video_targets=None,
         future_video_cls_targets=None,
         future_video_current_patch=None,
+        collect_metrics=True,
     ) -> Tensor:
         dtype = state.dtype
         device = state.device
@@ -877,8 +1125,10 @@ class FlowMatchingV2(FlowMatchingV1):
             vlm_position_ids=prefix_position_ids,
             past_key_values=None,
             inputs_embeds=[prefix_embs, suffix_embs],
-            use_cache=self.config.use_cache,
-            fill_kv_cache=True,
+            # Training never reuses a KV cache — filling one here only wastes memory
+            # (a full-sequence fp32/bf16 K/V copy per layer, discarded immediately).
+            use_cache=False,
+            fill_kv_cache=False,
             ada_cond=time_embs if getattr(self.config, "adanorm_time", False) else None,
             visual_pos_masks=visual_pos_masks,
             deepstack_visual_embeds=deepstack_visual_embeds,
@@ -956,10 +1206,33 @@ class FlowMatchingV2(FlowMatchingV1):
             losses = F.mse_loss(u_t, v_t, reduction="none")
         elif loss_type == "L1_fm":
             losses = F.l1_loss(u_t, v_t, reduction="none")
+        else:
+            raise ValueError(f"Unsupported loss_type: {loss_type!r} (expected 'fm' or 'L1_fm').")
 
-        seq_wise_loss, router_z_loss, moe_metrics = self._moe_losses_and_metrics(router_logits_list, losses)
+        seq_wise_loss, router_z_loss, moe_metrics = self._moe_losses_and_metrics(
+            router_logits_list, losses, collect_metrics=collect_metrics
+        )
         if align_metrics:
             moe_metrics.update(align_metrics)
+        if os.environ.get("ALIGN_DEBUG"):
+            def _s(name, t):
+                if torch.is_tensor(t):
+                    tf = t.float()
+                    logging.get_logger(__name__).info(
+                        f"[ALIGN_DEBUG] {name}: shape={tuple(t.shape)} "
+                        f"nan={torch.isnan(tf).any().item()} absmax={tf.abs().max().item():.4f}"
+                    )
+            _s("outputs_embeds", outputs_embeds)
+            _s("suffix_out", suffix_out)
+            _s("v_t", v_t)
+            _s("u_t", u_t)
+            _s("losses(fm)", losses)
+            _s("loss_depth", loss_depth)
+            _s("loss_future_depth", loss_future_depth)
+            _s("loss_future_video", loss_future_video)
+            _s("future_video_targets", future_video_targets)
+            _s("future_video_current_patch", future_video_current_patch)
+            _s("depth_targets", depth_targets)
         return (
             losses,
             loss_depth,
@@ -974,29 +1247,10 @@ class FlowMatchingV2(FlowMatchingV1):
             current_video_preds,
         )
 
-    def sample_actions(
-        self,
-        images,
-        img_masks,
-        lang_tokens,
-        lang_masks,
-        state,
-        noise=None,
-        image_grid_thw=None,
-    ) -> Tensor:
-        """Do a full Qwen3-VL inference forward and compute the action."""
-        bsize = state.shape[0]
-        device = state.device
-        dtype = state.dtype
-
-        if noise is None:
-            actions_shape = (
-                bsize,
-                self.config.n_action_steps,
-                self.config.max_action_dim,
-            )
-            noise = torch.randn(actions_shape, device=device, dtype=dtype)
-
+    def _embed_and_fill_prefix(self, images, img_masks, lang_tokens, lang_masks, image_grid_thw):
+        """Prefix half of sample_actions as one compilable unit: embed_prefix
+        (vision tower + language embedding + mrope position ids) followed by the
+        36-layer KV fill. Returns exactly what the denoise loop consumes."""
         (
             prefix_embs,
             prefix_pad_masks,
@@ -1012,7 +1266,6 @@ class FlowMatchingV2(FlowMatchingV1):
             image_grid_thw=image_grid_thw,
         )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-
         _, past_key_values, _ = self.qwenvl_with_expert.forward(
             attention_mask=prefix_att_2d_masks,
             position_ids=prefix_position_ids,
@@ -1024,39 +1277,751 @@ class FlowMatchingV2(FlowMatchingV1):
             visual_pos_masks=visual_pos_masks,
             deepstack_visual_embeds=deepstack_visual_embeds,
         )
+        return prefix_pad_masks, prefix_position_ids, past_key_values
+
+    def _compile_with_mode(self, fn):
+        """torch.compile with the shared mode. The default mode keeps
+        triton.cudagraphs off via options (torch.compile forbids mode+options
+        together; the *-no-cudagraphs modes already keep CUDA graphs off)."""
+        mode = getattr(self, "_compile_predict_velocity_mode", "default")
+        if mode == "default":
+            return torch.compile(fn, fullgraph=False, dynamic=False, options={"triton.cudagraphs": False})
+        return torch.compile(fn, fullgraph=False, dynamic=False, mode=mode)
+
+    def _get_rtc_processor(self):
+        """Lazily build the RTC guidance processor.
+
+        Defaults come from ``RTCConfig``; policy-config fields named ``rtc_<field>``
+        (e.g. ``rtc_max_guidance_weight``) override them for deployment tuning.
+        """
+        proc = getattr(self, "_rtc_processor", None)
+        if proc is None:
+            from lerobot.policies.rtc.configuration_rtc import RTCConfig
+            from lerobot.policies.rtc.modeling_rtc import RTCProcessor
+
+            cfg = RTCConfig()
+            for field_name in ("max_guidance_weight", "execution_horizon"):
+                override = getattr(self.config, f"rtc_{field_name}", None)
+                if override is not None:
+                    setattr(cfg, field_name, override)
+            proc = RTCProcessor(cfg)
+            self._rtc_processor = proc
+        return proc
+
+    def sample_actions(
+        self,
+        images,
+        img_masks,
+        lang_tokens,
+        lang_masks,
+        state,
+        noise=None,
+        image_grid_thw=None,
+        inference_delay: int = 0,
+        prev_chunk_left_over: Tensor | None = None,
+    ) -> Tensor:
+        """Do a full Qwen3-VL inference forward and compute the action."""
+        if not getattr(self.config, "use_cache", True):
+            raise ValueError(
+                "sample_actions requires config.use_cache=True: the denoise loop reuses "
+                "the prefix KV cache, and with use_cache=False the prefix fill returns "
+                "past_key_values=None. (Training forward does not go through "
+                "sample_actions and is unaffected.)"
+            )
+        bsize = state.shape[0]
+        device = state.device
+        dtype = state.dtype
+
+        if noise is None:
+            actions_shape = (
+                bsize,
+                self.config.n_action_steps,
+                self.config.max_action_dim,
+            )
+            noise = torch.randn(actions_shape, device=device, dtype=dtype)
+
+        if getattr(self, "_use_prefix_graph", False):
+            # CUDA-graphed prefix (see config docs). Falls through to the
+            # compiled/eager paths below only for the non-CUDA / use_cache
+            # guards; capture failures finish eagerly from the already-run
+            # embed_prefix (no second vision pass).
+            got = self._prefix_graphed(images, img_masks, lang_tokens, lang_masks, image_grid_thw)
+            if got is not None:
+                prefix_pad_masks, prefix_position_ids, past_key_values = got
+            else:
+                prefix_pad_masks, prefix_position_ids, past_key_values = self._embed_and_fill_prefix(
+                    images, img_masks, lang_tokens, lang_masks, image_grid_thw
+                )
+        elif getattr(self, "_use_compile_prefix", False):
+            prefix_fn = getattr(self, "_compiled_prefix", None)
+            if prefix_fn is None:
+                prefix_fn = self._compile_with_mode(self._embed_and_fill_prefix)
+                self._compiled_prefix = prefix_fn
+            prefix_pad_masks, prefix_position_ids, past_key_values = prefix_fn(
+                images,
+                img_masks,
+                lang_tokens,
+                lang_masks,
+                image_grid_thw,
+            )
+        else:
+            prefix_pad_masks, prefix_position_ids, past_key_values = self._embed_and_fill_prefix(
+                images,
+                img_masks,
+                lang_tokens,
+                lang_masks,
+                image_grid_thw,
+            )
 
         dt = torch.tensor(-1.0 / self.config.num_steps, dtype=dtype, device=device)
         x_t = noise
+        # Precompute the timestep schedule without any host read-back: a
+        # `while time >= -dt / 2` condition forces a GPU->CPU sync every
+        # denoise step, draining the pipeline and exposing host launch
+        # overhead. The values below come from the same iterative `time + dt`
+        # accumulation, so the schedule is bit-identical to the while form
+        # (exactly num_steps entries; accumulation error stays far below the
+        # old -dt/2 threshold).
         time = torch.tensor(1.0, dtype=dtype, device=device)
+        time_values = []
+        for _ in range(self.config.num_steps):
+            time_values.append(time)
+            time = time + dt
         count = 0
         predict_velocity_fn = self.predict_velocity
         if getattr(self, "_use_compile_predict_velocity", False):
             predict_velocity_fn = getattr(self, "_compiled_predict_velocity", None)
             if predict_velocity_fn is None:
-                predict_velocity_fn = torch.compile(
-                    self.predict_velocity,
-                    fullgraph=False,
-                    dynamic=False,
-                    options={"triton.cudagraphs": False},
-                )
+                predict_velocity_fn = self._compile_with_mode(self.predict_velocity)
                 self._compiled_predict_velocity = predict_velocity_fn
 
-        while time >= -dt / 2:
-            count += 1
-            expanded_time = time.expand(bsize)
-            v_t = predict_velocity_fn(
+        guided = prev_chunk_left_over is not None
+        if guided and any(p.requires_grad for p in self.parameters()):
+            # Guided (RTC) steps run under grad mode: RTCProcessor.denoise_step needs
+            # autograd from x_t to the denoiser output. With trainable params the graph
+            # would additionally carry a dead full-network backward per step whose saved
+            # activations OOM smaller GPUs (measured on a 24GB 4090). Inference never
+            # updates weights, so freeze once on first guided use.
+            for p in self.parameters():
+                p.requires_grad_(False)
+
+        if getattr(self.config, "use_cudagraph_denoise", False) and not guided:
+            # The captured graph has no guidance hook; replay it only unguided.
+            graphed = self._denoise_loop_graphed(
+                predict_velocity_fn,
                 state,
                 prefix_pad_masks,
                 past_key_values,
-                x_t,
-                expanded_time,
-                prefix_position_ids=prefix_position_ids,
+                noise,
+                prefix_position_ids,
+                time_values,
+                dt,
             )
+            if graphed is not None:
+                logger.debug("Denoised %s steps (single CUDA graph replay)", len(time_values))
+                return graphed
+            # Shape change or capture failure — fall through to the plain loop.
+
+        # Loop-invariant tensors (suffix 2D masks / position ids / mrope cos-sin /
+        # flex BlockMask) are computed on the first predict_velocity call and reused
+        # for the remaining denoise steps — they depend on the prefix masks only,
+        # not on x_t or the timestep.
+        denoise_cache: dict = {}
+        for step_time in time_values:
+            count += 1
+            expanded_time = step_time.expand(bsize)
+
+            if guided:
+                # RTC guidance (bench/rtc_bench.py parity): per-step local denoise cache —
+                # a shared cache would alias step k's tensors into step k+1's autograd graph.
+                def _pv_step(input_x_t, _et=expanded_time):
+                    return predict_velocity_fn(
+                        state,
+                        prefix_pad_masks,
+                        past_key_values,
+                        input_x_t,
+                        _et,
+                        prefix_position_ids=prefix_position_ids,
+                        _denoise_cache=None,
+                    )
+
+                with torch.enable_grad():
+                    v_t = self._get_rtc_processor().denoise_step(
+                        x_t=x_t,
+                        prev_chunk_left_over=prev_chunk_left_over,
+                        inference_delay=inference_delay,
+                        time=step_time,
+                        original_denoise_step_partial=_pv_step,
+                        execution_horizon=int(prev_chunk_left_over.shape[0]),
+                    )
+                v_t = v_t.to(x_t.dtype)  # guidance math upcasts to f32; keep x_t dtype
+            else:
+                v_t = predict_velocity_fn(
+                    state,
+                    prefix_pad_masks,
+                    past_key_values,
+                    x_t,
+                    expanded_time,
+                    prefix_position_ids=prefix_position_ids,
+                    _denoise_cache=denoise_cache,
+                )
 
             x_t += dt * v_t
-            time += dt
-        logger.debug("Denoised %s steps", count)
+        logger.debug("Denoised %s steps%s", count, " (RTC guided)" if guided else "")
         return x_t
+
+    @torch.no_grad()
+    def _denoise_loop_graphed(
+        self,
+        predict_velocity_fn,
+        state,
+        prefix_pad_masks,
+        past_key_values,
+        noise,
+        prefix_position_ids,
+        time_values,
+        dt,
+    ):
+        """Run the denoise loop as a single captured CUDA graph.
+
+        Returns the denoised action chunk, or None when the graph is
+        unavailable — non-CUDA input, `use_cache=False`, or a warm-up/capture
+        failure — so the caller falls back to the plain loop. An
+        observation-shape change drops the stale graph and re-captures.
+        """
+        if not state.is_cuda:
+            return None
+        if getattr(self, "_denoise_graph_disabled", False):
+            return None
+        if past_key_values is None:
+            # use_cache=False: there is no KV cache to freeze into the graph.
+            return None
+        kv_items = tuple(sorted(past_key_values.items()))
+        sig = (
+            tuple(noise.shape),
+            noise.dtype,
+            str(noise.device),
+            tuple(state.shape),
+            state.dtype,
+            tuple(prefix_pad_masks.shape),
+            tuple(prefix_position_ids.shape),
+            tuple(
+                (idx, tuple(kv["key_states"].shape), tuple(kv["value_states"].shape)) for idx, kv in kv_items
+            ),
+            len(time_values),
+            # Alias guard: when the static KV are the prefix graph's pool
+            # outputs, their generation must match too — any prefix-graph
+            # transition (re-capture/drop/disable) changes this term and
+            # forces a re-capture here instead of a stale-alias replay.
+            self._prefix_kv_gen(past_key_values),
+        )
+        gs = getattr(self, "_denoise_graph_state", None)
+        if gs is not None and gs["sig"] != sig:
+            warned = getattr(self, "_denoise_graph_warned", None)
+            if warned is None:
+                warned = self._denoise_graph_warned = set()
+            if sig not in warned:
+                logger.warning(
+                    "use_cudagraph_denoise: observation shapes or prefix-KV alias changed; "
+                    "re-capturing the denoise graph"
+                )
+                warned.add(sig)
+            gs = None  # drop the stale graph (frees its private pool) and re-capture below
+        if gs is None:
+            gs = self._capture_denoise_graph(
+                predict_velocity_fn,
+                state,
+                prefix_pad_masks,
+                past_key_values,
+                noise,
+                prefix_position_ids,
+                time_values,
+                dt,
+                sig,
+            )
+            if gs is None:
+                return None
+            self._denoise_graph_state = gs
+
+        # Replay: copy the live prefix outputs into the static buffers the
+        # graph reads, then re-execute the recorded kernel sequence. One
+        # _foreach_copy_ for the whole set (76 tensors for a 36-layer prefix):
+        # per-tensor copy_ launches would cost ~7ms of host time per chunk.
+        # The aliased case skips the KV copies: the signature above matched
+        # the identity-derived generation, so these KV *are* the prefix
+        # graph's pool outputs the graph was captured reading.
+        dsts = [gs["state"], gs["prefix_pad_masks"], gs["prefix_position_ids"], gs["x_t"]]
+        srcs = [state, prefix_pad_masks, prefix_position_ids, noise]
+        if not gs.get("kv_aliased", False):
+            for idx, kv in kv_items:
+                dsts.append(gs["kv"][idx]["key_states"])
+                srcs.append(kv["key_states"])
+                dsts.append(gs["kv"][idx]["value_states"])
+                srcs.append(kv["value_states"])
+        torch._foreach_copy_(dsts, srcs)
+        gs["graph"].replay()
+        return gs["out"].clone()
+
+    @torch.no_grad()
+    def _capture_denoise_graph(
+        self,
+        predict_velocity_fn,
+        state,
+        prefix_pad_masks,
+        past_key_values,
+        noise,
+        prefix_position_ids,
+        time_values,
+        dt,
+        sig,
+    ):
+        # When this chunk's KV are exactly the prefix graph's pool outputs,
+        # alias them as the static buffers instead of cloning: the denoise
+        # graph then reads the storage the prefix graph replays into, and the
+        # per-chunk KV copy below disappears. The signature's generation term
+        # (see _denoise_loop_graphed) keeps the alias valid.
+        kv_aliased = self._prefix_kv_gen(past_key_values) is not None
+        static = {
+            "state": state.clone(),
+            "prefix_pad_masks": prefix_pad_masks.clone(),
+            "prefix_position_ids": prefix_position_ids.clone(),
+            "kv": {
+                idx: {
+                    "key_states": kv["key_states"] if kv_aliased else kv["key_states"].clone(),
+                    "value_states": kv["value_states"] if kv_aliased else kv["value_states"].clone(),
+                }
+                for idx, kv in past_key_values.items()
+            },
+            "x_t": noise.clone(),
+            "dt": dt.clone(),
+            "time_values": [t.clone() for t in time_values],
+        }
+        bsize = state.shape[0]
+
+        def run_loop():
+            # A fresh cache per call: step 1 takes the fill branch, later steps
+            # the cached branch — exactly matching the plain loop. Capturing
+            # with an already-populated cache would record the all-cached graph,
+            # a different compiled artifact whose bf16 fusion differences
+            # integrate over the denoise steps (measured as visible drift).
+            cache: dict = {}
+            x = static["x_t"]
+            for step_time in static["time_values"]:
+                v_t = predict_velocity_fn(
+                    static["state"],
+                    static["prefix_pad_masks"],
+                    static["kv"],
+                    x,
+                    step_time.expand(bsize),
+                    prefix_position_ids=static["prefix_position_ids"],
+                    _denoise_cache=cache,
+                )
+                x = x + static["dt"] * v_t
+            return x
+
+        # Warm on the default stream so both compiled branches (fill +
+        # cached) exist, then once on a side stream so the allocator sees
+        # the loop's allocations outside the graph pool. A warm-up failure is
+        # not a capture failure: disable the graph and let the plain loop
+        # surface the real error.
+        try:
+            run_loop()
+            side = torch.cuda.Stream()
+            side.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(side):
+                run_loop()
+            torch.cuda.current_stream().wait_stream(side)
+            torch.cuda.synchronize()
+        except Exception as exc:
+            logger.warning(
+                "use_cudagraph_denoise: warm-up pass failed (%s: %s); using the plain denoise loop",
+                type(exc).__name__,
+                exc,
+            )
+            self._denoise_graph_disabled = True  # don't retry on every call
+            return None
+
+        try:
+            graph = torch.cuda.CUDAGraph()
+            # A recompile mid-capture would enqueue autotuning work on the
+            # capture stream; refuse it instead.
+            with torch.compiler.set_stance("fail_on_recompile"), torch.cuda.graph(graph):
+                static_out = run_loop()
+        except Exception as exc:
+            logger.warning(
+                "use_cudagraph_denoise: capture failed (%s: %s); using the plain denoise loop",
+                type(exc).__name__,
+                exc,
+            )
+            self._denoise_graph_disabled = True  # don't retry on every call
+            return None
+
+        logger.info(
+            "use_cudagraph_denoise: captured the %s-step denoise loop as one CUDA graph%s",
+            len(time_values),
+            " (prefix-KV aliased)" if kv_aliased else "",
+        )
+        return {"sig": sig, "graph": graph, "out": static_out, "kv_aliased": kv_aliased, **static}
+
+    def _prefix_llm_forward(
+        self,
+        prefix_embs,
+        prefix_att_2d_masks,
+        prefix_position_ids,
+        visual_pos_masks,
+        deepstack_visual_embeds,
+    ):
+        """The capture-scope unit: the 36-layer KV fill only (no vision tower,
+        no embed glue — their host syncs forbid capture). Sync-free since the
+        dense-deepstack refactor; compilable and CUDA-graph capturable."""
+        _, past_kv, _ = self.qwenvl_with_expert.forward(
+            attention_mask=prefix_att_2d_masks,
+            position_ids=prefix_position_ids,
+            vlm_position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,
+            fill_kv_cache=True,
+            visual_pos_masks=visual_pos_masks,
+            deepstack_visual_embeds=deepstack_visual_embeds,
+        )
+        return past_kv
+
+    def _prefix_kv_gen(self, past_key_values):
+        """Generation id of the prefix graph whose pool outputs are exactly
+        these KV tensors, else ``None`` (fresh eager tensors).
+
+        This identity check is the alias-safety guard: any prefix-graph state
+        transition — re-capture (new pool tensors, new gen), drop, or disable
+        with an eager fallback — yields tensors that fail the ``is`` test, so
+        the caller's shape signature changes and the stale denoise graph is
+        re-captured or re-copied instead of replaying against old KV.
+        """
+        pgs = getattr(self, "_prefix_graph_state", None)
+        if pgs is None:
+            return None
+        try:
+            if all(
+                pgs["out"][idx][part] is kv[part]
+                for idx, kv in past_key_values.items()
+                for part in ("key_states", "value_states")
+            ):
+                return pgs["gen"]
+        except KeyError:
+            pass
+        return None
+
+    @torch.no_grad()
+    def _vision_tower_graphed(self, images, flat_grid_thw):
+        """Run the vision tower (``embed_image``) as a captured CUDA graph.
+
+        The grid-derived metadata (pos_embeds / cu_seqlens / split_sizes / max_seqlen)
+        is hoisted once into ``core``'s capture cache, so the per-call host syncs in
+        ``preprcess_grid_thw`` / ``get_image_features`` become replay-time constants and
+        the tower is capture-safe. Returns ``(img_emb, deepstack_embs)`` — the graph
+        pool's outputs — or ``None`` on failure (caller falls back to eager).
+        """
+        if not images.is_cuda or getattr(self, "_vision_graph_disabled", False):
+            return None
+        sig = (tuple(images.shape), images.dtype, str(images.device), tuple(flat_grid_thw.shape))
+        gs = getattr(self, "_vision_graph_state", None)
+        if gs is not None and gs["sig"] != sig:
+            self._vision_graph_gen = getattr(self, "_vision_graph_gen", 0) + 1
+            gs = None
+        if gs is None:
+            if getattr(self, "_vision_recaptures", 0) >= 4:
+                self._vision_graph_disabled = True
+                logger.warning("use_cudagraph_prefix_full: vision re-capture limit reached; eager ViT")
+                return None
+            gs = self._capture_vision_graph(images, flat_grid_thw, sig)
+            if gs is None:
+                return None
+            self._vision_recaptures = getattr(self, "_vision_recaptures", 0) + 1
+            self._vision_graph_state = gs
+        gs["images"].copy_(images)
+        gs["graph"].replay()
+        return gs["img_emb"], gs["deepstack"]
+
+    @torch.no_grad()
+    def _capture_vision_graph(self, images, flat_grid_thw, sig):
+        core = self.qwenvl_with_expert
+        prev_flag = core._capture_grid_cache
+        prev_precompute = getattr(core.config, "precompute_grid_thw", False)
+        prev_grid = (core.pos_embeds, core.position_embeddings, core.cu_seqlens,
+                     core.visual_split_sizes, core.visual_max_seqlen)
+        static_in = images.clone()
+        try:
+            # Arm + seed the capture grid cache: populate pos_embeds/cu_seqlens/
+            # split_sizes/max_seqlen once so the vision tower is sync-free. The cache
+            # stays live on `core` afterwards — the captured graph closes over it.
+            core._capture_grid_cache = True
+            core.config.precompute_grid_thw = True
+            core.pos_embeds = None
+            core.position_embeddings = None
+            core.cu_seqlens = None
+            core.visual_split_sizes = None
+            core.visual_max_seqlen = None
+
+            def run_vit():
+                return core.embed_image(static_in, flat_grid_thw)
+
+            run_vit()
+            side = torch.cuda.Stream()
+            side.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(side):
+                run_vit()
+            torch.cuda.current_stream().wait_stream(side)
+            torch.cuda.synchronize()
+        except Exception as exc:
+            logger.warning(
+                "use_cudagraph_prefix_full: vision warm-up failed (%s: %s); eager ViT",
+                type(exc).__name__, exc,
+            )
+            core._capture_grid_cache = prev_flag
+            core.config.precompute_grid_thw = prev_precompute
+            (core.pos_embeds, core.position_embeddings, core.cu_seqlens,
+             core.visual_split_sizes, core.visual_max_seqlen) = prev_grid
+            self._vision_graph_disabled = True
+            return None
+        try:
+            graph = torch.cuda.CUDAGraph()
+            with torch.compiler.set_stance("fail_on_recompile"), torch.cuda.graph(graph):
+                img_emb, deepstack = run_vit()
+        except Exception as exc:
+            logger.warning(
+                "use_cudagraph_prefix_full: vision capture failed (%s: %s); eager ViT",
+                type(exc).__name__, exc,
+            )
+            core._capture_grid_cache = prev_flag
+            core.config.precompute_grid_thw = prev_precompute
+            (core.pos_embeds, core.position_embeddings, core.cu_seqlens,
+             core.visual_split_sizes, core.visual_max_seqlen) = prev_grid
+            self._vision_graph_disabled = True
+            return None
+        finally:
+            core._capture_grid_cache = prev_flag
+            core.config.precompute_grid_thw = prev_precompute
+            # grid cache stays live for replay.
+        logger.info("use_cudagraph_prefix_full: captured the vision tower as one CUDA graph")
+        return {"sig": sig, "graph": graph, "images": static_in, "img_emb": img_emb, "deepstack": deepstack}
+
+    @torch.no_grad()
+    def _prefix_graphed(
+        self,
+        images,
+        img_masks,
+        lang_tokens,
+        lang_masks,
+        image_grid_thw,
+    ):
+        """Run the prefix 36-layer KV fill as one captured CUDA graph.
+
+        Returns ``(prefix_pad_masks, prefix_position_ids, past_key_values)``
+        — the same contract as :meth:`_embed_and_fill_prefix` — or ``None``
+        when the graph path is unavailable (non-CUDA input, ``use_cache``
+        off, or disabled after earlier failures) so the caller falls back.
+        The vision tower and embed glue stay eager (their host syncs forbid
+        capture); only ``qwenvl_with_expert.forward(..., fill_kv_cache=True)``
+        is captured. Capture failures finish eagerly from the already-computed
+        embeds (no second vision pass). The returned KV are the graph pool's
+        output tensors; the denoise graph aliases them (see ``_prefix_kv_gen``).
+        """
+        if not images.is_cuda or getattr(self, "_prefix_graph_disabled", False):
+            return None
+        if not getattr(self.config, "use_cache", True):
+            return None
+
+        if getattr(self.config, "use_cudagraph_prefix_full", False):
+            # Vision tower as its own graph (grid metadata cached on `core`); the embed
+            # glue (language embed / masks / mrope ids / dense deepstack) stays eager —
+            # it is light and get_rope_index's data-dependent host syncs cannot be
+            # captured. The 36-layer KV fill graph below is unchanged.
+            flat_grid_thw = (
+                einops.rearrange(image_grid_thw, "b n d -> (b n) d")
+                if image_grid_thw.ndim == 3
+                else image_grid_thw
+            )
+            vision_outputs = self._vision_tower_graphed(images, flat_grid_thw)
+            if vision_outputs is None:
+                return None  # vision graph unavailable — caller falls back to eager prefix
+        else:
+            vision_outputs = None
+
+        # Capture target: the thin 36-layer fill, optionally torch.compile'd
+        # (mirroring how the denoise graph captures the compiled
+        # predict_velocity). Post-dense-deepstack this region is sync-free,
+        # so it compiles and captures; the compiled kernels keep their
+        # inductor fusion inside the graph.
+        prefix_llm_fn = self._prefix_llm_forward
+        if getattr(self, "_use_compile_prefix", False):
+            prefix_llm_fn = getattr(self, "_compiled_prefix_llm", None)
+            if prefix_llm_fn is None:
+                prefix_llm_fn = self._compile_with_mode(self._prefix_llm_forward)
+                self._compiled_prefix_llm = prefix_llm_fn
+
+        (
+            prefix_embs,
+            prefix_pad_masks,
+            prefix_att_masks,
+            prefix_position_ids,
+            visual_pos_masks,
+            deepstack_visual_embeds,
+        ) = self.embed_prefix(
+            images,
+            img_masks,
+            lang_tokens,
+            lang_masks,
+            image_grid_thw=image_grid_thw,
+            vision_outputs=vision_outputs,
+        )
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+
+        def _eager_finish():
+            # ``_prefix_llm_forward`` returns the KV cache alone (the 3-tuple
+            # unpack belongs to the ``qwenvl_with_expert.forward`` call inside it).
+            past_kv = self._prefix_llm_forward(
+                prefix_embs,
+                prefix_att_2d_masks,
+                prefix_position_ids,
+                visual_pos_masks,
+                deepstack_visual_embeds,
+            )
+            return prefix_pad_masks, prefix_position_ids, past_kv
+
+        sig = (
+            tuple(prefix_embs.shape),
+            prefix_embs.dtype,
+            str(prefix_embs.device),
+            tuple(prefix_att_2d_masks.shape),
+            prefix_att_2d_masks.dtype,
+            tuple(prefix_position_ids.shape),
+            prefix_position_ids.dtype,
+            tuple(visual_pos_masks.shape),
+            visual_pos_masks.dtype,
+            tuple(tuple(d.shape) for d in deepstack_visual_embeds),
+            tuple(d.dtype for d in deepstack_visual_embeds),
+        )
+        gs = getattr(self, "_prefix_graph_state", None)
+        if gs is not None and gs["sig"] != sig:
+            warned = getattr(self, "_prefix_graph_warned", None)
+            if warned is None:
+                warned = self._prefix_graph_warned = set()
+            if sig not in warned:
+                logger.warning(
+                    "use_cudagraph_prefix: prefix shapes changed; re-capturing the prefix graph"
+                )
+                warned.add(sig)
+            # Drop the stale graph. The aliased denoise graph still holds
+            # references to the old pool tensors until its own signature
+            # check (which includes the generation below) drops them.
+            self._prefix_graph_gen = getattr(self, "_prefix_graph_gen", 0) + 1
+            gs = None
+        if gs is None:
+            if getattr(self, "_prefix_recaptures", 0) >= 4:
+                # Circuit breaker: shape flicker must not re-capture forever.
+                self._prefix_graph_disabled = True
+                logger.warning(
+                    "use_cudagraph_prefix: re-capture limit reached; using the eager prefix"
+                )
+                return _eager_finish()
+            gs = self._capture_prefix_graph(
+                prefix_llm_fn,
+                prefix_embs,
+                prefix_att_2d_masks,
+                prefix_position_ids,
+                visual_pos_masks,
+                deepstack_visual_embeds,
+                sig,
+            )
+            if gs is None:
+                # Warm-up/capture failure: already warned and disabled.
+                return _eager_finish()
+            self._prefix_recaptures = getattr(self, "_prefix_recaptures", 0) + 1
+            self._prefix_graph_state = gs
+
+        # Replay: copy the live values into the static inputs, then replay.
+        # Always executed — including right after capture, whose pool outputs
+        # are uninitialized until the first replay.
+        dsts = [
+            gs["prefix_embs"],
+            gs["att_2d"],
+            gs["position_ids"],
+            gs["visual_pos_masks"],
+            *gs["deepstack"],
+        ]
+        srcs = [prefix_embs, prefix_att_2d_masks, prefix_position_ids, visual_pos_masks, *deepstack_visual_embeds]
+        torch._foreach_copy_(dsts, srcs)
+        gs["graph"].replay()
+        return prefix_pad_masks, prefix_position_ids, gs["out"]
+
+    @torch.no_grad()
+    def _capture_prefix_graph(
+        self,
+        prefix_llm_fn,
+        prefix_embs,
+        prefix_att_2d_masks,
+        prefix_position_ids,
+        visual_pos_masks,
+        deepstack_visual_embeds,
+        sig,
+    ):
+        static = {
+            "prefix_embs": prefix_embs.clone(),
+            "att_2d": prefix_att_2d_masks.clone(),
+            "position_ids": prefix_position_ids.clone(),
+            "visual_pos_masks": visual_pos_masks.clone(),
+            "deepstack": [d.clone() for d in deepstack_visual_embeds],
+        }
+
+        def run_prefix():
+            return prefix_llm_fn(
+                static["prefix_embs"],
+                static["att_2d"],
+                static["position_ids"],
+                static["visual_pos_masks"],
+                static["deepstack"],
+            )
+
+        # Warm-up discipline mirrors _capture_denoise_graph: default stream,
+        # side stream, synchronize — so the allocator sees the allocations
+        # outside the graph pool and any failure surfaces as a fallback, not
+        # a broken capture.
+        try:
+            run_prefix()
+            side = torch.cuda.Stream()
+            side.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(side):
+                run_prefix()
+            torch.cuda.current_stream().wait_stream(side)
+            torch.cuda.synchronize()
+        except Exception as exc:
+            logger.warning(
+                "use_cudagraph_prefix: warm-up pass failed (%s: %s); using the eager prefix",
+                type(exc).__name__,
+                exc,
+            )
+            self._prefix_graph_disabled = True  # don't retry on every call
+            return None
+
+        try:
+            graph = torch.cuda.CUDAGraph()
+            with torch.compiler.set_stance("fail_on_recompile"), torch.cuda.graph(graph):
+                static_out = run_prefix()
+        except Exception as exc:
+            logger.warning(
+                "use_cudagraph_prefix: capture failed (%s: %s); using the eager prefix",
+                type(exc).__name__,
+                exc,
+            )
+            self._prefix_graph_disabled = True  # don't retry on every call
+            return None
+
+        self._prefix_graph_gen = getattr(self, "_prefix_graph_gen", 0) + 1
+        logger.info(
+            "use_cudagraph_prefix: captured the %s-layer prefix KV fill as one CUDA graph",
+            len(static_out),
+        )
+        return {"sig": sig, "gen": self._prefix_graph_gen, "graph": graph, "out": static_out, **static}
 
     def predict_velocity(
         self,
@@ -1066,8 +2031,15 @@ class FlowMatchingV2(FlowMatchingV1):
         x_t,
         timestep,
         prefix_position_ids=None,
+        _denoise_cache: dict | None = None,
     ):
-        """Predict velocity at time t using cached Qwen3-VL prefix states."""
+        """Predict velocity at time t using cached Qwen3-VL prefix states.
+
+        ``_denoise_cache`` (optional) is a dict that persists across the denoise
+        loop: the suffix attention mask, position ids, mrope cos/sin and flex
+        BlockMask are loop-invariant, so they are computed on the first step and
+        reused afterwards.
+        """
         if prefix_position_ids is None:
             raise ValueError("FlowMatchingV2.predict_velocity requires Qwen3-VL prefix_position_ids.")
 
@@ -1078,44 +2050,61 @@ class FlowMatchingV2(FlowMatchingV1):
         )
 
         suffix_len = suffix_pad_masks.shape[1]
-        batch_size = prefix_pad_masks.shape[0]
         prefix_len = prefix_pad_masks.shape[1]
-        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(
-            batch_size,
-            suffix_len,
-            prefix_len,
-        )
-        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
-        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
-        if self.block_future_depth_to_action:
-            # Query rows here are all suffix (state/action), so row start is 0.
-            full_att_2d_masks = block_suffix_to_fv_(
+        cache = _denoise_cache if _denoise_cache is not None else {}
+        if "full_att_2d_masks" not in cache:
+            batch_size = prefix_pad_masks.shape[0]
+            prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(
+                batch_size,
+                suffix_len,
+                prefix_len,
+            )
+            suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
+            full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
+            if self.block_future_depth_to_action:
+                # Query rows here are all suffix (state/action), so row start is 0.
+                full_att_2d_masks = block_suffix_to_fv_(
+                    full_att_2d_masks,
+                    suffix_row_start=0,
+                    prefix_len=prefix_len,
+                    num_task_tokens=self.num_task_tokens,
+                )
+            full_att_2d_masks = self._block_suffix_to_future_video_if_enabled_(
                 full_att_2d_masks,
                 suffix_row_start=0,
                 prefix_len=prefix_len,
-                num_task_tokens=self.num_task_tokens,
             )
-        full_att_2d_masks = self._block_suffix_to_future_video_if_enabled_(
-            full_att_2d_masks,
-            suffix_row_start=0,
-            prefix_len=prefix_len,
-        )
 
-        full_position_ids = self._build_full_position_ids(
-            prefix_position_ids,
-            prefix_pad_masks,
-            suffix_pad_masks,
-        )
-        position_ids = full_position_ids[:, :, -suffix_len:]
+            full_position_ids = self._build_full_position_ids(
+                prefix_position_ids,
+                prefix_pad_masks,
+                suffix_pad_masks,
+            )
+            position_ids = full_position_ids[:, :, -suffix_len:]
+            core = self.qwenvl_with_expert
+            rep = suffix_embs.float() if getattr(core.config, "attention_fp32", False) else suffix_embs
+            position_embeddings = core.qwenvl.model.language_model.rotary_emb(rep, position_ids)
+            cache["full_att_2d_masks"] = full_att_2d_masks
+            cache["position_ids"] = position_ids
+            cache["position_embeddings"] = position_embeddings
+            if core.config.attention_implementation == "flex_cached":
+                cache["block_mask"] = build_block_mask(
+                    full_att_2d_masks,
+                    core.qwenvl.config.text_config.num_attention_heads,
+                    suffix_len,
+                    prefix_len + suffix_len,
+                )
 
         outputs_embeds, _, _ = self.qwenvl_with_expert.forward(
-            attention_mask=full_att_2d_masks,
-            position_ids=position_ids,
+            attention_mask=cache["full_att_2d_masks"],
+            position_ids=cache["position_ids"],
             past_key_values=past_key_values,
             inputs_embeds=[None, suffix_embs],
             use_cache=self.config.use_cache,
             fill_kv_cache=False,
             ada_cond=time_embs if getattr(self.config, "adanorm_time", False) else None,
+            position_embeddings=cache["position_embeddings"],
+            block_mask=cache.get("block_mask"),
         )
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.n_action_steps :]
@@ -1127,7 +2116,7 @@ class FlowMatchingV2(FlowMatchingV1):
             v_t = self.action_out_proj(suffix_out)
         return v_t
 
-    def _moe_losses_and_metrics(self, router_logits_list, losses):
+    def _moe_losses_and_metrics(self, router_logits_list, losses, collect_metrics=True):
         router_z_loss_coeff = getattr(self.config, "router_z_loss_coeff", 0)
         router_z_loss = losses.new_zeros(())
         router_z_layer_losses = None  # per-layer raw z-loss (pre-coeff), for monitoring
@@ -1149,21 +2138,38 @@ class FlowMatchingV2(FlowMatchingV1):
             if mode == "global":
                 seq_lengths = None
             else:
-                B = losses.shape[0]
-                N = router_logits_list[0].shape[0]
-                seq_lengths = [N // B] * B
+                batch = losses.shape[0]
+                n_tokens = router_logits_list[0].shape[0]
+                seq_lengths = [n_tokens // batch] * batch
+            seqwise_moe_layer_ids = sorted(getattr(self.config, "token_moe_layers", None) or [])
+            # Per-layer e_score_correction_bias so the loss's f_i top-k matches the
+            # router's actual (bias-corrected) selection.
+            seqwise_router_biases = tuple(
+                getattr(
+                    self.qwenvl_with_expert.qwen_expert.model.layers[
+                        seqwise_moe_layer_ids[i] if i < len(seqwise_moe_layer_ids) else i
+                    ].mlp,
+                    "e_score_correction_bias",
+                    None,
+                )
+                for i in range(len(router_logits_list))
+            )
             seqwise_layer_losses = triton_sequence_wise_balance_loss(
                 router_logits_list=tuple(router_logits_list),
                 top_k=getattr(self.config, "token_top_k", 4),
                 seq_lengths=seq_lengths,
                 padding_len=0,
                 score_func=score_func,
+                e_score_correction_bias_list=seqwise_router_biases,
             )
             if seqwise_layer_losses:
                 seq_wise_loss = seq_wise_loss_coeff * torch.stack(seqwise_layer_losses).mean()
 
         moe_metrics = {}
-        if router_logits_list:
+        # Monitoring-only block (per-layer MaxVio/entropy/dead-expert stats + the
+        # per-metric .item() syncs in the caller). Gated by collect_metrics so it
+        # runs on logging steps only, not every training step.
+        if collect_metrics and router_logits_list:
             token_moe_layers_list = sorted(getattr(self.config, "token_moe_layers", None) or [])
             all_moe_indices = token_moe_layers_list
             token_expert_counts = []
@@ -1177,17 +2183,8 @@ class FlowMatchingV2(FlowMatchingV1):
                     num_experts = logits.shape[-1]
                     routing_probs = F.softmax(logits, dim=1, dtype=torch.float)
                     moe_block = self.qwenvl_with_expert.qwen_expert.model.layers[layer_id].mlp
-                    if hasattr(moe_block, "last_tokens_per_expert"):
-                        # Global (all-reduced), biased, true top-k load from the load-balance hook.
-                        counts = moe_block.last_tokens_per_expert.clone()
-                        if counts.sum() == 0:
-                            # Buffer not yet populated by the load-balance hook (first step
-                            # after run start / resume) -> skip this layer to avoid a spurious
-                            # has_dead_expert / min_load_ratio spike on the very first viz.
-                            continue
-                    else:
-                        _, selected = torch.topk(routing_probs, 1, dim=-1)
-                        counts = F.one_hot(selected.squeeze(-1), num_classes=num_experts).float().sum(dim=0)
+                    _, selected = torch.topk(routing_probs, 1, dim=-1)
+                    counts = F.one_hot(selected.squeeze(-1), num_classes=num_experts).float().sum(dim=0)
                     avg_load = counts.mean()
                     denom = avg_load.clamp(min=1e-9)
                     maxvio = (counts.max() - avg_load) / denom  # peak overload  (>=0, larger=worse)
@@ -1232,7 +2229,7 @@ class FlowMatchingV2(FlowMatchingV1):
                 # ---- moe_seqwise/* : per-layer raw sequence-wise balance loss (pre-coeff) + average ----
                 if seqwise_layer_losses and len(seqwise_layer_losses) == len(all_moe_indices):
                     sw_vals = []
-                    for lid, sw in zip(all_moe_indices, seqwise_layer_losses):
+                    for lid, sw in zip(all_moe_indices, seqwise_layer_losses, strict=True):
                         v = sw.detach()
                         moe_metrics[f"moe_seqwise/layer{lid:02d}"] = v
                         sw_vals.append(v)
@@ -1240,7 +2237,7 @@ class FlowMatchingV2(FlowMatchingV1):
                 # ---- moe_zloss/* : per-layer raw router z-loss (pre-coeff) + average/weighted loss ----
                 if router_z_layer_losses and len(router_z_layer_losses) == len(all_moe_indices):
                     zl_vals = []
-                    for lid, zl in zip(all_moe_indices, router_z_layer_losses):
+                    for lid, zl in zip(all_moe_indices, router_z_layer_losses, strict=True):
                         v = zl.detach()
                         moe_metrics[f"moe_zloss/layer{lid:02d}"] = v
                         zl_vals.append(v)
@@ -1292,6 +2289,18 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
 
         if not getattr(self.config, "use_lm_head", False):
             del self.model.qwenvl_with_expert.qwenvl.lm_head
+            # With lm_head removed, the backbone's final decoder layer output and the
+            # final RMSNorm feed no loss: the prefix representation consumed downstream
+            # is taken before them, so their weights get requires_grad=True yet a None
+            # gradient every step. Under DDP such params make the reducer emit NaN into
+            # the shared gradient bucket and corrupt the whole graph; freeze them.
+            # They still run in forward (inference sample_actions fills the KV cache
+            # through them) — only their gradient update is disabled.
+            tail = self.model.qwenvl_with_expert.qwenvl.model.language_model
+            last = tail.layers[-1]
+            for mod in (last.self_attn.o_proj, last.mlp, last.post_attention_layernorm, tail.norm):
+                for p in mod.parameters():
+                    p.requires_grad_(False)
         del self.model.qwenvl_with_expert.qwen_expert.lm_head
 
         # The Qwen3-VL backbone builds in bfloat16 while our added projection/AdaRMSNorm
@@ -1303,9 +2312,40 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
 
         # Inference-time action de-normalizer: an unapply-only FeatureTransform (built
         # without the image processor / tokenizer) that inverts the per-slot normalization
-        # and the canonical slot mapping on the model's actions. Built lazily-safe so a
-        # missing robot_config just falls back to a plain truncation (see _postprocess_actions).
+        # and the canonical slot mapping on the model's actions. Training-only instances
+        # may omit robot_config, but inference refuses to emit normalized canonical values.
         self._action_unapply_ft = self._build_action_unapply_transform()
+
+        # Opt-in torch.compile for the denoise inner loop (see config docs).
+        if getattr(self.config, "compile_predict_velocity", False):
+            self.model._use_compile_predict_velocity = True
+            self.model._compile_predict_velocity_mode = getattr(
+                self.config, "compile_predict_velocity_mode", "default"
+            )
+            if getattr(self.config, "compile_prefix", False):
+                self.model._use_compile_prefix = True
+            # handle_kv_cache specializes per layer_idx (36 layers); the default
+            # recompile limit (8) silently falls parts of the fn back to eager
+            # mid-run. Raising it here covers the deployment path — the bench
+            # harness only raises it for its own --compile flag.
+            import torch._dynamo as _dynamo
+
+            _dynamo.config.recompile_limit = max(
+                getattr(_dynamo.config, "recompile_limit", 8), 64
+            )
+        # Independent of the compile flags (see config docs): the prefix CUDA
+        # graph supersedes compile_prefix when both are set.
+        if getattr(self.config, "use_cudagraph_prefix", False):
+            self.model._use_prefix_graph = True
+        # use_cudagraph_prefix_full lives inside _prefix_graphed (vision graph + LLM
+        # fill graph), so it implies the prefix graph is active.
+        if getattr(self.config, "use_cudagraph_prefix_full", False):
+            self.model._use_prefix_graph = True
+
+        # Frozen distillation teachers (native depth / DINO-video), built lazily on
+        # the first *training* forward when align_params is set. Plain attribute on
+        # purpose: see the "Distillation teachers" block below get_optim_params.
+        self._align_teachers = None
 
         self.reset()
         torch.set_float32_matmul_precision("high")
@@ -1316,37 +2356,20 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         try:
             resolve_robot_config_and_stats(cfg)
         except OSError as exc:
-            logging.get_logger(__name__).warning(
-                "Could not load the robot config for the inference action de-normalizer (%s); "
-                "select_action will return actions in the normalized canonical space.",
-                exc,
-            )
-            return None
+            raise RuntimeError(
+                "Could not load the robot config for the inference action de-normalizer. "
+                "Returning normalized canonical actions as robot commands is unsafe; "
+                f"fix the checkpoint's robot_config assets. ({exc})"
+            ) from exc
         if not getattr(cfg, "robot_config", None):
+            # Training-only instances (forward/loss path) never call select_action;
+            # keep them constructible. _postprocess_actions raises if used for inference.
             return None
         try:
-            from types import SimpleNamespace
+            from .configuration_lingbot_vla_v2 import build_feature_transform_configs
+            from .preprocessing.feature_transform import FeatureTransform
 
-            from .feature_transform import FeatureTransform
-
-            data_config = SimpleNamespace(
-                joints=[f"{{'{k}': {v}}}" for k, v in cfg.canonical_joints.items()],
-                norm_type=[f"{{'{k}': '{v}'}}" for k, v in cfg.canonical_norm_type.items()],
-                cameras=list(cfg.canonical_cameras),
-                img_size=cfg.resize_imgs_with_padding[0],
-                chat_template="default",
-                text_keys="task",
-            )
-            model_config = SimpleNamespace(
-                max_state_dim=cfg.max_state_dim,
-                max_action_dim=cfg.max_action_dim,
-                chunk_size=cfg.chunk_size,
-                tokenizer_max_length=cfg.tokenizer_max_length,
-                use_qwen3_chat_template=True,
-                return_image_grid_thw=True,
-                qwen3vl_use_vision_boundaries=True,
-                resize_imgs_with_padding=tuple(cfg.resize_imgs_with_padding),
-            )
+            data_config, model_config = build_feature_transform_configs(cfg)
             return FeatureTransform(
                 robot_config_path=cfg.robot_config_path,
                 data_config=data_config,
@@ -1357,28 +2380,38 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
                 robot_config=cfg.robot_config,
                 norm_stats=cfg.norm_stats,
             )
-        except Exception as exc:  # noqa: BLE001 - de-normalizer is best-effort at build time
-            logging.get_logger(__name__).warning(
-                "Could not build the inference action de-normalizer (%s); select_action will "
-                "return actions in the normalized canonical space.",
-                exc,
-            )
-            return None
+        except Exception as exc:  # noqa: BLE001 - de-normalizer is build-time critical
+            raise RuntimeError(
+                "Could not build the inference action de-normalizer. Returning normalized "
+                f"canonical actions as robot commands is unsafe. ({exc})"
+            ) from exc
 
     def _postprocess_actions(self, actions: Tensor, batch: dict) -> Tensor:
         """Invert normalization + the canonical slot mapping on a model action chunk.
 
         ``actions`` is ``(B, chunk, max_action_dim)`` in the normalized canonical space.
         Uses the per-joint masks and observation state carried in the (preprocessed) batch.
-        Falls back to a plain truncation when the de-normalizer or masks are unavailable.
+        Raises when those safety-critical inputs are unavailable rather than emitting
+        normalized canonical values as robot commands.
         """
-        action_dim = self.config.output_features[ACTION].shape[0]
         ft = self._action_unapply_ft
         action_joint_mask = batch.get("action_joint_mask")
         state_joint_mask = batch.get("state_joint_mask")
         state = batch.get(OBS_STATE)
-        if ft is None or action_joint_mask is None or state_joint_mask is None or state is None:
-            return actions[:, :, :action_dim]
+        if ft is None:
+            raise RuntimeError(
+                "No action de-normalizer available: this policy instance was built without a "
+                "robot_config, so select_action cannot map canonical actions back to robot "
+                "commands. Refusing to return normalized canonical values as robot commands."
+            )
+        if action_joint_mask is None or state_joint_mask is None or state is None:
+            raise RuntimeError(
+                "Batch is missing the joint masks / observation state required to invert the "
+                "canonical slot mapping (got "
+                f"action_joint_mask={action_joint_mask is not None}, "
+                f"state_joint_mask={state_joint_mask is not None}, state={state is not None}). "
+                "Refusing to fall back to a truncation of normalized canonical actions."
+            )
 
         recovered = []
         for i in range(actions.shape[0]):
@@ -1395,8 +2428,125 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         """Reset the rolling action queue used by select_action."""
         self._queues = {ACTION: deque(maxlen=self.config.n_action_steps)}
 
-    def get_optim_params(self) -> dict:
-        return self.parameters()
+    def get_optim_params(self) -> dict[str, torch.nn.Parameter]:
+        # Frozen parameters never receive a gradient, so the optimizer would only
+        # carry them along unused. Filtering here keeps optimizer state memory at
+        # the trainable subset — with PEFT that is ~0.2B adapter params instead of 6B.
+        # Name-keyed so the optimizer preset can group by FQN (lingbot_adamw's MoE
+        # expert-LR scaling matches `...layers.<N>.mlp.experts...` by name).
+        return {name: p for name, p in self.named_parameters() if p.requires_grad}
+
+    # ==================== Distillation teachers (native depth / DINO-video) ====================
+    # Port of the upstream trainer's per-micro-batch teacher block (tasks/vla/
+    # train_lingbotvla.py): frozen MoGe/MoRGBD (+ optional DINO-video) teachers run
+    # under no_grad + bf16 autocast on the raw pre-Qwen camera frames the processor
+    # carries as ``pil_images`` / ``future_pil_images``, and their outputs are fed
+    # to the model as loss targets. The bundle is a plain attribute — never an
+    # nn.Module registration — so teacher weights stay out of optimizers, DDP/FSDP
+    # wrapping, and saved checkpoints. Each DDP rank builds its own frozen copy.
+
+    def _ensure_align_teachers(self) -> DepthTeacherBundle:  # noqa: F821
+        if self._align_teachers is None:
+            from .teachers.depth_teachers import DepthTeacherBundle
+
+            device = next(self.model.parameters()).device
+            self._align_teachers = DepthTeacherBundle.build(self.config.align_params, device)
+        return self._align_teachers
+
+    def _compute_align_targets(self, batch: dict) -> dict:
+        """Teacher targets for one training batch, as model-forward kwargs."""
+        params = self.config.align_params
+        use_future_depth = bool(params["depth"].get("use_future_depth", False))
+        use_future_video = bool(params.get("use_future_video", False))
+
+        pil_images = batch.get("pil_images")
+        if pil_images is None:
+            raise RuntimeError(
+                "align_params is enabled but the batch carries no 'pil_images'. The "
+                "preprocessor step was built without use_depth_align=True — this happens "
+                "when training from a checkpoint whose saved processor predates the "
+                "distillation wiring, or when the processor was constructed from a "
+                "config without align_params. Rebuild with the align_params-carrying "
+                "config (see docs/source/lingbot_vla_v2_depth_dino_README.md)."
+            )
+
+        teachers = self._ensure_align_teachers()
+        targets: dict = {}
+        with torch.no_grad():
+            targets["depth_targets"] = teachers.depth_targets(pil_images)
+            if use_future_depth:
+                future_pil = batch.get("future_pil_images")
+                if future_pil is None:
+                    raise RuntimeError(
+                        "align_params.depth.use_future_depth is enabled but the batch carries no "
+                        "'future_pil_images'. Set --policy.dataset_fps and confirm the dataset "
+                        "delta sampling is active (future-frame keys are produced only when the "
+                        "processor step has use_future_image=True)."
+                    )
+                targets["future_depth_targets"] = teachers.depth_targets(future_pil)
+            if use_future_video:
+                future_pil = batch.get("future_pil_images")
+                if future_pil is None:
+                    raise RuntimeError(
+                        "align_params.use_future_video is enabled but the batch carries no "
+                        "'future_pil_images'. The DINO-video teacher needs the future camera "
+                        "frame; confirm the processor step has use_future_image=True "
+                        "(--policy.dataset_fps must be resolvable, see the depth/DINO README)."
+                    )
+                bundle = teachers.video_targets(
+                    pil_images,
+                    future_pil,
+                    params["video"],
+                    effective_fps=batch.get("future_video_effective_fps"),
+                )
+                if isinstance(bundle, dict):
+                    targets["future_video_targets"] = bundle["patch"]
+                    targets["future_video_cls_targets"] = bundle.get("cls")
+                    targets["future_video_current_patch"] = bundle.get("current_patch")
+                elif isinstance(bundle, tuple):
+                    targets["future_video_targets"], targets["future_video_cls_targets"] = bundle
+                else:
+                    targets["future_video_targets"] = bundle
+        return targets
+
+    # ==================== PEFT (LoRA) integration ====================
+    # The community PEFT path (lerobot `--peft.*` CLI → wrap_with_peft →
+    # save/resume via adapter checkpoints) works with this policy through the two
+    # subclass hooks below. Targeting notes specific to this architecture:
+    # - Both the Qwen3-VL LLM and the action expert name their attention
+    #   projections q/k/v/o_proj, so one suffix list covers both streams.
+    # - The vision tower uses a fused `qkv` projection and is not matched (it is
+    #   frozen via freeze_vision_encoder regardless).
+    # - The MoE router (`...mlp.gate`, a hidden×num_experts Linear) stays fully
+    #   trainable via modules_to_save: freezing the routing distribution hurts
+    #   fine-tuning on new robot data, and it is tiny.
+    # - The routed experts are stored as fused grouped GEMMs (Qwen2FusedExperts,
+    #   plain Parameters — not nn.Linear), so stock LoRA cannot target them.
+
+    def _get_default_peft_targets(self) -> dict[str, any] | None:
+        return {
+            "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+            "modules_to_save": ["gate"],
+        }
+
+    def _validate_peft_config(self, peft_config) -> None:
+        super()._validate_peft_config(peft_config)
+        targets = getattr(peft_config, "target_modules", None) or []
+        if isinstance(targets, str):
+            targets = [targets]
+        mlp_targets = {"gate_proj", "up_proj", "down_proj"} & set(targets)
+        if mlp_targets:
+            logging.get_logger(__name__).warning(
+                "PEFT target_modules %s only match the shared-expert MLP (nn.Linear); the routed "
+                "experts use fused grouped-GEMM storage (Qwen2FusedExperts) and will NOT be adapted.",
+                sorted(mlp_targets),
+            )
+        if not getattr(self.config, "gradient_checkpointing", False):
+            logging.get_logger(__name__).warning(
+                "LoRA adapters are inside every decoder layer, so backward still traverses the "
+                "frozen backbone's activations. Consider --policy.gradient_checkpointing=true to "
+                "cut activation memory."
+            )
 
     def _extract_model_inputs(self, batch: dict):
         dtype = next(self.parameters()).dtype
@@ -1415,6 +2565,17 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         actions = batch[ACTION].to(dtype=state.dtype)
         action_dim = actions.shape[-1]
         actions = F.pad(actions, (0, self.config.max_action_dim - action_dim))
+
+        # MoE monitoring metrics (per-layer stats + .item() syncs) only on logging steps.
+        self._train_step_count = getattr(self, "_train_step_count", 0) + 1
+        interval = max(1, int(getattr(self.config, "moe_metrics_interval", 1)))
+        collect_metrics = self._train_step_count % interval == 0
+
+        # External targets remain supported for diagnostic/unit-test callers, but
+        # real training computes them from frozen teachers when the native-depth
+        # branch is configured. Inference follows predict_action_chunk instead and
+        # never builds/runs teachers.
+        align_targets = self._compute_align_targets(batch) if self.training and self.config.align_params else {}
 
         (
             losses,
@@ -1438,12 +2599,17 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
             noise=batch.get("noise"),
             time=batch.get("time"),
             loss_type=self.config.loss_type,
-            depth_targets=batch.get("depth_targets"),
+            depth_targets=align_targets.get("depth_targets", batch.get("depth_targets")),
             image_grid_thw=image_grid_thw,
-            future_depth_targets=batch.get("future_depth_targets"),
-            future_video_targets=batch.get("future_video_targets"),
-            future_video_cls_targets=batch.get("future_video_cls_targets"),
-            future_video_current_patch=batch.get("future_video_current_patch"),
+            future_depth_targets=align_targets.get("future_depth_targets", batch.get("future_depth_targets")),
+            future_video_targets=align_targets.get("future_video_targets", batch.get("future_video_targets")),
+            future_video_cls_targets=align_targets.get(
+                "future_video_cls_targets", batch.get("future_video_cls_targets")
+            ),
+            future_video_current_patch=align_targets.get(
+                "future_video_current_patch", batch.get("future_video_current_patch")
+            ),
+            collect_metrics=collect_metrics,
         )
 
         joint_mask = batch.get("joint_mask")
@@ -1470,13 +2636,29 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         loss_dict["loss"] = total_loss.item()
         return total_loss, loss_dict
 
+    @staticmethod
+    def supports_rtc() -> bool:
+        """Declare RTC inference support: ``lerobot-rollout --inference.type=rtc``."""
+        return True
+
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict, noise: Tensor | None = None) -> Tensor:
+    def predict_action_chunk(
+        self,
+        batch: dict,
+        noise: Tensor | None = None,
+        inference_delay: int = 0,
+        prev_chunk_left_over: Tensor | None = None,
+    ) -> Tensor:
         """Run flow-matching denoising and return a de-normalized action chunk (B, chunk, action_dim).
 
         ``sample_actions`` returns the normalized 55-D canonical action; this inverts the
         per-slot normalization and the canonical slot mapping back to the raw dataset action
         (see ``_postprocess_actions``).
+
+        RTC args (from the rollout RTC engine): ``prev_chunk_left_over`` is the
+        normalized leftover prefix of the previous chunk (already truncated to the
+        execution horizon); ``inference_delay`` is the chunk's reaction lag in action
+        steps. Passing ``None`` (default) reproduces the plain unguided sampling.
         """
         self.eval()
         images, img_masks, lang_tokens, lang_masks, state, image_grid_thw = self._extract_model_inputs(batch)
@@ -1488,8 +2670,18 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
             state,
             noise=noise,
             image_grid_thw=image_grid_thw,
+            inference_delay=inference_delay,
+            prev_chunk_left_over=prev_chunk_left_over,
         )
+        # The RTC engine keeps a guidance reference in the SAMPLING (normalized) space;
+        # this policy's public output is already de-normalized, so stash the pre-inversion
+        # chunk for it (see get_last_normalized_chunk).
+        self._last_normalized_chunk = actions.detach()
         return self._postprocess_actions(actions, batch)
+
+    def get_last_normalized_chunk(self) -> Tensor:
+        """Normalized sampling-space output of the most recent ``predict_action_chunk``."""
+        return self._last_normalized_chunk
 
     @torch.no_grad()
     def select_action(self, batch: dict, noise: Tensor | None = None) -> Tensor:

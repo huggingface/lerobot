@@ -24,14 +24,22 @@ This one-shot tool repackages it as a standard LeRobot checkpoint:
   and normalization stats embedded, so the result is portable across machines.
 
 Example:
-    python -m lerobot.policies.lingbot_vla_v2.convert_upstream_checkpoint \
+    python -m lerobot.policies.lingbot_vla_v2.scripts.convert_upstream_checkpoint \
         --input robbyant/lingbot-vla-v2-6b \
         --output ./lingbot-vla-v2-6b-lerobot \
         --robot-config-path ./omx_multicubes_robot_config.yaml \
         --norm-stats-path ./omx_multicubes_norm_stats.json
 
+    # keep the depth / DINO-video distillation heads (see
+    # docs/source/lingbot_vla_v2_depth_dino_README.md):
+    python -m lerobot.policies.lingbot_vla_v2.scripts.convert_upstream_checkpoint \
+        --input robbyant/lingbot-vla-v2-6b \
+        --output ./lingbot-vla-v2-6b-depth-lerobot \
+        --robot-config-path ./omx_multicubes_robot_config.yaml \
+        --include-depth-heads
+
     # optionally push straight to the Hub:
-    python -m lerobot.policies.lingbot_vla_v2.convert_upstream_checkpoint \
+    python -m lerobot.policies.lingbot_vla_v2.scripts.convert_upstream_checkpoint \
         --input robbyant/lingbot-vla-v2-6b \
         --output ./lingbot-vla-v2-6b-lerobot \
         --robot-config-path ./omx_multicubes_robot_config.yaml \
@@ -41,6 +49,7 @@ Example:
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import logging
 from pathlib import Path
@@ -48,8 +57,8 @@ from pathlib import Path
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_STATE
 
-from .configuration_lingbot_vla_v2 import LingbotVLAV2Config
-from .processor_lingbot_vla_v2 import make_lingbot_vla_v2_pre_post_processors
+from ..configuration_lingbot_vla_v2 import LingbotVLAV2Config
+from ..processor_lingbot_vla_v2 import make_lingbot_vla_v2_pre_post_processors
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -74,6 +83,16 @@ UPSTREAM_CONFIG_OVERRIDES = {
     "use_depth": False,
     "max_action_dim": 55,
     "max_state_dim": 55,
+    # The released config.json omits the training loss; the published post-training
+    # recipe (configs/vla/robotwin/robotwin.yaml) uses L1_fm. Without this override
+    # the dataclass default "fm" (MSE) would silently downgrade fine-tunes started
+    # from the converted checkpoint.
+    "loss_type": "L1_fm",
+    # The released RoboTwin recipe fine-tunes the vision encoder and evaluates with
+    # causal prefix attention. Both fields are absent from upstream config.json, so
+    # record them explicitly rather than inheriting the port's conservative defaults.
+    "freeze_vision_encoder": False,
+    "vlm_causal": True,
 }
 
 # Upstream-only tensors that the action path does not consume when use_depth=False:
@@ -81,11 +100,14 @@ UPSTREAM_CONFIG_OVERRIDES = {
 ALLOWED_SKIPPED_PREFIXES = (
     "model.current_video_align_",
     "model.future_video_align_",
+    "model.future_video_cls_",
     "model.depth_align_",
     "model.future_depth_align_",
     "model.current_shared_task_proj.",
     "model.future_shared_task_proj.",
 )
+
+DEFAULT_ALIGN_PARAMS_FILE = Path(__file__).parent / "align_params_robotwin.json"
 
 
 def _resolve_upstream_checkpoint(input_path: str, revision: str | None = None) -> str:
@@ -113,21 +135,99 @@ def _resolve_upstream_checkpoint(input_path: str, revision: str | None = None) -
 
 
 def split_upstream_loading_keys(
-    model_keys: set[str], checkpoint_keys: set[str]
+    model_keys: set[str], checkpoint_keys: set[str], allow_skipped: bool = True
 ) -> tuple[list[str], list[str], list[str]]:
     """Split load-state keys into (missing, allowed-skipped, hard-unexpected).
 
     Missing keys and hard-unexpected keys mean the upstream checkpoint does not match
     the LingBot-VLA 2.0 architecture and the conversion must fail; allowed-skipped
     keys are the upstream-only depth / video distillation tensors (use_depth=False).
+    With ``allow_skipped=False`` (``--include-depth-heads``: the model *does* carry
+    the distillation heads) nothing may be skipped — a checkpoint tensor outside the
+    model, or a head the checkpoint lacks, fails the conversion instead of silently
+    leaving randomly-initialized heads.
     """
     missing = sorted(model_keys - checkpoint_keys)
-    skipped = sorted(k for k in checkpoint_keys - model_keys if k.startswith(ALLOWED_SKIPPED_PREFIXES))
-    unexpected = sorted(k for k in checkpoint_keys - model_keys if not k.startswith(ALLOWED_SKIPPED_PREFIXES))
+    if allow_skipped:
+        skipped = sorted(k for k in checkpoint_keys - model_keys if k.startswith(ALLOWED_SKIPPED_PREFIXES))
+        unexpected = sorted(
+            k for k in checkpoint_keys - model_keys if not k.startswith(ALLOWED_SKIPPED_PREFIXES)
+        )
+    else:
+        skipped = []
+        unexpected = sorted(checkpoint_keys - model_keys)
     return missing, skipped, unexpected
 
 
-def _load_upstream_weights(policy, checkpoint_dir: str) -> tuple[int, int]:
+def _resolve_teacher_paths(params: dict) -> dict:
+    """Fill the machine-specific teacher weight paths from the local HF cache.
+
+    The bundled recipe (align_params_robotwin.json) carries the official
+    hyper-parameters but not paths; the teachers ship as separate Hub assets
+    (MoGe in its own repo, MoRGBD + DINO-video inside the 6B repo snapshot).
+    """
+    import glob
+    import os
+
+    def _first(pattern: str, download_hint: str) -> str:
+        matches = sorted(glob.glob(os.path.expanduser(pattern)))
+        if not matches:
+            raise RuntimeError(f"Teacher weights not found. {download_hint}")
+        return matches[0]
+
+    cache = "~/.cache/huggingface/hub"
+    params = copy.deepcopy(params)
+    depth = params.setdefault("depth", {})
+    video = params.setdefault("video", {})
+    depth.setdefault(
+        "moge_path",
+        _first(
+            f"{cache}/models--Ruicheng--moge-2-vitb-normal/snapshots/*/model.pt",
+            "Run: hf download Ruicheng/moge-2-vitb-normal model.pt",
+        ),
+    )
+    depth.setdefault(
+        "morgbd_path",
+        _first(
+            f"{cache}/models--robbyant--lingbot-vla-v2-6b/snapshots/*/depth/model.pt",
+            "Run: hf download robbyant/lingbot-vla-v2-6b --include 'depth/*'",
+        ),
+    )
+    video.setdefault(
+        "ckpt_path",
+        _first(
+            f"{cache}/models--robbyant--lingbot-vla-v2-6b/snapshots/*/dino_video/teacher_step_10000.pth",
+            "Run: hf download robbyant/lingbot-vla-v2-6b --include 'dino_video/*'",
+        ),
+    )
+    video.setdefault(
+        "config_path",
+        _first(
+            f"{cache}/models--robbyant--lingbot-vla-v2-6b/snapshots/*/dino_video/config.yaml",
+            "Run: hf download robbyant/lingbot-vla-v2-6b --include 'dino_video/*'",
+        ),
+    )
+    return params
+
+
+def _parse_align_params(spec: str | None, include_flag: bool) -> dict:
+    """Resolve --align-params (inline JSON or @file) / --include-depth-heads."""
+    if spec is None and not include_flag:
+        return {}
+    if spec is None:
+        with DEFAULT_ALIGN_PARAMS_FILE.open() as f:
+            params = json.load(f)
+        params.pop("_comment", None)
+        logger.info("Using the bundled official RoboTwin align_params recipe.")
+        return _resolve_teacher_paths(params)
+
+    if spec.startswith("@"):
+        with open(spec[1:]) as f:
+            return json.load(f)
+    return json.loads(spec)
+
+
+def _load_upstream_weights(policy, checkpoint_dir: str, allow_skipped: bool = True) -> tuple[int, int]:
     """Load the sharded upstream weights onto the (CPU) policy, validating coverage."""
     from safetensors.torch import load_file
 
@@ -140,7 +240,7 @@ def _load_upstream_weights(policy, checkpoint_dir: str) -> tuple[int, int]:
 
     model_keys = set(policy.state_dict().keys())
     missing_keys, skipped_keys, unexpected_keys = split_upstream_loading_keys(
-        model_keys, set(weight_map.keys())
+        model_keys, set(weight_map.keys()), allow_skipped=allow_skipped
     )
     if missing_keys or unexpected_keys:
         parts = []
@@ -184,6 +284,23 @@ def main():
         "checkpoint directory itself). The saved configs still record the portable Hub id.",
     )
     parser.add_argument(
+        "--include-depth-heads",
+        action="store_true",
+        help="Keep the native-depth / DINO-video distillation head weights: build them from "
+        "the bundled official RoboTwin align_params recipe (teacher weight paths are "
+        "resolved from the local HF cache) and require full checkpoint coverage of them. "
+        "Teacher weights are plain downloads; no upstream repository checkout is involved "
+        "at any stage.",
+    )
+    parser.add_argument(
+        "--align-params",
+        default=None,
+        metavar="JSON|@FILE",
+        help="align_params dict as inline JSON or '@file.json', overriding the bundled recipe "
+        "when --include-depth-heads is used. Teacher paths must be filled in; see "
+        "align_params_robotwin.json for the full schema.",
+    )
+    parser.add_argument(
         "--push-to-hub",
         default=None,
         metavar="REPO_ID",
@@ -225,17 +342,25 @@ def main():
             **{cam: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)) for cam in camera_keys},
         },
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(55,))},
+        # Depth/DINO distillation branch: heads build from the dict (no teacher
+        # weights needed at build time); the paths are validated lazily at
+        # training when the frozen teachers load.
+        align_params=_parse_align_params(args.align_params, args.include_depth_heads),
     )
     for key, value in UPSTREAM_CONFIG_OVERRIDES.items():
         setattr(config, key, value)
+    # ``use_depth`` above stays False deliberately: it is a dead compatibility
+    # field the model never reads — the distillation branch keys on
+    # ``align_params`` alone.
     config._moe_implementation = config.moe_implementation
 
-    from .modeling_lingbot_vla_v2 import LingbotVLAV2Policy
+    from ..modeling_lingbot_vla_v2 import LingbotVLAV2Policy
 
     logger.info("Building the 6B policy on CPU (this takes a while and ~40 GB RAM)...")
     policy = LingbotVLAV2Policy(config)
 
-    loaded, skipped = _load_upstream_weights(policy, checkpoint_dir)
+    include_depth = bool(config.align_params)
+    loaded, skipped = _load_upstream_weights(policy, checkpoint_dir, allow_skipped=not include_depth)
     logger.info(
         "Loaded %d tensors, %d upstream-only (depth/video distillation) tensors skipped.", loaded, skipped
     )

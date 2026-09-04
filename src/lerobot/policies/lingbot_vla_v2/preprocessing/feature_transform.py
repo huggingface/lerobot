@@ -19,7 +19,6 @@ from .data_transform import (
     prepare_state,
     prepare_language,
     prepare_action,
-    expert_visual_transform,
 )
 from .ee_pose_transform import *
 
@@ -88,6 +87,7 @@ class FeatureTransform:
         use_future_image=False,
         robot_config=None,
         norm_stats=None,
+        preprocess_device=None,
     ):
         # ``robot_config`` / ``norm_stats`` accept the already-parsed contents so a
         # serialized checkpoint can ship self-contained configs (no absolute paths).
@@ -122,6 +122,16 @@ class FeatureTransform:
 
         self.chunk_size = chunk_size
         self.return_item_before_padding = return_item_before_padding
+
+        # When set, camera images are uploaded to this device and processed by the
+        # HF image processor in a single batched call (see prepare_images). None
+        # keeps the original per-camera CPU path.
+        self.preprocess_device = preprocess_device
+        # Episode-level tokenizer cache: the task string is constant within an
+        # episode, so lang_tokens/lang_masks are computed once and reused. Bounded
+        # (few distinct tasks per deployment) and keyed by the full prompt string.
+        self._lang_token_cache: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
+        self._lang_token_cache_size = 16
 
         # disabled_image_features: keep the image features or not when getting lerobot item
         self.disabled_image_features = disabled_image_features
@@ -335,7 +345,7 @@ class FeatureTransform:
         for feature_category, feature in org_features.items():
             if feature_category == "actions":
                 if len(feature) == 0 and len(self.actions_convert_from_state) > 0:
-                    org_features["actions"] == []
+                    org_features["actions"] = []
                     continue
             if len(feature) == 0:
                 org_features[feature_category] = target_features[feature_category]
@@ -424,7 +434,6 @@ class FeatureTransform:
             if isinstance(convert_info, list):
                 convert_info = sorted(convert_info, key=lambda x: x["end"])
                 concat_list = []
-                convert_success = True
                 for _convert_info in convert_info:
                     if _convert_info["target_key"] not in item:
                         raise ValueError(
@@ -435,8 +444,7 @@ class FeatureTransform:
                             ..., _convert_info["target_start"] : _convert_info["target_end"]
                         ]
                     )
-                if convert_success:
-                    out_item[target_key] = torch.cat(concat_list, dim=-1)
+                out_item[target_key] = torch.cat(concat_list, dim=-1)
 
         for feature in self.feature_to_keep:
             if feature in item:
@@ -447,11 +455,17 @@ class FeatureTransform:
     def apply(self, item, policy_eval=False):
         w_action = not policy_eval
         if w_action:
-            item["action_is_pad"] = (
-                item[f"{self.org_features['actions'][0]}_is_pad"]
-                if not len(self.actions_convert_from_state) > 0
-                else item[f"{self.org_features['states'][0]}_is_pad"][1:]
-            )
+            pad_all_false = torch.zeros(self.chunk_size, dtype=torch.bool)
+            if len(self.actions_convert_from_state) > 0:
+                pad_key = f"{self.org_features['states'][0]}_is_pad"
+                is_pad = item.get(pad_key)
+                item["action_is_pad"] = is_pad[1:] if is_pad is not None else pad_all_false
+            else:
+                pad_key = (
+                    f"{self.org_features['actions'][0]}_is_pad" if self.org_features["actions"] else None
+                )
+                is_pad = item.get(pad_key) if pad_key is not None else None
+                item["action_is_pad"] = is_pad if is_pad is not None else pad_all_false
         else:
             item["action_is_pad"] = torch.zeros(self.chunk_size)
         item = self.convert_features(item, w_action=w_action)
@@ -498,6 +512,7 @@ class FeatureTransform:
                 use_depth_align=self.use_depth_align,
                 return_image_grid_thw=return_image_grid_thw,
                 return_augment_params=True,
+                preprocess_device=self.preprocess_device,
             )
             if self.use_future_image and len(batch_dict.get("future_image", {})) > 0:
                 future_obs = {**batch_dict, "image": batch_dict["future_image"]}
@@ -525,14 +540,23 @@ class FeatureTransform:
         )
         batch_dict["image_token_count"] = image_token_count
 
-        lang_tokens, lang_masks = prepare_language(
-            self.model_config, self.tokenizer, batch_dict
-        )  # bs, seq_len
+        prompt_key = batch_dict["prompt"][0] if batch_dict.get("prompt") else None
+        cached_lang = self._lang_token_cache.get(prompt_key) if prompt_key is not None else None
+        if cached_lang is not None:
+            lang_tokens, lang_masks = cached_lang
+        else:
+            lang_tokens, lang_masks = prepare_language(
+                self.model_config, self.tokenizer, batch_dict
+            )  # bs, seq_len
+            if prompt_key is not None:
+                if len(self._lang_token_cache) >= self._lang_token_cache_size:
+                    self._lang_token_cache.clear()
+                self._lang_token_cache[prompt_key] = (lang_tokens, lang_masks)
         action_is_pad = batch_dict["action_is_pad"]
 
         state_joint_mask = batch_dict["state_joint_mask"]
         assert self.model_config.max_state_dim >= state_joint_mask.shape[-1], (
-            f"max_action_dim is smaller than the state joint dimension: {self.model_config.max_action_dim} < {state_joint_mask.shape[-1]}"
+            f"max_state_dim is smaller than the state joint dimension: {self.model_config.max_state_dim} < {state_joint_mask.shape[-1]}"
         )
         state_joint_mask = F.pad(
             state_joint_mask, (0, self.model_config.max_state_dim - state_joint_mask.shape[-1])
@@ -616,20 +640,28 @@ class FeatureTransform:
         state = item["state"][state_joint_mask]
         action = item["actions"][:, action_joint_mask]
 
+        state_offset = 0
+        action_offset = 0
         for k in self.feature_config.joints:
+            joint_width = self.feature_config.joints_max_dim[k]
             state_key = f"observation.state.{k}"
             if state_key in self.states:
-                joint_dim = self.normalizer.norm_stats[state_key]["mean"].shape[-1]
+                # Real (pre-padding) dim of this slot: the joint masks mark padded
+                # slots False, so the segment sum recovers it without norm stats
+                # (which do not exist when do_normalize=False).
+                joint_dim = int(state_joint_mask[state_offset : state_offset + joint_width].sum())
                 reverse_item[state_key] = state[:joint_dim]
                 state = state[joint_dim:]
             del state_key
+            state_offset += joint_width
 
             action_key = f"action.{k}"
             if action_key in self.actions:
-                joint_dim = self.normalizer.norm_stats[action_key]["mean"].shape[-1]
+                joint_dim = int(action_joint_mask[action_offset : action_offset + joint_width].sum())
                 reverse_item[action_key] = action[:, :joint_dim]
                 action = action[:, joint_dim:]
             del action_key
+            action_offset += joint_width
         return reverse_item
 
     def pad_and_concat(self, item, w_action=True):
@@ -637,7 +669,10 @@ class FeatureTransform:
         future_images = {}
         for image_key in self.feature_config.images:
             if image_key in self.images and image_key in item:
-                if not self.use_future_image:
+                # Training samples with future-frame deltas are [T,C,H,W]. Inference
+                # still supplies a plain [C,H,W] image even when a depth-aligned
+                # checkpoint is loaded, so only split an actual temporal tensor.
+                if not self.use_future_image or item[image_key].ndim != 4:
                     images[image_key] = item[image_key]
                 else:
                     images[image_key] = item[image_key][0]

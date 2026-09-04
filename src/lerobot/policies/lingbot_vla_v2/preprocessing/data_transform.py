@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 from torchvision.transforms import v2
+from torchvision.transforms.v2 import functional as tvF
 import logging
 
 logger = logging.getLogger(__name__)
@@ -192,28 +193,6 @@ class Normalizer:
         return unnormalized_data
 
 
-def resize_with_pad_item(img, width, height, pad_value=-1):
-    # assume no-op when width height fits already
-    if img.ndim != 3:
-        raise ValueError(f"(c,h,w) expected, but {img.shape}")
-
-    cur_height, cur_width = img.shape[1:]
-
-    ratio = max(cur_width / width, cur_height / height)
-    resized_height = int(cur_height / ratio)
-    resized_width = int(cur_width / ratio)
-    resized_img = F.interpolate(
-        img.unsqueeze(0), size=(resized_height, resized_width), mode="bilinear", align_corners=False
-    ).squeeze(0)
-
-    pad_height = max(0, int(height - resized_height))
-    pad_width = max(0, int(width - resized_width))
-
-    # pad on left and top of image
-    padded_img = F.pad(resized_img, (pad_width, 0, pad_height, 0), value=pad_value)
-    return padded_img
-
-
 def _visual_hw(visual: Tensor) -> tuple[int, int]:
     if visual.ndim == 3:
         return int(visual.shape[1]), int(visual.shape[2])
@@ -277,6 +256,123 @@ def apply_visual_augmentation(
     return image.squeeze(0) if squeeze else image
 
 
+def _smart_resize(height: int, width: int, factor: int, min_pixels: int, max_pixels: int) -> tuple[int, int]:
+    """Line-for-line replica of Qwen2-VL's smart_resize (integer grid rounding).
+
+    Copied so the GPU fast path derives the exact same target grid as the HF
+    processor without paying its Python wrapper overhead.
+    """
+    if max(height, width) / min(height, width) > 200:
+        raise ValueError(
+            f"absolute aspect ratio must be smaller than 200, got {max(height, width) / min(height, width)}"
+        )
+    h_bar = round(height / factor) * factor
+    w_bar = round(width / factor) * factor
+    if h_bar * w_bar > max_pixels:
+        beta = math.sqrt((height * width) / max_pixels)
+        h_bar = max(factor, math.floor(height / beta / factor) * factor)
+        w_bar = max(factor, math.floor(width / beta / factor) * factor)
+    elif h_bar * w_bar < min_pixels:
+        beta = math.sqrt(min_pixels / (height * width))
+        h_bar = math.ceil(height * beta / factor) * factor
+        w_bar = math.ceil(width * beta / factor) * factor
+    return h_bar, w_bar
+
+
+def prepare_images_on_device(image_processor, images: dict[str, Tensor], device):
+    """Batched on-device equivalent of Qwen2VLImageProcessor._preprocess.
+
+    Calls the exact same torch ops as the HF torchvision backend (tvF.resize
+    bicubic+antialias, fused rescale/normalize, view/permute patchify) but skips
+    the wrapper overhead (kwargs validation, per-image process_image, shape
+    grouping/reordering, BatchFeature) that dominates wall time on a busy host.
+    Verified bit-exact against the CPU path by bench/check_gpu_preprocess.py.
+
+    Args:
+        image_processor: the HF processor instance (params read off it live)
+        images: {key: CHW float tensor in [0, 255]}
+        device: target device string, e.g. "cuda"
+
+    Returns:
+        (pixel_values_per_key: dict[str, Tensor], image_grid_thw: Tensor (n, 3))
+        — all on `device`.
+    """
+    patch_size = image_processor.patch_size
+    merge_size = image_processor.merge_size
+    temporal_patch_size = image_processor.temporal_patch_size
+    size = image_processor.size
+    size_min = size["shortest_edge"] if isinstance(size, dict) else size.shortest_edge
+    size_max = size["longest_edge"] if isinstance(size, dict) else size.longest_edge
+    # Prefer the processor's explicit pixel bounds when present; fall back to the
+    # size dict's shortest/longest edge otherwise.
+    min_pixels = getattr(image_processor, "min_pixels", None)
+    if min_pixels is None:
+        min_pixels = size_min
+    max_pixels = getattr(image_processor, "max_pixels", None)
+    if max_pixels is None:
+        max_pixels = size_max
+    rescale_factor = image_processor.rescale_factor
+    image_mean = image_processor.image_mean
+    image_std = image_processor.image_std
+
+    # Fused rescale+normalize constants, replicating
+    # TorchvisionBackend.rescale_and_normalize: normalize((x), mean/rf, std/rf).
+    mean_t = torch.tensor(image_mean, device=device, dtype=torch.float32) * (1.0 / rescale_factor)
+    std_t = torch.tensor(image_std, device=device, dtype=torch.float32) * (1.0 / rescale_factor)
+    mean_t = mean_t.view(-1, 1, 1)
+    std_t = std_t.view(-1, 1, 1)
+
+    # Group cameras by input shape (one stacked call per distinct shape).
+    groups: dict[tuple[int, int], list[str]] = {}
+    for key, img in images.items():
+        groups.setdefault((int(img.shape[-2]), int(img.shape[-1])), []).append(key)
+
+    out: dict[str, Tensor] = {}
+    grids: dict[str, Tensor] = {}
+    for (height, width), keys in groups.items():
+        x = torch.stack([images[k] for k in keys]).to(device=device, non_blocking=True)
+        x = x.to(torch.float32)
+        resized_height, resized_width = _smart_resize(
+            height, width, factor=patch_size * merge_size, min_pixels=min_pixels, max_pixels=max_pixels
+        )
+        if (resized_height, resized_width) != (height, width):
+            x = tvF.resize(
+                x,
+                [resized_height, resized_width],
+                interpolation=tvF.InterpolationMode.BICUBIC,
+                antialias=True,
+            )
+        x = (x - mean_t) / std_t
+
+        patches = x.unsqueeze(1)  # (b, 1, c, h, w)
+        if patches.shape[1] % temporal_patch_size != 0:
+            repeats = patches[:, -1:].repeat(1, temporal_patch_size - 1, 1, 1, 1)
+            patches = torch.cat([patches, repeats], dim=1)
+        batch_size, grid_t, channel = patches.shape[:3]
+        grid_t = grid_t // temporal_patch_size
+        grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+        patches = patches.view(
+            batch_size,
+            grid_t,
+            temporal_patch_size,
+            channel,
+            grid_h // merge_size,
+            merge_size,
+            patch_size,
+            grid_w // merge_size,
+            merge_size,
+            patch_size,
+        )
+        patches = patches.permute(0, 1, 4, 7, 5, 8, 3, 2, 6, 9)
+        flatten_patches = patches.reshape(
+            batch_size, grid_t * grid_h * grid_w, channel * temporal_patch_size * patch_size * patch_size
+        )
+        for i, key in enumerate(keys):
+            out[key] = flatten_patches[i]
+            grids[key] = torch.tensor([grid_t, grid_h, grid_w], dtype=torch.long)
+    return out, grids
+
+
 def prepare_images(
     image_processor,
     observation: dict[str, Tensor],
@@ -286,11 +382,18 @@ def prepare_images(
     return_image_grid_thw=False,
     augment_params=None,
     return_augment_params=False,
+    preprocess_device=None,
 ):
     """Normalize, resize, and pad images and stack them into a tensor.
 
     Args:
         observation (dict[str, Tensor])
+        preprocess_device: when set (and not train / use_depth_align), all present
+            cameras are uploaded to this device and run through the HF image
+            processor in ONE batched call (the TorchvisionBackend keeps torch
+            tensors in torch, so resize/rescale/normalize/patchify execute on
+            device). Outputs stay on the device, letting the downstream vision
+            tower consume them without a second H2D copy.
 
     Returns:
         images (torch.Tensor): (*b, n, c, h, w) images in range [-1.0, 1.0]
@@ -313,32 +416,56 @@ def prepare_images(
         pil_images = []
         pil_image_dict = {}
 
-    for key in observation["image"]:
-        img = observation["image"][key]
-        assert img.ndim == 3, f"Expected 3D image, got {img.shape}"
-        if train:
-            if augment_params is None:
-                augment_params = sample_visual_augmentation_params(img)
+    # The fast path is a GPU optimization. ``preprocess_device="cpu"`` is the
+    # explicit opt-out used by deployment configs: keep the original per-camera CPU
+    # processor rather than running this tensor-only implementation on CPU.
+    gpu_fast_path = (
+        image_processor is not None
+        and preprocess_device is not None
+        and str(preprocess_device).startswith("cuda")
+        and not train
+        and not use_depth_align
+    )
 
-            img = apply_visual_augmentation(
-                img,
-                augment_params,
-            )
+    if gpu_fast_path:
+        # One fused on-device pass for all present cameras (same torch ops as the
+        # HF torchvision backend, minus its Python wrapper overhead). Outputs stay
+        # on-device for the vision tower — no second H2D copy.
+        image_dict, grid_dict = prepare_images_on_device(
+            image_processor, observation["image"], preprocess_device
+        )
+        if return_image_grid_thw:
+            image_grid_thw_dict = {k: v.unsqueeze(0) for k, v in grid_dict.items()}
+    else:
+        for key in observation["image"]:
+            img = observation["image"][key]
+            assert img.ndim == 3, f"Expected 3D image, got {img.shape}"
+            if train:
+                if augment_params is None:
+                    augment_params = sample_visual_augmentation_params(img)
 
-        if use_depth_align:
-            pil_image_dict[key] = img.cpu().numpy()
+                img = apply_visual_augmentation(
+                    img,
+                    augment_params,
+                )
 
-        if image_processor is None:
-            img = img.to(dtype) / 127.5 - 1.0  # to [-1, 1]
-        else:
-            processed = image_processor(img)
-            img = processed[
-                "pixel_values"
-            ]  # (grid_t * grid_h * grid_w, channel * temporal_patch_size * patch_size * patch_size) in qwen2.5vl, 256, 3*2*14*14
-            if return_image_grid_thw and "image_grid_thw" in processed:
-                image_grid_thw_dict[key] = processed["image_grid_thw"]
-        image_dict[key] = img
+            if use_depth_align:
+                pil_image_dict[key] = img.cpu().numpy()
 
+            if image_processor is None:
+                img = img.to(dtype) / 127.5 - 1.0  # to [-1, 1]
+            else:
+                processed = image_processor(img)
+                img = processed[
+                    "pixel_values"
+                ]  # (grid_t * grid_h * grid_w, channel * temporal_patch_size * patch_size * patch_size) in qwen2.5vl, 256, 3*2*14*14
+                if return_image_grid_thw and "image_grid_thw" in processed:
+                    image_grid_thw_dict[key] = processed["image_grid_thw"]
+            image_dict[key] = img
+    if not image_dict:
+        raise ValueError(
+            f"None of the configured camera keys are present in the observation; missing: {list(image_keys)}"
+        )
     for key in image_keys:
         if key in image_dict:
             img = image_dict[key]

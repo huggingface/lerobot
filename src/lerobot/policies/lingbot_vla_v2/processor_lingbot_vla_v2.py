@@ -22,7 +22,6 @@ tokenization stay exactly as trained.
 """
 
 from dataclasses import dataclass, field
-from types import SimpleNamespace
 from typing import Any
 
 import torch
@@ -50,7 +49,11 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.import_utils import _transformers_available
 
-from .configuration_lingbot_vla_v2 import LingbotVLAV2Config, resolve_robot_config_and_stats
+from .configuration_lingbot_vla_v2 import (
+    LingbotVLAV2Config,
+    build_feature_transform_configs,
+    resolve_robot_config_and_stats,
+)
 
 if _transformers_available:
     from transformers import AutoProcessor
@@ -110,6 +113,28 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
     # uses 16px patches + 2x2 merge (=1024 px/token), so 1,048,576 px ~= 1024 tokens.
     image_max_pixels: int = 262144
     image_min_pixels: int = 131072
+    # When set (e.g. "cuda"), camera images are uploaded to this device and run
+    # through the HF image processor in one batched call, with the outputs staying
+    # on-device for the vision tower. None keeps the per-camera CPU path.
+    preprocess_device: str | None = None
+    # Qwen3-VL specific token/vision handling (mirrors the policy config fields).
+    use_qwen3_chat_template: bool = True
+    return_image_grid_thw: bool = True
+    qwen3vl_use_vision_boundaries: bool = True
+    # Native-depth / DINO-video distillation branch: keep raw pre-Qwen-processor
+    # camera frames (CHW float [0,255], canonical camera order) as ``pil_images``
+    # in the batch, and — with ``use_future_image`` — also a ``future_pil_images``
+    # tensor from the last sampled frame. Both feed the frozen teachers inside
+    # ``LingbotVLAV2Policy.forward``; inference never consumes them.
+    use_depth_align: bool = False
+    use_future_image: bool = False
+    # Dataset fps and future-frame spacing, used to synthesize the per-item
+    # ``future_video_effective_fps`` for the DINO-video teacher exactly like the
+    # upstream dataset does: fps / max(1, future_frame_offset), where the offset
+    # defaults to chunk_size - 1. None for either disables synthesis and the
+    # teacher falls back to the effective_fps in its config.yaml.
+    dataset_fps: int | None = None
+    future_frame_offset: int | None = None
 
     _feature_transform: Any = field(default=None, init=False, repr=False)
 
@@ -119,8 +144,8 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
                 "transformers is required for LingbotVLAV2FeatureTransformStep. "
                 "Install it with `pip install 'lerobot[lingbot_vla2]'`."
             )
-        from .feature_transform import FeatureTransform
-        from .qwen3vl_in_vla import apply_lingbot_qwen3_vl_patch
+        from .model_core.qwen3vl_in_vla import apply_lingbot_qwen3_vl_patch
+        from .preprocessing.feature_transform import FeatureTransform
 
         apply_lingbot_qwen3_vl_patch()
         processor = AutoProcessor.from_pretrained(
@@ -145,24 +170,7 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
             if stats_path:
                 with open(stats_path) as f:
                     self.norm_stats = json.load(f)
-        data_config = SimpleNamespace(
-            joints=[f"{{'{k}': {v}}}" for k, v in self.canonical_joints.items()],
-            norm_type=[f"{{'{k}': '{v}'}}" for k, v in self.canonical_norm_type.items()],
-            cameras=list(self.cameras),
-            img_size=self.resize_imgs_with_padding[0],
-            chat_template="default",
-            text_keys="task",
-        )
-        model_config = SimpleNamespace(
-            max_state_dim=self.max_state_dim,
-            max_action_dim=self.max_action_dim,
-            chunk_size=self.chunk_size,
-            tokenizer_max_length=self.tokenizer_max_length,
-            use_qwen3_chat_template=True,
-            return_image_grid_thw=True,
-            qwen3vl_use_vision_boundaries=True,
-            resize_imgs_with_padding=tuple(self.resize_imgs_with_padding),
-        )
+        data_config, model_config = build_feature_transform_configs(self)
         self._feature_transform = FeatureTransform(
             robot_config_path=self.robot_config_path,
             data_config=data_config,
@@ -172,13 +180,20 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
             norm_stats_path=self.norm_stats_path,
             robot_config=self.robot_config,
             norm_stats=self.norm_stats,
+            preprocess_device=self.preprocess_device,
+            use_depth_align=self.use_depth_align,
+            use_future_image=self.use_future_image,
         )
 
     def _iter_items(self, observation: dict, action, task):
         """Yield the per-item dicts ``FeatureTransform.apply`` expects."""
         # Batch size from the state feature.
         batch_size = observation[OBS_STATE].shape[0]
-        image_keys = [k for k in observation if k.startswith("observation.images.")]
+        # ``*_is_pad`` columns (emitted whenever delta_timestamps sample multiple
+        # frames) are per-frame flags, not camera tensors.
+        image_keys = [
+            k for k in observation if k.startswith("observation.images.") and not k.endswith("_is_pad")
+        ]
 
         # The FeatureTransform runs on CPU (numpy stats + the Qwen image processor),
         # but Accelerate hands us batches already on the training device. Move each
@@ -188,7 +203,13 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
             return x.cpu() if isinstance(x, torch.Tensor) else x
 
         for i in range(batch_size):
-            item: dict[str, Any] = {OBS_STATE: _cpu(observation[OBS_STATE][i])}
+            state = _cpu(observation[OBS_STATE][i])
+            # Future-frame sampling stacks T frames on every observation key; the
+            # policy state is the current frame only (images keep their [T,C,H,W]
+            # so FeatureTransform can split current/future per camera).
+            if self.use_future_image and state.ndim == 2:
+                state = state[0]
+            item: dict[str, Any] = {OBS_STATE: state}
             for k in image_keys:
                 img = _cpu(observation[k][i])
                 # LeRobot images are float CHW in [0, 1]; the Qwen image processor
@@ -198,7 +219,12 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
                 item[k] = img
             if action is not None:
                 item[ACTION] = _cpu(action[i])
-                item["action_is_pad"] = torch.zeros(self.chunk_size, dtype=torch.bool)
+                # FeatureTransform.apply reads the pad mask from the raw action key
+                # (``f"{org_actions[0]}_is_pad"``); fill it dynamically and let the
+                # apply side fall back to an all-False mask when absent.
+                org_actions = self._feature_transform.org_features["actions"]
+                pad_key = f"{org_actions[0]}_is_pad" if org_actions else "action_is_pad"
+                item[pad_key] = torch.zeros(self.chunk_size, dtype=torch.bool)
             # Task text can arrive as a list of strings, a collated tensor of indices,
             # or a plain scalar; normalize to a string for the chat template.
             if isinstance(task, torch.Tensor):
@@ -241,15 +267,25 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
         new_obs["action_joint_mask"] = collated["action_joint_mask"]
         if "image_grid_thw" in collated:
             new_obs["image_grid_thw"] = collated["image_grid_thw"]
+        if self.use_depth_align:
+            new_obs["pil_images"] = collated["pil_images"]
+            # Single-frame (inference) items produce None per item, not a tensor —
+            # only route real future frames so teachers never see a junk key.
+            future = collated.get("future_pil_images") if self.use_future_image else None
+            if isinstance(future, torch.Tensor):
+                new_obs["future_pil_images"] = future
+                if self.dataset_fps is not None:
+                    offset = (
+                        self.future_frame_offset
+                        if self.future_frame_offset is not None
+                        else max(1, self.chunk_size - 1)
+                    )
+                    new_obs["future_video_effective_fps"] = self.dataset_fps / max(1, offset)
 
         self._current_transition[TransitionKey.OBSERVATION] = new_obs
         if action is not None:
             self._current_transition[TransitionKey.ACTION] = collated["actions"]
         return self._current_transition
-
-    def unapply_actions(self, actions: torch.Tensor) -> dict:
-        """Map a padded canonical action chunk back to the raw dataset keys."""
-        return self._feature_transform.unapply({"actions": actions})
 
     def get_config(self) -> dict[str, Any]:
         # Serialize the parsed contents rather than the (machine-specific) paths so a
@@ -271,6 +307,14 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
             # to defaults and mismatched the checkpoint's training resolution.
             "image_max_pixels": self.image_max_pixels,
             "image_min_pixels": self.image_min_pixels,
+            "preprocess_device": self.preprocess_device,
+            "use_qwen3_chat_template": self.use_qwen3_chat_template,
+            "return_image_grid_thw": self.return_image_grid_thw,
+            "qwen3vl_use_vision_boundaries": self.qwen3vl_use_vision_boundaries,
+            "use_depth_align": self.use_depth_align,
+            "use_future_image": self.use_future_image,
+            "dataset_fps": self.dataset_fps,
+            "future_frame_offset": self.future_frame_offset,
         }
 
     def transform_features(
@@ -318,6 +362,14 @@ def make_lingbot_vla_v2_pre_post_processors(
         resize_imgs_with_padding=tuple(config.resize_imgs_with_padding),
         image_max_pixels=config.image_max_pixels,
         image_min_pixels=config.image_min_pixels,
+        preprocess_device=config.preprocess_device,
+        use_qwen3_chat_template=config.use_qwen3_chat_template,
+        return_image_grid_thw=config.return_image_grid_thw,
+        qwen3vl_use_vision_boundaries=config.qwen3vl_use_vision_boundaries,
+        use_depth_align=config.use_depth_align,
+        use_future_image=config.use_future_image,
+        dataset_fps=config.dataset_fps,
+        future_frame_offset=config.future_frame_offset,
     )
 
     input_steps: list[ProcessorStep] = [
@@ -374,6 +426,64 @@ def make_lingbot_vla_v2_pre_post_processors_from_pretrained(
     }
     if "device_processor" not in postprocessor_overrides and "device_processor" in preprocessor_overrides:
         postprocessor_overrides["device_processor"] = preprocessor_overrides["device_processor"]
+
+    # The saved feature-transform step carries the slot mapping / normalization stats of
+    # the checkpoint's *source* embodiment. When fine-tuning on a new embodiment the
+    # policy config's assets must win here too — explicit ``robot_config_path`` /
+    # ``norm_stats_path`` first, the config's embedded contents as fallback (same rule
+    # as ``resolve_robot_config_and_stats``) — otherwise the training preprocessor
+    # silently keeps the source embodiment's mapping while the policy itself was
+    # already re-resolved onto the new one.
+    resolve_robot_config_and_stats(config)
+    # Same config -> step parameter set as ``make_lingbot_vla_v2_pre_post_processors``
+    # (paths excluded: their resolved contents are forwarded instead). Only fields the
+    # config actually carries (non-None) override the checkpoint's saved values.
+    feature_step_overrides: dict[str, Any] = {}
+    for step_param, config_attr in (
+        ("robot_config", "robot_config"),
+        ("norm_stats", "norm_stats"),
+        ("chunk_size", "chunk_size"),
+        ("max_state_dim", "max_state_dim"),
+        ("max_action_dim", "max_action_dim"),
+        ("tokenizer_max_length", "tokenizer_max_length"),
+        ("canonical_joints", "canonical_joints"),
+        ("canonical_norm_type", "canonical_norm_type"),
+        ("cameras", "canonical_cameras"),
+        ("resize_imgs_with_padding", "resize_imgs_with_padding"),
+        ("image_max_pixels", "image_max_pixels"),
+        ("image_min_pixels", "image_min_pixels"),
+        ("preprocess_device", "preprocess_device"),
+        ("use_qwen3_chat_template", "use_qwen3_chat_template"),
+        ("return_image_grid_thw", "return_image_grid_thw"),
+        ("qwen3vl_use_vision_boundaries", "qwen3vl_use_vision_boundaries"),
+        ("use_depth_align", "use_depth_align"),
+        ("use_future_image", "use_future_image"),
+        ("dataset_fps", "dataset_fps"),
+        ("future_frame_offset", "future_frame_offset"),
+    ):
+        value = getattr(config, config_attr, None)
+        if value is not None:
+            feature_step_overrides[step_param] = value
+    processor_path = config.processor_path or config.tokenizer_path
+    if processor_path is not None:
+        feature_step_overrides["processor_path"] = processor_path
+
+    # GPU preprocessing default: when the rollout inference device is CUDA and nobody
+    # explicitly configured preprocess_device (policy config, saved checkpoint, or an
+    # override), default it to that device. The fast path (prepare_images_on_device) is
+    # pure torch/torchvision — bit-exact vs the CPU path (bench/check_gpu_preprocess.py)
+    # — and saves ~171ms of per-tick host preprocessing on the measured 4090 setup
+    # (x86 shared-host CPU contention; on GB10 both paths measure ~5ms). Explicit
+    # config always wins, and ``preprocess_device="cpu"`` is the documented opt-out
+    # (keeps the original per-camera HF processor path).
+    if "preprocess_device" not in feature_step_overrides and config.preprocess_device is None:
+        dev_override = (preprocessor_overrides.get("device_processor") or {}).get("device")
+        target_dev = dev_override or getattr(config, "device", None)
+        if target_dev is not None and str(target_dev).startswith("cuda") and torch.cuda.is_available():
+            feature_step_overrides["preprocess_device"] = target_dev
+
+    if feature_step_overrides:
+        preprocessor_overrides["lingbot_vla_v2_feature_transform"] = feature_step_overrides
 
     preprocessor = PolicyProcessorPipeline.from_pretrained(
         pretrained_model_name_or_path=pretrained_path,

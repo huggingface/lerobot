@@ -38,9 +38,13 @@ def flex_attention_forward(
     value_states: torch.Tensor,
     attention_mask: torch.Tensor,
     scaling=None,
+    force_fp32: bool = True,
 ):
     """
     This is defined out of classes to make compile happy.
+
+    ``force_fp32`` upcasts Q/K/V to fp32 before the kernel (the original parity
+    path); pass False to run attention in the model dtype (bf16 tensor cores).
     """
     batch_size, seq_len, num_att_heads, head_dim = query_states.shape
     original_dtype = query_states.dtype
@@ -51,9 +55,10 @@ def flex_attention_forward(
     key_states = key_states.transpose(1, 2)
     value_states = value_states.transpose(1, 2)
 
-    query_states = query_states.to(torch.float32)
-    key_states = key_states.to(torch.float32)
-    value_states = value_states.to(torch.float32)
+    if force_fp32:
+        query_states = query_states.to(torch.float32)
+        key_states = key_states.to(torch.float32)
+        value_states = value_states.to(torch.float32)
 
     causal_mask = attention_mask
     if causal_mask is not None:
@@ -193,6 +198,7 @@ def flex_attention_with_block_mask(
     block_mask,
     seq_len: int,
     scaling=None,
+    force_fp32: bool = True,
 ):
     """
     Run flex_attention with a pre-built BlockMask (no create_mask allocation per call).
@@ -202,9 +208,13 @@ def flex_attention_with_block_mask(
     head_dim = query_states.shape[3]
     original_dtype = query_states.dtype
 
-    query_states = query_states.transpose(1, 2).to(torch.float32)
-    key_states = key_states.transpose(1, 2).to(torch.float32)
-    value_states = value_states.transpose(1, 2).to(torch.float32)
+    query_states = query_states.transpose(1, 2)
+    key_states = key_states.transpose(1, 2)
+    value_states = value_states.transpose(1, 2)
+    if force_fp32:
+        query_states = query_states.to(torch.float32)
+        key_states = key_states.to(torch.float32)
+        value_states = value_states.to(torch.float32)
 
     q_len_rounded = block_mask.shape[-2] if hasattr(block_mask, "shape") else query_states.shape[2]
     kv_len_rounded = block_mask.shape[-1] if hasattr(block_mask, "shape") else key_states.shape[2]

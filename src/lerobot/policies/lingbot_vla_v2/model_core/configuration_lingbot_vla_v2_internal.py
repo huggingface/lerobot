@@ -48,6 +48,8 @@ class LingbotVLAConfig(PretrainedConfig):
         max_action_dim: int = 14,
         max_state_dim: int = 14,
         chunk_size: int = 50,
+        n_action_steps: int | None = None,
+        num_steps: int = 10,
         vlm_causal: bool = False,
         tokenizer_max_length: int = 48,
         loss_type: str = "fm",
@@ -96,7 +98,7 @@ class LingbotVLAConfig(PretrainedConfig):
         self.train_expert_only = train_expert_only
         self.use_cache = False
         self.attention_implementation = attention_implementation
-        self.num_steps = 10
+        self.num_steps = num_steps
         self.n_obs_steps = 1
 
         assert not (split_gate_liner and nosplit_gate_liner), (
@@ -126,7 +128,7 @@ class LingbotVLAConfig(PretrainedConfig):
         self.max_action_dim = max_action_dim
         self.max_state_dim = max_state_dim
         self.chunk_size = chunk_size
-        self.n_action_steps = chunk_size
+        self.n_action_steps = n_action_steps if n_action_steps is not None else chunk_size
         self.vlm_causal = vlm_causal
         self.align_params = align_params
         self.use_moe = use_moe
