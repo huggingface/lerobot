@@ -172,53 +172,6 @@ lerobot-train \
   </figure>
 </div>
 
-## LanceDB dataset backend
-
-A `v3` dataset can also be stored as [LanceDB](https://lancedb.com) tables. LanceDB is a multimodal data lakehouse built on the Lance format for AI access patterns: fast random access to any row and its video bytes, and scalar, vector and full-text indexes on the same tables, so EDA, mining, curation and training run directly from object storage. The layout keeps `meta/` unchanged and adds a `frames` table for the tabular data and a `videos` table holding the MP4s as blobs. `"storage_format": "lance"` in `meta/info.json` selects the reader; the `LeRobotDataset` API, the items and the training pipeline are unchanged.
-
-- **Train straight from object storage with the GPUs fed.** Random frames are read in place from the Hub, HF Storage Buckets or any object store, only the bytes each batch needs, so every batch is a global shuffle and nothing is downloaded first.
-- **Convert at about the cost of a file copy.** Videos are not re-encoded, so items are bit-identical to the source. DROID converts in 34 minutes.
-- **Zero-copy feature engineering.** Add columns such as scores, embeddings or corrected labels to the tables the trainer reads, without rewriting the videos or copying the dataset, then filter and search on them with the indexes. The reader ignores columns it does not know.
-
-For how this works, benchmarks and examples, see the [LanceDB LeRobot guide](https://docs.lancedb.com/training/lerobot).
-
-Camera features must be video-backed. Datasets that store camera frames as images are not supported by the reader and need to be re-encoded as video before conversion.
-
-Reading Lance datasets needs the `lancedb` extra (`pip install "lerobot[lancedb]"`). The format is read-only: record and edit datasets in the default format, then convert them with the [`lerobot-lancedb`](https://pypi.org/project/lerobot-lancedb/) package:
-
-```bash
-pip install "lerobot-lancedb"
-lerobot-lance-convert --repo-id lerobot/pusht --out ./pusht-lance  # or --root <local dataset dir>
-```
-
-Loading uses the same class:
-
-```python
-from lerobot.datasets import LeRobotDataset
-
-# Hub dataset repo
-dataset = LeRobotDataset("lance-format/pusht-lance")
-
-# HF Storage Bucket, read in place
-dataset = LeRobotDataset("my-org/my-bucket/pusht-lance", repo_type="bucket")
-
-# any object store, read in place
-dataset = LeRobotDataset("lerobot/pusht", root="s3://my-bucket/pusht-lance")
-```
-
-The HF Storage Bucket options work in `lerobot-train`:
-
-```bash
-lerobot-train \
-  --dataset.repo_id=my-org/my-bucket/pusht-lance \
-  --dataset.repo_type=bucket \
-  --policy.type=act
-```
-
-Visualization works the same way: `lerobot-dataset-viz --display-mode foxglove` serves any episode of a Lance dataset to [Foxglove](https://foxglove.dev) straight from where it lives, fetching only the frames on screen, with no MCAP export or download.
-
-For remote roots only `meta/` is materialized locally, from the dataset's `meta` table. Data files are never downloaded. The default Parquet/MP4 format on buckets is streaming-only, so the map-style path above applies to `storage_format: "lance"`.
-
 ## Image transforms
 
 Image transforms are data augmentations applied to camera frames during training to improve model robustness and generalization. LeRobot supports various transforms including brightness, contrast, saturation, hue, and sharpness adjustments.
@@ -383,6 +336,51 @@ Without calling `finalize()`, your parquet files will be incomplete and the data
 
 ## Other formats and implementations
 
-### Lance
+### LanceDB dataset backend
 
-Lance is now supported natively as a storage format for video-backed datasets, see [LanceDB dataset backend](#lancedb-dataset-backend) above. The `LeRobotLanceDataset` classes from the `lerobot-lancedb` package are no longer needed for reading, and image-backed datasets are not supported by the native reader. That package now provides the converter.
+A `v3` dataset can also be stored as [LanceDB](https://lancedb.com) tables. LanceDB is a multimodal data lakehouse built on the Lance format for AI access patterns: fast random access to any row and its video bytes, and scalar, vector and full-text indexes on the same tables, so EDA, mining, curation and training run directly from object storage. The layout keeps `meta/` unchanged and adds a `frames` table for the tabular data and a `videos` table holding the MP4s as blobs. `"storage_format": "lance"` in `meta/info.json` selects the reader; the `LeRobotDataset` API, the items and the training pipeline are unchanged.
+
+- **Train straight from the Hub or HF Storage Buckets with the GPUs fed.** Random frames are read in place, only the bytes each batch needs, so every batch is a global shuffle and nothing is downloaded first.
+- **Convert at about the cost of a file copy.** Videos are not re-encoded, so items are bit-identical to the source. DROID converts in 34 minutes.
+- **Zero-copy feature engineering.** Add columns such as scores, embeddings or corrected labels to the tables the trainer reads, without rewriting the videos or copying the dataset, then filter and search on them with the indexes. The reader ignores columns it does not know.
+
+For how this works, benchmarks and examples, see the [LanceDB LeRobot guide](https://docs.lancedb.com/training/lerobot).
+
+Camera features must be video-backed. Datasets that store camera frames as images are not supported by the reader and need to be re-encoded as video before conversion.
+
+Reading Lance datasets needs the `lancedb` extra (`pip install "lerobot[lancedb]"`). The format is read-only: record and edit datasets in the default format, then convert them with the [`lerobot-lancedb`](https://pypi.org/project/lerobot-lancedb/) package:
+
+```bash
+pip install "lerobot-lancedb"
+lerobot-lance-convert --repo-id lerobot/pusht --out ./pusht-lance  # or --root <local dataset dir>
+```
+
+Loading uses the same class:
+
+```python
+from lerobot.datasets import LeRobotDataset
+
+# Hub dataset repo
+dataset = LeRobotDataset("lance-format/pusht-lance")
+
+# HF Storage Bucket, read in place
+dataset = LeRobotDataset("my-org/pusht-lance", repo_type="bucket")
+
+# the same bucket as a root URI (other object store URIs work the same way)
+dataset = LeRobotDataset("lerobot/pusht", root="hf://buckets/my-org/pusht-lance")
+```
+
+The HF Storage Bucket options work in `lerobot-train`:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=my-org/pusht-lance \
+  --dataset.repo_type=bucket \
+  --policy.type=act
+```
+
+Visualization works with both viewers. `lerobot-dataset-viz --repo-id lance-format/pusht-lance --episode-index 0` opens an episode in Rerun as usual, and `--display-mode foxglove` serves it to [Foxglove](https://foxglove.dev) over WebSocket. Either way only the frames on screen are fetched, with no MCAP export or download.
+
+For remote roots only `meta/` is materialized locally, from the dataset's `meta` table. Data files are never downloaded. The default Parquet/MP4 format on buckets is streaming-only, so the map-style path above applies to `storage_format: "lance"`.
+
+The `LeRobotLanceDataset` classes from the `lerobot-lancedb` package are no longer needed for reading; that package now provides the converter.
