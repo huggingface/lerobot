@@ -380,7 +380,3 @@ lerobot-train \
 ```
 
 Visualization works with both viewers. `lerobot-dataset-viz --repo-id lance-format/pusht-lance --episode-index 0` opens an episode in Rerun as usual, and `--display-mode foxglove` serves it to [Foxglove](https://foxglove.dev) over WebSocket. Either way only the frames on screen are fetched, with no MCAP export or download.
-
-For remote roots only `meta/` is materialized locally, from the dataset's `meta` table. Data files are never downloaded. The default Parquet/MP4 format on buckets is streaming-only, so the map-style path above applies to `storage_format: "lance"`.
-
-The `LeRobotLanceDataset` classes from the `lerobot-lancedb` package are no longer needed for reading; that package now provides the converter.
