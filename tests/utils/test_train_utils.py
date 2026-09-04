@@ -149,6 +149,18 @@ def test_push_checkpoint_to_hub_defaults_to_hub_default_visibility(tmp_path, mon
     assert api.create_repo.call_args.kwargs["private"] is None
 
 
+def test_push_checkpoint_to_hub_can_exclude_training_state(tmp_path, monkeypatch):
+    ckpt = tmp_path / "010000"
+    (ckpt / "pretrained_model").mkdir(parents=True)
+    (ckpt / TRAINING_STATE_DIR).mkdir()
+    api = MagicMock()
+    monkeypatch.setattr("lerobot.common.train_utils.HfApi", lambda *a, **k: api)
+
+    push_checkpoint_to_hub(ckpt, "user/run", include_training_state=False)
+
+    assert api.upload_folder.call_args.kwargs["ignore_patterns"] == f"{TRAINING_STATE_DIR}/**"
+
+
 def test_resolve_resume_checkpoint_downloads_latest_and_links(tmp_path, monkeypatch):
     from lerobot.common import train_utils
 
