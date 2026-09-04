@@ -12,15 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .configuration_robometer import RobometerConfig
-from .modeling_robometer import RobometerPrediction, RobometerRewardModel
-from .processor_robometer import make_robometer_pre_post_processors
-from .scoring_robometer import score_robometer_dataset
+"""Reusable offline scoring for frame-aligned reward-model signals."""
+
+from .reader import (
+    get_scoring_provenance,
+    get_signal_descriptors,
+    read_frame_signals,
+)
+from .runner import score_dataset
+from .schema import (
+    SCORING_FORMAT,
+    SCORING_SCHEMA_VERSION,
+)
+from .types import FrameSignals, ScoringSummary, SignalDescriptor
 
 __all__ = [
-    "RobometerConfig",
-    "RobometerPrediction",
-    "RobometerRewardModel",
-    "make_robometer_pre_post_processors",
-    "score_robometer_dataset",
+    "SCORING_FORMAT",
+    "SCORING_SCHEMA_VERSION",
+    "FrameSignals",
+    "ScoringSummary",
+    "SignalDescriptor",
+    "get_scoring_provenance",
+    "get_signal_descriptors",
+    "read_frame_signals",
+    "score_dataset",
 ]
