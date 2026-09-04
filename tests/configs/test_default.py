@@ -48,7 +48,12 @@ def test_local_episode_loading_is_opt_in():
 
 def test_local_episode_loading_rejects_streaming():
     with pytest.raises(ValueError, match="local_episode_loading.*streaming"):
-        DatasetConfig(repo_id="user/repo", local_episode_loading=True, streaming=True)
+        DatasetConfig(repo_id="user/repo", root="dataset", local_episode_loading=True, streaming=True)
+
+
+def test_local_episode_loading_requires_root():
+    with pytest.raises(ValueError, match="local_episode_loading requires root"):
+        DatasetConfig(repo_id="user/repo", local_episode_loading=True)
 
 
 @pytest.mark.parametrize(

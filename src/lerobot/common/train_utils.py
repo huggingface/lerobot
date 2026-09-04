@@ -58,6 +58,7 @@ def save_training_step(
     num_processes: int | None = None,
     batch_size: int | None = None,
     num_workers: int | None = None,
+    data_state: dict | None = None,
 ) -> None:
     state: dict = {"step": step}
     # num_processes and batch_size are recorded so a resumed run can detect a changed world size or
@@ -70,6 +71,8 @@ def save_training_step(
         state["batch_size"] = batch_size
     if num_workers is not None:
         state["num_workers"] = num_workers
+    if data_state is not None:
+        state["data_state"] = data_state
     write_json(state, save_dir / TRAINING_STEP)
 
 
@@ -91,6 +94,11 @@ def load_training_batch_size(checkpoint_dir: Path) -> int | None:
 def load_training_num_workers(checkpoint_dir: Path) -> int | None:
     """DataLoader worker count recorded at checkpoint time, or None for older checkpoints."""
     return load_json(checkpoint_dir / TRAINING_STATE_DIR / TRAINING_STEP).get("num_workers")
+
+
+def load_training_data_state(checkpoint_dir: Path) -> dict | None:
+    """Local episode partition/sampler state, or None for older checkpoints."""
+    return load_json(checkpoint_dir / TRAINING_STATE_DIR / TRAINING_STEP).get("data_state")
 
 
 def update_last_checkpoint(checkpoint_dir: Path) -> Path:
@@ -115,6 +123,7 @@ def save_checkpoint(
     num_workers: int | None = None,
     model_state_dict: dict | None = None,
     optim_state_dict: dict | None = None,
+    data_state: dict | None = None,
 ) -> None:
     """This function creates the following directory structure:
 
@@ -146,6 +155,7 @@ def save_checkpoint(
             resume. Defaults to None (not recorded).
         num_workers (int | None, optional): Per-process DataLoader worker count to record for
             sample-exact streaming resume. Defaults to None (not recorded).
+        data_state: Optional dataset partition and sampler state for sample-exact resume.
         model_state_dict: Pre-gathered full (unsharded) model state dict. Required under FSDP,
             where `policy.state_dict()` would return sharded tensors; the caller gathers it via a
             cross-rank collective and passes it here so rank 0 can write it directly. It holds
@@ -175,6 +185,7 @@ def save_checkpoint(
         num_processes=num_processes,
         batch_size=batch_size,
         num_workers=num_workers,
+        data_state=data_state,
         optim_state_dict=optim_state_dict,
     )
 
@@ -188,6 +199,7 @@ def save_training_state(
     batch_size: int | None = None,
     num_workers: int | None = None,
     optim_state_dict: dict | None = None,
+    data_state: dict | None = None,
 ) -> None:
     """
     Saves the training step, optimizer state, scheduler state, and rng state.
@@ -203,6 +215,7 @@ def save_training_state(
         batch_size (int | None, optional): Per-process batch size to record. Defaults to None.
         num_workers (int | None, optional): Per-process DataLoader worker count to record.
             Defaults to None.
+        data_state: Optional dataset partition and sampler state.
         optim_state_dict: Pre-gathered full optimizer state dict (for FSDP). Saved instead of
             `optimizer.state_dict()` when provided. Defaults to None.
     """
@@ -214,6 +227,7 @@ def save_training_state(
         num_processes=num_processes,
         batch_size=batch_size,
         num_workers=num_workers,
+        data_state=data_state,
     )
     save_rng_state(save_dir)
     if optimizer is not None:

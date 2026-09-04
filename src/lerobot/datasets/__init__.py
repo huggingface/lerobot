@@ -35,7 +35,12 @@ from .dataset_tools import (
     remove_feature,
     split_dataset,
 )
-from .factory import make_dataset, make_train_eval_datasets, resolve_delta_timestamps
+from .factory import (
+    make_dataset,
+    make_train_eval_datasets,
+    resolve_delta_timestamps,
+    resolve_train_eval_episode_indices,
+)
 from .image_writer import safe_stop_image_writer
 from .io_utils import load_episodes, write_stats
 from .language import (
@@ -50,7 +55,7 @@ from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
 from .pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from .pyav_utils import check_video_encoder_parameters_pyav, detect_available_encoders_pyav
-from .sampler import EpisodeAwareSampler, compute_sampler_state
+from .sampler import EpisodeAwareSampler, balanced_episode_shards, compute_sampler_state
 from .streaming_dataset import StreamingLeRobotDataset
 from .utils import DEFAULT_EPISODES_PATH, create_lerobot_dataset_card
 from .video_utils import VideoEncodingManager
@@ -83,6 +88,7 @@ __all__ = [
     "convert_image_to_video_dataset",
     "create_initial_features",
     "compute_sampler_state",
+    "balanced_episode_shards",
     "create_lerobot_dataset_card",
     "column_for_style",
     "delete_episodes",
@@ -97,6 +103,7 @@ __all__ = [
     "reencode_dataset",
     "remove_feature",
     "resolve_delta_timestamps",
+    "resolve_train_eval_episode_indices",
     "safe_stop_image_writer",
     "split_dataset",
     "write_stats",

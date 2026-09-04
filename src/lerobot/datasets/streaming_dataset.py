@@ -16,7 +16,7 @@
 import io
 import os
 from collections import deque
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
@@ -36,6 +36,7 @@ from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .depth_utils import MM_PER_METRE, dequantize_depth
 from .feature_utils import check_delta_timestamps, get_delta_indices, get_hf_features_from_features
 from .io_utils import hf_transform_to_torch
+from .sampler import balanced_episode_shards as _balanced_episode_shards
 from .streaming_sidecar import (
     ensure_dataset_mp4_sidecar,
     range_backend_for_root,
@@ -43,24 +44,6 @@ from .streaming_sidecar import (
 )
 from .utils import check_version_compatibility
 from .video_utils import decode_video_frames_pyav
-
-
-def _balanced_episode_shards(
-    episode_indices: list[int],
-    episode_frame_counts: Mapping[int, int],
-    *,
-    world_size: int,
-) -> list[list[int]]:
-    """Assign whole episodes deterministically with greedy frame-count balancing."""
-    if world_size <= 0:
-        raise ValueError("world_size must be positive")
-    shards: list[list[int]] = [[] for _ in range(world_size)]
-    shard_frames = [0] * world_size
-    for episode in sorted(episode_indices, key=lambda item: (-episode_frame_counts[item], item)):
-        rank = min(range(world_size), key=lambda item: (shard_frames[item], item))
-        shards[rank].append(episode)
-        shard_frames[rank] += episode_frame_counts[episode]
-    return shards
 
 
 class StreamingLeRobotDataset(torch.utils.data.IterableDataset):

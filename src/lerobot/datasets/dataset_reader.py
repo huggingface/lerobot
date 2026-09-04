@@ -15,6 +15,7 @@
 # limitations under the License.
 """Private reader component for LeRobotDataset. Handles random-access reading (HF dataset, delta indices, video decoding)."""
 
+import io
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -27,6 +28,8 @@ from lerobot.configs import (
     DEPTH_METER_UNIT,
     DepthEncoderConfig,
 )
+from lerobot.streaming.episode_cache import EpisodeByteCache
+from lerobot.streaming.manifest import EpisodeVideoManifest
 
 from .dataset_metadata import LeRobotDatasetMetadata
 from .depth_utils import MM_PER_METRE, dequantize_depth
@@ -39,7 +42,8 @@ from .io_utils import (
     hf_transform_to_torch,
     load_nested_dataset,
 )
-from .video_utils import decode_video_frames
+from .streaming_sidecar import ensure_dataset_mp4_sidecar
+from .video_utils import decode_video_frames, decode_video_frames_pyav
 
 
 class DatasetReader:
@@ -59,6 +63,7 @@ class DatasetReader:
         image_transforms: Callable | None,
         return_uint8: bool = False,
         depth_output_unit: str = DEFAULT_DEPTH_UNIT,
+        local_episode_loading: bool = False,
     ):
         """Initialize the reader with metadata, filtering, and transform config.
 
@@ -80,6 +85,8 @@ class DatasetReader:
                 instead of normalized float32.
             depth_output_unit: Physical unit depth maps are dequantized to
                 (``"m"`` or ``"mm"``). Defaults to ``"mm"``.
+            local_episode_loading: Read sidecar-indexed episode byte ranges instead of opening
+                complete local MP4 files.
         """
         self._meta = meta
         self.root = root
@@ -91,6 +98,9 @@ class DatasetReader:
         self._image_transforms = image_transforms
         self._return_uint8 = return_uint8
         self._depth_output_unit = depth_output_unit
+        self._local_episode_loading = local_episode_loading
+        self._local_sidecar_path: Path | None = None
+        self._local_video_cache: EpisodeByteCache | None = None
 
         self.hf_dataset: datasets.Dataset | None = None
         self._absolute_to_relative_idx: dict[int, int] | None = None
@@ -134,12 +144,73 @@ class DatasetReader:
             self.hf_dataset = None
             return False
         self._build_index_mapping()
+        self._resolve_local_sidecar()
         return True
 
     def load_and_activate(self) -> None:
         """Load HF dataset from disk and build index mapping. Call after data is on disk."""
         self.hf_dataset = self._load_hf_dataset()
         self._build_index_mapping()
+        self._resolve_local_sidecar()
+
+    def _resolve_local_sidecar(self) -> None:
+        if self._local_episode_loading and self._meta.video_keys:
+            self._local_sidecar_path = ensure_dataset_mp4_sidecar(
+                self._meta,
+                str(self.root),
+                workers=max(1, len(self._meta.video_keys)),
+                range_backend="fsspec",
+            )
+
+    @property
+    def local_video_cache(self) -> EpisodeByteCache | None:
+        return self._local_video_cache
+
+    @property
+    def local_episode_identity(self) -> str | None:
+        return self._local_sidecar_path.name if self._local_sidecar_path is not None else None
+
+    def _get_local_video_cache(self) -> EpisodeByteCache:
+        if self._local_sidecar_path is None:
+            raise RuntimeError("Local episode loading requires a resolved MP4 sidecar")
+        if self._local_video_cache is None:
+            episode_indices = (
+                self.episodes if self.episodes is not None else list(range(self._meta.total_episodes))
+            )
+            workers = max(1, len(self._meta.video_keys))
+            manifest = EpisodeVideoManifest.build(
+                self._meta,
+                self.root,
+                episode_indices=episode_indices,
+                range_backend="fsspec",
+                workers=workers,
+                sidecar_path=self._local_sidecar_path,
+            )
+            self._local_video_cache = EpisodeByteCache(
+                manifest,
+                self.root,
+                byte_budget=8 * 1024**3,
+                workers=workers,
+                range_backend="fsspec",
+                max_open_decoders=64,
+                video_backend=self._video_backend,
+                tolerance_s=self._tolerance_s,
+            )
+        return self._local_video_cache
+
+    def close(self) -> None:
+        cache = getattr(self, "_local_video_cache", None)
+        if cache is not None:
+            cache.close()
+            self._local_video_cache = None
+
+    def __getstate__(self) -> dict:
+        state = self.__dict__.copy()
+        state["_local_video_cache"] = None
+        return state
+
+    def __del__(self) -> None:
+        self.close()
 
     def _build_index_mapping(self) -> None:
         """Build absolute-to-relative index mapping from loaded hf_dataset."""
@@ -273,20 +344,37 @@ class DatasetReader:
         Segmentation Fault.
         """
         ep = self._meta.episodes[ep_idx]
+        local_cache = self._get_local_video_cache() if self._local_episode_loading else None
 
         def _decode_single(vid_key: str, query_ts: list[float]) -> tuple[str, torch.Tensor]:
             from_timestamp = ep[f"videos/{vid_key}/from_timestamp"]
             shifted_query_ts = [from_timestamp + ts for ts in query_ts]
-            video_path = self.root / self._meta.get_video_file_path(ep_idx, vid_key)
-            frames = decode_video_frames(
-                video_path,
-                shifted_query_ts,
-                self._tolerance_s,
-                self._video_backend,
-                return_uint8=self._return_uint8,
-                is_depth=vid_key in self._meta.depth_keys,
-            )
-            if vid_key in self._meta.depth_keys:
+            is_depth = vid_key in self._meta.depth_keys
+            if local_cache is not None:
+                if is_depth:
+                    source_start = local_cache.manifest.lookup(ep_idx, vid_key).source_start_pts
+                    frames = decode_video_frames_pyav(
+                        io.BytesIO(local_cache.get_bytes(ep_idx, vid_key)),
+                        [timestamp - source_start for timestamp in shifted_query_ts],
+                        self._tolerance_s,
+                        return_uint8=False,
+                        is_depth=True,
+                    )
+                else:
+                    frames = local_cache.get_frames(ep_idx, vid_key, shifted_query_ts)
+                    if not self._return_uint8:
+                        frames = frames.to(torch.float32) / 255.0
+            else:
+                video_path = self.root / self._meta.get_video_file_path(ep_idx, vid_key)
+                frames = decode_video_frames(
+                    video_path,
+                    shifted_query_ts,
+                    self._tolerance_s,
+                    self._video_backend,
+                    return_uint8=self._return_uint8,
+                    is_depth=is_depth,
+                )
+            if is_depth:
                 depth_encoder = self._depth_encoder_configs[vid_key]
                 frames = dequantize_depth(
                     frames,

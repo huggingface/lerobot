@@ -19,6 +19,8 @@ Requires: pip install 'lerobot[training]'  (includes dataset + accelerate + wand
 """
 
 import dataclasses
+import hashlib
+import json
 import logging
 import sys
 import time
@@ -40,6 +42,7 @@ from lerobot.common.train_utils import (
     get_step_identifier,
     load_fsdp_optimizer_state,
     load_training_batch_size,
+    load_training_data_state,
     load_training_num_processes,
     load_training_num_workers,
     load_training_state,
@@ -50,8 +53,9 @@ from lerobot.common.train_utils import (
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import JobConfig, parser
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
-from lerobot.datasets.factory import make_train_eval_datasets
+from lerobot.datasets import EpisodeAwareSampler, balanced_episode_shards, compute_sampler_state
+from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+from lerobot.datasets.factory import make_train_eval_datasets, resolve_train_eval_episode_indices
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.jobs import submit_to_hf
 from lerobot.optim.factory import make_optimizer_and_scheduler
@@ -192,6 +196,35 @@ def update_policy(
     return train_metrics, output_dict
 
 
+def _prepare_training_components(
+    accelerator,
+    policy,
+    optimizer,
+    dataloader,
+    lr_scheduler,
+    eval_dataloader,
+    *,
+    rank_sharded: bool,
+):
+    """Prepare training state without re-sharding an already rank-local DataLoader."""
+    if rank_sharded:
+        if eval_dataloader is not None:
+            policy, optimizer, lr_scheduler, eval_dataloader = accelerator.prepare(
+                policy, optimizer, lr_scheduler, eval_dataloader
+            )
+        else:
+            policy, optimizer, lr_scheduler = accelerator.prepare(policy, optimizer, lr_scheduler)
+    elif eval_dataloader is not None:
+        policy, optimizer, dataloader, lr_scheduler, eval_dataloader = accelerator.prepare(
+            policy, optimizer, dataloader, lr_scheduler, eval_dataloader
+        )
+    else:
+        policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
+            policy, optimizer, dataloader, lr_scheduler
+        )
+    return policy, optimizer, dataloader, lr_scheduler, eval_dataloader
+
+
 @parser.wrap()
 def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     """
@@ -269,18 +302,46 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    # Dataset loading synchronization: the global main process downloads once to the shared
-    # dataset root, then a barrier lets every other rank read the already-populated copy.
-    # LeRobotDataset skips its snapshot_download when try_load() succeeds, so no rank re-downloads.
-    if is_main_process:
-        logging.info("Creating dataset")
-        dataset, eval_dataset = make_train_eval_datasets(cfg)
-
-    accelerator.wait_for_everyone()
-
-    # Other ranks read from the shared copy populated by the main process.
-    if not is_main_process:
-        dataset, eval_dataset = make_train_eval_datasets(cfg)
+    local_episode_shards = None
+    local_episode_frame_counts = None
+    if cfg.dataset.local_episode_loading:
+        meta = LeRobotDatasetMetadata(
+            cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
+        )
+        train_episodes = (
+            cfg.dataset.episodes if cfg.dataset.episodes is not None else list(range(meta.total_episodes))
+        )
+        if cfg.dataset.eval_split:
+            train_episodes, _ = resolve_train_eval_episode_indices(
+                meta, train_episodes, cfg.dataset.eval_split
+            )
+        drop_n_last_frames = getattr(cfg.trainable_config, "drop_n_last_frames", 0)
+        local_episode_frame_counts = {
+            episode: max(
+                0,
+                int(meta.episodes[episode]["dataset_to_index"] - meta.episodes[episode]["dataset_from_index"])
+                - drop_n_last_frames,
+            )
+            for episode in train_episodes
+        }
+        local_episode_shards = balanced_episode_shards(
+            train_episodes, local_episode_frame_counts, world_size=accelerator.num_processes
+        )
+        rank_episodes = local_episode_shards[accelerator.process_index]
+        if not rank_episodes or not sum(local_episode_frame_counts[ep] for ep in rank_episodes):
+            raise ValueError(
+                "This rank owns no episodes. Reduce the distributed world size or select more episodes."
+            )
+        dataset, eval_dataset = make_train_eval_datasets(cfg, train_episodes=rank_episodes)
+    else:
+        # The global main process downloads once to the shared dataset root, then every other rank
+        # reads the already-populated copy.
+        if is_main_process:
+            logging.info("Creating dataset")
+            dataset, eval_dataset = make_train_eval_datasets(cfg)
+        accelerator.wait_for_everyone()
+        if not is_main_process:
+            dataset, eval_dataset = make_train_eval_datasets(cfg)
 
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
@@ -429,21 +490,40 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # create dataloader for offline training
+    local_data_state = None
     if not cfg.dataset.streaming:
         # All non-streaming (map-style) datasets use EpisodeAwareSampler.
         # The order is a pure function of (seed, epoch), so every rank independently produces the
-        # same permutation. accelerate then shards it disjointly across ranks via BatchSamplerShard
-        # without needing a `generator` attribute to synchronize an RNG, and resume is sample-exact.
+        # same permutation. Accelerate shards the ordinary path; local episode loading instead
+        # gives each rank a complete-episode subset and pads only after exact local coverage.
         shuffle = False
+        drop_n_last_frames = getattr(active_cfg, "drop_n_last_frames", 0)
+        pad_to_num_frames = None
+        if local_episode_shards is not None:
+            pad_to_num_frames = max(
+                sum(local_episode_frame_counts[episode] for episode in shard)
+                for shard in local_episode_shards
+            )
         sampler = EpisodeAwareSampler(
             dataset.meta.episodes["dataset_from_index"],
             dataset.meta.episodes["dataset_to_index"],
             episode_indices_to_use=dataset.episodes,
-            drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
+            drop_n_last_frames=drop_n_last_frames,
             shuffle=True,
             seed=cfg.seed if cfg.seed is not None else 0,
             absolute_to_relative_idx=dataset.absolute_to_relative_idx,
+            pad_to_num_frames=pad_to_num_frames,
         )
+        if cfg.dataset.local_episode_loading:
+            local_data_state = {
+                "partition": "episode-lpt-v1",
+                "partition_digest": hashlib.sha256(
+                    json.dumps(local_episode_shards, separators=(",", ":")).encode()
+                ).hexdigest(),
+                "world_size": accelerator.num_processes,
+                "batch_size": cfg.batch_size,
+                "sidecar": dataset.local_episode_identity,
+            }
         if cfg.resume and step > 0:
             # The resume offset depends on the (num_processes, batch_size) that produced `step`, so
             # use the values recorded in the checkpoint (falling back to the current ones for older
@@ -452,19 +532,54 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             saved_batch_size = load_training_batch_size(cfg.checkpoint_path)
             ckpt_num_processes = saved_num_processes or accelerator.num_processes
             ckpt_batch_size = saved_batch_size or cfg.batch_size
-            if is_main_process and saved_num_processes not in (None, accelerator.num_processes):
+            if (
+                is_main_process
+                and not cfg.dataset.local_episode_loading
+                and saved_num_processes not in (None, accelerator.num_processes)
+            ):
                 logging.warning(
                     f"Resuming with num_processes={accelerator.num_processes} but the checkpoint was "
                     f"written with num_processes={saved_num_processes}. The data order resumes at the "
                     "right epoch/offset, but per-rank sample-exactness requires the same world size."
                 )
-            if is_main_process and saved_batch_size not in (None, cfg.batch_size):
+            if (
+                is_main_process
+                and not cfg.dataset.local_episode_loading
+                and saved_batch_size not in (None, cfg.batch_size)
+            ):
                 logging.warning(
                     f"Resuming with batch_size={cfg.batch_size} but the checkpoint was written with "
                     f"batch_size={saved_batch_size}. The data order resumes at the right epoch/offset, "
                     "but per-rank sample-exactness requires the same batch size."
                 )
-            sampler_state = compute_sampler_state(step, len(sampler), ckpt_batch_size, ckpt_num_processes)
+            if cfg.dataset.local_episode_loading:
+                saved_data_state = load_training_data_state(cfg.checkpoint_path)
+                comparable_state = (
+                    {key: saved_data_state.get(key) for key in local_data_state}
+                    if saved_data_state is not None
+                    else None
+                )
+                if (
+                    saved_data_state is not None
+                    and "sampler" in saved_data_state
+                    and comparable_state == local_data_state
+                ):
+                    sampler_state = saved_data_state["sampler"]
+                elif saved_data_state is not None:
+                    sampler_state = {
+                        "epoch": int(saved_data_state.get("sampler", {}).get("epoch", 0)),
+                        "start_index": 0,
+                    }
+                    if is_main_process:
+                        logging.warning(
+                            "Local episode topology, batch size, or source identity changed; "
+                            "restarting data at coverage epoch %d instead of claiming sample-exact resume.",
+                            sampler_state["epoch"],
+                        )
+                else:
+                    sampler_state = compute_sampler_state(step, len(sampler), ckpt_batch_size, 1)
+            else:
+                sampler_state = compute_sampler_state(step, len(sampler), ckpt_batch_size, ckpt_num_processes)
             sampler.load_state_dict(sampler_state)
             if is_main_process:
                 logging.info(
@@ -569,23 +684,16 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     # Prepare everything with accelerator
     accelerator.wait_for_everyone()
-    if cfg.dataset.streaming:
-        # StreamingLeRobotDataset already assigns complete episodes disjointly to ranks and workers.
-        # Preparing this loader would make Accelerate shard its batches a second time.
-        if eval_dataloader is not None:
-            policy, optimizer, lr_scheduler, eval_dataloader = accelerator.prepare(
-                policy, optimizer, lr_scheduler, eval_dataloader
-            )
-        else:
-            policy, optimizer, lr_scheduler = accelerator.prepare(policy, optimizer, lr_scheduler)
-    elif eval_dataloader is not None:
-        policy, optimizer, dataloader, lr_scheduler, eval_dataloader = accelerator.prepare(
-            policy, optimizer, dataloader, lr_scheduler, eval_dataloader
-        )
-    else:
-        policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
-            policy, optimizer, dataloader, lr_scheduler
-        )
+    # Streaming and local episode loaders already assign complete episodes disjointly to ranks.
+    policy, optimizer, dataloader, lr_scheduler, eval_dataloader = _prepare_training_components(
+        accelerator,
+        policy,
+        optimizer,
+        dataloader,
+        lr_scheduler,
+        eval_dataloader,
+        rank_sharded=cfg.dataset.streaming or cfg.dataset.local_episode_loading,
+    )
 
     # FSDP optimizer state is sharded across ranks, so it can only be loaded once the optimizer and
     # model are FSDP-wrapped (i.e. after `prepare`). Collective: every rank must participate.
@@ -641,7 +749,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
-        if cfg.dataset.streaming:
+        if cfg.dataset.streaming or cfg.dataset.local_episode_loading:
             batch = send_to_device(batch, device, non_blocking=device.type == "cuda")
         for cam_key in dataset.meta.camera_keys:
             if cam_key in batch and batch[cam_key].dtype == torch.uint8:
@@ -740,6 +848,14 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     num_processes=accelerator.num_processes,
                     batch_size=cfg.batch_size,
                     num_workers=train_num_workers if cfg.dataset.streaming else cfg.num_workers,
+                    data_state=(
+                        {
+                            **local_data_state,
+                            "sampler": compute_sampler_state(step, len(sampler), cfg.batch_size, 1),
+                        }
+                        if local_data_state is not None
+                        else None
+                    ),
                     model_state_dict=model_state_dict,
                     optim_state_dict=optim_state_dict,
                 )

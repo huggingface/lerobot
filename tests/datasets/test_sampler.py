@@ -187,6 +187,15 @@ def test_sampler_rejects_padding_shorter_than_coverage_epoch():
         EpisodeAwareSampler([0], [5], pad_to_num_frames=4)
 
 
+def test_padded_sampler_resume_is_sample_exact():
+    reference = EpisodeAwareSampler([0], [5], shuffle=True, seed=42, pad_to_num_frames=8)
+    epoch = list(reference)
+    resumed = EpisodeAwareSampler([0], [5], shuffle=True, seed=42, pad_to_num_frames=8)
+    resumed.load_state_dict({"epoch": 0, "start_index": 6})
+
+    assert list(resumed) == epoch[6:]
+
+
 # --- seeded (seed, epoch) shuffling, resume, and state ---
 
 from lerobot.datasets.sampler import compute_sampler_state  # noqa: E402

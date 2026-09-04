@@ -264,6 +264,9 @@ class TrainPipelineConfig(HubMixin):
         if isinstance(self.dataset.repo_id, list):
             raise NotImplementedError("LeRobotMultiDataset is not currently implemented.")
 
+        if self.dataset.local_episode_loading and self.sample_weighting is not None:
+            raise ValueError("local_episode_loading does not support sample_weighting")
+
         if not self.use_policy_training_preset and (self.optimizer is None or self.scheduler is None):
             raise ValueError("Optimizer and Scheduler must be set when the policy presets are not used.")
         elif self.use_policy_training_preset and not self.resume:

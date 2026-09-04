@@ -15,12 +15,30 @@
 # limitations under the License.
 import logging
 import math
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 
 import numpy as np
 import torch
 
 logger = logging.getLogger(__name__)
+
+
+def balanced_episode_shards(
+    episode_indices: list[int],
+    episode_frame_counts: Mapping[int, int],
+    *,
+    world_size: int,
+) -> list[list[int]]:
+    """Assign whole episodes deterministically with greedy frame-count balancing."""
+    if world_size <= 0:
+        raise ValueError("world_size must be positive")
+    shards: list[list[int]] = [[] for _ in range(world_size)]
+    shard_frames = [0] * world_size
+    for episode in sorted(episode_indices, key=lambda item: (-episode_frame_counts[item], item)):
+        rank = min(range(world_size), key=lambda item: (shard_frames[item], item))
+        shards[rank].append(episode)
+        shard_frames[rank] += episode_frame_counts[episode]
+    return shards
 
 
 class EpisodeAwareSampler:
@@ -54,6 +72,7 @@ class EpisodeAwareSampler:
         shuffle: bool = False,
         seed: int = 0,
         absolute_to_relative_idx: dict[int, int] | None = None,
+        pad_to_num_frames: int | None = None,
     ):
         """
         Args:
@@ -64,6 +83,8 @@ class EpisodeAwareSampler:
             drop_n_last_frames: Frames to drop from the end of each episode.
             shuffle: Whether to shuffle the indices.
             seed: Seed the permutation is derived from (together with the epoch).
+            pad_to_num_frames: Repeat the shuffled epoch prefix after exact coverage until this
+                many samples are yielded. Used to synchronize uneven rank-local episode shards.
         """
         if drop_n_first_frames < 0:
             raise ValueError(f"drop_n_first_frames must be >= 0, got {drop_n_first_frames}")
@@ -104,6 +125,11 @@ class EpisodeAwareSampler:
         self._starts = starts[used]
         self._cum_lengths = np.cumsum(lengths[used])
         self._num_frames = int(self._cum_lengths[-1])
+        if pad_to_num_frames is not None and pad_to_num_frames < self._num_frames:
+            raise ValueError(
+                f"pad_to_num_frames ({pad_to_num_frames}) must be >= valid frames ({self._num_frames})"
+            )
+        self._num_samples = pad_to_num_frames or self._num_frames
         self.shuffle = shuffle
         self.seed = seed
         self._epoch = 0
@@ -149,14 +175,14 @@ class EpisodeAwareSampler:
     def _iter_epoch(self, epoch: int, start: int) -> Iterator[int]:
         if self.shuffle:
             order = torch.randperm(self._num_frames, generator=self._epoch_generator(epoch))
-            for k in range(start, self._num_frames):
-                yield self._frame_index(int(order[k]))
+            for k in range(start, self._num_samples):
+                yield self._frame_index(int(order[k % self._num_frames]))
         else:
-            for k in range(start, self._num_frames):
-                yield self._frame_index(k)
+            for k in range(start, self._num_samples):
+                yield self._frame_index(k % self._num_frames)
 
     def __len__(self) -> int:
-        return self._num_frames
+        return self._num_samples
 
 
 def compute_sampler_state(step: int, num_frames: int, batch_size: int, num_processes: int) -> dict:

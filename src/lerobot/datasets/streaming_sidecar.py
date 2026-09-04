@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import shutil
 from pathlib import Path
@@ -54,13 +55,26 @@ def make_sidecar_spec(meta: LeRobotDatasetMetadata, data_root: str) -> SidecarSp
     source_files: tuple[tuple[str, int | None], ...]
     if root.is_dir():
         source_files = tuple((path, (root / path).stat().st_size) for path in relative_paths)
+        digest = hashlib.sha256()
+        for path, size in source_files:
+            source = root / path
+            stat = source.stat()
+            digest.update(f"{path}\0{size}\0{stat.st_mtime_ns}\0".encode())
+            with source.open("rb") as file:
+                digest.update(file.read(64 * 1024))
+                if size > 64 * 1024:
+                    file.seek(max(0, size - 64 * 1024))
+                    digest.update(file.read(64 * 1024))
+        source_fingerprint = digest.hexdigest()
     else:
         source_files = tuple((path, None) for path in relative_paths)
+        source_fingerprint = None
     return SidecarSpec(
         repo_id=meta.repo_id,
         revision=str(meta.revision),
         data_root=data_root.rstrip("/"),
         source_files=source_files,
+        source_fingerprint=source_fingerprint,
     )
 
 

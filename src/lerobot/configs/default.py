@@ -62,8 +62,14 @@ class DatasetConfig:
     streaming_native_http_subranges: int = 1
     # Fraction of episodes held out per task for offline evaluation (0.0 = disabled).
     eval_split: float = 0.0
+    # Keep map-style indexing while reading episode-local MP4 byte ranges from local storage.
+    local_episode_loading: bool = False
 
     def __post_init__(self) -> None:
+        if self.local_episode_loading and self.streaming:
+            raise ValueError("local_episode_loading and streaming are mutually exclusive")
+        if self.local_episode_loading and self.root is None:
+            raise ValueError("local_episode_loading requires root to point to a local dataset")
         if self.depth_output_unit not in (DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT):
             raise ValueError(
                 f"depth_output_unit must be '{DEPTH_METER_UNIT}' or '{DEPTH_MILLIMETER_UNIT}', got {self.depth_output_unit!r}"

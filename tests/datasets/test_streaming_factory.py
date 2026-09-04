@@ -82,7 +82,7 @@ def test_factory_wires_local_episode_loading(monkeypatch):
     monkeypatch.setattr(factory, "resolve_delta_timestamps", lambda *args, **kwargs: None)
     monkeypatch.setattr(factory, "LeRobotDataset", DummyDataset)
     cfg = SimpleNamespace(
-        dataset=DatasetConfig(repo_id="owner/dataset", local_episode_loading=True),
+        dataset=DatasetConfig(repo_id="owner/dataset", root="dataset", local_episode_loading=True),
         trainable_config=object(),
         num_workers=2,
         tolerance_s=1e-4,
@@ -91,3 +91,22 @@ def test_factory_wires_local_episode_loading(monkeypatch):
     factory.make_dataset(cfg)
 
     assert captured["kwargs"]["local_episode_loading"] is True
+
+
+def test_train_eval_split_is_per_task_and_honors_selection():
+    meta = SimpleNamespace(
+        total_episodes=6,
+        episodes=[
+            {"tasks": ["a"]},
+            {"tasks": ["b"]},
+            {"tasks": ["a"]},
+            {"tasks": ["b"]},
+            {"tasks": ["a"]},
+            {"tasks": ["b"]},
+        ],
+    )
+
+    train, evaluation = factory.resolve_train_eval_episode_indices(meta, [0, 1, 2, 3], 0.5)
+
+    assert train == [0, 1]
+    assert evaluation == [2, 3]

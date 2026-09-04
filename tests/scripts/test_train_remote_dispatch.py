@@ -25,7 +25,11 @@ from lerobot.configs.train import TrainPipelineConfig  # noqa: E402
 from lerobot.policies.act.configuration_act import (
     ACTConfig,  # noqa: E402, F401  (registers --policy.type act)
 )
-from lerobot.scripts.lerobot_train import _remote_target_in_argv, train  # noqa: E402
+from lerobot.scripts.lerobot_train import (  # noqa: E402
+    _prepare_training_components,
+    _remote_target_in_argv,
+    train,
+)
 
 
 def _set_argv(monkeypatch, *args):
@@ -65,3 +69,29 @@ def test_train_dispatches_to_submit_when_remote(monkeypatch):
     # Returns the submitter's result and never enters the local training path.
     assert train(cfg) == "submitted"
     assert captured == [cfg]
+
+
+def test_rank_sharded_loader_is_not_prepared_twice():
+    class FakeAccelerator:
+        def __init__(self):
+            self.prepared = None
+
+        def prepare(self, *objects):
+            self.prepared = objects
+            return objects
+
+    accelerator = FakeAccelerator()
+    policy, optimizer, dataloader, scheduler, evaluation = (object() for _ in range(5))
+
+    prepared = _prepare_training_components(
+        accelerator,
+        policy,
+        optimizer,
+        dataloader,
+        scheduler,
+        evaluation,
+        rank_sharded=True,
+    )
+
+    assert dataloader not in accelerator.prepared
+    assert prepared == (policy, optimizer, dataloader, scheduler, evaluation)
