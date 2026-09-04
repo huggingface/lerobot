@@ -180,10 +180,11 @@ See `create_libero_envs()` (multi-suite, multi-task) and `create_metaworld_envs(
 
 ### 2. The config (`src/lerobot/envs/configs.py`)
 
-Register a config dataclass so users can select your benchmark with `--env.type=<name>`. Each config owns its environment creation and processor logic via two methods:
+Register a config dataclass so users can select your benchmark with `--env.type=<name>`. Each config owns its environment creation, processor logic and platform requirements via three methods:
 
 - **`create_envs(n_envs, use_async_envs)`** — Returns `{suite: {task_id: VectorEnv}}`. The base class default uses `gym.make()` for single-task envs. Multi-task benchmarks override this.
 - **`get_env_processors()`** — Returns `(preprocessor, postprocessor)`. The base class default returns identity (no-op) pipelines. Override if your benchmark needs observation/action transforms.
+- **`validate_platform()`** — Raises when the benchmark cannot run on the current machine. The base class default is a no-op. `TrainPipelineConfig.validate()` calls it at startup, before the dataset is downloaded, so override it if your dependency carries a platform marker (see step 4).
 
 ```python
 @EnvConfig.register_subclass("<benchmark_name>")
@@ -264,7 +265,7 @@ mybenchmark = ["my-benchmark-pkg==1.2.3", "lerobot[scipy-dep]"]
 Pinning rules:
 
 - **Always pin** benchmark packages to exact versions for reproducibility (e.g. `metaworld==3.0.0`).
-- **Add platform markers** when needed (e.g. `; sys_platform == 'linux'`).
+- **Add platform markers** when needed (e.g. `; sys_platform == 'linux'`). A marked dependency is skipped silently on other platforms and the install still succeeds, so pair it with a `validate_platform()` override (see step 2) or users only find out at the first rollout.
 - **Pin fragile transitive deps** if known (e.g. `gymnasium==1.1.0` for Meta-World).
 - **Document constraints** in your benchmark doc page.
 
