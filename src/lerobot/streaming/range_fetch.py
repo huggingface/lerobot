@@ -6,6 +6,7 @@
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 
+"""Thread-local fsspec and pooled native-HTTP byte-range readers."""
 
 from __future__ import annotations
 
@@ -114,6 +115,7 @@ class ThreadLocalRangeFetcher:
         cache_type: str = "none",
         token: str | bool | None = None,
     ):
+        """Configure independent thread-local handles for a data root."""
         self.data_root = str(data_root).rstrip("/")
         storage_options = {"token": token} if token is not None and self.data_root.startswith("hf://") else {}
         self.fs, self._root_path = fsspec.core.url_to_fs(self.data_root, **storage_options)
@@ -156,9 +158,11 @@ class ThreadLocalRangeFetcher:
         return handle
 
     def info_size(self, relative_path: str) -> int:
+        """Return the source file size."""
         return int(self.fs.info(self._url(relative_path))["size"])
 
     def read_range(self, relative_path: str, offset: int, length: int) -> bytes:
+        """Read an exact byte range and accumulate timing counters."""
         open_start = time.perf_counter()
         handle = self._handle(relative_path)
         open_s = time.perf_counter() - open_start
@@ -316,10 +320,12 @@ class ThreadLocalRangeFetcher:
         self._record_timing(**timings)
 
     def timing_summary(self) -> dict[str, float]:
+        """Return accumulated range and HTTP retry timings."""
         with self._timing_lock:
             return dict(self._timing_totals)
 
     def close(self) -> None:
+        """Close every thread-local source handle."""
         with self._handles_lock:
             handles = list(self._all_handles.values())
             self._all_handles.clear()
@@ -360,6 +366,7 @@ class NativeHTTPRangeFetcher:
         subrange_min_bytes: int = 8 * 1024 * 1024,
         token: str | bool | None = None,
     ):
+        """Configure direct pooled range requests for an HF object-store root."""
         self.data_root = str(data_root).rstrip("/")
         if not self.data_root.startswith("hf://"):
             raise ValueError("NativeHTTPRangeFetcher only supports hf:// roots")
@@ -501,6 +508,7 @@ class NativeHTTPRangeFetcher:
             response.close()
 
     def info_size(self, relative_path: str) -> int:
+        """Resolve and cache a remote source file size."""
         with self._lock:
             size = self._sizes.get(relative_path)
             if size is not None:
@@ -530,6 +538,7 @@ class NativeHTTPRangeFetcher:
             response.close()
 
     def read_range(self, relative_path: str, offset: int, length: int) -> bytes:
+        """Read a remote byte range, optionally split across pooled requests."""
         parts = self.subrange_parts
         if self._subrange_pool is None or parts <= 1 or length < 2 * self.subrange_min_bytes:
             return self._read_range_single(relative_path, offset, length)
@@ -708,10 +717,12 @@ class NativeHTTPRangeFetcher:
                 self._timing_totals[key] = self._timing_totals.get(key, 0.0) + value
 
     def timing_summary(self) -> dict[str, float]:
+        """Return accumulated request and range timings."""
         with self._timing_lock:
             return dict(self._timing_totals)
 
     def close(self) -> None:
+        """Close the HTTP client and subrange executor."""
         if self._subrange_pool is not None:
             self._subrange_pool.shutdown(wait=False, cancel_futures=True)
         self.client.close()
@@ -728,6 +739,7 @@ def make_range_fetcher(
     native_http_subranges: int = 1,
     token: str | bool | None = None,
 ):
+    """Construct the configured local/fsspec or native-HTTP range reader."""
     if range_backend == "fsspec":
         return ThreadLocalRangeFetcher(data_root, token=token)
     if range_backend == "native-http":

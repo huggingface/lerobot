@@ -6,6 +6,7 @@
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 
+"""Episode-to-MP4 byte-span manifests and sidecar serialization."""
 
 from __future__ import annotations
 
@@ -34,6 +35,8 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class EpisodeVideoSpan:
+    """Indexed media span for one episode and camera."""
+
     file_id: int
     mdat_offset: int
     mdat_length: int
@@ -47,12 +50,16 @@ class EpisodeVideoSpan:
 
 @dataclass(frozen=True)
 class VideoFileRecord:
+    """Source file metadata and parsed MP4 sample index."""
+
     file_path: str
     file_size: int
     mp4: Mp4Index
 
 
 class EpisodeVideoManifest:
+    """Map episode-camera pairs to source byte spans and MP4 metadata."""
+
     _FILE_SIDECAR_CACHE: dict[str, tuple[tuple[int, int], dict[str, VideoFileRecord]]] = {}
     _FILE_SIDECAR_CACHE_LOCK = threading.Lock()
 
@@ -63,6 +70,7 @@ class EpisodeVideoManifest:
         files: list[VideoFileRecord],
         spans: dict[str, np.ndarray],
     ):
+        """Store video keys, indexed source files, and episode span arrays."""
         self.video_keys = list(video_keys)
         self._camera_to_id = {key: idx for idx, key in enumerate(self.video_keys)}
         self.files = files
@@ -84,6 +92,7 @@ class EpisodeVideoManifest:
         sidecar_path: str | Path | None = None,
         token: str | bool | None = None,
     ) -> EpisodeVideoManifest:
+        """Build episode spans from source MP4s or a validated file sidecar."""
         meta.ensure_readable()
         video_keys = list(meta.video_keys)
         if episode_indices is None:
@@ -208,6 +217,7 @@ class EpisodeVideoManifest:
         max_probe_bytes: int = 64 * 1024 * 1024,
         token: str | bool | None = None,
     ) -> None:
+        """Index source files and write a reusable sidecar."""
         records = cls._build_file_records(
             sorted(set(rel_paths)),
             data_root,
@@ -226,6 +236,7 @@ class EpisodeVideoManifest:
         *,
         spec: SidecarSpec,
     ) -> None:
+        """Serialize source records and sample arrays to an NPZ sidecar."""
         sidecar_path = Path(sidecar_path)
         sidecar_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -252,6 +263,7 @@ class EpisodeVideoManifest:
 
     @staticmethod
     def load_file_sidecar_metadata(sidecar_path: str | Path) -> dict[str, Any]:
+        """Load and validate the sidecar identity metadata."""
         with np.load(sidecar_path, allow_pickle=False) as data:
             payload = json.loads(bytes(data["manifest_json"]).decode("utf-8"))
         if payload.get("version") != 2 or not isinstance(payload.get("sidecar"), dict):
@@ -260,6 +272,7 @@ class EpisodeVideoManifest:
 
     @staticmethod
     def validate_file_sidecar(sidecar_path: str | Path, spec: SidecarSpec) -> bool:
+        """Return whether a sidecar matches its expected source specification."""
         try:
             from lerobot.streaming.sidecar import SidecarSpec
 
@@ -276,6 +289,7 @@ class EpisodeVideoManifest:
 
     @staticmethod
     def load_file_sidecar(sidecar_path: str | Path) -> dict[str, VideoFileRecord]:
+        """Load indexed source records, reusing an unchanged process-local cache."""
         path = Path(sidecar_path).expanduser()
         cache_key = str(path)
         stat = path.stat()
@@ -308,9 +322,11 @@ class EpisodeVideoManifest:
         return records
 
     def camera_id(self, camera_key: str) -> int:
+        """Return the dense manifest index for a camera key."""
         return self._camera_to_id[camera_key]
 
     def lookup(self, episode_index: int, camera_key: str) -> EpisodeVideoSpan:
+        """Return the indexed source span for an episode camera."""
         cam = self.camera_id(camera_key)
         return EpisodeVideoSpan(
             file_id=int(self.spans["file_id"][episode_index, cam]),
@@ -325,12 +341,15 @@ class EpisodeVideoManifest:
         )
 
     def file_lookup(self, file_id: int) -> VideoFileRecord:
+        """Return a source record by dense file identifier."""
         return self.files[file_id]
 
     def mp4_index(self, episode_index: int, camera_key: str) -> Mp4Index:
+        """Return the source MP4 index for an episode camera."""
         return self.files[self.lookup(episode_index, camera_key).file_id].mp4
 
     def sample_slice(self, episode_index: int, camera_key: str) -> Mp4SampleSlice:
+        """Return the sample-table slice for an episode camera."""
         span = self.lookup(episode_index, camera_key)
         return Mp4SampleSlice(
             sample_lo=span.sample_lo,

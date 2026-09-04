@@ -33,6 +33,8 @@ class SidecarLockTimeoutError(TimeoutError):
 
 @dataclass(frozen=True)
 class SidecarSpec:
+    """Identity and source-file contract for an MP4 index sidecar."""
+
     repo_id: str
     revision: str
     data_root: str
@@ -40,6 +42,7 @@ class SidecarSpec:
     schema_version: int = SIDECAR_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
+        """Validate and normalize the immutable source-file list."""
         if not self.repo_id:
             raise ValueError("repo_id must not be empty")
         if not self.revision:
@@ -52,6 +55,7 @@ class SidecarSpec:
         object.__setattr__(self, "source_files", normalized)
 
     def to_dict(self) -> dict[str, object]:
+        """Serialize the sidecar specification."""
         return {
             "schema_version": self.schema_version,
             "repo_id": self.repo_id,
@@ -62,6 +66,7 @@ class SidecarSpec:
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> SidecarSpec:
+        """Parse and validate a serialized sidecar specification."""
         source_files = data.get("source_files")
         if not isinstance(source_files, list):
             raise ValueError("MP4 sidecar source_files must be a list")
@@ -80,6 +85,7 @@ class SidecarSpec:
         )
 
     def with_source_files(self, source_files: tuple[tuple[str, int], ...]) -> SidecarSpec:
+        """Return a copy with resolved source sizes."""
         return SidecarSpec(
             repo_id=self.repo_id,
             revision=self.revision,
@@ -89,6 +95,7 @@ class SidecarSpec:
         )
 
     def matches(self, candidate: SidecarSpec) -> bool:
+        """Return whether a candidate satisfies this expected specification."""
         if (
             self.schema_version != candidate.schema_version
             or self.repo_id != candidate.repo_id
@@ -108,6 +115,7 @@ SidecarDownloader = Callable[[Path, SidecarSpec], bool]
 
 
 def sidecar_cache_path(cache_root: str | Path, spec: SidecarSpec) -> Path:
+    """Derive a revision-keyed local cache path for a sidecar."""
     identity = json.dumps(
         {
             "schema_version": spec.schema_version,
@@ -139,7 +147,6 @@ def ensure_mp4_sidecar(
     This function never uploads. ``download`` and ``build`` must write only to the temporary path
     provided to them; a validated file becomes visible at the cache path through ``os.replace``.
     """
-
     destination = sidecar_cache_path(cache_root, spec)
     if EpisodeVideoManifest.validate_file_sidecar(destination, spec):
         return destination

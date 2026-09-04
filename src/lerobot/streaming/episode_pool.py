@@ -6,6 +6,7 @@
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 
+"""Deterministic bounded-pool sampling with exact episode-frame coverage."""
 
 from __future__ import annotations
 
@@ -53,6 +54,7 @@ class ExactCoveragePool:
         episode_byte_sizes: Mapping[int, int] | None = None,
         byte_budget: int | None = None,
     ):
+        """Build a seeded admission plan under optional compressed-byte limits."""
         self._counts = {int(ep): int(n) for ep, n in episode_frame_counts if int(n) > 0}
         self._rng = np.random.default_rng([seed, epoch])
         order = np.array(sorted(self._counts), dtype=np.int64)
@@ -118,6 +120,7 @@ class ExactCoveragePool:
 
     @property
     def remaining_total(self) -> int:
+        """Return the number of frames not yet emitted."""
         return self._remaining_total
 
     @property
@@ -127,10 +130,12 @@ class ExactCoveragePool:
 
     @property
     def resident(self) -> list[int]:
+        """Return the currently admitted episode indices."""
         return list(self._remaining)
 
     @property
     def resident_bytes(self) -> int:
+        """Return indexed bytes for the currently admitted episodes."""
         return self._resident_bytes
 
     def prefetch_candidates(self, count: int) -> list[int]:
@@ -140,9 +145,11 @@ class ExactCoveragePool:
         return self._pending[:count]
 
     def __iter__(self) -> ExactCoveragePool:
+        """Return this stateful planner as an iterator."""
         return self
 
     def __next__(self) -> tuple[int, int]:
+        """Emit the next episode and frame index in the coverage plan."""
         if self._remaining_total == 0:
             raise StopIteration
         # Uniform draw over all remaining frames in the pool: walk the residents by cumulative
