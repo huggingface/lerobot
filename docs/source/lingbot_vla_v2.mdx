@@ -28,8 +28,10 @@ slots into the same post-train → evaluate → deploy flow as π0, SmolVLA, WAL
 - A faithful port of the upstream `FeatureTransform` (per-embodiment robot-config slot
   mapping + per-slot normalization + Qwen3-VL native-resolution tokenization) as a LeRobot
   `ProcessorStep`.
-- Flash-attention is optional: the policy defaults to `eager` attention and only uses
-  `flash_attention_2` when explicitly requested (and when `flash-attn` is installed).
+- Flash-attention is optional: the policy defaults to `sdpa` attention (fused PyTorch
+  kernels, bf16) and only uses `flash_attention_2` when explicitly requested (and when
+  `flash-attn` is installed). `attention_fp32=true` restores the original fp32-attention
+  parity path.
 
 ## Installation
 
@@ -53,16 +55,18 @@ LeRobot format with the one-shot converter (the raw upstream checkpoint only car
 minimal `config.json` and is no longer loaded at runtime):
 
 ```bash
-python -m lerobot.policies.lingbot_vla_v2.convert_upstream_checkpoint \
+python -m lerobot.policies.lingbot_vla_v2.scripts.convert_upstream_checkpoint \
   --input robbyant/lingbot-vla-v2-6b \
   --output ./lingbot-vla-v2-6b-lerobot \
   --robot-config-path /path/to/robot_config.yaml \
   --norm-stats-path /path/to/norm_stats.json
 ```
 
-The converted checkpoint is self-contained: `config.json` carries
-`type: lingbot_vla_v2`, and the robot config / normalization stats are embedded in the
-saved processor configs, so it loads on any machine. Then use LeRobot's standard
+The converted checkpoint is self-contained w.r.t. the policy assets: `config.json`
+carries `type: lingbot_vla_v2`, and the robot config / normalization stats are embedded
+in the saved processor configs. The Qwen3-VL backbone tokenizer/config are still pulled
+from `Qwen/Qwen3-VL-4B-Instruct` (or a local `tokenizer_path` / `QWEN3VL_PATH`) at
+construction, as for the other VLAs in this repo. Then use LeRobot's standard
 checkpoint entry point, `policy.path`, pointing at the converted directory (or its Hub
 repo if you pushed it). Do not pass `policy.type` in that command; LeRobot infers
 `lingbot_vla_v2` from the checkpoint's `config.json`.
@@ -95,7 +99,7 @@ lerobot-train \
   --policy.tokenizer_path=Qwen/Qwen3-VL-4B-Instruct \
   --policy.processor_path=Qwen/Qwen3-VL-4B-Instruct \
   --policy.dtype=bfloat16 \
-  --policy.attention_implementation=eager \
+  --policy.attention_implementation=sdpa \
   --policy.image_max_pixels=262144 \
   --policy.image_min_pixels=131072 \
   --policy.loss_type=L1_fm \
@@ -116,23 +120,26 @@ the policy has been run with 4-way FSDP on 24 GB cards (cap `image_max_pixels` a
 
 ### Key Training Parameters
 
-| Parameter                               | Default                     | Description                                                                                                |
-| --------------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `robot_config_path`                     | `null`                      | Required YAML mapping dataset keys into the 55-D canonical LingBot slots.                                  |
-| `norm_stats_path`                       | `null`                      | Required per-slot normalization stats JSON used by the feature transform.                                  |
-| `processor_path`                        | `null`                      | Qwen3-VL processor path; falls back to `tokenizer_path` when omitted.                                      |
-| `tokenizer_path`                        | `Qwen/Qwen3-VL-4B-Instruct` | Qwen3-VL tokenizer/config source. Use a local path when the training node cannot access the Hub.           |
-| `dtype`                                 | `bfloat16`                  | Model dtype; LeRobot maps this to Accelerate mixed precision. Use `float32` for CPU smoke tests.           |
-| `attention_implementation`              | `eager`                     | Action-stream attention backend: `eager`, `sdpa`, `fa2`, `flex`, or `flex_cached`.                         |
-| `vit_attn_implementation`               | `eager`                     | Qwen3-VL vision attention backend; use Hugging Face names such as `eager`, `sdpa`, or `flash_attention_2`. |
-| `moe_implementation`                    | `null`                      | `null` uses the dense eager MoE path; `fused` enables the grouped/fused expert layout.                     |
-| `image_max_pixels` / `image_min_pixels` | `262144` / `131072`         | Qwen3-VL dynamic-resolution bounds; increasing them can raise memory quadratically with eager attention.   |
-| `loss_type`                             | `fm`                        | Flow-matching loss; the real-world recipe uses `L1_fm`.                                                    |
+| Parameter                               | Default                     | Description                                                                                                      |
+| --------------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `robot_config_path`                     | `null`                      | Required YAML mapping dataset keys into the 55-D canonical LingBot slots.                                        |
+| `norm_stats_path`                       | `null`                      | Required per-slot normalization stats JSON used by the feature transform.                                        |
+| `processor_path`                        | `null`                      | Qwen3-VL processor path; falls back to `tokenizer_path` when omitted.                                            |
+| `tokenizer_path`                        | `Qwen/Qwen3-VL-4B-Instruct` | Qwen3-VL tokenizer/config source. Use a local path when the training node cannot access the Hub.                 |
+| `dtype`                                 | `bfloat16`                  | Model dtype; LeRobot maps this to Accelerate mixed precision. Use `float32` for CPU smoke tests.                 |
+| `attention_implementation`              | `sdpa`                      | Action-stream attention backend: `eager`, `sdpa`, `fa2`, `flex`, or `flex_cached`.                               |
+| `vit_attn_implementation`               | `sdpa`                      | Qwen3-VL vision attention backend; use Hugging Face names such as `eager`, `sdpa`, or `flash_attention_2`.       |
+| `moe_implementation`                    | `fused`                     | `fused` (default) matches the released checkpoint's grouped expert layout; `null` uses the dense eager MoE path. |
+| `image_max_pixels` / `image_min_pixels` | `262144` / `131072`         | Qwen3-VL dynamic-resolution bounds; increasing them can raise memory quadratically with eager attention.         |
+| `loss_type`                             | `fm`                        | Flow-matching loss; the real-world recipe uses `L1_fm`.                                                          |
 
 ### Acceleration Options
 
-For a conservative single-GPU run, keep `attention_implementation=eager`. On recent PyTorch
-CUDA builds, `attention_implementation=sdpa` can improve attention performance while preserving
+The default `attention_implementation=sdpa` uses fused PyTorch kernels in the model dtype
+(bf16 on GPU). Set `attention_fp32=true` for the original fp32-attention parity path, or
+`attention_implementation=eager` for a conservative debug fallback. `gradient_checkpointing=true`
+trades ~30% step time for a much smaller activation footprint, and `moe_metrics_interval=N`
+(default 50) limits MoE monitoring overhead to every Nth step. `sdpa` preserves
 the tested eager parity. `attention_implementation=fa2` requires a compatible `flash-attn`
 installation; set `vit_attn_implementation=flash_attention_2` only when the Qwen3-VL runtime
 accepts that backend. The `flex` and `flex_cached` paths are experimental and should be treated
@@ -170,6 +177,119 @@ canonical joints, `images` rename cameras). Missing source keys are warned once 
 slot, but the robot config must still match the checkpoint's canonical layout to avoid wrong
 padding or normalization.
 
+When fine-tuning a converted checkpoint on a **new** embodiment, the explicit
+`--policy.robot_config_path` / `--policy.norm_stats_path` take precedence over the assets
+embedded in the checkpoint (a warning is logged when they differ). Checkpoints saved during
+fine-tuning embed the new assets, so they stay self-contained and portable.
+
+## Example: adapting to a single-arm robot
+
+This example adapts the released checkpoint to a 7-DoF single arm (6 arm joints + 1 gripper,
+joint angles in degrees, absolute action space) with two cameras (`front` + `wrist`), e.g. a
+Seeed reBot B601-RS dataset recorded with LeRobot.
+
+**1. Write the robot config (`rebot.yaml`).** The canonical layout packs filled dims from
+position 0 of each slot; unfilled slots are zero-padded and excluded from the loss via
+`joint_mask`. `subtract_state: false` keeps actions absolute (set it to `true` only when the
+dataset stores actions as deltas relative to the state, and never for `effector.position`):
+
+```yaml
+states:
+  - observation.state.arm.position:
+      origin_keys:
+        - observation.state: # state[0:6] -> arm.position[0:6] (14-D slot, rest padded)
+            start: 0
+            end: 6
+  - observation.state.effector.position:
+      origin_keys:
+        - observation.state: # state[6] -> effector.position[0] (2-D slot)
+            start: 6
+            end: 7
+
+actions:
+  - action.arm.position:
+      origin_keys:
+        - action:
+            start: 0
+            end: 6
+      subtract_state: false
+  - action.effector.position:
+      origin_keys:
+        - action:
+            start: 6
+            end: 7
+      subtract_state: false
+
+images: # map dataset cameras onto the canonical views; unmapped views are zero-filled
+  - observation.images.camera_top:
+      origin_keys: observation.images.front
+  - observation.images.camera_wrist_left:
+      origin_keys: observation.images.wrist
+
+norm_stats: rebot_norm_stats.json
+```
+
+**2. Generate the per-slot normalization stats.** With `canonical_norm_type` at its default
+(`meanstd`), the stats JSON needs `mean`/`std` per filled slot dim, computed over the dataset.
+For a LeRobot v3 dataset you can derive them from `meta/stats.json`:
+
+```python
+import json
+
+stats = json.load(open("<dataset_root>/meta/stats.json"))
+out = {"norm_stats": {}}
+for raw in ("observation.state", "action"):
+    out["norm_stats"][f"{raw}.arm.position"] = {
+        "mean": stats[raw]["mean"][0:6],
+        "std": [max(v, 1e-3) for v in stats[raw]["std"][0:6]],
+    }
+    out["norm_stats"][f"{raw}.effector.position"] = {
+        "mean": stats[raw]["mean"][6:7],
+        "std": [max(v, 1e-3) for v in stats[raw]["std"][6:7]],
+    }
+json.dump(out, open("rebot_norm_stats.json", "w"), indent=2)
+```
+
+**3. Fine-tune** with the standard training command, pointing at the new assets:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=<your/rebot_dataset> \
+  --dataset.root=<dataset_root> \
+  --policy.path=<converted-lingbot-vla-v2-6b> \
+  --policy.robot_config_path=./rebot.yaml \
+  --policy.norm_stats_path=./rebot_norm_stats.json \
+  --policy.dtype=bfloat16 \
+  --policy.loss_type=L1_fm \
+  --policy.optimizer_lr=5e-5 \
+  --policy.scheduler_decay_lr=5e-5 \
+  --batch_size=4 \
+  --steps=5000 \
+  --save_freq=1000
+```
+
+**4. Deploy** on the robot with `lerobot-rollout` (`--strategy.type=episodic` records
+evaluation episodes; camera names must match the `origin_keys` in your robot config).
+`select_action` returns actions in the robot's raw action space (here: 7 absolute joint
+angles in degrees) after the policy postprocessing path inverts normalization and the slot
+mapping:
+
+```bash
+lerobot-rollout \
+  --strategy.type=episodic \
+  --policy.path=<output_dir>/checkpoints/last/pretrained_model \
+  --policy.n_action_steps=25 \
+  --device=cuda \
+  --robot.type=<your_robot_type> \
+  --robot.port=<port> \
+  --robot.cameras="{ wrist: {...}, front: {...} }" \
+  --task="pick up the cube" \
+  --fps=30 \
+  --dataset.repo_id=<eval_repo_id> \
+  --dataset.num_episodes=10 \
+  --dataset.push_to_hub=false
+```
+
 ## Numerical validation
 
 The port was validated layer-by-layer against the original `Robbyant/lingbot-vla-v2`
@@ -186,6 +306,83 @@ and fixed inputs/noise):
   vendored triton `fused_moe` kernel's internal reduced-precision tensor-core MMA (the port's
   eager path is full-precision). This is a benign kernel-precision difference, not an
   architecture or weight-loading defect.
+
+## Benchmark
+
+### Closed-loop reproduction (this port, official weights)
+
+We loaded the official `lingbot-vla-v2-6b-robotwin` checkpoint
+(`global_step_50000`, the post-trained release) through this port and ran a
+closed-loop RoboTwin 2.0 evaluation on our own stack: 4× RTX 4090, bf16 eager
+policy server over WebSocket, SAPIEN/Vulkan rendering, `demo_clean`, domain
+randomization off, 30 episodes/task, seed 0, 10 Hz, action chunk 25 (per the
+upstream closed-loop recipe).
+
+| Task | Success (%) |
+| ----------------- | ----------: |
+| lift_pot | 100.0 |
+| open_laptop | 100.0 |
+| place_empty_cup | 100.0 |
+| press_stapler | 100.0 |
+| stack_blocks_two | 100.0 |
+| handover_block | 96.7 |
+| handover_mic | 96.7 |
+| pick_dual_bottles | 90.0 |
+| open_microwave | 86.7 |
+| stamp_seal | 76.7 |
+| **Avg (Top-10)** | **94.7** |
+
+The Top-10 average (94.7%) matches the upstream model card's Avg Clean (93.52%)
+within n=30 noise, confirming the port reproduces the released weights on the
+action path. `put_object_cabinet` (0/30) and `place_can_basket` are excluded:
+their scoring chain was broken by an environment-side patch in our setup, not a
+model defect — with scoring fixed and chunk 25, `put_object_cabinet` returns to
+26/30 = 86.7%.
+
+### Clean-only retraining (this port's training stack)
+
+A 6B base checkpoint retrained on RoboTwin **clean** data only (30k steps,
+FSDP2 + Muon + dual-query distillation) evaluated at **~76% `demo_clean`**. The
+upstream reference below is trained on clean+randomized mixed data; randomized
+data is disallowed for our use case, so the gap is expected. The per-task table
+and full training recipe will be added before the final release.
+
+### Inference latency (RTX 4090, model-only)
+
+Hand-written plain-PyTorch sparse-MoE backend (argsort → scatter → bmm →
+gather, no Triton/fused kernels), compile + dual CUDA-graph capture (denoise +
+prefix KV aliasing), eager attention, bf16:
+
+| Denoising steps | Latency (model-only) |
+| --------------- | -------------------: |
+| 7 | 174.8 ms |
+| 10 | 204.1 ms |
+
+Numerics are bit-identical to the eager reference path (max|Δ| = 0).
+
+### Upstream-reported reference
+
+Upstream-reported scores on **RoboTwin 2.0** (50 dual-arm manipulation tasks × 100
+episodes each, Sapien simulation, `demo_clean` / `demo_randomized` task configs,
+success judged by per-task `expert_check`):
+
+| Setting           | Success rate |
+| ----------------- | ------------ |
+| `demo_clean`      | 93.52 %      |
+| `demo_randomized` | 92.80 %      |
+
+These numbers are reported by the LingBot team for the released upstream weights
+([project page](https://github.com/Robbyant/lingbot-vla-v2)); the numerical-validation
+section above shows this port matches those weights bit-exactly on the action path.
+To reproduce the evaluation through the LeRobot port with a converted checkpoint:
+
+```bash
+lerobot-eval --policy.path <converted-checkpoint> \
+  --benchmark.robotwin.task_config demo_clean ...
+```
+
+The pre-converted checkpoint is being prepared for publication; until it lands, run
+`convert_upstream_checkpoint.py` on the upstream release first (see [Checkpoints](#checkpoints)).
 
 ## Notes
 

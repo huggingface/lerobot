@@ -242,7 +242,14 @@ lingbot_vla2 = [
     "lerobot[transformers-dep]",
     "lerobot[scipy-dep]",
     "lerobot[qwen-vl-utils-dep]",
+    "pydantic>=2.0.0,<3.0.0",
 ]
+# Native-depth / DINO-video distillation branch (align_params). Teacher
+# runtimes are first-party weight-compatible implementations maintained in
+# this repository; no upstream source checkout or third-party repo download is
+# involved. Teacher weights are separate Hub downloads — see
+# docs/source/lingbot_vla_v2_depth_dino_README.md.
+lingbot_vla2_depth = ["lerobot[lingbot_vla2]"]
 
 # Features
 async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
@@ -328,6 +335,7 @@ all = [
     "lerobot[vla_jepa]",
     "lerobot[lingbot_va]",
     "lerobot[lingbot_vla2]",
+
     "lerobot[async]",
     "lerobot[dev]",
     "lerobot[test]",
@@ -419,6 +427,9 @@ ignore = [
 "__init__.py" = ["F401", "F403", "E402"]
 # E402: conditional-import guards (TYPE_CHECKING / is_package_available) must precede the imports they protect
 "src/lerobot/scripts/convert_dataset_v21_to_v30.py" = ["E402"]
+"src/lerobot/policies/wall_x/**" = ["N801", "N812", "SIM102", "SIM108", "SIM210", "SIM211", "B006", "B007", "SIM118"] # Supprese these as they are coming from original Qwen2_5_vl code TODO(pepijn): refactor original
+"src/lerobot/policies/lingbot_vla_v2/{model_core,preprocessing}/*.py" = ["N801", "N802", "N803", "N806", "N812", "N816", "SIM101", "SIM102", "SIM105", "SIM108", "SIM114", "SIM118", "SIM210", "SIM211", "SIM910", "B006", "B007", "B015", "B905", "C405", "F401", "F403", "F405", "F811", "F841", "E402", "E701", "E722", "I001", "UP006", "UP007", "UP015", "UP035", "UP045"] # Vendored from Qwen3-VL / LingBot-VLA 2.0 upstream code, kept close to source (hand-written configuration_lingbot_vla_v2.py / processor_lingbot_vla_v2.py / __init__.py are linted normally)
+
 [tool.ruff.lint.isort]
 combine-as-imports = true
 known-first-party = ["lerobot"]
@@ -427,8 +438,9 @@ known-first-party = ["lerobot"]
 convention = "google"
 
 [tool.ruff.lint.extend-per-file-ignores]
-"src/lerobot/policies/lingbot_vla_v2/{configuration_lingbot_vla_v2_internal,data_transform,ee_pose_transform,feature_transform,flex_attention,modeling_lingbot_vla_v2_base,modeling_lingbot_vla_v2,moe_load_balance,moe_loss,qwen2_action_expert,qwen3vl_in_vla,triton_moe,utils}.py" = ["N801", "N802", "N803", "N806", "N812", "N816", "SIM101", "SIM102", "SIM105", "SIM108", "SIM114", "SIM118", "SIM210", "SIM211", "SIM910", "B006", "B007", "B015", "B905", "C405", "F401", "F403", "F405", "F811", "F841", "E402", "E701", "E722", "I001", "UP006", "UP007", "UP015", "UP035", "UP045"] # Vendored from Qwen3-VL / LingBot-VLA 2.0 upstream code, kept close to source (hand-written configuration_lingbot_vla_v2.py / processor_lingbot_vla_v2.py / __init__.py are linted normally)
-"tests/policies/lingbot_vla_v2/{test_moe_eager,test_triton_moe}.py" = ["N806", "N812"]
+"src/lerobot/policies/lingbot_vla_v2/{model_core,preprocessing}/*.py" = ["N801", "N802", "N803", "N806", "N812", "N816", "SIM101", "SIM102", "SIM105", "SIM108", "SIM114", "SIM118", "SIM210", "SIM211", "SIM910", "B006", "B007", "B015", "B905", "C405", "F401", "F403", "F405", "F811", "F841", "E402", "E701", "E722", "I001", "UP006", "UP007", "UP015", "UP035", "UP045"] # Vendored from Qwen3-VL / LingBot-VLA 2.0 upstream code, kept close to source (hand-written configuration_lingbot_vla_v2.py / processor_lingbot_vla_v2.py / __init__.py are linted normally)
+"tests/policies/lingbot_vla_v2/test_moe_eager.py" = ["N806", "N812"]
+"src/lerobot/optim/muon.py" = ["N806", "SIM108", "SIM109", "SIM110", "SIM300", "SIM401"] # Vendored from upstream LingBot-VLA v2 training stack (numerics identical); kept close to source: Newton-Schulz matrix symbols (A/M_/K_/B_) uppercase, SIM1xx/SIM3xx/SIM4xx simplifications left as upstream wrote them
 
 [tool.ruff.format]
 quote-style = "double"
