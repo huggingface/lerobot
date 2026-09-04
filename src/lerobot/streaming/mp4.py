@@ -19,6 +19,8 @@ import numpy as np
 
 @dataclass(frozen=True)
 class Box:
+    """Top-level or nested ISO BMFF box bounds."""
+
     type: bytes
     start: int
     header_size: int
@@ -26,15 +28,19 @@ class Box:
 
     @property
     def payload_start(self) -> int:
+        """Return the absolute offset immediately after the box header."""
         return self.start + self.header_size
 
     @property
     def size(self) -> int:
+        """Return the total box size in bytes."""
         return self.end - self.start
 
 
 @dataclass(frozen=True)
 class Mp4SampleSlice:
+    """Contiguous source-byte range covering an indexed sample interval."""
+
     sample_lo: int
     sample_hi: int
     byte_offset: int
@@ -44,6 +50,8 @@ class Mp4SampleSlice:
 
 @dataclass(frozen=True)
 class Mp4Index:
+    """Serializable video-track sample table for one MP4 source file."""
+
     file_path: str
     file_size: int
     ftyp: bytes
@@ -74,6 +82,7 @@ class Mp4Index:
         keyframe_pad_fraction: float = 0.05,
         file_size: int | None = None,
     ) -> Mp4SampleSlice:
+        """Select a keyframe-aligned sample range around a timestamp span."""
         if to_ts < from_ts:
             raise ValueError(f"Invalid timestamp span: {from_ts=} {to_ts=}")
         if len(self.sample_pts) == 0:
@@ -111,6 +120,7 @@ class Mp4Index:
         )
 
     def to_dict(self) -> dict:
+        """Serialize scalar MP4 metadata; sample arrays are stored separately."""
         return {
             "file_path": self.file_path,
             "file_size": self.file_size,
@@ -131,6 +141,7 @@ class Mp4Index:
 
     @classmethod
     def from_dict(cls, data: dict, arrays: dict[str, np.ndarray]) -> Mp4Index:
+        """Reconstruct an MP4 index from scalar metadata and sample arrays."""
         return cls(
             file_path=data["file_path"],
             file_size=int(data["file_size"]),
@@ -163,6 +174,7 @@ def fetch_mp4_index(
     header_probe_bytes: int = 4 * 1024 * 1024,
     max_probe_bytes: int = 64 * 1024 * 1024,
 ) -> Mp4Index:
+    """Fetch enough source bytes to parse a complete MP4 video-track index."""
     probe_size = min(header_probe_bytes, file_size)
     while True:
         data = read_range(path, 0, probe_size)
@@ -226,6 +238,7 @@ def _fetch_tail_moov_index(
 
 
 def parse_mp4_index(path: str, data: bytes, *, file_size: int | None = None) -> Mp4Index:
+    """Parse an MP4 video-track index from an in-memory file prefix."""
     if file_size is None:
         file_size = len(data)
     top = list(iter_boxes(data, 0, len(data), absolute_base=0, allow_truncated=True))
@@ -312,6 +325,7 @@ def _parse_mp4_index_from_layout(
 
 
 def synthesize_mp4(index: Mp4Index, sample_slice: Mp4SampleSlice, mdat_payload: bytes) -> bytes:
+    """Build a seekable episode-local MP4 around one indexed media slice."""
     lo = sample_slice.sample_lo
     hi = sample_slice.sample_hi + 1
     if lo < 0 or hi > len(index.sample_sizes) or lo >= hi:
@@ -380,6 +394,7 @@ def iter_boxes(
     absolute_base: int = 0,
     allow_truncated: bool = False,
 ) -> Iterable[Box]:
+    """Iterate ISO BMFF boxes within a byte interval."""
     pos = start
     while pos + 8 <= end:
         size = struct.unpack_from(">I", data, pos)[0]

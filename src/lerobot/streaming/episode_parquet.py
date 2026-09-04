@@ -35,6 +35,7 @@ class EpisodeParquetReader:
         max_retries: int = 4,
         retry_backoff_s: float = 0.05,
     ):
+        """Configure projected episode reads from a local or fsspec root."""
         if not columns:
             raise ValueError("EpisodeParquetReader requires at least one projected column")
         self.columns = tuple(dict.fromkeys(columns))
@@ -59,6 +60,7 @@ class EpisodeParquetReader:
         episode_index: int,
         expected_rows: int,
     ) -> pa.Table:
+        """Read and validate one complete episode with column projection."""
         if expected_rows <= 0:
             raise ValueError(f"Episode {episode_index} must contain at least one row")
 

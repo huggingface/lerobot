@@ -6,6 +6,7 @@
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 
+"""Bounded compressed-byte and decoder cache for episode video streaming."""
 
 from __future__ import annotations
 
@@ -28,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 
 class EpisodeByteCache:
+    """Fetch, synthesize, and retain episode-local MP4s within bounded caches."""
+
     def __init__(
         self,
         manifest: EpisodeVideoManifest,
@@ -46,6 +49,7 @@ class EpisodeByteCache:
         tolerance_s: float = 1e-4,
         token: str | bool | None = None,
     ):
+        """Configure byte fetching, synthesis, decoder limits, and backend selection."""
         if byte_budget <= 0:
             raise ValueError("byte_budget must be positive")
         if max_open_decoders <= 0:
@@ -92,6 +96,7 @@ class EpisodeByteCache:
         }
 
     def close(self) -> None:
+        """Close fetchers, executors, decoders, and cached state."""
         self._pool.shutdown(wait=True, cancel_futures=True)
         with self._lock:
             decoders = list(self._decoders.values())
@@ -107,20 +112,25 @@ class EpisodeByteCache:
         self.fetcher.close()
 
     def __enter__(self) -> EpisodeByteCache:
+        """Return this cache as a context manager."""
         return self
 
     def __exit__(self, *_exc) -> None:
+        """Close the cache when leaving its context."""
         self.close()
 
     def submit_prefetch(self, episode_index: int) -> None:
+        """Schedule every camera payload for an episode."""
         for camera_key in self.manifest.video_keys:
             self._submit(episode_index, camera_key)
 
     def retain_episode(self, episode_index: int) -> None:
+        """Prevent an episode from being evicted until released."""
         with self._lock:
             self._retained_episodes[episode_index] = self._retained_episodes.get(episode_index, 0) + 1
 
     def release_episode(self, episode_index: int) -> None:
+        """Release one retention lease and evict bytes if needed."""
         with self._lock:
             count = self._retained_episodes.get(episode_index, 0)
             if count <= 1:
@@ -131,20 +141,24 @@ class EpisodeByteCache:
 
     @property
     def resident_bytes(self) -> int:
+        """Return the current synthesized-byte footprint."""
         with self._lock:
             return self._bytes
 
     @property
     def open_decoder_count(self) -> int:
+        """Return the number of cached video decoders."""
         with self._lock:
             return len(self._decoders)
 
     @property
     def decoder_fallback_count(self) -> int:
+        """Return the number of TorchCodec-to-PyAV fallbacks."""
         with self._lock:
             return self._decoder_fallback_count
 
     def ensure_ready(self, episode_index: int) -> None:
+        """Synchronously fetch an episode and optionally open its decoders."""
         for camera_key in self.manifest.video_keys:
             self.get_bytes(episode_index, camera_key)
             if self.open_decoders:
@@ -167,9 +181,11 @@ class EpisodeByteCache:
         return True
 
     def get_bytes(self, episode_index: int, camera_key: str) -> bytes:
+        """Return the synthesized MP4 bytes for one episode camera."""
         return self._get_entry(episode_index, camera_key)["bytes"]
 
     def get_decoder(self, episode_index: int, camera_key: str) -> Any:
+        """Return or open the bounded cached decoder for one episode camera."""
         key = (episode_index, camera_key)
         entry = self._get_entry(episode_index, camera_key)
         with self._lock:
@@ -224,6 +240,7 @@ class EpisodeByteCache:
             return decoder
 
     def get_frames(self, episode_index: int, camera_key: str, timestamps: list[float]):
+        """Decode source-timeline timestamps from an episode-local MP4."""
         key = (episode_index, camera_key)
         span = self.manifest.lookup(episode_index, camera_key)
         local_ts = [ts - span.source_start_pts for ts in timestamps]
@@ -274,6 +291,7 @@ class EpisodeByteCache:
             return decoder, decoder.release
 
     def timing_summary(self) -> dict[str, float]:
+        """Return accumulated cache and range-fetch timings."""
         with self._lock:
             summary = dict(self._timing_totals)
             summary["decoder_fallbacks"] = float(self._decoder_fallback_count)
@@ -508,6 +526,7 @@ def _close_decoder(decoder: Any) -> None:
 
 
 def open_video_decoder(file_like_or_bytesio, frame_mappings=None, *, backend: str = "torchcodec"):
+    """Open a TorchCodec or PyAV decoder over synthesized MP4 bytes."""
     if frame_mappings is not None:
         raise ValueError("Synthesized episode videos use a local timeline; pass frame_mappings=None.")
     if backend == "pyav":
