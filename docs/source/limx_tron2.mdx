@@ -1,0 +1,57 @@
+# LIMX Tron2
+
+[LIMX Dynamics Tron2](https://www.limxdynamics.com/en/products/tron2) is a dual-arm humanoid platform driven by a network SDK (`tron2_env`). LeRobot connects to the robot's controller over TCP/IP, so no USB/serial ports need to be configured — only the robot's IP address and port.
+For detailed user manual and low level development, refer to the [LIMX Dynamics Tron2 documentation](https://www.limxdynamics.com/en/documents).
+## Install LeRobot
+
+Follow the [installation instructions](https://github.com/huggingface/lerobot#installation) to install LeRobot.
+
+Install LeRobot with Tron2 dependencies:
+
+```bash
+pip install -e ".[tron2]"
+```
+
+This pulls in `tron2_env`, LIMX Dynamics' SDK for connecting to and commanding the robot, installed directly from its [GitHub repository](https://github.com/limxdynamics/tron2_env).
+
+## Device Configuration
+
+The Tron2 connects over the network by pointing `--robot.robot_ip` and `--robot.port` at the robot's controller:
+
+```bash
+lerobot-teleoperate \
+    --robot.type=limx_tron2 \
+    --robot.robot_ip=192.168.1.100 \
+    --robot.port=5000 \
+    --robot.id=my_tron2
+```
+
+## Observation sources
+
+The robot supports two ways of getting camera observations, controlled by `--robot.observation_source`:
+
+- `legacy` (default): images come from LeRobot [`CameraConfig`](./cameras) entries passed via `--robot.cameras`, connected/read the same way as any other LeRobot robot.
+- `bridge`: images and state come from a Tron2 Bridge WebSocket server instead, exposing the `cam_high`, `cam_left_wrist`, and `cam_right_wrist` streams. Set `--robot.bridge_host` to the Bridge's WebSocket URL (e.g. `ws://192.168.1.100:8080`) when using this mode.
+
+```bash
+lerobot-teleoperate \
+    --robot.type=limx_tron2 \
+    --robot.robot_ip=192.168.1.100 \
+    --robot.port=5000 \
+    --robot.observation_source=bridge \
+    --robot.bridge_host=ws://192.168.1.100:8080
+```
+
+<Tip warning={true}>
+  `bridge_host` must be set to the real Bridge WebSocket URL when
+  `observation_source=bridge`; leaving it empty or containing the
+  `BRIDGE_HOST` placeholder raises a configuration error.
+</Tip>
+
+## Calibration
+
+The Tron2 doesn't require a calibration step: `is_calibrated` always returns `True`, and the arms are driven to `init_joints` / `init_head` on connect.
+
+## Recording datasets
+
+Use `lerobot-record` with the same `--robot.*` arguments (plus `--dataset.*` and `--teleop.*`) to record demonstrations for training. See [Imitation Learning for Robots](./il_robots) for the full workflow.
