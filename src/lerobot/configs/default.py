@@ -109,6 +109,9 @@ class EvalConfig:
     # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
     # Defaults to True; automatically downgraded to SyncVectorEnv when batch_size=1.
     use_async_envs: bool = True
+    # Run environments in a subprocess without GPU access, using OSMesa software rendering.
+    # This keeps the main process's VRAM available for policy inference on low-memory GPUs.
+    process_isolated: bool = False
     # Whether to record eval rollouts as a LeRobot dataset on disk.
     recording: bool = False
     # If set, push recorded eval datasets to the Hub under this repo id (one repo per task,
