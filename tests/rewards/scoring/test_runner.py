@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 from types import SimpleNamespace
 
 import numpy as np
@@ -99,6 +98,8 @@ def test_score_dataset_writes_dense_and_sparse_signals_with_roundtripped_metadat
     assert table["frame_index"].to_pylist() == [0, 1, 2, 0, 2]
     assert get_signal_descriptors(table) == {PROGRESS_NAME: PROGRESS_DESCRIPTOR}
     assert get_scoring_provenance(table) == provenance
+    assert pq.ParquetFile(output_path).metadata.num_row_groups == 2
+    assert not (tmp_path / ".signals.parquet.parts").exists()
 
 
 def test_score_dataset_resumes_only_atomic_completed_episode_parts(tmp_path):
@@ -142,6 +143,52 @@ def test_score_dataset_resumes_only_atomic_completed_episode_parts(tmp_path):
     assert summary.resumed_episode_count == 1
     assert summary.episode_count == 2
     assert pq.read_table(output_path).num_rows == 4
+    assert not parts_dir.exists()
+
+
+def test_score_dataset_reuses_a_valid_completed_output(tmp_path):
+    dataset = FakeDataset([2, 3])
+    output_path = tmp_path / "signals.parquet"
+    provenance = {"model_revision": "abc"}
+    score_dataset(dataset, dense_scorer, output_path=output_path, provenance=provenance)
+
+    calls: list[int] = []
+
+    def scorer(dataset: FakeDataset, episode_index: int) -> FrameSignals:
+        calls.append(episode_index)
+        return dense_scorer(dataset, episode_index)
+
+    summary = score_dataset(dataset, scorer, output_path=output_path, provenance=provenance)
+
+    assert calls == []
+    assert summary.new_episode_count == 0
+    assert summary.resumed_episode_count == 2
+    assert summary.frame_count == 5
+
+
+def test_score_dataset_writes_an_empty_sparse_episode(tmp_path):
+    dataset = FakeDataset([2])
+    output_path = tmp_path / "signals.parquet"
+
+    def scorer(dataset: FakeDataset, episode_index: int) -> FrameSignals:
+        return FrameSignals(
+            frame_indices=np.asarray([], dtype=np.int64),
+            signals={PROGRESS_NAME: np.asarray([], dtype=np.float32)},
+            descriptors={PROGRESS_NAME: PROGRESS_DESCRIPTOR},
+        )
+
+    summary = score_dataset(
+        dataset,
+        scorer,
+        output_path=output_path,
+        provenance={"model_revision": "abc"},
+    )
+
+    assert summary.frame_count == 0
+    table = read_frame_signals(output_path)
+    assert table.num_rows == 0
+    assert table.column_names == ["index", "episode_index", "frame_index", PROGRESS_NAME]
+    assert not (tmp_path / ".signals.parquet.parts").exists()
 
 
 @pytest.mark.parametrize(
@@ -197,13 +244,51 @@ def test_resume_rejects_changed_schema_version(tmp_path):
     output_path = tmp_path / "signals.parquet"
     score_dataset(dataset, dense_scorer, output_path=output_path, provenance={"model": "test"})
 
-    manifest_path = tmp_path / ".signals.parquet.parts" / "manifest.json"
-    manifest = json.loads(manifest_path.read_text())
-    manifest["schema_version"] = 999
-    manifest_path.write_text(json.dumps(manifest))
+    table = pq.read_table(output_path)
+    metadata = dict(table.schema.metadata or {})
+    metadata[b"lerobot.reward_scoring.schema_version"] = b"999"
+    pq.write_table(table.replace_schema_metadata(metadata), output_path)
 
     with pytest.raises(ValueError, match="Cannot resume scoring"):
         score_dataset(dataset, dense_scorer, output_path=output_path, provenance={"model": "test"})
+
+
+def test_final_merge_failure_keeps_completed_parts_for_retry(monkeypatch, tmp_path):
+    import lerobot.rewards.scoring.writer as scoring_writer
+
+    dataset = FakeDataset([2, 2])
+    output_path = tmp_path / "signals.parquet"
+    provenance = {"model_revision": "abc"}
+    parquet_writer = scoring_writer.pq.ParquetWriter
+
+    def fail_merge(*args, **kwargs):
+        raise RuntimeError("merge failed")
+
+    monkeypatch.setattr(scoring_writer.pq, "ParquetWriter", fail_merge)
+    with pytest.raises(RuntimeError, match="merge failed"):
+        score_dataset(dataset, dense_scorer, output_path=output_path, provenance=provenance)
+
+    parts_dir = tmp_path / ".signals.parquet.parts"
+    assert (parts_dir / "episode-000000.parquet").is_file()
+    assert (parts_dir / "episode-000001.parquet").is_file()
+    assert not output_path.exists()
+    assert not list(tmp_path.glob(".signals.parquet.*.tmp"))
+
+    monkeypatch.setattr(scoring_writer.pq, "ParquetWriter", parquet_writer)
+    calls: list[int] = []
+
+    def scorer(dataset: FakeDataset, episode_index: int) -> FrameSignals:
+        calls.append(episode_index)
+        return dense_scorer(dataset, episode_index)
+
+    summary = score_dataset(dataset, scorer, output_path=output_path, provenance=provenance)
+
+    assert calls == []
+    assert summary.new_episode_count == 0
+    assert summary.resumed_episode_count == 2
+    assert summary.frame_count == 4
+    assert output_path.is_file()
+    assert not parts_dir.exists()
 
 
 @pytest.mark.parametrize(
