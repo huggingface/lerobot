@@ -28,11 +28,11 @@ uv run lerobot-score-dataset \
 
 By default, the sidecar is written to `reward_signals/robometer.parquet` under the local dataset root. Use `--output_path=/path/signals.parquet` to choose another location and `--episodes='[0,1]'` to select episodes.
 
-Pass `--push_to_hub=true` to upload the completed sidecar to `reward_signals/robometer.parquet` in the dataset repository. Atomic episode parts remain local and are not published.
+Pass `--push_to_hub=true` to upload the completed sidecar to `reward_signals/robometer.parquet` in the dataset repository. Atomic episode parts are local staging data: they remain available after an interrupted run and are removed after the final sidecar is published successfully.
 
 For an immutable run, pass commit hashes through `--dataset_revision` and `--reward_model_revision`. The requested revisions are stored in provenance and must match when resuming.
 
-The command is resumable by default. Every completed episode is first committed atomically under a hidden `.parquet.parts` directory. A retry skips those episodes only when the dataset revision, model revision, adapter options, episode selection, and schema are unchanged.
+The command is resumable by default. Every completed episode is first committed atomically under a hidden `.parquet.parts` directory. A retry skips those episodes only when the dataset revision, model revision, adapter options, episode selection, and schema are unchanged. Completed parts are streamed into the final Parquet file in episode order, so finalization holds only one episode at a time in memory. An identical rerun validates and reuses the published sidecar without rescoring it.
 
 ## Python API
 
