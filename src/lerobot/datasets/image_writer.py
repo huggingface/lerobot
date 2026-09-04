@@ -54,6 +54,31 @@ def squeeze_single_channel(array: np.ndarray) -> np.ndarray:
     return array
 
 
+def check_image_range(image_array: np.ndarray) -> None:
+    """Check that a float RGB image lies in ``[0.0, 1.0]`` before it is rescaled to ``uint8``.
+
+    Single-channel images (e.g. depth maps) keep their native range and are skipped. Only reads
+    ``min``/``max``, so it is cheap enough for the recording hot path.
+
+    Args:
+        image_array: Image array, channel-first or channel-last.
+
+    Raises:
+        ValueError: If a non-``uint8`` RGB image has values outside ``[0.0, 1.0]``.
+    """
+    array = squeeze_single_channel(image_array)
+    is_rgb = array.ndim == 3 and 3 in (array.shape[0], array.shape[-1])
+    if not is_rgb or array.dtype == np.uint8:
+        return
+    min_, max_ = array.min().item(), array.max().item()
+    if min_ < 0.0 or max_ > 1.0:
+        raise ValueError(
+            "The image data type is float, which requires values in the range [0.0, 1.0]. "
+            f"However, the provided range is [{min_}, {max_}]. Please adjust the range or "
+            "provide a uint8 image with values in the range [0, 255]."
+        )
+
+
 def image_array_to_pil_image(image_array: np.ndarray, range_check: bool = True) -> PIL.Image.Image:
     """Convert a NumPy array to a PIL Image, preserving precision for grayscale.
 
@@ -97,14 +122,7 @@ def image_array_to_pil_image(image_array: np.ndarray, range_check: bool = True) 
 
     if image_array.dtype != np.uint8:
         if range_check:
-            max_ = image_array.max().item()
-            min_ = image_array.min().item()
-            if max_ > 1.0 or min_ < 0.0:
-                raise ValueError(
-                    "The image data type is float, which requires values in the range [0.0, 1.0]. "
-                    f"However, the provided range is [{min_}, {max_}]. Please adjust the range or "
-                    "provide a uint8 image with values in the range [0, 255]."
-                )
+            check_image_range(image_array)
 
         image_array = (image_array * 255).astype(np.uint8)
 

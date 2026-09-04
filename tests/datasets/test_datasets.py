@@ -338,18 +338,10 @@ def test_add_frame_image_wrong_shape(image_dataset):
 
 
 def test_add_frame_image_wrong_range(image_dataset):
-    """This test will display the following error message from a thread:
-    ```
-    Error writing image ...test_add_frame_image_wrong_ran0/test/images/image/episode_000000/frame_000000.png:
-    The image data type is float, which requires values in the range [0.0, 1.0]. However, the provided range is [0.009678772038470007, 254.9776492089887].
-    Please adjust the range or provide a uint8 image with values in the range [0, 255]
-    ```
-    Hence the image won't be saved on disk and save_episode will raise `FileNotFoundError`.
-    """
+    """An out-of-range float RGB image makes `add_frame` raise instead of dropping frames downstream."""
     dataset = image_dataset
-    dataset.add_frame({"image": np.random.rand(*DUMMY_CHW) * 255, "task": "Dummy task"})
-    with pytest.raises(FileNotFoundError):
-        dataset.save_episode()
+    with pytest.raises(ValueError, match="requires values in the range"):
+        dataset.add_frame({"image": np.random.rand(*DUMMY_CHW) * 255, "task": "Dummy task"})
 
 
 def test_add_frame_image(image_dataset):
