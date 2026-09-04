@@ -222,6 +222,13 @@ class PeftConfig:
     # Common values are r (alpha == rank) or 2*r.
     lora_alpha: int | None = None
 
+    # LoRA+ (https://arxiv.org/abs/2402.12354): trains the LoRA B matrices with a higher learning
+    # rate than the A matrices, which can speed up convergence at no extra cost. When set, the B
+    # matrices use `lr * loraplus_lr_ratio` and the A matrices (and any other trainable parameters)
+    # use the base `lr`. `None` keeps standard LoRA (a single learning rate). A typical value is 16;
+    # must be > 0.
+    loraplus_lr_ratio: float | None = None
+
 
 @dataclass
 class JobConfig:

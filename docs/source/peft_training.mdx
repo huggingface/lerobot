@@ -39,6 +39,12 @@ instead of the full weight matrix. This rank can be specified using the `--peft.
 `--peft.lora_alpha` (where `scaling = lora_alpha / r`). The higher the rank
 the closer you get to full fine-tuning
 
+To speed up convergence you can enable [LoRA+](https://arxiv.org/abs/2402.12354) by adding
+`--peft.loraplus_lr_ratio=16` to the command above. LoRA+ trains the LoRA `B` matrices at
+`lr * loraplus_lr_ratio` while the `A` matrices keep the base learning rate, which can improve
+convergence at no extra compute cost. The ratio must be greater than 0; leaving it unset keeps
+standard LoRA with a single learning rate.
+
 There are more complex methods that have more parameters. These are not yet supported, feel free to raise an issue
 if you want to see a specific PEFT method supported.
 

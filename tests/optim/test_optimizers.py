@@ -11,9 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
+from types import SimpleNamespace
+
 import pytest
 import torch
 
+from lerobot.configs.default import PeftConfig
+from lerobot.optim.factory import apply_loraplus_lr_ratio, make_optimizer_and_scheduler
 from lerobot.optim.optimizers import (
     AdamConfig,
     AdamWConfig,
@@ -22,6 +27,7 @@ from lerobot.optim.optimizers import (
     load_optimizer_state,
     save_optimizer_state,
 )
+from lerobot.optim.schedulers import ConstantWithWarmupSchedulerConfig
 from lerobot.utils.constants import (
     OPTIMIZER_PARAM_GROUPS,
     OPTIMIZER_STATE,
@@ -240,3 +246,124 @@ def test_save_and_load_empty_multi_optimizer_state(base_params_dict, tmp_path):
         torch.testing.assert_close(
             optimizer.state_dict()["param_groups"], loaded_optimizers[name].state_dict()["param_groups"]
         )
+
+
+class _DummyLoRA(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.base = torch.nn.Linear(4, 4)  # frozen base weights
+        self.q_lora_A = torch.nn.Linear(4, 2, bias=False)
+        self.q_lora_B = torch.nn.Linear(2, 4, bias=False)
+        self.v_lora_A = torch.nn.Linear(4, 2, bias=False)
+        self.v_lora_B = torch.nn.Linear(2, 4, bias=False)
+        self.base.requires_grad_(False)
+
+
+def test_apply_loraplus_lr_ratio_single_group():
+    model = _DummyLoRA()
+    lr = 1e-4
+    ratio = 16.0
+
+    trainable = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(trainable, lr=lr)
+    apply_loraplus_lr_ratio(optimizer, model, ratio)
+
+    # The B matrices are pulled into their own group at lr * ratio; A matrices keep the base lr.
+    assert sorted(g["lr"] for g in optimizer.param_groups) == [lr, lr * ratio]
+    b_group = next(g for g in optimizer.param_groups if g["lr"] == lr * ratio)
+    a_group = next(g for g in optimizer.param_groups if g["lr"] == lr)
+    b_ids = {id(p) for p in b_group["params"]}
+    a_ids = {id(p) for p in a_group["params"]}
+    assert {id(model.q_lora_B.weight), id(model.v_lora_B.weight)} == b_ids
+    assert {id(model.q_lora_A.weight), id(model.v_lora_A.weight)} == a_ids
+
+
+def test_apply_loraplus_lr_ratio_composes_with_named_groups():
+    # Presets like XVLAAdamWConfig build their own groups with different per-group lrs. LoRA+ should
+    # layer on top: within each group the B matrices get that group's lr * ratio, A keeps the base.
+    model = _DummyLoRA()
+    lr = 1e-4
+    ratio = 16.0
+
+    optimizer = torch.optim.AdamW(
+        [
+            {"params": [model.q_lora_A.weight, model.q_lora_B.weight], "lr": lr, "name": "q"},
+            {"params": [model.v_lora_A.weight, model.v_lora_B.weight], "lr": lr * 0.1, "name": "v"},
+        ]
+    )
+    apply_loraplus_lr_ratio(optimizer, model, ratio)
+
+    assert sorted(g["lr"] for g in optimizer.param_groups) == sorted(
+        [lr, lr * ratio, lr * 0.1, lr * 0.1 * ratio]
+    )
+
+
+def test_apply_loraplus_lr_ratio_rejects_non_positive():
+    model = _DummyLoRA()
+    optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=1e-4)
+    with pytest.raises(ValueError):
+        apply_loraplus_lr_ratio(optimizer, model, 0.0)
+
+
+def test_apply_loraplus_lr_ratio_keeps_initial_lr_in_sync():
+    # LR schedulers stamp `initial_lr` on each group and anneal from it, so a scaled group must
+    # carry a scaled `initial_lr` instead of inheriting the unscaled one.
+    model = _DummyLoRA()
+    lr = 1e-4
+    ratio = 16.0
+
+    optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr)
+    for group in optimizer.param_groups:
+        group["initial_lr"] = group["lr"]
+
+    apply_loraplus_lr_ratio(optimizer, model, ratio)
+
+    assert sorted(g["lr"] for g in optimizer.param_groups) == [lr, lr * ratio]
+    for group in optimizer.param_groups:
+        assert group["initial_lr"] == group["lr"]
+
+
+def test_apply_loraplus_lr_ratio_composes_with_scheduler():
+    model = _DummyLoRA()
+    lr = 1e-4
+    ratio = 16.0
+
+    optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr)
+    apply_loraplus_lr_ratio(optimizer, model, ratio)
+    scheduler = ConstantWithWarmupSchedulerConfig(num_warmup_steps=0).build(optimizer, num_training_steps=10)
+
+    # The scheduler anneals from the scaled B learning rate, not the unscaled base one.
+    assert sorted(scheduler.base_lrs) == [lr, lr * ratio]
+    optimizer.step()
+    scheduler.step()
+    assert sorted(g["lr"] for g in optimizer.param_groups) == [lr, lr * ratio]
+
+
+def test_apply_loraplus_lr_ratio_warns_without_lora_params(caplog):
+    model = torch.nn.Linear(4, 4)  # no adapters attached
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+
+    with caplog.at_level(logging.WARNING):
+        apply_loraplus_lr_ratio(optimizer, model, 16.0)
+
+    assert "no trainable LoRA B parameters" in caplog.text
+    assert [g["lr"] for g in optimizer.param_groups] == [1e-4]
+
+
+def test_make_optimizer_and_scheduler_rejects_loraplus_with_multi_optimizer():
+    model = _DummyLoRA()
+    trainable = [p for p in model.parameters() if p.requires_grad]
+    cfg = SimpleNamespace(
+        optimizer=MultiAdamConfig(lr=1e-4, optimizer_groups={"default": {"lr": 1e-4}}),
+        peft=PeftConfig(loraplus_lr_ratio=16.0),
+        use_policy_training_preset=True,
+        scheduler=None,
+        steps=100,
+    )
+    policy = SimpleNamespace(
+        get_optim_params=lambda: {"default": trainable},
+        named_parameters=model.named_parameters,
+    )
+
+    with pytest.raises(ValueError, match="multi-optimizer"):
+        make_optimizer_and_scheduler(cfg, policy)
