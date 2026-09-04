@@ -173,6 +173,43 @@ def test_image_transforms_are_applied(tmp_path, lerobot_dataset_factory):
         assert transform_called["count"] >= 1
 
 
+# ── Batched get_items ────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("use_delta", [False, True])
+def test_get_items_batched_matches_single(tmp_path, lerobot_dataset_factory, use_delta):
+    """Batched get_items (cross-batch video grouping) must match per-index results."""
+    dataset = lerobot_dataset_factory(
+        root=tmp_path / "ds", total_episodes=2, total_frames=20, use_videos=True
+    )
+    fps = dataset.meta.fps
+    delta = {dataset.meta.video_keys[0]: [-1 / fps, 0.0], "action": [0.0, 1 / fps]} if use_delta else None
+    reader = DatasetReader(
+        meta=dataset.meta,
+        root=dataset.root,
+        episodes=None,
+        tolerance_s=1e-4,
+        video_backend=get_safe_default_video_backend(),
+        delta_timestamps=delta,
+        image_transforms=None,
+    )
+    reader.load_and_activate()
+
+    # Order mixes episodes and repeats an index to exercise same-file grouping.
+    order = [0, 10, 1, 11, 0, 19]
+    batched = reader.get_items(order)
+    singles = [reader.get_item(i) for i in order]
+
+    assert len(batched) == len(singles)
+    for got, want in zip(batched, singles, strict=True):
+        assert set(got) == set(want)
+        for key in want:
+            if isinstance(want[key], torch.Tensor):
+                assert torch.equal(got[key], want[key]), key
+            else:
+                assert got[key] == want[key], key
+
+
 # ── File paths ───────────────────────────────────────────────────────
 
 
@@ -273,7 +310,7 @@ def test_query_hf_dataset_matches_row_query(tmp_path, lerobot_dataset_factory):
     for abs_idx in range(reader.num_frames):
         ep_idx = int(reader.hf_dataset[abs_idx]["episode_index"])
         query_indices, _ = reader._get_query_indices(abs_idx, ep_idx)
-        result = reader._query_hf_dataset(query_indices)
+        result = reader._query_hf_dataset([query_indices])[0]
         for key, q_idx in query_indices.items():
             expected = torch.stack(reader.hf_dataset[q_idx][key])
             assert torch.equal(result[key], expected)
@@ -307,7 +344,7 @@ def test_delta_query_transform_receives_only_requested_column(tmp_path, lerobot_
     reader.hf_dataset.set_transform(spy_transform)
 
     query_indices, _ = reader._get_query_indices(5, 0)
-    reader._query_hf_dataset(query_indices)
+    reader._query_hf_dataset([query_indices])
 
     assert seen_key_sets, "expected the transform to be invoked"
     assert all(keys == {"action"} for keys in seen_key_sets)
@@ -331,7 +368,7 @@ def test_column_views_are_rebuilt_after_set_transform(tmp_path, lerobot_dataset_
     reader = dataset.reader
 
     query_indices, _ = reader._get_query_indices(5, 0)
-    baseline = reader._query_hf_dataset(query_indices)
+    baseline = reader._query_hf_dataset([query_indices])[0]
 
     def doubling_transform(items_dict):
         items = hf_transform_to_torch(items_dict)
@@ -339,5 +376,5 @@ def test_column_views_are_rebuilt_after_set_transform(tmp_path, lerobot_dataset_
 
     reader.hf_dataset.set_transform(doubling_transform)
 
-    result = reader._query_hf_dataset(query_indices)
+    result = reader._query_hf_dataset([query_indices])[0]
     assert torch.equal(result["action"], 2 * baseline["action"])
