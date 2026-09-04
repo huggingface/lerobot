@@ -510,9 +510,10 @@ def encode_video_frames(
         output_stream.pix_fmt = pix_fmt
         output_stream.width = width
         output_stream.height = height
+        output_stream.time_base = Fraction(1, fps)
 
         # Loop through input frames and encode them
-        for input_data in input_list:
+        for frame_count, input_data in enumerate(input_list):
             with Image.open(input_data) as input_image:
                 if is_depth:
                     input_frame = quantize_depth(
@@ -527,6 +528,8 @@ def encode_video_frames(
                 else:
                     input_image = input_image.convert("RGB")
                     input_frame = av.VideoFrame.from_image(input_image)
+                input_frame.pts = frame_count
+                input_frame.time_base = Fraction(1, fps)
                 packet = output_stream.encode(input_frame)
                 if packet:
                     output.mux(packet)
@@ -1018,6 +1021,17 @@ class StreamingVideoEncoder:
                     f"Encoder queue full for {video_key}, dropped {count} frame(s). "
                     f"Consider using vcodec='auto' for hardware encoding or increasing encoder_queue_maxsize."
                 )
+
+    def dropped_frame_count(self, video_key: str) -> int:
+        """Return frames dropped for ``video_key`` in the current episode from encoder back-pressure.
+
+        Args:
+            video_key: Video feature key.
+
+        Returns:
+            Dropped frame count; ``recorded_frames - dropped`` equals the frames encoded.
+        """
+        return self._dropped_frames.get(video_key, 0)
 
     def finish_episode(self) -> dict[str, tuple[Path, dict | None]]:
         """Finish encoding the current episode.
