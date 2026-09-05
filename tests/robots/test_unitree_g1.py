@@ -225,6 +225,40 @@ def hardware_mode(robot):
 # ---------------------------------------------------------------------------
 
 
+def test_connect_releases_cameras_and_threads_when_a_camera_fails(make_robot):
+    # The subscribe thread is not a daemon, so a camera failure used to leave it running and
+    # block interpreter exit instead of surfacing the original error (see #4550).
+    factory, _ = make_robot
+    robot = hardware_mode(factory())
+
+    good_cam = MagicMock(name="good_cam")
+    good_cam.is_connected = False
+    good_cam.connect.side_effect = lambda: setattr(good_cam, "is_connected", True)
+    good_cam.disconnect.side_effect = lambda: setattr(good_cam, "is_connected", False)
+
+    captured = {}
+    bad_cam = MagicMock(name="bad_cam")
+    bad_cam.is_connected = False
+
+    def _fail():
+        captured["subscribe_thread"] = robot.subscribe_thread
+        raise ConnectionError("Failed to open bad_cam.")
+
+    bad_cam.connect.side_effect = _fail
+    robot._cameras = {"good": good_cam, "bad": bad_cam}
+
+    with pytest.raises(ConnectionError, match="bad_cam"):
+        robot.connect()
+
+    good_cam.disconnect.assert_called_once_with()
+    assert not good_cam.is_connected
+    assert captured["subscribe_thread"] is not None
+    assert not captured["subscribe_thread"].is_alive()
+    assert robot.subscribe_thread is None
+    # Cleared so a later attempt can start its threads again.
+    assert not robot._shutdown_event.is_set()
+
+
 class TestInitialState:
     def test_starts_disconnected(self, make_robot):
         factory, _ = make_robot
