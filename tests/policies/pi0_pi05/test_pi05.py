@@ -161,3 +161,32 @@ def test_config_creation():
     except Exception as e:
         print(f"Config creation failed: {e}")
         raise
+
+
+def test_default_peft_targets_match_model_module_names():
+    """Default PEFT targets must match the actual module names of PI05Pytorch.
+
+    Regression test: `time_mlp_in`/`time_mlp_out` were previously written with an
+    `action_` prefix inherited from pi0, but PI05Pytorch names them without it, so
+    the LoRA adapter never targeted these projections.
+    """
+    import re
+    from types import SimpleNamespace
+
+    policy = object.__new__(PI05Policy)
+    policy.config = SimpleNamespace(use_proprioceptive_memory=False)
+
+    pattern = re.compile(policy._get_default_peft_targets()["target_modules"])
+
+    # Projections that exist in PI05Pytorch and must be targeted by default.
+    for module in (
+        "model.action_in_proj",
+        "model.action_out_proj",
+        "model.time_mlp_in",
+        "model.time_mlp_out",
+    ):
+        assert pattern.fullmatch(module), f"PEFT target regex should match {module}"
+
+    # pi0-style names do not exist in PI05Pytorch and must not be targeted.
+    for module in ("model.action_time_mlp_in", "model.action_time_mlp_out"):
+        assert not pattern.fullmatch(module), f"PEFT target regex should not match {module}"
