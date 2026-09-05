@@ -1,0 +1,247 @@
+# 사용자 정의 정책 가져오기 (Bring Your Own Policies)
+
+이 튜토리얼은 사용자 정의 정책(policy) 구현을 LeRobot 생태계에 통합하여, 자신만의 알고리즘을 사용하면서도 학습, 평가, 배포를 위한 LeRobot의 모든 도구를 활용할 수 있는 방법을 설명합니다.
+
+## 1단계: 정책 패키지 생성
+
+사용자 정의 정책은 LeRobot의 플러그인 관례를 따르는 설치 가능한 Python 패키지로 구성되어야 합니다.
+
+### 패키지 구조
+
+`lerobot_policy_` 접두사(중요!) 뒤에 정책 이름을 붙여 패키지를 생성합니다:
+
+```bash
+lerobot_policy_my_custom_policy/
+├── pyproject.toml
+└── src/
+    └── lerobot_policy_my_custom_policy/
+        ├── __init__.py
+        ├── configuration_my_custom_policy.py
+        ├── modeling_my_custom_policy.py
+        └── processor_my_custom_policy.py
+```
+
+### 패키지 설정
+
+`pyproject.toml`을 다음과 같이 설정합니다:
+
+```toml
+[project]
+name = "lerobot_policy_my_custom_policy"
+version = "0.1.0"
+dependencies = [
+    # 정책별 의존성을 여기에 작성하세요
+]
+requires-python = ">= 3.12"
+
+[build-system]
+build-backend = # 사용하려는 빌드 백엔드
+requires = # 사용하려는 빌드 시스템
+```
+
+## 2단계: 정책 설정(Configuration) 정의
+
+[`PreTrainedConfig`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/configs/policies.py)를 상속하고 정책 타입을 등록하는 설정(Configuration) 클래스를 생성합니다:
+다음은 시작을 위한 템플릿입니다. 정책의 아키텍처와 학습 요구사항에 맞게 매개변수와 메서드를 적절히 수정하세요.
+
+```python
+# configuration_my_custom_policy.py
+from dataclasses import dataclass, field
+from lerobot.configs import PreTrainedConfig
+from lerobot.optim import AdamWConfig
+from lerobot.optim import CosineDecayWithWarmupSchedulerConfig
+
+@PreTrainedConfig.register_subclass("my_custom_policy")
+@dataclass
+class MyCustomPolicyConfig(PreTrainedConfig):
+    """MyCustomPolicy를 위한 설정 클래스.
+
+    Args:
+        n_obs_steps: 입력으로 사용할 관측 스텝(observation step)의 수
+        horizon: 액션 예측 구간
+        n_action_steps: 실행할 액션 스텝(action step)의 수
+        hidden_dim: 정책 네트워크의 은닉 차원
+        # 여기에 정책별 매개변수를 추가하세요
+    """
+
+    horizon: int = 50
+    n_action_steps: int = 50
+    hidden_dim: int = 256
+
+    optimizer_lr: float = 1e-4
+    optimizer_weight_decay: float = 1e-4
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.n_action_steps > self.horizon:
+            raise ValueError("n_action_steps cannot exceed horizon")
+
+    def validate_features(self) -> None:
+        """입력/출력 feature 호환성을 검증합니다."""
+        if not self.image_features:
+            raise ValueError("MyCustomPolicy requires at least one image feature.")
+        if self.action_feature is None:
+            raise ValueError("MyCustomPolicy requires 'action' in output_features.")
+
+    def get_optimizer_preset(self) -> AdamWConfig:
+        return AdamWConfig(lr=self.optimizer_lr, weight_decay=self.optimizer_weight_decay)
+
+    def get_scheduler_preset(self):
+        return None
+
+    @property
+    def observation_delta_indices(self) -> list[int] | None:
+        """데이터셋 로더가 observation마다 제공하는 상대 타임스텝 오프셋입니다.
+
+        단일 프레임 정책의 경우 `None`을 반환합니다. 여러 과거 또는 미래 프레임을
+        사용하는 시간적(temporal) 정책의 경우 오프셋 리스트를 반환합니다.
+        예: stride 10으로 3개의 과거 프레임과 stride 10으로 1개의 미래 프레임인 경우 `[-20, -10, 0, 10]`.
+        """
+        return None
+
+    @property
+    def action_delta_indices(self) -> list[int]:
+        """데이터셋 로더가 반환하는 액션 청크(action chunk)에 대한 상대 타임스텝 오프셋입니다.
+        """
+        return list(range(self.horizon))
+
+    @property
+    def reward_delta_indices(self) -> None:
+        return None
+```
+
+## 3단계: 정책 클래스 구현
+
+[`PreTrainedPolicy`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/pretrained.py)를 상속하여 정책 구현을 생성합니다:
+
+```python
+# modeling_my_custom_policy.py
+import torch
+import torch.nn as nn
+from typing import Any
+
+from lerobot.policies import PreTrainedPolicy
+from lerobot.utils.constants import ACTION
+from .configuration_my_custom_policy import MyCustomPolicyConfig
+
+class MyCustomPolicy(PreTrainedPolicy):
+    config_class = MyCustomPolicyConfig  # @register_subclass에 전달한 문자열과 일치해야 합니다
+    name = "my_custom_policy"
+
+    def __init__(self, config: MyCustomPolicyConfig, dataset_stats: dict[str, Any] = None):
+        super().__init__(config, dataset_stats)
+        config.validate_features()  # 베이스 클래스에서 자동으로 호출되지 않습니다
+        self.config = config
+        self.model = ...  # 여기에 사용자의 nn.Module을 작성하세요
+
+    def reset(self):
+        """에피소드 상태를 리셋합니다."""
+        ...
+
+    def get_optim_params(self) -> dict:
+        """옵티마이저에 전달할 매개변수를 반환합니다 (예: 그룹별 lr/wd 포함)."""
+        return {"params": self.parameters()}
+
+    def predict_action_chunk(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
+        """현재 observation에 대한 전체 action chunk (B, chunk_size, action_dim)를 반환합니다."""
+        ...
+
+    def select_action(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
+        """현재 타임스텝에 대한 단일 action을 반환합니다 (추론 시 호출됨)."""
+        ...
+
+    def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """학습 손실(loss)을 계산합니다.
+
+        `batch["action_is_pad"]`는 shape (B, horizon)의 bool 마스크로,
+        에피소드가 `horizon` 스텝 이전에 종료되어 패딩된 타임스텝을 표시합니다.
+        이 타임스텝들을 손실에서 제외할 수 있습니다.
+        """
+        actions = batch[ACTION]
+        action_is_pad = batch.get("action_is_pad")
+        ...
+        return {"loss": ...}
+```
+
+## 4단계: 데이터 프로세서 추가
+
+프로세서 함수를 생성합니다. 구체적인 참고 자료는 [processor_act.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/processor_act.py) 또는 [processor_diffusion.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/diffusion/processor_diffusion.py)를 참조하세요.
+
+```python
+# processor_my_custom_policy.py
+from typing import Any
+import torch
+
+from lerobot.processor import PolicyAction, PolicyProcessorPipeline
+
+
+def make_my_custom_policy_pre_post_processors(
+    config,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
+    preprocessor = ...   # 입력을 위한 PolicyProcessorPipeline을 구성합니다
+    postprocessor = ...  # 출력을 위한 PolicyProcessorPipeline을 구성합니다
+    return preprocessor, postprocessor
+```
+
+**중요 - 함수 이름 규칙:** LeRobot은 이름을 통해 프로세서를 탐지합니다. 함수는 **반드시** `make_{policy_name}_pre_post_processors`로 명명되어야 합니다 (`@PreTrainedConfig.register_subclass`에 전달한 문자열과 일치).
+
+## 5단계: 패키지 초기화
+
+패키지의 `__init__.py`에서 클래스들을 외부로 공개합니다:
+
+```python
+# __init__.py
+"""LeRobot용 사용자 정의 정책 패키지."""
+
+try:
+    import lerobot  # noqa: F401
+except ImportError:
+    raise ImportError(
+        "lerobot is not installed. Please install lerobot to use this policy package."
+    )
+
+from .configuration_my_custom_policy import MyCustomPolicyConfig
+from .modeling_my_custom_policy import MyCustomPolicy
+from .processor_my_custom_policy import make_my_custom_policy_pre_post_processors
+
+__all__ = [
+    "MyCustomPolicyConfig",
+    "MyCustomPolicy",
+    "make_my_custom_policy_pre_post_processors",
+]
+```
+
+## 6단계: 설치 및 사용
+
+### 정책 패키지 설치
+
+```bash
+cd lerobot_policy_my_custom_policy
+pip install -e .
+# 또는 PyPI에 게시된 경우 PyPI에서 설치
+pip install lerobot_policy_my_custom_policy
+```
+
+### 정책 사용
+
+설치가 완료되면, 여러분의 정책이 LeRobot의 학습 및 평가 도구와 자동으로 통합됩니다:
+
+```bash
+lerobot-train \
+    --policy.type my_custom_policy \
+    --env.type pusht \
+    --steps 200000
+```
+
+## 예제 및 커뮤니티 기여
+
+다음 예제 정책 구현들을 확인해 보세요:
+
+- [DiTFlow Policy](https://github.com/danielsanjosepro/lerobot_policy_ditflow) - flow-matching objective를 사용하는 Diffusion Transformer 정책.
+다음 예제에서 사용해 볼 수 있습니다: [DiTFlow Example](https://github.com/danielsanjosepro/test_lerobot_policy_ditflow)
+
+여러분의 정책 구현을 커뮤니티와 공유해 주세요! 🤗
