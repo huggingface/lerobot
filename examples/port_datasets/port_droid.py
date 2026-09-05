@@ -250,7 +250,7 @@ def is_episode_successful(tf_episode_metadata):
 def generate_lerobot_frames(tf_episode):
     m = tf_episode["episode_metadata"]
     frame_meta = {
-        "task_category": m["building"].numpy().decode(),
+        "task_category": m["task_category"].numpy().decode(),
         "building": m["building"].numpy().decode(),
         "collector_id": m["collector_id"].numpy().decode(),
         "date": m["date"].numpy().decode(),
