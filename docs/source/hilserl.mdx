@@ -145,7 +145,7 @@ The environment processor (`env_processor`) handles incoming observations and en
 1. **VanillaObservationProcessorStep**: Converts raw robot observations into standardized format
 2. **JointVelocityProcessorStep** (optional): Adds joint velocity information to observations
 3. **MotorCurrentProcessorStep** (optional): Adds motor current readings to observations
-4. **ForwardKinematicsJointsToEE** (optional): Computes end-effector pose from joint positions
+4. **ForwardKinematicsJointsToEEObservation** (optional): Computes end-effector pose from joint positions
 5. **ImageCropResizeProcessorStep** (optional): Crops and resizes camera images
 6. **TimeLimitProcessorStep** (optional): Enforces episode time limits
 7. **GripperPenaltyProcessorStep** (optional): Applies penalties for inappropriate gripper usage
@@ -413,7 +413,7 @@ We support using a gamepad or a keyboard or the leader arm of the robot.
 
 HIL-Serl learns actions in the end-effector space of the robot. Therefore, the teleoperation will control the end-effector's x,y,z displacements.
 
-The end-effector transformation is applied by the processor pipeline (`InverseKinematicsRLStep`, `EEBoundsAndSafety`, `EEReferenceAndDelta`, `GripperVelocityToJoint`) configured under `env.processor.inverse_kinematics` (`InverseKinematicsConfig`) and `env.processor.gripper` / `env.processor.max_gripper_pos`. The defaults related to the end-effector space are:
+The end-effector transformation is applied by the processor pipeline (`EEReferenceAndDelta`, `EEBoundsAndSafety`, `GripperVelocityToJoint`, `InverseKinematicsEEToJoints`, `AddIKSolutionStep`) configured under `env.processor.inverse_kinematics` (`InverseKinematicsConfig`) and `env.processor.gripper` / `env.processor.max_gripper_pos`. The defaults related to the end-effector space are:
 
 <!-- prettier-ignore-start -->
 ```python

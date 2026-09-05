@@ -36,12 +36,14 @@ from lerobot.processor import (
     DeviceProcessorStep,
     EnvTransition,
     GripperPenaltyProcessorStep,
-    GymHILAdapterProcessorStep,
+    GymHILInfoAdapterStep,
+    GymHILTeleopDataAdapterStep,
     ImageCropResizeProcessorStep,
     InterventionActionProcessorStep,
     MapDeltaActionToRobotActionStep,
     MapTensorToDeltaActionDictStep,
     Numpy2TorchActionProcessorStep,
+    Numpy2TorchTeleopActionProcessorStep,
     RewardClassifierProcessorStep,
     RobotActionToPolicyActionProcessorStep,
     RobotObservation,
@@ -59,11 +61,12 @@ from lerobot.robots import (  # noqa: F401
 )
 from lerobot.robots.robot import Robot
 from lerobot.robots.so_follower.robot_kinematic_processor import (
+    AddIKSolutionStep,
     EEBoundsAndSafety,
     EEReferenceAndDelta,
     ForwardKinematicsJointsToEEObservation,
     GripperVelocityToJoint,
-    InverseKinematicsRLStep,
+    InverseKinematicsEEToJoints,
 )
 from lerobot.teleoperators import (
     gamepad,  # noqa: F401
@@ -382,8 +385,10 @@ def make_processors(
         ]
 
         env_pipeline_steps = [
-            GymHILAdapterProcessorStep(),
+            GymHILInfoAdapterStep(),
+            GymHILTeleopDataAdapterStep(),
             Numpy2TorchActionProcessorStep(),
+            Numpy2TorchTeleopActionProcessorStep(),
             VanillaObservationProcessorStep(),
         ]
 
@@ -494,6 +499,9 @@ def make_processors(
 
     # Replace InverseKinematicsProcessor with new kinematic processors
     if cfg.processor.inverse_kinematics is not None and kinematics_solver is not None:
+        ik_step = InverseKinematicsEEToJoints(
+            kinematics=kinematics_solver, motor_names=motor_names, initial_guess_current_joints=False
+        )
         # Add EE bounds and safety processor
         inverse_kinematics_steps = [
             MapTensorToDeltaActionDictStep(
@@ -515,9 +523,8 @@ def make_processors(
                 speed_factor=1.0,
                 discrete_gripper=True,
             ),
-            InverseKinematicsRLStep(
-                kinematics=kinematics_solver, motor_names=motor_names, initial_guess_current_joints=False
-            ),
+            ik_step,
+            AddIKSolutionStep(ik_step=ik_step),
         ]
         action_pipeline_steps.extend(inverse_kinematics_steps)
         action_pipeline_steps.append(RobotActionToPolicyActionProcessorStep(motor_names=motor_names))
