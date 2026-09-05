@@ -1,0 +1,250 @@
+# 설치 가이드
+
+이 가이드는 환경 관리를 위해 `conda`(miniforge 경유)를 사용합니다(권장). 다른 환경 관리 도구(예: `uv`, `venv`)를 선호하는 경우, Python >=3.12와 PyTorch >= 2.10을 지원하는지 확인한 후 [환경 설정](#step-2-environment-setup)으로 바로 이동해주세요.
+
+## Step 1 (`conda` 전용): [`miniforge`](https://conda-forge.org/download/) 설치
+
+```bash
+wget "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
+bash Miniforge3-$(uname)-$(uname -m).sh
+```
+
+## Step 2: 환경 설정
+
+Python 3.12로 가상 환경을 생성합니다:
+
+<!-- prettier-ignore-start -->
+<hfoptions id="create_venv">
+<hfoption id="conda">
+```bash
+conda create -y -n lerobot python=3.12
+```
+</hfoption>
+<hfoption id="uv (PyTorch >= 2.10 only)">
+```bash
+uv python install 3.12
+uv venv --python 3.12
+```
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
+
+그런 다음 가상 환경을 활성화합니다. LeRobot을 사용하려면 셸을 열 때마다 이 명령을 실행해야 합니다:
+
+<!-- prettier-ignore-start -->
+
+<hfoptions id="activate_venv">
+<hfoption id="conda">
+```bash
+conda activate lerobot
+```
+
+> [!NOTE]
+> WSL(Windows Subsystem for Linux) 내에서 LeRobot을 설치하는 경우, 다음 명령으로 `evdev`도 함께 설치해주세요:
+>
+> ```bash
+> conda install evdev -c conda-forge
+> ```
+
+</hfoption>
+<hfoption id="uv (PyTorch >= 2.10 only)">
+```bash
+# Linux/macOS
+source .venv/bin/activate
+# Windows PowerShell
+.venv\Scripts\activate
+```
+
+> [!NOTE]
+> WSL(Windows Subsystem for Linux) 내에서 LeRobot을 설치하는 경우, 다음 명령으로 `evdev`도 함께 설치해주세요:
+>
+> ```bash
+> sudo apt install libevdev-dev
+> uv pip install evdev
+> ```
+
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
+
+### `ffmpeg` 설치 (비디오 디코딩용)
+
+LeRobot은 기본적으로 비디오 디코딩을 위해 [TorchCodec](https://github.com/meta-pytorch/torchcodec)을 사용하며, 이는 `ffmpeg`를 필요로 합니다.
+
+> [!NOTE]
+> **플랫폼 지원:** TorchCodec은 macOS Intel (x86_64), Linux ARM (aarch64, arm64, armv7l), 또는 PyTorch < 2.8을 사용하는 Windows에서는 **사용할 수 없습니다**. 이러한 플랫폼에서는 LeRobot이 자동으로 `pyav`로 대체되므로, `ffmpeg`를 설치할 필요가 없고 Step 3으로 건너뛰어도 됩니다.
+
+플랫폼이 TorchCodec을 지원하는 경우, 아래 방법 중 하나로 `ffmpeg`를 설치해주세요:
+
+<!-- prettier-ignore-start -->
+
+<hfoptions id="install_ffmpeg">
+<hfoption id="conda (any PyTorch version)">
+
+conda 환경에 `ffmpeg`를 설치합니다. 이 방식은 **모든 PyTorch 버전**에서 작동하며, **PyTorch < 2.10에서는 필수**입니다:
+
+```bash
+conda install ffmpeg -c conda-forge
+```
+
+> [!TIP]
+> 이 명령은 일반적으로 `libsvtav1` 인코더가 포함된 `ffmpeg 8.X`를 설치합니다. 문제가 발생하는 경우(예: `libsvtav1` 누락 — `ffmpeg -encoders`로 확인 가능 — 또는 `torchcodec`과의 버전 불일치), 다음 명령으로 `ffmpeg 7.1.1`을 명시적으로 설치할 수 있습니다:
+>
+> ```bash
+> conda install ffmpeg=7.1.1 -c conda-forge
+> ```
+
+</hfoption>
+<hfoption id="uv (PyTorch >= 2.10 only)">
+
+**PyTorch >= 2.10**(TorchCodec ≥ 0.10)부터 TorchCodec은 시스템 전역 `ffmpeg` 설치에 동적으로 링크할 수 있습니다. 이는 `uv`나 다른 비`conda` 환경 관리 도구를 사용할 때 유용합니다:
+
+```bash
+# Ubuntu/Debian
+sudo apt install ffmpeg
+
+# macOS (Apple Silicon)
+brew install ffmpeg
+```
+
+> [!IMPORTANT]
+> 시스템 전역 `ffmpeg`는 **PyTorch >= 2.10**(TorchCodec ≥ 0.10)에서만 지원됩니다. 이전 PyTorch 버전에서는 **반드시** `conda install ffmpeg -c conda-forge`를 사용해주세요.
+
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
+
+## Step 3: LeRobot 설치 🤗
+
+기본 `lerobot` 설치는 의도적으로 **가볍게** 구성되어 있습니다. 핵심 ML 의존성(PyTorch, torchvision, numpy, opencv, einops, draccus, huggingface-hub, gymnasium, safetensors)만 포함합니다. 무거운 의존성은 선택적 확장(extras) 뒤에 두어, 필요한 것만 설치할 수 있도록 했습니다.
+
+### 소스에서 설치
+
+먼저, 레포지토리를 클론하고 디렉토리로 이동합니다:
+
+```bash
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+```
+
+그런 다음, 편집 가능 모드로 라이브러리를 설치합니다. 코드에 기여할 계획이라면 이 방법이 유용합니다.
+
+<!-- prettier-ignore-start -->
+<hfoptions id="install_lerobot_src">
+<hfoption id="conda">
+```bash
+pip install -e ".[core_scripts]"  # 로봇 워크플로우용 (녹화, 재생, 캘리브레이션)
+pip install -e ".[training]"      # 정책 학습용
+pip install -e ".[all]"           # 전체 (모든 정책, 환경, 하드웨어, 개발 도구)
+```
+</hfoption>
+<hfoption id="uv">
+```bash
+uv pip install -e ".[core_scripts]"  # 로봇 워크플로우용 (녹화, 재생, 캘리브레이션)
+uv pip install -e ".[training]"      # 정책 학습용
+uv pip install -e ".[all]"           # 전체 (모든 정책, 환경, 하드웨어, 개발 도구)
+```
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
+
+### PyPI에서 설치
+
+**핵심 라이브러리:**
+다음 명령으로 기본 패키지를 설치합니다:
+
+<!-- prettier-ignore-start -->
+<hfoptions id="install_lerobot_pypi">
+<hfoption id="conda">
+```bash
+pip install lerobot
+```
+</hfoption>
+<hfoption id="uv">
+```bash
+uv pip install lerobot
+```
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
+
+_이 명령은 핵심 ML 의존성만 설치합니다. 대부분의 워크플로우에는 확장(extras)을 설치해야 합니다._
+
+**기능 확장 (Feature Extras):**
+LeRobot은 일반적인 워크플로우에 맞는 **기능 중심 확장(feature-scoped extras)**을 제공합니다. `uv`를 사용하는 경우, 아래 명령에서 `pip install`을 `uv pip install`로 대체해주세요.
+
+| 확장(Extra) | 추가되는 내용                               | 일반적인 사용 사례    |
+| ----------- | ------------------------------------------- | --------------------- |
+| `dataset`   | `datasets`, `av`, `torchcodec`, `jsonlines` | 데이터셋 로드 및 생성 |
+| `training`  | `dataset` + `accelerate`, `wandb`           | 정책 학습             |
+| `hardware`  | `pynput`, `pyserial`, `deepdiff`            | 실제 로봇 연결        |
+| `viz`       | `rerun-sdk`                                 | 녹화/평가 중 시각화   |
+
+**복합 확장 (Composite Extras)**은 일반적인 CLI 스크립트를 위해 기능 확장을 결합한 것입니다:
+
+| 확장(Extra)    | 포함                           | 일반적인 사용 사례                                      |
+| -------------- | ------------------------------ | ------------------------------------------------------- |
+| `core_scripts` | `dataset` + `hardware` + `viz` | `lerobot-record`, `lerobot-replay`, `lerobot-calibrate` |
+| `evaluation`   | `av`                           | `lerobot-eval` (필요에 따라 정책/환경 확장 추가)        |
+| `dataset_viz`  | `dataset` + `viz`              | `lerobot-dataset-viz`, `lerobot-imgtransform-viz`       |
+
+```bash
+pip install 'lerobot[core_scripts]'          # 녹화, 재생, 캘리브레이션
+pip install 'lerobot[training]'              # 정책 학습
+pip install 'lerobot[core_scripts,training]' # 녹화 + 학습
+pip install 'lerobot[all]'                   # 전체
+```
+
+**정책, 환경, 하드웨어 확장**은 특정 의존성을 위해 여전히 사용 가능합니다:
+
+```bash
+pip install 'lerobot[pi]'             # Pi0/Pi0.5/Pi0-FAST 정책 의존성
+pip install 'lerobot[smolvla]'        # SmolVLA 정책 의존성
+pip install 'lerobot[diffusion]'      # Diffusion 정책 의존성 (diffusers)
+pip install 'lerobot[aloha,pusht]'    # 시뮬레이션 환경
+pip install 'lerobot[feetech]'        # Feetech 모터 지원
+```
+
+_여러 확장을 조합할 수 있습니다(예: `.[core_scripts,pi,pusht]`). 사용 가능한 모든 확장의 전체 목록은 `pyproject.toml`을 참조해주세요._
+
+### 문제 해결
+
+빌드 오류가 발생하면, 추가 시스템 의존성(`cmake`, `build-essential`, `ffmpeg libs`)을 설치해야 할 수 있습니다.
+Linux에서 설치하려면 다음을 실행해주세요:
+
+```bash
+sudo apt-get install cmake build-essential python3-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev
+```
+
+다른 시스템의 경우: [PyAV 컴파일](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)을 참조해주세요.
+
+## 선택적 의존성
+
+LeRobot은 특정 기능을 위한 선택적 확장(extras)을 제공합니다. 여러 확장을 조합할 수 있습니다(예: `.[aloha,feetech]`). 사용 가능한 모든 확장은 `pyproject.toml`을 참조해주세요. `uv`를 사용하는 경우, 아래 명령에서 `pip install`을 `uv pip install`로 대체해주세요.
+
+### 시뮬레이션
+
+환경 패키지를 설치합니다: `aloha` ([gym-aloha](https://github.com/huggingface/gym-aloha)), 또는 `pusht` ([gym-pusht](https://github.com/huggingface/gym-pusht)).
+이 패키지들은 `dataset` 확장을 자동으로 포함합니다.
+
+```bash
+pip install -e ".[aloha]" # 또는 예를 들어 "[pusht]"
+```
+
+### 모터 제어
+
+Koch v1.1의 경우 Dynamixel SDK를, SO100/SO101/Moss의 경우 Feetech SDK를 설치합니다.
+
+```bash
+pip install -e ".[feetech]" # 또는 예를 들어 "[dynamixel]"
+```
+
+### 실험 추적
+
+Weights and Biases는 `training` 확장에 포함되어 있습니다. 실험 추적을 위해 [Weights and Biases](https://docs.wandb.ai/quickstart)를 사용하려면, 다음 명령으로 로그인해주세요:
+
+```bash
+wandb login
+```
+
+이제 로봇이 아직 준비되지 않았다면 조립할 수 있습니다. 왼쪽에서 로봇 유형을 찾아주세요. 그런 다음 아래 링크를 따라 LeRobot을 로봇과 함께 사용해주세요.
