@@ -55,12 +55,14 @@ Where the found port is: `/dev/tty.usbmodem575E0032081` corresponding to your le
 </hfoption>
 <hfoption id="Linux">
 
-On Linux, you might need to give access to the USB ports by running:
+On Linux, you need to set up udev rules to give persistent access to the USB ports. Run the following for each arm, using the ports found by `lerobot-find-port`:
 
 ```bash
-sudo chmod 666 /dev/ttyACM0
-sudo chmod 666 /dev/ttyACM1
+sudo bash src/lerobot/scripts/generate_motorbus_udev_rule.bash -d /dev/ttyACM0 -n follower_arm
+sudo bash src/lerobot/scripts/generate_motorbus_udev_rule.bash -d /dev/ttyACM1 -n leader_arm
 ```
+
+This creates symlinks `/dev/follower_arm` and `/dev/leader_arm` that persist across reboots. Use these symlinks in place of `/dev/ttyACM*` in subsequent commands. Replace the device paths above with the actual ports shown by `lerobot-find-port`.
 
 Example output:
 
