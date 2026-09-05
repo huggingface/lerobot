@@ -186,6 +186,19 @@ class WandBLogger:
             if custom_step_key is not None and k == custom_step_key:
                 continue
 
+            # Log list metrics as individual entries (e.g. loss_per_dim)
+            if isinstance(v, (list, tuple)):
+                for i, elem in enumerate(v):
+                    if isinstance(elem, (int, float)):
+                        metric_key = f"{mode}/{k}_{i}"
+                        if custom_step_key is not None:
+                            self._wandb.log(
+                                {metric_key: elem, f"{mode}/{custom_step_key}": d[custom_step_key]}
+                            )
+                        else:
+                            self._wandb.log({metric_key: elem}, step=step)
+                continue
+
             if not isinstance(v, (int | float | str)):
                 logging.warning(
                     f'WandB logging of key "{k}" was ignored as its type "{type(v)}" is not handled by this wrapper.'
