@@ -178,6 +178,49 @@ During recording, the control loop peeks the freshest buffered frames non-blocki
 
 For how depth streams are stored and encoded when recording a dataset, see the [Depth streams](./video_encoding_parameters#depth-streams) section of the video encoding guide.
 
+## Check camera mounts
+
+Camera extrinsics drift. A tripod gets nudged, a wrist mount is re-clamped after a repair, the rig moves to another table. A policy trained on the old viewpoint then fails silently, and the failure reads as a policy problem rather than a hardware one. Note that you cannot recover the old pose from the dataset afterwards: once a camera has moved far enough to matter, feature matching against the recorded frames no longer converges.
+
+Pin the mounts while the rig is in a state you are happy to record from:
+
+```bash
+lerobot-check-cameras --mode=save \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_awesome_follower_arm \
+    --robot.cameras='{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}'
+```
+
+Then check them before a session, after any hardware work, and after moving the robot:
+
+```bash
+lerobot-check-cameras --mode=check \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_awesome_follower_arm \
+    --robot.cameras='{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}'
+```
+
+```
+reference from 2026-01-14T09:31:02 at ~/.cache/huggingface/lerobot/calibration/cameras/so_follower/my_awesome_follower_arm
+  front            pan LEFT 25px                                        [329 pts, frame]
+  wrist            in tolerance                                         [726 pts, frame]
+```
+
+Move each camera the way it says until every line reads `in tolerance`. Add `--live=true` to keep measuring and show an overlay while you nudge. The command exits nonzero when any camera is out of tolerance, so you can gate a recording script on it.
+
+The defaults of 4 px and 0.4 deg are what an untouched camera reproduces between recordings, which makes them the right bar for _has this drifted_. They are a harder bar to hit by hand. Re-seating a camera that has actually been moved tends to bottom out around 10 px on a friction mount, because loosening and re-tightening it displaces the camera by about as much as the correction you are making; the readings stop converging and start alternating in sign. When you see that, you are at the mount's limit rather than your own. Get the roll right first, since it is the part you can control, then either accept the residual or raise `--tolerance.shift_px` to something your hardware can actually return to.
+
+> [!WARNING]
+> The arm has to be back at the pose the reference was captured at, for **every** camera and not just wrist-mounted ones. An eye-in-hand camera's view is a function of the joint angles outright: matched across two arm poses in the same recording, a wrist camera reports over 100 px and 15 deg of drift that is entirely arm motion. A fixed camera is affected too, more weakly, because once the robot fills a good part of its frame the matched features concentrate on the robot and the arm's rotation is read as camera roll. So the reference stores the arm pose and `check` refuses to score until the arm is back there. Pass `--drive_to_pose=true` to have the arm driven back instead of refusing; make sure the workspace is clear first.
+
+Save asks you for the arm pose first and the frames second, so use the gap to get your hands out of shot: a hand held on the arm becomes part of the reference and every later check fails against it. The arm is under torque once connected, so drive it into place with the leader arm rather than pushing against the servos.
+
+You are also asked to drag a box around the robot in each view. The robot is the only rigid thing that comes with you when the rig moves, so that box is what the check falls back on once the rest of the scene has changed. Skip it with `--select_roi=false`; checks will still work on the same table.
+
+Tolerances default to 4 px, 0.4 deg and 1% zoom, which sits just above the mount-to-mount noise of a typical fixed webcam. Adjust with `--tolerance.shift_px`, `--tolerance.roll_deg`, `--tolerance.zoom` and `--tolerance.pose_deg`.
+
 ## Use your phone's camera
 
 <hfoptions id="use phone">
