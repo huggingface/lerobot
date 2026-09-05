@@ -1,0 +1,135 @@
+# RL-Token with PI0
+
+This integration follows [RL Token: Bootstrapping Online RL with Vision-Language-Action
+Models](https://pi.website/research/rlt). RL-Token adds a compact, task-specific state
+representation and a lightweight online actor-critic to a frozen LeRobot PI0 policy. It has
+two stages:
+
+1. Train the RL-token encoder/decoder for 2,000 to 10,000 gradient steps on task demonstrations.
+2. Freeze PI0 and RL-token, then train the chunk actor and twin critic from real-world interaction.
+
+Install the PI0, dataset, training, and HIL dependencies:
+
+```bash
+pip install -e '.[training,pi,hilserl]'
+```
+
+## Verify the software path
+
+The toy workflow uses the same RL-token, actor-critic, overlap replay, online trainer,
+evaluation, and checkpoint code as the real workflow. It replaces only PI0 inference and
+the robot environment with small deterministic providers.
+
+```bash
+python examples/tutorial/rl/rl_token_toy.py \
+  --output-dir outputs/rl_token_toy
+```
+
+## Stage 1
+
+Use a fine-tuned PI0 checkpoint and its task demonstration dataset. The command refuses
+to continue if pretrained PI0 weights were not loaded.
+
+```bash
+lerobot-train-rl-token \
+  --policy-path outputs/pi0_task/checkpoints/last/pretrained_model \
+  --dataset-repo-id USER/TASK_DATASET \
+  --output-dir outputs/TASK/rl_token \
+  --steps 2000 \
+  --batch-size 2
+```
+
+`encode_vla_tokens()` reads the final PaliGemma prefix hidden states without running PI0
+action denoising. The reconstruction objective applies stop-gradient to those VLA states.
+
+## Online real-world RL
+
+`lerobot-train-rlt` accepts a Draccus JSON/YAML config. The environment block uses the same
+`HILSerlRobotEnvConfig` robot, teleoperator, reward classifier, reset, and safety processors
+as HIL-SERL. A minimal top-level shape is:
+
+```yaml
+pi0_path: outputs/pi0_task/checkpoints/last/pretrained_model
+rl_token_path: outputs/TASK/rl_token
+task: "insert the connector"
+output_dir: outputs/TASK/rlt
+device: cuda
+learner_device: cuda:1 # Prefer a second GPU; omit to reuse `device`.
+chunk_length: 10
+stride: 2
+utd_ratio: 5
+critic_updates_per_actor: 2
+replay_capacity: 200000
+expert_replay_capacity: 100000
+online_sample_ratio: 0.5
+warmup_env_steps: 2000
+total_env_steps: 100000
+parameter_push_interval_s: 4.0
+env:
+  name: real_robot
+  fps: 50
+  robot:
+    type: so101_follower
+    # Use the same robot fields as a HIL-SERL config.
+  teleop:
+    type: gamepad
+  processor:
+    reset:
+      terminate_on_success: true
+```
+
+Run it with:
+
+```bash
+lerobot-train-rlt --config_path path/to/rlt.yaml
+```
+
+PI0 and RL-token remain frozen. At every stride offset, PI0 produces final tokens and a
+normalized reference action chunk in one prefix prefill. The actor consumes
+`concat(z_rl, proprio)` and the reference chunk. Only the action sent to the robot is
+unnormalized; policy and intervention actions are normalized before replay storage.
+
+### Asynchronous collection and learning
+
+The real-world CLI starts a local learner with the multiprocessing `spawn` context. The
+collector process exclusively owns the robot, teleoperator, frozen PI0/RL-token models,
+and inference actor. It sends serialized CPU transition batches to an unbounded queue and never runs
+an optimizer step. The learner process owns the trainable actor/critic, optimizers,
+checkpoints, and both replay buffers. It consumes queued data and pays the configured UTD
+budget independently of robot collection.
+
+Actor snapshots use latest-only consumption. The collector checks for a snapshot before
+planning each chunk and never changes weights while a chunk is being executed. The initial
+random actor cannot control the robot: PI0 supplies warmup actions, and actor control starts
+only after `warmup_env_steps` and after the learner has completed at least one actor update.
+
+This removes gradient updates and learner backpressure from the robot control path. It does
+not provide hardware-level isolation when both processes use the same GPU: concurrent
+training kernels can still increase PI0 inference latency. Set `learner_device` to a second
+GPU for real-time deployments. CPU learning is also supported, but if learning cannot keep
+up, the unbounded transition queue can grow in memory. At the end of collection, robot
+hardware is closed first and the learner then drains any payable update budget.
+
+### Online and expert replay
+
+The learner follows HIL-SERL's two-buffer routing:
+
+- Every newly collected transition enters the online replay buffer.
+- A transition containing a human intervention in its real `valid_horizon` is also copied
+  into the expert replay buffer. Padding bits are ignored.
+- The per-action `intervention_mask` remains in both buffers for auditing. Because RLT uses
+  overlapping chunks, one corrected action can legitimately mark more than one transition.
+- `online_sample_ratio=0.5` produces a 50/50 online/expert batch. Before the expert buffer has
+  data, sampling falls back to online-only.
+- Intervention copies do not create additional UTD debt. Updates are counted once per newly
+  received online transition.
+
+The expert buffer can start empty and accumulate interventions. To start with demonstrations,
+set `expert_replay_path` to a serialized RLT replay state or an asynchronous RLT checkpoint;
+raw LeRobot episodes first need to be encoded into RLT transition fields. A resume checkpoint
+restores the learner, both buffers, RNG states, collection counters, and inference actor.
+
+The replay schema stores explicit current/next RL state, current/next PI0 reference,
+discounted return, `gamma^n`, termination and truncation separately, valid horizon, and the
+per-step intervention mask. Timeouts bootstrap from the real final observation; true
+terminations do not bootstrap.
