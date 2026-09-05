@@ -1,0 +1,283 @@
+# Hope Jr
+
+## 事前準備（prerequisites）
+
+- [硬體設定（Hardware Setup）](https://github.com/TheRobotStudio/HOPEJr)
+
+## 安裝 LeRobot（install LeRobot）
+
+請依照[安裝說明（installation instructions）](https://github.com/huggingface/lerobot#installation)安裝 LeRobot。
+
+安裝的 LeRobot 與 HopeJR 依賴套件（dependencies）：
+
+```bash
+pip install -e ".[hopejr]"
+```
+
+## 裝置設定（device configuration）
+
+在開始校正（calibration）與操作之前，您需要識別每個 HopeJR 元件的 USB 連接埠（ports）。執行此腳本來找出手臂（arm）、手（hand）、手套（glove）與外骨骼（exoskeleton）的 USB 連接埠：
+
+```bash
+lerobot-find-port
+```
+
+這會顯示可用的 USB 連接埠（ports）及其相關聯的裝置。請記下連接埠路徑（port paths，例如 `/dev/tty.usbmodem58760433331`、`/dev/tty.usbmodem11301`），因為在錄製資料（recording data）、重播回合（replaying episodes）或執行遙操作腳本（running teleoperation scripts）時，您需要在 `--robot.port` 與 `--teleop.port` 參數（parameter）中指定它們。
+
+## 步驟 1：校正（calibration）
+
+在進行遙操作（teleoperation）之前，HopeJR 的肢體需要先校正（calibration）。校正檔案（calibration files）會儲存在 `~/.cache/huggingface/lerobot/calibration`
+
+### 1.1 校正機器人手部（calibrate robot hand）
+
+```bash
+lerobot-calibrate \
+    --robot.type=hope_jr_hand \
+    --robot.port=/dev/tty.usbmodem58760432281 \
+    --robot.id=blue \
+    --robot.side=right
+```
+
+執行校正腳本（calibration script）時，會彈出一個校正 GUI。手指關節（finger joints）命名如下（named as follows）：
+
+**拇指（Thumb）**：
+
+- **CMC**：連接拇指（thumb）與手掌（hand）的基部關節（base joint）
+- **MCP**：指節關節（knuckle joint）
+- **PIP**：第一指節關節（first finger joint）
+- **DIP**：指尖關節（fingertip joint）
+
+**食指（index）、中指（middle）、無名指（ring）與小指（pinky fingers）**：
+
+- **橈側屈肌（Radial flexor）**：將手指基部（base of finger）朝拇（thumb）指方向移動
+- **尺側屈肌（Ulnar flexor）**：將手指基部（base of finger）朝小指（pinky）方向移動
+- **PIP/DIP**：彎曲（flexes）手指的遠端與近端指骨（distal and proximal phalanx）
+
+以上每一項都需要透過 GUI 個別校正（calibration）。
+請注意，尺側與橈側屈肌（ulnar and radial flexors）應具有相同大小的範圍（但偏移量 offsets 不同），以獲得對稱的運動（symmetric movement）。
+
+<p align="center">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/calibration_gui_1.png"
+    alt="Setting boundaries in the hand calibration GUI"
+    title="Setting boundaries in the hand calibration GUI"
+    width="100%"
+  ></img>
+</p>
+
+使用校正介面（calibration interface）為每個關節（joint）設定範圍界限（range boundaries），如上圖所示。
+
+<p align="center">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/calibration_gui_2.png"
+    alt="Saving calibration values"
+    title="Saving calibration values"
+    width="100%"
+  ></img>
+</p>
+
+當您為所有關節（joints）設定好適當的界限（boundaries）後，點擊「Save」將校正值（calibration values）儲存到馬達（motors）。
+
+### 1.2 校正遙操作器手套（calibrate teleoperator glove）
+
+```bash
+lerobot-calibrate \
+    --teleop.type=homunculus_glove \
+    --teleop.port=/dev/tty.usbmodem11201 \
+    --teleop.id=red \
+    --teleop.side=right
+```
+
+從拇指（thumb）開始，讓每根手指走完其完整的活動範圍（move each finger through its full range of motion）。
+
+```
+Move thumb through its entire range of motion.
+Recording positions. Press ENTER to stop...
+
+-------------------------------------------
+NAME      |    MIN |    POS |    MAX
+thumb_cmc |   1790 |   1831 |   1853
+thumb_mcp |   1497 |   1514 |   1528
+thumb_pip |   1466 |   1496 |   1515
+thumb_dip |   1463 |   1484 |   1514
+```
+
+對每根手指繼續進行：
+
+```
+Move middle through its entire range of motion.
+Recording positions. Press ENTER to stop...
+
+-------------------------------------------
+NAME                 |    MIN |    POS |    MAX
+middle_mcp_abduction |   1598 |   1718 |   1820
+middle_mcp_flexion   |   1512 |   1658 |   2136
+middle_dip           |   1484 |   1500 |   1547
+```
+
+校正（calibration）完成後，系統會將校正儲存到 `/Users/your_username/.cache/huggingface/lerobot/calibration/teleoperators/homunculus_glove/red.json`
+
+### 1.3 校正機器人手臂（calibrate robot arm）
+
+```bash
+lerobot-calibrate \
+    --robot.type=hope_jr_arm \
+    --robot.port=/dev/tty.usbserial-1110 \
+    --robot.id=white
+```
+
+這會開啟一個校正（calibration） GUI，您可以在其中為每個馬達設定範圍限制（range limits）。手臂的運動組織如下：
+
+- **肩部（Shoulder）**：俯仰（pitch）、偏擺（yaw）與滾轉（roll）
+- **肘部（Elbow）**：彎曲（flex）
+- **腕部（Wrist）**：俯仰（pitch）、偏擺（yaw）與滾轉（roll）
+
+<p align="center">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/calibration_gui_2.png"
+    alt="Setting boundaries in the arm calibration GUI"
+    title="Setting boundaries in the arm calibration GUI"
+    width="100%"
+  ></img>
+</p>
+
+使用校正介面（calibration interface）為每個關節（joint）設定範圍界限（range boundaries）。讓每個關節走完其完整的活動範圍（move each joint through its full range of motion），並相應地調整最小值與最大值（minimum and maximum values）。當您為所有關節設定好適當的界限後，儲存校正（calibration）。
+
+### 1.4 校正遙操作器外骨骼（calibrate teleoperator exoskeleton）
+
+```bash
+lerobot-calibrate \
+    --teleop.type=homunculus_arm \
+    --teleop.port=/dev/tty.usbmodem11201 \
+    --teleop.id=black
+```
+
+外骨骼（exoskeleton）讓人得以控制機器人手臂。校正（calibration）期間，系統會提示您讓所有關節走完其完整的活動範圍（move all joints through their full range of motion）：
+
+```
+Move all joints through their entire range of motion.
+Recording positions. Press ENTER to stop...
+
+-------------------------------------------
+-------------------------------------------
+NAME            |    MIN |    POS |    MAX
+shoulder_pitch  |    586 |    736 |    895
+shoulder_yaw    |   1257 |   1374 |   1390
+shoulder_roll   |    449 |   1034 |   2564
+elbow_flex      |   3023 |   3117 |   3134
+wrist_roll      |   3073 |   3096 |   3147
+wrist_yaw       |   2143 |   2171 |   2185
+wrist_pitch     |   1975 |   1993 |   2074
+Calibration saved to /Users/your_username/.cache/huggingface/lerobot/calibration/teleoperators/homunculus_arm/black.json
+```
+
+## 步驟 2：遙操作（teleoperation）
+
+由於 Feetech middleware 中的全域變數衝突（global variable conflicts），手臂與手的遙操作（teleoperation for arm and hand）必須在各自獨立的 shell 工作階段（sessions）中執行：
+
+### 手（hand）
+
+```bash
+lerobot-teleoperate \
+    --robot.type=hope_jr_hand \
+    --robot.port=/dev/tty.usbmodem58760432281 \
+    --robot.id=blue \
+    --robot.side=right \
+    --teleop.type=homunculus_glove \
+    --teleop.port=/dev/tty.usbmodem11201 \
+    --teleop.id=red \
+    --teleop.side=right \
+    --display_data=true \
+    --fps=30
+```
+
+### 手臂（arm）
+
+```bash
+lerobot-teleoperate \
+    --robot.type=hope_jr_arm \
+    --robot.port=/dev/tty.usbserial-1110 \
+    --robot.id=white \
+    --teleop.type=homunculus_arm \
+    --teleop.port=/dev/tty.usbmodem11201 \
+    --teleop.id=black \
+    --display_data=true \
+    --fps=30
+```
+
+## 步驟 3：錄製、重播與訓練（record, replay, train）
+
+使用 Hope-JR 進行錄製（record）、重播（replay）與訓練（train）仍屬實驗性質（experimental）。
+
+### 錄製（record）
+
+此步驟會錄製資料集（records the dataset），可在[這裡](https://huggingface.co/datasets/nepyope/hand_record_test_with_video_data/settings)看到一個範例。
+
+```bash
+lerobot-record \
+    --robot.type=hope_jr_hand \
+    --robot.port=/dev/tty.usbmodem58760432281 \
+    --robot.id=right \
+    --robot.side=right \
+    --robot.cameras='{"main": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30}}' \
+    --teleop.type=homunculus_glove \
+    --teleop.port=/dev/tty.usbmodem1201 \
+    --teleop.id=right \
+    --teleop.side=right \
+    --dataset.repo_id=<USER>/hand_record_test_with_video_data \
+    --dataset.single_task="Hand recording test with video data" \
+    --dataset.num_episodes=1 \
+    --dataset.episode_time_s=5 \
+    --dataset.push_to_hub=true \
+    --dataset.private=true \
+    --dataset.streaming_encoding=true \
+    --dataset.encoder_threads=2 \
+    # --dataset.rgb_encoder.vcodec=auto \
+    --display_data=true
+```
+
+### 重播（replay）
+
+```bash
+lerobot-replay \
+    --robot.type=hope_jr_hand \
+    --robot.port=/dev/tty.usbmodem58760432281 \
+    --robot.id=right \
+    --robot.side=right \
+    --dataset.repo_id=<USER>/hand_record_test_with_camera \
+    --dataset.episode=0
+```
+
+### 訓練（train）
+
+```bash
+lerobot-train \
+  --dataset.repo_id=<USER>/hand_record_test_with_video_data \
+  --policy.type=act \
+  --output_dir=outputs/train/hopejr_hand \
+  --job_name=hopejr \
+  --policy.device=mps \
+  --wandb.enable=true \
+  --policy.repo_id=<USER>/hand_test_policy
+```
+
+### 評估（evaluate）
+
+這次訓練執行（training run）可在[這裡](https://wandb.ai/tino/lerobot/runs/rp0k8zvw?nw=nwusertino)作為範例查看。
+
+```bash
+lerobot-record \
+  --robot.type=hope_jr_hand \
+  --robot.port=/dev/tty.usbmodem58760432281 \
+  --robot.id=right \
+  --robot.side=right \
+  --robot.cameras='{"main": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30}}' \
+  --display_data=false \
+  --dataset.repo_id=<USER>/eval_hopejr \
+  --dataset.single_task="Evaluate hopejr hand policy" \
+  --dataset.num_episodes=10 \
+  --dataset.streaming_encoding=true \
+  --dataset.encoder_threads=2 \
+  # --dataset.rgb_encoder.vcodec=auto \
+  --policy.path=outputs/train/hopejr_hand/checkpoints/last/pretrained_model
+```

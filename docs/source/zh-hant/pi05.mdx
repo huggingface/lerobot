@@ -1,0 +1,157 @@
+# π₀.₅ 策略（Pi05 policy）
+
+π₀.₅ 是一個**具備開放世界泛化能力的視覺-語言-動作模型（Vision-Language-Action model with open-world generalization）**，來自 Physical Intelligence。LeRobot 的實作改寫自他們的開源 [OpenPI](https://github.com/Physical-Intelligence/openpi) 儲存庫（repository）。
+
+## 模型概覽（model overview）
+
+π₀.₅ 代表了 π₀ 的重大演進，由 [Physical Intelligence](https://www.physicalintelligence.company/blog/pi05) 開發，旨在解決機器人領域的一大挑戰：**開放世界泛化（open-world generalization）**。雖然機器人能在受控環境中執行令人印象深刻的任務（tasks），但 π₀.₅ 的設計目標是能夠泛化（generalize）到訓練（training）期間從未見過的全新環境與情境（new environments and situations）。
+
+### 泛化挑戰（the generalization challenge）
+
+正如 Physical Intelligence 所解釋的，根本挑戰不在於執行靈巧或敏捷的任務（tasks of agility or dexterity），而在於泛化（generalization），在新設定中使用新物件（new settings with new objects）正確執行任務的能力。以清潔不同住家的機器人為例：每個家庭都有不同的物品放在不同的位置（different objects in different places）。泛化（generalization）必須在多個層面上實現：
+
+- **物理層面（physical level）**：理解如何拿起湯匙（握住把手）或盤子（抓住邊緣），即使面對雜亂環境（cluttered environments）中未見過的物品（unseen objects）
+- **語義層面（semantic level）**：理解任務語義（task semantics），衣物和鞋子該放哪裡（洗衣籃，而非床上），以及哪些工具適合清理溢出的液體
+- **環境層面（environmental level）**：適應「混亂的（messy）」真實世界環境（real-world environments），如住家、雜貨店、辦公室和醫院
+
+### 異質資料協同訓練（co-training on heterogeneous data）
+
+π₀.₅ 的突破性創新在於**異質資料來源的協同訓練（co-training on heterogeneous data sources）**。該模型（model）從以下來源學習：
+
+1. **多模態網路資料（multimodal web data）**：圖片描述（image captioning）、視覺問答（visual question answering）、物件偵測（object detection）
+2. **口語指令（verbal instructions）**：人類逐步指導機器人（humans coaching robots）完成複雜任務（complex tasks）
+3. **子任務指令（subtask commands）**：高層語義行為標籤（high-level semantic behavior labels，例如，針對未整理的床鋪下達「拿起枕頭」指令）
+4. **跨載體機器人資料（cross-embodiment robot data）**：來自具有不同能力（different capabilities）的各種機器人平台（various robot platforms）的資料
+5. **多環境資料（multi-environment data）**：部署（deployed）在多個不同住家的固定式機器人（static robots）
+6. **移動操作資料（mobile manipulation data）**：約 400 小時的移動機器人示範資料（mobile robot demonstrations）
+
+這種多樣化的訓練混合（diverse training mixture）形成了一套「課程（curriculum）」，使得模型（model）能在物理（physical）、視覺（visual）和語義層面（semantic levels）同時實現泛化。
+
+## 安裝需求（installation requirements）
+
+1. 依照我們的[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
+2. 執行以下指令安裝 Pi0.5 的相依套件（dependencies）：
+
+   ```bash
+   pip install -e ".[pi]"
+   ```
+
+## 使用方式（Usage）
+
+若要在 LeRobot 設定中使用 π₀.₅，請將策略類型（policy type）指定為：
+
+```python
+policy.type=pi05
+```
+
+## 訓練（training）
+
+### 訓練指令範例（training command example）
+
+以下是在您自己的資料集（dataset）上微調 π₀.₅ 基礎模型（finetuning the base π₀.₅ model）的完整訓練（training）指令：
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi05 \
+    --output_dir=./outputs/pi05_training \
+    --job_name=pi05_training \
+    --policy.repo_id=your_repo_id \
+    --policy.pretrained_path=lerobot/pi05_base \
+    --policy.compile_model=true \
+    --policy.gradient_checkpointing=true \
+    --wandb.enable=true \
+    --policy.dtype=bfloat16 \
+    --policy.freeze_vision_encoder=false \
+    --policy.train_expert_only=false \
+    --steps=3000 \
+    --policy.device=cuda \
+    --batch_size=32
+```
+
+### 關鍵訓練參數（key training parameters）
+
+- **`--policy.compile_model=true`**：啟用模型編譯（model compilation）以加速訓練（training）
+- **`--policy.gradient_checkpointing=true`**：在訓練（training）過程中顯著降低記憶體使用量
+- **`--policy.dtype=bfloat16`**：使用混合精度訓練（mixed precision training）以提升效率
+- **`--batch_size=32`**：訓練批次大小（batch size for training），請根據您的 GPU 記憶體進行調整
+- **`--policy.pretrained_path=lerobot/pi05_base`**：您欲微調（finetune）的基礎 π₀.₅ 模型（base π₀.₅ model），選項包括：
+  - [lerobot/pi05_base](https://huggingface.co/lerobot/pi05_base)
+  - [lerobot/pi05_libero](https://huggingface.co/lerobot/pi05_libero)（專門針對 Libero 資料集訓練）
+
+### 訓練參數說明（training parameters explained）
+
+| 參數（parameter）       | 預設值（default） | 說明（description）                                                       |
+| ----------------------- | ----------------- | ------------------------------------------------------------------------- |
+| `freeze_vision_encoder` | `false`           | 不凍結視覺編碼器（do not freeze the vision encoder）                      |
+| `train_expert_only`     | `false`           | 不凍結 VLM（do not freeze the VLM），訓練所有參數（train all parameters） |
+
+**💡 提示**：設定 `train_expert_only=true` 會凍結（freezes） VLM，僅訓練動作專家模組和投影層（trains only the action expert and projections），從而以較低的記憶體使用量進行微調（fine-tune）。
+
+如果您的資料集（dataset）尚未以 `quantiles` 轉換，可以使用以下指令進行轉換：
+
+```bash
+python src/lerobot/scripts/augment_dataset_quantile_stats.py \
+    --repo-id=your_dataset \
+```
+
+或使用以下正規化對映（normalization mapping）來訓練（training） pi05：`--policy.normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'`
+
+## 相對動作（relative actions）
+
+預設情況下，π₀.₅ 預測絕對動作（predicts absolute actions）。您可以啟用**相對動作（relative actions）**，讓模型（model）預測相對於當前機器人狀態（current robot state）的偏移量（offsets）。這對於某些設定可以提升訓練穩定性（training stability）。
+
+若要使用相對動作（relative actions），請先透過 CLI 在相對空間（relative space）中重新計算資料集統計量（dataset stats）：
+
+```bash
+lerobot-edit-dataset \
+    --repo_id your_dataset \
+    --operation.type recompute_stats \
+    --operation.relative_action true \
+    --operation.chunk_size 50 \
+    --operation.relative_exclude_joints "['gripper']" \
+    --push_to_hub true
+```
+
+或等效的 Python 寫法：
+
+```python
+from lerobot.datasets import LeRobotDataset, recompute_stats
+
+dataset = LeRobotDataset("your_dataset")
+recompute_stats(dataset, relative_action=True, chunk_size=50, relative_exclude_joints=["gripper"])
+dataset.push_to_hub()
+```
+
+`chunk_size` 應與您策略的（policy’s） `chunk_size` 一致（π₀.₅ 預設為 50）。`relative_exclude_joints` 列出應保持在絕對空間（absolute space）中的關節名稱（joint names，如夾爪 gripper 指令）。使用 `--push_to_hub true` 將更新後的統計量（updated stats）上傳至 Hub。
+
+然後啟用相對動作（relative actions）進行訓練（training）：
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi05 \
+    --policy.use_relative_actions=true \
+    --policy.relative_exclude_joints='["gripper"]' \
+    ...
+```
+
+## 效能結果（performance results）
+
+### Libero 基準測試結果（Libero benchmark results）
+
+π₀.₅ 在 Libero 基準測試套件（benchmark suite）上展現了優異的效能。為了比較和測試其 LeRobot 實作，我們在 Libero 資料集（dataset）上對 libero 基礎模型（libero base model）額外微調（finetuned）了 6k 步，並將結果與 OpenPI 參考結果進行比較。
+
+| 基準測試（benchmark） | LeRobot 實作 | OpenPI 參考值 |
+| --------------------- | ------------ | ------------- |
+| **Libero Spatial**    | 97.0%        | 98.8%         |
+| **Libero Object**     | 99.0%        | 98.2%         |
+| **Libero Goal**       | 98.0%        | 98.0%         |
+| **Libero 10**         | 96.0%        | 92.4%         |
+| **平均**              | 97.5%        | 96.85%        |
+
+這些結果展示了 π₀.₅ 在多樣化機器人操作任務（robotic manipulation tasks）中強大的泛化能力（generalization capabilities）。若要重現（reproduce）這些結果，您可以依照 [Libero](https://huggingface.co/docs/lerobot/libero) 章節中的說明操作。
+
+## 授權條款
+
+本模型遵循 **Apache 2.0 授權條款**，與原始 [OpenPI 儲存庫](https://github.com/Physical-Intelligence/openpi) 一致。

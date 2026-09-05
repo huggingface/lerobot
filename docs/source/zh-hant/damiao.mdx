@@ -1,0 +1,165 @@
+# Damiao 馬達與 CAN 匯流排（bus）
+
+本指南說明如何透過 CAN 匯流排通訊（bus communication），在 LeRobot 中設定與使用 Damiao 馬達。
+
+目前僅支援 Linux，因為 OpenArms 的 CAN 轉接器只有 Linux 驅動程式（drivers）。
+
+## Linux CAN 設定（Linux CAN setup）
+
+使用 Damiao 馬達前，您需要在 Linux 系統上設定 CAN 介面（interface）。
+
+### 安裝 CAN 工具（install CAN utilities）
+
+```bash
+sudo apt-get install can-utils
+```
+
+### 手動設定 CAN 介面（configure CAN interface manually）
+
+若使用標準 CAN FD（建議搭配 OpenArms）：
+
+```bash
+sudo ip link set can0 down
+sudo ip link set can0 type can bitrate 1000000 dbitrate 5000000 fd on
+sudo ip link set can0 up
+```
+
+若使用標準 CAN（不含 FD）：
+
+```bash
+sudo ip link set can0 down
+sudo ip link set can0 type can bitrate 1000000
+sudo ip link set can0 up
+```
+
+### 使用 LeRobot 設定 CAN 介面（configure CAN interface with LeRobot）
+
+LeRobot 提供一個工具腳本來設定與測試 CAN 介面（interfaces）：
+
+```bash
+# 設定多個介面（例如：使用 2 條 CAN 匯流排的 OpenArms Followers）
+lerobot-setup-can --mode=setup --interfaces=can0,can1
+```
+
+## 除錯 CAN 通訊（debugging CAN communication）
+
+使用內建的除錯工具測試馬達通訊（motor communication）：
+
+```bash
+# 測試所有介面上的馬達
+lerobot-setup-can --mode=test --interfaces=can0,can1
+
+# 執行速度/延遲測試
+lerobot-setup-can --mode=speed --interfaces=can0
+```
+
+測試模式會掃描馬達（ID 0x01-0x08）並回報哪些有回應（respond）。範例輸出：
+
+```
+can0: UP (CAN FD)
+  Motor 0x01 (joint_1): ✓ FOUND
+    → Response 0x11 [FD]: 00112233...
+  Motor 0x02 (joint_2): ✓ FOUND
+  Motor 0x03 (joint_3): ✗ No response
+  ...
+  Summary: 2/8 motors found
+```
+
+## 使用方式（usage）
+
+### 基本設定（basic setup）
+
+```python
+from lerobot.motors import Motor
+from lerobot.motors.damiao import DamiaoMotorsBus
+
+# 定義馬達，並指定發送/接收的 CAN ID
+motors = {
+    "joint_1": Motor(id=0x01, motor_type_str="dm8009", recv_id=0x11),
+    "joint_2": Motor(id=0x02, motor_type_str="dm4340", recv_id=0x12),
+    "joint_3": Motor(id=0x03, motor_type_str="dm4310", recv_id=0x13),
+}
+
+# 建立匯流排
+bus = DamiaoMotorsBus(
+    port="can0",  # Linux socketcan 介面
+    motors=motors,
+)
+
+# 連線
+bus.connect()
+```
+
+### 讀取馬達狀態（reading motor states）
+
+```python
+# 讀取單一馬達位置（度）
+position = bus.read("Present_Position", "joint_1")
+
+# 從多個馬達讀取
+positions = bus.sync_read("Present_Position")  # 所有馬達
+positions = bus.sync_read("Present_Position", ["joint_1", "joint_2"])
+
+# 一次讀取所有狀態（位置、速度、扭矩）
+states = bus.sync_read_all_states()
+# 回傳：{'joint_1': {'position': 45.2, 'velocity': 1.3, 'torque': 0.5}, ...}
+```
+
+### 寫入馬達命令（writing motor commands）
+
+```python
+# 啟用扭矩
+bus.enable_torque()
+
+# 設定目標位置（度）
+bus.write("Goal_Position", "joint_1", 45.0)
+
+# 為多個馬達設定位置
+bus.sync_write("Goal_Position", {
+    "joint_1": 45.0,
+    "joint_2": -30.0,
+    "joint_3": 90.0,
+})
+
+# 停用扭矩
+bus.disable_torque()
+```
+
+## 設定選項（configuration options）
+
+| 參數（parameter） | 預設值（default） | 說明（description）                                                       |
+| ----------------- | ----------------- | ------------------------------------------------------------------------- |
+| `port`            | -                 | CAN 介面（interface, `can0`）或序列埠（serial port, `/dev/cu.usbmodem*`） |
+| `use_can_fd`      | `True`            | 啟用 CAN FD 以獲得更高的資料傳輸率（data rates）                          |
+| `bitrate`         | `1000000`         | 標稱位元率（1 Mbps）                                                      |
+| `data_bitrate`    | `5000000`         | CAN FD 資料位元率（5 Mbps）                                               |
+
+## 馬達設定（motor configuration）
+
+每個馬達需要：
+
+- `id`：用於發送命令的 CAN ID
+- `motor_type`：其中一種支援的馬達類型（motor types，例如 `"dm8009"`、`"dm4340"`）
+- `recv_id`：用於接收回應（responses）的 CAN ID
+
+OpenArms 的預設 ID 遵循以下模式：發送 ID `0x0N`、接收 ID `0x1N`，其中 N 為關節編號（joint number）。
+
+## 疑難排解（troubleshooting）
+
+### 馬達沒有回應（no response from motors）
+
+1. **檢查電源（check power）**
+2. **確認 CAN 接線（verify CAN wiring）**：檢查 CAN-H、CAN-L 與 GND 的連接
+3. **檢查馬達 ID（check motor IDs）**：使用 Damiao 除錯工具驗證/設定 ID
+4. **測試 CAN 介面（test CAN interface）**：執行 `candump can0` 查看是否有收到訊息
+5. **執行診斷（run diagnostics）**：`lerobot-setup-can --mode=test --interfaces=can0`
+
+### 馬達逾時參數（motor timeout parameter）
+
+若馬達設定的 timeout=0，它們將不會回應命令。請使用 Damiao 除錯工具（Damiao Debugging Tools）設定非零的逾時值（non-zero timeout value）。
+
+### 確認 CAN FD 狀態（verify CAN FD status）
+
+```bash
+ip -d link show can0 | grep fd
+```

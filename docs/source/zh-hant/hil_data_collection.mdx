@@ -1,0 +1,267 @@
+# 人在迴圈中的資料收集（Human-In-the-Loop data collection）
+
+人在迴圈中（Human-In-the-Loop, HIL）的資料收集（data collection）讓您能透過將已訓練的策略（trained policy）部署（deployment）到真實機器人上，同時由人類操作員（human operator）監控（monitors）並在需要時介入（intervenes），來改進該策略。介入資料（intervention data，恢復動作與修正動作）會與自主運行片段（autonomous segments）一併記錄（recorded），產生更豐富的訓練資料集（training dataset），教導策略如何處理失敗情況（failures）。
+
+---
+
+## 為什麼需要人在迴圈中的機制？（why Human-In-the-Loop?）
+
+標準的行為複製（standard behavioral cloning）僅在成功的示範（successful demonstrations）上訓練策略（train a policy）。在部署（deployment）期間，微小的誤差可能會不斷累積（compound），將機器人推入訓練期間從未見過的狀態（分佈偏移 distribution shift）。HIL 資料收集透過以下方式解決此問題：
+
+- 在真實機器人上執行已訓練的策略（trained policy）
+- 當機器人即將失敗（about to fail）時由人為介入（human intervene）
+- 將人為的恢復與修正（human’s recovery and correction）記錄（recording）為訓練資料（training data）
+- 使用合併的資料集（combined dataset）微調策略（fine-tuning the policy）
+
+這將產生一個不僅知道如何執行任務（task），還知道如何在出錯時恢復（recover）的策略（policy）。
+
+---
+
+## 運作方式（how it works）
+
+在 HIL 進行期間，人類操作員（human operator）在每個回合（episode）中遵循以下循環（loop）：
+
+1. **觀察（watch）**策略自主運行（policy run autonomously）
+2. 當即將發生失敗（failure）時**暫停（pause）**，機器人保持當前位置（position）
+3. **接管控制（take control）**並遙操作（teleoperate）機器人回到良好狀態（good state，恢復 recovery），然後修正行為（correct the behavior）
+4. **將控制權交還給策略（return control to the policy）**，策略恢復自主執行（policy resumes autonomous execution）
+5. 在回合（episode）內根據需要重複步驟 2–4 任意次數
+6. 當任務（task）完成時**結束回合（end the episode）**，儲存並進入下一個推演（next rollout）
+
+自主與人為控制（human-controlled）的片段（segments）都會被記錄（recorded）。策略（policy）和人類可以在單一回合（episode）內多次交替控制（alternate control），每次交接（handoff）後回合（episode）會從當前狀態（current state）繼續（不需要因為發生介入 intervention 而重置）。這在一條連續軌跡（continuous trajectory）中捕捉了自主執行（autonomous execution）、恢復（recovery）和修正（correction）。收集完成後，合併的資料集（combined dataset，原始示範 + HIL 資料）用於微調策略（fine-tune the policy）。
+
+此過程可以迭代重複（repeated iteratively）：部署（deployment）、收集（collect）、微調（fine-tune）、再重複。每一輪針對當前策略的失敗模式（policy’s failure modes）。
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  策略 v0（在示範上訓練）                                                   │
+│       ↓                                                                 │
+│  HIL 收集（針對當前失敗模式）→ 微調 → 策略 v1                                │
+│       ↓                                                                 │
+│  HIL 收集（針對新的失敗模式）→ 微調 → 策略 v2                                │
+│       ↓                                                                 │
+│  ...（重複直到效能令人滿意）                                                │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 硬體需求（hardware requirements）
+
+### 遙操作器需求（teleoperator requirements）
+
+使用 `lerobot-rollout` 搭配 `--strategy.type=dagger` 模式需要**具有主動馬達的遙操作器（teleoperators with active motors）**，能夠：
+
+- 以程式方式啟用/停用扭力（enable/disable torque）
+- 移動到目標位置（target positions，用於在暫停時鏡像機器人狀態 robot state）
+
+**相容的遙操作器（teleoperator）：**
+
+- `bi_openarm_mini` - 雙臂 OpenArm Mini
+- `so_leader` - SO100 / SO101 的領導臂（leader arm）
+
+> [!IMPORTANT]
+> 提供的指令預設使用 `bi_openarm_follower` + `bi_openarm_mini`。
+> `so_follower` + `so_leader` 的配置也已註冊（registered），可透過 CLI flags 使用。
+
+---
+
+## 腳本（script）
+
+使用 `lerobot-rollout` 搭配 `--strategy.type=dagger` 進行 HIL 資料收集（data collection）。透過 `--inference.type=sync|rtc` 選擇推論後端（inference backend）：
+
+| 模式（mode）    | 旗標（flag）             | 模型（model）         |
+| --------------- | ------------------------ | --------------------- |
+| 標準（預設）    | _（不需要旗標（flag））_ | ACT、Diffusion Policy |
+| 即時分塊（RTC） | `--inference.type=rtc`   | Pi0、Pi0.5、SmolVLA   |
+
+---
+
+## 逐步指南（step-by-step guide）
+
+### 步驟 1：預訓練基礎策略（pre-train a base policy）
+
+首先，在您的示範資料集（demonstration dataset）上訓練策略（train a policy）：
+
+```bash
+python src/lerobot/scripts/lerobot_train.py \
+    --dataset.repo_id=your-username/demo-dataset \
+    --policy.type=pi0 \
+    --output_dir=outputs/pretrain \
+    --batch_size=32 \
+    --steps=50000
+```
+
+### 步驟 2：收集 HIL 資料（collect HIL data）
+
+**標準推論（ACT、Diffusion policy）：**
+
+```bash
+lerobot-rollout --strategy.type=dagger \
+    --robot.type=bi_openarm_follower \
+    --robot.left_arm_config.port=can1 \
+    --robot.left_arm_config.side=left \
+    --robot.right_arm_config.port=can0 \
+    --robot.right_arm_config.side=right \
+    --robot.cameras='{left_wrist: {type: opencv, index_or_path: "/dev/video0", width: 1280, height: 720, fps: 30}, right_wrist: {type: opencv, index_or_path: "/dev/video4", width: 1280, height: 720, fps: 30}, base: {type: opencv, index_or_path: "/dev/video2", width: 640, height: 480, fps: 30}}' \
+    --teleop.type=bi_openarm_mini \
+    --teleop.left_arm_config.port=/dev/ttyACM0 \
+    --teleop.right_arm_config.port=/dev/ttyACM1 \
+    --policy.path=outputs/pretrain/checkpoints/last/pretrained_model \
+    --dataset.repo_id=your-username/rollout_hil_dataset \
+    --dataset.single_task="Fold the T-shirt properly" \
+    --dataset.fps=30 \
+    --strategy.num_episodes=50 \
+    --interpolation_multiplier=2
+```
+
+**搭配 RTC 用於大型模型（Pi0、Pi0.5、SmolVLA）：**
+
+對於推論（inference）延遲較高（high inference latency）的模型（model），啟用 RTC 以實現流暢執行（smooth execution）：
+
+```bash
+lerobot-rollout --strategy.type=dagger \
+    --inference.type=rtc \
+    --inference.rtc.execution_horizon=20 \
+    --inference.rtc.max_guidance_weight=5.0 \
+    --inference.rtc.prefix_attention_schedule=LINEAR \
+    --robot.type=bi_openarm_follower \
+    --robot.left_arm_config.port=can1 \
+    --robot.left_arm_config.side=left \
+    --robot.right_arm_config.port=can0 \
+    --robot.right_arm_config.side=right \
+    --robot.cameras='{left_wrist: {type: opencv, index_or_path: "/dev/video0", width: 1280, height: 720, fps: 30}, right_wrist: {type: opencv, index_or_path: "/dev/video4", width: 1280, height: 720, fps: 30}, base: {type: opencv, index_or_path: "/dev/video2", width: 640, height: 480, fps: 30}}' \
+    --teleop.type=bi_openarm_mini \
+    --teleop.left_arm_config.port=/dev/ttyACM0 \
+    --teleop.right_arm_config.port=/dev/ttyACM1 \
+    --policy.path=outputs/pretrain/checkpoints/last/pretrained_model \
+    --dataset.repo_id=your-username/rollout_hil_rtc_dataset \
+    --dataset.single_task="Fold the T-shirt properly" \
+    --dataset.fps=30 \
+    --strategy.num_episodes=50 \
+    --interpolation_multiplier=3
+```
+
+**操控方式（概念說明）：**
+
+互動模式（interaction model）如下：
+
+- **暫停輸入（pause input）**：暫停自主策略執行（pause autonomous policy execution）
+- **接管輸入（takeover input:）**：將控制權轉移（transfer control）給人類操作員（human operator）並記錄介入資料（record intervention data）
+- **交還策略輸入（return-to-policy input）**：將控制權交還（hand control back）給策略（policy）並繼續同一回合（same episode）
+- **回合控制輸入（episode control inputs）**：根據需要儲存（save）/重新錄製（re-record）/停止（stop）/重置（reset）
+
+實際的按鍵（key）/踏板（padal）對應可能因腳本和硬體整合而異。請以每個腳本印出的操控說明作為您設定上具體對應關係的依據（source of truth）。
+
+HIL 協定（HIL protocol）：
+
+1. 觀察策略（policy）自主運行（run autonomously，遙操作器 teleoperator 處於閒置 idle/自由 free 的狀態）
+2. 當您看到即將發生失敗（imminent failure）時，觸發**暫停輸入（pause input）**
+   - 策略停止（policy stops）
+   - 遙操作器（teleoperator）移動以匹配機器人位置（robot position，扭力 torque 啟用）
+   - 暫停期間不記錄影格（frame）
+3. 觸發**接管輸入（takeover input）**以接管控制
+   - 遙操作器扭力停用（teleoperator torque disabled），可自由移動
+   - **恢復（recovery）**：遙操作（teleoperate）機器人回到良好狀態（good state）
+   - **修正（correction）**：修正行為（correct the behavior）
+   - 所有動作都會被記錄（recorded）
+4. 觸發**交還策略輸入（return-to-policy input）**
+   - 策略（policy）從當前狀態（current state）恢復自主執行（resumes autonomous execution）
+   - 您可以隨時再次介入（intervene again，重複步驟 2–4）
+5. 當任務（task）完成（或達到回合時間限制 episode time limit）時結束並儲存回合（save the episode）
+6. **重置（reset）**：遙操作（teleoperate）移動到機器人位置（robot position），您可以將機器人移動到起始位置（starting position）
+7. 開始下一個回合（next episode）
+
+**Linux 的腳踏板設定（foot pedal setup）：**
+
+如果使用 USB 腳踏板（foot pedal, PCsensor FootSwitch），請確保存取權限（ensure access）：
+
+```bash
+sudo setfacl -m u:$USER:rw /dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd
+```
+
+### 步驟 3：微調策略（fine-tune the policy）
+
+在**合併的**資料集（combined dataset， `demo-dataset` + `hil-dataset` 合併在一起）上進行微調（fine-tune）：
+
+```bash
+python src/lerobot/scripts/lerobot_train.py \
+    --dataset.repo_id=your-username/hil-dataset \
+    --policy.type=pi0 \
+    --policy.pretrained_path=outputs/pretrain/checkpoints/last/pretrained_model \
+    --output_dir=outputs/hil_finetune \
+    --steps=20000
+```
+
+然後部署（deployment）微調後的策略（fine-tuned policy），從步驟 2 重新開始，針對其剩餘的失敗模式（failure modes）進行改進。
+
+---
+
+## 有效 HIL 收集的技巧（tips for effective HIL collection）
+
+### 何時介入（when to intervene）
+
+當您觀察到以下情況時介入（intervene）：
+
+- 機器人即將犯下不可逆的錯誤（irreversible mistake）
+- 機器人猶豫不決或表現出不確定的行為（hesitating or showing uncertain behavior）
+- 機器人偏離預期軌跡（deviating from the expected trajectory）
+
+### 恢復：遙操作回到良好狀態（recovery: teleoperating back to a good state）
+
+在恢復（recovery）階段，遙操作（teleoperate）機器人回到以下狀態（state）：
+
+- 機器人處於熟悉的、分佈內的配置（familiar, in-distribution configuration）
+- 當前子任務（subtask）仍然可以完成
+- 恢復軌跡（recovery trajectory）本身就是有資訊量的訓練資料（informative training data）
+
+### 修正的品質（quality of corrections）
+
+在修正（correction）階段：
+
+- 提供**自信、乾淨的**軌跡（trajectory）
+- 完整地完成當前子任務（task）
+- 不要過度修正或添加不必要的動作（action）
+
+---
+
+## 相關工作（related work）
+
+此 HIL 資料收集方法（HIL data collection approach）建立在互動式模仿學習（interactive imitation learning）的理念之上：
+
+- **DAgger** (Ross et al., 2011) 引入了核心理念：不只在專家示範上訓練（training on expert demonstrations），而是在學習者所造訪（learner visits）的狀態（state）上查詢專家的修正（query the expert for corrections）。這透過迭代收集 on-policy 資料，打破了標準行為複製（standard behavioral cloning）的累積誤差循環（compounding-error cycle）。
+
+- **HG-DAgger** (Kelly et al., 2019) 使其在機器人領域變得實用：人類專家監控（human expert monitors）機器人，僅在需要時介入（intervenes），而非標註每一個狀態（labeling every state）。自主（autonomous）與人類控制（human control）之間的切換正是此處腳本所使用的暫停（pause） → 接管（takeover） → 交還策略循環（return-to-policy loop）。
+
+- **RaC** (Hu et al., 2025) 透過將介入（interventions）明確分解為**恢復**（recovery，遙操作回到良好狀態 good state）和**修正**（corrections，從該處示範正確行為），將此循環擴展至長期任務（task）。此分解方式即為 `lerobot-rollout` 中 DAgger 策略（strategy）所遵循的協定（protocol）。
+
+- **π0.6/RECAP** (Physical Intelligence, 2025) 將相同的迭代收集與微調循環（iterative collect-and-finetune loop）大規模應用於 VLA 模型，展示即使是大型預訓練策略（large pretrained policies）也能從針對自身失敗模式（failure modes）的人類修正（human corrections）中獲得顯著改善。π0.6 使用 RECAP 進行訓練。
+
+```bibtex
+@article{ross2011dagger,
+  title={A Reduction of Imitation Learning and Structured Prediction to No-Regret Online Learning},
+  author={Ross, Stéphane and Gordon, Geoffrey and Bagnell, Drew},
+  journal={Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics},
+  year={2011}
+}
+
+@article{kelly2019hgdagger,
+  title={HG-DAgger: Interactive Imitation Learning with Human Experts},
+  author={Kelly, Michael and Sidrane, Chelsea and Driggs-Campbell, Katherine and Kochenderfer, Mykel J},
+  journal={arXiv preprint arXiv:1810.02890},
+  year={2019}
+}
+
+@article{hu2025rac,
+  title={RaC: Robot Learning for Long-Horizon Tasks by Scaling Recovery and Correction},
+  author={Hu, Zheyuan and Wu, Robyn and Enock, Naveen and Li, Jasmine and Kadakia, Riya and Erickson, Zackory and Kumar, Aviral},
+  journal={arXiv preprint arXiv:2509.07953},
+  year={2025}
+}
+
+@article{pi2025recap,
+  title={π0.6: a VLA That Learns From Experience},
+  author={Physical Intelligence},
+  year={2025}
+}
+```

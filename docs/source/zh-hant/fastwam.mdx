@@ -1,0 +1,167 @@
+# FastWAM
+
+FastWAM 是一個用於機器人控制的世界動作模型策略（World Action Model policy）。LeRobot 的整合透過標準的策略 API 公開 FastWAM，因此可以用 `policy.type=fastwam` 進行設定、以 `lerobot-train` 進行訓練（training），並透過 LeRobot 的預訓練策略介面（pretrained policy interface）載入。
+
+## 模型概覽（model overview）
+
+FastWAM 在訓練（training）期間保留影片建模（video modeling），但在推論（inference）時採用直接動作預測（action prediction），而非迭代式地生成未來的觀測（iteratively generating future observations）。這個 LeRobot 策略（policy）封裝（wrap）了 FastWAM 動作模型（action model），將 LeRobot 批次（batch）調整為 FastWAM 訓練樣本（training samples），並提供標準的處理器管線（processor pipeline）以進行正規化與動作後處理（normalization and action postprocessing）。
+
+此實作預設會從 `Wan-AI/Wan2.2-TI2V-5B` 初始化視覺世界模型元件（visual world-model components），並預測形狀（shape）為 `[batch, action_horizon, action_dim]` 的動作區塊（action chunk）。
+
+### LeRobot 整合涵蓋的範圍（what the lerobot integration covers）
+
+- 透過 LeRobot 進行標準的 `policy.type=fastwam` 設定（configuration）
+- 影像（Image）、狀態（state）、動作（action）與語言任務的批次調整（language-task batch adaptation）
+- 透過 `select_action` 與 `predict_action_chunk` 進行動作（action chunk inference）
+- 透過 LeRobot 策略（policy） API 進行檢查點（checkpoint）儲存/載入
+- 可設定的 LIBERO 夾爪動作後處理（gripper action postprocessing）
+
+## 安裝需求（installation requirements）
+
+從原始碼安裝 LeRobot，接著安裝 FastWAM 相依套件（dependencies）：
+
+```bash
+pip install -e ".[fastwam]"
+```
+
+這會從 `pyproject.toml` 安裝 FastWAM 策略額外套件（policy extra）：`transformers`、
+`diffusers`、`ftfy` 與 `regex`，外加 LeRobot 的基礎相依套件（dependencies）。
+
+若要進行 LIBERO 評估（evaluation），也請安裝該基準測試的相依套件（benchmark dependencies）：
+
+```bash
+pip install -e ".[fastwam,libero]"
+```
+
+這會同時安裝這兩個額外套件（extras）。除了上述的 FastWAM 相依套件（dependencies）之外，
+`libero` 額外套件還會安裝 LeRobot 資料集相依套件（dataset dependencies）、Linux 上的 `hf-libero`，以及
+`scipy`。
+
+FastWAM 使用 Wan2.2 TI2V 骨幹網路（backbone）。預設的 model id 為：
+
+```python
+policy.model_id=Wan-AI/Wan2.2-TI2V-5B
+```
+
+## 資料需求（data requirements）
+
+FastWAM 需要一個具備下列條件的 LeRobot 資料集（dataset）：
+
+- 一個或多個視覺觀測（visual observations），其寬度串接（widths concatenate）後等於 `policy.image_size[1]`
+- 當 `policy.proprio_dim` 不為 `None` 時的 `observation.state`
+- `action`
+- 透過資料集任務欄位（dataset task field）提供的語言任務指令（language task instruction），或預先計算的 `context` 與 `context_mask` 張量（tensors）
+
+預設的視覺設定（visual setup）是一個名為 `observation.images.image`、形狀（shape）為 `(3, 224, 448)` 的影像特徵（image feature）。若資料集（dataset）使用兩個攝影機，請設定（configure） `policy.input_features`，使其高度（heights）符合 `224`，且寬度總和（widths sum）為 `448`。
+
+## 使用方式（usage）
+
+使用以下指令建立一個新的 FastWAM 策略（policy）：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your-org/your-dataset \
+  --policy.type=fastwam \
+  --policy.action_dim=7 \
+  --policy.proprio_dim=8 \
+  --policy.action_horizon=32 \
+  --policy.n_action_steps=10 \
+  --policy.image_size='[224,448]' \
+  --output_dir=./outputs/fastwam_training \
+  --job_name=fastwam_training \
+  --steps=300000 \
+  --batch_size=8 \
+  --policy.device=cuda
+```
+
+使用以下指令在 LIBERO-10 上評估（evaluate）既有的 LeRobot 格式檢查點（checkpoint）：
+
+```bash
+lerobot-eval \
+  --policy.path=ZibinDong/fastwam_libero_uncond_2cam224 \
+  --policy.device=cuda \
+  --policy.torch_dtype=float32 \
+  --policy.n_action_steps=10 \
+  --env.type=libero \
+  --env.task=libero_10 \
+  --env.observation_height=224 \
+  --env.observation_width=224 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=50 \
+  --seed=0 \
+  --env.episode_length=600
+```
+
+對於 `libero_goal`、`libero_spatial` 與 `libero_object`，請使用
+`--env.episode_length=300`。
+
+若要進行真實機器人（real-robot）的 rollout，請使用相同的檢查點路徑（checkpoint path）：
+
+```bash
+lerobot-rollout \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM0 \
+  --policy.path=your-org/fastwam-real-robot
+```
+
+## 設定注意事項（configuration notes）
+
+### 影像特徵（feature）
+
+`policy.image_size` 是串接後（concatenated）的 FastWAM 影像張量（image tensor）的尺寸（size），格式為 `(height, width)`。每個設定的影像特徵（configured image feature）都必須具有 `(3, height, camera_width)` 的形狀（shape），且所有攝影機寬度的總和（all camera widths must sum）必須等於所設定的寬度（configured width）。
+
+### 動作區塊化（action chunking）
+
+`policy.action_horizon` 控制在訓練期間受監督與在推論期間預測的未來動作數量（number of future actions supervised during training and predicted during inference）。`policy.n_action_steps` 控制在策略預測新的區塊（policy predicts a fresh chunk）之前會消耗（consumed）多少個動作（actions）。`policy.n_action_steps` 必須小於或等於 `policy.action_horizon`。
+
+### Wan 元件（Wan components）
+
+FastWAM 會從所設定的 Wan 模型目錄（model directory）或 Hugging Face Hub model id 載入 Wan VAE、video DiT、文字編碼器（text encoder）與 tokenizer。由 `save_pretrained` 儲存的 LeRobot 格式 FastWAM 檢查點（checkpoint），也會複製 `from_pretrained` 所需的本機 Wan 元件檔案（local Wan component files）。
+
+### 注意力後端（attention backend）
+
+FastWAM 的 DiT 對所有注意力都使用 PyTorch 的 `scaled_dot_product_attention`（SDPA）。它**不**使用 FlashAttention：其 Mixture-of-Transformers（MoT）路由（routing）需要任意的布林 `[query, key]` 注意力遮罩（attention masks），而這是 FlashAttention 的 varlen API 無法表達的。因此安裝 `flash-attn` 套件（package）對 FastWAM 的路徑不會有任何影響。（請注意，SDPA 本身內部仍可能選用 PyTorch 自己的 flash／memory-efficient／math 核心 kernel，這與 `flash-attn` 套件 package 無關。）
+
+### LIBERO 動作切換（LIBERO action toggle）
+
+FastWAM 的 LIBERO 檢查點（checkpoint）預設使用 `policy.toggle_action_dimensions=[-1]`，
+以符合原始 FastWAM 評估管線（evaluation pipeline）所採用的夾爪
+動作慣例（gripper action convention）：
+
+```bash
+--policy.toggle_action_dimensions='[-1]'
+```
+
+## 結果（results）
+
+在 LIBERO 上使用 [`ZibinDong/fastwam_libero_uncond_2cam224`](https://huggingface.co/ZibinDong/fastwam_libero_uncond_2cam224) 進行評估（evaluation）：
+
+| 套件（suite）  | 成功率（success rate） | n_episodes |
+| -------------- | ---------------------: | ---------: |
+| libero_spatial |                  97.6% |        500 |
+| libero_object  |                  99.0% |        500 |
+| libero_goal    |                  95.0% |        500 |
+| libero_10      |                  94.0% |        500 |
+| **平均**       |              **96.4%** |       2000 |
+
+重現方式：`lerobot-eval --policy.path=ZibinDong/fastwam_libero_uncond_2cam224 --policy.device=cuda --policy.torch_dtype=float32 --policy.n_action_steps=10 --env.type=libero --env.task=libero_spatial --env.observation_height=256 --env.observation_width=256 --eval.batch_size=1 --eval.n_episodes=50 --seed=0 --env.episode_length=300`（1x H20 140 GB）。
+
+## 參考資料
+
+- [Fast-WAM 論文](https://arxiv.org/abs/2603.16666)
+- [Fast-WAM 專案頁面](https://yuantianyuan01.github.io/FastWAM/)
+- [Fast-WAM 程式碼](https://github.com/yuantianyuan01/FastWAM)
+- [已發布的上游檢查點（Released upstream checkpoints）](https://huggingface.co/yuanty/fastwam)
+- [Wan2.2 TI2V 5B](https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B)
+
+## 引用
+
+```bibtex
+@article{yuan2026fastwam,
+  title = {Fast-WAM: Do World Action Models Need Test-time Future Imagination?},
+  author = {Tianyuan Yuan and Zibin Dong and Yicheng Liu and Hang Zhao},
+  journal = {arXiv preprint arXiv:2603.16666},
+  year = {2026},
+  url = {https://arxiv.org/abs/2603.16666}
+}
+```

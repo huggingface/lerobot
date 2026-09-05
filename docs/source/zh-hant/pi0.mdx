@@ -1,0 +1,135 @@
+# π₀ (Pi0)
+
+π₀ 是一個**用於通用機器人控制的視覺-語言-動作模型（Vision-Language-Action model for general robot control）**，由 Physical Intelligence 開發。LeRobot 的實作改寫自他們的開源 [OpenPI](https://github.com/Physical-Intelligence/openpi) 儲存庫（repository）。
+
+## 模型概覽（model overview）
+
+π₀ 代表了機器人領域的一項突破，是由 [Physical Intelligence](https://www.physicalintelligence.company/blog/pi0) 開發的首個通用型機器人基礎模型（general-purpose robot foundation model）。不同於傳統為重複動作（repetitive motions）編程的狹隘專用機器人程式，π₀ 被設計為一種通用策略（generalist policy），能夠理解視覺輸入（visual inputs）、解讀自然語言指令（natural language instructions），並控制各種不同的機器人執行多樣化的任務（tasks）。
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-pi0%20(1).png"
+  alt="An overview of Pi0"
+  width="85%"
+/>
+
+### Physical Intelligence 的願景（the vision for Physical Intelligence）
+
+正如 Physical Intelligence 所描述的，雖然 AI 在數位領域已取得卓越的成就，從下棋到藥物發現皆然，但在物理世界中，人類智慧仍大幅領先 AI。套用莫拉維克悖論（Moravec's paradox）的說法，贏得一盤棋對 AI 而言是「簡單」的問題，但摺一件襯衫或清理桌面卻需要解決一些有史以來最困難的工程問題。π₀ 代表了開發人工物理智慧的第一步，使用戶能夠像使用大型語言模型（large language models）一樣，簡單地要求機器人執行任何想要的任務（task）。
+
+### 架構與方法（architecture and approach）
+
+π₀ 結合了以下幾項關鍵創新（key innovations）：
+
+- **流匹配（flow matching）**：使用一種新穎的方法，透過流匹配（flow matching，擴散模型 diffusion model 的一種變體）為預訓練（pre-trained）的 VLM 增添連續動作輸出（continuous action outputs）能力
+- **跨載體訓練（cross-embodiment training）**：使用來自 8 個不同機器人平台的資料進行訓練（training），包括 UR5e、雙臂 UR5e、Franka、雙臂 Trossen、雙臂 ARX、移動式 Trossen 和移動式 Fibocom
+- **網際網路規模預訓練（internet-scale pre-training）**：從一個擁有 30 億參數的預訓練視覺-語言模型（pre-trained 3B parameter Vision-Language Model）繼承語義知識（inherits semantic knowledge）
+- **高頻率控制（high-frequency control）**：以高達 50 Hz 的頻率輸出馬達指令，實現即時靈巧操作（real-time dexterous manipulation）
+
+## 安裝需求（installation requirements）
+
+1. 依照我們的[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
+2. 執行以下指令安裝 Pi0 相關依賴套件（dependencies）：
+
+   ```bash
+   pip install -e ".[pi]"
+   ```
+
+## 訓練資料與能力（training data and capabilities）
+
+π₀ 使用迄今為止最大的機器人互動資料集（robot interaction dataset）進行訓練（training），結合了三個關鍵資料來源（key data sources）：
+
+1. **網際網路規模預訓練（internet-scale pre-training）**：來自網路的視覺-語言（Vision-language）資料，用於語義理解
+2. **Open X-Embodiment 資料集**：開源機器人操作資料集（robot manipulation datasets）
+3. **Physical Intelligence 資料集**：涵蓋 8 種不同機器人的大型多樣化靈巧任務（dexterous tasks）資料集（dataset）
+
+## 使用方式（usage）
+
+若要在 LeRobot 中使用 π₀，請將策略類型（policy type）指定為：
+
+```python
+policy.type=pi0
+```
+
+## 訓練（training）
+
+要訓練（training） π₀，您可以使用標準的 LeRobot 訓練腳本（training script）搭配適當的設置（configuration）：
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi0 \
+    --output_dir=./outputs/pi0_training \
+    --job_name=pi0_training \
+    --policy.pretrained_path=lerobot/pi0_base \
+    --policy.repo_id=your_repo_id \
+    --policy.compile_model=true \
+    --policy.gradient_checkpointing=true \
+    --policy.dtype=bfloat16 \
+    --policy.freeze_vision_encoder=false \
+    --policy.train_expert_only=false \
+    --steps=3000 \
+    --policy.device=cuda \
+    --batch_size=32
+```
+
+### 關鍵訓練參數（key training parameters）
+
+- **`--policy.compile_model=true`**：啟用模型編譯（model compilation）以加速訓練（training）
+- **`--policy.gradient_checkpointing=true`**：大幅減少訓練（training）過程中的記憶體使用量
+- **`--policy.dtype=bfloat16`**：使用混合精度（mixed precision）訓練（training）以提升效率
+- **`--batch_size=32`**：訓練（training）的批次大小（batch size），請根據您的 GPU 記憶體調整
+- **`--policy.pretrained_path=lerobot/pi0_base`**：您想要微調（fine-tune）的 π₀ 基礎模型（base π₀ model），選項包括：
+  - [lerobot/pi0_base](https://huggingface.co/lerobot/pi0_base)
+  - [lerobot/pi0_libero](https://huggingface.co/lerobot/pi0_libero)（專門針對 Libero 資料集訓練）
+
+### 訓練參數說明（training parameters explained）
+
+| 參數（parameter）       | 預設值（default） | 說明（description）                                                       |
+| ----------------------- | ----------------- | ------------------------------------------------------------------------- |
+| `freeze_vision_encoder` | `false`           | 不凍結視覺編碼器（do not freeze the vision encoder）                      |
+| `train_expert_only`     | `false`           | 不凍結 VLM（do not freeze the VLM），訓練所有參數（train all parameters） |
+
+**💡 提示**：設定 `train_expert_only=true` 會凍結（freezes） VLM，僅訓練動作專家和投影層（trains only the action expert and projections），讓微調（fine-tune）時使用更少的記憶體。
+
+## 相對動作（relative actions）
+
+預設情況下，π₀ 預測絕對動作（absolute actions）。您可以啟用**相對動作（relative actions）**，使模型（model）預測相對於當前機器人狀態（current robot state）的偏移量（offsets）。這對於某些設定可以提升訓練穩定性（training stability）。
+
+若要使用相對動作（relative action），請先透過 CLI 在相對空間（relative space）中重新計算資料集統計量（dataset stats）：
+
+```bash
+lerobot-edit-dataset \
+    --repo_id your_dataset \
+    --operation.type recompute_stats \
+    --operation.relative_action true \
+    --operation.chunk_size 50 \
+    --operation.relative_exclude_joints "['gripper']" \
+    --push_to_hub true
+```
+
+或等效的 Python 寫法：
+
+```python
+from lerobot.datasets import LeRobotDataset, recompute_stats
+
+dataset = LeRobotDataset("your_dataset")
+recompute_stats(dataset, relative_action=True, chunk_size=50, relative_exclude_joints=["gripper"])
+dataset.push_to_hub()
+```
+
+`chunk_size` 應與您的策略（policy）的 `chunk_size` 一致（π₀ 預設為 50）。`relative_exclude_joints` 列出應保持在絕對空間（absolute space）中的關節名稱（joint names，例如夾爪 gripper 指令）。使用 `--push_to_hub true` 將更新後的統計量（stats ）上傳至 Hub。
+
+然後啟用相對動作（relative action）進行訓練（training）：
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi0 \
+    --policy.use_relative_actions=true \
+    --policy.relative_exclude_joints='["gripper"]' \
+    ...
+```
+
+## 授權條款
+
+本模型遵循 **Apache 2.0 授權條款**，與原始 [OpenPI 儲存庫](https://github.com/Physical-Intelligence/openpi)一致。

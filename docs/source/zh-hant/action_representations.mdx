@@ -1,0 +1,223 @@
+# 動作表示法（action representations）
+
+本指南說明機器人動作（robot actions）在 LeRobot 中的各種表示方式、它們彼此之間的關係，以及各自的適用時機。
+
+## 關節空間 vs 末端執行器空間（joint space vs end-effector space）
+
+在討論動作（action）表示法之前，先了解動作可以存在的兩種座標空間會有幫助。
+
+### 關節空間（joint space）
+
+關節空間的動作（joint-space actions）直接為每個馬達指定目標位置（target positions）。對於一支帶夾爪（gripper）的 6-DOF 手臂，關節空間動作可能長這樣：
+
+```
+action = [shoulder_pan: 45.0, shoulder_lift: -20.0, elbow: -30.0, wrist_pitch: 10.0, wrist_roll: 0.0, wrist_yaw: 5.0, gripper: 0.8]
+```
+
+關節空間（joint space）是 LeRobot 的預設。它很簡單、不需要運動學模型（kinematics model），並直接對應到馬達指令（motor commands）。大多數初學者的設定（SO-100、Koch）都使用關節空間動作（joint-space actions）。
+
+### 末端執行器空間（end-effector / EE space）
+
+末端執行器空間的動作（end-effector space actions）以笛卡兒座標（Cartesian coordinates）指定機器人工具尖端（tool tip，夾爪 gripper）所需的位置（position）與朝向（orientation）：
+
+```
+action = [x: 0.25, y: -0.10, z: 0.15, wx: 0.0, wy: 0.0, wz: 0.1, gripper: 0.8]
+```
+
+對於像抓取與放置（pick-and-place）這類任務（tasks），EE 空間（EE space）更為直覺，因為它直接描述夾爪（gripper）應該移動到哪裡，但它需要一個運動學模型（kinematics model，URDF）在 EE 姿態（EE poses）與關節角度（joint angles）之間轉換。
+
+### 在兩種空間之間轉換（converting between spaces）
+
+LeRobot 提供處理器步驟（processor step），使用正向與逆向運動學（forward and inverse kinematics）在關節空間（joint space）與 EE 空間（EE space）之間轉換。這些都建構在 `RobotKinematics` 之上，它會載入您機器人的 URDF 模型（URDF model）。
+
+```python
+from lerobot.model.kinematics import RobotKinematics
+from lerobot.robots.so_follower.robot_kinematic_processor import (
+    ForwardKinematicsJointsToEE,
+    InverseKinematicsEEToJoints,
+)
+
+kinematics = RobotKinematics(
+    urdf_path="./SO101/so101_new_calib.urdf",
+    target_frame_name="gripper_frame_link",
+    joint_names=["shoulder", "elbow", "wrist_pitch", "wrist_roll", "wrist_yaw"],
+)
+
+# 關節 → EE（用於觀測：「我的夾爪在哪裡？」）
+fk_step = ForwardKinematicsJointsToEE(kinematics=kinematics, motor_names=[...])
+
+# EE → 關節（用於動作：「把我的夾爪移到這裡」）
+ik_step = InverseKinematicsEEToJoints(kinematics=kinematics, motor_names=[...])
+```
+
+若需要在 SO-100 手臂上以 EE 空間動作（EE space actions）進行錄製（record）、重播（replay）與評估（evaluating）的完整可運作範例，請參閱 [`examples/so100_to_so100_EE/`](https://github.com/huggingface/lerobot/tree/main/examples/so100_to_so100_EE)。
+
+## 絕對、相對與差量動作（absolute, relative, and delta actions）
+
+無論您是在關節空間（joint space）或 EE 空間（EE space）中工作，動作值（action values）都可以用三種不同的方式表示。這裡的術語沿用 [UMI (Chi et al., 2024)](https://arxiv.org/abs/2402.10329) 的定義。
+
+### LeRobot 預設：絕對動作（absolute actions）
+
+每個動作（action）直接指定目標位置（target position）。
+
+**範例**（關節空間 joint space，區塊大小 chunk size 為 4）：
+
+```
+current_state = [45.0, -30.0, 10.0]
+
+action_chunk = [
+    [46.0, -29.0, 11.0],   # 移動到 46, -29, 11
+    [47.5, -27.0, 12.0],   # 移動到 47.5, -27, 12
+    [49.0, -25.0, 13.5],   # 移動到 49, -25, 13.5
+    [50.0, -24.0, 15.0],   # 移動到 50, -24, 15
+]
+```
+
+每個值都是機器人座標系（robot’s coordinate frame）中的一個目標位置（target position）。簡單且直接，但需要一致的全域座標系（global coordinate frame）。這是 LeRobot 的預設。
+
+### 相對動作（relative actions，OpenPI / pi0 使用）
+
+區塊中的每個動作（action）都是相對於**預測當下的目前狀態（current state at the moment of prediction）**的偏移量（offset）。區塊（chunk）中所有動作共用同一個參考點（reference point）：
+
+```
+current_state = [45.0, -30.0, 10.0]
+
+relative_chunk = [
+    [1.0,  1.0, 1.0],   # 相對於目前 +1 → 目標 46, -29, 11
+    [2.5,  3.0, 2.0],   # 相對於目前 +2.5 → 目標 47.5, -27, 12
+    [4.0,  5.0, 3.5],   # 相對於目前 +4 → 目標 49, -25, 13.5
+    [5.0,  6.0, 5.0],   # 相對於目前 +5 → 目標 50, -24, 15
+]
+```
+
+轉換方式很直接：`relative = absolute - current_state`。要還原成絕對值：`absolute = relative + current_state`。
+
+**為什麼要使用相對動作（relative actions）？** 模型（model）學習預測（predict）以零為中心的偏移量（offsets centered around zero），這更容易正規化（normalization），也帶來更穩定的訓練（training）。由於每個區塊（chunk）都參考相同的目前狀態（current state），區塊之間不會有誤差累積（error accumulation）。
+
+### 差量動作（delta actions，差量序列）
+
+每個動作（action）都是相對於**前一個動作（previous action）**的偏移量（offset，第一步則相對於目前狀態 current state）：
+
+```
+current_state = [45.0, -30.0, 10.0]
+
+delta_chunk = [
+    [1.0,  1.0, 1.0],   # 目前狀態 → 46, -29, 11
+    [1.5,  2.0, 1.0],   # 前一個動作 → 47.5, -27, 12
+    [1.5,  2.0, 1.5],   # 前一個動作 → 49, -25, 13.5
+    [1.0,  1.0, 1.5],   # 前一個動作 → 50, -24, 15
+]
+```
+
+在此，每一步都相對於它的前一步。要還原絕對位置（absolute positions），您必須把所有先前的差量（deltas）加總起來，這代表誤差會隨時間累積（errors accumulate over time）。UMI 也正是基於這個原因明確反對這種表示法（representation）。
+
+### 視覺化比較（visual comparison）
+
+下圖（基於 [UMI, Chi et al., 2024](https://arxiv.org/abs/2402.10329) 的一張圖）說明了關鍵差異。在**相對軌跡（relative trajectory）**下，區塊中的每個動作（action）都指回同一個原點（origin，目前狀態 current state），因此新的推論（inference）步驟能乾淨地重設參考點。在**差量（delta）**下，每個動作都依賴前一個，因此誤差會累積（errors accumulate）。**絕對（absolute）**動作則需要一致的全域座標系（global coordinate frame）。
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/action_representations_umi.png"
+  alt="Relative Trajectory as Action Representation (UMI, Chi et al., 2024)"
+  width="85%"
+/>
+
+## 在 LeRobot 中使用相對動作（using relative actions in LeRobot）
+
+LeRobot 提供 `RelativeActionsProcessorStep`，可在處理器管線（processor pipeline）內於絕對與相對動作（absolute and relative actions）之間轉換。pi0、pi0.5 與 pi0_fast 就是這樣支援相對動作（relative actions）的。
+
+> **注意：** 所有 pi 模型（pi0、pi0.5、pi0_fast）都在正規化（normalization）**之前**套用相對轉換（`relative → normalize`），因此正規化器（normalizer）看到的一律是差量（delta，相對 relative）值。這代表當以 `use_relative_actions=true` 訓練（training）時，它們全都**需要相對動作統計量（relative action stats）**。在 pi0_fast 中，`RelativeActionsProcessorStep` 只修改動作（action），狀態觀測（state observation）維持不變，因此 `NormalizerProcessorStep` 仍會在狀態 tokenizer （state tokenizer）之前執行，tokenizer 也如預期持續接收到正規化後的狀態（normalized state）。
+
+### 運作方式（how it works）
+
+在**訓練**（前處理 preprocessing）期間，動作（action）會在模型（model）看到之前，從絕對轉換為相對（converted from absolute to relative）：
+
+```
+原始絕對動作 → RelativeActionsProcessorStep → 正規化 → 模型
+```
+
+在**推論**（後處理 postprocessing）期間，模型的預測（model predictions）會在送往機器人之前轉換回絕對（converted back to absolute）：
+
+```
+模型輸出 → 反正規化 → AbsoluteActionsProcessorStep → 機器人
+```
+
+`AbsoluteActionsProcessorStep` 會從與其配對的 `RelativeActionsProcessorStep` 讀取快取的目前狀態（state），因此這兩者必須串接在一起（由 policy factory 自動處理）。
+
+### 為 pi 系列啟用相對動作（enabling relative actions for the pi family, pi0, pi0.5, pi0_fast）
+
+**步驟 1**：為您的資料集（dataset）預先計算相對動作統計量（relative action statistics）：
+
+```bash
+lerobot-edit-dataset \
+    --repo_id your_dataset \
+    --operation.type recompute_stats \
+    --operation.relative_action true \
+    --operation.chunk_size 50 \
+    --operation.relative_exclude_joints "['gripper']"
+```
+
+**步驟 2**：以啟用相對動作（relative action）的方式訓練（training）：
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi0 \
+    --policy.use_relative_actions=true \
+    --policy.relative_exclude_joints='["gripper"]'
+```
+
+`relative_exclude_joints` 參數（parameter）指定哪些關節（joints）應保持在絕對空間（absolute space）中。舉例來說，夾爪（gripper）指令通常是二值的（開／關），並不會因為相對編碼（relative encoding）而受益。
+
+### 將相對動作與 RTC 結合（combining relative actions with RTC）
+
+[RTC](https://arxiv.org/abs/2506.07339) 以高頻率執行策略推論（policy inference），並在動作（action）被預測出來時就即時送往機器人，而非等待整個區塊完成。相對動作（relative actions）與 RTC 完全相容：因為在相對模式下每個區塊都參考**同一個**目前狀態（current state，在推論 inference 開始時擷取），所以區塊（chunk）中每個預測的動作（predicted action）即使機器人已經移動，仍是有效的偏移量（valid offset）。不需要任何特殊處理，`RelativeActionsProcessorStep` 每次推論呼叫只快取一次狀態（caches the state），而 `AbsoluteActionsProcessorStep` 會將它套用到串流輸出（streamed output）中的每個動作。
+
+### 將相對動作與 EE 空間結合（combining relative actions with EE space）
+
+相對動作（relative actions）在關節空間（joint space）與 EE 空間（EE space）中都可運作。舉例來說，如果您的資料集（dataset）儲存的是 EE 動作（EE actions），相對編碼（relative encoding）會將它們轉換為相對於目前 EE 姿態（current EE pose）的偏移量（offsets）：
+
+```
+current_ee_state = [x: 0.25, y: -0.10, z: 0.15, gripper: 0.8]
+
+absolute_ee_chunk = [
+    [0.26, -0.09, 0.16, 0.8],
+    [0.28, -0.07, 0.18, 0.8],
+]
+
+relative_ee_chunk = [
+    [0.01,  0.01, 0.01, 0.0],   # 相對於目前 EE 姿態的偏移量
+    [0.03,  0.03, 0.03, 0.0],   # 相對於目前 EE 姿態的偏移量
+]
+```
+
+## 處理管線總覽（processing pipeline summary）
+
+以下是各個處理器（processors）如何組合。每個箭頭代表一個處理器步驟（processor step），它們可以串接在 `RobotProcessorPipeline` 或 `PolicyProcessorPipeline` 中：
+
+```
+                    ┌─────────────────────────────────────────┐
+   Action Space     │   Joint Space  ←──IK──→  EE Space      │
+                    │   ForwardKinematicsJointsToEE           │
+                    │   InverseKinematicsEEToJoints           │
+                    └─────────────────────────────────────────┘
+
+                    ┌─────────────────────────────────────────┐
+   Representation   │   Absolute  ←────→  Relative            │
+                    │   RelativeActionsProcessorStep (pre)    │
+                    │   AbsoluteActionsProcessorStep (post)   │
+                    └─────────────────────────────────────────┘
+
+                    ┌─────────────────────────────────────────┐
+   Normalization    │   Raw  ←────→  Normalized               │
+                    │   NormalizerProcessorStep (pre)         │
+                    │   UnnormalizerProcessorStep (post)      │
+                    └─────────────────────────────────────────┘
+```
+
+典型的訓練前處理器（training preprocessor）可能串接為：`原始絕對關節動作（raw absolute joint actions） → 相對（relative） → 正規化（normalize）`。典型的推論後處理器（inference postprocessor）：`反正規化（unnormalize） → 絕對（absolute） → 視需要以 IK 轉為關節（optionally IK to joints）`。
+
+## 參考資料
+
+- [Universal Manipulation Interface (UMI)](https://arxiv.org/abs/2402.10329) - Chi et al., 2024。定義了相對軌跡的動作表示法（relative trajectory action representation ），並將其與絕對及差量動作（absolute and delta actions）比較。
+- [處理器簡介（introduction to processors）](./introduction_processors) - LeRobot 中處理器管線（processor pipeline）的運作方式。
+- [`examples/so100_to_so100_EE/`](https://github.com/huggingface/lerobot/tree/main/examples/so100_to_so100_EE) - 以 EE 空間動作（EE space action）進行錄製（recording）與評估（evaluating）的完整範例。

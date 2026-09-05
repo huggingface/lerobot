@@ -1,0 +1,196 @@
+# 手機（Phone）
+
+使用您的手機（iOS 或 Android）來控制您的機器人。
+
+**在本指南中，您將學到：**
+
+- 如何連接 iOS/Android 手機
+- 手機姿態（phone pose）如何對應到機器人末端執行器（end-effector, EE）目標（targets）
+- 如何調整安全限制（safety limits）、夾爪控制（gripper control）與 IK 設定（IK settings）
+
+若要使用手機控制您的機器人，請以下列命令安裝相關依賴套件（relevant dependencies）：
+
+```bash
+pip install lerobot[phone]
+```
+
+## 開始使用（get started）
+
+### 支援的平台（supported platforms）
+
+- iOS：使用 HEBI Mobile I/O app（ARKit 姿態 pose + 按鈕）。請先下載該 app 並開啟，範例會在您的網路上探索到它，並串流（stream）手機姿態（phone pose）與輸入。
+- Android：使用 `teleop` 套件（WebXR）。當您啟動 Python 程序（process）時，它會印出一個本機 URL。在手機上開啟該連結，點擊 Start，然後使用 Move 來串流姿態（stream pose）。
+
+連結：
+
+- Android WebXR 函式庫：[PyPI 上的 `teleop`](https://pypi.org/project/teleop/)
+- iOS app：[HEBI Mobile I/O](https://docs.hebi.us/tools.html#mobile-io)
+
+### 手機方向與控制（phone orientation and controls）
+
+- 方向（orientation）：手持手機，螢幕朝上，頂部邊緣指向與機器人夾爪（gripper）相同的方向。這能確保校正（calibration）時將手機的座標系（phone’s frame）與機器人座標系（robot frame）對齊，使動作感覺自然，請參考下方圖片。
+- 啟用/停用（enable/disable）：
+  - iOS：按住 `B1` 以啟用遙操作（teleoperation），放開即停止。第一次按下會擷取一個參考姿態（reference pose）。
+  - Android：按住 `Move` 按鈕，放開即停止。第一次按下會擷取一個參考姿態（reference pose）。
+- 夾爪控制（gripper control）：
+  - iOS：類比輸入 `A3` 以速度輸入（velocity input）的方式控制夾爪（gripper）。
+  - Android：按鈕 `A` 與 `B` 作用類似遞增/遞減（increment/decrement，A 開啟、B 關閉）。您可以在 `GripperVelocityToJoint` 步驟中調整速度（velocity）。
+
+<img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/phone_teleop.webp" alt="Phone teleop orientation" title="Phone teleop orientation" width="40%">
+
+### 步驟 1：選擇平台（choose the platform）
+
+修改範例，在 `PhoneConfig` 中使用 `PhoneOS.IOS` 或 `PhoneOS.ANDROID`。跨平台的 API 完全相同，只有輸入來源不同。所有範例都在 `examples/` 底下，並且有 `phone_so100_*.py` 的變體（variants）。
+
+遙操作（teleoperation）範例：
+
+```python
+from lerobot.teleoperators.phone import Phone, PhoneConfig
+from lerobot.teleoperators.phone.config_phone import PhoneOS
+
+teleop_config = PhoneConfig(phone_os=PhoneOS.IOS)  # 或 PhoneOS.ANDROID
+teleop_device = Phone(teleop_config)
+```
+
+### 步驟 2：連接與校正（connect and calibrate）
+
+當 `Phone(teleop_config)` 被建立且呼叫 `connect()` 時，會自動提示校正（calibration）。以上述方向（orientation）手持手機，然後：
+
+- iOS：按住 `B1` 以擷取參考姿態（reference pose）。
+- Android：在 WebXR 頁面按下 `Move` 按鈕以擷取參考姿態（reference pose）。
+
+為什麼要校正（calibration）？我們擷取當前姿態（current pose），使後續的姿態（subsequent poses）都以一個與機器人對齊的座標系（robot aligned frame）來表示。當您再次按下按鈕以啟用控制（enable control）時，會重新擷取位置（position），以避免在停用期間重新擺放手機所造成的漂移（drift）。
+
+### 步驟 3：執行範例（run an example）
+
+執行其中一個範例腳本來遙操作（teleoperation）、錄製資料集（record a dataset）、重播資料集（replay a dataset）或評估策略（evaluate a policy）。
+
+所有腳本都假設您已設定好機器人（例如 SO-100 follower）並設定了正確的序列埠（serial port）。
+
+此外，您還需要**將機器人的 URDF 複製到 examples 資料夾中**。以本教學的範例（使用 SO100/SO101）而言，請將 [SO-ARM100 repo](https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101) 中的 `SO101` 資料夾複製到 `examples/phone_to_so100/` 目錄中，使得 URDF 檔案路徑變為 `examples/phone_to_so100/SO101/so101_new_calib.urdf`。
+
+- 執行此範例以進行遙操作（teleoperation）：
+
+  ```bash
+  cd examples/phone_to_so100
+  python teleoperate.py
+  ```
+
+執行範例後：
+
+- Android：啟動腳本（script）後，在手機上開啟印出的本機 URL，點擊 Start，然後按住 Move。
+- iOS：先開啟 HEBI Mobile I/O；B1 啟用動作（enables motion）。A3 控制夾爪（gripper）。
+
+此外，您可以透過編輯範例中所示的處理器步驟（processor steps）來自訂對應關係（customize mapping）或安全限制（safety limits）。您也可以重新對應輸入（例如使用不同的類比輸入），或修改輸入與運動學步驟（kinematics steps），將流程調整為適用於其他機器人（例如 LeKiwi）。更多相關內容請參閱[機器人與遙操作器的處理器](./processors_robots_teleop)指南。
+
+- 執行此範例以錄製資料集（record a dataset），它會儲存絕對末端執行器的觀測值（absolute end effector observations）與動作（actions）：
+
+  ```bash
+  cd examples/phone_to_so100
+  python record.py
+  ```
+
+- 執行此範例以重播已錄製的回合（replay recorded episodes）：
+
+  ```bash
+  cd examples/phone_to_so100
+  python replay.py
+  ```
+
+- 執行此範例以評估預訓練策略（evaluate a pretrained policy）：
+
+  ```bash
+  cd examples/phone_to_so100
+  python evaluate.py
+  ```
+
+### 重要的管線步驟與選項（important pipeline steps and options）
+
+- 運動學（kinematics）會用於多個步驟中。我們使用 [Placo](https://github.com/Rhoban/placo)，它是 Pinocchio 的包裝器，用於處理我們的運動學。我們透過傳入機器人的 URDF 與目標座標系（target frame）來建構運動學物件（kinematics object）。我們將 `target_frame_name` 設為夾爪座標系（gripper frame）。
+
+  ```python
+  kinematics_solver = RobotKinematics(
+    urdf_path="./SO101/so101_new_calib.urdf",
+    target_frame_name="gripper_frame_link",
+    joint_names=list(robot.bus.motors.keys()),
+  )
+
+  ```
+
+- `MapPhoneActionToRobotAction` 步驟將校正後的手機姿態（calibrated phone pose）與輸入轉換為目標增量（target deltas）與夾爪命令（gripper commands），下方顯示此步驟的輸出。
+
+  ```python
+  action["enabled"] = enabled
+        action["target_x"] = -pos[1] if enabled else 0.0
+        action["target_y"] = pos[0] if enabled else 0.0
+        action["target_z"] = pos[2] if enabled else 0.0
+        action["target_wx"] = rotvec[1] if enabled else 0.0
+        action["target_wy"] = rotvec[0] if enabled else 0.0
+        action["target_wz"] = -rotvec[2] if enabled else 0.0
+        action["gripper_vel"] = gripper_vel  # 停用時仍會送出夾爪動作
+  ```
+
+- `EEReferenceAndDelta` 步驟將目標增量（target deltas）轉換為絕對的期望 EE 姿態（absolute desired EE pose），並在啟用時儲存一個參考（reference），`end_effector_step_sizes` 是 EE 姿態的步進大小（step sizes for the EE pose），可以修改以改變動作速度（motion speed）。
+
+  ```python
+  EEReferenceAndDelta(
+      kinematics=kinematics_solver,
+      end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5},
+      motor_names=list(robot.bus.motors.keys()),
+      use_latched_reference=True,
+  ),
+  ```
+
+- `EEBoundsAndSafety` 步驟將 EE 動作（EE motion）限制在工作空間（workspace）內，並檢查 EE 是否有大幅的步進跳動（large ee step jumps）以確保安全。`end_effector_bounds` 是 EE 姿態的邊界（bounds for the EE pose），可以修改以改變工作空間。`max_ee_step_m` 是 EE 姿態的步進限制（step limits for the EE pose），可以修改以改變安全限制（safety limits）。
+
+  ```python
+  EEBoundsAndSafety(
+      end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
+      max_ee_step_m=0.10,
+  )
+  ```
+
+- `GripperVelocityToJoint` 步驟利用當前的實測狀態（current measured state），將類速度的夾爪輸入（velocity‑like gripper input）轉換為絕對的夾爪位置（absolute gripper position）。`speed_factor` 是速度所乘上的係數（factor）。
+
+  ```python
+  GripperVelocityToJoint(speed_factor=20.0)
+  ```
+
+#### 不同的 IK 初始猜測（different IK initial guesses）
+
+我們在運動學步驟中使用不同的 IK 初始猜測（IK initial guesses）。作為初始猜測，會使用當前實測的關節（current measured joints），或前一次的 IK 解（IK solution）。
+
+- 閉迴路（用於 record/eval）：設定 `initial_guess_current_joints=True`，使 IK 每一影格（frame）都從實測關節（measured joints）開始。
+
+  ```python
+  InverseKinematicsEEToJoints(
+      kinematics=kinematics_solver,
+      motor_names=list(robot.bus.motors.keys()),
+      initial_guess_current_joints=True,  # 閉迴路
+  )
+  ```
+
+- 開迴路（用於 replay）：設定 `initial_guess_current_joints=False`，使 IK 從前一次的 IK 解（IK solution）延續，而非從實測狀態（measured state）開始。這在我們沒有回饋地重播（replay without feedback）時，能保持動作的穩定性（action stability）。
+
+  ```python
+  InverseKinematicsEEToJoints(
+      kinematics=kinematics_solver,
+      motor_names=list(robot.bus.motors.keys()),
+      initial_guess_current_joints=False,  # 開迴路
+  )
+  ```
+
+### 管線步驟說明（pipeline steps explained）
+
+- MapPhoneActionToRobotAction：將校正後的手機姿態（calibrated phone pose）與輸入轉換為目標增量（target deltas）與夾爪命令（gripper command）。動作由啟用訊號（iOS 上的 B1、Android 上的 Move）控制。
+- EEReferenceAndDelta：在啟用時鎖存一個參考 EE 姿態（reference EE pose），並將其與目標增量（target deltas）結合，於每一影格（frame）產生絕對的期望 EE 姿態（absolute desired EE pose）。停用時，它會持續送出最後下達的姿態（last commanded pose）。
+- EEBoundsAndSafety：將 EE 姿態（EE pose）限制在工作空間（workspace）內，並對跳動進行速率限制（rate‑limits jumps）以確保安全。同時宣告 `action.ee.*` 特徵（features）。
+- InverseKinematicsEEToJoints：以 IK 將 EE 姿態（EE pose）轉換為關節位置（joint positions）。閉迴路控制（closed‑loop control）建議使用 `initial_guess_current_joints=True`；開迴路重播（open‑loop replay）為求穩定則設為 `False`。
+- GripperVelocityToJoint：利用當前的實測狀態（current measured state），將類速度的夾爪輸入（velocity‑like gripper input）積分為絕對的夾爪位置（absolute gripper position）。
+- ForwardKinematicsJointsToEE：從觀測到的關節（observed joints）計算 `observation.state.ee.*`，用於記錄（logging）與在 EE 狀態（EE state）上訓練（training）。
+
+### 疑難排解
+
+- iOS 未被探索到：確認 HEBI Mobile I/O 已開啟，且您的筆電/手機位於同一網路上。
+- Android URL 無法連線：檢查您本機使用的是 `https` 而非 `http`，使用腳本印出的確切 IP，並允許您的瀏覽器進入並忽略憑證問題（ignore the certificate issue）。
+- 動作感覺相反（motion feels inverted）：調整 `MapPhoneActionToRobotAction` 中的正負號翻轉（sign flips），或交換軸向（swap axes）以符合您的設定。

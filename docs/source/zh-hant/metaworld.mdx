@@ -1,0 +1,130 @@
+# Meta-World
+
+Meta-World 是一個用於**多任務與元強化學習（multi-task and meta reinforcement learning）**的開源模擬基準測試（simulation benchmark），專注於連續控制的機器人操作任務（continuous-control robotic manipulation）。它彙集了 50 種使用日常物品的多樣化操作任務（manipulation tasks），搭配通用的桌面 Sawyer 機械手臂，提供標準化的測試環境（standardized playground），用以驗證演算法能否學習多種不同任務（tasks）並快速泛化至新任務。
+
+- 論文：[Meta-World: A Benchmark and Evaluation for Multi-Task and Meta Reinforcement Learning 論文](https://arxiv.org/abs/1910.10897)
+- GitHub：[Farama-Foundation/Metaworld](https://github.com/Farama-Foundation/Metaworld)
+- 專案網站：[metaworld.farama.org](https://metaworld.farama.org)
+
+![MetaWorld MT10 的演示](https://meta-world.github.io/figures/ml45.gif)
+
+## 可用任務（available tasks）
+
+Meta-World 提供 50 個任務（task），並按難度分組（difficulty groups）。在 LeRobot 中，你可以對個別任務（individual tasks）、難度群組（difficulty groups）或完整的 MT50 套件（suite）進行評估（evaluation）：
+
+| 群組（group） | CLI 名稱（name）                         | 任務數（tasks） | 描述（description）                                                                    |
+| ------------- | ---------------------------------------- | --------------- | -------------------------------------------------------------------------------------- |
+| 簡單          | `easy`                                   | 28              | 具有簡單動力學（dynamics）和單步目標的任務（single-step goals）                        |
+| 中等          | `medium`                                 | 11              | 需要多步推理（multi-step reasoning）的任務（tasks）                                    |
+| 困難          | `hard`                                   | 6               | 具有複雜接觸（complex contacts）和精確操作（precise manipulation）的任務（tasks）      |
+| 極難          | `very_hard`                              | 5               | 套件（suite）中最具挑戰性的任務（most challenging tasks）                              |
+| MT50（全部）  | 以逗號分隔的列表（comma-separated list） | 50              | 全部 50 個任務（task） — 最具挑戰性的多任務設定（most challenging multi-task setting） |
+
+你也可以直接傳入個別任務名稱（individual task names，例如 `assembly-v3`、`dial-turn-v3`）。
+
+我們在 HF Hub 上提供了適用於 LeRobot 的 Meta-World MT50 資料集（dataset）：[lerobot/metaworld_mt50](https://huggingface.co/datasets/lerobot/metaworld_mt50)。此資料集針對 MT50 評估（evaluation）進行格式化，使用所有 50 個任務（task），並搭配固定的物體/目標位置（fixed object/goal positions）和 one-hot 任務向量（task vectors）以確保一致性（consistency）。
+
+## 安裝（installation）
+
+按照 LeRobot 安裝說明（installation instructions）完成後：
+
+```bash
+pip install -e ".[metaworld]"
+```
+
+<Tip warning={true}>
+如果在執行 Meta-World 環境時遇到 AssertionError: ['human', 'rgb_array', 'depth_array'] 錯誤，這是 Meta-World 與你的 Gymnasium 版本不相容所致。請透過以下指令修復：
+
+```bash
+pip install "gymnasium==1.1.0"
+```
+
+</Tip>
+
+## 評估（evaluation）
+
+### 建議：預設評估（default evaluation）
+
+在中等難度分組（medium difficulty split）上進行評估（evaluation，在涵蓋範圍和運算量之間取得良好平衡）：
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=metaworld \
+  --env.task=medium \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10
+```
+
+### 單任務評估（single-task evaluation）
+
+在特定任務（task）上進行評估（evaluation）：
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=metaworld \
+  --env.task=assembly-v3 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10
+```
+
+### 多任務評估（multi-task evaluation）
+
+跨多個任務（multiple tasks）或難度群組（difficulty groups）進行評估（evaluation）：
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=metaworld \
+  --env.task=assembly-v3,dial-turn-v3,handle-press-side-v3 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10
+```
+
+- `--env.task` 接受明確的任務列表（explicit task lists，以逗號分隔 comma-separated）或難度群組（difficulty groups，例如 `easy`、`medium`、`hard`、`very_hard`）。
+- `--eval.batch_size` 控制同時並行執行（run in parallel）的環境（environments）數量。
+- `--eval.n_episodes` 設定每個任務要執行的回合數（how many episodes to run per task）。
+
+### 策略的輸入與輸出（policy inputs and outputs）
+
+**觀測值（observations）：**
+
+- `observation.image` — 單一攝影機視角（single camera view, `corner2`），480x480 HWC uint8
+- `observation.state` — 4 維本體感知狀態（4-dim proprioceptive state，末端執行器位置 end-effector position + 夾爪 gripper）
+
+**動作（actions）：**
+
+- 在 `Box(-1, 1, shape=(4,))` 中連續控制 — 3D 末端執行器增量（end-effector delta） + 1D 夾爪（gripper）
+
+### 建議評估回合數（recommended evaluation episodes）
+
+為確保可重現的基準測試（reproducible benchmarking），建議使用**每個任務 10 個回合（10 episodes per task）**。對於完整的 MT50 套件（suite），這將產生共 500 個回合（episodes）。如果你關注泛化能力（generalization），請在完整的 MT50 上執行 — 它刻意設計得具有挑戰性，比起少數幾個特定任務更能揭示優勢與劣勢。
+
+## 訓練（training）
+
+### 範例訓練指令（example training command）
+
+在 Meta-World 任務子集（subset）上訓練（training）SmolVLA 策略（policy）：
+
+```bash
+lerobot-train \
+  --policy.type=smolvla \
+  --policy.repo_id=${HF_USER}/metaworld-test \
+  --policy.load_vlm_weights=true \
+  --dataset.repo_id=lerobot/metaworld_mt50 \
+  --env.type=metaworld \
+  --env.task=assembly-v3,dial-turn-v3,handle-press-side-v3 \
+  --output_dir=./outputs/ \
+  --steps=100000 \
+  --batch_size=4 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=1 \
+  --env_eval_freq=1000
+```
+
+## 實用提示（practical tips）
+
+- 在多任務訓練（multi-task training）中使用 one-hot 任務條件化（one-hot task conditioning，MT10/MT50 慣例），讓策略（policy）具有明確的任務上下文（explicit task context）。
+- 在撰寫後處理或日誌記錄時，檢查資料集任務描述（dataset task descriptions）和 `info["is_success"]` 鍵值（keys），以確保你的成功指標（success metrics）與基準測試（benchmark）一致。
+- 根據你的運算預算（compute budget）調整 `batch_size`、`steps` 和 `env_eval_freq`。

@@ -1,0 +1,255 @@
+# 影片編碼參數（video encoding parameters）
+
+當啟用影片儲存（video storage）時，LeRobot 會將每個攝影機串流（camera stream）儲存為 **MP4** 檔案，而不是為每個時間（timestep）步儲存一個影像檔案（image file）。影片編碼（video encoding）會跨時間壓縮（compresses），相較於一堆 PNG，通常能縮減資料集（dataset）大小與 I/O，同時維持 MP4 這種每個播放器與載入器都懂的格式。
+
+將影格編碼（encoding frames）為 MP4 是一整套完整的 FFmpeg 管線（pipeline）：編碼器（encoder）選擇、像素格式（pixel format）、GOP/關鍵影格（keyframes）、品質與速度的取捨，以及選用的額外編碼器旗標（extra encoder flags）。這些旋鈕大多可由使用者透過 `rgb_encoder` 調整，這是一個透過 PyAV 傳入的巢狀（nested） `RGBEncoderConfig`（`lerobot.configs.video.RGBEncoderConfig`）。
+
+你可以在 CLI 上以 `--dataset.rgb_encoder.<field>` 設定這些參數（parameters，例如搭配 `lerobot-record` 或 `lerobot-rollout`）。同一個區塊（block）會套用到該次執行中的每個攝影機影片串流（camera video stream）。
+
+> [!TIP]
+> 必須開啟影片儲存（video storage），`rgb_encoder` 才會有任何效果 — 在 Python API 中設定
+> `use_videos=True`，或在 CLI 上設定
+> `--dataset.video=true`（錄製 recording 時的預設值）。若關閉影片，輸入會維持為影像，且
+> `rgb_encoder` 會被忽略。
+
+關於影格（frame）**何時**被寫入 vs. 編碼（串流 streaming vs. 回合結束後 post-episode）、佇列（queues），以及其他頂層（top-level） `--dataset.*` 開關的細節，請參閱[串流影片編碼（streaming video encoding）](./streaming_video_encoding)。關於編碼參數（encoding-parameter）的比較與實驗，請參閱 [video-benchmark Space](https://huggingface.co/spaces/lerobot/video-benchmark)。
+
+---
+
+## 範例（examples）
+
+```bash
+lerobot-record \
+    --robot.type=so100_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.cameras="{laptop: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --robot.id=black \
+    --teleop.type=so100_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \
+    --teleop.id=blue \
+    --dataset.repo_id=<my_username>/<my_dataset_name> \
+    --dataset.num_episodes=2 \
+    --dataset.single_task="Grab the cube" \
+    --dataset.streaming_encoding=true \
+    --dataset.encoder_threads=2 \
+    --dataset.rgb_encoder.vcodec=h264 \
+    --dataset.rgb_encoder.preset=fast \
+    --dataset.rgb_encoder.extra_options={"tune": "film", "profile:v": "high", "bf": 2} \
+    --display_data=true
+```
+
+---
+
+## 調校參數（tuning parameters）
+
+> [!WARNING]
+> 預設值是為了在典型機器人資料集（typical robotics datasets）上平衡**壓縮比（compression ratio）**、**視覺品質（visual quality）**與**解碼/搜尋速度（decoding/seek speed）**而調校的。變更它們可能同時影響錄製（CPU 負載、掉影格 frame drops）與訓練（解碼吞吐量 decoding throughput、影像品質 image quality）。
+>
+> 只有在你有特定理由時才覆寫這些參數（parameters），並在依賴新設定之前先量測其對你管線（pipeline）的影響（impact）。
+
+以下所有旗標（flag）在 CLI 上皆以 `--dataset.rgb_encoder.` 為前綴（prefixed）。
+
+| 參數（parameter） | 型別（type）     | 預設（default） | 描述（description）                                                                                                                                                                                                                                       |
+| ----------------- | ---------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vcodec`          | `str`            | `"libsvtav1"`   | 影片編解碼器（codec）名稱。`"auto"` 會從固定的偏好清單挑選第一個可用的硬體編碼器（encoder），並回退到 `libsvtav1`。                                                                                                                                       |
+| `pix_fmt`         | `str`            | `"yuv420p"`     | 輸出像素格式（pixel format）。必須被你 FFmpeg 建置中所選的編解碼器（codec）支援。                                                                                                                                                                         |
+| `g`               | `int`            | `2`             | GOP 大小 — 每 `g` 個影格（frame）一個關鍵影格（keyframe）。以 FFmpeg 選項 `g` 發出（emitted）。                                                                                                                                                           |
+| `crf`             | `int` 或 `float` | `30`            | 抽象的品質值（abstract quality value），依編解碼器（codec）對映（請參閱下方的[對映](#mapping-videoencoderconfig--ffmpeg-options)）。在對映為單調（mapping is monotone）的情況下，越低（lower） → 品質越高（higher quality） / 輸出越大（larger output）。 |
+| `preset`          | `int` 或 `str`   | `12` \*         | 編碼器速度預設（encoder speed preset）；意義取決於編解碼器（codec）。<br/>\* 當未設定且 `vcodec=libsvtav1` 時，LeRobot 預設為 `12`。                                                                                                                      |
+| `fast_decode`     | `int`            | `0`             | `libsvtav1`：`0–2`，透過 `svtav1-params` 傳入。<br/>`h264` / `hevc`（軟體）：若 `>0`，設定 `tune=fastdecode`。<br/>其他編解碼器（codec）：通常不使用。                                                                                                    |
+| `video_backend`   | `str`            | `"pyav"`        | 目前影片編碼僅實作 `"pyav"`。                                                                                                                                                                                                                             |
+| `extra_options`   | `dict`           | `{}`            | 在上述結構化欄位（structured fields）之後合併的額外 FFmpeg 或編解碼器（codec）特定選項。無法覆寫那些欄位已設定的鍵（keys）。                                                                                                                              |
+
+---
+
+## 深度串流（depth streams）
+
+深度圖（depth maps，Intel RealSense、Reachy 2）會與 RGB 串流（stream）並排儲存為其**自身的影片串流（own video streams）**。原始深度（`uint16` 毫米或 `float32` 公尺）無法在 8 位元編解碼器（codec）中存活，因此 LeRobot 會將每張深度圖**量化（quantizes）**為一個 12 位元的碼（`[0, 4095]`），預設以對數（logarithmically）方式進行，以符合深度感測器（depth sensors）的 `1/depth` 誤差輪廓（error profile），接著將其打包成高位元深度的像素格式（high-bit-depth pixel format, `gray12le`），並以 12 位元編解碼器編碼。
+
+<div style="margin:28px 0;padding:14px 0;">
+  <div style="margin:0 auto;display:flex;flex-wrap:wrap;justify-content:center;align-items:stretch;gap:6px;font-family:'Source Sans 3',ui-sans-serif,system-ui,sans-serif;font-size:14px;font-weight:600;color:#1B1B1D;">
+    <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#DBEAFE;color:#1D4ED8;border-radius:9px;padding:8px 12px;">
+      <span>原始深度</span>
+      <span style="font-size:11px;font-weight:400;color:#3B6FD4;white-space:nowrap;">
+        uint16 mm
+        <br />
+        float32 m
+      </span>
+    </span>
+    <span style="display:flex;align-items:center;font-size:16px;color:#C3CBD9;">
+      →
+    </span>
+    <div style="border:2px dashed #C4B5FD;border-radius:13px;padding:18px 12px 12px;position:relative;display:flex;align-items:stretch;gap:6px;">
+      <span style="position:absolute;top:-10px;left:12px;background:#fff;padding:0 6px;font-size:11px;font-weight:700;color:#7E22CE;text-transform:uppercase;letter-spacing:0.5px;white-space:nowrap;">
+        錄製時
+      </span>
+      <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#F3E8FF;color:#7E22CE;border-radius:9px;padding:8px 12px;">
+        <span>裁切</span>
+        <span style="font-size:11px;font-weight:400;color:#9061C2;white-space:nowrap;">
+          至 [depth_min,
+          <br />
+          depth_max]
+        </span>
+      </span>
+      <span style="display:flex;align-items:center;font-size:16px;color:#C3CBD9;">
+        →
+      </span>
+      <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#F3E8FF;color:#7E22CE;border-radius:9px;padding:8px 12px;">
+        <span>量化</span>
+        <span style="font-size:11px;font-weight:400;color:#9061C2;white-space:nowrap;">
+          12 位元碼 0–4095
+          <br />
+          對數（預設）或線性
+        </span>
+      </span>
+      <span style="display:flex;align-items:center;font-size:16px;color:#C3CBD9;">
+        →
+      </span>
+      <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#F3E8FF;color:#7E22CE;border-radius:9px;padding:8px 12px;">
+        <span>打包</span>
+        <span style="font-size:11px;font-weight:400;color:#9061C2;white-space:nowrap;">
+          成 gray12le
+          <br />
+          平面
+        </span>
+      </span>
+      <span style="display:flex;align-items:center;font-size:16px;color:#C3CBD9;">
+        →
+      </span>
+      <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#F3E8FF;color:#7E22CE;border-radius:9px;padding:8px 12px;">
+        <span>編碼</span>
+        <span style="font-size:11px;font-weight:400;color:#9061C2;white-space:nowrap;">
+          HEVC
+          <br />
+          Main 12
+        </span>
+      </span>
+    </div>
+    <span style="display:flex;align-items:center;font-size:16px;color:#C3CBD9;">
+      →
+    </span>
+    <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#FEF3C7;color:#B45309;border-radius:9px;padding:8px 12px;">
+      <span>MP4</span>
+      <span style="font-size:11px;font-weight:400;color:#C77D18;white-space:nowrap;">
+        已儲存
+        <br />
+        串流
+      </span>
+    </span>
+    <span style="display:flex;align-items:center;font-size:16px;color:#34A06B;">
+      →
+    </span>
+    <div style="border:2px dashed #6EE7B7;border-radius:13px;padding:18px 12px 12px;position:relative;display:flex;align-items:center;gap:6px;">
+      <span style="position:absolute;top:-10px;left:12px;background:#fff;padding:0 6px;font-size:11px;font-weight:700;color:#047857;text-transform:uppercase;letter-spacing:0.5px;white-space:nowrap;">
+        載入時
+      </span>
+      <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#D1FAE5;color:#047857;border-radius:9px;padding:8px 12px;">
+        <span>反量化</span>
+        <span style="font-size:11px;font-weight:400;color:#059669;white-space:nowrap;">
+          為 mm / m
+        </span>
+      </span>
+    </div>
+  </div>
+</div>
+
+透過一個並行的 **`depth_encoder`** 區塊（`DepthEncoderConfig`）設定深度管線（depth pipeline）。它共用 `RGBEncoderConfig` 的每個欄位（`vcodec`、`pix_fmt`、`crf`、…），並新增四個量化器 quantizer knobs，透過 `--dataset.depth_encoder.<field>` 設定：
+
+```bash
+lerobot-record \
+    ... \
+    --dataset.depth_encoder.vcodec=hevc \
+    --dataset.depth_encoder.depth_min=0.05 \
+    --dataset.depth_encoder.depth_max=5.0 \
+    --dataset.depth_encoder.use_log=true
+```
+
+| 參數（parameter） | 型別    | 預設                            | 說明                                                                                                                                                                     |
+| ----------------- | ------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `vcodec`          | `str`   | `"hevc"`                        | HEVC Main 12（一種支援 12 位元、相容 MP4 的編解碼器 codec）。                                                                                                            |
+| `extra_options`   | `dict`  | `{"x265-params": "lossless=1"}` | **深度預設為無損（depth defaults to lossless）**（exact round-trip）；`crf` 會被忽略。傳入 `extra_options={}` 並設定 `crf` 以取得較小的有損串流（lossy stream）。        |
+| `pix_fmt`         | `str`   | `"gray12le"`                    | 用於承載量化碼（quantized codes）的單通道 12 位元像素格式（pixel format）。                                                                                              |
+| `depth_min`       | `float` | `0.01`                          | 對映到量子 `0` （mapped to quantum `0`）的深度（公尺）。低於此值者在解碼時會被裁切。                                                                                     |
+| `depth_max`       | `float` | `10.0`                          | 對映到量子 `4095` 的深度（公尺）。高於此值者在解碼（decode）時會被裁切（clipped）。                                                                                      |
+| `shift`           | `float` | `3.5`                           | 對數量化（logarithmic quantization）中用於接近零處（near zero）數值穩定性（numerical stability）的預對數偏移（pre-log offset，公尺）。必須滿足 `depth_min + shift > 0`。 |
+| `use_log`         | `bool`  | `True`                          | 若為 `true`，在對數空間中量化（quantize in log-space，典型深度感測器建議使用）。設為 `false` 以進行均勻/線性量化（uniform/linear quantization）。                        |
+
+> [!TIP]
+> 無論輸入深度的單位為何，`depth_min`、`depth_max` 與 `shift` 一律以**公尺**解讀。輸入會被自動偵測：整數陣列（integer arrays，例如直接來自 RealSense 的 `uint16` 毫米）會被視為毫米，浮點陣列（floating arrays）則視為公尺。
+> 挑選 `depth_min` / `depth_max` 以框住你感測器的實際工作範圍（working range of your sensor ） — 超出該範圍的量子會飽和（saturate），可能在邊界處（boundaries）抹除細節（crush detail）。
+
+深度特徵（depth feature）在 `meta/info.json` 中會以 `"is_depth_map": true` 標記，且其量化器設定（quantizer settings，`video.depth_min`、`video.depth_max`、`video.shift`、`video.use_log`）會被保存，這正是讓深度能在載入時**反量化回實體單位（dequantized back to physical units）**的關鍵。
+
+### 載入時的輸出單位（output unit at load time）
+
+`depth_encoder` 是一個**錄製時（record-time）**的考量。深度圖在*載入*時（例如訓練 training 期間）反量化（dequantization）所使用的單位，是由讀取時的旗標（read-time flag） `--dataset.depth_output_unit` 另外設定的：
+
+```bash
+lerobot-train \
+    --dataset.repo_id=<my_username>/<my_dataset_name> \
+    --dataset.depth_output_unit=m \
+    --policy.type=act
+```
+
+| 參數（parameter）   | 型別（type） | 預設（default） | 說明（description）                                                                                  |
+| ------------------- | ------------ | --------------- | ---------------------------------------------------------------------------------------------------- |
+| `depth_output_unit` | `str`        | `"mm"`          | 深度圖（depth maps）在載入時反量化（dequantization）所用的實體單位：`"mm"`（毫米）或 `"m"`（公尺）。 |
+
+> [!TIP]
+> 這純粹是解碼時（decode-time）的呈現選擇 — 它**不會**改變已儲存的影片或其元資料（metadata），因此同一個資料集（dataset）可被讀取為 `mm` 或 `m` 而無需重新編碼（re-encoding）。它對沒有深度攝影機（depth cameras）的資料集（dataset）沒有影響。
+
+---
+
+## 元資料中的持久化（persistence in metadata）
+
+在影片串流（streaming video encoding）的第一個回合（first episode）被編碼後（encoded），編碼器設定（encoder configuration）會**被保存到資料集元資料（dataset metadata）**（`meta/info.json`）中每個影片特徵（video feature）之下，與從檔案本身探測到的值並列。對於影片特徵 `observation.images.<camera>`，在 `info.json` 中的布局為：
+
+```json
+{
+  "features": {
+    "observation.images.laptop": {
+      "dtype": "video",
+      "shape": [480, 640, 3],
+      "info": {
+        "video.height": 480,
+        "video.width": 640,
+        "video.codec": "h264",
+        "video.pix_fmt": "yuv420p",
+        "video.fps": 30,
+        "video.channels": 3,
+        "is_depth_map": false,
+        "video.g": 2,
+        "video.crf": 30,
+        "video.preset": "fast",
+        "video.fast_decode": 0,
+        "video.video_backend": "pyav",
+        "video.extra_options": { "tune": "film", "profile:v": "high", "bf": 2 }
+      }
+    }
+  }
+}
+```
+
+有兩個來源貢獻到 `info` 區塊：
+
+| 來源（source）                    | 來自何處（where it comes from）                  | 欄位（fields）                                                                                                          |
+| --------------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| **來自串流（stream-derived）**    | 用 PyAV 從編碼後的 MP4 讀回。                    | `video.height`、`video.width`、`video.codec`、`video.pix_fmt`、`video.fps`、`video.channels`、`is_depth_map`、`audio.*` |
+| **來自編碼器（encoder-derived）** | 取自 `RGBEncoderConfig` / `DepthEncoderConfig`。 | `video.g`、`video.crf`、`video.preset`、`video.fast_decode`、`video.video_backend`、`video.extra_options`               |
+
+> [!IMPORTANT]
+> 這個區塊只從**第一個**回合（episode）填入**一次**。它假設資料集（dataset）中每個
+> 回合（episode）都以相同的 `rgb_encoder`
+> 編碼。錄製（recording）途中變更編碼器（encoder）設定並不受支援 — `info.json`
+> 只會反映第一個回合（episode）所用的參數（parameters）。
+
+---
+
+## 合併資料集（merging datasets）
+
+當以 `merge_datasets` 彙整資料集（dataset）時，影片檔案會原樣串接（concatenated as-is，不重新編碼 re-encoding），而 `info.json` 中的編碼器欄位（encoder fields）會依鍵合併（merged per-key）：
+
+| 合併規則     | 欄位                                                                               | 行為                                                                                                                      |
+| ------------ | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| **必須相符** | `video.codec`、`video.pix_fmt`、`video.height`、`video.width`、`video.fps`         | 來自串流的欄位必須跨各來源相符，否則 FFmpeg 的 concat demuxer 會失敗。                                                    |
+| **寬鬆合併** | `video.g`、`video.crf`、`video.preset`、`video.fast_decode`、`video.extra_options` | 編碼器調校欄位。若每個來源皆一致，該值會被保留；若否，則設為 `null`（或 `video.extra_options` 為 `{}`），並記錄一則警告。 |
