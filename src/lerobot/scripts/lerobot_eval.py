@@ -945,6 +945,31 @@ def run_one(
     return task_group, task_id, metrics
 
 
+def _policy_view_for_task(policy):
+    """Return a per-task view of `policy` that shares weights but owns its episode state.
+
+    `eval_one` calls `policy.reset()` at the start of every rollout, and `select_action`
+    mutates per-episode state as it goes (action-chunk queues, temporal ensembler,
+    KV caches). Sharing one instance across thread-pool workers lets one task's `reset()`
+    wipe the action chunk another task is halfway through consuming, so every task returns
+    garbage actions -- silently, with no crash and no warning.
+
+    Parameters and buffers are seeded into the deepcopy memo, so the view reuses the
+    original tensors: it costs no extra device memory, only the Python-level module graph.
+    """
+    memo = {id(t): t for t in (*policy.parameters(), *policy.buffers())}
+    try:
+        view = deepcopy(policy, memo)
+    except Exception as e:
+        raise RuntimeError(
+            f"Cannot evaluate {type(policy).__name__} with max_parallel_tasks > 1: it carries "
+            f"per-episode state that must not be shared across threads, and it could not be "
+            f"copied ({e}). Re-run with max_parallel_tasks=1."
+        ) from e
+    view.reset()
+    return view
+
+
 def eval_policy_all(
     envs: dict[str, dict[int, gym.vector.VectorEnv]],
     policy,
@@ -1054,7 +1079,11 @@ def eval_policy_all(
             with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
                 fut2meta = {}
                 for task_group, task_id, env in tasks:
-                    fut = executor.submit(task_runner, task_group, task_id, env)
+                    # Override the shared policy bound into `task_runner`: workers must not
+                    # share per-episode state (see `_policy_view_for_task`).
+                    fut = executor.submit(
+                        task_runner, task_group, task_id, env, policy=_policy_view_for_task(policy)
+                    )
                     fut2meta[fut] = (task_group, task_id, env)
                 for fut in cf.as_completed(fut2meta):
                     tg, tid, env = fut2meta[fut]
