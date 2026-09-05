@@ -17,7 +17,7 @@
 import logging
 import time
 from queue import Queue
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from lerobot.lerobot_types import RobotAction
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
@@ -33,13 +33,15 @@ from .configuration_keyboard import (
 )
 
 PYNPUT_AVAILABLE = _pynput_available
-keyboard = None
-if PYNPUT_AVAILABLE:
+if TYPE_CHECKING or PYNPUT_AVAILABLE:
     try:
         from pynput import keyboard
     except Exception as e:
         PYNPUT_AVAILABLE = False
+        keyboard = None
         logging.info("Could not import pynput keyboard backend: %s", e)
+else:
+    keyboard = None
 
 
 class KeyboardTeleop(Teleoperator):
@@ -56,17 +58,20 @@ class KeyboardTeleop(Teleoperator):
         self.config = config
         self.robot_type = config.type
 
-        self.event_queue = Queue()
-        self.current_pressed = {}
-        self.listener = None
-        self.logs = {}
+        self.event_queue: Queue = Queue()
+        self.current_pressed: dict = {}
+        self.listener: keyboard.Listener | None = None
+        self.logs: dict = {}
 
     @property
     def action_features(self) -> dict:
+        # TODO: `self.arm` is never defined on this class (dead/unreachable code path -
+        # no caller invokes `action_features` on a plain `KeyboardTeleop`, only on the
+        # `KeyboardEndEffectorTeleop`/`KeyboardRoverTeleop` subclasses, which override it).
         return {
             "dtype": "float32",
-            "shape": (len(self.arm),),
-            "names": {"motors": list(self.arm.motors)},
+            "shape": (len(self.arm),),  # type: ignore[attr-defined]
+            "names": {"motors": list(self.arm.motors)},  # type: ignore[attr-defined]
         }
 
     @property
@@ -79,7 +84,7 @@ class KeyboardTeleop(Teleoperator):
 
     @property
     def is_calibrated(self) -> bool:
-        pass
+        return True
 
     @check_if_already_connected
     def connect(self) -> None:
@@ -158,7 +163,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
     def __init__(self, config: KeyboardEndEffectorTeleopConfig):
         super().__init__(config)
         self.config = config
-        self.misc_keys_queue = Queue()
+        self.misc_keys_queue: Queue = Queue()
 
     @property
     def action_features(self) -> dict:
@@ -219,7 +224,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
 
         return action_dict
 
-    def get_teleop_events(self) -> dict[str, Any]:
+    def get_teleop_events(self) -> dict[TeleopEvents, Any]:
         """
         Get extra control events from the keyboard such as intervention status,
         episode termination, success indicators, etc.

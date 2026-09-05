@@ -130,11 +130,11 @@ class OpenArmMini(Teleoperator):
         self.bus.disable_torque()
 
         logger.info("Setting Phase to 12 for all motors...")
-        for motor in self.bus.motors:
-            self.bus.write("Phase", motor, 12)
+        for motor_name in self.bus.motors:
+            self.bus.write("Phase", motor_name, 12)
 
-        for motor in self.bus.motors:
-            self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+        for motor_name in self.bus.motors:
+            self.bus.write("Operating_Mode", motor_name, OperatingMode.POSITION.value)
 
         input(
             "\nCalibration: Zero Position\n"
@@ -191,7 +191,7 @@ class OpenArmMini(Teleoperator):
             self.calibration[motor_name] = MotorCalibration(
                 id=motor.id,
                 drive_mode=drive_mode,
-                homing_offset=homing_offsets[motor_name],
+                homing_offset=int(homing_offsets[motor_name]),
                 range_min=range_min,
                 range_max=range_max,
             )
