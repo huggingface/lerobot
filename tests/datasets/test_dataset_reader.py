@@ -15,20 +15,27 @@
 # limitations under the License.
 """Contract tests for DatasetReader."""
 
+import importlib
 import json
 import sys
 import types
+from importlib.metadata import EntryPoint
 
 import pytest
 import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
-from lerobot.datasets import LeRobotDataset, register_dataset_reader
+from lerobot.datasets import LeRobotDataset, register_dataset_reader, storage as storage_module
 from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.io_utils import hf_transform_to_torch
 from lerobot.datasets.language import LANGUAGE_EVENTS
-from lerobot.datasets.storage import _DATASET_READER_MODULES, DEFAULT_STORAGE_FORMAT, localize_remote_root
+from lerobot.datasets.storage import (
+    _DATASET_READER_MODULES,
+    DATASET_READER_ENTRY_POINT_GROUP,
+    DEFAULT_STORAGE_FORMAT,
+    localize_remote_root,
+)
 from lerobot.utils.import_utils import get_safe_default_video_backend
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_REPO_ID
 
@@ -251,6 +258,141 @@ def test_register_dataset_reader(tmp_path, lerobot_dataset_factory, monkeypatch)
         assert localize_remote_root(DUMMY_REPO_ID, "s3://bucket/ds") == root
     finally:
         _DATASET_READER_MODULES.pop("toyfmt", None)
+
+
+# ── Reader registry: entry point discovery ───────────────────────────
+
+
+def _fake_entry_points(monkeypatch, *pairs):
+    """Make discovery see exactly ``pairs`` of ``(name, value)``, on a scratch registry.
+
+    Returns the list the fake appends to on every scan, so a test can assert how
+    many times the entry points were read.
+    """
+    points = [
+        EntryPoint(name=name, value=value, group=DATASET_READER_ENTRY_POINT_GROUP) for name, value in pairs
+    ]
+    scans = []
+
+    def fake_entry_points(group=None):
+        scans.append(group)
+        return points if group == DATASET_READER_ENTRY_POINT_GROUP else []
+
+    monkeypatch.setattr(storage_module, "entry_points", fake_entry_points)
+    monkeypatch.setattr(storage_module, "_DATASET_READER_MODULES", dict(_DATASET_READER_MODULES))
+    monkeypatch.setattr(storage_module, "_PLUGINS_DISCOVERED", False)
+    return scans
+
+
+def test_entry_point_plugin_serves_a_dataset(tmp_path, lerobot_dataset_factory, monkeypatch):
+    """An installed package's storage format loads without the caller importing it."""
+    root = tmp_path / "src"
+    lerobot_dataset_factory(
+        root=root, total_episodes=2, total_frames=60, use_videos=False, camera_features={}
+    )
+    plain_item = LeRobotDataset(DUMMY_REPO_ID, root=root)[0]
+
+    module = types.ModuleType("plugin_reader")
+    module.DATASET_READER = ToyDatasetReader
+    monkeypatch.setitem(sys.modules, "plugin_reader", module)
+    _fake_entry_points(monkeypatch, ("plugfmt", "plugin_reader"))
+
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["storage_format"] = "plugfmt"
+    info_path.write_text(json.dumps(info))
+
+    # Note there is no register_dataset_reader() call and no import of the
+    # plugin anywhere in this test: declaring the entry point is the whole setup.
+    ds = LeRobotDataset(DUMMY_REPO_ID, root=root)
+
+    assert isinstance(ds.reader, ToyDatasetReader)
+    item = ds[0]
+    for key, expected in plain_item.items():
+        if isinstance(expected, torch.Tensor):
+            torch.testing.assert_close(item[key], expected, rtol=0, atol=0)
+
+
+def test_entry_points_cannot_shadow_builtin_formats(monkeypatch):
+    """Installing a package cannot change how built-in formats are read."""
+    _fake_entry_points(monkeypatch, ("lerobot", "hijack_reader"), ("lance", "hijack_reader"))
+
+    storage_module._discover_plugin_readers()
+
+    assert DEFAULT_STORAGE_FORMAT not in storage_module._DATASET_READER_MODULES
+    assert storage_module._DATASET_READER_MODULES["lance"] == "lerobot.datasets.lance_backend"
+
+
+def test_broken_entry_point_does_not_block_the_others(monkeypatch):
+    """One unusable plugin is skipped; the rest still register."""
+    _fake_entry_points(
+        monkeypatch,
+        ("brokenfmt", "not a module path!"),
+        ("dupefmt", "first_reader"),
+        ("dupefmt", "second_reader"),
+        ("goodfmt", "good_reader"),
+    )
+
+    storage_module._discover_plugin_readers()
+
+    registry = storage_module._DATASET_READER_MODULES
+    assert "brokenfmt" not in registry
+    assert registry["dupefmt"] == "first_reader"  # first declaration wins
+    assert registry["goodfmt"] == "good_reader"
+
+
+def test_discovery_does_not_import_plugin_modules(monkeypatch):
+    """Registration records the module name only, so plugin deps stay optional."""
+    module_name = "lerobot_absent_plugin_module"
+    assert module_name not in sys.modules
+    _fake_entry_points(monkeypatch, ("lazyfmt", module_name))
+
+    storage_module._discover_plugin_readers()
+
+    assert storage_module._DATASET_READER_MODULES["lazyfmt"] == module_name
+    assert module_name not in sys.modules
+
+
+def test_entry_points_are_scanned_once(monkeypatch):
+    """Discovery runs on first lookup and is not repeated on later ones."""
+    scans = _fake_entry_points(monkeypatch, ("oncefmt", "once_reader"))
+
+    for _ in range(3):
+        storage_module._discover_plugin_readers()
+
+    assert scans == [DATASET_READER_ENTRY_POINT_GROUP]
+
+
+def test_discovery_reads_real_distribution_metadata(tmp_path, monkeypatch):
+    """The scan goes through importlib.metadata, so a pip-installed package is found.
+
+    Every other test here fakes ``entry_points``; this one puts a real
+    ``.dist-info`` on ``sys.path`` and lets importlib find it, which is what
+    actually happens for an installed plugin.
+    """
+    dist_info = tmp_path / "lerobot_fake_plugin-0.1.0.dist-info"
+    dist_info.mkdir()
+    (dist_info / "METADATA").write_text("Metadata-Version: 2.1\nName: lerobot-fake-plugin\nVersion: 0.1.0\n")
+    (dist_info / "entry_points.txt").write_text(
+        f"[{DATASET_READER_ENTRY_POINT_GROUP}]\nrealfmt = lerobot_fake_plugin.reader\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    monkeypatch.setattr(storage_module, "_DATASET_READER_MODULES", dict(_DATASET_READER_MODULES))
+    monkeypatch.setattr(storage_module, "_PLUGINS_DISCOVERED", False)
+
+    storage_module._discover_plugin_readers()
+
+    assert storage_module._DATASET_READER_MODULES["realfmt"] == "lerobot_fake_plugin.reader"
+    assert "lerobot_fake_plugin.reader" not in sys.modules
+
+
+def test_unknown_storage_format_lists_discovered_plugins(monkeypatch):
+    """The 'unknown format' error names plugin formats, so a typo is diagnosable."""
+    _fake_entry_points(monkeypatch, ("plugfmt", "plugin_reader"))
+
+    with pytest.raises(ValueError, match="plugfmt"):
+        storage_module._reader_module("nosuchfmt")
 
 
 # ── Delta queries ────────────────────────────────────────────────────
