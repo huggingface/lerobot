@@ -1,0 +1,196 @@
+# 手机遥操作
+
+使用你的手机（iOS 或 Android）来控制你的机器人。
+
+**在本指南中你将学到：**
+
+- 如何连接 iOS/Android 手机
+- 手机姿态如何映射到机器人末端执行器（EE）目标
+- 如何调整安全限制、夹爪控制和 IK 设置
+
+要使用手机控制机器人，请安装相关依赖：
+
+```bash
+pip install lerobot[phone]
+```
+
+## 快速开始
+
+### 支持的平台
+
+- iOS：使用 HEBI Mobile I/O 应用（ARKit 姿态 + 按钮）。先下载应用，打开后示例代码会在网络上自动发现它，并流式传输手机姿态和输入。
+- Android：使用 `teleop` 包（WebXR）。当你启动 Python 进程时，它会打印一个本地 URL。在手机上打开该链接，点击 Start，然后使用 Move 流式传输姿态。
+
+链接：
+
+- Android WebXR 库：[`teleop` on PyPI](https://pypi.org/project/teleop/)
+- iOS 应用：[HEBI Mobile I/O](https://docs.hebi.us/tools.html#mobile-io)
+
+### 手机方向和控制
+
+- 方向：将手机屏幕朝上、顶部边缘指向与机器人夹爪相同的方向持握。这确保校准将手机的坐标系与机器人坐标系对齐，使运动感觉自然，参见下方参考图片。
+- 启用/禁用：
+  - iOS：按住 `B1` 启用遥操作，松开停止。首次按下时捕获参考姿态。
+  - Android：按住 `Move` 按钮，松开停止。首次按下时捕获参考姿态。
+- 夹爪控制：
+  - iOS：模拟输入 `A3` 控制夹爪，作为速度输入。
+  - Android：按钮 `A` 和 `B` 类似增/减（A 打开，B 闭合）。你可以在 `GripperVelocityToJoint` 步骤中调整速度。
+
+<img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/phone_teleop.webp" alt="手机遥操作方向" title="手机遥操作方向" width="40%">
+
+### 步骤 1：选择平台
+
+在 `PhoneConfig` 中修改示例以使用 `PhoneOS.IOS` 或 `PhoneOS.ANDROID`。API 在两个平台上完全相同，只是输入源不同。所有示例位于 `examples/` 目录下，并有 `phone_so100_*.py` 变体。
+
+遥操作示例：
+
+```python
+from lerobot.teleoperators.phone import Phone, PhoneConfig
+from lerobot.teleoperators.phone.config_phone import PhoneOS
+
+teleop_config = PhoneConfig(phone_os=PhoneOS.IOS)  # 或 PhoneOS.ANDROID
+teleop_device = Phone(teleop_config)
+```
+
+### 步骤 2：连接和校准
+
+当 `Phone(teleop_config)` 被创建并调用 `connect()` 时，会自动提示校准。按照上述方向持握手机，然后：
+
+- iOS：按住 `B1` 捕获参考姿态。
+- Android：在 WebXR 页面上按 `Move` 按钮捕获参考姿态。
+
+为什么要校准？我们捕获当前姿态，以便后续姿态在一个与机器人对齐的坐标系中表示。当你再次按下按钮启用控制时，位置会被重新捕获，以避免手机在禁用期间被重新放置后产生漂移。
+
+### 步骤 3：运行示例
+
+运行示例脚本来进行遥操作、录制 dataset、回放 dataset 或评估 policy。
+
+所有脚本假设你已配置好机器人（例如 SO-100 follower）并设置了正确的串口。
+
+此外，你需要**将机器人的 URDF 复制到示例文件夹中**。对于本教程中的示例（使用 SO100/SO101），将 [SO-ARM100 仓库](https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101) 中的 `SO101` 文件夹复制到 `examples/phone_to_so100/` 目录中，使 URDF 文件路径变为 `examples/phone_to_so100/SO101/so101_new_calib.urdf`。
+
+- 运行此示例进行遥操作：
+
+  ```bash
+  cd examples/phone_to_so100
+  python teleoperate.py
+  ```
+
+运行示例后：
+
+- Android：启动脚本后，在手机上打开打印的本地 URL，点击 Start，然后按住 Move。
+- iOS：先打开 HEBI Mobile I/O；B1 启用运动。A3 控制夹爪。
+
+此外，你可以通过编辑示例中显示的 processor 步骤来自定义映射或安全限制。你还可以重新映射输入（例如使用不同的模拟输入）或通过修改输入和运动学步骤来适配其他机器人（例如 LeKiwi）。更多信息请参阅 [Processor 配置指南](./processors_robots_teleop)。
+
+- 运行此示例录制 dataset，保存绝对末端执行器观测和动作：
+
+  ```bash
+  cd examples/phone_to_so100
+  python record.py
+  ```
+
+- 运行此示例回放录制的 episode：
+
+  ```bash
+  cd examples/phone_to_so100
+  python replay.py
+  ```
+
+- 运行此示例评估预训练的 policy：
+
+  ```bash
+  cd examples/phone_to_so100
+  python evaluate.py
+  ```
+
+### 重要的 pipeline 步骤和选项
+
+- 运动学在多个步骤中使用。我们使用 [Placo](https://github.com/Rhoban/placo)，它是 Pinocchio 的封装，用于处理运动学。我们通过传递机器人的 URDF 和目标坐标系来构建运动学对象。我们将 `target_frame_name` 设置为夹爪坐标系。
+
+  ```python
+  kinematics_solver = RobotKinematics(
+    urdf_path="./SO101/so101_new_calib.urdf",
+    target_frame_name="gripper_frame_link",
+    joint_names=list(robot.bus.motors.keys()),
+  )
+
+  ```
+
+- `MapPhoneActionToRobotAction` 步骤将校准后的手机姿态和输入转换为目标增量和夹爪命令，以下是该步骤的输出。
+
+  ```python
+  action["enabled"] = enabled
+        action["target_x"] = -pos[1] if enabled else 0.0
+        action["target_y"] = pos[0] if enabled else 0.0
+        action["target_z"] = pos[2] if enabled else 0.0
+        action["target_wx"] = rotvec[1] if enabled else 0.0
+        action["target_wy"] = rotvec[0] if enabled else 0.0
+        action["target_wz"] = -rotvec[2] if enabled else 0.0
+        action["gripper_vel"] = gripper_vel  # 禁用时仍然发送夹爪动作
+  ```
+
+- `EEReferenceAndDelta` 步骤将目标增量转换为绝对期望 EE 姿态，在启用时存储参考值。`end_effector_step_sizes` 是 EE 姿态的步长，可以修改以改变运动速度。
+
+  ```python
+  EEReferenceAndDelta(
+      kinematics=kinematics_solver,
+      end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5},
+      motor_names=list(robot.bus.motors.keys()),
+      use_latched_reference=True,
+  ),
+  ```
+
+- `EEBoundsAndSafety` 步骤将 EE 运动限制在工作空间内，并检查大的 EE 步长跳变以确保安全。`end_effector_bounds` 是 EE 姿态的边界，可以修改以改变工作空间。`max_ee_step_m` 是 EE 姿态的步长限制，可以修改以改变安全限制。
+
+  ```python
+  EEBoundsAndSafety(
+      end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
+      max_ee_step_m=0.10,
+  )
+  ```
+
+- `GripperVelocityToJoint` 步骤使用当前测量状态将速度形式的夹爪输入转换为绝对夹爪位置。`speed_factor` 是速度乘以的系数。
+
+  ```python
+  GripperVelocityToJoint(speed_factor=20.0)
+  ```
+
+#### 不同的 IK 初始猜测
+
+我们在运动学步骤中使用不同的 IK 初始猜测。初始猜测使用当前测量的关节值或之前的 IK 解。
+
+- 闭环（用于录制/评估）：设置 `initial_guess_current_joints=True`，使 IK 每帧从测量的关节值开始。
+
+  ```python
+  InverseKinematicsEEToJoints(
+      kinematics=kinematics_solver,
+      motor_names=list(robot.bus.motors.keys()),
+      initial_guess_current_joints=True,  # 闭环
+  )
+  ```
+
+- 开环（用于回放）：设置 `initial_guess_current_joints=False`，使 IK 从之前的 IK 解继续，而不是从测量状态开始。这在没有反馈的回放中保持动作稳定性。
+
+  ```python
+  InverseKinematicsEEToJoints(
+      kinematics=kinematics_solver,
+      motor_names=list(robot.bus.motors.keys()),
+      initial_guess_current_joints=False,  # 开环
+  )
+  ```
+
+### Pipeline 步骤说明
+
+- MapPhoneActionToRobotAction：将校准后的手机姿态和输入转换为目标增量和夹爪命令。运动由启用信号控制（iOS 上为 B1，Android 上为 Move）。
+- EEReferenceAndDelta：在启用时锁定参考 EE 姿态，并将其与目标增量组合以产生每帧的绝对期望 EE 姿态。禁用时，持续发送上一次命令的姿态。
+- EEBoundsAndSafety：将 EE 姿态限制在工作空间内，并对跳变进行速率限制以确保安全。同时声明 `action.ee.*` 特征。
+- InverseKinematicsEEToJoints：使用 IK 将 EE 姿态转换为关节位置。`initial_guess_current_joints=True` 推荐用于闭环控制；设为 `False` 用于开环回放以保持稳定性。
+- GripperVelocityToJoint：使用当前测量状态将速度形式的夹爪输入积分到绝对夹爪位置。
+- ForwardKinematicsJointsToEE：从观测到的关节计算 `observation.state.ee.*`，用于日志记录和 EE 状态训练。
+
+### 故障排除
+
+- iOS 无法发现：确保 HEBI Mobile I/O 已打开，且你的电脑/手机在同一网络上。
+- Android URL 无法访问：检查你使用的是 `https` 而不是 `http`，使用脚本打印的精确 IP 地址，并允许浏览器忽略证书问题。
+- 运动方向反转：调整 `MapPhoneActionToRobotAction` 中的符号翻转或交换轴以匹配你的配置。
