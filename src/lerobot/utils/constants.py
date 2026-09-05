@@ -41,6 +41,7 @@ TRUNCATED = "next.truncated"
 DONE = "next.done"
 SUCCESS = "next.success"
 INFO = "info"
+TASK = "task"
 
 # Complementary-data keys describing a text-generation request, set by the rollout
 # inference engines before the preprocessor runs so a processor step can format the
