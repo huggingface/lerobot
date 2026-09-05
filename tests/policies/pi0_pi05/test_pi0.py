@@ -125,3 +125,19 @@ def test_config_creation():
     except Exception as e:
         print(f"Config creation failed: {e}")
         raise
+
+
+def test_from_pretrained_strict_raises_on_bad_checkpoint(tmp_path):
+    """A checkpoint that fails to load must raise, not return an untrained model (#4577)."""
+    from safetensors.torch import save_file
+
+    class TinyPI0Policy(PI0Policy):
+        def __init__(self, config, **kwargs):
+            torch.nn.Module.__init__(self)
+            self.config = config
+            self.model = torch.nn.Linear(1, 1)
+
+    save_file({"model.bogus": torch.zeros(1)}, tmp_path / "model.safetensors")
+
+    with pytest.raises(RuntimeError, match="Unexpected key"):
+        TinyPI0Policy.from_pretrained(tmp_path, config=PI0Config(), strict=True)
