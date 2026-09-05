@@ -1850,3 +1850,11 @@ def test_episode_filter_unknown_key_raises(tmp_path, lerobot_dataset_factory):
             root=dataset.root,
             episode_filter=lambda ep: ep["not_a_real_field"] > 0,
         )
+
+
+def test_get_hf_features_zero_width_feature_does_not_raise_on_from_dict():
+    import datasets
+
+    features = {"empty": {"dtype": "float32", "shape": (0,), "names": ["empty"]}}
+    hf_features = get_hf_features_from_features(features)
+    datasets.Dataset.from_dict({"empty": [[], []]}, features=hf_features)
