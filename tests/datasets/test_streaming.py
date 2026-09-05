@@ -384,6 +384,57 @@ def test_frames_with_delta_consistency(tmp_path, lerobot_dataset_factory, state_
         )
 
 
+def test_frames_with_delta_beyond_default_window(tmp_path, lerobot_dataset_factory):
+    """Deltas reaching farther than the old fixed 100-frame Backtrackable window.
+
+    With 300-frame episodes and 3.5 s deltas (105 frames at 30 fps), the fixed-bounds
+    implementation marked in-episode frames as padding because the buffer could not
+    reach them. Bounds derived from delta_indices must reproduce the map-style
+    dataset's padding masks exactly.
+    """
+    ds_num_frames = 600
+    ds_num_episodes = 2  # 300 frames per episode
+
+    local_path = tmp_path / "test"
+    repo_id = f"{DUMMY_REPO_ID}-long-deltas"
+
+    delta_timestamps = {
+        "state": [-3.5, 0],  # 105 frames back at 30 fps
+        ACTION: [0, 3.5],  # 105 frames ahead
+    }
+
+    ds = lerobot_dataset_factory(
+        root=local_path,
+        repo_id=repo_id,
+        total_episodes=ds_num_episodes,
+        total_frames=ds_num_frames,
+        delta_timestamps=delta_timestamps,
+    )
+    streaming_ds = StreamingLeRobotDataset(
+        repo_id=repo_id,
+        root=local_path,
+        buffer_size=10,
+        seed=42,
+        shuffle=False,
+        delta_timestamps=delta_timestamps,
+    )
+
+    far_delta_served = False
+    for streaming_frame in streaming_ds:
+        target_frame = ds[streaming_frame["index"]]
+        for key in ("state", ACTION):
+            pad_key = f"{key}_is_pad"
+            assert torch.equal(streaming_frame[pad_key], target_frame[pad_key]), (
+                f"Padding mask mismatch for {key} at index {streaming_frame['index']}"
+            )
+            valid = ~streaming_frame[pad_key]
+            assert torch.allclose(streaming_frame[key][valid], target_frame[key][valid])
+        # the -3.5s slot: served (not padded) once frame_index >= 105 within the episode
+        far_delta_served |= not streaming_frame["state_is_pad"][0]
+
+    assert far_delta_served, "no frame exercised a lookback beyond the old 100-frame window"
+
+
 @pytest.mark.parametrize(
     "state_deltas, action_deltas",
     [
