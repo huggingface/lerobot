@@ -71,6 +71,36 @@ def test_euler_integrate_constant_velocity_is_exact():
     torch.testing.assert_close(out, noise - c, rtol=0, atol=1e-6)
 
 
+def test_euler_integrate_forward_constant_velocity_is_exact():
+    # Forward convention: dt = +1/num_steps, so x_1 = x_0 + sum(dt * c) = x_0 + c exactly.
+    noise = torch.randn(3, 5, 2)
+    c = torch.randn(3, 5, 2)
+    out = euler_integrate(lambda x_t, time: c, noise, num_steps=10, forward_euler=True)
+    torch.testing.assert_close(out, noise + c, rtol=0, atol=1e-6)
+
+
+def _reference_forward_loop(denoise_fn, noise, num_steps):
+    """Verbatim structure of the groot/evo1/wall_x forward-Euler loop (t: 0 -> 1)."""
+    bsize = noise.shape[0]
+    device = noise.device
+    dt = 1.0 / num_steps
+    x_t = noise
+    for step in range(num_steps):
+        time = 0.0 + step * dt
+        time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
+        x_t = x_t + dt * denoise_fn(x_t, time_tensor)
+    return x_t
+
+
+def test_euler_integrate_forward_matches_reference_loop():
+    torch.manual_seed(7)
+    denoise_fn = _make_denoise_fn()
+    noise = torch.randn(2, 6, 4)
+    ref = _reference_forward_loop(denoise_fn, noise, 10)
+    out = euler_integrate(denoise_fn, noise, 10, forward_euler=True)
+    assert torch.equal(out, ref)
+
+
 def _reference_pi0_loop(denoise_fn, noise, num_steps, rtc_enabled, rtc_processor, kw):
     """Verbatim structure of the historical pi0/pi05/smolvla sample_actions loop."""
     bsize = noise.shape[0]
