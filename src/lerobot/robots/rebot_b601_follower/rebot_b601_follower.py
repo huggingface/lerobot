@@ -116,20 +116,47 @@ class RebotB601Follower(Robot):
                 f"Unsupported can_adapter '{self.config.can_adapter}'. Use 'damiao' or 'socketcan'."
             )
 
-        for motor_name, (send_id, recv_id) in self.config.motor_can_ids.items():
-            self.motors[motor_name] = self.bus.add_damiao_motor(send_id, recv_id, MOTOR_MODELS[motor_name])
+        try:
+            for motor_name, (send_id, recv_id) in self.config.motor_can_ids.items():
+                self.motors[motor_name] = self.bus.add_damiao_motor(
+                    send_id, recv_id, MOTOR_MODELS[motor_name]
+                )
 
-        if not self.is_calibrated and calibrate:
-            logger.info(
-                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
-            )
-            self.calibrate()
+            if not self.is_calibrated and calibrate:
+                logger.info(
+                    "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
+                )
+                self.calibrate()
 
-        for cam in self.cameras.values():
-            cam.connect()
+            for cam in self.cameras.values():
+                cam.connect()
 
-        self.configure()
+            self.configure()
+        except BaseException:
+            self._release_after_failed_connect()
+            raise
+
         logger.info(f"{self} connected.")
+
+    def _release_bus_after_failed_connect(self) -> None:
+        """Tears down the CAN controller, which is closed rather than disconnected."""
+        for motor in self.motors.values():
+            try:
+                if self.config.disable_torque_on_disconnect:
+                    motor.disable()
+                motor.clear_error()
+                motor.close()
+            except Exception:
+                logger.exception(f"Failed to release {motor} after {self} failed to connect.")
+
+        if self.bus is not None:
+            try:
+                self.bus.close()
+            except Exception:
+                logger.exception(f"Failed to close the bus after {self} failed to connect.")
+
+        self.bus = None
+        self.motors = {}
 
     @property
     def is_calibrated(self) -> bool:

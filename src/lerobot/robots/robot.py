@@ -87,19 +87,27 @@ class Robot(abc.ABC):
         Failures here are logged rather than raised so they cannot mask it.
         """
         for cam in getattr(self, "cameras", {}).values():
-            if not cam.is_connected:
-                continue
             try:
-                cam.disconnect()
+                if cam.is_connected:
+                    cam.disconnect()
             except Exception:
                 logger.exception(f"Failed to disconnect {cam} after {self} failed to connect.")
 
+        self._release_bus_after_failed_connect()
+
+    def _release_bus_after_failed_connect(self) -> None:
+        """Releases the motors bus after a failed connect().
+
+        Override this when the bus does not follow the ``disconnect(disable_torque)``
+        shape, as is the case for CAN-backed robots that hold a controller handle.
+        """
         bus = getattr(self, "bus", None)
-        if bus is None or not bus.is_connected:
+        if bus is None:
             return
 
         try:
-            bus.disconnect(self.config.disable_torque_on_disconnect)
+            if bus.is_connected:
+                bus.disconnect(self.config.disable_torque_on_disconnect)
         except Exception:
             logger.exception(f"Failed to disconnect the bus after {self} failed to connect.")
 
