@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import json
 import tempfile
 from pathlib import Path
 
@@ -20,8 +21,11 @@ import numpy as np
 import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType
+from lerobot.policies.factory import build_rename_override
 from lerobot.processor import (
     DataProcessorPipeline,
+    DeviceProcessorStep,
+    PolicyProcessorPipeline,
     ProcessorStepRegistry,
     RenameObservationsProcessorStep,
     TransitionKey,
@@ -534,3 +538,45 @@ def test_rename_stats_basic():
     # Ensure deep copy: mutate original and verify renamed unaffected
     orig[OBS_STATE]["mean"][0] = 42.0
     assert renamed["observation.robot_state"]["mean"][0] != 42.0
+
+
+def test_empty_cli_rename_map_keeps_saved_rename_map(tmp_path):
+    """A pipeline saved with a rename map must keep it when no CLI rename map is given (#4548)."""
+    saved_map = {
+        "observation.images.robot0_agentview_left": "observation.images.camera1",
+        "observation.images.robot0_agentview_right": "observation.images.camera2",
+        "observation.images.robot0_eye_in_hand": "observation.images.camera3",
+    }
+    pipeline = PolicyProcessorPipeline(
+        [RenameObservationsProcessorStep(rename_map=saved_map), DeviceProcessorStep(device="cpu")]
+    )
+    pipeline.save_pretrained(tmp_path, config_filename="policy_preprocessor.json")
+    assert (
+        json.loads((tmp_path / "policy_preprocessor.json").read_text())["steps"][0]["config"]["rename_map"]
+        == saved_map
+    )
+
+    # No CLI rename map: the override built for the loaders must not touch the saved map,
+    # while the device override that always ships alongside it still applies.
+    overrides = {"device_processor": {"device": "cpu"}, **build_rename_override({})}
+    loaded = PolicyProcessorPipeline.from_pretrained(
+        tmp_path, config_filename="policy_preprocessor.json", overrides=overrides
+    )
+    rename_step = next(s for s in loaded.steps if isinstance(s, RenameObservationsProcessorStep))
+    assert rename_step.rename_map == saved_map
+
+
+def test_non_empty_cli_rename_map_overrides_saved_rename_map(tmp_path):
+    """An explicit CLI rename map still replaces the saved map."""
+    saved_map = {"observation.images.old": "observation.images.camera1"}
+    pipeline = PolicyProcessorPipeline([RenameObservationsProcessorStep(rename_map=saved_map)])
+    pipeline.save_pretrained(tmp_path, config_filename="policy_preprocessor.json")
+
+    cli_map = {"observation.images.left": "observation.images.camera1"}
+    loaded = PolicyProcessorPipeline.from_pretrained(
+        tmp_path,
+        config_filename="policy_preprocessor.json",
+        overrides={**build_rename_override(cli_map)},
+    )
+    rename_step = next(s for s in loaded.steps if isinstance(s, RenameObservationsProcessorStep))
+    assert rename_step.rename_map == cli_map
