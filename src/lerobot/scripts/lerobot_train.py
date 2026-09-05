@@ -73,7 +73,7 @@ from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.jobs import submit_to_hf
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
-from lerobot.policies.factory import ProcessorConfigKwargs
+from lerobot.policies.factory import ProcessorConfigKwargs, build_rename_override
 from lerobot.processor.rename_processor import rename_batch_keys, rename_stats
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
@@ -503,13 +503,13 @@ def train(cfg: TrainPipelineConfig):
     if cfg.is_reward_model_training:
         processor_kwargs["dataset_meta"] = dataset.meta
     if not cfg.is_reward_model_training and processor_pretrained_path is not None:
-        preprocessor_overrides = {
+        preprocessor_overrides: dict[str, Any] = {
             "device_processor": {"device": device.type},
             "normalizer_processor": {
                 "features": {**policy.config.input_features, **policy.config.output_features},
                 "norm_map": policy.config.normalization_mapping,
             },
-            "rename_observations_processor": {"rename_map": cfg.rename_map},
+            **build_rename_override(cfg.rename_map),
         }
         postprocessor_overrides = {
             "unnormalizer_processor": {

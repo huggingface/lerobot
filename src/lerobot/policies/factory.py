@@ -148,6 +148,18 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     dataset_meta: Any | None
 
 
+def build_rename_override(rename_map: dict[str, str] | None) -> dict[str, Any]:
+    """Build the `rename_observations_processor` preprocessor override for a CLI rename map.
+
+    Returns an empty dict when `rename_map` is empty: omitting the override key keeps the
+    rename map saved in the checkpoint's preprocessor, whereas an empty override would
+    replace it with `{}`.
+    """
+    if not rename_map:
+        return {}
+    return {"rename_observations_processor": {"rename_map": dict(rename_map)}}
+
+
 def make_pre_post_processors(
     policy_cfg: PreTrainedConfig,
     pretrained_path: str | None = None,
