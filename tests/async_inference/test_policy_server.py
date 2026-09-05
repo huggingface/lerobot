@@ -217,3 +217,44 @@ def test_predict_action_chunk(monkeypatch, policy_server):
     for i, ta in enumerate(timed_actions):
         expected_ts = obs.get_timestamp() + i * policy_server.config.environment_dt
         assert abs(ta.get_timestamp() - expected_ts) < 1e-6
+
+
+def test_predict_action_chunk_with_shape_sensitive_postprocessor(monkeypatch, policy_server):
+    """Verify that the policy server supports shape-sensitive/chunk-dependent postprocessors
+    (e.g., relative action decoding) by passing the full 3D chunk.
+    """
+    from lerobot.async_inference.policy_server import PolicyServer
+
+    policy_server.policy_type = "act"
+    policy_server.preprocessor = lambda obs: obs
+
+    # 1. Setup a shape-sensitive postprocessor that strictly asserts input has 3 dimensions (ndim == 3)
+    # This mimics GrootN17ActionDecodeStep
+    def mock_shape_sensitive_postprocessor(tensor):
+        assert tensor.ndim == 3, f"Expected 3D tensor, got shape {tensor.shape}"
+        # Dummy operation to verify value preservation: multiply by 2
+        return tensor * 2
+
+    policy_server.postprocessor = mock_shape_sensitive_postprocessor
+    action_dim = 6
+    batch_size = 1
+    actions_per_chunk = policy_server.actions_per_chunk
+
+    # Mock the policy inference to return a deterministic 3D tensor of shape (B, T, D)
+    def _fake_get_action_chunk(_self, _obs, _type="act"):
+        return torch.ones(batch_size, actions_per_chunk, action_dim)
+
+    monkeypatch.setattr(PolicyServer, "_get_action_chunk", _fake_get_action_chunk, raising=True)
+
+    # 2. Run prediction
+    obs = _make_obs(torch.zeros(6), timestep=5)
+    timed_actions = policy_server._predict_action_chunk(obs)
+
+    # 3. Verify assertions
+    assert len(timed_actions) == actions_per_chunk
+    # Check that each action value was processed correctly (multiplied by 2)
+    # The fake policy returned ones, so the postprocessed values should be twos.
+    for ta in timed_actions:
+        assert torch.allclose(ta.action, torch.ones(action_dim) * 2), (
+            "TimedAction values were not correctly postprocessed"
+        )
