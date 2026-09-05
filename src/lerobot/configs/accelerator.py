@@ -59,6 +59,14 @@ class FSDPConfig:
         Raises:
             ValueError: If both ``wrap_modules`` and ``min_num_params`` are set (they are
                 mutually exclusive wrap policies), or if ``min_num_params`` is < 1.
+
+        Note:
+            On torch >= 2.12, FSDP2 rejects a tied parameter pair that a wrap policy splits
+            across two groups. Size-based wrapping can split such a pair, so a policy with
+            tied weights needs ``wrap_modules`` listing modules that keep the tied parameters
+            together. GR00T and wall_x both tie the language head to the input embedding and
+            declare no ``_fsdp_wrap_modules``, so they need that flag set on the command line;
+            it takes precedence over the class declaration.
         """
         if self.wrap_modules is not None and self.min_num_params is not None:
             raise ValueError(

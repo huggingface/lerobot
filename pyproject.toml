@@ -59,8 +59,10 @@ keywords = ["lerobot", "huggingface", "robotics",  "machine learning", "artifici
 
 dependencies = [
     # Core ML
-    "torch>=2.7,<2.12.0",
-    "torchvision>=0.22.0,<0.27.0",
+    "torch>=2.7,<2.15.0; sys_platform != 'darwin'",
+    "torch>=2.7,<2.12.0; sys_platform == 'darwin'",
+    "torchvision>=0.22.0,<0.30.0; sys_platform != 'darwin'",
+    "torchvision>=0.22.0,<0.27.0; sys_platform == 'darwin'",
     "numpy>=2.0.0,<2.3.0", # NOTE: Explicitly listing numpy helps the resolver converge faster. Upper bound imposed by opencv-python-headless.
     "opencv-python-headless>=4.9.0,<4.14.0",
     "Pillow>=10.0.0,<13.0.0",
@@ -87,7 +89,7 @@ dependencies = [
 
     # Build tools (required by opencv-python-headless on some platforms)
     "cmake>=3.29.0.1,<4.2.0",
-    "setuptools>=71.0.0,<82.0.0",  # torch 2.11 requires setuptools<82; a higher cap makes the resolver downgrade torch
+    "setuptools>=71.0.0,<82.0.0",  # torch 2.11/2.12 cap setuptools<82; the darwin ceiling pins torch to 2.11
 ]
 
 # Optional dependencies
@@ -114,11 +116,28 @@ dataset = [
     #   - linux aarch64/arm64              : wheels since 0.11.0 (needs torch>=2.11).
     #   - macOS x86_64 (Intel) and linux armv7l: no wheels in any released version -> fall through to the PyAV decoder.
     # Each platform gets its own line so the resolver picks the minimum version that has a wheel for it.
-
-    # Other torch/torchcodec pairings (informational): 0.8.1 = ffmpeg>=8 support, 0.10 = system-wide ffmpeg support, 0.12 needs torch==2.12.
-    "torchcodec>=0.3.0,<0.12.0; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')) or (sys_platform == 'darwin' and platform_machine == 'arm64')",
-    "torchcodec>=0.7.0,<0.12.0; sys_platform == 'win32'",
-    "torchcodec>=0.11.0,<0.12.0; sys_platform == 'linux' and (platform_machine == 'aarch64' or platform_machine == 'arm64')",
+    #
+    # Ceilings raised from <0.12.0 so a torch >=2.12 install can pick a torchcodec built against it.
+    # torchcodec declares NO torch dependency at any version, so the resolver cannot enforce the
+    # ABI pairing in either direction; the raised ceiling widens the range in which #4393 can
+    # occur. Fixing that needs upstream metadata or an explicit floor here, which would raise
+    # the minimum supported torch and is out of scope.
+    #
+    # The raised ceiling also admits versions that no longer raise when their shared libraries are
+    # missing: they set an internal availability flag instead, so the probe in
+    # `utils/import_utils.get_safe_default_video_backend` selects torchcodec and the failure moves
+    # into the decoder. Repairing that probe belongs with the video backend, not with this range.
+    #
+    # From 0.14.0 the PyPI torchcodec wheel is built against CUDA 13 and loads libnvrtc.so.13 at
+    # import time, so any CUDA 12 pin has to redirect torchcodec along with torch and
+    # torchvision; both CUDA 12 indexes publish a matching build.
+    "torchcodec>=0.3.0,<0.18.0; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')",
+    # macOS arm64: torch 2.12+, torchvision 0.27+ and torchcodec 0.12+ ship only
+    # macosx_14_0 wheels, so the darwin ceilings stay below those to keep the
+    # macOS 11-13 support that the current ranges already provide.
+    "torchcodec>=0.3.0,<0.12.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "torchcodec>=0.7.0,<0.18.0; sys_platform == 'win32'",
+    "torchcodec>=0.11.0,<0.18.0; sys_platform == 'linux' and (platform_machine == 'aarch64' or platform_machine == 'arm64')",
     "jsonlines>=4.0.0,<5.0.0",
 ]
 training = [
@@ -370,18 +389,18 @@ lerobot-rollout="lerobot.scripts.lerobot_rollout:main"
 
 # ---------------- Tool Configurations ----------------
 
-# cu128 wheels keep broad hardware reach; the driver floor is 570.86.
-# To use a different CUDA variant, reinstall torch with an explicit index, e.g.:
-#   uv pip install --force-reinstall torch torchvision \
-#       --index-url https://download.pytorch.org/whl/cu130
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
-
-[tool.uv.sources]
-torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
-torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
+# torch/torchvision resolve from PyPI. A pinned CUDA index constrains the torch version in
+# both directions -- cu128 published nothing above 2.11, which capped this project, and no
+# single index covers >=2.7 on both architectures (cu126 aarch64 starts at 2.9.0, cu129 at
+# 2.8.0) -- so the variant is left to the installer. Select one explicitly with
+# `uv pip install --torch-backend <auto|cpu|cu126|cu130|...>`; see
+# docs/source/installation.mdx.
+#
+# The CI image (Dockerfile.internal) moves to a CUDA 13 base, and the RoboTwin benchmark image
+# derives its nvcc from whatever torch the base carries: cpp_extension raises on a MAJOR
+# toolkit/wheel mismatch and only warns on a minor one, so nvcc must share torch's major
+# version wherever an extension with a .cu source is built (CuRobo does; pytorch3d compiles
+# CPU-only here because the image sets no FORCE_CUDA).
 
 [tool.setuptools.package-data]
 lerobot = ["envs/*.json", "annotations/steerable_pipeline/prompts/*.txt"]

@@ -33,9 +33,16 @@ USER root
 # Pinned upstream SHA for reproducible benchmark runs. Bump when we need
 # an upstream fix; don't rely on `main` drift.
 ARG ROBOTWIN_SHA=0aeea2d669c0f8516f4d5785f0aa33ba812c14b4
-RUN apt-get update \
+# nvcc has to share torch's CUDA major version, because cpp_extension raises on a major
+# mismatch and CuRobo below builds .cu sources unconditionally. torch comes from the base
+# image, so derive the toolkit version from it instead of hardcoding one that silently rots
+# whenever the base moves to a new CUDA major.
+RUN CUDA_APT_VERSION="$(python -c 'import torch; print((torch.version.cuda or "").replace(".", "-"))')" \
+    && test -n "${CUDA_APT_VERSION}" || { echo "base image torch has no CUDA build" >&2; exit 1; } \
+    && echo "base torch reports CUDA ${CUDA_APT_VERSION}" \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
-         cuda-nvcc-12-8 cuda-cudart-dev-12-8 \
+         "cuda-nvcc-${CUDA_APT_VERSION}" "cuda-cudart-dev-${CUDA_APT_VERSION}" \
          libvulkan1 vulkan-tools \
     && mkdir -p /usr/share/vulkan/icd.d \
     && echo '{"file_format_version":"1.0.0","ICD":{"library_path":"libGLX_nvidia.so.0","api_version":"1.3.0"}}' \
@@ -58,11 +65,22 @@ RUN uv pip install --no-cache --no-build-isolation \
 # CuRobo — NVlabs motion generator; TORCH_CUDA_ARCH_LIST must be set or the
 # build aborts on an empty arch list. RoboTwin's own installer pins v0.7.8,
 # which still exposes the v1 API (`curobo.types.math`) that RoboTwin imports.
+# 7.0 is not in the list: CUDA 13 rejects compute_70 outright, and the torch wheels this
+# image installs carry no sm_70 cubins either way (only cu126 builds still ship Volta).
+# The awk step guards CuRobo's own scalar `lerp` declaration. From torch 2.12, cpp_extension
+# compiles .cu sources at -std=c++20, and nvcc preincludes cmath, so std::lerp is already
+# declared and CuRobo's global float lerp becomes a conflicting redeclaration. All eight of its
+# .cu files include this header, so the build stops. Only the float overload collides; the
+# float2/float3/float4 ones stay because CuRobo's kernels call them.
 ARG CUROBO_REF=v0.7.8
 RUN cd ${ROBOTWIN_ROOT}/envs \
     && git clone --branch ${CUROBO_REF} --depth 1 https://github.com/NVlabs/curobo.git \
     && cd curobo \
-    && TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0" \
+    && awk '/^inline __device__ __host__ float lerp\(float a, float b, float t\)$/{print "#if __cplusplus < 202002L"; f=1} {print} f&&/^}$/{print "#endif"; f=0}' \
+           src/curobo/curobolib/cpp/helper_math.h > /tmp/helper_math.h \
+    && mv /tmp/helper_math.h src/curobo/curobolib/cpp/helper_math.h \
+    && test "$(grep -c '__cplusplus < 202002L' src/curobo/curobolib/cpp/helper_math.h)" = 1 \
+    && TORCH_CUDA_ARCH_LIST="7.5;8.0;8.6;8.9;9.0" \
        uv pip install -e . --no-build-isolation --no-cache
 
 # Upstream patches (mirror RoboTwin's script/_install.sh).

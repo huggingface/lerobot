@@ -218,14 +218,42 @@ On Linux, the install path determines which CUDA wheel you get. macOS and Window
 
 **Source install via `uv` (`uv sync` or `uv pip install -e .`)**
 
-`torch` and `torchvision` are pinned by the project to the **CUDA 12.8** PyTorch index (`https://download.pytorch.org/whl/cu128`, driver floor **570.86**) — covers Ampere/Ada/Hopper/Blackwell GPUs. No action needed for typical NVIDIA setups.
+`torch` and `torchvision` come from PyPI, whose Linux wheel bundles the **CUDA 13** runtime (driver floor **580.65**). Architecture coverage differs by host architecture, and these wheels ship no PTX, so a GPU missing from the build cannot run at all:
 
-To override for a different CUDA variant:
+| host    | architectures in the default PyPI wheel                                             |
+| ------- | ----------------------------------------------------------------------------------- |
+| x86_64  | `sm_75`, `sm_80`, `sm_86`, `sm_89`, `sm_90`, `sm_100`, `sm_103`, `sm_120`, `sm_121` |
+| aarch64 | `sm_80`, `sm_90`, `sm_100`, `sm_103`, `sm_110`, `sm_120`, `sm_121`                  |
 
-```bash
-uv pip install --force-reinstall torch torchvision \
-    --index-url https://download.pytorch.org/whl/cu126   # older drivers; or cu130 for Blackwell on driver ≥ 580
+On x86_64 that covers Turing through Blackwell and needs no action. On aarch64 there is no `sm_75`, `sm_86` or `sm_89`, but a cubin runs on an equal-or-higher minor within the same major, so an A10 (`sm_86`) or L4 (`sm_89`) runs on the `sm_80` cubin. A T4 (`sm_75`) has no `sm_7x` cubin in any aarch64 wheel, on PyPI or on either CUDA 12 index, so it needs a torch built for the device.
+
+On a driver older than 580, pin a CUDA 12 index in your own checkout. Both CUDA 12 variants have driver floor **525.60.13** and differ in which GPUs they carry:
+
+| index   | x86_64 architectures                                                                                     | aarch64 architectures                                    |
+| ------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `cu129` | Turing → Blackwell (`sm_75`, `sm_80`, `sm_86`, `sm_89`, `sm_90`, `sm_100`, `sm_103`, `sm_120`, `sm_121`) | `sm_80`, `sm_90`, `sm_100`, `sm_103`, `sm_120`, `sm_121` |
+| `cu126` | Maxwell → Hopper (`sm_50`, `sm_60`, `sm_70`, `sm_75`, `sm_80`, `sm_86`, `sm_89`, `sm_90`)                | `sm_80`, `sm_90`                                         |
+
+Prefer `cu129` unless you need pre-Turing (Maxwell/Pascal/Volta) or a torch older than 2.8, both of which only `cu126` carries — `cu129`'s oldest release is 2.8.0, so pinning it raises this project's effective floor from 2.7:
+
+```toml
+# pyproject.toml, in your own checkout
+[[tool.uv.index]]
+name = "pytorch-cu129"
+url = "https://download.pytorch.org/whl/cu129"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu129", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cu129", marker = "sys_platform == 'linux'" }]
+torchcodec = [{ index = "pytorch-cu129", marker = "sys_platform == 'linux'" }]
 ```
+
+`torchcodec` has to be redirected with them: from 0.14.0 the PyPI wheel is built against CUDA 13 and loads `libnvrtc.so.13` at import, so leaving it on PyPI in a CUDA 12 environment raises `ImportError` on `import torchcodec`. Both CUDA 12 indexes publish a matching build.
+
+`uv sync` has no `--torch-backend` flag, and it reinstalls exactly what `uv.lock` pins, so a one-off `uv pip install --force-reinstall` is reverted by the next sync. The index has to be declared in the project for the choice to stick.
+
+Editing `pyproject.toml` leaves `uv.lock` out of date, so run `uv lock` afterwards. Both files are tracked, so keep the two edits on a local branch and expect to redo them when you pull.
 
 </hfoption>
 <hfoption id="pip-conda">
@@ -236,22 +264,24 @@ PyPI default torch wheel is currently a cu130-bundled Linux wheel, driver floor 
 
 To pick a specific CUDA variant:
 
-**Using `pip` or `conda`** — install torch first with an explicit index, then lerobot:
+**Using `pip` or `conda`** — pass the index to both commands, so the second one does not pull torch back from PyPI:
 
 ```bash
-pip install --index-url https://download.pytorch.org/whl/cu128 torch torchvision
-pip install -e ".[all]"          # source
+pip install --index-url https://download.pytorch.org/whl/cu129 torch torchvision torchcodec
+pip install --extra-index-url https://download.pytorch.org/whl/cu129 -e ".[all]"   # source
 # — or —
-pip install lerobot              # from PyPI
+pip install --extra-index-url https://download.pytorch.org/whl/cu129 "torch<2.12" lerobot   # from PyPI
 ```
 
-**Using `uv` to install from PyPI** — one-liner via `--torch-backend` (uv ≥ 0.6):
+Without the index on the second command, pip re-resolves `torch` from PyPI and replaces the CUDA 12 build you just installed with the default CUDA 13 one. The published `lerobot` package still caps `torch` below 2.12, so that recipe also needs the explicit `"torch<2.12"` to keep the resolver on a version the `cu129` index actually carries.
+
+**Using `uv` to install from PyPI** — one-liner via `--torch-backend` (uv ≥ 0.7):
 
 ```bash
-uv pip install --torch-backend cu128 lerobot
+uv pip install --torch-backend auto lerobot
 ```
 
-Supported values include `auto`, `cpu`, `cu126`, `cu128`, `cu129`, `cu130`, plus various `rocm*` and `xpu`. Swap as needed for your driver.
+Supported values include `auto`, `cpu`, `cu126`, `cu128`, `cu129`, `cu130`, `cu132`, plus various `rocm*` and `xpu`. Swap as needed for your driver. Each value has its own minimum uv: `cu128` from 0.7.0, `cu129` from ~0.9.0, `cu130` from 0.10.0, `rocm*`/`xpu` from 0.7.20, and `cu132` only from 0.11.29. The flag itself does not exist before ~0.6.9.
 
 </hfoption>
 </hfoptions>
