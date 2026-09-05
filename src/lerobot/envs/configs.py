@@ -58,6 +58,8 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     fps: int = 30
     features: dict[str, PolicyFeature] = field(default_factory=dict)
     features_map: dict[str, str] = field(default_factory=dict)
+    # Evaluate this many tasks concurrently in eval_policy_all. Each worker thread deep-copies the
+    # policy and processors on first use, so memory scales with this value, not with the task count.
     max_parallel_tasks: int = 1
     disable_env_checker: bool = True
 
