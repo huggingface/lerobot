@@ -180,6 +180,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         if os.path.isdir(model_id):
             print("Loading weights from local directory")
             model_file = os.path.join(model_id, SAFETENSORS_SINGLE_FILE)
+            cls._warn_legacy_normalization(model_file, model_id, revision)
             policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
         else:
             try:
@@ -194,6 +195,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                     token=token,
                     local_files_only=local_files_only,
                 )
+                cls._warn_legacy_normalization(model_file, model_id, revision)
                 policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
             except HfHubHTTPError as e:
                 raise FileNotFoundError(
@@ -203,6 +205,31 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         policy.to(config.device)
         policy.eval()
         return policy
+
+    @classmethod
+    def _warn_legacy_normalization(
+        cls,
+        model_file: str,
+        pretrained_name_or_path: str,
+        revision: str | None,
+    ) -> None:
+        """Inspect safetensors keys before the policy-specific loader runs.
+
+        Checking the file header up front keeps the legacy-migration warning working
+        even when a subclass overrides ``_load_as_safetensor`` and never calls
+        :func:`log_model_loading_keys`, without changing that protected hook's signature.
+        """
+        from safetensors import safe_open
+
+        from .utils import warn_legacy_normalization_keys
+
+        with safe_open(model_file, framework="pt") as f:
+            checkpoint_keys = list(f.keys())
+        warn_legacy_normalization_keys(
+            checkpoint_keys,
+            pretrained_name_or_path=pretrained_name_or_path,
+            revision=revision,
+        )
 
     @classmethod
     def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
