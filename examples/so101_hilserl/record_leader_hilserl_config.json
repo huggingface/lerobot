@@ -1,0 +1,110 @@
+{
+  "env": {
+    "name": "real_robot",
+    "fps": 10,
+    "robot": {
+      "type": "so101_follower",
+      "port": "/dev/ttyACM0",
+      "use_degrees": true,
+      "id": "my_follower",
+      "cameras": {
+        "top": {
+          "type": "opencv",
+          "index_or_path": "/dev/video0",
+          "height": 720,
+          "width": 1280,
+          "fps": 10,
+          "fourcc": "MJPG",
+          "backend": 200
+        },
+        "wrist": {
+          "type": "opencv",
+          "index_or_path": "/dev/video2",
+          "height": 720,
+          "width": 1280,
+          "fps": 10,
+          "fourcc": "MJPG",
+          "backend": 200
+        }
+      }
+    },
+    "teleop": {
+      "type": "so101_leader",
+      "port": "/dev/ttyACM1",
+      "id": "my_leader",
+      "use_gripper": true
+    },
+    "processor": {
+      "control_mode": "leader",
+      "max_gripper_pos": 50,
+      "observation": {
+        "display_cameras": true,
+        "add_joint_velocity_to_observation": true,
+        "add_current_to_observation": true,
+        "add_ee_pose_to_observation": false
+      },
+      "image_preprocessing": {
+        "crop_params_dict": {
+          "observation.images.top": [116, 503, 311, 311],
+          "observation.images.wrist": [0, 70, 720, 720]
+        },
+        "resize_size": [128, 128]
+      },
+      "gripper": {
+        "use_gripper": true,
+        "gripper_penalty": -0.02
+      },
+      "reset": {
+        "fixed_reset_joint_positions": [
+          5.934065934065934,
+          -71.91208791208791,
+          72.65934065934066,
+          57.62637362637363,
+          -4.8791208791208796,
+          30.819277108433735
+        ],
+        "reset_time_s": 7,
+        "control_time_s": 30.0,
+        "terminate_on_success": true
+      },
+      "inverse_kinematics": {
+        "urdf_path": "/path/to/so101_new_calib.urdf",
+        "target_frame_name": "gripper_frame_link",
+        "end_effector_bounds": {
+          "min": [0.1512, -0.0858, -0.1069],
+          "max": [0.3049, 0.0847, 0.1952]
+        },
+        "end_effector_step_sizes": {
+          "x": 0.02,
+          "y": 0.02,
+          "z": 0.02
+        }
+      },
+      "reward_classifier": {
+        "pretrained_path": null,
+        "success_threshold": 0.5,
+        "success_reward": 1.0
+      }
+    }
+  },
+  "dataset": {
+    "repo_id": "username/so101_hilserl_leader",
+    "root": null,
+    "task": "Pick the object and place it up",
+    "num_episodes_to_record": 1,
+    "replay_episode": null,
+    "push_to_hub": false
+  },
+  "leader_hilserl_record": {
+    "episode_time_s": 20,
+    "reset_time_s": 10,
+    "gripper_deadband": 1.0,
+    "bounds_output_json": "outputs/so101_hilserl_leader/ee_bounds.json",
+    "display_data": false,
+    "vcodec": "libsvtav1",
+    "streaming_encoding": false,
+    "encoder_threads": null
+  },
+  "mode": "record",
+  "device": "cuda"
+}
