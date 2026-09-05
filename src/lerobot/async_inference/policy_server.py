@@ -87,6 +87,8 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.policy = None
         self.preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None
         self.postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None
+        self._loaded_policy_path: str | None = None
+        self._loaded_policy_type: str | None = None
 
     @property
     def running(self):
@@ -141,6 +143,18 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             f"Device: {policy_specs.device}"
         )
 
+        # Skip reload if the same policy is already loaded
+        if (
+            self.policy is not None
+            and self._loaded_policy_path == policy_specs.pretrained_name_or_path
+            and self._loaded_policy_type == policy_specs.policy_type
+        ):
+            self.logger.info("Policy already loaded with same configuration, skipping reload")
+            # Still update mutable config fields that may differ between runs
+            self.lerobot_features = policy_specs.lerobot_features
+            self.actions_per_chunk = policy_specs.actions_per_chunk
+            return services_pb2.Empty()
+
         self.device = policy_specs.device
         self.policy_type = policy_specs.policy_type  # act, pi0, etc.
         self.lerobot_features = policy_specs.lerobot_features
@@ -163,6 +177,9 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             },
             postprocessor_overrides={"device_processor": device_override},
         )
+
+        self._loaded_policy_path = policy_specs.pretrained_name_or_path
+        self._loaded_policy_type = policy_specs.policy_type
 
         end = time.perf_counter()
 
