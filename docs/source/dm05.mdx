@@ -1,0 +1,136 @@
+# DM0.5 for LeRobot
+
+DM05, also released as DM0.5, is Dexmal's Vision-Language-Action model for open-world robot control. The LeRobot
+adapter preserves the OpenDM model path while using standard LeRobot datasets, processors, training,
+checkpointing, Hub loading, and evaluation.
+
+For model details, see the [DM0.5 technical blog](https://www.dexmal.com/blog/dm0.5/index_en.html), the
+[OpenDM repository](https://github.com/Dexmal/OpenDM), and the raw
+[Dexmal/DM05](https://huggingface.co/Dexmal/DM05) release.
+
+## Installation
+
+```bash
+pip install -e ".[training,dm05]"   # training
+pip install -e ".[libero,dm05]"     # LIBERO evaluation on Linux
+```
+
+## Checkpoint
+
+Use `Dexmal/DM05-Lerobot` with `--policy.path`. It is a self-contained LeRobot conversion of the raw OpenDM
+checkpoint and supports `DM05Policy.from_pretrained()`.
+
+The base config records OpenDM's 14-dimensional state/action contract. DM05's core model supports up to 32
+dimensions; fresh fine-tuning resolves the effective image, state, and action features from the target dataset.
+
+## Dataset contract
+
+DM05 accepts standard LeRobot datasets with:
+
+- one or more image or video observations;
+- `observation.state`;
+- `action`;
+- task descriptions.
+
+Set `policy.image_keys` when camera order must be explicit. RoboTwin, ALOHA, and other sources do not need a
+DM05-specific reader after conversion to the standard LeRobot schema. Keep the standard `observation.state` and
+`action` keys; use `rename_map` only to align camera names.
+
+## Training
+
+The LIBERO recipe follows OpenDM:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=HuggingFaceVLA/libero \
+  --dataset.video_backend=pyav \
+  --policy.path=Dexmal/DM05-Lerobot \
+  --policy.add_state=false \
+  --policy.chunk_size=10 \
+  --policy.n_action_steps=10 \
+  --policy.repo_id=your_repo_id \
+  --output_dir=outputs/train/dm05-libero \
+  --steps=50000 \
+  --batch_size=8 \
+  --policy.device=cuda
+```
+
+### Key training parameters
+
+| Parameter                     | LIBERO value                 | Meaning                                                              |
+| ----------------------------- | ---------------------------- | -------------------------------------------------------------------- |
+| `dataset.repo_id`             | `HuggingFaceVLA/libero`      | Standard LeRobot training dataset                                    |
+| `policy.path`                 | `Dexmal/DM05-Lerobot`        | Self-contained base checkpoint                                       |
+| `policy.add_state`            | `false`                      | Matches OpenDM's LIBERO prompt without state tokens                  |
+| `policy.use_relative_actions` | `false` (checkpoint default) | Learns stored actions unchanged; relative mode is an explicit opt-in |
+| `policy.chunk_size`           | `10`                         | Number of actions predicted per chunk                                |
+| `policy.n_action_steps`       | `10`                         | Number executed before the next model call; at most `chunk_size`     |
+| `policy.repo_id`              | `your_repo_id`               | Hub destination; use `policy.push_to_hub=false` for local-only runs  |
+
+Environment control mode is configured separately from the policy action representation. Relative mode requires
+matching state/action dimensions and matching relative-action statistics.
+
+### Normalization statistics
+
+Absolute-action training, the default, uses the standard LeRobot state/action statistics in
+`meta/stats.json` directly.
+
+Relative-action training changes the arm targets to `action - state`, while excluded dimensions such as the
+gripper remain absolute. Prepare matching statistics in a separate dataset checkout before enabling
+`policy.use_relative_actions`:
+
+```bash
+uv run python -m lerobot.policies.dm05.prepare_stats_dm05 \
+  --repo-id=org/dataset \
+  --root=/path/to/dataset \
+  --chunk-size=10 \
+  --drop-n-last-frames=1 \
+  --force
+```
+
+The command writes `/path/to/dataset/meta/stats.json` in place. Match its chunk, episode selection, and
+`--relative-exclude-joints` values to training. `--force` is required when replacing standard absolute-action
+statistics.
+
+Without complete target statistics, `--policy.path` reuses checkpoint statistics with a warning. This is valid only
+for the same state/action contract and distribution.
+
+## Evaluation
+
+The LIBERO checkpoint `Dexmal/DM05-Lerobot-LIBERO` was trained for 50,000 steps and evaluated on all 40
+LIBERO tasks with 5 episodes per task:
+
+```bash
+MUJOCO_GL=egl lerobot-eval \
+  --policy.path=Dexmal/DM05-Lerobot-LIBERO \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --env.camera_name_mapping='{"agentview_image":"front","robot0_eye_in_hand_image":"wrist"}' \
+  --env.observation_height=256 \
+  --env.observation_width=256 \
+  --env.control_mode=relative \
+  --eval.n_episodes=5 \
+  --eval.batch_size=1 \
+  --seed=7 \
+  --policy.device=cuda
+```
+
+| Suite     |           Successes |
+| --------- | ------------------: |
+| Spatial   |               49/50 |
+| Object    |               50/50 |
+| Goal      |               50/50 |
+| LIBERO-10 |               48/50 |
+| **Total** | **197/200 (98.5%)** |
+
+This is a 200-episode reproduction check, not the 2,000-episode LIBERO benchmark protocol.
+
+## Checkpoint layout
+
+Use the complete checkpoint directory, which contains policy weights, config, and processor state. A standalone
+`model.safetensors` is not sufficient for training or inference.
+
+## License
+
+The LeRobot integration is Apache-2.0. Model weights follow the license attached to the corresponding DM05
+model card.
