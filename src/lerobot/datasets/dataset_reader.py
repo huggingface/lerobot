@@ -301,7 +301,12 @@ class DatasetReader(BaseDatasetReader):
     def _get_query_indices(
         self, abs_idx: int, ep_idx: int
     ) -> tuple[dict[str, list[int]], dict[str, torch.Tensor]]:
-        """Compute query indices for delta timestamps."""
+        """Compute query indices for delta timestamps.
+
+        A delta is padding when ``abs_idx + delta`` falls outside the episode's
+        ``[dataset_from_index, dataset_to_index)`` range, and is clamped back into it
+        otherwise.
+        """
         ep = self._meta.episodes[ep_idx]
         ep_start = ep["dataset_from_index"]
         ep_end = ep["dataset_to_index"]
