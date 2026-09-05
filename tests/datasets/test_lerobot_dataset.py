@@ -28,9 +28,12 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from huggingface_hub.errors import OfflineModeIsEnabled
+
 import lerobot.datasets.dataset_metadata as dataset_metadata_module
 import lerobot.datasets.lerobot_dataset as lerobot_dataset_module
-from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+import lerobot.datasets.utils as dataset_utils
+from lerobot.datasets.dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.dataset_writer import DatasetWriter
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -726,3 +729,60 @@ def test_create_record_finalize_read_roundtrip(tmp_path):
         item = reopened[3 + i]
         assert torch.allclose(item["state"], ep1_states[i], atol=1e-5)
         assert item["episode_index"].item() == 1
+
+
+def test_metadata_revision_lookup_survives_unusable_hub(
+    tmp_path,
+    info_factory,
+    stats_factory,
+    tasks_factory,
+    episodes_factory,
+    hf_dataset_factory,
+    create_info,
+    create_stats,
+    create_tasks,
+    create_episodes,
+    create_hf_dataset,
+    monkeypatch,
+):
+    """A Hub that cannot answer no longer aborts the metadata load.
+
+    The metadata lookup under `$HF_LEROBOT_HOME/{repo_id}` misses for a Hub-fetched dataset, so
+    the download branch runs and resolves the revision through `get_safe_version`. Listing the
+    Hub refs fails there, and that must not abort a load the cache can serve.
+    """
+    repo_id = DUMMY_REPO_ID
+    cache_root = tmp_path / "lerobot_cache"
+    snapshot_root = cache_root / "hub" / "datasets--dummy--repo" / "snapshots" / "commit-codebase-version"
+    _write_dataset_tree(
+        snapshot_root,
+        motor_features=SNAPSHOT_MAIN_FEATURES,
+        info_factory=info_factory,
+        stats_factory=stats_factory,
+        tasks_factory=tasks_factory,
+        episodes_factory=episodes_factory,
+        hf_dataset_factory=hf_dataset_factory,
+        create_info=create_info,
+        create_stats=create_stats,
+        create_tasks=create_tasks,
+        create_episodes=create_episodes,
+        create_hf_dataset=create_hf_dataset,
+    )
+
+    _set_default_cache_root(monkeypatch, cache_root)
+    api = Mock()
+    api.list_repo_refs.side_effect = OfflineModeIsEnabled("offline mode is enabled")
+    monkeypatch.setattr(dataset_utils, "HfApi", Mock(return_value=api))
+    snapshot_download = Mock(return_value=str(snapshot_root))
+    monkeypatch.setattr(dataset_metadata_module, "snapshot_download", snapshot_download)
+
+    # No explicit revision: this is the path the failure actually travels, where `revision`
+    # falls back to CODEBASE_VERSION.
+    meta = LeRobotDatasetMetadata(repo_id=repo_id)
+
+    # The lookup was attempted, gave up, and the requested revision reached snapshot_download.
+    api.list_repo_refs.assert_called_once()
+    assert snapshot_download.call_args.kwargs["revision"] == CODEBASE_VERSION
+    assert meta.root == snapshot_root
+    assert meta.fps == DEFAULT_FPS
+    assert meta.total_episodes > 0
