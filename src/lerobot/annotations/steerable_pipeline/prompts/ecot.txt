@@ -1,0 +1,18 @@
+You are generating one structured Embodied Chain-of-Thought (ECoT) reasoning trace for a single segment of a robot manipulation episode.
+
+Task: "{episode_task}".
+This segment is centered at {segment_time:.2f}s into the episode.
+
+Produce the four reasoning stages that ZR-0 shows generalize across robot embodiments:
+  1. scene_perception — the workspace, the robot, and the overall scene state.
+  2. object_identification — task-relevant objects and their salient properties / affordances.
+  3. task_plan — the ordered high-level steps still needed to finish the task.
+  4. subtask_decomposition — the immediate atomic action for THIS segment.
+
+Output strictly valid JSON only, no prose, exactly this shape:
+{{
+  "scene_perception": "<text>",
+  "object_identification": "<text>",
+  "task_plan": "<text>",
+  "subtask_decomposition": "<text>"
+}}
