@@ -65,9 +65,9 @@ class LiberoProcessorStep(ObservationProcessorStep):
             robot_state = processed_obs.pop(observation_robot_state_str)
 
             # Extract components
-            eef_pos = robot_state["eef"]["pos"]  # (B, 3,)
-            eef_quat = robot_state["eef"]["quat"]  # (B, 4,)
-            gripper_qpos = robot_state["gripper"]["qpos"]  # (B, 2,)
+            eef_pos = self._ensure_batched(robot_state["eef"]["pos"], "eef.pos", 3)
+            eef_quat = self._ensure_batched(robot_state["eef"]["quat"], "eef.quat", 4)
+            gripper_qpos = self._ensure_batched(robot_state["gripper"]["qpos"], "gripper.qpos", 2)
 
             # Convert quaternion to axis-angle
             eef_axisangle = self._quat2axisangle(eef_quat)  # (B, 3)
@@ -110,6 +110,16 @@ class LiberoProcessorStep(ObservationProcessorStep):
 
     def observation(self, observation):
         return self._process_observation(observation)
+
+    def _ensure_batched(self, value: torch.Tensor, name: str, dim: int) -> torch.Tensor:
+        """Accept vectorized and single-env LIBERO robot-state tensors."""
+        if not isinstance(value, torch.Tensor):
+            raise TypeError(f"{name} expected a torch.Tensor, got {type(value)}")
+        if value.ndim == 1:
+            value = value.unsqueeze(0)
+        if value.ndim != 2 or value.shape[1] != dim:
+            raise ValueError(f"{name} expected shape (B, {dim}), got {tuple(value.shape)}")
+        return value
 
     def _quat2axisangle(self, quat: torch.Tensor) -> torch.Tensor:
         """
