@@ -149,6 +149,11 @@ class VLABenchEnv(gym.Env):
         # subtracts `robot_frame_pos` from ee_pos). The robot is attached at a
         # fixed offset per task so this is safe to cache once per env build.
         self._robot_base_xyz: np.ndarray | None = None
+        # Maps ["image", "second_image", "wrist_image"] to indices into the
+        # raw per-step `obs["rgb"]` array (ordered by MuJoCo camera index).
+        # Resolved by camera name once per env build in `_ensure_env()` —
+        # see there for why this can't just be the raw index order.
+        self._camera_order: list[int | None] | None = None
 
         h, w = self.render_resolution
 
@@ -275,6 +280,57 @@ class VLABenchEnv(gym.Env):
             # Fallback to VLABench's default Franka base position.
             self._robot_base_xyz = np.array([0.0, -0.4, 0.78], dtype=np.float64)
 
+        self._camera_order = self._resolve_camera_order()
+
+    def _resolve_camera_order(self) -> list[int | None]:
+        """Map ["image", "second_image", "wrist_image"] to indices into the
+        raw `obs["rgb"]` array.
+
+        `obs["rgb"][i]` is ordered by MuJoCo camera index (`physics.model
+        .camera(i)`), which is *not* our "image"/"second_image"/
+        "wrist_image" semantics — e.g. on the current VLABench build the
+        cameras are `["right", "left", "forward", "franka/Franka_wrist_cam"]`
+        (index 2 is the front/scene view, index 3 is eye-in-hand). VLABench's
+        own `scripts/convert_to_lerobot.py` builds its training dataset from
+        `images[i][2]` ("front camera") -> "image" and `images[i][3]`
+        ("wrist camera") -> "wrist_image"; blindly taking raw indices 0/1/2
+        here would feed the policy the wrong views entirely (e.g. "right" as
+        "image", and the scene's "forward" view mislabeled as "wrist_image")
+        and silently drop the real wrist camera, which is exactly the kind
+        of mismatch that tanks a policy that was trained on the correctly
+        labeled views.
+
+        "second_image" isn't produced by that script at all — the released
+        `lerobot/smolvla_vlabench` checkpoint's actual training set
+        (`lerobot/vlabench_unified`) was built by a different pipeline, but
+        comparing its `second_image` frames against each raw camera here
+        confirms it's the "right" camera (matching composition: robot base
+        bottom-left, scene objects to the right — mirrored from "left").
+        """
+        assert self._env is not None
+        try:
+            names = [self._env.physics.model.camera(i).name.lower() for i in range(self._env.physics.model.ncam)]
+        except Exception:
+            names = []
+
+        def find(*substrings: str) -> int | None:
+            return next((i for i, name in enumerate(names) if any(s in name for s in substrings)), None)
+
+        wrist_idx = find("wrist")
+        front_idx = find("forward", "front")
+        if front_idx is None and wrist_idx is None:
+            # Unrecognized naming scheme (older/unknown VLABench build) —
+            # fall back to the legacy positional mapping rather than guess.
+            return [0, 1, 2]
+        second_idx = find("right")
+        if second_idx is None or second_idx in (front_idx, wrist_idx):
+            # No (distinct) "right" camera on this build — fall back to
+            # whatever's left over, in index order.
+            used = {i for i in (front_idx, wrist_idx) if i is not None}
+            remaining = [i for i in range(len(names)) if i not in used]
+            second_idx = remaining[0] if remaining else None
+        return [front_idx, second_idx, wrist_idx]
+
     def _get_obs(self) -> dict:
         """Get current observation from the environment."""
         assert self._env is not None
@@ -317,10 +373,11 @@ class VLABenchEnv(gym.Env):
                     raw_frames = [rgb]
 
         image_keys = ["image", "second_image", "wrist_image"]
+        cam_order = self._camera_order if self._camera_order is not None else [0, 1, 2]
         images: dict[str, np.ndarray] = {}
-        for i, key in enumerate(image_keys):
-            if i < len(raw_frames):
-                images[key] = _to_hwc3(raw_frames[i])
+        for key, idx in zip(image_keys, cam_order, strict=True):
+            if idx is not None and idx < len(raw_frames):
+                images[key] = _to_hwc3(raw_frames[idx])
             else:
                 images[key] = np.zeros((h, w, 3), dtype=np.uint8)
 
@@ -430,6 +487,8 @@ class VLABenchEnv(gym.Env):
         return ctrl
 
     def reset(self, seed=None, **kwargs) -> tuple[RobotObservation, dict[str, Any]]:
+        from dm_control.rl.control import PhysicsError  # type: ignore[import-untyped]
+
         self._ensure_env()
         assert self._env is not None
         super().reset(seed=seed)
@@ -437,7 +496,52 @@ class VLABenchEnv(gym.Env):
         if seed is not None:
             self._seed_inner_env(int(self.np_random.integers(0, 2**31 - 1)))
 
-        self._env.reset()
+        # VLABench's LM4ManipDMEnv.reset() re-samples the task layout and runs
+        # its own settle warm-up, which can hit the same integrator
+        # divergence that _ensure_env() guards against at construction time
+        # (see its docstring) — but this happens on a *later* episode reset
+        # of an already-built env, so that guard doesn't cover it. Retry with
+        # a rebuilt env on a fresh layout rather than crashing the whole
+        # multi-task eval run.
+        last_exc: PhysicsError | None = None
+        for attempt in range(1, self._ENSURE_ENV_MAX_ATTEMPTS + 1):
+            try:
+                self._env.reset()
+                break
+            except PhysicsError as exc:
+                last_exc = exc
+                logger.warning(
+                    "PhysicsError on attempt %d/%d while resetting task '%s': %s. "
+                    "Rebuilding env with a fresh layout…",
+                    attempt,
+                    self._ENSURE_ENV_MAX_ATTEMPTS,
+                    self.task,
+                    exc,
+                )
+                with contextlib.suppress(Exception):
+                    self._env.close()
+                self._env = None
+                # Reseed both RNGs from OS entropy — VLABench's task config
+                # managers sample layouts with stdlib `random`, not
+                # `np.random` (see `_ensure_env()`'s docstring), so reseeding
+                # only NumPy would leave retries walking the same
+                # deterministic sequence set by `lerobot_eval`'s
+                # `set_seed(cfg.seed)`.
+                np.random.seed(None)
+                random.seed(None)
+                self._ensure_env()
+                assert self._env is not None
+                if seed is not None:
+                    self._seed_inner_env(int(self.np_random.integers(0, 2**31 - 1)))
+        else:
+            assert last_exc is not None
+            raise RuntimeError(
+                f"VLABench task '{self.task}' failed to produce a stable "
+                f"initial layout after {self._ENSURE_ENV_MAX_ATTEMPTS} reset "
+                f"attempts. This task's upstream sampler diverges too often "
+                f"for the configured robot; consider removing it from the "
+                f"eval set. Last physics error: {last_exc}"
+            ) from last_exc
 
         observation = self._get_obs()
         info = {"is_success": False}
