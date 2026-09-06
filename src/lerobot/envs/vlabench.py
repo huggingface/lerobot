@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import random
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -207,10 +208,16 @@ class VLABenchEnv(gym.Env):
         settle; for some random layouts MuJoCo's integrator diverges and
         raises `mjWARN_BADQACC`. Re-sampling the layout almost always yields
         a stable one, so we retry a number of times before giving up. Between
-        attempts we reseed NumPy's global RNG from OS entropy so the upstream
-        task sampler explores fresh initial states — without this, retries
-        can replay the same diverging configuration when the sampler is
-        deterministic given the current RNG state.
+        attempts we reseed both NumPy's and Python's stdlib `random` global
+        RNGs from OS entropy so the upstream task sampler explores fresh
+        initial states — VLABench's task config managers (e.g.
+        `select_mahjong_series.py`) sample layouts with `random.*`, not
+        `np.random`, so reseeding only NumPy leaves the actual layout
+        sampler on the deterministic sequence set by `lerobot_eval`'s
+        `set_seed(cfg.seed)`. That made every retry (and every re-run with
+        the same eval seed) walk the exact same sequence of layouts,
+        turning a single unlucky draw into a fully reproducible 20/20
+        failure instead of an independent re-sample.
         """
         if self._env is not None:
             return
@@ -237,6 +244,7 @@ class VLABenchEnv(gym.Env):
                     exc,
                 )
                 np.random.seed(None)
+                random.seed(None)
         if self._env is None:
             assert last_exc is not None
             raise RuntimeError(

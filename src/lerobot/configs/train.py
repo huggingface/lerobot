@@ -285,10 +285,18 @@ class TrainPipelineConfig(HubMixin):
             )
 
         active_cfg = self.trainable_config
-        if self.rename_map and active_cfg.pretrained_path is None:
+        # A policy can also carry a pretrained *sub*-model (e.g. SafeDiffVLAConfig.backbone_name) whose
+        # own feature names are fixed independently of `active_cfg` itself being freshly initialized —
+        # `rename_map` is legitimate there too, so only block it when neither is set.
+        if (
+            self.rename_map
+            and active_cfg.pretrained_path is None
+            and getattr(active_cfg, "backbone_name", None) is None
+        ):
             raise ValueError(
-                "`rename_map` requires a pretrained policy checkpoint. "
-                "Fresh initialization derives feature names from the current dataset, so no rename is applied."
+                "`rename_map` requires a pretrained policy checkpoint (or a policy config that carries "
+                "one via a `backbone_name`-style field). Fresh initialization derives feature names from "
+                "the current dataset, so no rename is applied."
             )
 
         if not self.job_name:

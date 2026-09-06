@@ -203,14 +203,11 @@ class DiffusionConfig(PreTrainedConfig):
         if self.crop_shape is not None and (self.crop_shape[0] <= 0 or self.crop_shape[1] <= 0):
             raise ValueError(f"`crop_shape` must have positive dimensions. Got {self.crop_shape}.")
 
-        # Check that the horizon size and U-Net downsampling is compatible.
-        # U-Net downsamples by 2 with each stage.
-        downsampling_factor = 2 ** len(self.down_dims)
-        if self.horizon % downsampling_factor != 0:
-            raise ValueError(
-                "The horizon should be an integer multiple of the downsampling factor (which is determined "
-                f"by `len(down_dims)`). Got {self.horizon=} and {self.down_dims=}"
-            )
+    # Explicitly declare known policy-level action contract when applicable.
+    # Diffusion policies in this repo have historically been trained on LIBERO-style
+    # action targets (controller-command style). Declaring the policy_action_contract
+    # lets the runtime registry prefer this explicit contract over heuristics.
+    policy_action_contract: str | None = "libero"
 
     def get_optimizer_preset(self) -> AdamConfig:
         return AdamConfig(

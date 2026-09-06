@@ -5,6 +5,7 @@ SmolVLA's ``action_out_proj`` input during nominal action sampling. SmolVLA is
 used unchanged; the temporary hook is owned and removed by this wrapper.
 """
 
+import math
 from collections import deque
 from time import perf_counter
 from typing import Any
@@ -19,6 +20,7 @@ from lerobot.utils.constants import ACTION
 from .configuration_safediff_vla import SafeDiffVLAConfig
 from .critics import TrajectoryCritic, score_candidates
 from .diffusion_planner import ConditionalDiffusionPlanner
+from .domain_adapter import LiberoBackboneDomainAdapter, load_processor_normalization_stats
 from .losses import optional_binary_loss
 from .scheduler import DDPMScheduler
 from .utils import first_available_label, pad_or_crop_horizon
@@ -28,10 +30,20 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
     config_class = SafeDiffVLAConfig
     name = "safediff_vla"
 
-    def __init__(self, config: SafeDiffVLAConfig, backbone: nn.Module | None = None, **_: Any) -> None:
+    def __init__(
+        self,
+        config: SafeDiffVLAConfig,
+        backbone: nn.Module | None = None,
+        dataset_stats: dict[str, dict[str, Any]] | None = None,
+        backbone_stats: dict[str, dict[str, Any]] | None = None,
+        **_: Any,
+    ) -> None:
         super().__init__(config)
         config.validate_features()
         self.backbone = backbone if backbone is not None else self._make_backbone()
+        self.domain_adapter = self._make_domain_adapter(dataset_stats, backbone_stats)
+        if not config.freeze_vision_encoder:
+            self._unfreeze_backbone_vision_encoder()
         if config.use_lora:
             self.backbone = self.backbone.wrap_with_peft(
                 peft_cli_overrides={
@@ -54,6 +66,51 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
         self.scheduler = DDPMScheduler(config.num_diffusion_steps, config.beta_schedule)
         self.reset()
         self._set_training_mode()
+
+    def _make_domain_adapter(
+        self,
+        dataset_stats: dict[str, dict[str, Any]] | None,
+        backbone_stats: dict[str, dict[str, Any]] | None,
+    ) -> LiberoBackboneDomainAdapter | None:
+        if not self.config.use_backbone_domain_adapter:
+            return None
+        source_stats = backbone_stats or load_processor_normalization_stats(self.config.backbone_name)
+        target_stats = dataset_stats
+        if target_stats is None and self.config.pretrained_path:
+            target_stats = load_processor_normalization_stats(self.config.pretrained_path)
+        if target_stats is None:
+            raise ValueError(
+                "Backbone domain adaptation needs target dataset_stats during training or "
+                "a pretrained_path containing the SafeDiff processor during evaluation"
+            )
+        return LiberoBackboneDomainAdapter(
+            source_stats,
+            target_stats,
+            state_dim=self.config.input_features["observation.state"].shape[0],
+            action_dim=self.config.action_feature.shape[0],
+            semantics=self.config.backbone_action_conversion_semantics,
+        )
+
+    def _unfreeze_backbone_vision_encoder(self) -> None:
+        """Undo the vision-encoder freeze baked into the loaded SmolVLA checkpoint.
+
+        `_make_backbone()` reconstructs the backbone via `SmolVLAPolicy.from_pretrained`,
+        which restores *that checkpoint's own* saved config — e.g. `HuggingFaceVLA/smolvla_libero`
+        ships with `freeze_vision_encoder=True`, so `SmolVLMWithExpertModel.__init__` already set
+        `requires_grad=False` on the vision tower before this class ever sees it. Setting
+        `SafeDiffVLAConfig.freeze_backbone=False` does NOT undo that — it only skips the *additional*
+        blanket `requires_grad_(False)` applied below. Note `SmolVLMWithExpertModel.set_requires_grad()`
+        is one-directional (it only ever sets `requires_grad=False`, never back to `True`), so simply
+        toggling the flag and re-calling it is a no-op here — we flip the params directly instead.
+        """
+        vlm_with_expert = getattr(getattr(self.backbone, "model", None), "vlm_with_expert", None)
+        if vlm_with_expert is None or not hasattr(vlm_with_expert, "get_vlm_model"):
+            raise RuntimeError(
+                "freeze_vision_encoder=False requires a SmolVLA-style backbone exposing "
+                "model.vlm_with_expert.get_vlm_model()."
+            )
+        vlm_with_expert.freeze_vision_encoder = False
+        vlm_with_expert.get_vlm_model().vision_model.requires_grad_(True)
 
     def _latent_in_features(self) -> int:
         """Hidden size of the pooled action-token latent fed into ``latent_projection``.
@@ -107,14 +164,19 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
 
     def reset(self) -> None:
         self._action_queue: deque[Tensor] = deque(maxlen=self.config.execute_horizon)
+        # Holds up to `action_horizon` past chunk predictions, oldest first, for temporal
+        # ensembling: the k-th most recently appended chunk was queried k steps ago, so its
+        # prediction for "now" lives at its own index k (`_ensembled_action` below).
+        self._ensemble_buffer: deque[Tensor] = deque(maxlen=self.config.action_horizon)
         if hasattr(self.backbone, "reset"):
             self.backbone.reset()
 
     def _backbone_outputs(self, batch: dict[str, Tensor]) -> tuple[Tensor, Tensor]:
-        """Return normalized nominal [B,H,A] and pooled action-token latent [B,D]."""
+        """Return target-normalized nominal [B,H,A] and pooled backbone latent [B,D]."""
+        backbone_batch = self.domain_adapter.observation_for_backbone(batch) if self.domain_adapter else batch
         if hasattr(self.backbone, "extract_safediff_features"):
             with torch.set_grad_enabled(not self.config.freeze_backbone):
-                nominal, latent = self.backbone.extract_safediff_features(batch)
+                nominal, latent = self.backbone.extract_safediff_features(backbone_batch)
         else:
             hidden_states: list[Tensor] = []
 
@@ -123,7 +185,7 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
 
             handle = self.backbone.model.action_out_proj.register_forward_pre_hook(capture_action_hidden)
             try:
-                nominal = self.backbone.predict_action_chunk(dict(batch))
+                nominal = self.backbone.predict_action_chunk(dict(backbone_batch))
             finally:
                 handle.remove()
             if not hidden_states:
@@ -131,6 +193,8 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
             latent = hidden_states[-1].mean(dim=1)
 
         nominal = pad_or_crop_horizon(nominal, self.config.action_horizon)
+        if self.domain_adapter is not None:
+            nominal = self.domain_adapter.nominal_for_target(nominal)
         return nominal.detach() if self.config.freeze_backbone else nominal, self.latent_projection(
             latent.float()
         )
@@ -269,9 +333,28 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
         self.last_inference_metrics = metrics if self.config.enable_inference_metrics else {}
         return actions
 
+    def _ensembled_action(self, chunk: Tensor) -> Tensor:
+        """Blend "now"-predictions from every buffered chunk with exponential-decay weights.
+
+        `chunk` (this step's fresh prediction) is pushed last, so iterating the buffer newest
+        -> oldest via `reversed()` lines up positional age with the offset each chunk holds its
+        prediction for "now" at: age 0 is `chunk` itself (offset 0), age 1 is last step's chunk
+        (offset 1, since it was queried one step ago), and so on.
+        """
+        self._ensemble_buffer.append(chunk)
+        predictions, weights = [], []
+        for age, past_chunk in enumerate(reversed(self._ensemble_buffer)):
+            predictions.append(past_chunk[:, age])
+            weights.append(math.exp(-self.config.temporal_ensemble_coeff * age))
+        weights = torch.tensor(weights, device=chunk.device, dtype=chunk.dtype)
+        weights /= weights.sum()
+        return (torch.stack(predictions, dim=0) * weights[:, None, None]).sum(dim=0)
+
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         self.eval()
+        if self.config.use_temporal_ensembling:
+            return self._ensembled_action(self.predict_action_chunk(batch))
         if not self._action_queue:
             chunk = self.predict_action_chunk(batch)
             self._action_queue.extend(chunk.transpose(0, 1)[: self.config.execute_horizon])

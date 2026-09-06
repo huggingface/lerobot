@@ -273,7 +273,8 @@ def make_dataloaders(
         cfg (TrainPipelineConfig): The training config (batch size, workers, streaming, resume, seed).
         dataset (LeRobotDataset | MultiLeRobotDataset): The training dataset.
         eval_dataset (LeRobotDataset | None): Optional held-out split; when provided, an eval
-            dataloader is built (subsampled per task when `cfg.max_eval_samples > 0`).
+            dataloader is built (subsampled per task when `cfg.max_eval_samples > 0` and the
+            dataset exposes `hf_dataset`; strided evenly across the split otherwise).
         step (int): The loop step to resume the sampler from (0 for a fresh run).
         parallel_dims (ParallelDims): The resolved parallelism topology; provides the device type
             and the fallback dp world size for the resume offset.
@@ -355,14 +356,22 @@ def make_dataloaders(
     eval_dataloader = None
     if eval_dataset is not None:
         eval_ds = eval_dataset
-        if cfg.max_eval_samples > 0 and hasattr(eval_dataset, "hf_dataset"):
-            task_arr = eval_dataset.hf_dataset.data.column("task_index").to_numpy()
-            unique_tasks = sorted(set(task_arr.tolist()))
-            per_task = max(1, cfg.max_eval_samples // len(unique_tasks))
-            selected: list[int] = []
-            for t in unique_tasks:
-                frames = (task_arr == t).nonzero()[0][:per_task]
-                selected.extend(frames.tolist())
+        if cfg.max_eval_samples > 0 and len(eval_dataset) > cfg.max_eval_samples:
+            if hasattr(eval_dataset, "hf_dataset"):
+                task_arr = eval_dataset.hf_dataset.data.column("task_index").to_numpy()
+                unique_tasks = sorted(set(task_arr.tolist()))
+                per_task = max(1, cfg.max_eval_samples // len(unique_tasks))
+                selected: list[int] = []
+                for t in unique_tasks:
+                    frames = (task_arr == t).nonzero()[0][:per_task]
+                    selected.extend(frames.tolist())
+            else:
+                # Generic fallback for dataset adapters without a pyarrow-backed `hf_dataset`
+                # (e.g. LiberoSafetyV21Dataset): stride evenly across the whole held-out split
+                # so every episode region gets some representation, instead of silently
+                # ignoring `max_eval_samples` and evaluating on the entire split every time.
+                stride = len(eval_dataset) / cfg.max_eval_samples
+                selected = [int(i * stride) for i in range(cfg.max_eval_samples)]
             eval_ds = torch.utils.data.Subset(eval_dataset, selected)
 
         eval_collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
@@ -597,7 +606,6 @@ def train(cfg: TrainPipelineConfig):
     # One loop step consumes one micro-batch on every dp worker; the optimizer sees
     # `samples_per_step x gradient_accumulation_steps` samples per update.
     samples_per_step = cfg.batch_size * parallel_dims.dp_world_size
-    effective_batch_size = samples_per_step * cfg.accelerator.gradient_accumulation.steps
     if is_main_process():
         num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
         num_total_params = sum(p.numel() for p in policy.parameters())
@@ -612,8 +620,12 @@ def train(cfg: TrainPipelineConfig):
         logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
         logging.info(f"{dataset.num_episodes=}")
         num_processes = accelerator.num_processes
-        effective_bs = cfg.batch_size * num_processes
-        logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} = {effective_bs}")
+        grad_accum_steps = cfg.accelerator.gradient_accumulation.steps
+        effective_bs = cfg.batch_size * num_processes * grad_accum_steps
+        logging.info(
+            f"Effective batch size: {cfg.batch_size} x {num_processes} x {grad_accum_steps} "
+            f"(grad accum) = {effective_bs}"
+        )
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
@@ -700,7 +712,9 @@ def train(cfg: TrainPipelineConfig):
         train_metrics["gpu_mem_gb"] = AverageMeter("mem_gb", ":.2f", reduction="max")
 
     # Keep global batch size for logging; MetricsTracker handles world size internally.
-    effective_batch_size = cfg.batch_size * accelerator.num_processes
+    effective_batch_size = (
+        cfg.batch_size * accelerator.num_processes * cfg.accelerator.gradient_accumulation.steps
+    )
     train_tracker = MetricsTracker(
         cfg.batch_size,
         dataset.num_frames,

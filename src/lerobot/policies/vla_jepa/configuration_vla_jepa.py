@@ -97,6 +97,9 @@ class VLAJEPAConfig(PreTrainedConfig):
     gripper_dim: int = 6
     gripper_threshold: float = 0.5
     torch_dtype: str = "bfloat16"
+    # VLA-JEPA models unnormalize outputs across input+output features and apply
+    # gripper binarization; this is consistent with controller-command style targets.
+    policy_action_contract: str | None = "libero"
 
     optimizer_lr: float = 1e-4
     optimizer_betas: tuple[float, float] = (0.9, 0.95)

@@ -64,6 +64,15 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     # automatic gradient scaling is used.
     use_amp: bool = False
 
+    # Optional declarative action semantics for policies. Policies may declare their
+    # output action representation to allow the rollout to route conversions correctly.
+    # - `action_representation`: one of 'controller_command', 'physical_delta', 'physical_velocity'
+    # - `action_domain`: optional hint (e.g., 'libero' or 'libero_safety') used to infer controller scales
+    # - `policy_action_contract`: explicit registered contract name (policy or dataset key) to use
+    action_representation: str | None = None
+    action_domain: str | None = None
+    policy_action_contract: str | None = None
+
     # Whether the policy employed PEFT for training.
     use_peft: bool = False
 

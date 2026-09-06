@@ -340,7 +340,12 @@ def rollout(
             observation = env_preprocessor(observation)
 
             observation = preprocessor(observation)
-            with torch.inference_mode():
+            # `no_grad()` rather than `inference_mode()`: inference-mode tensors can never
+            # re-enter autograd, even via a local `enable_grad()` block, which breaks policies
+            # that need a real gradient at inference time (e.g. SafeDiff-VLA's critic guidance,
+            # `_apply_guidance` in modeling_safediff_vla.py). `no_grad()` still prevents any
+            # gradient accumulation here; it's just reversible where a policy needs it to be.
+            with torch.no_grad():
                 action = policy.select_action(observation)
             if predicted_latents_callback is not None:
                 predicted_latents_callback(policy)
@@ -1146,6 +1151,15 @@ def eval_policy_all(
                     tg, tid, metrics = task_runner(task_group, task_id, env)
                     _accumulate_to(tg, metrics)
                     per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+                except Exception as e:
+                    logging.error(
+                        "Task '%s' (id=%s) failed and will be skipped: %s",
+                        task_group,
+                        task_id,
+                        e,
+                        exc_info=True,
+                    )
+                    per_task_infos.append({"task_group": task_group, "task_id": task_id, "error": str(e)})
                 finally:
                     env.close()
                     # Prefetch next task's workers *after* closing current env to prevent
@@ -1167,6 +1181,11 @@ def eval_policy_all(
                         tg, tid, metrics = fut.result()
                         _accumulate_to(tg, metrics)
                         per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+                    except Exception as e:
+                        logging.error(
+                            "Task '%s' (id=%s) failed and will be skipped: %s", tg, tid, e, exc_info=True
+                        )
+                        per_task_infos.append({"task_group": tg, "task_id": tid, "error": str(e)})
                     finally:
                         env.close()
     finally:

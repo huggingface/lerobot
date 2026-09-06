@@ -138,6 +138,10 @@ class SmolVLAConfig(PreTrainedConfig):
             grad_clip_norm=self.optimizer_grad_clip_norm,
         )
 
+    # SmolVLA policies are trained to predict LIBERO-style controller commands
+    # (normalized during training). Declare explicitly to make resolution deterministic.
+    policy_action_contract: str | None = "libero"
+
     def get_scheduler_preset(self):
         return CosineDecayWithWarmupSchedulerConfig(
             peak_lr=self.optimizer_lr,

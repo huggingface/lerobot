@@ -30,6 +30,8 @@ from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.visualization_utils import log_visualization_data
 
 from ..inference import InferenceEngine
+from lerobot.action_semantics.adapter import ActionAdapter
+from lerobot.action_semantics.registry import resolve_env_contract_from_env_type
 
 if TYPE_CHECKING:
     from ..configs import RolloutStrategyConfig
@@ -364,7 +366,18 @@ def send_next_action(
     if len(interp) != len(ordered_keys):
         raise ValueError(f"Interpolated tensor length ({len(interp)}) != action keys ({len(ordered_keys)})")
     action_dict = {k: interp[i].item() for i, k in enumerate(ordered_keys)}
+    # Build a canonical/env/recording action transition via ActionAdapter.
+    adapter = ActionAdapter()
+    # Interpret the raw action_dict as matching the dataset contract when recording
+    dataset = ctx.data.dataset
+    dataset_repo_id = dataset.repo_id if dataset is not None else None
+    canonical = adapter.policy_to_canonical(action_dict, dataset_repo_id=dataset_repo_id)
+    # Convert canonical -> environment action using env type from cfg
+    env_type = ctx.runtime.cfg.env.type if getattr(ctx.runtime.cfg, "env", None) is not None else None
+    env_contract = resolve_env_contract_from_env_type(env_type) if env_type is not None else None
+    env_action = adapter.canonical_to_environment(canonical, env_contract=env_contract)
     with section("send"):
-        processed = ctx.processors.robot_action_processor((action_dict, obs_raw))
+        processed = ctx.processors.robot_action_processor((env_action, obs_raw))
         ctx.hardware.robot_wrapper.send_action(processed)
+    # Return richer structure but keep compatibility: return policy-style dict
     return action_dict

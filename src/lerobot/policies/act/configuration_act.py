@@ -156,6 +156,10 @@ class ACTConfig(PreTrainedConfig):
             weight_decay=self.optimizer_weight_decay,
         )
 
+    # Historically ACT models are trained on LIBERO controller-command targets.
+    # Prefer an explicit contract so registry resolution is deterministic.
+    policy_action_contract: str | None = "libero"
+
     def get_scheduler_preset(self) -> None:
         return None
 

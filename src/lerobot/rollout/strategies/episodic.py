@@ -265,7 +265,15 @@ class EpisodicStrategy(RolloutStrategy):
                 if interpolator.emitted_policy_action:
                     with timer.section("record"):
                         obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
-                        action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
+                        # Convert policy action -> canonical -> dataset representation
+                        from lerobot.action_semantics.adapter import ActionAdapter
+                        from lerobot.action_semantics.registry import resolve_dataset_contract_from_repo_id
+
+                        adapter = ActionAdapter()
+                        dataset_repo_id = dataset.repo_id if dataset is not None else None
+                        canonical = adapter.policy_to_canonical(action_dict, dataset_repo_id=dataset_repo_id)
+                        record_action = adapter.canonical_to_dataset(canonical, dataset_repo_id=dataset_repo_id)
+                        action_frame = build_dataset_frame(features, record_action, prefix=ACTION)
                         dataset.add_frame({**obs_frame, **action_frame, "task": single_task})
 
             timer.wait()
