@@ -53,6 +53,15 @@ class CIGVLAConfig(PreTrainedConfig):
     lora_dropout: float = 0.05
     lora_bias: str = "none"
     optimizer_lr: float = 1e-4
+    # `get_scheduler_preset()` used to hardcode these three (1000/30000/1e-6), which silently
+    # froze the LR at its floor for the rest of training on any run longer than 30k steps
+    # (CosineDecayWithWarmupSchedulerConfig only auto-scales *down* when num_training_steps <
+    # num_decay_steps -- see optim/schedulers.py -- never up). Exposed as CLI-overridable
+    # fields, matching XVLAConfig's scheduler_warmup_steps/scheduler_decay_steps/scheduler_decay_lr,
+    # so `--steps` past 30k can be paired with a matching `--policy.scheduler_decay_steps`.
+    scheduler_warmup_steps: int = 1_000
+    scheduler_decay_steps: int = 30_000
+    scheduler_decay_lr: float = 1e-6
 
     def __post_init__(self):
         super().__post_init__()
@@ -86,5 +95,8 @@ class CIGVLAConfig(PreTrainedConfig):
 
     def get_scheduler_preset(self):
         return CosineDecayWithWarmupSchedulerConfig(
-            peak_lr=self.optimizer_lr, decay_lr=1e-6, num_warmup_steps=1000, num_decay_steps=30000
+            peak_lr=self.optimizer_lr,
+            decay_lr=self.scheduler_decay_lr,
+            num_warmup_steps=self.scheduler_warmup_steps,
+            num_decay_steps=self.scheduler_decay_steps,
         )
