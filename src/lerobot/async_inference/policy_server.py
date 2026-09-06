@@ -426,10 +426,10 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
 def serve_zmq(cfg: PolicyServerConfig, policy_server: PolicyServer):
     """Start the PolicyServer using ZeroMQ transport."""
-    import zmq
     from lerobot.utils.import_utils import require_package
 
     require_package("pyzmq", extra="async", import_name="zmq")
+    import zmq
 
     context = zmq.Context.instance()
     socket = context.socket(zmq.ROUTER)
@@ -445,9 +445,27 @@ def serve_zmq(cfg: PolicyServerConfig, policy_server: PolicyServer):
     poller = zmq.Poller()
     poller.register(socket, zmq.POLLIN)
 
+    # Track clients waiting for actions when queue is empty: client_id -> (client_id_bytes, request_timestamp)
+    waiting_action_clients: dict[str, tuple[bytes, float]] = {}
+
     try:
         while policy_server.running:
             events = dict(poller.poll(timeout=200))
+            now = time.time()
+
+            # Handle timeout for clients waiting for actions
+            timed_out_clients = [
+                cid
+                for cid, (_, req_time) in waiting_action_clients.items()
+                if now - req_time >= cfg.obs_queue_timeout
+            ]
+            for cid in timed_out_clients:
+                target_id_bytes, _ = waiting_action_clients.pop(cid)
+                try:
+                    socket.send_multipart([target_id_bytes, b"", b""])
+                except Exception as e:
+                    policy_server.logger.debug(f"Failed to send timeout response to {cid}: {e}")
+
             if socket in events:
                 frames = socket.recv_multipart()
                 if not frames:
@@ -480,15 +498,33 @@ def serve_zmq(cfg: PolicyServerConfig, policy_server: PolicyServer):
                     policy_server._handle_send_observation(timed_obs, client_id)
                     socket.send_multipart([client_id_bytes, b"", b"ok"])
 
+                    # If this client is waiting for actions, fulfill it now that an observation arrived
+                    if client_id in waiting_action_clients:
+                        actions_bytes = policy_server._handle_get_actions(client_id, block=False)
+                        if actions_bytes:
+                            target_id_bytes, _ = waiting_action_clients.pop(client_id)
+                            socket.send_multipart([target_id_bytes, b"", actions_bytes])
+
                 elif cmd == b"get_actions":
                     actions_bytes = policy_server._handle_get_actions(client_id, block=False)
-                    socket.send_multipart([client_id_bytes, b"", actions_bytes])
+                    if actions_bytes:
+                        socket.send_multipart([client_id_bytes, b"", actions_bytes])
+                    else:
+                        # Queue currently empty: defer reply until an observation is received or timeout
+                        waiting_action_clients[client_id] = (client_id_bytes, time.time())
 
                 else:
                     policy_server.logger.warning(f"Unknown ZMQ command: {cmd}")
                     socket.send_multipart([client_id_bytes, b"", b"error: unknown command"])
 
     finally:
+        for target_id_bytes, _ in waiting_action_clients.values():
+            try:
+                socket.send_multipart([target_id_bytes, b"", b""])
+            except Exception:
+                pass
+        waiting_action_clients.clear()
+
         try:
             poller.unregister(socket)
         except Exception:

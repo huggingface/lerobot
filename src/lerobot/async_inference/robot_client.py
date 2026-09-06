@@ -169,6 +169,8 @@ class RobotClient:
             self.zmq_obs_socket = self.zmq_context.socket(zmq.REQ)
             self.zmq_obs_socket.connect(self.zmq_address)
 
+            self.zmq_action_socket = None
+
             self.channel = None
             self.stub = None
         else:
@@ -257,8 +259,11 @@ class RobotClient:
         self.logger.debug("Robot disconnected")
 
         if self.transport == "zmq":
-            if hasattr(self, "zmq_obs_socket"):
-                self.zmq_obs_socket.close(linger=0)
+            for sock_name in ("zmq_obs_socket", "zmq_cmd_socket", "zmq_action_socket"):
+                if hasattr(self, sock_name):
+                    sock = getattr(self, sock_name)
+                    if sock is not None and not sock.closed:
+                        sock.close(linger=0)
         else:
             if self.channel is not None:
                 self.channel.close()
@@ -360,29 +365,34 @@ class RobotClient:
         self.start_barrier.wait()
         self.logger.info("Action receiving thread starting")
 
+        if self.transport == "zmq":
+            import zmq
+
+            # Dedicated REQ socket for action receiver thread (thread-safety)
+            self.zmq_action_socket = self.zmq_context.socket(zmq.REQ)
+            self.zmq_action_socket.connect(self.zmq_address)
+
         try:
             while self.running:
                 try:
                     if self.transport == "zmq":
-                        import zmq
-
                         try:
-                            self.zmq_cmd_socket.send_multipart([b"get_actions", b""])
+                            self.zmq_action_socket.send_multipart([b"get_actions", b""])
                             while self.running:
-                                if self.zmq_cmd_socket.poll(timeout=200) != 0:
-                                    actions_bytes = self.zmq_cmd_socket.recv()
+                                if self.zmq_action_socket.poll(timeout=200) != 0:
+                                    actions_bytes = self.zmq_action_socket.recv()
                                     break
                             else:
                                 break
                         except zmq.ZMQError as e:
-                            self.logger.error(f"ZMQ Error receiving actions: {e}")
+                            if self.running:
+                                self.logger.error(f"ZMQ Error receiving actions: {e}")
                             break
                     else:
                         actions_chunk = self.stub.GetActions(services_pb2.Empty())
                         actions_bytes = actions_chunk.data
 
                     if len(actions_bytes) == 0:
-                        time.sleep(0.001)
                         continue  # received empty response from server, wait for next call
 
                     receive_time = time.time()
@@ -435,14 +445,13 @@ class RobotClient:
                             f"Deserialization time: {deserialize_time * 1000:.2f}ms"
                         )
 
-                    # Update action queue
-                    start_time = time.perf_counter()
-                    self._aggregate_action_queues(timed_actions, self.config.aggregate_fn)
-                    queue_update_time = time.perf_counter() - start_time
+                        # Update action queue
+                        start_time = time.perf_counter()
+                        self._aggregate_action_queues(timed_actions, self.config.aggregate_fn)
+                        queue_update_time = time.perf_counter() - start_time
 
-                    self.must_go.set()  # after receiving actions, next empty queue triggers must-go processing!
+                        self.must_go.set()  # after receiving actions, next empty queue triggers must-go processing!
 
-                    if verbose:
                         # Get queue state after changes
                         new_size, new_timesteps = self._inspect_action_queue()
 
@@ -460,13 +469,22 @@ class RobotClient:
                             f"Before: {old_size} items | "
                             f"After: {new_size} items | "
                         )
+                    else:
+                        # Update action queue when not in verbose mode
+                        start_time = time.perf_counter()
+                        self._aggregate_action_queues(timed_actions, self.config.aggregate_fn)
+                        self.must_go.set()
 
                 except grpc.RpcError as e:
-                    self.logger.error(f"Error receiving actions: {e}")
+                    self.logger.error(f"gRPC error receiving actions: {e}")
+                except Exception as e:
+                    self.logger.exception(f"Unexpected error receiving actions: {e}")
         finally:
-            if self.transport == "zmq" and hasattr(self, "zmq_cmd_socket"):
-                self.zmq_cmd_socket.close(linger=0)
-                self.logger.debug("ZMQ command socket closed in receive_actions thread")
+            if self.transport == "zmq" and hasattr(self, "zmq_action_socket") and self.zmq_action_socket:
+                if not self.zmq_action_socket.closed:
+                    self.zmq_action_socket.close(linger=0)
+                self.zmq_action_socket = None
+                self.logger.debug("ZMQ action socket closed in receive_actions thread")
 
     def actions_available(self):
         """Check if there are actions available in the queue"""
