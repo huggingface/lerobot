@@ -268,6 +268,17 @@ class XVLAConfig(PreTrainedConfig):
         return list(range(self.chunk_size))
 
     @property
+    def state_observation_delta_indices(self) -> list[int] | None:
+        """Action-aligned proprio for EE6D targets (see `XVLALiberoActionToEE6DProcessorStep`).
+
+        `resolve_delta_timestamps` (datasets/factory.py) reads this opt-in property
+        directly -- unlike `delta_indices_for_feature` below, which nothing calls.
+        """
+        if self.action_mode.lower() == "ee6d":
+            return self.action_delta_indices
+        return None
+
+    @property
     def reward_delta_indices(self) -> list[int] | None:
         return None
 
