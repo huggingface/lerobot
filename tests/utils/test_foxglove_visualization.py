@@ -99,3 +99,21 @@ def test_is_scalar():
     assert fv._is_scalar(np.array(3.0))  # 0-d array
     assert not fv._is_scalar(np.array([1.0, 2.0]))
     assert not fv._is_scalar("x")
+
+
+def test_playback_times_ns():
+    class WithHF:
+        hf_dataset = {"timestamp": [0.0, 0.1, 0.2]}
+
+    class NoHF:
+        fps = 10
+
+        def __len__(self):
+            return 3
+
+        @property
+        def hf_dataset(self):
+            raise AttributeError("not available for this storage format")
+
+    assert fv._playback_times_ns(WithHF()) == [0, 100_000_000, 200_000_000]
+    assert fv._playback_times_ns(NoHF()) == [0, 100_000_000, 200_000_000]
