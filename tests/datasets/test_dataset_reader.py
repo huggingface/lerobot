@@ -177,7 +177,8 @@ def test_image_transforms_are_applied(tmp_path, lerobot_dataset_factory):
 
 
 @pytest.mark.parametrize("use_delta", [False, True])
-def test_get_items_batched_matches_single(tmp_path, lerobot_dataset_factory, use_delta):
+@pytest.mark.parametrize("backend", ["pyav", get_safe_default_video_backend()])
+def test_get_items_batched_matches_single(tmp_path, lerobot_dataset_factory, use_delta, backend):
     """Batched get_items (cross-batch video grouping) must match per-index results."""
     dataset = lerobot_dataset_factory(
         root=tmp_path / "ds", total_episodes=2, total_frames=20, use_videos=True
@@ -189,7 +190,7 @@ def test_get_items_batched_matches_single(tmp_path, lerobot_dataset_factory, use
         root=dataset.root,
         episodes=None,
         tolerance_s=1e-4,
-        video_backend=get_safe_default_video_backend(),
+        video_backend=backend,
         delta_timestamps=delta,
         image_transforms=None,
     )
@@ -208,6 +209,42 @@ def test_get_items_batched_matches_single(tmp_path, lerobot_dataset_factory, use
                 assert torch.equal(got[key], want[key]), key
             else:
                 assert got[key] == want[key], key
+
+
+@pytest.mark.parametrize("backend", ["torchcodec", "pyav", "video_reader"])
+def test_video_batch_keeps_pyav_windows_separate(monkeypatch, tmp_path, backend):
+    reader = DatasetReader.__new__(DatasetReader)
+    reader.root = tmp_path
+    reader._video_backend = backend
+    reader._tolerance_s = 1e-4
+    reader._return_uint8 = False
+    reader._depth_output_unit = "mm"
+    reader._meta = types.SimpleNamespace(
+        depth_keys=["depth"],
+        episodes=[{f"videos/{key}/from_timestamp": offset for key in ("rgb", "depth")} for offset in (0, 30)],
+        get_video_file_path=lambda ep_idx, key: f"{key}.mp4",
+    )
+    reader._depth_encoder_configs = {
+        "depth": types.SimpleNamespace(depth_min=0, depth_max=1, shift=0, use_log=False)
+    }
+    calls = {"rgb": [], "depth": []}
+
+    def decode(path, timestamps, *args, is_depth=False, **kwargs):
+        calls["depth" if is_depth else "rgb"].append(timestamps)
+        return torch.tensor(timestamps).reshape(-1, 1, 1, 1)
+
+    monkeypatch.setattr("lerobot.datasets.dataset_reader.decode_video_frames", decode)
+    monkeypatch.setattr("lerobot.datasets.dataset_reader.dequantize_depth", lambda frames, **kw: frames)
+    queries = [dict.fromkeys(calls, window) for window in ([1.0, 1.0], [4.0])]
+    items = reader._query_videos(queries, [1, 0])
+
+    assert calls["depth"] == [[31.0, 31.0], [4.0]]
+    assert calls["rgb"] == ([[31.0, 31.0, 4.0]] if backend == "torchcodec" else calls["depth"])
+    for key in calls:
+        assert items[0][key].shape == (2, 1, 1, 1)
+        assert items[0][key].flatten().tolist() == [31.0, 31.0]
+        assert items[1][key].shape == (1, 1, 1)
+        assert items[1][key].item() == 4.0
 
 
 # ── File paths ───────────────────────────────────────────────────────
