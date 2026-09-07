@@ -18,6 +18,16 @@ lerobot-rollout \
 
 This runs the policy for 30 seconds with no recording.
 
+### Choosing a device
+
+Pass `--device=cpu` or `--device=cuda` to override the checkpoint device on a host where that device is available.
+The resolved device is applied to the policy configuration before loading the policy and constructing its processors.
+For example, add `--device=cpu` to the command above to run a CUDA-trained checkpoint on a CPU-only host, if the policy supports CPU execution.
+Check that CPU inference can meet your required control rate before deploying on a robot.
+
+When `--device` is omitted, rollout uses the policy configuration device if set, otherwise it selects an available device automatically.
+The same behavior applies to `RolloutConfig(device=...)` with `build_rollout_context`.
+
 ---
 
 ## Strategies
