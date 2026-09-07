@@ -73,7 +73,7 @@ def _reconnect_relative_absolute_steps(
     if relative_step is None:
         return
     for step in postprocessor.steps:
-        if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
+        if isinstance(step, AbsoluteActionsProcessorStep):
             step.relative_step = relative_step
 
 

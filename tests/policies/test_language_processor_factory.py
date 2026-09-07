@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+import torch
 
 from lerobot.policies import factory
 from lerobot.processor import (
@@ -51,14 +52,17 @@ def test_language_finetuning_rebuilds_processors_from_active_config(monkeypatch)
     ]
 
 
-def test_rebuilt_pipeline_applies_overrides_and_reconnects_relative_actions():
+@pytest.mark.parametrize("rebuild_postprocessor", [False, True])
+def test_rebuilt_pipeline_applies_overrides_and_reconnects_relative_actions(rebuild_postprocessor):
     preprocessor = PolicyProcessorPipeline(
         steps=[
             DeviceProcessorStep(device="cpu"),
             RelativeActionsProcessorStep(),
         ]
     )
-    postprocessor = PolicyProcessorPipeline(steps=[AbsoluteActionsProcessorStep()])
+    postprocessor = PolicyProcessorPipeline(
+        steps=[AbsoluteActionsProcessorStep(enabled=True, relative_step=preprocessor.steps[1])]
+    )
 
     preprocessor = factory._apply_processor_overrides(
         preprocessor,
@@ -73,7 +77,7 @@ def test_rebuilt_pipeline_applies_overrides_and_reconnects_relative_actions():
     )
     postprocessor = factory._apply_processor_overrides(
         postprocessor,
-        {"absolute_actions_processor": {"enabled": True}},
+        {"absolute_actions_processor": {"enabled": True}} if rebuild_postprocessor else None,
     )
     factory._reconnect_relative_absolute_steps(preprocessor, postprocessor)
 
@@ -86,6 +90,10 @@ def test_rebuilt_pipeline_applies_overrides_and_reconnects_relative_actions():
     assert relative_step.action_names == ["shoulder", "gripper"]
     assert absolute_step.enabled
     assert absolute_step.relative_step is relative_step
+
+    preprocessor({"observation.state": torch.tensor([[10.0, 20.0]])})
+    output = postprocessor({"action": torch.tensor([[1.0, 2.0]])})
+    torch.testing.assert_close(output["action"], torch.tensor([[11.0, 2.0]]))
 
 
 def test_language_rollout_loads_checkpoint_processors_even_when_dataset_stats_are_present(monkeypatch):
