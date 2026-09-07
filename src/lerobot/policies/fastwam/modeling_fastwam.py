@@ -54,6 +54,9 @@ class FastWAMPolicy(PreTrainedPolicy):
 
     config_class = FastWAMConfig
     name = "fastwam"
+    # FSDP2 wrap units: MoTLayer is the single FSDP owner of each layer's expert blocks
+    # (the blocks are re-parented onto it precisely so sharding has one boundary to hook).
+    _fsdp_wrap_modules = ["MoTLayer"]
 
     def __init__(
         self,
@@ -311,6 +314,7 @@ def _batch_to_infer_kwargs(batch: dict[str, Tensor], config: FastWAMConfig) -> d
         "seed": batch.get("seed", config.inference_seed),
         "rand_device": batch.get("rand_device", config.rand_device),
         "tiled": bool(batch.get("tiled", config.tiled)),
+        "compile_action_infer": bool(batch.get("compile_action_infer", config.compile_action_infer)),
     }
 
 

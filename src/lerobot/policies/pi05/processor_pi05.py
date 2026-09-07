@@ -48,6 +48,10 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
 
     max_state_dim: int = 32
     task_key: str = "task"
+    # MEM section III-D represents proprioception with a linear projection into the
+    # backbone instead of discretized prompt tokens, so the state is carried once.
+    # Set from `PI05Config.use_proprioceptive_memory`; stock PI0.5 keeps it in the prompt.
+    include_state_in_prompt: bool = True
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
@@ -62,16 +66,22 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
         # TODO: check if this necessary
         state = deepcopy(state)
 
-        # State should already be normalized to [-1, 1] by the NormalizerProcessorStep that runs before this step
-        # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
-        state_np = state.cpu().numpy()
-        discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
+        discretized_states = None
+        if self.include_state_in_prompt:
+            # State should already be normalized to [-1, 1] by the NormalizerProcessorStep that runs before this step
+            # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
+            prompt_state = state[:, -1] if state.ndim == 3 else state
+            state_np = prompt_state.cpu().numpy()
+            discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
 
         full_prompts = []
         for i, task in enumerate(tasks):
             cleaned_text = task.strip().replace("_", " ").replace("\n", " ")
-            state_str = " ".join(map(str, discretized_states[i]))
-            full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
+            if discretized_states is None:
+                full_prompt = f"Task: {cleaned_text};\nAction: "
+            else:
+                state_str = " ".join(map(str, discretized_states[i]))
+                full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
             full_prompts.append(full_prompt)
 
         transition[TransitionKey.COMPLEMENTARY_DATA][self.task_key] = full_prompts
@@ -136,7 +146,10 @@ def make_pi05_pre_post_processors(
         # NOTE: NormalizerProcessorStep MUST come before Pi05PrepareStateTokenizerProcessorStep
         # because the tokenizer step expects normalized state in [-1, 1] range for discretization
         steps.normalize,
-        Pi05PrepareStateTokenizerProcessorStep(max_state_dim=config.max_state_dim),
+        Pi05PrepareStateTokenizerProcessorStep(
+            max_state_dim=config.max_state_dim,
+            include_state_in_prompt=not config.use_proprioceptive_memory,
+        ),
         TokenizerProcessorStep(
             tokenizer_name="google/paligemma-3b-pt-224",
             max_length=config.tokenizer_max_length,

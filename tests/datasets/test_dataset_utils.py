@@ -28,7 +28,12 @@ from huggingface_hub import DatasetCard
 
 import lerobot.datasets.utils as dataset_utils
 from lerobot.datasets.io_utils import hf_transform_to_torch
-from lerobot.datasets.utils import create_lerobot_dataset_card, get_repo_versions, get_safe_version
+from lerobot.datasets.utils import (
+    create_lerobot_dataset_card,
+    get_repo_versions,
+    get_safe_version,
+    resolve_episode_indices,
+)
 from lerobot.utils.constants import ACTION, OBS_IMAGES
 from lerobot.utils.feature_utils import combine_feature_dicts
 
@@ -60,6 +65,20 @@ def test_default_parameters():
             "data_files": "data/*/*.parquet",
         }
     ]
+
+
+def test_resolve_episode_indices_applies_allowlist_and_exclusions():
+    assert resolve_episode_indices([4, 1, 3, 0], 5, [1, 4]) == [3, 0]
+
+
+def test_resolve_episode_indices_preserves_none_without_filtering():
+    assert resolve_episode_indices(None, 5) is None
+
+
+def test_resolve_episode_indices_ignores_out_of_range_values(caplog):
+    assert resolve_episode_indices([-1, 0, 3, 5], 4, [-2, 3, 8]) == [0]
+    assert "Ignoring episode indices outside the dataset range [0, 4): [-1, 5]" in caplog.text
+    assert "Ignoring excluded episode indices outside the dataset range [0, 4): [-2, 8]" in caplog.text
 
 
 @pytest.mark.parametrize("token", ["hf_test_token", True, False])

@@ -72,7 +72,16 @@ def is_package_available(
 def get_safe_default_video_backend():
     logger = logging.getLogger(__name__)
     if importlib.util.find_spec("torchcodec"):
-        return "torchcodec"
+        # Despite being installed, torchcodec may not be loadable at runtime.
+        try:
+            importlib.import_module("torchcodec")
+            return "torchcodec"
+        except (ImportError, OSError, RuntimeError) as e:
+            logger.warning(
+                f"{e}\n'torchcodec' is installed but cannot be loaded (see the error above). "
+                "Falling back to 'pyav' as a default decoder."
+            )
+            return "pyav"
     else:
         logger.warning(
             "'torchcodec' is not available in your platform, falling back to 'pyav' as a default decoder"
@@ -101,6 +110,7 @@ def require_package(pkg_name: str, extra: str, import_name: str | None = None) -
 # Do NOT define ad-hoc ``is_package_available(...)`` calls in other modules.
 
 # ML / training
+_lancedb_available = is_package_available("lancedb")
 _transformers_available = is_package_available("transformers")
 _peft_available = is_package_available("peft")
 _scipy_available = is_package_available("scipy")
@@ -173,6 +183,7 @@ def make_device_from_device_class(config: ChoiceRegistry) -> Any:
     parts = module_path.split(".")
     parent_module = ".".join(parts[:-1]) if len(parts) > 1 else module_path
     candidates = [
+        module_path,  # the config's own module (single-file plugins)
         parent_module,  # typical: lerobot_teleop_mydevice
         parent_module + "." + device_class_name.lower(),  # typical: lerobot_teleop_mydevice.mydevice
     ]
@@ -217,7 +228,8 @@ def register_third_party_plugins() -> None:
 
     This function uses `importlib.metadata` to find packages installed in the environment
     (including editable installs) starting with 'lerobot_robot_', 'lerobot_camera_',
-    'lerobot_teleoperator_', 'lerobot_policy_', or 'lerobot_env_' and imports them.
+    'lerobot_teleoperator_', 'lerobot_policy_', 'lerobot_env_' or 'lerobot_strategy_' and
+    imports them.
     """
     prefixes = (
         "lerobot_robot_",
@@ -225,6 +237,7 @@ def register_third_party_plugins() -> None:
         "lerobot_teleoperator_",
         "lerobot_policy_",
         "lerobot_env_",
+        "lerobot_strategy_",
     )
     imported: list[str] = []
     failed: list[str] = []

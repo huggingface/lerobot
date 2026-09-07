@@ -29,6 +29,13 @@ def test_message_recipe_validates_unknown_binding():
         )
 
 
+def test_canonical_recipe_loads():
+    """The canonical PI052 blend YAML loads + validates."""
+    recipe = TrainingRecipe.from_yaml(Path("src/lerobot/configs/recipes/subtask_mem_vqa_speech.yaml"))
+    assert recipe.blend is not None
+    assert sum(c.weight for c in recipe.blend.values()) == pytest.approx(1.0)
+
+
 def test_message_turn_requires_a_stream():
     """Every turn must declare a stream — None is rejected at construction.
 
@@ -79,6 +86,19 @@ def test_blend_component_must_define_weight():
 def test_blend_component_weight_must_be_positive():
     with pytest.raises(ValueError, match="positive weight"):
         TrainingRecipe(blend={"a": TrainingRecipe(weight=0.0, messages=[_minimal_target_turn()])})
+
+
+def test_recipe_route_must_be_supported():
+    with pytest.raises(ValueError, match="Unsupported recipe route"):
+        TrainingRecipe(weight=1.0, route="other", messages=[_minimal_target_turn()])
+
+
+def test_route_cannot_be_set_on_blend_recipe():
+    with pytest.raises(ValueError, match="only be set on a message recipe"):
+        TrainingRecipe(
+            route="vqa",
+            blend={"a": TrainingRecipe(weight=1.0, messages=[_minimal_target_turn()])},
+        )
 
 
 def test_blend_component_must_define_messages():

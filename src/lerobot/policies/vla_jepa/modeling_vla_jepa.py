@@ -16,18 +16,17 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from contextlib import nullcontext
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812
+from safetensors.torch import load_file
 from torch import Tensor, nn
 
 from lerobot.policies.pretrained import PreTrainedPolicy, T
-from lerobot.policies.utils import populate_queues
+from lerobot.policies.utils import log_model_loading_keys, populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE
-from lerobot.utils.device_utils import is_amp_available
+from lerobot.utils.device_utils import get_autocast_context, resolve_safetensors_device
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -40,21 +39,6 @@ from .action_head import VLAJEPAActionHead
 from .configuration_vla_jepa import VLAJEPAConfig
 from .qwen_interface import Qwen3VLInterface
 from .world_model import ActionConditionedVideoPredictor
-
-
-def _get_autocast_context(device_type: str, dtype: torch.dtype = torch.bfloat16):
-    """Return an autocast context appropriate for the device.
-
-    MPS does not support ``torch.autocast`` at all.  On CUDA devices
-    without bfloat16 support (compute capability < 8.0) we fall back to
-    float16.
-    """
-    if not is_amp_available(device_type):
-        return nullcontext()
-    if device_type == "cuda" and dtype == torch.bfloat16 and not torch.cuda.is_bf16_supported():
-        dtype = torch.float16
-    return torch.autocast(device_type=device_type, dtype=dtype)
-
 
 # ============================================================================
 # Native VLA-JEPA Model - follows original starVLA VLA_JEPA.py implementation
@@ -107,7 +91,7 @@ class VLAJEPAModel(nn.Module):
                 torch_dtype=self.qwen._get_torch_dtype(config.torch_dtype),
             )
             self.video_processor = AutoVideoProcessor.from_pretrained(config.jepa_encoder_name)
-            num_views = config.jepa_tubelet_size
+            num_views = config.num_world_model_views
             tubelet_size = self.video_encoder.config.tubelet_size
             image_size = getattr(self.video_encoder.config, "image_size", None)
             if image_size is None:
@@ -125,6 +109,7 @@ class VLAJEPAModel(nn.Module):
                 num_heads=config.predictor_num_heads,
                 mlp_ratio=config.predictor_mlp_ratio,
                 num_action_tokens_per_step=config.num_action_tokens_per_timestep,
+                dropout=config.predictor_dropout,
             )
         else:
             self.video_encoder = None
@@ -154,11 +139,13 @@ class VLAJEPAModel(nn.Module):
     def _qwen_last_decoder_hidden(self, qwen_inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         """Return the last decoder hidden state before the final RMSNorm.
 
-        The model was trained with the output of the last transformer block BEFORE
-        the final RMSNorm. In transformers 5.x, `hidden_states[-1]` from
-        `output_hidden_states=True` is post-norm (tied to `last_hidden_state` via
-        `@capture_outputs`). A forward hook on `language_model.layers[-1]` recovers
-        the correct pre-RMSNorm state, matching the training-time representation.
+        The model was trained on the last block's pre-RMSNorm output, but in transformers 5.x
+        `hidden_states[-1]` is post-norm, so hook `language_model.layers[-1]` instead.
+
+        Calls the inner `Qwen3VLModel`, not the `Qwen3VLForConditionalGeneration` wrapper, whose
+        forward would build and discard full-sequence logits over the 151936-token vocab (~3.4 GB
+        in bf16 at batch 8). The wrapper stays as `self.qwen.model` so `lm_head` keeps its
+        checkpoint key; only this path skips it.
         """
         captured: list[torch.Tensor] = []
 
@@ -169,12 +156,7 @@ class VLAJEPAModel(nn.Module):
         last_layer = self.qwen.model.model.language_model.layers[-1]
         handle = last_layer.register_forward_hook(_hook)
         try:
-            self.qwen.model(
-                **qwen_inputs,
-                output_hidden_states=False,
-                output_attentions=False,
-                return_dict=True,
-            )
+            self.qwen.model.model(**qwen_inputs)
         finally:
             handle.remove()
 
@@ -184,7 +166,7 @@ class VLAJEPAModel(nn.Module):
 
     def _encode_qwen(
         self, images: list[list[Tensor]], instructions: list[str], *, need_action_tokens: bool
-    ) -> tuple[Tensor, Tensor, Tensor | None]:
+    ) -> tuple[Tensor, Tensor | None]:
         """Run Qwen and gather the embodied-action (and optionally action) token hidden states."""
         qwen_inputs = self.qwen.build_inputs(
             images=images,
@@ -200,7 +182,7 @@ class VLAJEPAModel(nn.Module):
             action_idx = action_mask.nonzero(as_tuple=True)
 
         device_type = next(self.parameters()).device.type
-        with _get_autocast_context(device_type, torch.bfloat16):
+        with get_autocast_context(device_type, torch.bfloat16):
             last_hidden = self._qwen_last_decoder_hidden(qwen_inputs)  # [B, seq_len, H]
             b, _, h = last_hidden.shape
             embodied_action_tokens = last_hidden[embodied_idx[0], embodied_idx[1], :].view(b, -1, h)
@@ -211,10 +193,42 @@ class VLAJEPAModel(nn.Module):
             )
         return embodied_action_tokens, action_tokens
 
-    def _world_model_loss(self, videos: Tensor, action_tokens: Tensor) -> Tensor:
-        """JEPA encode + predictor L1 loss. `videos` is [B, V, T, C, H, W] float in [0, 1]."""
+    def _causal_video_embeddings(self, video_pixels: Tensor, tubelet_size: int, num_positions: int) -> Tensor:
+        """Encode `num_positions` leading temporal positions from only their own raw-frame prefix.
+
+        A single V-JEPA2 pass over the full clip lets bidirectional attention leak future frames
+        into every position's embedding, including the context positions used as predictor input
+        (#4153). Running one prefix-only pass per context position keeps position i blind to frames
+        after it, at the cost of `num_positions` encoder calls instead of one.
+        """
+        positions = []
+        for position in range(num_positions):
+            prefix = self.video_encoder.get_vision_features(
+                pixel_values_videos=video_pixels[:, : (position + 1) * tubelet_size]
+            )
+            tokens_per_position = prefix.shape[1] // (position + 1)
+            positions.append(prefix[:, -tokens_per_position:])
+        return torch.cat(positions, dim=1)
+
+    @staticmethod
+    def _merge_views(embeddings: Tensor, b: int, v: int) -> Tensor:
+        """Merge per-view features: [B*V, N, H] -> [B, N, V*H].
+
+        Rows run view-fastest, since `videos.reshape(b * v, ...)` flattens (B, V) row-major. A
+        `chunk(chunks=v, dim=0)` + `cat(dim=2)` merge assumes view-slowest and so concatenates
+        features from *different* samples — shape-valid, so it fails silently for b > 1.
+        """
+        n_tokens, hidden = embeddings.shape[1], embeddings.shape[2]
+        return embeddings.reshape(b, v, n_tokens, hidden).permute(0, 2, 1, 3).reshape(b, n_tokens, v * hidden)
+
+    def _world_model_loss(self, videos: Tensor, action_tokens: Tensor, reduction: str = "mean") -> Tensor:
+        """JEPA encode + predictor L1 loss. `videos` is [B, V, T, C, H, W] float in [0, 1].
+
+        `reduction="none"` returns a per-sample loss (B,) for sample weighting (RA-BC);
+        "mean" returns the scalar loss.
+        """
         # Match the world model's expected view count: pad with the first view, or trim extras.
-        num_views = self.config.jepa_tubelet_size
+        num_views = self.config.num_world_model_views
         if videos.shape[1] < num_views:
             missing = num_views - videos.shape[1]
             videos = torch.cat([videos, videos[:, :1].repeat(1, missing, 1, 1, 1, 1)], dim=1)
@@ -231,21 +245,29 @@ class VLAJEPAModel(nn.Module):
             do_rescale=False,
         )["pixel_values_videos"]  # [B*V, T, C, H, W]
 
+        tubelet_size = self.video_encoder.config.tubelet_size
         with torch.no_grad():
             video_embeddings = self.video_encoder.get_vision_features(pixel_values_videos=video_pixels)
-            # Merge views: [B*V, ...] -> [B, ..., V*embed_dim]
-            video_embeddings = torch.cat(torch.chunk(video_embeddings, chunks=v, dim=0), dim=2)
+            video_embeddings = self._merge_views(video_embeddings, b, v)
 
-        tubelet_size = self.video_encoder.config.tubelet_size
         # num_video_frames raw frames → t_enc_total temporal positions after tubelet compression
         t_enc_total = self.config.num_video_frames // tubelet_size
         if t_enc_total < 2:
-            return torch.zeros((), device=video_embeddings.device)
+            zero_shape = (video_embeddings.shape[0],) if reduction == "none" else ()
+            return torch.zeros(zero_shape, device=video_embeddings.device)
 
         # Shift-by-one JEPA split: input_states = positions 0..T-2, gt_states = positions 1..T-1
         t_enc_ctx = t_enc_total - 1
         tokens_per_frame = video_embeddings.shape[1] // t_enc_total
-        input_states = video_embeddings[:, : tokens_per_frame * t_enc_ctx, :]
+        if self.config.causal_world_model_context:
+            # The shared pass above lets bidirectional attention leak future frames into the context
+            # positions used as predictor input (#4153). Recompute input_states causally instead;
+            # gt_states keeps the full-pass embeddings (a target encoder seeing full context is fine).
+            with torch.no_grad():
+                input_states = self._causal_video_embeddings(video_pixels, tubelet_size, t_enc_ctx)
+                input_states = self._merge_views(input_states, b, v)
+        else:
+            input_states = video_embeddings[:, : tokens_per_frame * t_enc_ctx, :]
         gt_states = video_embeddings[:, tokens_per_frame:, :]
 
         expected_actions = t_enc_ctx * self.config.num_action_tokens_per_timestep
@@ -256,6 +278,10 @@ class VLAJEPAModel(nn.Module):
         predicted_states = self.video_predictor(
             input_states.float(), action_tokens[:, :expected_actions].float()
         )
+        if reduction == "none":
+            # Per-sample loss (B,): mean over all non-batch dims (tokens, feature).
+            elementwise = F.l1_loss(predicted_states, gt_states.float(), reduction="none")
+            return elementwise.mean(dim=tuple(range(1, elementwise.ndim)))
         return F.l1_loss(predicted_states, gt_states.float(), reduction="mean")
 
     def _action_loss(
@@ -264,17 +290,27 @@ class VLAJEPAModel(nn.Module):
         actions: Tensor,
         state: Tensor | None,
         action_is_pad: Tensor | None,
+        reduction: str = "mean",
     ) -> Tensor:
-        """Flow-matching action-head loss, repeated over `repeated_diffusion_steps`."""
+        """Flow-matching action-head loss, repeated over `repeated_diffusion_steps`.
+
+        `reduction="none"` returns a per-sample loss (B,) — the `repeated_diffusion_steps`
+        independent noise draws are averaged back per original sample — for RA-BC weighting.
+        """
         device_type = next(self.parameters()).device.type
-        with _get_autocast_context(device_type, torch.float32):
+        with get_autocast_context(device_type, torch.float32):
             r = self.config.repeated_diffusion_steps
             horizon = self.config.chunk_size
+            b = embodied_action_tokens.shape[0]
             actions_target = actions[:, -horizon:, :].to(torch.float32).repeat(r, 1, 1)
             embodied = embodied_action_tokens.repeat(r, 1, 1)
             state_rep = state.to(embodied_action_tokens.dtype).repeat(r, 1, 1) if state is not None else None
             pad_rep = action_is_pad[:, -horizon:].repeat(r, 1) if action_is_pad is not None else None
-            return self.action_model(embodied, actions_target, state_rep, pad_rep)
+            loss = self.action_model(embodied, actions_target, state_rep, pad_rep, reduction=reduction)
+            if reduction == "none":
+                # `.repeat(r, 1, 1)` tiles as [rep0(b0..b_{B-1}), rep1(...), ...] → (r, B); mean over reps.
+                return loss.view(r, b).mean(dim=0)
+            return loss
 
     def forward(
         self,
@@ -284,21 +320,29 @@ class VLAJEPAModel(nn.Module):
         actions: Tensor | None = None,
         state: Tensor | None = None,
         action_is_pad: Tensor | None = None,
+        reduction: str = "mean",
     ) -> dict[str, Tensor]:
-        """Native forward: Qwen encode → optional world-model loss → optional action-head loss."""
+        """Native forward: Qwen encode → optional world-model loss → optional action-head loss.
+
+        `reduction="none"` makes both loss terms per-sample (B,) for RA-BC weighting; "mean"
+        returns scalar losses.
+        """
         embodied_action_tokens, action_tokens = self._encode_qwen(
             images, instructions, need_action_tokens=self.config.enable_world_model
         )
 
         if self.config.enable_world_model and videos is not None:
-            wm_loss = self._world_model_loss(videos, action_tokens)
+            wm_loss = self._world_model_loss(videos, action_tokens, reduction=reduction)
         else:
-            wm_loss = torch.zeros((), device=embodied_action_tokens.device)
+            zero_shape = (embodied_action_tokens.shape[0],) if reduction == "none" else ()
+            wm_loss = torch.zeros(zero_shape, device=embodied_action_tokens.device)
 
         if actions is None:
             return {"wm_loss": wm_loss}
 
-        action_loss = self._action_loss(embodied_action_tokens, actions, state, action_is_pad)
+        action_loss = self._action_loss(
+            embodied_action_tokens, actions, state, action_is_pad, reduction=reduction
+        )
         return {"action_loss": action_loss, "wm_loss": wm_loss * self.config.world_model_loss_weight}
 
     # ---- Native predict_action (follows original VLA_JEPA.predict_action) ----
@@ -344,16 +388,9 @@ class VLAJEPAPolicy(PreTrainedPolicy):
     def __init__(self, config: VLAJEPAConfig, **kwargs) -> None:
         super().__init__(config)
         config.validate_features()
-        if dataset_meta := kwargs.get("dataset_meta"):
-            # cfg.input_features keeps the pretrained model's feature keys (needed for rename_map
-            # compatibility), so validate_features() may have read stale dims from a pretrained
-            # config. Override state_dim/action_dim from the actual dataset being used.
-            ds_features = dataset_meta.features
-            if OBS_STATE in ds_features:
-                config.state_dim = ds_features[OBS_STATE]["shape"][0]
-            if ACTION in ds_features:
-                config.action_dim = ds_features[ACTION]["shape"][0]
-
+        # Dataset dim derivation lives in `VLAJEPAConfig.set_dataset_feature_metadata` (called by
+        # `make_policy` before this): keeps `__init__` from mutating a config it does not own, and
+        # makes the derived dims visible to the processor factory too.
         self.model = VLAJEPAModel(config)
         self.reset()
 
@@ -383,13 +420,19 @@ class VLAJEPAPolicy(PreTrainedPolicy):
             raise ValueError("VLAJEPA requires at least one image feature.")
         batch_size = batch[image_keys[0]].shape[0]
 
-        # Current-frame image per view ([B, C, H, W]); regroup per sample for Qwen messages.
+        # Current-frame image per view ([B, C, H, W]); regroup per sample for Qwen messages. Resize to
+        # `resize_images_to` as `predict_action` does, so training and inference feed Qwen the same
+        # resolution and native frames (e.g. 720x1280) don't blow up the vision-tower patch count.
+        resize_hw = tuple(self.config.resize_images_to) if self.config.resize_images_to else None
         frames = []
         for key in image_keys:
             t = batch[key]
             if t.ndim == 5:  # [B, T, C, H, W] -> current observation (delta=0)
                 t = t[:, 0]
-            frames.append(self.model.qwen.to_pixel_values(t))
+            px = self.model.qwen.to_pixel_values(t)  # [B, C, H, W]
+            if resize_hw is not None and tuple(px.shape[-2:]) != resize_hw:
+                px = F.interpolate(px.float(), size=resize_hw, mode="area")
+            frames.append(px)
         images = [[frame[b] for frame in frames] for b in range(batch_size)]
 
         tasks = batch.get("task")
@@ -405,7 +448,24 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         # Videos [B, V, T, C, H, W] - only assembled during training when the world model consumes them.
         if self.model.config.enable_world_model and training:
             views = [batch[k].unsqueeze(1) if batch[k].ndim == 4 else batch[k] for k in image_keys]
-            inputs["videos"] = self.model.qwen.to_pixel_values(torch.stack(views, dim=1))
+            # A single stacked [B, V, T, C, H, W] tensor needs one spatial size for every view, and
+            # cameras can differ (base 480x640 vs wrist 720x1280). Resize to `resize_images_to`, else
+            # to the first view's size (a no-op for single-resolution datasets). The vjepa video
+            # processor handles the final resize to the encoder resolution.
+            cfg = self.model.config
+            target_hw = tuple(cfg.resize_images_to) if cfg.resize_images_to else tuple(views[0].shape[-2:])
+            resized = []
+            for v in views:
+                if tuple(v.shape[-2:]) != target_hw:
+                    b, t, c = v.shape[0], v.shape[1], v.shape[2]
+                    v = F.interpolate(
+                        v.reshape(b * t, c, v.shape[3], v.shape[4]).float(),
+                        size=target_hw,
+                        mode="bilinear",
+                        align_corners=False,
+                    ).reshape(b, t, c, target_hw[0], target_hw[1])
+                resized.append(v)
+            inputs["videos"] = self.model.qwen.to_pixel_values(torch.stack(resized, dim=1))
 
         actions = batch.get(ACTION)
         if actions is not None:
@@ -424,15 +484,17 @@ class VLAJEPAPolicy(PreTrainedPolicy):
 
     # ---- LeRobot Policy Interface ----
 
-    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
+    def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict]:
         """LeRobot train forward: convert → native forward → aggregate losses."""
-        native_output = self.model.forward(**self._prepare_model_inputs(batch, training=True))
+        native_output = self.model.forward(
+            **self._prepare_model_inputs(batch, training=True), reduction=reduction
+        )
 
         ref = next(iter(native_output.values()))
-        zero = torch.zeros((), device=ref.device, dtype=ref.dtype)
+        zero = torch.zeros_like(ref)
         total_loss = native_output.get("action_loss", zero) + native_output.get("wm_loss", zero)
-        logs = {k: v.detach().item() for k, v in native_output.items()}
-        logs["loss"] = total_loss.detach().item()
+        logs = {k: v.detach().mean().item() for k, v in native_output.items()}
+        logs["loss"] = total_loss.detach().mean().item()
         return total_loss, logs
 
     def get_optim_params(self) -> dict:
@@ -459,22 +521,15 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         return self._queues[ACTION].popleft()
 
     @classmethod
-    def from_pretrained(
-        cls: type[T],
-        pretrained_name_or_path: str | Path,
-        **kwargs,
-    ):
-        return super().from_pretrained(pretrained_name_or_path, **kwargs)
-
-    @classmethod
     def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
         reinit_prefixes = model.config.reinit_modules
         if not reinit_prefixes:
             return super()._load_as_safetensor(model, model_file, map_location, strict)
 
-        from safetensors.torch import load_file
-
-        state_dict = load_file(model_file, device=map_location)
+        # `resolve_safetensors_device` is what keeps every rank from materializing the whole
+        # checkpoint on GPU 0: safetensors maps the bare string "cuda" to cuda:0 regardless of
+        # torch.cuda.current_device(), and `config.device` is exactly that bare string.
+        state_dict = load_file(model_file, device=resolve_safetensors_device(map_location))
         current = model.state_dict()
 
         reinitialized: list[str] = []
@@ -498,8 +553,17 @@ class VLAJEPAPolicy(PreTrainedPolicy):
                 f"(randomly re-initialised):\n  " + "\n  ".join(reinitialized)
             )
 
-        from lerobot.policies.utils import log_model_loading_keys
-
+        # Deliberately non-strict: the reinitialized tensors above are *expected* to be missing.
+        # `strict` still has to mean something, so enforce it on everything else.
         missing_keys, unexpected_keys = model.load_state_dict(filtered, strict=False)
+        if strict:
+            reinit_keys = {entry.split(":", 1)[0] for entry in reinitialized}
+            unaccounted = [k for k in missing_keys if k not in reinit_keys]
+            if unaccounted or unexpected_keys:
+                raise RuntimeError(
+                    f"Error(s) in loading state_dict for {type(model).__name__} with strict=True: "
+                    f"missing keys not covered by `reinit_modules` {unaccounted}, "
+                    f"unexpected keys {list(unexpected_keys)}."
+                )
         log_model_loading_keys(missing_keys, unexpected_keys)
         return model

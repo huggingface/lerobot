@@ -1,0 +1,27 @@
+# Configuration
+
+LeRobot configuration is plain dataclasses parsed by [draccus](https://github.com/dlwh/draccus), so every
+field is settable from the CLI. [`TrainPipelineConfig`] is the top-level object for `lerobot-train`.
+
+Polymorphic configs (policies, robots, environments) use `draccus.ChoiceRegistry`: a subclass registers
+itself with `@register_subclass("name")` and is then selectable by that name on the command line.
+
+## TrainPipelineConfig
+
+[[autodoc]] lerobot.configs.train.TrainPipelineConfig
+
+## PreTrainedConfig
+
+[[autodoc]] lerobot.configs.PreTrainedConfig
+
+## DatasetConfig
+
+[[autodoc]] lerobot.configs.DatasetConfig
+
+## EvalConfig
+
+[[autodoc]] lerobot.configs.EvalConfig
+
+## WandBConfig
+
+[[autodoc]] lerobot.configs.WandBConfig

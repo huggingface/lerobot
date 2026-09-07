@@ -1,0 +1,99 @@
+# Third-Party Cameras & Sensors
+
+The LeRobot ecosystem extends far beyond its natively supported cameras (OpenCV, Intel RealSense, ZMQ, Reachy 2). Thanks to LeRobot's plugin architecture, the community has built drop-in camera and sensor integrations — from depth cameras to vision-based tactile sensors. This page showcases community-maintained camera and sensor integrations you can use for teleoperation, data collection, and policy deployment.
+
+> [!IMPORTANT]
+> These projects are developed and maintained by third parties. Please refer to each repository for installation instructions, hardware requirements, and support.
+
+Drop-in plugins are auto-discovered by package name: LeRobot imports any installed package prefixed with `lerobot_camera_`. Once installed, reference the camera `type` the plugin registers (see its README — it may differ from the package name) directly from any LeRobot command:
+
+```bash
+pip install lerobot_camera_<name>
+
+lerobot-record \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras="{ front: {type: <name>, width: 640, height: 480, fps: 30} }" \
+    --dataset.repo_id=${HF_USER}/my-dataset \
+    --dataset.num_episodes=5
+```
+
+## Tactile Sensors
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>Project</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/xensedyl/lerobot-camera-xense">lerobot-camera-xense</a></td>
+      <td>Plugin for <a href="https://www.xenserobotics.com/">Xense</a> vision-based tactile sensors, exposing rectified/difference images, depth, and 2D markers.</td>
+    </tr>
+  </tbody>
+</table>
+
+## Depth Cameras
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>Project</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/hexfellow/hex_lerobot_drivers/tree/main/lerobot_camera_berxel">lerobot_camera_berxel</a></td>
+      <td>Plugin for the <a href="https://www.berxel.com/">Berxel</a> depth camera, part of the broader <a href="https://hexfellow.com/">HEXFELLOW</a> driver suite.</td>
+    </tr>
+  </tbody>
+</table>
+
+## Networked Cameras
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>Project</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/F-Fer/lerobot_ur5e_gello">lerobot_camera_zmq</a></td>
+      <td>Plugin streaming <a href="https://www.stereolabs.com/">Stereolabs ZED</a> and USB camera frames from a Raspberry Pi over the network.</td>
+    </tr>
+  </tbody>
+</table>
+
+## Virtual Cameras
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>Project</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/hexfellow/hex_lerobot_drivers/tree/main/lerobot_camera_dummy">lerobot_camera_dummy</a></td>
+      <td>Plugin simulating a camera for recording without hardware. Useful for debugging !</td>
+    </tr>
+  </tbody>
+</table>
+
+## Contributing
+
+Built your own LeRobot camera or sensor integration? Package it as an installable `lerobot_camera_<name>` plugin and it will be auto-discovered by the LeRobot CLI — see the [Bring Your Own Hardware](./integrate_hardware) guide and the [Cameras](./cameras) reference to get started, then share your project with the community!
