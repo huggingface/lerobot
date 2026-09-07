@@ -320,6 +320,23 @@ def depth_encoder_defaults() -> DepthEncoderConfig:
     return DepthEncoderConfig()
 
 
+def is_depth_map(feature: dict | None) -> bool:
+    """Return whether a feature is flagged as a depth map.
+
+    Depth maps are flagged canonically via ``feature['info']['is_depth_map']`` or through the
+    legacy ``video.is_depth_map`` key, which may live in ``feature['info']`` or in a separate
+    ``feature['video_info']`` dict.
+    """
+    feature = feature or {}
+    info = feature.get("info") or {}
+    video_info = feature.get("video_info")
+    return bool(
+        info.get("is_depth_map")
+        or info.get("video.is_depth_map")
+        or (isinstance(video_info, dict) and video_info.get("video.is_depth_map"))
+    )
+
+
 def encoder_config_from_video_info(video_info: dict | None) -> VideoEncoderConfig:
     """Build the appropriate encoder config from a feature's ``info`` block.
 
@@ -336,6 +353,7 @@ def encoder_config_from_video_info(video_info: dict | None) -> VideoEncoderConfi
         :class:`RGBEncoderConfig`.
     """
     video_info = video_info or {}
-    is_depth = bool(video_info.get("is_depth_map") or video_info.get("video.is_depth_map"))
-    cls: type[VideoEncoderConfig] = DepthEncoderConfig if is_depth else RGBEncoderConfig
+    cls: type[VideoEncoderConfig] = (
+        DepthEncoderConfig if is_depth_map({"info": video_info}) else RGBEncoderConfig
+    )
     return cls.from_video_info(video_info)

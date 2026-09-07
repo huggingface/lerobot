@@ -1,0 +1,372 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Interactive rollout session: chat-style stdin commands for ``lerobot-rollout``.
+
+Enabled with ``--interactive=true``, this module lets the operator drive a rollout from the terminal
+(``/help`` lists the commands) while hardware and policy stay connected and warm.  It adds only the
+CLI front-end — stdin reading, command parsing, terminal output, and log muting.  Real shutdown
+signals (SIGINT/SIGTERM) propagate through the session's :class:`LinkedEvent` parent, so Ctrl-C
+behaves exactly as in non-interactive runs.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import logging
+import sys
+import warnings
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from typing import IO, TYPE_CHECKING
+
+from lerobot.utils.stdin_input import StdinCommandListener
+from lerobot.utils.utils import log_say
+
+from .controller import AskResult, RolloutController, RolloutEvent
+from .inference import QueryAnswer, QueryKind
+
+if TYPE_CHECKING:
+    from .context import RolloutContext
+    from .strategies import RolloutStrategy
+
+logger = logging.getLogger(__name__)
+
+_BANNER_RULE = "─" * 60
+
+
+@contextlib.contextmanager
+def _mute_system_output() -> Iterator[None]:
+    """Suppress log records below ERROR and Python warnings, process-wide.
+
+    Routine system logs would contend with the chat prompt.  ``logging.disable`` gates records
+    before handler dispatch, so non-propagating library loggers and loggers created mid-session are
+    covered too (as are file handlers); ERROR and above still get through, so failures stay visible.
+    """
+    previous_disable = logging.root.manager.disable
+    logging.disable(logging.WARNING)
+    try:
+        # catch_warnings also restores the mutation counter and showwarning, unlike a filters snapshot.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            yield
+    finally:
+        logging.disable(previous_disable)
+
+
+@dataclass(frozen=True)
+class InteractiveCommand:
+    """A parsed ``/name args`` line from the interactive prompt."""
+
+    name: str
+    args: str = ""
+
+
+def _format_task(task: str) -> str:
+    """Render a task string for the operator, naming the empty case explicitly."""
+    return repr(task) if task else "(none — set one with /subtask <text>)"
+
+
+def _strip_quotes(text: str) -> str:
+    """Drop one layer of matching surrounding quotes from a command argument."""
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
+        return text[1:-1]
+    return text
+
+
+def parse_command(line: str) -> InteractiveCommand | None:
+    """Parse an input line into an :class:`InteractiveCommand`.
+
+    Commands are ``/name`` optionally followed by free-text arguments.  Returns ``None`` for lines
+    that are not commands (no leading ``/`` or a bare ``/``).
+    """
+    line = line.strip()
+    if not line.startswith("/"):
+        return None
+    head, *rest = line.split(maxsplit=1)
+    name = head[1:].lower()
+    if not name:
+        return None
+    return InteractiveCommand(name=name, args=rest[0].strip() if rest else "")
+
+
+class InteractiveSession:
+    """Drive a rollout from chat-style stdin commands.
+
+    A thin terminal front-end over :class:`RolloutController`, exposed as :attr:`controller` for
+    tests and embedders: the stdin listener parses lines into commands that call the controller's
+    thread-safe methods, and controller events are rendered back as terminal output.
+
+    Commands are last-write-wins: ``/reset`` and ``/stop`` cancel a pending ``/start``.  EOF on the
+    command stream stops the session (nothing is left to command the robot with), so piped scripts
+    must keep stdin open for the intended duration, e.g.
+    ``(printf '/start\\n'; sleep 60; printf '/stop\\n') | lerobot-rollout ... --interactive=true``.
+    """
+
+    def __init__(
+        self,
+        strategy: RolloutStrategy,
+        ctx: RolloutContext,
+        input_stream: IO[str] | None = None,
+    ) -> None:
+        self.controller = RolloutController(strategy, ctx, on_event=self._on_event)
+        self._runtime = ctx.runtime
+        self._play_sounds = ctx.runtime.cfg.play_sounds
+        self._listener = StdinCommandListener(self._handle_line, on_eof=self._handle_eof, stream=input_stream)
+
+        # name -> (handler, argument hint, help line); /help and the banner render from this table.
+        self._commands: dict[str, tuple[Callable[[InteractiveCommand], None], str, str]] = {
+            "start": (self._cmd_start, "", "start (or restart) the policy control loop"),
+            "subtask": (self._cmd_subtask, " <text>", "set the instruction the policy follows"),
+            "vqa": (self._cmd_vqa, " <text>", "ask the policy a question about what it sees"),
+            "autosteer": (
+                self._cmd_autosteer,
+                " <goal>|off",
+                "let the policy pick its own subtasks toward a high-level goal",
+            ),
+            "reset": (self._cmd_reset, "", "stop movement, return to initial position, restore the task"),
+            "stop": (self._cmd_stop, "", "end the session and shut down"),
+            "help": (self._cmd_help, "", "show this help"),
+        }
+
+    @contextlib.contextmanager
+    def _route_cadence_reports(self) -> Iterator[None]:
+        """Send the control loop's cadence summaries to the chat stream, not the muted log.
+
+        Boundary-only output, printed on the serve thread; scoped like :func:`_mute_system_output`.
+        """
+        previous = self._runtime.cadence_report
+        self._runtime.cadence_report = self._print
+        try:
+            yield
+        finally:
+            self._runtime.cadence_report = previous
+
+    def run(self) -> None:
+        """Run the session until ``/stop``, EOF, engine failure, or a shutdown signal."""
+        try:
+            with _mute_system_output(), self._route_cadence_reports():
+                self._print(self._render_banner())
+                self._listener.start()
+                try:
+                    self.controller.serve()
+                finally:
+                    self._listener.stop()
+        finally:
+            # Outside the muting context, so the announcement and teardown logs are visible again.
+            log_say("Interactive session ended", self._play_sounds)
+
+    # ------------------------------------------------------------------
+    # Controller events (fired on the serve thread) -> terminal output
+    # ------------------------------------------------------------------
+
+    def _on_event(self, event: RolloutEvent, payload: QueryAnswer | None = None) -> None:
+        if event is RolloutEvent.QUERY_ANSWERED and payload is not None:
+            self._report_answer(payload)
+        elif event is RolloutEvent.SEGMENT_STARTED:
+            log_say("Starting rollout", self._play_sounds)
+            self._print(
+                f"Rollout running — task {_format_task(self.controller.task)}. "
+                "/subtask <text> to change it, /reset to return to initial position, /stop to shut down."
+            )
+        elif event is RolloutEvent.SEGMENT_ENDED:
+            self._print(
+                "Rollout run ended on its own (duration reached). Robot is holding position — "
+                "/start to run again, /reset to return to initial position, /stop to shut down."
+            )
+        elif event is RolloutEvent.RESET_STARTED:
+            log_say("Resetting robot to initial position", self._play_sounds)
+            self._print("Resetting — returning the robot to its initial position...")
+        elif event is RolloutEvent.RESET_DONE:
+            self._print("Robot reset — holding at initial position. /start to run.")
+        elif event is RolloutEvent.RESET_SKIPPED:
+            self._print("Robot paused — no initial position captured, holding current pose. /start to run.")
+        elif event is RolloutEvent.RESET_FAILED:
+            self._print(
+                "Reset FAILED — the return move errored, so the robot may NOT be at its "
+                "initial position. Check the robot before /start."
+            )
+        elif event is RolloutEvent.ENGINE_FAILED:
+            self._report_failure("Inference engine failed — shutting down.")
+        elif event is RolloutEvent.STRATEGY_FAILED:
+            self._report_failure("Rollout strategy failed (robot or recording error) — shutting down.")
+
+    def _report_answer(self, answer: QueryAnswer) -> None:
+        """Render a resolved text query (an operator question or an autosteer turn)."""
+        if answer.kind is QueryKind.NEXT_SUBTASK:
+            if answer.ok:
+                # The engine has already applied it via set_task; just announce.
+                self._print(f"Autosteer subtask: {answer.answer!r}")
+            else:
+                self._print(
+                    f"Autosteer stopped — could not plan the next subtask for {answer.question!r}: "
+                    f"{answer.error}"
+                )
+        elif answer.ok:
+            self._print(f"Q: {answer.question}\nA: {answer.answer}")
+        else:
+            self._print(f"Could not answer {answer.question!r} — {answer.error}")
+
+    def _report_failure(self, headline: str) -> None:
+        """Surface a fatal engine/strategy error despite the muted console logging."""
+        self._print(headline)
+        failure_traceback = self.controller.failure_traceback
+        if failure_traceback:
+            self._print(failure_traceback)
+        else:
+            self._print("Re-run without --interactive=true to see the error output.")
+
+    # ------------------------------------------------------------------
+    # Command handlers (called from the listener thread)
+    # ------------------------------------------------------------------
+
+    def _handle_line(self, line: str) -> None:
+        cmd = parse_command(line)
+        if cmd is None:
+            self._print("Input not recognized — commands start with '/'. Type /help for the list.")
+            return
+        entry = self._commands.get(cmd.name)
+        if entry is None:
+            self._print(f"Unknown command '/{cmd.name}'. Type /help for the list.")
+            return
+        handler = entry[0]
+        handler(cmd)
+
+    def _handle_eof(self) -> None:
+        self._print("Input stream closed — stopping the session.")
+        self.controller.stop()
+
+    def _cmd_start(self, cmd: InteractiveCommand) -> None:
+        if self.controller.start():
+            return
+        # start() also refuses while stopping or after a failure — don't mislabel an idle robot.
+        if self.controller.running:
+            self._print("Already running — /reset to pause first, or /stop to shut down.")
+        else:
+            self._print("Can't start — the session is stopping or has failed.")
+
+    def _cmd_subtask(self, cmd: InteractiveCommand) -> None:
+        # Strip quotes before the emptiness check, so /subtask "" reports the task instead of
+        # silently applying the empty instruction.
+        task = _strip_quotes(cmd.args)
+        if not task:
+            self._print(f"Current task: {_format_task(self.controller.task)}")
+            return
+        previous = self.controller.task
+        steering = self.controller.autosteer_goal
+        if steering is not None:
+            self._print(f"Autosteer off (was {steering!r}) — setting the instruction by hand takes over.")
+        if self.controller.set_task(task):
+            self._print(
+                f"Task: {_format_task(previous)} → {_format_task(task)} "
+                "(applies from the next policy inference)"
+            )
+        elif task == self.controller.task:
+            self._print(f"Task unchanged: {_format_task(task)}")
+        else:
+            # set_task also refuses while stopping; "unchanged" would imply it was applied.
+            self._print("Can't change the task — the session is stopping.")
+
+    def _cmd_vqa(self, cmd: InteractiveCommand) -> None:
+        # Strip quotes first, so /vqa "" prints the usage hint instead of queueing an empty question.
+        question = _strip_quotes(cmd.args)
+        if not question:
+            self._print("Usage: /vqa <question> — e.g. /vqa is the cube inside the box?")
+            return
+        result = self.controller.ask(question)
+        if result is AskResult.QUEUED:
+            self._print(f"Asked: {question!r} — answering from the next observation...")
+        elif result is AskResult.UNSUPPORTED:
+            self._print("This policy has no text head — it cannot answer questions.")
+        elif result is AskResult.NOT_RUNNING:
+            self._print("Not running — /start first so the policy has a live view to answer from.")
+        elif result is AskResult.BUSY:
+            # Could be a previous /vqa or an autosteer query — the channel does not say which.
+            self._print("The policy is busy with another query — try again in a moment.")
+        else:  # a future AskResult variant must not be mislabeled as busy
+            logger.error("Unhandled AskResult %r for /vqa", result)
+            self._print(f"Could not queue the question ({result.value}).")
+
+    def _cmd_autosteer(self, cmd: InteractiveCommand) -> None:
+        goal = _strip_quotes(cmd.args)
+        if not goal:
+            current = self.controller.autosteer_goal
+            self._print(
+                f"Autosteer on — goal {current!r}." if current else "Autosteer off. Usage: /autosteer <goal>"
+            )
+            return
+        if goal.lower() == "off":
+            stopped = self.controller.stop_autosteer()
+            self._print(
+                f"Autosteer off (was {stopped!r}). The last subtask stays in effect."
+                if stopped
+                else "Autosteer was not running."
+            )
+            return
+        result = self.controller.autosteer(goal)
+        if result is AskResult.UNSUPPORTED:
+            self._print("This policy has no text head — it cannot plan subtasks.")
+        elif result is AskResult.NOT_RUNNING:
+            self._print("Not running — /start first so the policy has a live view to plan from.")
+        elif result is AskResult.QUEUED:
+            self._print(
+                f"Autosteer on — goal {goal!r}. The policy picks its own subtasks; "
+                "each one is announced here. Take over with /subtask <text> or /autosteer off."
+            )
+        else:  # a future AskResult variant must not be announced as success
+            logger.error("Unhandled AskResult %r for /autosteer", result)
+            self._print(f"Could not start autosteer ({result.value}).")
+
+    def _cmd_reset(self, cmd: InteractiveCommand) -> None:
+        if self.controller.reset():
+            self._print(f"Task restored to {_format_task(self.controller.initial_task)}")
+        elif self.controller.stopped:
+            self._print("Can't reset — the session has stopped.")
+
+    def _cmd_stop(self, cmd: InteractiveCommand) -> None:
+        self.controller.stop()
+
+    def _cmd_help(self, cmd: InteractiveCommand) -> None:
+        self._print(self._render_help())
+
+    # ------------------------------------------------------------------
+    # Rendering
+    # ------------------------------------------------------------------
+
+    def _render_help(self) -> str:
+        usages = {name: f"/{name}{entry[1]}" for name, entry in self._commands.items()}
+        width = max(len(usage) for usage in usages.values())
+        lines = [f"  {usages[name]:<{width}}   {entry[2]}" for name, entry in self._commands.items()]
+        return "Available commands:\n" + "\n".join(lines)
+
+    def _render_banner(self) -> str:
+        return (
+            f"{_BANNER_RULE}\n"
+            "Interactive rollout session — the robot will NOT move until you type /start.\n"
+            f"Task: {_format_task(self.controller.initial_task)}\n"
+            f"{self._render_help()}\n"
+            "Routine system logs and warnings are muted during the session (errors and the "
+            "cadence summary of each run still show).\n"
+            f"{_BANNER_RULE}"
+        )
+
+    @staticmethod
+    def _print(message: str) -> None:
+        """User-facing chat output; logging stays on stderr, replies on stdout.
+
+        One ``write`` call per message, newline included: ``print()``'s separate message/newline
+        writes can interleave mid-line between the listener and serve threads.
+        """
+        sys.stdout.write(message + "\n")
+        sys.stdout.flush()

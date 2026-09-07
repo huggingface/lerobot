@@ -53,11 +53,24 @@ def test_create_sinusoidal_pos_embedding_matches_openpi_formula():
     torch.testing.assert_close(emb, expected, rtol=1e-9, atol=1e-9)
 
 
+def test_create_sinusoidal_pos_embedding_per_action_time_matches_scalar():
+    """Per-action time (training-time RTC) must embed each row exactly like the scalar path."""
+    dim, min_period, max_period = 8, 4e-3, 4.0
+    per_action = torch.tensor([[0.0, 0.25, 0.25], [1.0, 0.5, 0.5]])
+    emb = create_sinusoidal_pos_embedding(per_action, dim, min_period, max_period, device=torch.device("cpu"))
+
+    assert emb.shape == (2, 3, dim)
+    flat = create_sinusoidal_pos_embedding(
+        per_action.reshape(-1), dim, min_period, max_period, device=torch.device("cpu")
+    )
+    torch.testing.assert_close(emb.reshape(-1, dim), flat)
+
+
 def test_create_sinusoidal_pos_embedding_validation():
     with pytest.raises(ValueError, match="divisible by 2"):
         create_sinusoidal_pos_embedding(torch.zeros(2), 7, 4e-3, 4.0, device=torch.device("cpu"))
-    with pytest.raises(ValueError, match="batch_size"):
-        create_sinusoidal_pos_embedding(torch.zeros(2, 2), 8, 4e-3, 4.0, device=torch.device("cpu"))
+    with pytest.raises(ValueError, match="must have shape"):
+        create_sinusoidal_pos_embedding(torch.zeros(2, 2, 2), 8, 4e-3, 4.0, device=torch.device("cpu"))
 
 
 def test_make_att_2d_masks_docstring_cases():

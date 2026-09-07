@@ -314,6 +314,7 @@ def _batch_to_infer_kwargs(batch: dict[str, Tensor], config: FastWAMConfig) -> d
         "seed": batch.get("seed", config.inference_seed),
         "rand_device": batch.get("rand_device", config.rand_device),
         "tiled": bool(batch.get("tiled", config.tiled)),
+        "compile_action_infer": bool(batch.get("compile_action_infer", config.compile_action_infer)),
     }
 
 
