@@ -405,6 +405,14 @@ def _frame_to_scalars(sample: dict, key: str, labels: list[str] | None = None) -
     return _labeled_scalars(name, arr.flatten(), labels)
 
 
+def _playback_times_ns(dataset) -> list[int]:
+    """Per-frame timestamps in nanoseconds, read without decoding video."""
+    if hasattr(dataset, "hf_dataset"):
+        return [int(round(float(t) * 1e9)) for t in dataset.hf_dataset["timestamp"]]
+    # Storage formats without hf_dataset (e.g. lance): timestamps lie on the fps grid.
+    return [int(round(i * 1e9 / dataset.fps)) for i in range(len(dataset))]
+
+
 def serve_foxglove_dataset_playback(
     dataset,
     episode_index: int,
@@ -445,8 +453,7 @@ def serve_foxglove_dataset_playback(
         ServerListener,
     )
 
-    # Per-frame timestamps in nanoseconds (read straight from the table, no video decode).
-    times_ns = [int(round(float(t) * 1e9)) for t in dataset.hf_dataset["timestamp"]]
+    times_ns = _playback_times_ns(dataset)
     n_frames = len(times_ns)
     if n_frames == 0:
         raise ValueError("Cannot visualize an empty episode.")
