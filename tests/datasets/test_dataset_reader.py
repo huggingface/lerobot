@@ -176,6 +176,36 @@ def test_image_transforms_are_applied(tmp_path, lerobot_dataset_factory):
 # ── Batched get_items ────────────────────────────────────────────────
 
 
+@pytest.mark.parametrize("use_videos", [False, True])
+def test_loading_timings_are_opt_in_batch_wall_times(
+    tmp_path, lerobot_dataset_factory, monkeypatch, use_videos
+):
+    dataset = lerobot_dataset_factory(
+        root=tmp_path / "ds", total_episodes=1, total_frames=10, use_videos=use_videos
+    )
+    dataset.reader._video_backend = "pyav"
+
+    def unexpected_clock():
+        pytest.fail("Profiling must not read the clock when disabled")
+
+    monkeypatch.setattr("lerobot.datasets.dataset_reader.perf_counter", unexpected_clock)
+    expected = dataset.__getitems__([3, 1, 3])
+    assert all("_loader_timings" not in item for item in expected)
+    ticks = iter([10.0, 12.0, 15.0, 18.0] if use_videos else [10.0, 18.0])
+    monkeypatch.setattr("lerobot.datasets.dataset_reader.perf_counter", lambda: next(ticks))
+    dataset.reader.profile_loading = True
+    actual = dataset.__getitems__([3, 1, 3])
+    for got, want in zip(actual, expected, strict=True):
+        assert got.pop("_loader_timings") == {
+            "worker_loading_s": 8.0,
+            "video_loading_s": 3.0 if use_videos else 0.0,
+        }
+        assert got.pop("task") == want.pop("task")
+        torch.testing.assert_close(got, want, rtol=0, atol=0)
+    monkeypatch.setattr("lerobot.datasets.dataset_reader.perf_counter", lambda: 20.0)
+    assert dataset.__getitems__([]) == []
+
+
 @pytest.mark.parametrize("use_delta", [False, True])
 @pytest.mark.parametrize("backend", ["pyav", get_safe_default_video_backend()])
 def test_get_items_batched_matches_single(tmp_path, lerobot_dataset_factory, use_delta, backend):

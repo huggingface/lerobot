@@ -60,7 +60,8 @@ from lerobot.common.train_utils import (
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import JobConfig, parser
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
+from lerobot.datasets import EpisodeAwareSampler, LeRobotDataset, compute_sampler_state
+from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.factory import make_train_eval_datasets
 from lerobot.distributed import (
     ParallelDims,
@@ -130,8 +131,14 @@ def _preprocess_dataset_batch(
     camera_keys: list[str],
     rename_map: dict[str, str],
     preprocessor: Any,
+    train_tracker: MetricsTracker | None = None,
 ) -> Any:
     """Prepare a raw dataset batch identically for training and held-out evaluation."""
+    timings = batch.pop("_loader_timings", {})
+    if train_tracker is not None:
+        # One observation per delivered batch, averaged over the logging window and across ranks.
+        # Each sample carries its source batch's elapsed time; do not sum duplicates.
+        train_tracker.update_metrics({key: values.mean().item() for key, values in timings.items()})
     for cam_key in camera_keys:
         if cam_key in batch and batch[cam_key].dtype == torch.uint8:
             batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
@@ -282,6 +289,10 @@ def make_dataloaders(
         tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader | None]: The train
         dataloader and the eval dataloader (None when no eval split exists).
     """
+    if isinstance(dataset, LeRobotDataset) and isinstance(reader := dataset._ensure_reader(), DatasetReader):
+        reader.profile_loading = cfg.dataset.profile_loading
+    elif cfg.dataset.profile_loading:
+        logging.warning("Worker loading timings are unavailable for this dataset reader.")
     active_cfg = cfg.trainable_config
     if not cfg.dataset.streaming:
         # All non-streaming (map-style) datasets use EpisodeAwareSampler.
@@ -728,7 +739,9 @@ def train(cfg: TrainPipelineConfig):
         batch = next(dl_iter)
         preprocessing_start = time.perf_counter()
         train_tracker.dataloading_s = preprocessing_start - step_start
-        batch = _preprocess_dataset_batch(batch, dataset.meta.camera_keys, cfg.rename_map, preprocessor)
+        batch = _preprocess_dataset_batch(
+            batch, dataset.meta.camera_keys, cfg.rename_map, preprocessor, train_tracker
+        )
         train_tracker.preprocessing_s = time.perf_counter() - preprocessing_start
 
         train_tracker, _ = update_policy(
