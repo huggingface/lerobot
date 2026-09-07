@@ -19,6 +19,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from time import perf_counter
 
 import datasets
 import torch
@@ -153,6 +154,7 @@ class DatasetReader(BaseDatasetReader):
         self.set_image_transforms(image_transforms)
         self._return_uint8 = return_uint8
         self._depth_output_unit = depth_output_unit
+        self.profile_loading = False
 
         self.hf_dataset: datasets.Dataset | None = None
         self._absolute_to_relative_idx: dict[int, int] | None = None
@@ -553,6 +555,8 @@ class DatasetReader(BaseDatasetReader):
         Returns:
             One fully assembled frame dict per entry in ``indices``, in order.
         """
+        start = perf_counter() if self.profile_loading else 0.0
+        video_loading_s = 0.0
         if self.hf_dataset is None:
             # One-shot load after finalize()
             self.load_and_activate()
@@ -581,8 +585,11 @@ class DatasetReader(BaseDatasetReader):
         if len(self._meta.video_keys) > 0:
             current_ts = [float(items[i]["timestamp"]) for i in range(n)]
             query_timestamps = self._get_query_timestamps(current_ts, query_indices_per_item)
+            video_start = perf_counter() if self.profile_loading else 0.0
             for i, video in enumerate(self._query_videos(query_timestamps, ep_idxs)):
                 items[i].update(video)
+            if self.profile_loading:
+                video_loading_s = perf_counter() - video_start
 
         for i in range(n):
             item = items[i]
@@ -604,4 +611,11 @@ class DatasetReader(BaseDatasetReader):
 
             item["task"] = self._meta.tasks.iloc[int(item["task_index"])].name
 
+        if self.profile_loading:
+            # Batch wall time, not summed per-file CPU time. Includes seeks/decoding/conversion;
+            # preparation also includes tabular reads/transforms, but excludes collation and IPC.
+            timings = {"worker_loading_s": perf_counter() - start, "video_loading_s": video_loading_s}
+            timings = {key: torch.tensor(value, dtype=torch.float32) for key, value in timings.items()}
+            for item in items:
+                item["_loader_timings"] = timings
         return items
