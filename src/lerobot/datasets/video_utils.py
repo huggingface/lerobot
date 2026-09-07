@@ -28,7 +28,7 @@ from dataclasses import asdict, dataclass, field
 from fractions import Fraction
 from pathlib import Path
 from threading import Lock
-from typing import Any, ClassVar
+from typing import Any, BinaryIO, ClassVar
 
 import av
 import fsspec
@@ -105,7 +105,7 @@ def decode_video_frames(
 
 
 def decode_video_frames_pyav(
-    video_path: Path | str,
+    video_path: Path | str | BinaryIO,
     timestamps: list[float],
     tolerance_s: float,
     log_loaded_timestamps: bool = False,
@@ -124,7 +124,8 @@ def decode_video_frames_pyav(
     video can be adjusted at encoding time to trade off decoding speed against file size.
 
     Args:
-        video_path: Path to the video file.
+        video_path: Path to the video file, or a seekable binary file-like object
+            (supporting ``read``/``seek``) — e.g. a buffered remote source.
         timestamps: List of timestamps (in seconds) to extract frames for.
         tolerance_s: Allowed deviation in seconds between a queried timestamp and the closest
             decoded frame.
@@ -137,7 +138,9 @@ def decode_video_frames_pyav(
         torch.Tensor of shape (len(timestamps), C, H, W).
     """
     # TODO(rcadene): also load audio stream at the same time
-    video_path = str(video_path)
+    if isinstance(video_path, (str, Path)):
+        video_path = str(video_path)
+    # else: a file-like object (e.g. a buffered remote source) passes to av.open as-is.
 
     # set the first and last requested timestamps
     # Note: previous timestamps are usually loaded, since we need to access the previous key frame
@@ -183,8 +186,9 @@ def decode_video_frames_pyav(
             f"No frames could be decoded from {video_path} in the timestamp range [{first_ts}, {last_ts}]."
         )
 
-    query_ts = torch.tensor(timestamps)
-    loaded_ts_t = torch.tensor(loaded_ts)
+    # float64: hour-scale timestamps quantize past tolerance_s in float32.
+    query_ts = torch.tensor(timestamps, dtype=torch.float64)
+    loaded_ts_t = torch.tensor(loaded_ts, dtype=torch.float64)
 
     # compute distances between each query timestamp and timestamps of all loaded frames
     dist = torch.cdist(query_ts[:, None], loaded_ts_t[:, None], p=1)
@@ -394,8 +398,9 @@ def decode_video_frames_torchcodec(
         if log_loaded_timestamps:
             logger.info(f"Frame loaded at timestamp={pts:.4f}")
 
-    query_ts = torch.tensor(timestamps)
-    loaded_ts = torch.tensor(loaded_ts)
+    # float64: hour-scale timestamps quantize past tolerance_s in float32.
+    query_ts = torch.tensor(timestamps, dtype=torch.float64)
+    loaded_ts = torch.tensor(loaded_ts, dtype=torch.float64)
 
     # compute distances between each query timestamp and loaded timestamps
     dist = torch.cdist(query_ts[:, None], loaded_ts[:, None], p=1)
