@@ -14,25 +14,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 from functools import cached_property
 
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.bimanual import BimanualMixin
 from lerobot.utils.decorators import check_if_not_connected
 
-from ..rebot_b601_follower import RebotB601Follower, RebotB601FollowerRobotConfig
+from ..rebot_b601_follower import RebotB601Follower
 from ..robot import Robot
 from .config_bi_rebot_b601_follower import BiRebotB601FollowerConfig
 
-logger = logging.getLogger(__name__)
-
 
 class BiRebotB601Follower(BimanualMixin, Robot):
-    """Bimanual Seeed Studio reBot B601-DM follower.
+    """Bimanual Seeed Studio reBot B601 follower.
 
     Composes two single-arm :class:`RebotB601Follower` instances. Observation and
     action keys of each arm are namespaced with a ``left_`` / ``right_`` prefix.
+
+    Both arms use the same configured motor family.
     """
 
     config_class = BiRebotB601FollowerConfig
@@ -52,48 +51,14 @@ class BiRebotB601Follower(BimanualMixin, Robot):
             raise ValueError(
                 f"Top-level camera names collide with per-arm camera names: {sorted(_collisions)}"
             )
-        left_arm_cameras = {**config.left_arm_config.cameras, **config.cameras}
-
-        left_arm_config = RebotB601FollowerRobotConfig(
+        left_arm_config = config.left_arm_config.as_robot_config(
             id=f"{config.id}_left" if config.id else None,
             calibration_dir=config.calibration_dir,
-            port=config.left_arm_config.port,
-            can_adapter=config.left_arm_config.can_adapter,
-            dm_serial_baud=config.left_arm_config.dm_serial_baud,
-            disable_torque_on_disconnect=config.left_arm_config.disable_torque_on_disconnect,
-            max_relative_target=config.left_arm_config.max_relative_target,
-            cameras=left_arm_cameras,
-            motor_can_ids=config.left_arm_config.motor_can_ids,
-            pos_vel_velocity=config.left_arm_config.pos_vel_velocity,
-            control_mode=config.left_arm_config.control_mode,
-            mit_kp=config.left_arm_config.mit_kp,
-            mit_kd=config.left_arm_config.mit_kd,
-            gripper_control_mode=config.left_arm_config.gripper_control_mode,
-            gripper_torque_ratio=config.left_arm_config.gripper_torque_ratio,
-            gripper_mit_kp=config.left_arm_config.gripper_mit_kp,
-            gripper_mit_kd=config.left_arm_config.gripper_mit_kd,
-            joint_limits=config.left_arm_config.joint_limits,
+            cameras={**config.left_arm_config.cameras, **config.cameras},
         )
-
-        right_arm_config = RebotB601FollowerRobotConfig(
+        right_arm_config = config.right_arm_config.as_robot_config(
             id=f"{config.id}_right" if config.id else None,
             calibration_dir=config.calibration_dir,
-            port=config.right_arm_config.port,
-            can_adapter=config.right_arm_config.can_adapter,
-            dm_serial_baud=config.right_arm_config.dm_serial_baud,
-            disable_torque_on_disconnect=config.right_arm_config.disable_torque_on_disconnect,
-            max_relative_target=config.right_arm_config.max_relative_target,
-            cameras=config.right_arm_config.cameras,
-            motor_can_ids=config.right_arm_config.motor_can_ids,
-            pos_vel_velocity=config.right_arm_config.pos_vel_velocity,
-            control_mode=config.right_arm_config.control_mode,
-            mit_kp=config.right_arm_config.mit_kp,
-            mit_kd=config.right_arm_config.mit_kd,
-            gripper_control_mode=config.right_arm_config.gripper_control_mode,
-            gripper_torque_ratio=config.right_arm_config.gripper_torque_ratio,
-            gripper_mit_kp=config.right_arm_config.gripper_mit_kp,
-            gripper_mit_kd=config.right_arm_config.gripper_mit_kd,
-            joint_limits=config.right_arm_config.joint_limits,
         )
 
         self.left_arm = RebotB601Follower(left_arm_config)
@@ -101,6 +66,10 @@ class BiRebotB601Follower(BimanualMixin, Robot):
 
         # Only for compatibility with parts of the codebase that expect `robot.cameras`.
         self.cameras = {**self.left_arm.cameras, **self.right_arm.cameras}
+
+    def _disconnect_arm_after_failed_connect(self, arm: RebotB601Follower) -> None:
+        """Force-disable an arm while recovering from a bimanual failure."""
+        arm._disconnect(force_disable=True)
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -128,26 +97,34 @@ class BiRebotB601Follower(BimanualMixin, Robot):
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
-        obs_dict: RobotObservation = {}
-        for k, v in self.left_arm.get_observation().items():
-            obs_dict[k if k in self._top_level_cam_keys else f"left_{k}"] = v
-        for k, v in self.right_arm.get_observation().items():
-            obs_dict[f"right_{k}"] = v
-        return obs_dict
+        try:
+            obs_dict: RobotObservation = {}
+            for k, v in self.left_arm.get_observation().items():
+                obs_dict[k if k in self._top_level_cam_keys else f"left_{k}"] = v
+            for k, v in self.right_arm.get_observation().items():
+                obs_dict[f"right_{k}"] = v
+            return obs_dict
+        except Exception:
+            self._disconnect_arms(after_failed_connect=True)
+            raise
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        left_action = {
-            key.removeprefix("left_"): value for key, value in action.items() if key.startswith("left_")
-        }
-        right_action = {
-            key.removeprefix("right_"): value for key, value in action.items() if key.startswith("right_")
-        }
+        try:
+            left_action = {
+                key.removeprefix("left_"): value for key, value in action.items() if key.startswith("left_")
+            }
+            right_action = {
+                key.removeprefix("right_"): value for key, value in action.items() if key.startswith("right_")
+            }
 
-        sent_action_left = self.left_arm.send_action(left_action)
-        sent_action_right = self.right_arm.send_action(right_action)
+            sent_action_left = self.left_arm.send_action(left_action)
+            sent_action_right = self.right_arm.send_action(right_action)
 
-        return {
-            **{f"left_{k}": v for k, v in sent_action_left.items()},
-            **{f"right_{k}": v for k, v in sent_action_right.items()},
-        }
+            return {
+                **{f"left_{k}": v for k, v in sent_action_left.items()},
+                **{f"right_{k}": v for k, v in sent_action_right.items()},
+            }
+        except Exception:
+            self._disconnect_arms(after_failed_connect=True)
+            raise

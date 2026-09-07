@@ -164,7 +164,7 @@
   - local: openarm
     title: OpenArm
   - local: rebot_b601
-    title: reBot B601-DM
+    title: reBot B601
   - local: third_party_robots
     title: Third-Party Robots & Teleoperators
   title: "Robots"
