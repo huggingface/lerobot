@@ -52,7 +52,7 @@ from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
-from .configs import BaseStrategyConfig, DAggerStrategyConfig, RolloutConfig
+from .configs import RolloutConfig
 from .inference import (
     InferenceEngine,
     RTCInferenceConfig,
@@ -98,6 +98,45 @@ def _wrap_predict_action_chunk_with_torch_compile(
 
     logger.info("torch.compile configured for predict_action_chunk")
     return True
+
+
+def _validate_trained_rtc_rollout_config(policy_config, inference_config: RTCInferenceConfig) -> None:
+    """Fail fast when rollout cannot retain every trained RTC prefix."""
+    rtc = inference_config.rtc
+    if not rtc.enabled or rtc.mode != "trained":
+        return
+    if policy_config.type != "pi05":
+        raise ValueError(
+            "--inference.rtc.mode=trained currently requires a PI05 checkpoint; "
+            f"got policy type {policy_config.type!r}."
+        )
+
+    training_max_delay = int(getattr(policy_config, "rtc_training_max_delay", 0))
+    if training_max_delay <= 0:
+        raise ValueError(
+            "--inference.rtc.mode=trained requires a checkpoint trained with "
+            "--policy.rtc_training_max_delay > 0."
+        )
+    if rtc.execution_horizon < training_max_delay:
+        raise ValueError(
+            f"--inference.rtc.execution_horizon ({rtc.execution_horizon}) must be at least the "
+            f"checkpoint's rtc_training_max_delay ({training_max_delay})."
+        )
+    if inference_config.queue_threshold < training_max_delay:
+        raise ValueError(
+            f"--inference.queue_threshold ({inference_config.queue_threshold}) must be at least the "
+            f"checkpoint's rtc_training_max_delay ({training_max_delay})."
+        )
+
+    # RTC requires d <= s <= H - d (arXiv 2506.07339): an execution horizon past H - d would
+    # commit actions the next chunk can no longer re-plan, so the overlap never closes.
+    chunk_size = int(getattr(policy_config, "chunk_size", 0))
+    if chunk_size and rtc.execution_horizon > chunk_size - training_max_delay:
+        raise ValueError(
+            f"--inference.rtc.execution_horizon ({rtc.execution_horizon}) must be at most "
+            f"chunk_size - rtc_training_max_delay ({chunk_size} - {training_max_delay} = "
+            f"{chunk_size - training_max_delay})."
+        )
 
 
 def _resolve_action_key_order(
@@ -276,6 +315,9 @@ def build_rollout_context(
     logger.info("Loading policy from '%s'...", cfg.policy.pretrained_path)
     policy_config = cfg.policy
 
+    if is_rtc:
+        _validate_trained_rtc_rollout_config(policy_config, cfg.inference)
+
     if hasattr(policy_config, "compile_model"):
         policy_config.compile_model = cfg.use_torch_compile
 
@@ -436,8 +478,11 @@ def build_rollout_context(
 
     # --- 5. Dataset -------------
     dataset = None
-    if cfg.dataset is not None and not isinstance(cfg.strategy, BaseStrategyConfig):
+    if cfg.dataset is not None:
         logger.info("Setting up dataset (repo_id=%s)...", cfg.dataset.repo_id)
+        # Strategy-owned columns join the robot/policy features above the resume/create
+        # split, so ``ctx.data.dataset_features`` describes the same schema on both paths.
+        dataset_features.update(cfg.strategy.extra_dataset_features())
         if cfg.resume:
             dataset = LeRobotDataset.resume(
                 cfg.dataset.repo_id,
@@ -453,13 +498,6 @@ def build_rollout_context(
                 * len(robot.cameras if hasattr(robot, "cameras") else []),
             )
         else:
-            if isinstance(cfg.strategy, DAggerStrategyConfig):
-                dataset_features["intervention"] = {
-                    "dtype": "bool",
-                    "shape": (1,),
-                    "names": None,
-                }
-
             repo_name = cfg.dataset.repo_id.split("/", 1)[-1]
             if not repo_name.startswith("rollout_"):
                 raise ValueError(
@@ -509,10 +547,15 @@ def build_rollout_context(
         },
     )
 
-    if isinstance(cfg.inference, SyncInferenceConfig) and any(
-        isinstance(step, RelativeActionsProcessorStep) and step.enabled
-        for step in getattr(preprocessor, "steps", ())
-    ):
+    relative_action_step = next(
+        (
+            step
+            for step in getattr(preprocessor, "steps", ())
+            if isinstance(step, RelativeActionsProcessorStep) and step.enabled
+        ),
+        None,
+    )
+    if isinstance(cfg.inference, SyncInferenceConfig) and relative_action_step is not None:
         raise NotImplementedError(
             "SyncInferenceEngine does not support policies with relative actions for now."
             "Use --inference.type=rtc or remove relative action processor steps from the policy pipeline."

@@ -48,6 +48,7 @@ from lerobot.utils.import_utils import _peft_available, require_package
 
 from .evo1.configuration_evo1 import Evo1Config
 from .groot.configuration_groot import GrootConfig
+from .molmoact2.configuration_molmoact2 import MolmoAct2Config
 from .pretrained import PreTrainedPolicy
 from .utils import validate_visual_features_consistency
 
@@ -187,6 +188,25 @@ def make_pre_post_processors(
                 revision=pretrained_revision,
                 dataset_stats=kwargs.get("dataset_stats"),
                 dataset_meta=kwargs.get("dataset_meta"),
+                preprocessor_overrides=kwargs.get("preprocessor_overrides"),
+                postprocessor_overrides=kwargs.get("postprocessor_overrides"),
+                preprocessor_config_filename=kwargs.get(
+                    "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+                ),
+                postprocessor_config_filename=kwargs.get(
+                    "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+                ),
+            )
+
+        if isinstance(policy_cfg, MolmoAct2Config):
+            from .molmoact2.processor_molmoact2 import (
+                make_molmoact2_pre_post_processors_from_pretrained,
+            )
+
+            return make_molmoact2_pre_post_processors_from_pretrained(
+                config=policy_cfg,
+                pretrained_path=pretrained_path,
+                revision=pretrained_revision,
                 preprocessor_overrides=kwargs.get("preprocessor_overrides"),
                 postprocessor_overrides=kwargs.get("postprocessor_overrides"),
                 preprocessor_config_filename=kwargs.get(

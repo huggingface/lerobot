@@ -76,6 +76,7 @@ from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     load_training_metadata,
     save_checkpoint,
+    should_save_checkpoint,
     update_last_checkpoint,
 )
 from lerobot.common.wandb_utils import WandBLogger
@@ -457,7 +458,7 @@ def add_actor_information_and_train(
             logging.info(f"[LEARNER] Number of optimization step: {optimization_step}")
 
         # Save checkpoint at specified intervals
-        if saving_checkpoint and (optimization_step % save_freq == 0 or optimization_step == online_steps):
+        if saving_checkpoint and should_save_checkpoint(optimization_step, save_freq, online_steps):
             save_training_checkpoint(
                 cfg=cfg,
                 optimization_step=optimization_step,
