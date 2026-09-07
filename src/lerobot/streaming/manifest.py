@@ -240,7 +240,7 @@ class EpisodeVideoManifest:
         sidecar_path = Path(sidecar_path)
         sidecar_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "version": 2,
+            "version": 3,
             "sidecar": spec.with_source_files(
                 tuple((record.file_path, record.file_size) for record in records)
             ).to_dict(),
@@ -253,6 +253,7 @@ class EpisodeVideoManifest:
         for file_idx, record in enumerate(records):
             arrays[f"{file_idx}/sample_pts"] = record.mp4.sample_pts
             arrays[f"{file_idx}/sample_durations"] = record.mp4.sample_durations
+            arrays[f"{file_idx}/sample_composition_offsets"] = record.mp4.sample_composition_offsets
             arrays[f"{file_idx}/sample_sizes"] = record.mp4.sample_sizes
             arrays[f"{file_idx}/sample_offsets"] = record.mp4.sample_offsets
             arrays[f"{file_idx}/sync_samples"] = record.mp4.sync_samples
@@ -266,7 +267,7 @@ class EpisodeVideoManifest:
         """Load and validate the sidecar identity metadata."""
         with np.load(sidecar_path, allow_pickle=False) as data:
             payload = json.loads(bytes(data["manifest_json"]).decode("utf-8"))
-        if payload.get("version") != 2 or not isinstance(payload.get("sidecar"), dict):
+        if payload.get("version") != 3 or not isinstance(payload.get("sidecar"), dict):
             raise ValueError(f"Unsupported MP4 sidecar schema in {sidecar_path}")
         return payload["sidecar"]
 
@@ -301,7 +302,7 @@ class EpisodeVideoManifest:
 
         with np.load(path, allow_pickle=False) as data:
             payload = json.loads(bytes(data["manifest_json"]).decode("utf-8"))
-            if payload.get("version") != 2:
+            if payload.get("version") != 3:
                 raise ValueError(f"Unsupported MP4 sidecar schema in {path}")
             records = {}
             for file_idx, item in enumerate(payload["files"]):
@@ -310,6 +311,7 @@ class EpisodeVideoManifest:
                     for name in [
                         "sample_pts",
                         "sample_durations",
+                        "sample_composition_offsets",
                         "sample_sizes",
                         "sample_offsets",
                         "sync_samples",

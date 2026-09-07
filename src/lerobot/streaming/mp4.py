@@ -13,6 +13,7 @@ from __future__ import annotations
 import struct
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from functools import cached_property
 
 import numpy as np
 
@@ -69,9 +70,14 @@ class Mp4Index:
     stsd_body: bytes
     sample_pts: np.ndarray
     sample_durations: np.ndarray
+    sample_composition_offsets: np.ndarray
     sample_sizes: np.ndarray
     sample_offsets: np.ndarray
     sync_samples: np.ndarray
+
+    @cached_property
+    def _has_composition_offsets(self) -> bool:
+        return bool(np.any(self.sample_composition_offsets))
 
     def sample_slice(
         self,
@@ -91,19 +97,42 @@ class Mp4Index:
         pad = max(keyframe_pad_s, (to_ts - from_ts) * keyframe_pad_fraction)
         lo_ts = max(0.0, from_ts - pad)
         hi_ts = to_ts + pad
-        lo = int(np.searchsorted(self.sample_pts, lo_ts, side="left"))
-        hi = int(np.searchsorted(self.sample_pts, hi_ts, side="right")) - 1
-        lo = min(max(lo, 0), len(self.sample_pts) - 1)
-        hi = min(max(hi, lo), len(self.sample_pts) - 1)
+        if not self._has_composition_offsets:
+            # Keep logarithmic lookup for the common no-reordering video path.
+            lo = int(np.searchsorted(self.sample_pts, lo_ts, side="left"))
+            hi = int(np.searchsorted(self.sample_pts, hi_ts, side="right")) - 1
+            lo = min(max(lo, 0), len(self.sample_pts) - 1)
+            hi = min(max(hi, lo), len(self.sample_pts) - 1)
+            first_pts = float(self.sample_pts[lo])
+        else:
+            # Sample tables are in decode order, not presentation order (B-frames).
+            selected = np.flatnonzero((self.sample_pts >= lo_ts) & (self.sample_pts <= hi_ts))
+            if len(selected):
+                lo, hi = int(selected[0]), int(selected[-1])
+                first_pts = float(self.sample_pts[selected].min())
+            else:
+                lo = hi = int(np.argmin(np.abs(self.sample_pts - from_ts)))
+                first_pts = float(self.sample_pts[lo])
 
         if len(self.sync_samples):
-            prev_sync = self.sync_samples[self.sync_samples <= lo]
+            # Open-GOP leading B-frames can be decoded after a keyframe while
+            # being presented before it. Keep the preceding GOP in that case.
+            prev_sync = self.sync_samples[
+                (self.sync_samples <= lo) & (self.sample_pts[self.sync_samples] <= first_pts)
+            ]
             if len(prev_sync):
                 lo = int(prev_sync[-1])
             else:
                 lo = int(self.sync_samples[0])
                 if lo > hi:
                     hi = lo
+
+        if self._has_composition_offsets:
+            # Finish the GOP so later reference pictures do not leave holes in the
+            # presentation sequence. Approximate frame-index decoders require a
+            # complete, contiguous sequence, not just the requested B-frame packets.
+            next_sync = self.sync_samples[self.sync_samples > hi]
+            hi = int(next_sync[0]) - 1 if len(next_sync) else len(self.sample_pts) - 1
 
         offsets = self.sample_offsets[lo : hi + 1]
         sizes = self.sample_sizes[lo : hi + 1]
@@ -160,6 +189,7 @@ class Mp4Index:
             stsd_body=bytes.fromhex(data["stsd_body"]),
             sample_pts=arrays["sample_pts"],
             sample_durations=arrays["sample_durations"],
+            sample_composition_offsets=arrays["sample_composition_offsets"],
             sample_sizes=arrays["sample_sizes"],
             sample_offsets=arrays["sample_offsets"],
             sync_samples=arrays["sync_samples"],
@@ -295,7 +325,10 @@ def _parse_mp4_index_from_layout(
         sample_pts_units[0] = 0
         if len(sample_durations) > 1:
             sample_pts_units[1:] = np.cumsum(sample_durations[:-1], dtype=np.int64)
-    sample_pts = sample_pts_units.astype(np.float64) / float(mdhd_timescale)
+    composition_offsets = _parse_ctts(stbl, len(sample_sizes))
+    edit_offset = _parse_edit_offset(trak_payload, mvhd_timescale, mdhd_timescale)
+    sample_pts = (sample_pts_units + composition_offsets).astype(np.float64) / float(mdhd_timescale)
+    sample_pts += edit_offset
     sample_offsets = _sample_offsets(stsc, chunk_offsets, sample_sizes)
 
     return Mp4Index(
@@ -318,6 +351,7 @@ def _parse_mp4_index_from_layout(
         stsd_body=stsd_body,
         sample_pts=sample_pts,
         sample_durations=sample_durations,
+        sample_composition_offsets=composition_offsets,
         sample_sizes=sample_sizes,
         sample_offsets=sample_offsets,
         sync_samples=sync_samples,
@@ -341,7 +375,8 @@ def synthesize_mp4(index: Mp4Index, sample_slice: Mp4SampleSlice, mdat_payload: 
 
     durations = index.sample_durations[lo:hi]
     sync = index.sync_samples[(index.sync_samples >= lo) & (index.sync_samples < hi)] - lo + 1
-    moov = _make_moov(index, durations, sizes, rel_offsets, sync, mdat_data_offset=0)
+    composition_offsets = index.sample_composition_offsets[lo:hi]
+    moov = _make_moov(index, durations, sizes, rel_offsets, sync, composition_offsets, mdat_data_offset=0)
     header_size = len(index.ftyp) + len(moov)
     mdat_header_size = 8 if len(mdat_payload) + 8 <= 0xFFFFFFFF else 16
     moov = _make_moov(
@@ -350,6 +385,7 @@ def synthesize_mp4(index: Mp4Index, sample_slice: Mp4SampleSlice, mdat_payload: 
         sizes,
         rel_offsets,
         sync,
+        composition_offsets,
         mdat_data_offset=header_size + mdat_header_size,
     )
     return index.ftyp + moov + _box(b"mdat", mdat_payload)
@@ -372,7 +408,8 @@ def synthesized_mp4_size(index: Mp4Index, sample_slice: Mp4SampleSlice) -> int:
 
     durations = index.sample_durations[lo:hi]
     sync = index.sync_samples[(index.sync_samples >= lo) & (index.sync_samples < hi)] - lo + 1
-    moov = _make_moov(index, durations, sizes, rel_offsets, sync, mdat_data_offset=0)
+    composition_offsets = index.sample_composition_offsets[lo:hi]
+    moov = _make_moov(index, durations, sizes, rel_offsets, sync, composition_offsets, mdat_data_offset=0)
     header_size = len(index.ftyp) + len(moov)
     mdat_header_size = 8 if sample_slice.byte_length + 8 <= 0xFFFFFFFF else 16
     moov = _make_moov(
@@ -381,6 +418,7 @@ def synthesized_mp4_size(index: Mp4Index, sample_slice: Mp4SampleSlice) -> int:
         sizes,
         rel_offsets,
         sync,
+        composition_offsets,
         mdat_data_offset=header_size + mdat_header_size,
     )
     return len(index.ftyp) + len(moov) + mdat_header_size + sample_slice.byte_length
@@ -501,6 +539,46 @@ def _parse_stts(payload: bytes) -> list[tuple[int, int]]:
     return out
 
 
+def _parse_ctts(stbl: bytes, sample_count: int) -> np.ndarray:
+    box = _one(list(_children(stbl, 0, len(stbl))), b"ctts", required=False)
+    if box is None:
+        return np.zeros(sample_count, dtype=np.int64)
+    payload = stbl[box.payload_start : box.end]
+    version = payload[0]
+    if version not in (0, 1):
+        raise ValueError(f"Unsupported ctts version {version}")
+    count = struct.unpack_from(">I", payload, 4)[0]
+    entries = [
+        struct.unpack_from(">Ii" if version == 1 else ">II", payload, 8 + idx * 8) for idx in range(count)
+    ]
+    return _expand_stts(entries, sample_count)
+
+
+def _parse_edit_offset(trak: bytes, movie_timescale: int, media_timescale: int) -> float:
+    edts = _one(list(_children(trak, 0, len(trak))), b"edts", required=False)
+    if edts is None:
+        return 0.0
+    payload = _find_descendant(trak[edts.payload_start : edts.end], [b"elst"])
+    version = payload[0]
+    if version not in (0, 1):
+        raise ValueError(f"Unsupported elst version {version}")
+    count = struct.unpack_from(">I", payload, 4)[0]
+    entry_size = 20 if version == 1 else 12
+    entries = [
+        struct.unpack_from(">Qqhh" if version == 1 else ">Iihh", payload, 8 + idx * entry_size)
+        for idx in range(count)
+    ]
+    # A single rate-one edit, optionally preceded by empty time, is the usual
+    # encoder delay layout. Repeated/trimmed timelines need more than a constant
+    # timestamp translation and must not silently produce incorrect images.
+    empty_duration = 0
+    if len(entries) == 2 and entries[0][1] == -1 and entries[0][2:] == (1, 0):
+        empty_duration = entries.pop(0)[0]
+    if len(entries) != 1 or entries[0][1] < 0 or entries[0][2:] != (1, 0):
+        raise ValueError("Unsupported MP4 edit list: expected one rate-one media edit")
+    return empty_duration / movie_timescale - entries[0][1] / media_timescale
+
+
 def _expand_stts(entries: list[tuple[int, int]], sample_count: int) -> np.ndarray:
     values = np.empty(sample_count, dtype=np.int64)
     pos = 0
@@ -597,10 +675,24 @@ def _make_moov(
     sizes: np.ndarray,
     rel_offsets: np.ndarray,
     sync_samples: np.ndarray,
+    composition_offsets: np.ndarray,
     *,
     mdat_data_offset: int,
 ) -> bytes:
     duration = int(durations.sum())
+    if np.any(composition_offsets) and len(sync_samples) > 1:
+        # Approximate decoders seek using sync samples without scanning packets.
+        # An internal open-GOP keyframe is later than its leading B-frames: do
+        # not seek there and accidentally skip a requested preceding picture.
+        presentation_times = np.cumsum(durations) - durations + composition_offsets
+        safe_sync_samples = [int(sync_samples[0])]
+        for position, sample in enumerate(sync_samples[1:], start=1):
+            next_sample = (
+                int(sync_samples[position + 1]) if position + 1 < len(sync_samples) else len(sizes) + 1
+            )
+            if not np.any(presentation_times[sample : next_sample - 1] < presentation_times[sample - 1]):
+                safe_sync_samples.append(int(sample))
+        sync_samples = np.array(safe_sync_samples, dtype=np.int64)
     stco_values = [int(mdat_data_offset + value) for value in rel_offsets]
     if any(value > 0xFFFFFFFF for value in stco_values):
         offset_box = _co64(stco_values)
@@ -610,6 +702,7 @@ def _make_moov(
         b"stbl",
         _box(b"stsd", index.stsd_body)
         + _stts(durations)
+        + (_ctts(composition_offsets) if np.any(composition_offsets) else b"")
         + _stsc_one_sample_per_chunk(len(sizes))
         + _stsz(sizes)
         + offset_box
@@ -617,7 +710,15 @@ def _make_moov(
     )
     minf = _box(b"minf", _vmhd() + _dinf() + stbl)
     mdia = _box(b"mdia", _mdhd(index.timescale, duration) + _hdlr() + minf)
-    trak = _box(b"trak", _tkhd(index.track_id, duration, index.width, index.height) + mdia)
+    # Preserve decode/presentation offsets, but put the first keyframe at local
+    # time zero. The manifest stores its original presentation timestamp.
+    media_time = int(composition_offsets[0])
+    edit = (
+        _box(b"edts", _full_box(b"elst", 1, 0, struct.pack(">IQqhh", 1, duration, media_time, 1, 0)))
+        if media_time
+        else b""
+    )
+    trak = _box(b"trak", _tkhd(index.track_id, duration, index.width, index.height) + edit + mdia)
     return _box(b"moov", _mvhd(index.timescale, duration, index.track_id + 1) + trak)
 
 
@@ -686,6 +787,20 @@ def _stts(durations: np.ndarray) -> bytes:
         struct.pack(">II", count, delta) for count, delta in runs
     )
     return _full_box(b"stts", 0, 0, payload)
+
+
+def _ctts(offsets: np.ndarray) -> bytes:
+    runs: list[list[int]] = []
+    for offset in offsets.tolist():
+        if runs and runs[-1][1] == offset:
+            runs[-1][0] += 1
+        else:
+            runs.append([1, offset])
+    signed = bool(np.any(offsets < 0))
+    payload = struct.pack(">I", len(runs)) + b"".join(
+        struct.pack(">Ii" if signed else ">II", count, offset) for count, offset in runs
+    )
+    return _full_box(b"ctts", int(signed), 0, payload)
 
 
 def _stsc_one_sample_per_chunk(sample_count: int) -> bytes:

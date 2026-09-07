@@ -407,7 +407,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         retained_video_episodes: set[int] = set()
         if video_cache is not None:
             for episode_index in planner.resident:
-                video_cache.retain_episode(episode_index)
+                video_cache.retain_episode(episode_index, wait=True)
                 retained_video_episodes.add(episode_index)
 
         def submit(episode_index: int) -> Future[datasets.Dataset]:
@@ -423,8 +423,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 if episode_index in scheduled_episodes:
                     continue
                 submit(episode_index)
-                if video_cache is not None:
-                    video_cache.submit_prefetch(episode_index)
+                if video_cache is not None and not video_cache.submit_prefetch(episode_index):
+                    continue
                 scheduled_episodes.add(episode_index)
 
         def decode_item(
@@ -449,7 +449,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             if video_cache is not None:
                 for admitted_episode in planner.newly_admitted:
                     if admitted_episode not in retained_video_episodes:
-                        video_cache.retain_episode(admitted_episode)
+                        # The last anchor may still be decoding after planner eviction.
+                        # Wait for its byte lease before admitting the replacement.
+                        video_cache.retain_episode(admitted_episode, wait=True)
                         retained_video_episodes.add(admitted_episode)
             planner.evicted.clear()
             planner.newly_admitted.clear()

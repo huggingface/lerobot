@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -49,6 +50,7 @@ def _record(path: str = "videos/camera/chunk-000/file-000.mp4", size: int = 128)
         stsd_body=b"",
         sample_pts=np.array([0.0]),
         sample_durations=arrays,
+        sample_composition_offsets=arrays,
         sample_sizes=arrays,
         sample_offsets=arrays,
         sync_samples=arrays,
@@ -91,6 +93,31 @@ def test_ensure_reuses_valid_local_sidecar(tmp_path: Path) -> None:
 
     assert resolved == path
     assert build_calls == 0
+
+
+def test_ensure_rebuilds_sidecar_without_composition_timing(tmp_path: Path) -> None:
+    spec = _spec()
+    path = sidecar_cache_path(tmp_path, spec)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    old_spec = SidecarSpec(spec.repo_id, spec.revision, spec.data_root, spec.source_files, schema_version=2)
+    # Schema 2 recorded decode timestamps as presentation timestamps and cannot
+    # safely be reused even when its source identity and file sizes match.
+    np.savez_compressed(
+        path, manifest_json=json.dumps({"version": 2, "sidecar": old_spec.to_dict()}).encode()
+    )
+    assert path != sidecar_cache_path(tmp_path, old_spec)
+    assert not EpisodeVideoManifest.validate_file_sidecar(path, spec)
+    with pytest.raises(ValueError, match="Unsupported MP4 sidecar schema"):
+        EpisodeVideoManifest.load_file_sidecar(path)
+    build_calls = []
+
+    def build(target: Path, target_spec: SidecarSpec) -> None:
+        build_calls.append(target_spec)
+        _write_valid(target, target_spec)
+
+    assert ensure_mp4_sidecar(spec, tmp_path, build=build) == path
+    assert build_calls == [spec]
+    assert EpisodeVideoManifest.validate_file_sidecar(path, spec)
 
 
 def test_ensure_downloads_valid_published_sidecar(tmp_path: Path) -> None:

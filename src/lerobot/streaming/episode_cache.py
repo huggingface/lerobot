@@ -19,11 +19,14 @@ from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from lerobot.streaming.manifest import EpisodeVideoManifest
 from lerobot.streaming.mp4 import Mp4SampleSlice, synthesize_mp4
 from lerobot.streaming.range_fetch import make_range_fetcher
+
+if TYPE_CHECKING:
+    import torch
 
 logger = logging.getLogger(__name__)
 
@@ -80,13 +83,17 @@ class EpisodeByteCache:
         self._cache: OrderedDict[tuple[int, str], dict[str, Any]] = OrderedDict()
         self._decoders: OrderedDict[tuple[int, str], Any] = OrderedDict()
         self._decoder_locks: dict[tuple[int, str], threading.Lock] = {}
-        self._futures: dict[tuple[int, str], Future[dict[str, Any]]] = {}
+        self._futures: dict[tuple[int, str], Future[None]] = {}
+        self._reservations: OrderedDict[int, int] = OrderedDict()
+        self._reserved_bytes = 0
         self._retained_episodes: dict[int, int] = {}
         self._decoder_fallback_count = 0
         self._fallback_decoders: set[tuple[int, str]] = set()
         self._fallback_warning_emitted = False
         self._bytes = 0
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._space_available = threading.Condition(self._lock)
+        self._closed = False
         self._timing_totals = {
             "lookup_s": 0.0,
             "fetch_s": 0.0,
@@ -97,6 +104,9 @@ class EpisodeByteCache:
 
     def close(self) -> None:
         """Close fetchers, executors, decoders, and cached state."""
+        with self._space_available:
+            self._closed = True
+            self._space_available.notify_all()
         self._pool.shutdown(wait=True, cancel_futures=True)
         with self._lock:
             decoders = list(self._decoders.values())
@@ -107,6 +117,8 @@ class EpisodeByteCache:
             self._retained_episodes.clear()
             self._fallback_decoders.clear()
             self._bytes = 0
+            self._reservations.clear()
+            self._reserved_bytes = 0
         for decoder in decoders:
             _close_decoder(decoder)
         self.fetcher.close()
@@ -119,31 +131,56 @@ class EpisodeByteCache:
         """Close the cache when leaving its context."""
         self.close()
 
-    def submit_prefetch(self, episode_index: int) -> None:
-        """Schedule every camera payload for an episode."""
-        for camera_key in self.manifest.video_keys:
-            self._submit(episode_index, camera_key)
+    def submit_prefetch(self, episode_index: int) -> bool:
+        """Schedule all cameras if the episode fits; never wait for speculative work.
 
-    def retain_episode(self, episode_index: int) -> None:
-        """Prevent an episode from being evicted until released."""
-        with self._lock:
+        A False result means the caller may retry after releasing another episode.
+        """
+        with self._space_available:
+            if not self._reserve_locked(episode_index):
+                return False
+            for camera_key in self.manifest.video_keys:
+                self._submit_locked(episode_index, camera_key)
+            return True
+
+    def retain_episode(self, episode_index: int, *, wait: bool = False) -> None:
+        """Reserve all camera bytes and prevent eviction until released.
+
+        With wait=True, admission waits for another thread's fetch or decode lease
+        to finish. Callers must not wait on leases that only they can release.
+        """
+        with self._space_available:
+            while not self._reserve_locked(episode_index):
+                if not wait:
+                    raise MemoryError(f"Episode {episode_index} does not fit the available byte budget")
+                self._space_available.wait()
             self._retained_episodes[episode_index] = self._retained_episodes.get(episode_index, 0) + 1
 
     def release_episode(self, episode_index: int) -> None:
-        """Release one retention lease and evict bytes if needed."""
-        with self._lock:
+        """Release one retention lease and wake blocked admissions."""
+        with self._space_available:
             count = self._retained_episodes.get(episode_index, 0)
             if count <= 1:
                 self._retained_episodes.pop(episode_index, None)
             else:
                 self._retained_episodes[episode_index] = count - 1
-            self._evict_locked()
+            self._space_available.notify_all()
 
     @property
     def resident_bytes(self) -> int:
-        """Return the current synthesized-byte footprint."""
+        """Return all completed payload bytes, including unconsumed prefetches."""
         with self._lock:
             return self._bytes
+
+    @property
+    def reserved_bytes(self) -> int:
+        """Return bytes reserved for pending, completed, and leased episode payloads.
+
+        This bounds cached compressed payloads, not decoder memory, decoded tensors,
+        or temporary range-fetch and synthesis buffers.
+        """
+        with self._lock:
+            return self._reserved_bytes
 
     @property
     def open_decoder_count(self) -> int:
@@ -176,7 +213,7 @@ class EpisodeByteCache:
                 if key in self._cache:
                     continue
                 future = self._futures.get(key)
-            if future is None or not future.done():
+            if future is None or not future.done() or future.cancelled() or future.exception() is not None:
                 return False
         return True
 
@@ -186,6 +223,13 @@ class EpisodeByteCache:
 
     def get_decoder(self, episode_index: int, camera_key: str) -> Any:
         """Return or open the bounded cached decoder for one episode camera."""
+        self.retain_episode(episode_index)
+        try:
+            return self._get_decoder(episode_index, camera_key)
+        finally:
+            self.release_episode(episode_index)
+
+    def _get_decoder(self, episode_index: int, camera_key: str) -> Any:
         key = (episode_index, camera_key)
         entry = self._get_entry(episode_index, camera_key)
         with self._lock:
@@ -239,8 +283,15 @@ class EpisodeByteCache:
                 logger.debug("Using PyAV decoder fallback for synthesized episode video %s", key)
             return decoder
 
-    def get_frames(self, episode_index: int, camera_key: str, timestamps: list[float]):
+    def get_frames(self, episode_index: int, camera_key: str, timestamps: list[float]) -> torch.Tensor:
         """Decode source-timeline timestamps from an episode-local MP4."""
+        self.retain_episode(episode_index)
+        try:
+            return self._get_frames(episode_index, camera_key, timestamps)
+        finally:
+            self.release_episode(episode_index)
+
+    def _get_frames(self, episode_index: int, camera_key: str, timestamps: list[float]) -> torch.Tensor:
         key = (episode_index, camera_key)
         span = self.manifest.lookup(episode_index, camera_key)
         local_ts = [ts - span.source_start_pts for ts in timestamps]
@@ -300,44 +351,74 @@ class EpisodeByteCache:
             summary.update(fetcher_summary())
         return summary
 
-    def _submit(self, episode_index: int, camera_key: str) -> Future[dict[str, Any]]:
+    def _submit_locked(self, episode_index: int, camera_key: str) -> Future[None]:
         key = (episode_index, camera_key)
-        with self._lock:
-            if key in self._cache:
-                future: Future[dict[str, Any]] = Future()
-                future.set_result(self._cache[key])
-                return future
-            future = self._futures.get(key)
-            if future is None:
-                future = self._pool.submit(self._fetch_and_synthesize, episode_index, camera_key)
-                self._futures[key] = future
-            return future
+        future = self._futures.get(key)
+        if future is None:
+            future = self._pool.submit(self._fetch_and_store, episode_index, camera_key)
+            self._futures[key] = future
+            future.add_done_callback(self._notify_fetch_done)
+        return future
+
+    def _notify_fetch_done(self, _future: Future[None]) -> None:
+        with self._space_available:
+            self._space_available.notify_all()
+
+    def _reserve_locked(self, episode_index: int) -> bool:
+        if self._closed:
+            raise RuntimeError("Episode byte cache is closed")
+        if episode_index in self._reservations:
+            self._reservations.move_to_end(episode_index)
+            return True
+        size = self.manifest.episode_byte_size(episode_index)
+        if size > self.byte_budget:
+            raise MemoryError(
+                f"Episode {episode_index} exceeds the byte budget ({size} > {self.byte_budget})"
+            )
+        while self._reserved_bytes + size > self.byte_budget:
+            evicted = next(
+                (
+                    episode
+                    for episode in self._reservations
+                    if episode not in self._retained_episodes
+                    and all(future.done() for key, future in self._futures.items() if key[0] == episode)
+                ),
+                None,
+            )
+            if evicted is None:
+                return False
+            self._evict_episode_locked(evicted)
+        self._reservations[episode_index] = size
+        self._reserved_bytes += size
+        return True
 
     def _get_entry(self, episode_index: int, camera_key: str) -> dict[str, Any]:
-        key = (episode_index, camera_key)
-        with self._lock:
-            entry = self._cache.get(key)
-            if entry is not None:
-                self._cache.move_to_end(key)
-                return entry
-        future = self._submit(episode_index, camera_key)
-        entry = future.result()
+        self.retain_episode(episode_index)
+        try:
+            key = (episode_index, camera_key)
+            with self._lock:
+                future = self._futures.get(key)
+                if future is None:
+                    future = self._submit_locked(episode_index, camera_key)
+            future.result()
+            with self._lock:
+                return self._cache[key]
+        finally:
+            self.release_episode(episode_index)
+
+    def _fetch_and_store(self, episode_index: int, camera_key: str) -> None:
+        # Futures carry no payload: the accounted cache is the sole owner of completed bytes.
+        entry = self._fetch_and_synthesize(episode_index, camera_key)
         store_start = time.perf_counter()
         with self._lock:
-            self._futures.pop(key, None)
-            existing = self._cache.get(key)
-            if existing is not None:
-                self._cache.move_to_end(key)
-                return existing
-            self._cache[key] = entry
-            self._bytes += len(entry["bytes"])
-            try:
-                self._evict_locked()
-            except MemoryError:
-                failed_entry = self._cache.pop(key, None)
-                if failed_entry is not None:
-                    self._bytes -= len(failed_entry["bytes"])
-                raise
+            size = len(entry["bytes"])
+            episode_bytes = sum(
+                len(value["bytes"]) for key, value in self._cache.items() if key[0] == episode_index
+            )
+            if episode_bytes + size > self._reservations[episode_index]:
+                raise ValueError(f"Synthesized episode {episode_index} exceeds its indexed byte reservation")
+            self._cache[episode_index, camera_key] = entry
+            self._bytes += size
             timings = entry.pop("_timings", None)
             if timings is not None:
                 self._timing_totals["lookup_s"] += timings["lookup_s"]
@@ -345,20 +426,15 @@ class EpisodeByteCache:
                 self._timing_totals["synthesize_s"] += timings["synthesize_s"]
                 self._timing_totals["store_s"] += time.perf_counter() - store_start
                 self._timing_totals["jobs"] += 1
-            return entry
 
-    def _evict_locked(self) -> None:
-        while self._bytes > self.byte_budget:
-            key = next(
-                (candidate for candidate in self._cache if candidate[0] not in self._retained_episodes),
-                None,
-            )
-            if key is None:
-                raise MemoryError(
-                    f"Retained episode bytes exceed byte budget ({self._bytes} > {self.byte_budget})"
-                )
-            entry = self._cache.pop(key)
-            self._bytes -= len(entry["bytes"])
+    def _evict_episode_locked(self, episode_index: int) -> None:
+        self._reserved_bytes -= self._reservations.pop(episode_index)
+        for camera_key in self.manifest.video_keys:
+            key = (episode_index, camera_key)
+            entry = self._cache.pop(key, None)
+            if entry is not None:
+                self._bytes -= len(entry["bytes"])
+            self._futures.pop(key, None)
             decoder = self._decoders.pop(key, None)
             self._decoder_locks.pop(key, None)
             self._fallback_decoders.discard(key)

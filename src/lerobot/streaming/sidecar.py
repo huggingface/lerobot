@@ -24,7 +24,7 @@ from filelock import FileLock, Timeout
 
 from lerobot.streaming.manifest import EpisodeVideoManifest
 
-SIDECAR_SCHEMA_VERSION = 2
+SIDECAR_SCHEMA_VERSION = 3
 
 
 class SidecarLockTimeoutError(TimeoutError):

@@ -113,6 +113,7 @@ def _fake_cache(
     video_backend="torchcodec",
 ):
     manifest = EpisodeVideoManifest(video_keys=["camera"], files=[], spans={})
+    monkeypatch.setattr(manifest, "episode_byte_size", lambda _episode: 5)
     cache = EpisodeByteCache(
         manifest,
         tmp_path,
@@ -143,11 +144,11 @@ def test_byte_cache_does_not_evict_retained_episode(monkeypatch, tmp_path):
 
 
 def test_byte_cache_rejects_retained_set_larger_than_budget(monkeypatch, tmp_path):
-    with _fake_cache(monkeypatch, tmp_path, byte_budget=4) as cache:
+    with (
+        _fake_cache(monkeypatch, tmp_path, byte_budget=4) as cache,
+        pytest.raises(MemoryError, match="byte budget"),
+    ):
         cache.retain_episode(0)
-
-        with pytest.raises(MemoryError, match="byte budget"):
-            cache.ensure_ready(0)
 
 
 def test_decoder_count_has_independent_limit(monkeypatch, tmp_path):

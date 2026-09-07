@@ -54,6 +54,12 @@ uv run python scripts/build_mp4_sidecar.py \
 Publication is always explicit. Add `--push` only after validating the complete-dataset sidecar.
 Subset sidecars cannot be published.
 
+Sidecar schema v3 preserves MP4 composition timing and encoder-delay edits, including B-frame
+videos. Older sidecars are rebuilt automatically into a separate revision-keyed cache entry;
+they must also be rebuilt before explicit publication. Reordered videos include the end of the
+last GOP in each fetched span so decoded frame indices remain contiguous. Repeated or non-unit-rate
+MP4 edit timelines are rejected rather than silently returning incorrectly aligned frames.
+
 ## Configuration
 
 The production defaults are:
@@ -72,7 +78,14 @@ The production defaults are:
 
 The active episode set is capped by both episode count and the exact synthesized mini-MP4 sizes
 computed from the sidecar. An episode larger than the complete rank budget fails before training
-fetches its payload. The cache, decoder LRU, and decoded-batch queue remain independently bounded.
+fetches its payload. Reservations cover pending fetches, completed prefetches, and episodes still
+being decoded. At a full budget, speculative prefetch pauses and replacement admission waits for
+the last decode to release its bytes. `EpisodeByteCache.reserved_bytes` reports these reservations;
+`resident_bytes` reports all completed payloads, even before their first sample is requested.
+
+This is a compressed-payload budget, not a process RSS limit: range-fetch/synthesis scratch buffers,
+decoder state, Parquet tables, and decoded tensors need additional memory. The decoder LRU and
+decoded-sample queue have separate limits.
 Start with a smaller pool or budget on memory-constrained hosts:
 
 ```bash
