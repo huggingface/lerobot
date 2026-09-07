@@ -18,6 +18,7 @@ import os
 from collections import deque
 from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -44,6 +45,12 @@ from .streaming_sidecar import (
 )
 from .utils import check_version_compatibility
 from .video_utils import decode_video_frames_pyav
+
+
+@dataclass(frozen=True)
+class _EpisodeData:
+    dataset: datasets.Dataset
+    columns: dict[str, datasets.Dataset]
 
 
 def _balanced_episode_shards(
@@ -401,7 +408,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             max_workers=self.decode_threads,
             thread_name_prefix="lerobot-decode",
         )
-        episode_futures: dict[int, Future[datasets.Dataset]] = {}
+        episode_futures: dict[int, Future[_EpisodeData]] = {}
         decoded_futures: deque[Future[dict]] = deque()
         scheduled_episodes: set[int] = set()
         retained_video_episodes: set[int] = set()
@@ -410,7 +417,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 video_cache.retain_episode(episode_index, wait=True)
                 retained_video_episodes.add(episode_index)
 
-        def submit(episode_index: int) -> Future[datasets.Dataset]:
+        def submit(episode_index: int) -> Future[_EpisodeData]:
             future = episode_futures.get(episode_index)
             if future is None:
                 future = parquet_executor.submit(self._load_episode_dataset, parquet_reader, episode_index)
@@ -428,7 +435,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 scheduled_episodes.add(episode_index)
 
         def decode_item(
-            episode_future: Future[datasets.Dataset],
+            episode_future: Future[_EpisodeData],
             episode_index: int,
             frame_index: int,
         ) -> dict:
@@ -540,7 +547,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self,
         reader: EpisodeParquetReader,
         episode_index: int,
-    ) -> datasets.Dataset:
+    ) -> _EpisodeData:
         table = reader.read_episode(
             self.meta.get_data_file_path(episode_index),
             episode_index=episode_index,
@@ -550,7 +557,12 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         # while retaining the episode-sized memory bound.
         dataset = datasets.Dataset.from_dict(table.to_pydict(), features=self._hf_features)
         dataset.set_transform(hf_transform_to_torch)
-        return dataset
+        # Zero-copy views share the episode's lifetime and fixed HF transform. Project
+        # before row lookup so action/state windows cannot decode unrelated images.
+        column_keys = set(self.delta_indices or ()) - set(self.meta.video_keys)
+        if self.meta.video_keys:
+            column_keys.add("timestamp")
+        return _EpisodeData(dataset, {key: dataset.select_columns(key) for key in sorted(column_keys)})
 
     def _make_video_cache(
         self,
@@ -585,13 +597,14 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
     def _make_episode_item(
         self,
-        episode_dataset: datasets.Dataset,
+        episode_data: _EpisodeData,
         episode_index: int,
         frame_index: int,
         *,
         video_cache: EpisodeByteCache | None,
         apply_image_transforms: bool = True,
     ) -> dict:
+        episode_dataset = episode_data.dataset
         item = episode_dataset[frame_index]
         episode = self.meta.episodes[episode_index]
         episode_start = int(episode["dataset_from_index"])
@@ -608,7 +621,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                     ]
                 )
                 if key not in self.meta.video_keys:
-                    item[key] = torch.stack(episode_dataset[target_indices][key])
+                    item[key] = torch.stack(episode_data.columns[key][target_indices][key])
 
         if self.meta.video_keys:
             if video_cache is None:
@@ -623,7 +636,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 else:
                     target_indices = [frame_index]
                 local_timestamps = [
-                    float(episode_dataset[index]["timestamp"].item()) for index in target_indices
+                    float(timestamp.item())
+                    for timestamp in episode_data.columns["timestamp"][target_indices]["timestamp"]
                 ]
                 from_timestamp = float(episode_metadata[f"videos/{video_key}/from_timestamp"])
                 query_timestamps = [from_timestamp + timestamp for timestamp in local_timestamps]
