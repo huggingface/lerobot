@@ -492,6 +492,89 @@ def resume_after_prepare(
         load_scheduler_state(scheduler, training_state_dir)
 
 
+def _is_fsdp2(model) -> bool:
+    """Whether ``model`` is an FSDP2 ``fully_shard`` module.
+
+    FSDP1 wraps the root in ``FullyShardedDataParallel``; FSDP2 mutates wrapped modules to implement
+    ``FSDPModule``. The two APIs have incompatible optimizer-state conversion paths, so this check
+    must stay local to the checkpoint helpers rather than relying on Accelerate's shared FSDP enum.
+    """
+    from torch.distributed.fsdp import FSDPModule
+
+    return isinstance(model, FSDPModule)
+
+
+def gather_fsdp_state_dicts(model, optimizer) -> tuple[dict, dict]:
+    """Gather the full (unsharded) model and optimizer state dicts under FSDP.
+
+    This must run on every rank with the prepared model and optimizer. FSDP1's ``state_dict_type``
+    and FSDP2's distributed-checkpoint APIs both materialize CPU full state only on rank 0; other
+    ranks receive empty dictionaries. The resulting parameter-FQN keyed optimizer state is portable
+    across FSDP world sizes and is reshaped by ``load_fsdp_optimizer_state`` on resume.
+    """
+    if _is_fsdp2(model):
+        from torch.distributed.checkpoint.state_dict import (
+            StateDictOptions,
+            get_model_state_dict,
+            get_optimizer_state_dict,
+        )
+
+        # FSDP2 returns the full CPU tensors only on rank 0, matching the FSDP1 rank0_only
+        # contract below; non-main ranks still join the collective but receive empty dictionaries.
+        options = StateDictOptions(full_state_dict=True, cpu_offload=True, broadcast_from_rank0=True)
+        return get_model_state_dict(model, options=options), get_optimizer_state_dict(
+            model, optimizer, options=options
+        )
+
+    from torch.distributed.fsdp import (
+        FullOptimStateDictConfig,
+        FullStateDictConfig,
+        FullyShardedDataParallel as FSDP,  # noqa F401
+        StateDictType,
+    )
+
+    state_cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+    optim_cfg = FullOptimStateDictConfig(offload_to_cpu=True, rank0_only=True)
+    with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, state_cfg, optim_cfg):
+        model_state_dict = model.state_dict()
+        optim_state_dict = FSDP.optim_state_dict(model, optimizer)
+    return model_state_dict, optim_state_dict
+
+
+def load_fsdp_optimizer_state(model, optimizer, checkpoint_dir: Path) -> None:
+    """Load a portable FSDP optimizer state into the prepared optimizer.
+
+    This cross-rank operation runs after ``accelerator.prepare()``. FSDP1 converts the saved full
+    state into its current shard topology, while FSDP2 performs the corresponding DTensor-aware
+    conversion in ``set_optimizer_state_dict``. Do not call ``optimizer.load_state_dict`` after the
+    FSDP2 setter: it has already installed the correctly sharded state.
+    """
+    full_osd = load_optimizer_state_dict(checkpoint_dir / TRAINING_STATE_DIR)
+
+    if _is_fsdp2(model):
+        from torch.distributed.checkpoint.state_dict import StateDictOptions, set_optimizer_state_dict
+
+        set_optimizer_state_dict(
+            model,
+            optimizer,
+            full_osd,
+            options=StateDictOptions(full_state_dict=True, cpu_offload=True, broadcast_from_rank0=True),
+        )
+        return
+
+    from torch.distributed.fsdp import (
+        FullOptimStateDictConfig,
+        FullStateDictConfig,
+        FullyShardedDataParallel as FSDP,  # noqa F401
+        StateDictType,
+    )
+
+    # Every rank reads the same full state from the shared checkpoint directory.
+    state_cfg = FullStateDictConfig(rank0_only=False)
+    optim_cfg = FullOptimStateDictConfig(rank0_only=False)
+    with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, state_cfg, optim_cfg):
+        sharded_osd = FSDP.optim_state_dict_to_load(model=model, optim=optimizer, optim_state_dict=full_osd)
+    optimizer.load_state_dict(sharded_osd)
 # ---------------------------------------------------------------------------------------------
 # Hub: checkpoint push (resume artifact) and publishing (distribution artifact)
 # ---------------------------------------------------------------------------------------------

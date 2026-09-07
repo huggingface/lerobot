@@ -1,0 +1,49 @@
+states:
+  - observation.state.arm.position:
+      origin_keys:
+        - observation.state:
+            start: 0
+            end: 6
+        - observation.state:
+            start: 7
+            end: 13
+
+  - observation.state.effector.position:
+      origin_keys:
+        - observation.state:
+            start: 6
+            end: 7
+        - observation.state:
+            start: 13
+            end: 14
+
+actions:
+  - action.arm.position:
+      origin_keys:
+          - action:
+              start: 0
+              end: 6
+          - action:
+              start: 7
+              end: 13
+      subtract_state: False
+
+  - action.effector.position:
+      origin_keys:
+          - action:
+              start: 6
+              end: 7
+          - action:
+              start: 13
+              end: 14
+      subtract_state: False
+
+images:
+  - observation.images.camera_top:
+      origin_keys:  observation.images.cam_high
+  - observation.images.camera_wrist_left:
+      origin_keys: observation.images.cam_left_wrist
+  - observation.images.camera_wrist_right:
+      origin_keys: observation.images.cam_right_wrist
+
+norm_stats: assets/norm_stats/robotwin_all_new_fullnorm.json

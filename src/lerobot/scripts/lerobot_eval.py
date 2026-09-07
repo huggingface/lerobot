@@ -773,9 +773,11 @@ def eval_main(cfg: EvalPipelineConfig):
         "rename_observations_processor": {"rename_map": cfg.rename_map},
     }
 
+    processor_pretrained_path = cfg.policy.pretrained_path
+
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
-        pretrained_path=cfg.policy.pretrained_path,
+        pretrained_path=processor_pretrained_path,
         preprocessor_overrides=preprocessor_overrides,
     )
 

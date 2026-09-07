@@ -30,6 +30,7 @@ from .schedulers import (
     load_scheduler_state,
     save_scheduler_state,
 )
+from .lingbot import LingbotAdamWConfig as LingbotAdamWConfig, LingbotMuonConfig as LingbotMuonConfig
 
 # NOTE: make_optimizer_and_scheduler is intentionally NOT re-exported here
 # to avoid circular dependencies (it imports lerobot.configs.train and lerobot.policies).
@@ -39,6 +40,8 @@ __all__ = [
     # Optimizer configs
     "AdamConfig",
     "AdamWConfig",
+    "LingbotAdamWConfig",
+    "LingbotMuonConfig",
     "MultiAdamConfig",
     "OptimizerConfig",
     "SGDConfig",

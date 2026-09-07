@@ -109,6 +109,9 @@ class AdamWConfig(OptimizerConfig):
     eps: float = 1e-8
     weight_decay: float = 1e-2
     grad_clip_norm: float = 10.0
+    # torch.optim.AdamW fused=True: single CUDA kernel per param group instead of
+    # the foreach loop over _fused ops; faster step on GPU, same math.
+    fused: bool = False
 
     def build(self, params: OptimizerParams) -> torch.optim.Optimizer:
         kwargs = asdict(self)
