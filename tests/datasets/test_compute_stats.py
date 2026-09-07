@@ -35,7 +35,11 @@ from lerobot.utils.constants import OBS_IMAGE, OBS_STATE
 
 
 def mock_load_image_as_numpy(path, dtype, channel_first):
-    return np.ones((3, 32, 32), dtype=dtype) if channel_first else np.ones((32, 32, 3), dtype=dtype)
+    is_depth = "depth" in str(path)
+    channels = 1 if is_depth else 3
+    out_dtype = np.uint16 if is_depth else dtype
+    arr = np.arange(channels * 32 * 32, dtype=out_dtype).reshape(channels, 32, 32)
+    return arr if channel_first else arr.transpose(1, 2, 0)
 
 
 @pytest.fixture
@@ -168,22 +172,33 @@ def test_get_feature_stats_single_value():
 
 
 def test_compute_episode_stats():
+    depth_key = "observation.images.depth"
     episode_data = {
         OBS_IMAGE: [f"image_{i}.jpg" for i in range(100)],
+        depth_key: [f"depth_{i}.tiff" for i in range(100)],
         OBS_STATE: np.random.rand(100, 10),
     }
     features = {
         OBS_IMAGE: {"dtype": "image"},
+        depth_key: {"dtype": "image", "info": {"is_depth_map": True}},
         OBS_STATE: {"dtype": "numeric"},
     }
 
     with patch("lerobot.datasets.compute_stats.load_image_as_numpy", side_effect=mock_load_image_as_numpy):
         stats = compute_episode_stats(episode_data, features)
 
-    assert OBS_IMAGE in stats and OBS_STATE in stats
+    assert OBS_IMAGE in stats and depth_key in stats and OBS_STATE in stats
     assert stats[OBS_IMAGE]["count"].item() == 100
+    assert stats[depth_key]["count"].item() == 100
     assert stats[OBS_STATE]["count"].item() == 100
     assert stats[OBS_IMAGE]["mean"].shape == (3, 1, 1)
+    assert stats[depth_key]["mean"].shape == (1, 1, 1)
+    # Depth keeps raw values: max far exceeds 255, proving no /255 and no uint8 downcast.
+    assert stats[depth_key]["min"].item() == 0.0
+    assert stats[depth_key]["max"].item() == 1023.0
+    # RGB is normalized to [0, 1].
+    np.testing.assert_allclose(stats[OBS_IMAGE]["min"], 0.0)
+    np.testing.assert_allclose(stats[OBS_IMAGE]["max"], 1.0)
 
 
 def test_assert_type_and_shape_valid():
@@ -618,25 +633,31 @@ def test_compute_episode_stats_with_custom_quantiles():
 def test_compute_episode_stats_with_image_data():
     """Test quantile computation with image features."""
     image_paths = [f"image_{i}.jpg" for i in range(50)]
+    depth_paths = [f"depth_{i}.tiff" for i in range(50)]
     episode_data = {
         "observation.image": image_paths,
+        "observation.images.depth": depth_paths,
         "action": np.random.normal(0, 1, (50, 5)),
     }
     features = {
         "observation.image": {"dtype": "image"},
+        "observation.images.depth": {"dtype": "image", "info": {"is_depth_map": True}},
         "action": {"dtype": "float32", "shape": (5,)},
     }
 
     with patch("lerobot.datasets.compute_stats.load_image_as_numpy", side_effect=mock_load_image_as_numpy):
         stats = compute_episode_stats(episode_data, features)
 
-    # Image quantiles should be normalized and have correct shape
-    assert "q01" in stats["observation.image"]
-    assert "q50" in stats["observation.image"]
-    assert "q99" in stats["observation.image"]
-    assert stats["observation.image"]["q01"].shape == (3, 1, 1)
-    assert stats["observation.image"]["q50"].shape == (3, 1, 1)
-    assert stats["observation.image"]["q99"].shape == (3, 1, 1)
+    # RGB image quantiles should be normalized and per-channel.
+    for q in ("q01", "q50", "q99"):
+        assert stats["observation.image"][q].shape == (3, 1, 1)
+
+    # Depth quantiles are single-channel and kept in raw (un-normalized) units.
+    for q in ("q01", "q50", "q99"):
+        assert stats["observation.images.depth"][q].shape == (1, 1, 1)
+    # Depth max stays in raw units (not /255, not uint8-capped); RGB is normalized.
+    assert stats["observation.images.depth"]["max"].item() == 1023.0
+    np.testing.assert_allclose(stats["observation.image"]["max"], 1.0)
 
     # Action quantiles should have correct shape
     assert stats["action"]["q01"].shape == (5,)
@@ -667,7 +688,7 @@ def test_compute_episode_stats_string_features_skipped():
 
 
 def test_aggregate_feature_stats_with_quantiles():
-    """Test aggregating feature stats that include quantiles."""
+    """Test aggregating feature stats that include quantiles uses conservative bounds."""
     stats_ft_list = [
         {
             "min": np.array([1.0]),
@@ -676,6 +697,9 @@ def test_aggregate_feature_stats_with_quantiles():
             "std": np.array([2.0]),
             "count": np.array([100]),
             "q01": np.array([1.5]),
+            "q10": np.array([2.0]),
+            "q50": np.array([5.0]),
+            "q90": np.array([9.0]),
             "q99": np.array([9.5]),
         },
         {
@@ -685,22 +709,21 @@ def test_aggregate_feature_stats_with_quantiles():
             "std": np.array([2.5]),
             "count": np.array([150]),
             "q01": np.array([2.5]),
+            "q10": np.array([3.0]),
+            "q50": np.array([6.0]),
+            "q90": np.array([11.0]),
             "q99": np.array([11.5]),
         },
     ]
 
     result = aggregate_feature_stats(stats_ft_list)
 
-    # Should preserve quantiles
-    assert "q01" in result
-    assert "q99" in result
-
-    # Verify quantile aggregation (weighted average)
-    expected_q01 = (1.5 * 100 + 2.5 * 150) / 250  # ≈ 2.1
-    expected_q99 = (9.5 * 100 + 11.5 * 150) / 250  # ≈ 10.7
-
-    np.testing.assert_allclose(result["q01"], np.array([expected_q01]), atol=1e-6)
-    np.testing.assert_allclose(result["q99"], np.array([expected_q99]), atol=1e-6)
+    # Lower quantiles use min; upper quantiles use max, regardless of counts.
+    np.testing.assert_allclose(result["q01"], np.array([1.5]), atol=1e-6)
+    np.testing.assert_allclose(result["q10"], np.array([2.0]), atol=1e-6)
+    np.testing.assert_allclose(result["q50"], np.array([5.0]), atol=1e-6)
+    np.testing.assert_allclose(result["q90"], np.array([11.0]), atol=1e-6)
+    np.testing.assert_allclose(result["q99"], np.array([11.5]), atol=1e-6)
 
 
 def test_aggregate_stats_mixed_quantiles():
@@ -857,3 +880,60 @@ def test_fixed_quantiles_always_computed():
         for q_key in expected_quantiles:
             assert q_key in episode_stats[key]
             assert episode_stats[key][q_key].shape == (features[key]["shape"][0],)
+
+
+def test_aggregate_stats_incremental_resume():
+    """Verify conservative bounds remain associative across incremental additions."""
+    # Start with episode 1 stats (narrow distribution)
+    ep1_stats = {
+        "action": {
+            "min": np.array([-10.0, -5.0]),
+            "max": np.array([10.0, 5.0]),
+            "mean": np.array([0.0, 0.0]),
+            "std": np.array([3.0, 1.5]),
+            "count": np.array([500]),
+            "q01": np.array([-9.0, -4.5]),
+            "q99": np.array([9.0, 4.5]),
+        },
+    }
+
+    # Episode 2: wider distribution on dim 0
+    ep2_stats = {
+        "action": {
+            "min": np.array([-30.0, -5.0]),
+            "max": np.array([40.0, 6.0]),
+            "mean": np.array([5.0, 0.5]),
+            "std": np.array([15.0, 2.0]),
+            "count": np.array([100]),
+            "q01": np.array([-25.0, -4.0]),
+            "q99": np.array([35.0, 5.5]),
+        },
+    }
+
+    # First aggregation: ep1 + ep2 (simulates save_episode for ep2)
+    cumulative = aggregate_stats([ep1_stats, ep2_stats])
+
+    # q01 should take min (conservative lower bound)
+    np.testing.assert_allclose(cumulative["action"]["q01"], np.array([-25.0, -4.5]))
+    # q99 should take max (conservative upper bound)
+    np.testing.assert_allclose(cumulative["action"]["q99"], np.array([35.0, 5.5]))
+
+    # Episode 3: even wider on dim 1
+    ep3_stats = {
+        "action": {
+            "min": np.array([-8.0, -20.0]),
+            "max": np.array([8.0, 25.0]),
+            "mean": np.array([0.0, 3.0]),
+            "std": np.array([2.0, 8.0]),
+            "count": np.array([50]),
+            "q01": np.array([-7.0, -18.0]),
+            "q99": np.array([7.0, 22.0]),
+        },
+    }
+
+    # Second aggregation: cumulative + ep3 (simulates save_episode for ep3)
+    cumulative2 = aggregate_stats([cumulative, ep3_stats])
+
+    # Bounds should widen monotonically
+    np.testing.assert_allclose(cumulative2["action"]["q01"], np.array([-25.0, -18.0]))
+    np.testing.assert_allclose(cumulative2["action"]["q99"], np.array([35.0, 22.0]))

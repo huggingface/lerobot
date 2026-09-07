@@ -18,6 +18,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from lerobot.utils.import_utils import _hidapi_available, _pygame_available, require_package
+from lerobot.utils.keyboard_input import pynput_can_capture
 
 from ..utils import TeleopEvents
 
@@ -123,6 +124,15 @@ class KeyboardController(InputController):
 
     def start(self):
         """Start the keyboard listener."""
+        if not pynput_can_capture():
+            logging.warning(
+                "Keyboard control is unavailable in this environment. pynput cannot capture keys "
+                "on Wayland or headless machines, or on macOS without Accessibility / Input "
+                "Monitoring permission. Keyboard motion will be inactive."
+            )
+            self.running = False
+            return
+
         from pynput import keyboard
 
         def on_press(key):

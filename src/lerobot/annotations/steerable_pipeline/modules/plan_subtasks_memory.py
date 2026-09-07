@@ -116,6 +116,8 @@ class PlanSubtasksMemoryModule:
             rows.extend(self._task_aug_rows([effective_task, *variants], t0))
 
         subtask_spans = self._generate_subtasks(record, task=effective_task)
+        if self.config.subtask_seeded_relabel and subtask_spans:
+            subtask_spans = self._seeded_relabel(record, subtask_spans, effective_task)
 
         # subtask rows
         for span in subtask_spans:
@@ -508,6 +510,51 @@ class PlanSubtasksMemoryModule:
         cleaned = self._stitch_full_coverage(cleaned, record)
 
         return cleaned
+
+    def _seeded_relabel(
+        self, record: EpisodeRecord, spans: list[dict[str, Any]], task: str
+    ) -> list[dict[str, Any]]:
+        """Re-label each span using prev/current/next segment contact sheets.
+
+        Boundaries are kept fixed; only ``text`` is refined. The original
+        ("seed") label is passed as a strong prior so the model verifies and
+        minimally corrects it rather than re-describing from scratch — the
+        macrodata seeded-relabeling step. One VLM call per span.
+        """
+        n = len(spans)
+        out: list[dict[str, Any]] = []
+        for i, span in enumerate(spans):
+            content: list[dict[str, Any]] = []
+            if i > 0:
+                content += self._segment_sheet(record, spans[i - 1])
+            content += self._segment_sheet(record, span)
+            if i < n - 1:
+                content += self._segment_sheet(record, spans[i + 1])
+            prompt = load_prompt("plan_subtask_relabel").format(
+                episode_task=task,
+                seed_label=span["text"],
+                segment_index=i + 1,
+                segment_count=n,
+                start=float(span["start"]),
+                end=float(span["end"]),
+            )
+            content.append({"type": "text", "text": prompt})
+            label = self._vlm_field([{"role": "user", "content": content}], "label")
+            text = label.strip() if isinstance(label, str) and label.strip() else span["text"]
+            out.append({**span, "text": text})
+        return out
+
+    def _segment_sheet(self, record: EpisodeRecord, span: dict[str, Any]) -> list[dict[str, Any]]:
+        """Contact-sheet block(s) for one span: up to N frames sampled uniformly."""
+        s, e = float(span["start"]), float(span["end"])
+        n = max(1, int(self.config.subtask_relabel_frames))
+        if e <= s or n == 1:
+            timestamps = [s]
+        else:
+            step = (e - s) / (n - 1)
+            timestamps = [s + i * step for i in range(n)]
+        frames = self.frame_provider.frames_at(record, timestamps)
+        return self._contact_sheet_blocks(frames, timestamps[: len(frames)])
 
     def _generate_subtasks_windowed(
         self, record: EpisodeRecord, task: str, window_s: float

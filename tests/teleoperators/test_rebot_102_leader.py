@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from lerobot.teleoperators.bi_rebot_102_leader import BiRebotArm102Leader, BiRebotArm102LeaderConfig
+from lerobot.teleoperators.bi_rebot_102_leader import BiRebot102Leader, BiRebot102LeaderConfig
 from lerobot.teleoperators.rebot_102_leader import (
     RebotArm102Leader,
     RebotArm102LeaderConfig,
@@ -91,11 +91,11 @@ def test_send_feedback_not_implemented(leader):
 
 def test_bimanual_prefixes_features():
     with patch(f"{_MODULE}.require_package", lambda *a, **kw: None):
-        cfg = BiRebotArm102LeaderConfig(
+        cfg = BiRebot102LeaderConfig(
             left_arm_config=RebotArm102LeaderConfig(port="/dev/null0"),
             right_arm_config=RebotArm102LeaderConfig(port="/dev/null1"),
         )
-        teleop = BiRebotArm102Leader(cfg)
+        teleop = BiRebot102Leader(cfg)
     assert any(k.startswith("left_") for k in teleop.action_features)
     assert any(k.startswith("right_") for k in teleop.action_features)
     assert "left_gripper.pos" in teleop.action_features

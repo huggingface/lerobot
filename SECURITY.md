@@ -6,43 +6,127 @@
 
 Fortunately, being an open-source project, the community can also help by reporting and fixing vulnerabilities. We appreciate your efforts to responsibly disclose your findings and will make every effort to acknowledge your contributions.
 
-## Reporting a Vulnerability
-
-To report a security issue, please use the GitHub Security Advisory ["Report a Vulnerability"](https://github.com/huggingface/lerobot/security/advisories/new) tab.
-
-The `lerobot` team will send a response indicating the next steps in handling your report. After the initial reply to your report, the security team will keep you informed of the progress towards a fix and full announcement, and may ask for additional information or guidance.
-
-#### Hugging Face Security Team
-
-Since this project is part of the Hugging Face ecosystem, feel free to submit vulnerability reports directly to: **[security@huggingface.co](mailto:security@huggingface.co)**. Someone from the HF security team will review the report and recommend next steps.
-
-#### Open Source Disclosures
-
-If reporting a vulnerability specific to the open-source codebase (and not the underlying Hub infrastructure), you may also use [Huntr](https://huntr.com), a vulnerability disclosure program for open source software.
-
 ## Supported Versions
 
-Currently, we treat `lerobot` as a rolling release. We prioritize security updates for the latest available version (`main` branch).
+Currently, we treat `lerobot` as a rolling release. We prioritize security updates for the latest available version (`main` branch). Please reproduce on the current head before reporting — we do not backport fixes to older releases.
 
 | Version  | Supported |
 | -------- | --------- |
 | Latest   | ✅        |
 | < Latest | ❌        |
 
-## Secure Usage Guidelines
+## Reporting a Vulnerability
 
-`lerobot` is tightly coupled to the Hugging Face Hub for sharing data and pretrained policies. When downloading artifacts uploaded by others, you expose yourself to risks. Please read below for recommendations to keep your runtime and robot environment safe.
+Report privately — **do not open a public issue or PR for a suspected vulnerability.**
+
+To report a security issue, please use the GitHub Security Advisory ["Report a Vulnerability"](https://github.com/huggingface/lerobot/security/advisories/new) tab. This routes to the maintainers, keeps the report private until a fix is ready, and lets us issue a CVE through GitHub if warranted. The `lerobot` team will send a response indicating the next steps in handling your report. We acknowledge valid, in-scope reports and will keep you updated on remediation. Please give us a reasonable window to fix before any public disclosure.
+
+#### Hugging Face Security Team
+
+Since this project is part of the Hugging Face ecosystem, feel free to submit vulnerability reports directly to: **[security@huggingface.co](mailto:security@huggingface.co)**. Someone from the HF security team will review the report and recommend next steps. After the initial reply to your report, the security team will keep you informed of the progress towards a fix and full announcement, and may ask for additional information or guidance.
+
+## Recognition
+
+We do not offer a monetary bounty. For a valid, in-scope report we credit you on the published GitHub Security Advisory and name you as the reporter in the associated CVE. Let us know how you'd like to be credited (name or handle).
+
+## What your report must include
+
+We receive a high volume of reports. To be triaged, a report **must** follow the structure below. Copy this block into your submission and fill in every field. Reports missing the version, the proof of concept, or the impact are returned as incomplete and are not investigated until provided.
+
+```markdown
+### Summary
+
+One sentence: what the vulnerability is and where.
+
+### Affected version / commit
+
+Exact released version or commit SHA you reproduced on (e.g. v4.57.0 / a1b2c3d).
+Not "latest" or "main".
+
+### Affected component
+
+The public API, module, or entry point involved (e.g. `AutoModel.from_pretrained`).
+
+### Vulnerability class
+
+Type and CWE if known (e.g. deserialization / CWE-502, path traversal / CWE-22).
+
+### Attack vector & preconditions
+
+- How is the vulnerable code reached? (which API call / input / config)
+- Who is the attacker and what do they control?
+- What must be true for the attack to work? (auth, a user action, a non-default
+  setting, a malicious file being loaded, etc.)
+
+### Proof of concept
+
+A minimal, self-contained script or step sequence that runs on a clean install
+of the version above. Include:
+
+- the exact commands / code to run,
+- any input files needed (attach them, or give a script that generates them),
+- the **expected** behavior vs. the **actual** behavior you observed.
+  A snippet showing that a function _exists_ or _could_ be misused is not a PoC.
+
+### Impact
+
+What an attacker gains in a realistic deployment. "Could theoretically…"
+without a working chain is not an impact.
+
+### Scope
+
+Which trust boundary (see below) does this cross? If your finding touches
+anything in the "Out of scope" list, name which item and explain why it is
+nonetheless a violation of a guarantee we make.
+
+### Suggested severity (optional)
+
+We assign the final severity. Include a CVSS v3.1 vector only if you have one.
+
+### Suggested fix (optional)
+```
+
+> [!NOTE]
+> The bar is a **reproducible PoC against a supported version, with a concrete impact that crosses a trust boundary we actually defend** (see scope below). Reports that are theoretical, auto-generated by a scanner or LLM, or that restate documented behavior will be closed without detailed review.
+
+## Threat model & trust boundaries
+
+`lerobot` is tightly coupled to the Hugging Face Hub for sharing data and pretrained policies. When downloading artifacts uploaded by others, you expose yourself to risks. Please read below for recommendations to keep your runtime and robot environment safe. We _will_ treat as a vulnerability anything that breaks one of these protections — e.g. code executing despite `safetensors`-only loading, or a pinned revision being bypassed.
 
 ### Remote Artefacts (Weights & Policies)
 
-Models and policies uploaded to the Hugging Face Hub come in different formats. We heavily recommend uploading and downloading models in the [`safetensors`](https://github.com/huggingface/safetensors) format.
-
-`safetensors` was developed specifically to prevent arbitrary code execution on your system, which is critical when running software on physical hardware/robots.
-
-To avoid loading models from unsafe formats (e.g., `pickle`), you should ensure you are prioritizing `safetensors` files.
+Models and policies uploaded to the Hugging Face Hub come in different formats. We heavily recommend uploading and downloading models in the [`safetensors`](https://github.com/huggingface/safetensors) format. `safetensors` was developed specifically to prevent arbitrary code execution on your system, which is critical when running software on physical hardware/robots. To avoid loading models from unsafe formats (e.g., `pickle`), you should ensure you are prioritizing `safetensors` files.
 
 ### Remote Code
 
-Some models or environments on the Hub may require `trust_remote_code=True` to run custom architecture code.
+Some models or environments on the Hub may require `trust_remote_code=True` to run custom architecture code. Please **always** verify the content of the modeling files when using this argument. We recommend setting a specific `revision` (commit hash) when loading remote code to ensure you protect yourself from unverified updates to the repository.
 
-Please **always** verify the content of the modeling files when using this argument. We recommend setting a specific `revision` (commit hash) when loading remote code to ensure you protect yourself from unverified updates to the repository.
+## In scope
+
+We treat as vulnerabilities issues in the **published package code** — the library's own API surface — that an attacker can trigger without the victim having opted into a documented risk. For example:
+
+- code execution, memory corruption, or file access reachable through a normal API call on input that is **not** an untrusted model/artifact the user chose to load;
+- a control we advertise being bypassed (e.g. code running despite `safetensors`-only loading, or a pinned revision being ignored);
+- exposure or mishandling of credentials, tokens, or another user's data by the library;
+- a real escape from a backend we document as a sandbox;
+- CI/CD or supply-chain issues in this repository.
+
+## Out of scope
+
+The following are **not** treated as vulnerabilities in `lerobot`. If your finding touches one of these, the report must explain why it is nonetheless a violation of a guarantee we make — otherwise it will be closed.
+
+- Issues that require loading an untrusted artifact and amount to the documented load-time risk above (code execution / file access on load of a malicious model, dataset, config, or pickle).
+- Findings in `examples/`, documentation, tests, or other non-packaged reference material.
+- Local denial-of-service from feeding pathological input to a function on your own machine (high memory, slow parse, panic), absent a multi-tenant or remote-service impact.
+- Model behavior: jailbreaks, alignment failures, prompt injection, or harmful generations. Model weights are authored by their uploaders; report these to the model owner.
+- Vulnerabilities in third-party dependencies we do not vendor — report upstream (we'll bump once fixed).
+- Theoretical issues without a working proof of concept, and reports auto-generated from scanners or LLMs without a verified, reproducible chain.
+- Best-practice or hardening suggestions with no demonstrated impact — missing email-authentication or transport records (MTA-STS, TLS-RPT, DMARC/SPF tuning), missing HTTP security headers, TLS configuration preferences, and similar scanner or config-checker output presented without a working exploit chain.
+
+## Safe harbor
+
+Good-faith research that respects these guidelines, avoids privacy violations and service disruption, and gives us a reasonable disclosure window will not be pursued by us. Do not access data that isn't yours and do not run tests against Hugging Face production infrastructure.
+
+<div align="center">
+<sub>Built by the <a href="https://huggingface.co/lerobot">LeRobot</a> team at <a href="https://huggingface.co">Hugging Face</a> with ❤️</sub>
+</div>

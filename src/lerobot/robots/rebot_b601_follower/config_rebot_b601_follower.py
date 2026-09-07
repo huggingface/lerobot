@@ -65,18 +65,33 @@ class RebotB601FollowerConfig:
         }
     )
 
-    # Target velocity for joints running in POS_VEL mode, in degrees/s. A scalar is
-    # applied to every joint; a list provides one value per joint (in motor order).
-    pos_vel_velocity: float | list[float] = field(default_factory=lambda: [150.0] * 7)
+    # Max speed (deg/s) per joint for POS_VEL arms and FORCE_POS gripper (motor order).
+    pos_vel_velocity: float | list[float] = field(
+        default_factory=lambda: [150.0, 150.0, 150.0, 150.0, 150.0, 150.0, 900.0]
+    )
 
-    # Torque/current ratio for the gripper's FORCE_POS mode, in range [0, 1].
-    gripper_torque_ratio: float = 0.1
+    # Arm control: "mit" or "pos_vel".
+    control_mode: str = "mit"
+
+    # MIT kp/kd per arm joint (motor order). Unused when control_mode="pos_vel".
+    mit_kp: float | list[float] = field(default_factory=lambda: [45.0, 45.0, 45.0, 8.0, 9.0, 8.0, 8.0])
+    mit_kd: float | list[float] = field(default_factory=lambda: [12.0, 12.0, 12.0, 1.0, 1.0, 1.0, 1.0])
+
+    # Gripper control: "force_pos" or "mit".
+    gripper_control_mode: str = "force_pos"
+
+    # FORCE_POS only: max grip force, in [0, 1].
+    gripper_torque_ratio: float = 0.07
+
+    # MIT only.
+    gripper_mit_kp: float = 8.0
+    gripper_mit_kd: float = 0.3
 
     # Soft joint limits (degrees). These are clipped against on every action.
     joint_limits: dict[str, tuple[float, float]] = field(
         default_factory=lambda: {
-            "shoulder_pan": (-145.0, 145.0),
-            "shoulder_lift": (-170.0, 1.0),
+            "shoulder_pan": (-150.0, 150.0),
+            "shoulder_lift": (-200.0, 1.0),
             "elbow_flex": (-200.0, 1.0),
             "wrist_flex": (-80.0, 90.0),
             "wrist_yaw": (-90.0, 90.0),

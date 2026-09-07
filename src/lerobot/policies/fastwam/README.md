@@ -1,0 +1,1 @@
+../../../../docs/source/policy_fastwam_README.md

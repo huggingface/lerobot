@@ -14,12 +14,11 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-import numpy as np
 import torch
-from PIL import Image
 
 from lerobot.utils.import_utils import _transformers_available
 
@@ -72,13 +71,26 @@ class Qwen3VLInterface(torch.nn.Module):
             tokenizer.add_tokens([embodied_action_token], special_tokens=True)
         embodied_action_token_id = tokenizer.convert_tokens_to_ids(embodied_action_token)
 
-        if self.model.get_input_embeddings().weight.size(0) < len(tokenizer):
+        # Qwen3-VL-2B ships 267 spare embedding rows, so the `chunk_size * 4 + 1` added tokens fit
+        # without a resize up to chunk_size=66. Past that, resizing changes the `embed_tokens` /
+        # `lm_head` shapes and checkpoints stop loading across chunk sizes unless those prefixes are
+        # in `reinit_modules` — warn instead of failing silently.
+        current_rows = self.model.get_input_embeddings().weight.size(0)
+        if current_rows < len(tokenizer):
+            logging.warning(
+                f"chunk_size={self.config.chunk_size} needs {max_action_tokens + 1} added tokens, "
+                f"which exceeds the {current_rows} embedding rows of {self.config.qwen_model_name}. "
+                f"Resizing to {len(tokenizer)} rows changes the shapes of "
+                f"`model.qwen.model.model.language_model.embed_tokens` and "
+                f"`model.qwen.model.lm_head`, so this model will not load from a checkpoint trained "
+                f"with a different chunk_size unless those prefixes are in `reinit_modules`."
+            )
             self.model.resize_token_embeddings(len(tokenizer))
         return action_tokens, action_token_ids, embodied_action_token_id
 
     def build_inputs(
         self,
-        images: Sequence[Sequence[Image.Image]],
+        images: Sequence[Sequence[torch.Tensor]],
         instructions: Sequence[str],
         action_prompt: str,
         embodied_prompt: str,
@@ -94,24 +106,42 @@ class Qwen3VLInterface(torch.nn.Module):
             content.append({"type": "text", "text": prompt})
             messages.append([{"role": "user", "content": content}])
 
+        # The Qwen image processor is a torchvision-backed fast processor: passing the
+        # images as GPU tensors (with `device`) keeps the whole vision pipeline on-device
+        # and avoids a GPU->CPU->GPU roundtrip. The image tensors are forwarded through
+        # apply_chat_template untouched into Qwen3VLProcessor.__call__.
+        # do_rescale=False: images already arrive as float in [0, 1] (the dataset decoder
+        # yields float32/255 and VISUAL normalization is IDENTITY), so we skip the
+        # processor's /255 rescale instead of round-tripping through uint8.
         batch_inputs = self.processor.apply_chat_template(
             messages,
             tokenize=True,
             add_generation_prompt=True,
             return_dict=True,
-            processor_kwargs={"padding": True, "return_tensors": "pt"},
+            processor_kwargs={
+                "padding": True,
+                "return_tensors": "pt",
+                "device": self.model.device,
+                "do_rescale": False,
+            },
         )
         return batch_inputs.to(self.model.device)
 
     @staticmethod
-    def tensor_to_pil(image_tensor: torch.Tensor) -> Image.Image:
-        image = image_tensor.detach().cpu()
-        if image.ndim == 3 and image.shape[0] in (1, 3):
-            image = image.permute(1, 2, 0)
-        image = image.float()
-        if image.max() <= 1.0:
-            image = image * 255.0
-        image = image.clamp(0, 255).round().to(torch.uint8).numpy()
-        if image.shape[-1] == 1:
-            image = np.repeat(image, 3, axis=-1)
-        return Image.fromarray(image)
+    def to_pixel_values(image_tensor: torch.Tensor) -> torch.Tensor:
+        """Prepare an image/video tensor for the fast processors (used with do_rescale=False).
+
+        The dataset decoder yields float32 in [0, 1] (channels-first) and VISUAL
+        normalization is IDENTITY, so the tensor already arrives in [0, 1]; we pass it
+        through as float and let the processors normalize (no rescale, no uint8
+        quantization). A single channel is expanded to 3 to match the RGB processors.
+
+        Works for any channels-first layout (channel dim is -3): [C, H, W], [B, C, H, W],
+        [T, C, H, W], [B, V, T, C, H, W], ...
+        """
+        image = image_tensor.detach().float()
+        if image.shape[-3] == 1:
+            repeats = [1] * image.ndim
+            repeats[-3] = 3
+            image = image.repeat(*repeats)
+        return image

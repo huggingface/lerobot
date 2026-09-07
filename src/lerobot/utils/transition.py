@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 import torch
 
@@ -28,7 +28,7 @@ class Transition(TypedDict):
     next_state: dict[str, torch.Tensor]
     done: bool
     truncated: bool
-    complementary_info: dict[str, torch.Tensor | float | int] | None = None
+    complementary_info: NotRequired[dict[str, torch.Tensor | float | int] | None]
 
 
 def move_transition_to_device(transition: Transition, device: str = "cpu") -> Transition:

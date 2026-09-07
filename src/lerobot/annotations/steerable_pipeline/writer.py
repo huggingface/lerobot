@@ -54,6 +54,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from lerobot.datasets.io_utils import write_table_one_row_group_per_episode
 from lerobot.datasets.language import (
     EVENT_ONLY_STYLES,
     LANGUAGE_EVENTS,
@@ -274,12 +275,11 @@ class LanguageColumnsWriter:
         new_table = self._materialize_table(
             table, per_row_persistent, per_row_events, drop_old=self.drop_existing_subtask_index
         )
-        # Atomic replace: write to a sibling tmp path and rename so a crash
-        # mid-write can't leave a half-written shard that ``pq.read_table``
-        # would then fail to open. ``Path.replace`` is atomic on POSIX +
-        # Windows when source and target sit on the same filesystem.
+        # Re-emit one row group per episode (a bulk pq.write_table would collapse
+        # them into one). Write to a sibling tmp path and atomically rename so a
+        # crash mid-write can't leave a half-written shard.
         tmp_path = path.with_suffix(path.suffix + ".tmp")
-        pq.write_table(new_table, tmp_path)
+        write_table_one_row_group_per_episode(new_table, tmp_path)
         tmp_path.replace(path)
 
     def _materialize_table(

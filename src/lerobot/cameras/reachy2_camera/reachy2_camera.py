@@ -173,7 +173,8 @@ class Reachy2Camera(Camera):
             raise ValueError(
                 f"Invalid color mode '{self.color_mode}'. Expected {ColorMode.RGB} or {ColorMode.BGR}."
             )
-        if self.color_mode == ColorMode.RGB:
+        is_depth_frame = self.config.name == "depth" and self.config.image_type == "depth"
+        if not is_depth_frame and self.color_mode == ColorMode.RGB:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         self.latest_frame = frame

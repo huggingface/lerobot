@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2026 The Allen Institute for Artificial Intelligence and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,13 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""MolmoAct2 policy for LeRobot.
+
+MolmoAct2 is a VLM-based robotics policy from Allen AI that combines a
+Molmo vision-language backbone with a per-layer flow-matching action expert
+for continuous action generation, plus an optional discrete action token
+head. This module wraps the vendored HF model implementation
+(``molmoact2_hf_model/``) into the LeRobot ``PreTrainedPolicy`` interface.
+
+Paper:  https://allenai.org/blog/molmoact2
+Code:   https://github.com/allenai/molmoact2
+"""
+
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 import types
 from collections import deque
-from contextlib import nullcontext
+from collections.abc import Iterator
+from contextlib import nullcontext, suppress
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -32,24 +45,158 @@ from torch.distributions import Beta
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
-from lerobot.utils.import_utils import _scipy_available, _transformers_available, require_package
+from lerobot.utils.import_utils import (
+    _peft_available,
+    _scipy_available,
+    _transformers_available,
+    require_package,
+)
 
 from ..rtc.modeling_rtc import RTCProcessor
-from .configuration_molmoact2 import MolmoAct2Config, _hf_token, _resolve_checkpoint_location
+from .configuration_molmoact2 import MolmoAct2Config
+from .utils_molmoact2 import (
+    hf_token as _hf_token,
+    position_ids_from_attention_mask as _position_ids_from_attention_mask,
+    resolve_checkpoint_location as _resolve_checkpoint_location,
+)
+
+if TYPE_CHECKING or _peft_available:
+    from peft import LoraConfig, get_peft_model
+else:
+    LoraConfig = None
+    get_peft_model = None
+
+logger = logging.getLogger(__name__)
+
+
+def _torch_dtype(dtype: str) -> torch.dtype:
+    """Convert a dtype name string to a torch.dtype."""
+    if dtype == "float32":
+        return torch.float32
+    if dtype == "bfloat16":
+        return torch.bfloat16
+    raise ValueError(f"Unsupported dtype: {dtype}")
+
+
+def _call_module_without_gradient_checkpointing_layer(
+    module: torch.nn.Module,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Call normal ``nn.Module`` dispatch without a subclass ``__call__`` wrapper.
+
+    Transformers decoder layers implement activation checkpointing by
+    overriding ``__call__``. MolmoAct2's joint continuous path checkpoints the
+    paired text+action layer as one unit, so invoking that override inside the
+    joint checkpoint would checkpoint the text layer twice. Dispatching through
+    the base implementation skips only the Transformers wrapper while retaining
+    module compilation, hooks, and autograd.
+    """
+    return torch.nn.Module.__call__(module, *args, **kwargs)
+
+
+def _next_decode_position_ids_from_attention_mask(attention_mask: Tensor | None) -> Tensor | None:
+    if attention_mask is None:
+        return None
+    if attention_mask.ndim != 2:
+        raise ValueError(
+            "MolmoAct2 cached decoding requires a 2D attention mask, "
+            f"got shape {tuple(attention_mask.shape)}."
+        )
+    return attention_mask.to(dtype=torch.long).sum(dim=-1, keepdim=True)
+
+
+def _set_dynamo_lru_cache(enabled: bool) -> None:
+    """Set Dynamo's compiled-graph cache ordering policy.
+
+    PyTorch activation checkpointing replays an eager function during
+    backward.  With repeated compiled blocks, LRU reordering can make that
+    replay select a different valid graph than the original forward, which
+    changes the saved-tensor signature.  PyTorch exposes this narrow switch as
+    the short-term fix for pytorch/pytorch#166926.
+    """
+    torch_c = getattr(torch, "_C", None)
+    dynamo_c = getattr(torch_c, "_dynamo", None)
+    eval_frame = getattr(dynamo_c, "eval_frame", None)
+    set_lru_cache = getattr(eval_frame, "_set_lru_cache", None)
+    if not callable(set_lru_cache):
+        raise RuntimeError(
+            "MolmoAct2 compile_model=true with gradient_checkpointing=true requires "
+            "a PyTorch build that exposes torch._C._dynamo.eval_frame._set_lru_cache. "
+            "Disable compile_model or upgrade PyTorch."
+        )
+    set_lru_cache(enabled)
+
+
+def _disable_dynamo_ddp_optimizer() -> None:
+    """Keep block compilation identical in DDP forward and recomputation.
+
+    The Dynamo DDP optimizer changes graph partitioning only while execution is
+    inside the DDP forward context. Activation-checkpoint recomputation happens
+    during backward, outside that context. MolmoAct2 already compiles individual
+    transformer blocks, so disabling this additional graph splitter preserves
+    stable block graphs while the regular C++ DDP reducer still synchronizes
+    gradients.
+    """
+    dynamo = getattr(torch, "_dynamo", None)
+    dynamo_config = getattr(dynamo, "config", None)
+    if dynamo_config is None or not hasattr(dynamo_config, "optimize_ddp"):
+        raise RuntimeError(
+            "MolmoAct2 compile_model=true with gradient_checkpointing=true requires "
+            "a PyTorch build that exposes torch._dynamo.config.optimize_ddp. "
+            "Disable compile_model or upgrade PyTorch."
+        )
+    dynamo_config.optimize_ddp = False
+
+
+def _mark_action_context_dynamic(
+    key_states: Tensor,
+    value_states: Tensor,
+    attention_mask: Tensor | None,
+) -> None:
+    """Mark only the variable cross-attention sequence dimensions dynamic.
+
+    MolmoAct2 training fixes the per-rank batch size, flow-timestep count, and
+    action horizon. The encoder context length is the only action-block input
+    dimension that changes between batches. Marking that dimension explicitly
+    lets Dynamo build one reusable graph without making every otherwise-static
+    action dimension symbolic.
+    """
+    dynamo = getattr(torch, "_dynamo", None)
+    mark_dynamic = getattr(dynamo, "mark_dynamic", None)
+    if not callable(mark_dynamic):
+        raise RuntimeError(
+            "MolmoAct2 compile_model=true with gradient_checkpointing=true requires "
+            "a PyTorch build that exposes torch._dynamo.mark_dynamic. "
+            "Disable compile_model or upgrade PyTorch."
+        )
+    mark_dynamic(key_states, 1)
+    mark_dynamic(value_states, 1)
+    if attention_mask is not None:
+        mark_dynamic(attention_mask, attention_mask.ndim - 1)
+
 
 if TYPE_CHECKING or _transformers_available:
     from transformers.utils import SAFE_WEIGHTS_INDEX_NAME, SAFE_WEIGHTS_NAME
 
-    from .hf_model.configuration_molmoact2 import MolmoAct2Config as HFMolmoAct2Config
-    from .hf_model.modeling_molmoact2 import MolmoAct2ForConditionalGeneration
+    from .molmoact2_hf_model.configuration_molmoact2 import MolmoAct2Config as HFMolmoAct2Config
+    from .molmoact2_hf_model.modeling_molmoact2 import (
+        ActionExpertRMSNorm,
+        MolmoAct2ForConditionalGeneration,
+        MolmoAct2RMSNorm,
+        MolmoAct2RotaryEmbedding,
+    )
 else:
     SAFE_WEIGHTS_INDEX_NAME = "model.safetensors.index.json"
     SAFE_WEIGHTS_NAME = "model.safetensors"
+    ActionExpertRMSNorm = None
     HFMolmoAct2Config = None
     MolmoAct2ForConditionalGeneration = None
+    MolmoAct2RMSNorm = None
+    MolmoAct2RotaryEmbedding = None
 
 if TYPE_CHECKING or (_transformers_available and _scipy_available):
-    from .hf_model.action_tokenizer import UniversalActionProcessor
+    from .molmoact2_hf_model.action_tokenizer import UniversalActionProcessor
 else:
     UniversalActionProcessor = None
 
@@ -68,6 +215,168 @@ _MODEL_INPUT_KEYS = {
     "token_type_ids",
     "inputs_embeds",
 }
+
+
+def _load_hf_norm_metadata_for_tag(
+    checkpoint_path: str,
+    *,
+    revision: str | None,
+    force_download: bool,
+    norm_tag: str | None,
+    norm_stats_path: str | None = None,
+) -> dict[str, Any]:
+    """Read per-tag metadata from the checkpoint's ``norm_stats.json``."""
+    norm_tag = str(norm_tag or "").strip()
+    if not norm_tag:
+        return {}
+    from pathlib import Path
+
+    norm_stats_filename = "norm_stats.json"
+    if norm_stats_path is not None:
+        stats_path = Path(norm_stats_path).expanduser().resolve(strict=True)
+        norm_stats_filename = stats_path.name
+        if not stats_path.is_file():
+            raise ValueError(f"MolmoAct2 norm_stats_path must be a JSON file, got {stats_path}.")
+    else:
+        checkpoint_location = Path(
+            _resolve_checkpoint_location(
+                checkpoint_path,
+                revision=revision,
+                force_download=force_download,
+            )
+        )
+        config_path = checkpoint_location / "config.json"
+        if config_path.exists():
+            with suppress(OSError, json.JSONDecodeError):
+                norm_stats_filename = str(
+                    json.loads(config_path.read_text()).get("norm_stats_filename") or norm_stats_filename
+                )
+        stats_path = checkpoint_location / norm_stats_filename
+    if not stats_path.exists():
+        raise FileNotFoundError(
+            f"MolmoAct2 HF checkpoint is missing {norm_stats_filename!r}; cannot resolve norm_tag={norm_tag!r}."
+        )
+    payload = json.loads(stats_path.read_text())
+    metadata_by_tag = payload.get("metadata_by_tag")
+    if not isinstance(metadata_by_tag, dict):
+        raise ValueError(f"MolmoAct2 norm stats file {stats_path} has no metadata_by_tag mapping.")
+    metadata = metadata_by_tag.get(norm_tag)
+    if not isinstance(metadata, dict):
+        available = sorted(str(tag) for tag in metadata_by_tag)
+        raise ValueError(f"Unknown MolmoAct2 norm_tag={norm_tag!r}. Available tags: {available}.")
+    return metadata
+
+
+def _apply_norm_tag_metadata(config: MolmoAct2Config) -> None:
+    """Populate config fields from the checkpoint's norm-tag metadata."""
+    if config.pretrained_path is not None:
+        # LeRobot checkpoints persist the already-resolved embodiment metadata
+        # and their saved processors own normalization. Reopening one through
+        # policy.path must not consult the original HF/local norm stats source.
+        return
+    if not str(config.norm_tag or "").strip():
+        return
+    metadata = _load_hf_norm_metadata_for_tag(
+        config.checkpoint_path,
+        revision=config.checkpoint_revision,
+        force_download=bool(config.checkpoint_force_download),
+        norm_tag=config.norm_tag,
+        norm_stats_path=config.norm_stats_path,
+    )
+    if metadata.get("action_horizon") is not None:
+        config.chunk_size = int(metadata["action_horizon"])
+    if metadata.get("n_action_steps") is not None:
+        config.n_action_steps = int(metadata["n_action_steps"])
+    if not config.setup_type and metadata.get("setup_type") is not None:
+        config.setup_type = str(metadata["setup_type"])
+    if not config.control_mode and metadata.get("control_mode") is not None:
+        config.control_mode = str(metadata["control_mode"])
+
+
+def _saved_policy_action_mode(config: MolmoAct2Config) -> str | None:
+    """Read the action mode from a LeRobot-saved checkpoint's ``config.json``."""
+    from pathlib import Path
+
+    pretrained_path = getattr(config, "pretrained_path", None)
+    if pretrained_path is None:
+        return None
+    config_path = Path(pretrained_path) / "config.json"
+    if not config_path.exists():
+        return None
+    try:
+        mode = json.loads(config_path.read_text()).get("action_mode")
+    except (OSError, json.JSONDecodeError):
+        return None
+    if mode in {"continuous", "discrete", "both"}:
+        return str(mode)
+    return None
+
+
+def _training_action_mode(config: MolmoAct2Config, saved_policy_action_mode: str | None = None) -> str:
+    return saved_policy_action_mode or config.action_mode
+
+
+def _validate_inference_action_mode(
+    config: MolmoAct2Config, saved_policy_action_mode: str | None = None
+) -> None:
+    """Check that the requested inference mode is compatible with the training mode."""
+    requested_mode = config.inference_action_mode
+    if requested_mode is None:
+        return
+    training_mode = _training_action_mode(config, saved_policy_action_mode)
+    if requested_mode == "continuous" and training_mode == "discrete":
+        raise ValueError(
+            "MolmoAct2 checkpoint was trained with action_mode='discrete' and cannot run "
+            "continuous inference."
+        )
+    if requested_mode == "discrete" and training_mode == "continuous":
+        raise ValueError(
+            "MolmoAct2 checkpoint was trained with action_mode='continuous' and cannot run "
+            "discrete inference. Train with action_mode='both' or action_mode='discrete' first."
+        )
+
+
+def _validate_checkpoint_action_mode(
+    config: MolmoAct2Config,
+    checkpoint_action_mode: str,
+    *,
+    has_action_expert: bool,
+) -> None:
+    """Check that the checkpoint's action mode is compatible with the config."""
+    if config.action_mode == "both" and checkpoint_action_mode != "both":
+        raise ValueError(
+            f"action_mode='both' requires checkpoint action_mode='both', got {checkpoint_action_mode!r}."
+        )
+    if config.action_mode == "discrete" and checkpoint_action_mode not in {"discrete", "both"}:
+        raise ValueError(
+            f"action_mode='discrete' requires checkpoint action_mode in {{'discrete', 'both'}}, "
+            f"got {checkpoint_action_mode!r}."
+        )
+    if config.action_mode in {"continuous", "both"} and not has_action_expert:
+        raise ValueError("Continuous MolmoAct2 training requires an action expert checkpoint.")
+
+
+def _resolve_inference_action_mode(
+    config: MolmoAct2Config,
+    requested_mode: str | None,
+    saved_policy_action_mode: str | None = None,
+) -> str:
+    """Resolve the final inference action mode, validating compatibility."""
+    training_mode = _training_action_mode(config, saved_policy_action_mode)
+    if requested_mode is None:
+        requested_mode = config.inference_action_mode
+    if requested_mode is None:
+        raise ValueError(
+            "MolmoAct2 inference requires `inference_action_mode` to be set explicitly "
+            "to either 'continuous' or 'discrete'."
+        )
+    if requested_mode not in {"continuous", "discrete"}:
+        raise ValueError("MolmoAct2 inference_action_mode must be either 'continuous' or 'discrete'.")
+    if requested_mode == "continuous" and training_mode == "discrete":
+        raise ValueError("MolmoAct2 action_mode='discrete' checkpoint cannot run continuous inference.")
+    if requested_mode == "discrete" and training_mode == "continuous":
+        raise ValueError("MolmoAct2 action_mode='continuous' checkpoint cannot run discrete inference.")
+    return requested_mode
 
 
 def _strict_load_safetensors_weights(model: torch.nn.Module, checkpoint_location: str) -> None:
@@ -103,16 +412,6 @@ def _strict_load_safetensors_weights(model: torch.nn.Module, checkpoint_location
     )
 
 
-def _torch_dtype(dtype: str) -> torch.dtype:
-    if dtype == "float32":
-        return torch.float32
-    if dtype == "bfloat16":
-        return torch.bfloat16
-    if dtype == "float16":
-        return torch.float16
-    raise ValueError(f"Unsupported dtype: {dtype}")
-
-
 def _sample_beta_timesteps(
     *,
     batch_size: int,
@@ -136,9 +435,210 @@ def _sample_beta_timesteps(
     return time_offset + scale * samples
 
 
+def _mask_discrete_action_spans(
+    *,
+    input_ids: Tensor,
+    mask: Tensor,
+    start_token_id: int | None,
+    end_token_id: int | None,
+) -> Tensor:
+    if start_token_id is None or end_token_id is None:
+        return mask
+    mask = mask.clone()
+    for batch_idx in range(input_ids.shape[0]):
+        row = input_ids[batch_idx]
+        starts = (row == int(start_token_id)).nonzero(as_tuple=False).flatten().tolist()
+        ends = (row == int(end_token_id)).nonzero(as_tuple=False).flatten().tolist()
+        end_ptr = 0
+        for start in starts:
+            while end_ptr < len(ends) and ends[end_ptr] < start:
+                end_ptr += 1
+            if end_ptr >= len(ends):
+                mask[batch_idx, start:] = False
+                break
+            end = int(ends[end_ptr])
+            mask[batch_idx, start : end + 1] = False
+            end_ptr += 1
+    return mask
+
+
+def _drop_trivial_attention_mask(model_inputs: dict[str, Tensor]) -> dict[str, Tensor]:
+    attention_mask = model_inputs.get("attention_mask")
+    if torch.is_tensor(attention_mask) and bool(attention_mask.to(dtype=torch.bool).all().item()):
+        model_inputs = dict(model_inputs)
+        model_inputs.pop("attention_mask", None)
+    return model_inputs
+
+
+def _expand_mask(mask: Tensor | None, num_flow_timesteps: int) -> Tensor | None:
+    if mask is None:
+        return None
+    return (
+        mask.unsqueeze(1)
+        .expand(-1, num_flow_timesteps, *([-1] * (mask.ndim - 1)))
+        .reshape(mask.shape[0] * num_flow_timesteps, *mask.shape[1:])
+    )
+
+
+def _action_dim_valid_mask(target: Tensor, action_dim_is_pad: Tensor | None) -> Tensor | None:
+    if action_dim_is_pad is None:
+        return None
+    mask = ~action_dim_is_pad.to(device=target.device, dtype=torch.bool)
+    if mask.ndim == 1:
+        mask = mask.unsqueeze(0)
+    if mask.shape[-1] != target.shape[-1]:
+        raise ValueError(
+            f"action_dim_is_pad width {mask.shape[-1]} does not match target width {target.shape[-1]}."
+        )
+    if mask.shape[0] == 1 and target.shape[0] != 1:
+        mask = mask.expand(target.shape[0], -1)
+    if mask.shape[0] != target.shape[0]:
+        raise ValueError(
+            f"action_dim_is_pad batch {mask.shape[0]} does not match target batch {target.shape[0]}."
+        )
+    while mask.ndim < target.ndim:
+        mask = mask.unsqueeze(1)
+    return mask
+
+
+def _mask_action_dim_tensor(tensor: Tensor, action_dim_is_pad: Tensor | None) -> Tensor:
+    if action_dim_is_pad is None:
+        return tensor
+    valid_mask = _action_dim_valid_mask(tensor, action_dim_is_pad)
+    if valid_mask is None:
+        return tensor
+    return tensor.masked_fill(~valid_mask, 0)
+
+
+def _apply_action_dim_padding_mask(loss: Tensor, action_dim_is_pad: Tensor | None) -> Tensor:
+    valid_mask = _action_dim_valid_mask(loss, action_dim_is_pad)
+    if valid_mask is None:
+        return loss
+    valid = valid_mask.to(dtype=loss.dtype)
+    denom = valid.sum(dim=-1).clamp_min(1.0)
+    return (loss * valid).sum(dim=-1) / denom
+
+
+def _apply_action_chunk_padding_mask(loss: Tensor, action_horizon_is_pad: Tensor | None) -> Tensor:
+    if action_horizon_is_pad is None:
+        return loss
+    valid_action = (
+        (~action_horizon_is_pad.to(device=loss.device, dtype=torch.bool)).unsqueeze(1).unsqueeze(-1)
+    )
+    return loss * valid_action
+
+
+def _combine_rollout_seeds(first_seed: int, batch_size: int) -> int:
+    seed = 0
+    for idx in range(batch_size):
+        seed = (seed + (idx + 1) * (first_seed + idx)) % (2**63 - 1)
+    return seed
+
+
+def _rollout_task_signature(batch: dict[str, Any]) -> tuple[Any, ...] | None:
+    task = batch.get("task")
+    if task is None:
+        task = batch.get("observation.language")
+    if task is None:
+        return None
+    if isinstance(task, str):
+        return (task,)
+    if isinstance(task, (list, tuple)):
+        return tuple(str(item) for item in task)
+    return (str(task),)
+
+
+def _extract_discrete_token_bins(
+    generated_ids: list[int],
+    start_token_id: int,
+    end_token_id: int,
+    token_id_to_bin: dict[int, int],
+) -> list[int]:
+    start_idx = None
+    end_idx = None
+    for idx, token_id in enumerate(generated_ids):
+        if token_id == start_token_id:
+            start_idx = idx
+            break
+    if start_idx is not None:
+        for idx in range(start_idx + 1, len(generated_ids)):
+            if generated_ids[idx] == end_token_id:
+                end_idx = idx
+                break
+    span_start = 0 if start_idx is None else start_idx + 1
+    span_end = len(generated_ids) if end_idx is None else end_idx
+    return [
+        int(token_id_to_bin[token_id])
+        for token_id in generated_ids[span_start:span_end]
+        if token_id in token_id_to_bin
+    ]
+
+
+def _weighted_mean(values: Tensor, weights: Tensor | None) -> Tensor:
+    if weights is None:
+        numerator = values.sum()
+        denominator = values.new_tensor(float(values.numel()))
+    else:
+        weights = weights.to(device=values.device, dtype=values.dtype)
+        numerator = torch.dot(values, weights)
+        denominator = weights.sum()
+
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        world_size = torch.distributed.get_world_size()
+        denominator = denominator.detach().clone()
+        torch.distributed.all_reduce(denominator, op=torch.distributed.ReduceOp.SUM)
+        denominator = denominator / world_size
+    return numerator / denominator.clamp_min(1.0)
+
+
+def _weighted_per_example(
+    values: Tensor,
+    weights: Tensor | None,
+    example_indices: Tensor,
+    batch_size: int,
+) -> Tensor:
+    values = values.float()
+    if weights is None:
+        weights = torch.ones_like(values)
+    else:
+        weights = weights.to(device=values.device, dtype=values.dtype)
+    loss_sum = torch.zeros(batch_size, device=values.device, dtype=torch.float32)
+    weight_sum = torch.zeros(batch_size, device=values.device, dtype=torch.float32)
+    loss_sum.scatter_add_(0, example_indices, values * weights)
+    weight_sum.scatter_add_(0, example_indices, weights)
+    global_weight_sum = weight_sum.sum().clamp_min(1.0)
+    return loss_sum * float(batch_size) / global_weight_sum
+
+
 class MolmoAct2Policy(PreTrainedPolicy):
+    """MolmoAct2 policy wrapping the vendored HF model for LeRobot.
+
+    Supports three training modes via ``config.action_mode``:
+    ``"continuous"`` (flow-matching only), ``"discrete"`` (autoregressive
+    token prediction only), or ``"both"`` (joint loss). At inference,
+    ``config.inference_action_mode`` selects which head generates actions.
+    """
+
     config_class = MolmoAct2Config
     name = "molmoact2"
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        pretrained_name_or_path: str | os.PathLike[str],
+        *,
+        strict: bool = True,
+        **kwargs: Any,
+    ) -> MolmoAct2Policy:
+        """Load a LeRobot checkpoint without silently accepting topology changes."""
+        return super().from_pretrained(
+            pretrained_name_or_path,
+            strict=strict,
+            **kwargs,
+        )
+
+    def supports_rtc(self) -> bool:
+        return self.config.inference_action_mode == "continuous"
 
     def __init__(
         self,
@@ -149,20 +649,23 @@ class MolmoAct2Policy(PreTrainedPolicy):
         **kwargs,
     ):
         super().__init__(config, *inputs, **kwargs)
-        self.config.apply_norm_tag_metadata()
+        _apply_norm_tag_metadata(self.config)
         self.config.validate_features()
         del inputs, kwargs, dataset_stats, dataset_meta
-        self._checkpoint_action_mode = self.config.saved_policy_action_mode()
+        self._checkpoint_action_mode = _saved_policy_action_mode(self.config)
         self._action_queue: deque[Tensor] = deque(maxlen=self.config.n_action_steps)
         self._rollout_action_generator: torch.Generator | None = None
         self._rollout_task_key: tuple[Any, ...] | None = None
         self._rollout_index_for_task = -1
         self.rtc_processor: RTCProcessor | None = None
         self.action_tokenizer: Any | None = None
+        self._compile_applied = False
+        self._compiled_module_names: tuple[str, ...] = ()
         self._load_hf_model()
-        self.config.validate_inference_action_mode(self._checkpoint_action_mode)
-        if self.config.enable_lora_vlm:
+        _validate_inference_action_mode(self.config, self._checkpoint_action_mode)
+        if self.config.train_mode_vlm == "lora":
             self._apply_lora_adapters()
+        self._apply_compile()
         self.init_rtc_processor()
 
     def _load_hf_model(self) -> None:
@@ -173,22 +676,30 @@ class MolmoAct2Policy(PreTrainedPolicy):
             revision=self.config.checkpoint_revision,
             force_download=bool(self.config.checkpoint_force_download),
         )
-        model_dtype = _torch_dtype(self.config.model_dtype)
+        storage_dtype = _torch_dtype(self.config.dtype)
         if HFMolmoAct2Config is None or MolmoAct2ForConditionalGeneration is None:
             raise RuntimeError("transformers is required to load MolmoAct2 checkpoints.")
         hf_config = HFMolmoAct2Config.from_pretrained(
             checkpoint_location,
             token=_hf_token(),
         )
+        text_config = getattr(hf_config, "text_config", None)
+        if text_config is not None and hasattr(text_config, "residual_dropout"):
+            text_config.residual_dropout = float(self.config.llm_residual_dropout)
         self.model = MolmoAct2ForConditionalGeneration.from_pretrained(
             checkpoint_location,
             config=hf_config,
-            dtype=model_dtype,
+            dtype=storage_dtype,
             low_cpu_mem_usage=True,
             token=_hf_token(),
         )
         # Keep Hub loading limited to local code plus safetensors, and verify the
         # local implementation exactly matches the checkpoint key space.
+        self._apply_bfloat16_parameter_policy()
+        # In bfloat16 mode, establish the final target dtype tree before this last
+        # strict load. This preserves the checkpoint's original fp32 values for
+        # the action expert and other fp32-targeted modules instead of widening
+        # already-rounded bf16 tensors.
         _strict_load_safetensors_weights(self.model, checkpoint_location)
         hf_max_action_dim = int(getattr(self.model.config, "max_action_dim", -1))
         if hf_max_action_dim != int(self.config.expected_max_action_dim):
@@ -212,20 +723,22 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 "`policy.checkpoint_force_download=true` after the updated files are pushed."
             )
         checkpoint_action_mode = str(self.model.config.action_mode)
-        self.config.validate_checkpoint_action_mode(
+        _validate_checkpoint_action_mode(
+            self.config,
             checkpoint_action_mode,
             has_action_expert=bool(getattr(self.model.config, "add_action_expert", False)),
         )
 
         if self.config.freeze_embedding:
             self._freeze_input_embeddings()
-        if self.config.train_action_expert_only:
-            self._freeze_non_action_expert_parameters()
+        if self.config.train_mode_vlm == "freeze":
+            self._freeze_vlm_parameters()
         if self.config.gradient_checkpointing:
             self._enable_gradient_checkpointing()
         self.train(self.training)
 
     def reset(self) -> None:
+        """Clear the action queue and rollout generator between episodes."""
         self._action_queue = deque(maxlen=self.config.n_action_steps)
         self._rollout_action_generator = None
 
@@ -279,14 +792,14 @@ class MolmoAct2Policy(PreTrainedPolicy):
         if vision_backbone is not None:
             vision_backbone.gradient_checkpointing = True
 
-    def _freeze_non_action_expert_parameters(self) -> None:
+    def _freeze_vlm_parameters(self) -> None:
         trainable_params = 0
         for name, param in self.named_parameters():
             param.requires_grad = "action_expert" in name
             if param.requires_grad:
                 trainable_params += param.numel()
         if trainable_params == 0:
-            raise RuntimeError("train_action_expert_only=true, but no action_expert parameters were found.")
+            raise RuntimeError("train_mode_vlm='freeze', but no action_expert parameters were found.")
 
     def _unfreeze_action_expert_parameters(self) -> None:
         trainable_params = 0
@@ -295,11 +808,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 param.requires_grad_(True)
                 trainable_params += param.numel()
         if trainable_params == 0:
-            raise RuntimeError("enable_lora_vlm=true, but no action_expert parameters were found.")
+            raise RuntimeError("train_mode_vlm='lora', but no action_expert parameters were found.")
 
     def train(self, mode: bool = True):
         super().train(mode)
-        if getattr(self.config, "train_action_expert_only", False) and hasattr(self, "model"):
+        if getattr(self.config, "train_mode_vlm", "fft") == "freeze" and hasattr(self, "model"):
             self._hf_model().eval()
             self._action_expert().train(mode)
         self._set_inference_cuda_graph_enabled(not mode)
@@ -330,10 +843,61 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 "freeze_embedding=true would also freeze lm_head because input embeddings and lm_head "
                 "share parameters in this checkpoint."
             )
-        for param in embedding_params:
-            param.requires_grad = False
+        for embeddings in embedding_modules:
+            base_embedding = getattr(embeddings, "embedding", None)
+            if isinstance(base_embedding, torch.nn.Parameter):
+                base_embedding.requires_grad = False
+            elif isinstance(base_embedding, torch.nn.Module):
+                for param in base_embedding.parameters():
+                    param.requires_grad = False
+            else:
+                for param in embeddings.parameters():
+                    param.requires_grad = False
+
+    def _apply_bfloat16_parameter_policy(self) -> None:
+        """Apply the fixed low-memory MolmoAct2 parameter-storage policy.
+
+        Large text and vision matrices stay in bf16. The complete action
+        expert, norms, RoPE state, depth gates, and LoRA adapters use fp32
+        parameters and therefore fp32 Adam state when trainable. Eligible
+        action-expert operators still execute in bf16 under autocast.
+        """
+        if self.config.dtype != "bfloat16":
+            return
+
+        self.model.to(dtype=torch.bfloat16)
+        backbone = self._backbone()
+
+        action_expert = getattr(backbone, "action_expert", None)
+        if action_expert is not None:
+            action_expert.to(dtype=torch.float32)
+
+        depth_gate = getattr(backbone, "action_expert_depth_gate", None)
+        if depth_gate is not None:
+            depth_gate.to(dtype=torch.float32)
+
+        fp32_module_types = tuple(
+            module_type
+            for module_type in (
+                torch.nn.LayerNorm,
+                ActionExpertRMSNorm,
+                MolmoAct2RMSNorm,
+            )
+            if isinstance(module_type, type)
+        )
+        for module in self.model.modules():
+            if isinstance(module, fp32_module_types):
+                module.to(dtype=torch.float32)
+            if isinstance(MolmoAct2RotaryEmbedding, type) and isinstance(module, MolmoAct2RotaryEmbedding):
+                module.to(dtype=torch.float32)
+                # ``original_inv_freq`` is an alias rather than a registered
+                # buffer, so Module.to() does not update it automatically.
+                module.original_inv_freq = module.inv_freq
+                module._pos_sin_cache = torch.empty(0, device=module.inv_freq.device, dtype=torch.float32)
+                module._pos_cos_cache = torch.empty(0, device=module.inv_freq.device, dtype=torch.float32)
 
     def get_optim_params(self) -> list[dict[str, Any]]:
+        """Return optimizer param groups with per-component learning rates."""
         vit_params: list[Tensor] = []
         connector_params: list[Tensor] = []
         action_expert_params: list[Tensor] = []
@@ -343,7 +907,14 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 continue
             if "action_expert" in name:
                 action_expert_params.append(param)
-            elif any(part in name for part in ("image_pooling_2d", "image_projector")):
+            # Native MolmoAct2 explicitly owns the checkpoint's additional
+            # vocabulary table under get_connector_parameters().  It remains
+            # trainable for the published ft_embedding="lm_head" FFT recipe,
+            # so route it to the connector LR and independent clip group even
+            # though it is structurally nested below the text embedding.
+            elif ".wte.new_embedding" in name or any(
+                part in name for part in ("image_pooling_2d", "image_projector")
+            ):
                 connector_params.append(param)
             elif any(part in name for part in ("vision", "image_encoder", "vit")):
                 vit_params.append(param)
@@ -352,9 +923,10 @@ class MolmoAct2Policy(PreTrainedPolicy):
             else:
                 vlm_params.append(param)
 
-        vlm_lr = 5e-5 if self.config.enable_lora_vlm else self.config.optimizer_lr
-        vit_lr = 5e-5 if self.config.enable_lora_vlm else self.config.optimizer_vit_lr
-        connector_lr = 5e-5 if self.config.enable_lora_vlm else self.config.optimizer_connector_lr
+        vlm_lora = self.config.train_mode_vlm == "lora"
+        vlm_lr = 5e-5 if vlm_lora else self.config.optimizer_lr
+        vit_lr = 5e-5 if vlm_lora else self.config.optimizer_vit_lr
+        connector_lr = 5e-5 if vlm_lora else self.config.optimizer_connector_lr
 
         groups: list[dict[str, Any]] = []
         if vlm_params:
@@ -368,12 +940,29 @@ class MolmoAct2Policy(PreTrainedPolicy):
         return groups
 
     def _model_inputs(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
-        compute_dtype = _torch_dtype(self.config.model_dtype)
+        # Match Pi0.5: keep continuous inputs in fp32, then cross into bf16 at
+        # explicit model/autocast boundaries.
         return {
-            key: value.to(dtype=compute_dtype) if value.is_floating_point() else value
+            key: value.to(dtype=torch.float32) if value.is_floating_point() else value
             for key, value in batch.items()
             if key in _MODEL_INPUT_KEYS and value is not None
         }
+
+    def _autocast_context(self):
+        compute_dtype = _torch_dtype(self.config.dtype)
+        device_type = next(self.parameters()).device.type
+        autocast_available = torch.amp.autocast_mode.is_autocast_available(device_type)
+        if compute_dtype == torch.bfloat16:
+            if not autocast_available:
+                raise RuntimeError(
+                    f"MolmoAct2 dtype='bfloat16' requires autocast support on device type {device_type!r}."
+                )
+            return torch.autocast(device_type=device_type, dtype=compute_dtype)
+        if autocast_available:
+            # A surrounding eval/use_amp context must not override the single
+            # Pi0.5-style dtype switch when float32 was requested.
+            return torch.autocast(device_type=device_type, enabled=False)
+        return nullcontext()
 
     def _output_action_dim(self, batch: dict[str, Tensor]) -> int:
         action_feature = self.config.output_features.get(ACTION)
@@ -398,6 +987,73 @@ class MolmoAct2Policy(PreTrainedPolicy):
     def _backbone(self):
         return self._hf_model().model
 
+    def _iter_compile_targets(self) -> Iterator[tuple[str, torch.nn.Module, bool | None]]:
+        """Yield the numerically validated MolmoAct2 training compile boundary.
+
+        The outer policy/model forwards intentionally remain eager: multimodal
+        packing, action-span handling, and metrics contain data-dependent Python
+        control flow. Compiling those wrappers would add graph breaks without
+        improving the transformer-heavy training path. The VLM, vision tower,
+        and connector also remain eager in both FFT and LoRA modes. Real-batch
+        same-start parity tests found material activation, gradient, and Adam
+        update drift when those BF16 paths were compiled. Action-expert blocks
+        pass the forward, activation, and gradient gates and retain the useful
+        F-step flow-matching acceleration.
+        """
+        backbone = self._backbone()
+
+        # Non-reentrant activation checkpointing must replay the same compiled
+        # graph in forward and backward. The variable encoder-context dimensions
+        # are marked explicitly immediately before each block call, so Dynamo
+        # sees them as symbolic in the first trace. Leave the remaining fixed
+        # batch/action dimensions static instead of requesting a fully dynamic
+        # graph here.
+        sequence_dynamic = None
+        action_expert = getattr(backbone, "action_expert", None)
+        for index, block in enumerate(getattr(action_expert, "blocks", ())):
+            yield f"action_expert.blocks.{index}", block, sequence_dynamic
+
+    def _apply_compile(self) -> None:
+        """Install official-style block compilation when explicitly enabled."""
+        if not self.config.compile_model or self._compile_applied:
+            return
+        if not hasattr(torch.nn.Module, "compile"):
+            raise RuntimeError("MolmoAct2 compile_model=True requires torch.nn.Module.compile support.")
+
+        if self.config.gradient_checkpointing:
+            # Keep Dynamo cache lookup order stable between the original
+            # forward and activation-checkpoint recomputation.  This does not
+            # disable graph caching or compilation; it only disables LRU hit
+            # reordering, the PyTorch-recommended workaround for repeated
+            # compiled blocks saving a different tensor signature on replay.
+            _set_dynamo_lru_cache(False)
+            # DDP's compiler-side graph splitter is active only in the original
+            # DDP forward, not in checkpoint recomputation. The model's existing
+            # block boundaries already provide natural backward/all-reduce
+            # overlap, so keep this extra splitter disabled for graph identity.
+            _disable_dynamo_ddp_optimizer()
+
+        torch.set_float32_matmul_precision("high")
+        compile_options = {"emulate_precision_casts": True}
+        compile_kwargs = {
+            "backend": "inductor",
+            "options": compile_options,
+            "fullgraph": False,
+        }
+        compiled_names = []
+        for name, module, dynamic in self._iter_compile_targets():
+            module.compile(**compile_kwargs, dynamic=dynamic)
+            compiled_names.append(name)
+
+        if not compiled_names:
+            raise RuntimeError("MolmoAct2 compile_model=True found no compatible model blocks.")
+        self._compiled_module_names = tuple(compiled_names)
+        self._compile_applied = True
+        logger.info(
+            "Enabled MolmoAct2 block-wise torch.compile for %d modules.",
+            len(compiled_names),
+        )
+
     def _override_loaded_max_action_horizon(self, action_horizon: int) -> None:
         if action_horizon < 1:
             raise ValueError(f"action_horizon must be >= 1, got {action_horizon}.")
@@ -419,39 +1075,26 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 return int(value)
         raise RuntimeError("MolmoAct2 could not resolve an action generation horizon.")
 
-    @staticmethod
-    def _mask_discrete_action_spans(
-        *,
-        input_ids: Tensor,
-        mask: Tensor,
-        start_token_id: int | None,
-        end_token_id: int | None,
-    ) -> Tensor:
-        if start_token_id is None or end_token_id is None:
-            return mask
-        mask = mask.clone()
-        for batch_idx in range(input_ids.shape[0]):
-            row = input_ids[batch_idx]
-            starts = (row == int(start_token_id)).nonzero(as_tuple=False).flatten().tolist()
-            ends = (row == int(end_token_id)).nonzero(as_tuple=False).flatten().tolist()
-            end_ptr = 0
-            for start in starts:
-                while end_ptr < len(ends) and ends[end_ptr] < start:
-                    end_ptr += 1
-                if end_ptr >= len(ends):
-                    mask[batch_idx, start:] = False
-                    break
-                end = int(ends[end_ptr])
-                mask[batch_idx, start : end + 1] = False
-                end_ptr += 1
-        return mask
-
     def _encoder_attention_mask_for_action_expert(
         self,
         *,
         input_ids: Tensor | None,
         attention_mask: Tensor | None,
     ) -> Tensor | None:
+        # The released HF base is a BOTH checkpoint, but the current official
+        # trainer explicitly switches its native model to continuous action
+        # format.  Calling the HF backbone helper first would therefore inherit
+        # the checkpoint's stale BOTH-mode EOS/action-span masking even when
+        # this policy is training continuous-only.  Construct the ordinary
+        # prompt mask directly for continuous mode; only the joint objective
+        # should apply discrete-output masking.
+        if getattr(self.config, "action_mode", None) != "both":
+            if attention_mask is not None:
+                return attention_mask.to(dtype=torch.bool).clone()
+            if input_ids is not None:
+                return input_ids != -1
+            return None
+
         backbone = self._backbone()
         get_encoder_attention_mask = getattr(backbone, "_get_encoder_attention_mask", None)
         if callable(get_encoder_attention_mask):
@@ -463,27 +1106,19 @@ class MolmoAct2Policy(PreTrainedPolicy):
         else:
             return None
 
-        if getattr(self.config, "action_mode", None) != "both" or input_ids is None or mask is None:
+        if input_ids is None or mask is None:
             return mask
 
         mask = mask.to(dtype=torch.bool).clone()
         eos_token_id = getattr(self.model.config, "eos_token_id", None)
         if eos_token_id is not None:
             mask &= input_ids != int(eos_token_id)
-        return self._mask_discrete_action_spans(
+        return _mask_discrete_action_spans(
             input_ids=input_ids,
             mask=mask,
             start_token_id=getattr(self.model.config, "action_start_token_id", None),
             end_token_id=getattr(self.model.config, "action_end_token_id", None),
         )
-
-    @staticmethod
-    def _drop_trivial_attention_mask(model_inputs: dict[str, Tensor]) -> dict[str, Tensor]:
-        attention_mask = model_inputs.get("attention_mask")
-        if torch.is_tensor(attention_mask) and bool(attention_mask.to(dtype=torch.bool).all().item()):
-            model_inputs = dict(model_inputs)
-            model_inputs.pop("attention_mask", None)
-        return model_inputs
 
     def _load_discrete_action_tokenizer(self) -> Any:
         if self.action_tokenizer is None:
@@ -498,27 +1133,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         return self.action_tokenizer
 
     def _resolve_inference_action_mode(self, requested_mode: str | None) -> str:
-        return self.config.resolve_inference_action_mode(requested_mode, self._checkpoint_action_mode)
-
-    @staticmethod
-    def _combine_rollout_seeds(first_seed: int, batch_size: int) -> int:
-        seed = 0
-        for idx in range(batch_size):
-            seed = (seed + (idx + 1) * (first_seed + idx)) % (2**63 - 1)
-        return seed
-
-    @staticmethod
-    def _rollout_task_signature(batch: dict[str, Any]) -> tuple[Any, ...] | None:
-        task = batch.get("task")
-        if task is None:
-            task = batch.get("observation.language")
-        if task is None:
-            return None
-        if isinstance(task, str):
-            return (task,)
-        if isinstance(task, (list, tuple)):
-            return tuple(str(item) for item in task)
-        return (str(task),)
+        return _resolve_inference_action_mode(self.config, requested_mode, self._checkpoint_action_mode)
 
     def _rollout_generator_for_inputs(
         self,
@@ -532,7 +1147,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         if self._rollout_action_generator is not None:
             return self._rollout_action_generator
 
-        task_signature = self._rollout_task_signature(batch)
+        task_signature = _rollout_task_signature(batch)
         if task_signature != self._rollout_task_key:
             self._rollout_task_key = task_signature
             self._rollout_index_for_task = 0
@@ -545,71 +1160,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
             device if device.type == "cuda" and torch.cuda.is_available() else torch.device("cpu")
         )
         generator = torch.Generator(device=generator_device)
-        generator.manual_seed(self._combine_rollout_seeds(first_seed, batch_size))
+        generator.manual_seed(_combine_rollout_seeds(first_seed, batch_size))
         self._rollout_action_generator = generator
         return generator
-
-    @staticmethod
-    def _expand_mask(mask: Tensor | None, num_flow_timesteps: int) -> Tensor | None:
-        if mask is None:
-            return None
-        return (
-            mask.unsqueeze(1)
-            .expand(-1, num_flow_timesteps, *([-1] * (mask.ndim - 1)))
-            .reshape(mask.shape[0] * num_flow_timesteps, *mask.shape[1:])
-        )
-
-    @staticmethod
-    def _action_dim_valid_mask(target: Tensor, action_dim_is_pad: Tensor | None) -> Tensor | None:
-        if action_dim_is_pad is None:
-            return None
-        mask = ~action_dim_is_pad.to(device=target.device, dtype=torch.bool)
-        if mask.ndim == 1:
-            mask = mask.unsqueeze(0)
-        if mask.shape[-1] != target.shape[-1]:
-            raise ValueError(
-                f"action_dim_is_pad width {mask.shape[-1]} does not match target width {target.shape[-1]}."
-            )
-        if mask.shape[0] == 1 and target.shape[0] != 1:
-            mask = mask.expand(target.shape[0], -1)
-        if mask.shape[0] != target.shape[0]:
-            raise ValueError(
-                f"action_dim_is_pad batch {mask.shape[0]} does not match target batch {target.shape[0]}."
-            )
-        while mask.ndim < target.ndim:
-            mask = mask.unsqueeze(1)
-        return mask
-
-    @classmethod
-    def _mask_action_dim_tensor(cls, tensor: Tensor, action_dim_is_pad: Tensor | None) -> Tensor:
-        if not cls._mask_enabled_static(action_dim_is_pad):
-            return tensor
-        valid_mask = cls._action_dim_valid_mask(tensor, action_dim_is_pad)
-        if valid_mask is None:
-            return tensor
-        return tensor.masked_fill(~valid_mask, 0)
-
-    @staticmethod
-    def _mask_enabled_static(action_dim_is_pad: Tensor | None) -> bool:
-        return action_dim_is_pad is not None
-
-    @classmethod
-    def _apply_action_dim_padding_mask(cls, loss: Tensor, action_dim_is_pad: Tensor | None) -> Tensor:
-        valid_mask = cls._action_dim_valid_mask(loss, action_dim_is_pad)
-        if valid_mask is None:
-            return loss
-        valid = valid_mask.to(dtype=loss.dtype)
-        denom = valid.sum(dim=-1).clamp_min(1.0)
-        return (loss * valid).sum(dim=-1) / denom
-
-    @staticmethod
-    def _apply_action_chunk_padding_mask(loss: Tensor, action_horizon_is_pad: Tensor | None) -> Tensor:
-        if action_horizon_is_pad is None:
-            return loss
-        valid_action = (
-            (~action_horizon_is_pad.to(device=loss.device, dtype=torch.bool)).unsqueeze(1).unsqueeze(-1)
-        )
-        return loss * valid_action
 
     def _prepare_flow_matching_tensors(
         self,
@@ -619,9 +1172,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
         timesteps: Tensor | None = None,
         noise: Tensor | None = None,
     ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
-        action_expert = self._backbone()._require_action_expert()
-        action_dtype = next(action_expert.parameters()).dtype
-        actions = actions.to(dtype=action_dtype)
+        # Match the original MolmoAct2 fp32+AMP training path: normalized actions,
+        # sampled flow noise, timesteps, and the velocity target are kept in fp32.
+        # Autocast still handles eligible action-expert matmuls even though its
+        # parameters are deliberately stored in fp32.
+        actions = actions.to(dtype=torch.float32)
         batch_size = int(actions.shape[0])
         device = actions.device
         num_flow_timesteps = max(1, int(self.config.num_flow_timesteps))
@@ -637,19 +1192,19 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     alpha=self.config.flow_matching_beta_alpha,
                     beta=self.config.flow_matching_beta_beta,
                 )
-                .to(dtype=action_dtype)
+                .to(dtype=actions.dtype)
                 .view(batch_size, num_flow_timesteps)
             )
         else:
             expected_timesteps_shape = (batch_size, num_flow_timesteps)
-            timesteps = timesteps.to(device=device, dtype=action_dtype)
+            timesteps = timesteps.to(device=device, dtype=actions.dtype)
             if tuple(timesteps.shape) != expected_timesteps_shape:
                 raise ValueError(
                     f"flow timesteps must have shape {expected_timesteps_shape}, got {tuple(timesteps.shape)}."
                 )
 
         if self.config.mask_action_dim_padding:
-            actions = self._mask_action_dim_tensor(actions, action_dim_is_pad)
+            actions = _mask_action_dim_tensor(actions, action_dim_is_pad)
 
         expected_noise_shape = (batch_size, num_flow_timesteps, actions.shape[1], actions.shape[2])
         if noise is None:
@@ -661,7 +1216,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     f"flow noise must have shape {expected_noise_shape}, got {tuple(noise.shape)}."
                 )
         if self.config.mask_action_dim_padding:
-            noise = self._mask_action_dim_tensor(noise, action_dim_is_pad)
+            noise = _mask_action_dim_tensor(noise, action_dim_is_pad)
 
         t_broadcast = timesteps.view(batch_size, num_flow_timesteps, 1, 1)
         actions_expanded = actions.unsqueeze(1).expand(-1, num_flow_timesteps, -1, -1)
@@ -705,20 +1260,35 @@ class MolmoAct2Policy(PreTrainedPolicy):
             raise ValueError("MolmoAct2 joint flow training cannot combine inputs_embeds with visual inputs.")
         if inputs_embeds is None:
             inputs_embeds, _image_features = backbone.build_input_embeddings(input_ids, images, token_pooling)
+        # External embeddings bypass the vendored text model's embedding
+        # boundary, so normalize them to the active AMP activation dtype here.
+        device_type = inputs_embeds.device.type
+        if torch.is_autocast_enabled(device_type):
+            inputs_embeds = inputs_embeds.to(dtype=torch.get_autocast_dtype(device_type))
 
         cache_position = torch.arange(0, inputs_embeds.shape[1], device=inputs_embeds.device)
+        attention_mask = model_inputs.get("attention_mask")
         position_ids = model_inputs.get("position_ids")
         if position_ids is None:
-            position_ids = cache_position.unsqueeze(0)
+            if torch.is_tensor(attention_mask) and attention_mask.ndim == 2:
+                position_ids = _position_ids_from_attention_mask(attention_mask)
+            else:
+                position_ids = cache_position.unsqueeze(0)
 
-        attention_mask = model_inputs.get("attention_mask")
         if isinstance(attention_mask, dict):
             causal_mask_mapping = attention_mask
         else:
+            # The official native fine-tuning config explicitly sets
+            # ``bi_directional_attn=None``. The converted HF processor still
+            # emits image ``token_type_ids`` for inference compatibility, but
+            # forwarding them here would silently make all image tokens
+            # bidirectional and change every VLM KV state seen by the action
+            # expert. Keep joint flow training causal to match the model's
+            # pretraining/fine-tuning recipe; inference remains unchanged.
             causal_mask_mapping = backbone._build_native_attention_bias(
                 inputs_embeds=inputs_embeds,
                 attention_mask=attention_mask,
-                token_type_ids=model_inputs.get("token_type_ids"),
+                token_type_ids=None,
                 past_key_values=None,
             )
         return inputs_embeds, causal_mask_mapping, position_ids, cache_position
@@ -786,35 +1356,42 @@ class MolmoAct2Policy(PreTrainedPolicy):
         if batch.get("action_horizon_is_pad") is not None:
             action_attention_mask = ~batch["action_horizon_is_pad"].to(device=device, dtype=torch.bool)
 
+        # Match the original AMP implementation: construct masks and RoPE caches
+        # from the action activation dtype, not the fp32 master-weight dtype.
+        # Under bf16 autocast the linears below produce bf16 activations even
+        # though action_embed.weight remains fp32.
+        action_parameter_dtype = action_expert.action_embed.weight.dtype
+        conditioning = self._action_time_conditioning(action_expert, timesteps_flat)
+        action_hidden = action_expert.action_embed(xt_flat.to(dtype=action_parameter_dtype))
+        action_compute_dtype = action_hidden.dtype
+
         valid_action = None
         if action_attention_mask is not None:
-            valid_action = action_attention_mask.to(device=device, dtype=actions.dtype).unsqueeze(-1)
-            valid_action = self._expand_mask(valid_action, num_flow_timesteps)
+            valid_action = action_attention_mask.to(device=device, dtype=action_compute_dtype).unsqueeze(-1)
+            valid_action = _expand_mask(valid_action, num_flow_timesteps)
 
         rope_cache = None
         if len(action_expert.blocks) > 0 and action_expert.blocks[0].self_attn.rope is not None:
             rope_cache = action_expert.blocks[0].self_attn.rope.build_cache(
                 seq_len=actions.shape[1],
                 device=device,
-                dtype=actions.dtype,
+                dtype=action_compute_dtype,
             )
 
         cross_mask = action_expert._build_cross_attention_mask(
             encoder_attention_mask,
             batch_size,
-            actions.dtype,
+            action_compute_dtype,
         )
-        cross_mask = self._expand_mask(cross_mask, num_flow_timesteps)
+        cross_mask = _expand_mask(cross_mask, num_flow_timesteps)
         self_mask = action_expert._build_self_attention_mask(
             action_attention_mask,
             actions.shape[1],
             device,
-            actions.dtype,
+            action_compute_dtype,
         )
-        self_mask = self._expand_mask(self_mask, num_flow_timesteps)
+        self_mask = _expand_mask(self_mask, num_flow_timesteps)
 
-        conditioning = self._action_time_conditioning(action_expert, timesteps_flat)
-        action_hidden = action_expert.action_embed(xt_flat)
         if valid_action is not None:
             action_hidden = action_hidden * valid_action
 
@@ -846,17 +1423,28 @@ class MolmoAct2Policy(PreTrainedPolicy):
             else:
                 position_embeddings_i = position_embeddings
 
-            layer_outputs = decoder_block(
-                layer_hidden,
-                position_embeddings=position_embeddings_i,
-                attention_mask=causal_mask_mapping,
-                position_ids=position_ids,
-                past_key_values=None,
-                output_attentions=False,
-                use_cache=False,
-                cache_position=cache_position,
-                collect_layer_kv_states=True,
-            )
+            decoder_kwargs = {
+                "position_embeddings": position_embeddings_i,
+                "attention_mask": causal_mask_mapping,
+                "position_ids": position_ids,
+                "past_key_values": None,
+                "output_attentions": False,
+                "use_cache": False,
+                "cache_position": cache_position,
+                "collect_layer_kv_states": True,
+            }
+            if use_gradient_checkpointing:
+                # The surrounding checkpoint covers the paired text+action
+                # layer. Bypass only Transformers' per-text-layer checkpoint
+                # wrapper so the text block is not recomputed twice. Base
+                # Module dispatch still honors Module.compile and hooks.
+                layer_outputs = _call_module_without_gradient_checkpointing_layer(
+                    decoder_block,
+                    layer_hidden,
+                    **decoder_kwargs,
+                )
+            else:
+                layer_outputs = decoder_block(layer_hidden, **decoder_kwargs)
             next_hidden = layer_outputs[0]
             key_states, value_states = self._decoder_layer_kv_outputs(layer_outputs, output_attentions=False)
             key_states = backbone._cache_to_sequence(key_states)
@@ -871,8 +1459,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
             if k_norm is not None:
                 k_ctx = k_norm(k_ctx.transpose(1, 2)).transpose(1, 2)
             if num_flow_timesteps != 1:
-                k_ctx = self._expand_mask(k_ctx, num_flow_timesteps)
-                v_ctx = self._expand_mask(v_ctx, num_flow_timesteps)
+                k_ctx = _expand_mask(k_ctx, num_flow_timesteps)
+                v_ctx = _expand_mask(v_ctx, num_flow_timesteps)
+
+            if self.config.compile_model and use_gradient_checkpointing:
+                _mark_action_context_dynamic(k_ctx, v_ctx, cross_mask)
 
             next_action_hidden = action_block(
                 layer_action_hidden,
@@ -909,12 +1500,12 @@ class MolmoAct2Policy(PreTrainedPolicy):
             pred_velocity = pred_velocity * valid_action
         pred_velocity = pred_velocity.reshape(
             batch_size, num_flow_timesteps, actions.shape[1], actions.shape[2]
-        )
+        ).to(dtype=target_velocity.dtype)
 
         loss = F.mse_loss(pred_velocity, target_velocity, reduction="none")
-        loss = self._apply_action_chunk_padding_mask(loss, batch.get("action_horizon_is_pad"))
+        loss = _apply_action_chunk_padding_mask(loss, batch.get("action_horizon_is_pad"))
         if self.config.mask_action_dim_padding:
-            loss = self._apply_action_dim_padding_mask(loss, batch.get("action_dim_is_pad"))
+            loss = _apply_action_dim_padding_mask(loss, batch.get("action_dim_is_pad"))
         loss = loss.reshape(batch_size, -1).mean(dim=1)
         if reduction == "mean":
             loss = loss.mean()
@@ -932,32 +1523,6 @@ class MolmoAct2Policy(PreTrainedPolicy):
         nonempty = token_counts > 0
         example_weights[nonempty] = 2.0 / torch.sqrt(token_counts[nonempty])
         return example_weights[:, None].expand_as(valid_positions)[valid_positions].to(dtype=torch.float32)
-
-    @staticmethod
-    def _weighted_mean(values: Tensor, weights: Tensor | None) -> Tensor:
-        if weights is None:
-            return values.mean()
-        weights = weights.to(device=values.device, dtype=values.dtype)
-        return torch.dot(values, weights) / weights.sum().clamp_min(1.0)
-
-    @staticmethod
-    def _weighted_per_example(
-        values: Tensor,
-        weights: Tensor | None,
-        example_indices: Tensor,
-        batch_size: int,
-    ) -> Tensor:
-        values = values.float()
-        if weights is None:
-            weights = torch.ones_like(values)
-        else:
-            weights = weights.to(device=values.device, dtype=values.dtype)
-        loss_sum = torch.zeros(batch_size, device=values.device, dtype=torch.float32)
-        weight_sum = torch.zeros(batch_size, device=values.device, dtype=torch.float32)
-        loss_sum.scatter_add_(0, example_indices, values * weights)
-        weight_sum.scatter_add_(0, example_indices, weights)
-        global_weight_sum = weight_sum.sum().clamp_min(1.0)
-        return loss_sum * float(batch_size) / global_weight_sum
 
     def _discrete_loss_from_backbone_outputs(
         self,
@@ -992,55 +1557,27 @@ class MolmoAct2Policy(PreTrainedPolicy):
         token_weights = self._discrete_token_weights(valid_positions)
         if reduction == "none":
             example_indices = valid_positions.nonzero(as_tuple=False)[:, 0].to(device=hidden_states.device)
-            ce_loss = self._weighted_per_example(
+            ce_loss = _weighted_per_example(
                 token_ce_loss,
                 token_weights,
                 example_indices,
                 int(labels.shape[0]),
             )
         else:
-            ce_loss = self._weighted_mean(token_ce_loss, token_weights)
+            ce_loss = _weighted_mean(token_ce_loss, token_weights)
         if not self.config.softmax_auxiliary_loss:
             return ce_loss, None
 
         if reduction == "none":
-            z_loss = self.config.softmax_auxiliary_loss_scale * self._weighted_per_example(
+            z_loss = self.config.softmax_auxiliary_loss_scale * _weighted_per_example(
                 log_z.pow(2),
                 token_weights,
                 example_indices,
                 int(labels.shape[0]),
             )
         else:
-            z_loss = self.config.softmax_auxiliary_loss_scale * self._weighted_mean(
-                log_z.pow(2), token_weights
-            )
+            z_loss = self.config.softmax_auxiliary_loss_scale * _weighted_mean(log_z.pow(2), token_weights)
         return ce_loss, z_loss
-
-    @staticmethod
-    def _extract_discrete_token_bins(
-        generated_ids: list[int],
-        start_token_id: int,
-        end_token_id: int,
-        token_id_to_bin: dict[int, int],
-    ) -> list[int]:
-        start_idx = None
-        end_idx = None
-        for idx, token_id in enumerate(generated_ids):
-            if token_id == start_token_id:
-                start_idx = idx
-                break
-        if start_idx is not None:
-            for idx in range(start_idx + 1, len(generated_ids)):
-                if generated_ids[idx] == end_token_id:
-                    end_idx = idx
-                    break
-        span_start = 0 if start_idx is None else start_idx + 1
-        span_end = len(generated_ids) if end_idx is None else end_idx
-        return [
-            int(token_id_to_bin[token_id])
-            for token_id in generated_ids[span_start:span_end]
-            if token_id in token_id_to_bin
-        ]
 
     def _action_token_id_to_bin(self) -> dict[int, int]:
         method = getattr(self.model, "_action_token_id_to_bin", None)
@@ -1093,6 +1630,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         current_output = initial_output
         current_past_key_values = past_key_values
         current_attention_mask = attention_mask
+        next_position_ids = _next_decode_position_ids_from_attention_mask(current_attention_mask)
         hit_end = False
         for _ in range(int(max_steps)):
             next_token = torch.argmax(current_output.logits[:, -1, :], dim=-1)
@@ -1108,11 +1646,15 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 )
                 current_past_key_values = current_output.past_key_values
             else:
+                step_position_ids = next_position_ids
                 last_hidden, current_past_key_values = ar_decode_step(
                     next_token,
                     past_key_values=current_past_key_values,
                     attention_bias=attention_bias,
+                    position_ids=step_position_ids,
                 )
+                if next_position_ids is not None:
+                    next_position_ids = next_position_ids + 1
                 current_output = types.SimpleNamespace(
                     logits=self.model.lm_head(last_hidden),
                     past_key_values=current_past_key_values,
@@ -1179,7 +1721,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         chunks: list[Tensor] = []
         for token_row in generated_token_ids:
             generated_ids = [int(token_id) for token_id in token_row.detach().cpu().tolist()]
-            discrete_token_ids = self._extract_discrete_token_bins(
+            discrete_token_ids = _extract_discrete_token_bins(
                 generated_ids,
                 int(self.model.config.action_start_token_id),
                 int(self.model.config.action_end_token_id),
@@ -1218,7 +1760,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         model_inputs: dict[str, Tensor],
         action_dim: int,
     ) -> Tensor:
-        model_inputs = self._drop_trivial_attention_mask(model_inputs)
+        model_inputs = _drop_trivial_attention_mask(model_inputs)
         max_steps = self._discrete_generation_max_steps()
         static_cache, attention_bias = self._make_discrete_ar_graph_decode_inputs(
             model_inputs,
@@ -1294,7 +1836,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             generator=generator,
         )
         if self.config.mask_action_dim_padding:
-            trajectory = self._mask_action_dim_tensor(trajectory, action_dim_is_pad)
+            trajectory = _mask_action_dim_tensor(trajectory, action_dim_is_pad)
 
         action_context = action_expert.prepare_context(
             encoder_kv_states=encoder_kv_states,
@@ -1327,7 +1869,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     modulation=step_modulation,
                 )
                 if mask_enabled:
-                    velocity = self._mask_action_dim_tensor(velocity, action_dim_is_pad)
+                    velocity = _mask_action_dim_tensor(velocity, action_dim_is_pad)
                 return velocity
 
             if self._rtc_enabled():
@@ -1352,7 +1894,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
             trajectory = trajectory + dt * velocity
             if mask_enabled:
-                trajectory = self._mask_action_dim_tensor(trajectory, action_dim_is_pad)
+                trajectory = _mask_action_dim_tensor(trajectory, action_dim_is_pad)
             if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
                 self.rtc_processor.track(time=float(flow_timestep[0].item()), x_t=trajectory, v_t=velocity)
 
@@ -1363,6 +1905,16 @@ class MolmoAct2Policy(PreTrainedPolicy):
         batch: dict[str, Tensor],
         reduction: str = "mean",
     ) -> tuple[Tensor, dict[str, Any]]:
+        """Compute training loss under MolmoAct2's configured AMP policy."""
+        with self._autocast_context():
+            return self._forward_impl(batch, reduction=reduction)
+
+    def _forward_impl(
+        self,
+        batch: dict[str, Tensor],
+        reduction: str = "mean",
+    ) -> tuple[Tensor, dict[str, Any]]:
+        """Compute training loss (flow-matching and/or discrete token loss)."""
         if reduction not in {"mean", "none"}:
             raise ValueError(f"Unsupported reduction={reduction!r}. Expected 'mean' or 'none'.")
         model_inputs = self._model_inputs(batch)
@@ -1422,6 +1974,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+        """Generate an action chunk via continuous flow matching or discrete AR decoding."""
         if "action_mode" in kwargs:
             raise TypeError(
                 "MolmoAct2 predict_action_chunk got unexpected keyword argument 'action_mode'; "
@@ -1431,7 +1984,6 @@ class MolmoAct2Policy(PreTrainedPolicy):
         inference_action_mode = self._resolve_inference_action_mode(kwargs.get("inference_action_mode"))
         num_steps = kwargs.get("num_steps", getattr(self.config, "num_inference_steps", None))
         generator = kwargs.get("generator")
-        model_dtype = _torch_dtype(self.config.model_dtype)
         device = next(self.parameters()).device
         batch_size = int(next(iter(model_inputs.values())).shape[0])
         if generator is None:
@@ -1441,12 +1993,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 device=device,
             )
         action_dim = self._output_action_dim(batch)
-        autocast_context = (
-            torch.autocast(device_type=device.type, dtype=model_dtype)
-            if device.type in {"cuda", "cpu"} and model_dtype in {torch.bfloat16, torch.float16}
-            else nullcontext()
-        )
-        with autocast_context:
+        with self._autocast_context():
             if inference_action_mode == "discrete":
                 if self._rtc_enabled():
                     raise ValueError("RTC is only supported for continuous MolmoAct2 inference.")
@@ -1465,17 +2012,33 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     execution_horizon=kwargs.get("execution_horizon"),
                 )
             else:
+                generation_kwargs: dict[str, Tensor] = {}
+                # LeRobot checkpoints record their actual training action mode
+                # in the outer policy config, while their immutable HF base can
+                # still say ``both``.  Reuse the continuous training mask at
+                # inference for saved LeRobot checkpoints.  Original HF
+                # checkpoints have no saved outer mode and retain their native
+                # BOTH-mode inference behavior.
+                if self._checkpoint_action_mode is not None:
+                    generation_kwargs["encoder_attention_mask"] = (
+                        self._encoder_attention_mask_for_action_expert(
+                            input_ids=model_inputs.get("input_ids"),
+                            attention_mask=model_inputs.get("attention_mask"),
+                        )
+                    )
                 actions = self._backbone().generate_actions_from_inputs(
                     **model_inputs,
                     action_dim_is_pad=batch.get("action_dim_is_pad"),
                     action_horizon=self._generation_action_horizon(),
                     num_steps=num_steps,
                     generator=generator,
+                    **generation_kwargs,
                 )
         return actions[:, : self.config.n_action_steps, :action_dim].to(dtype=torch.float32)
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+        """Pop one action step from the queue, regenerating the chunk when empty."""
         if self._rtc_enabled():
             raise AssertionError("RTC is not supported for select_action, use it with predict_action_chunk")
         self.eval()
@@ -1485,7 +2048,10 @@ class MolmoAct2Policy(PreTrainedPolicy):
         return self._action_queue.popleft()
 
     def _get_default_peft_targets(self) -> dict[str, Any]:
-        target_modules = self._lora_target_modules(prefix=r"model\.model")
+        target_modules = self._lora_target_modules(
+            prefix=r"model\.model",
+            lm_head_path=r"model\.lm_head",
+        )
         return {
             "target_modules": target_modules,
             "modules_to_save": [],
@@ -1493,10 +2059,14 @@ class MolmoAct2Policy(PreTrainedPolicy):
             "lora_alpha": self.config.lora_alpha,
             "lora_dropout": self.config.lora_dropout,
             "bias": self.config.lora_bias,
+            # We apply the official Gaussian initialization below under an
+            # isolated seed. Avoid PEFT's default Kaiming reset first, which
+            # would otherwise consume the global training RNG stream.
+            "init_lora_weights": False,
         }
 
     def _get_inner_peft_targets(self) -> dict[str, Any]:
-        target_modules = self._lora_target_modules(prefix="model")
+        target_modules = self._lora_target_modules(prefix="model", lm_head_path="lm_head")
         return {
             "target_modules": target_modules,
             "modules_to_save": [],
@@ -1504,45 +2074,112 @@ class MolmoAct2Policy(PreTrainedPolicy):
             "lora_alpha": self.config.lora_alpha,
             "lora_dropout": self.config.lora_dropout,
             "bias": self.config.lora_bias,
+            "init_lora_weights": False,
         }
 
-    def _lora_target_modules(self, *, prefix: str) -> str:
+    def _lora_target_modules(self, *, prefix: str, lm_head_path: str) -> str:
         vlm_linear_leaves = "w1|w2|w3|wq|wk|wv|wo|att_proj|attn_out|ff_proj|ff_out|patch_embedding"
-        target_modules = rf"{prefix}\.(transformer|vision_backbone)\.(?:.*\.)?({vlm_linear_leaves})$"
-        if self.config.enable_lora_action_expert:
-            action_expert_linear_paths = (
-                r"time_embed\.(1|3)|"
-                r"action_embed|context_k_proj|context_v_proj|"
-                r"blocks\.\d+\.self_attn\.(qkv|out_proj)|"
-                r"blocks\.\d+\.cross_attn\.(q_proj|out_proj)|"
-                r"blocks\.\d+\.mlp\.(up_proj|gate_proj|down_proj)|"
-                r"blocks\.\d+\.modulation\.linear|"
-                r"final_layer\.(modulation\.linear|linear)"
-            )
-            target_modules = (
-                f"({target_modules}|"
-                rf"{prefix}\.action_expert\.({action_expert_linear_paths})$)"
-            )
-        return target_modules
+        # The native model keeps its vocabulary projection at
+        # ``transformer.ff_out``. The HF conversion moves that exact weight to
+        # the top-level ``lm_head``; include it explicitly so LoRA covers the
+        # same linear modules as official MolmoAct2. Native MolmoAct2 also keeps
+        # image pooling and projection inside ``vision_backbone``. The HF
+        # conversion moves those connector modules beside ``vision_backbone``,
+        # so include their converted parent paths explicitly as well.
+        return (
+            rf"(?:{prefix}\.(transformer|vision_backbone|image_pooling_2d|image_projector)\.(?:.*\.)?"
+            rf"({vlm_linear_leaves})|{lm_head_path})$"
+        )
 
     def _build_inner_lora_config(self):
         require_package("peft", extra="molmoact2")
-        from peft import LoraConfig
 
         return LoraConfig(**self._get_inner_peft_targets())
 
+    @staticmethod
+    def _official_lora_initialization_sort_key(module_name: str) -> tuple[int, int, int]:
+        """Return the native MolmoAct2 module traversal order for a HF LoRA layer.
+
+        Official training injects PEFT into the native text transformer and
+        vision backbone separately, then initializes adapters by iterating the
+        resulting native module tree.  The converted HF model registers the
+        same 303 linear targets in a different order.  Sorting by the native
+        structural order makes seed 6198 select the same Gaussian LoRA-A
+        matrix for each mapped module instead of merely the same distribution.
+        """
+
+        text_match = re.search(
+            r"(?:^|\.)transformer\.blocks\.(\d+)\.(?:self_attn|mlp)\."
+            r"(attn_out|ff_out|att_proj|ff_proj)$",
+            module_name,
+        )
+        if text_match is not None:
+            native_leaf_order = {"attn_out": 0, "ff_out": 1, "att_proj": 2, "ff_proj": 3}
+            return (0, int(text_match.group(1)), native_leaf_order[text_match.group(2)])
+
+        if re.search(r"(?:^|\.)lm_head$", module_name) is not None:
+            return (1, 0, 0)
+
+        pooling_match = re.search(r"(?:^|\.)image_pooling_2d\.(wq|wk|wv|wo)$", module_name)
+        if pooling_match is not None:
+            return (2, 0, {"wq": 0, "wk": 1, "wv": 2, "wo": 3}[pooling_match.group(1)])
+
+        projector_match = re.search(r"(?:^|\.)image_projector\.(w1|w2|w3)$", module_name)
+        if projector_match is not None:
+            return (3, 0, {"w1": 0, "w2": 1, "w3": 2}[projector_match.group(1)])
+
+        if re.search(r"(?:^|\.)image_vit\.patch_embedding$", module_name) is not None:
+            return (4, 0, 0)
+
+        vit_match = re.search(
+            r"(?:^|\.)image_vit\.transformer\.resblocks\.(\d+)\."
+            r"(attention|feed_forward)\.(wq|wk|wv|wo|w1|w2)$",
+            module_name,
+        )
+        if vit_match is not None:
+            branch, leaf = vit_match.group(2), vit_match.group(3)
+            if branch == "attention":
+                leaf_order = {"wq": 0, "wk": 1, "wv": 2, "wo": 3}[leaf]
+            else:
+                leaf_order = {"w1": 4, "w2": 5}[leaf]
+            return (5, int(vit_match.group(1)), leaf_order)
+
+        raise RuntimeError(
+            f"MolmoAct2 cannot map a LoRA target into the official initialization order: {module_name!r}."
+        )
+
     def _apply_lora_adapters(self) -> None:
         require_package("peft", extra="molmoact2")
-        from peft import get_peft_model
 
         peft_config = self._build_inner_lora_config()
         self._validate_peft_config(peft_config)
 
         for param in self.model.parameters():
             param.requires_grad_(False)
-        self.model = get_peft_model(self.model, peft_config)
-        if not self.config.enable_lora_action_expert:
-            self._unfreeze_action_expert_parameters()
+        # Keep LoRA adapters in fp32 for optimizer stability. This is a
+        # deliberate memory/precision tradeoff, especially at high rank.
+        self.model = get_peft_model(
+            self.model,
+            peft_config,
+            autocast_adapter_dtype=True,
+        )
+        # Match the official trainer: adapters start as an identity update,
+        # with A sampled from N(0, 1/r) and B initialized to zero. Forking the
+        # RNG keeps initialization identical on every DDP rank without changing
+        # the training/data RNG stream.
+        from peft.tuners.lora.layer import LoraLayer
+
+        lora_layers = [
+            (name, module) for name, module in self.model.named_modules() if isinstance(module, LoraLayer)
+        ]
+        lora_layers.sort(key=lambda item: self._official_lora_initialization_sort_key(item[0]))
+        devices = [torch.cuda.current_device()] if torch.cuda.is_available() else []
+        with torch.random.fork_rng(devices=devices):
+            torch.manual_seed(6198)
+            for _, module in lora_layers:
+                for adapter_name in module.lora_A:
+                    module.reset_lora_parameters(adapter_name, "gaussian")
+        self._unfreeze_action_expert_parameters()
         self.train(self.training)
 
     def _validate_peft_config(self, peft_config) -> None:

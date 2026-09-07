@@ -1,0 +1,30 @@
+# Trains subtask prediction, subtask-conditioned action flow, and memory updates without plans.
+# Requires `subtask` and `memory`; missing `if_present` bindings skip the affected sub-recipe.
+
+blend:
+
+  high_level_subtask:
+    weight: 0.25
+    messages:
+      - {role: user, content: "${task}", stream: high_level}
+      - {role: assistant, content: "${subtask}", stream: high_level, target: true, if_present: subtask}
+
+  low_level_execution:
+    weight: 0.60
+    messages:
+      # The low-level stream trains action flow on the generated or annotated subtask.
+      - {role: user, content: "${subtask}", stream: low_level, if_present: subtask}
+
+  memory_update:
+    # `active_at` densifies sparse boundaries while preserving the prior-memory/subtask mapping.
+    # Inference controls update timing through `subtask_change` events.
+    weight: 0.15
+    bindings:
+      prior_memory: "nth_prev(style=memory, offset=1)"
+      current_memory: "active_at(t, style=memory)"
+      completed_subtask: "nth_prev(style=subtask, offset=1)"
+    messages:
+      - {role: user, content: "${task}", stream: high_level}
+      - {role: assistant, content: "Previous memory: ${prior_memory}", stream: high_level, if_present: prior_memory}
+      - {role: user, content: "Completed subtask: ${completed_subtask}", stream: high_level, if_present: completed_subtask}
+      - {role: assistant, content: "${current_memory}", stream: high_level, target: true, if_present: current_memory}

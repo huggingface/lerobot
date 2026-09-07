@@ -1,23 +1,177 @@
+# LeRobot
+
 <div class="flex justify-center">
   <a target="_blank" href="https://huggingface.co/lerobot">
     <img
-      alt="HuggingFace Expert Acceleration Program"
+      alt="LeRobot, Hugging Face Robotics Library"
       src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-logo-thumbnail.png"
-      style="width: 100%"
     ></img>
   </a>
 </div>
 
-# LeRobot
-
 **State-of-the-art machine learning for real-world robotics**
 
-🤗 LeRobot aims to provide models, datasets, and tools for real-world robotics in PyTorch. The goal is to lower the barrier for entry to robotics so that everyone can contribute and benefit from sharing datasets and pretrained models.
+🤗 LeRobot provides a hardware-agnostic, Python-native interface for controlling real robots - from affordable arms like the SO-ARM101 to full humanoids. Plus the tools to record, store, and share the datasets they generate. Every dataset uses the standardized **LeRobotDataset** format (synchronized video + action/state data) and can be streamed directly from the [Hugging Face Hub](https://huggingface.co/lerobot).
 
-🤗 LeRobot contains state-of-the-art approaches that have been shown to transfer to the real-world with a focus on imitation learning and reinforcement learning.
+🤗 On top of that data, LeRobot implements state-of-the-art policies - from lightweight imitation-learning models like ACT to large vision-language-action models like π₀ and SmolVLA - all trainable, shareable, and deployable with the same handful of CLI commands.
 
-🤗 LeRobot already provides a set of pretrained models, datasets with human collected demonstrations, and simulated environments so that everyone can get started.
+The goal: lower the barrier to entry for robotics, so that everyone can contribute to, and benefit from, shared datasets and pretrained models.
 
-🤗 LeRobot hosts pretrained models and datasets on the LeRobot HuggingFace page.
+<div align="center" style="display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin: 20px 0;">
+  <a href="https://discord.gg/s3KuuzsPFb" target="_blank">
+    <img alt="Discord" src="https://img.shields.io/badge/Discord-Join_the_Community-5865F2?style=flat&logo=discord&logoColor=white">
+  </a>
+  <a href="https://x.com/LeRobotHF" target="_blank">
+    <img alt="X (Twitter)" src="https://img.shields.io/badge/X-Follow_%40LeRobotHF-black?style=flat&logo=x&logoColor=white">
+  </a>
+  <a href="https://huggingface.co/lerobot" target="_blank">
+    <img alt="Hugging Face Hub" src="https://img.shields.io/badge/HF_Hub-Models_%26_Datasets-FFD21E?style=flat">
+  </a>
+</div>
 
-Join the LeRobot community on [Discord](https://discord.gg/s3KuuzsPFb)
+<div align="center">
+  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/robots_control_video.webp" width="640px" alt="Reachy 2 Demo">
+</div>
+
+## How It Works
+
+**Teleoperate → Record → Train → Deploy**
+
+1. **Teleoperate** - control the robot yourself (with a leader arm, keyboard, or phone) so it can learn from your movements.
+2. **Record** - each demonstration is saved as a dataset: synchronized camera video plus the actions you took.
+3. **Train** - a policy (the neural network that will control the robot) learns to imitate your demonstrations.
+4. **Deploy** - run the trained policy on the robot and watch it complete the task on its own.
+
+## Get Started
+
+New here? [Install LeRobot](./installation), then pick your path:
+
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 my-6">
+  <div class="border dark:border-gray-700 rounded-lg p-4 shadow">
+    <div class="text-lg font-semibold mb-2">🔧 I have a robot</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      LeRobot supports a wide range of arms and mobile robots. Popular picks:
+    </p>
+    <ul class="text-gray-700 dark:text-gray-300 text-sm list-disc pl-5 mb-2">
+      <li>
+        <a href="./so101">SO-101</a> - our flagship, low-cost arm
+      </li>
+      <li>
+        <a href="./lekiwi">LeKiwi</a> - a mobile base with an arm on top
+      </li>
+      <li>
+        <a href="./koch">Koch v1.1</a> - a long-time community favorite
+      </li>
+      <li>
+        or find yours under <strong>Robots</strong> in the sidebar
+      </li>
+    </ul>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      Once it's assembled and calibrated, record a dataset and train your first
+      policy with the <a href="./il_robots">imitation learning tutorial</a> - or
+      skip the CLI entirely with <a href="./lelab">LeLab</a>, a browser GUI for
+      the same workflow.
+    </p>
+  </div>
+  <div class="border dark:border-gray-700 rounded-lg p-4 shadow">
+    <div class="text-lg font-semibold mb-2">💻 No hardware yet</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      You can still train and evaluate policies without owning a robot:
+    </p>
+    <ul class="text-gray-700 dark:text-gray-300 text-sm list-disc pl-5 mb-2">
+      <li>
+        train on an existing
+        <a href="https://huggingface.co/datasets?other=LeRobot">
+          LeRobot dataset
+        </a>
+        from the Hub
+      </li>
+      <li>
+        evaluate in <a href="./envhub">simulation</a>, against benchmarks like
+        LIBERO or Meta-World
+      </li>
+      <li>
+        try the free <a href="./notebooks">Colab notebooks</a> - nothing to
+        install
+      </li>
+    </ul>
+  </div>
+  <div class="border dark:border-gray-700 rounded-lg p-4 shadow">
+    <div class="text-lg font-semibold mb-2">🤝 I want to contribute</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      Start with the <a href="./contributing">Contributing guide</a>, then
+      <a href="./bring_your_own_policies">add a new policy</a> or
+      <a href="./integrate_hardware">bring your own hardware</a>.
+    </p>
+  </div>
+</div>
+
+## Explore the Docs
+
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 my-6">
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./cheat-sheet"
+  >
+    <div class="font-semibold mb-1">📋 Cheat Sheet</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      Every LeRobot CLI command, copy-paste ready.
+    </p>
+  </a>
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./hardware_guide"
+  >
+    <div class="font-semibold mb-1">🖥️ Compute & Hardware Guide</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      Which policy fits your GPU, and how long training takes.
+    </p>
+  </a>
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./lerobot-dataset-v3"
+  >
+    <div class="font-semibold mb-1">🗂️ LeRobotDataset</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      Load, stream, and visualize robot datasets from the Hub.
+    </p>
+  </a>
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./lelab"
+  >
+    <div class="font-semibold mb-1">🖼 LeLab</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      A browser GUI for calibrating, recording, and training - no CLI required.
+    </p>
+  </a>
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./act"
+  >
+    <div class="font-semibold mb-1">🧠 Policies</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      Start with ACT, our recommended first policy - or browse SmolVLA, π₀, and
+      more in the sidebar.
+    </p>
+  </a>
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./envhub"
+  >
+    <div class="font-semibold mb-1">🎮 Simulation & Benchmarks</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      Train and evaluate in simulated environments before touching real
+      hardware.
+    </p>
+  </a>
+</div>
+
+## Common Problems
+
+Running into issues? A few of the most frequent ones:
+
+- **Blurry or unusable camera footage** - lighting matters more than resolution. See the [Cameras](./cameras) guide.
+- **Build or install errors** (`cmake`, `ffmpeg`, CUDA) - see the Troubleshooting section of the [Installation guide](./installation#troubleshooting).
+- **Not sure which policy fits your GPU** - check the [Compute & Hardware Guide](./hardware_guide).
+- **Still stuck?** Ask on [Discord](https://discord.gg/s3KuuzsPFb) - the community (and the LeRobot team) is there to help.

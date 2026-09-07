@@ -23,6 +23,7 @@ from typing import Any, Literal, get_args
 
 MessageRole = Literal["user", "assistant", "system", "tool"]
 MessageStream = Literal["high_level", "low_level"]
+RecipeRoute = Literal["vqa"]
 
 DEFAULT_BINDINGS = {
     "subtask": "active_at(t, style=subtask)",
@@ -40,6 +41,7 @@ discovery (here) and rendered-message substitution (in ``language_render``)."""
 
 _VALID_ROLES = frozenset(get_args(MessageRole))
 _VALID_STREAMS = frozenset(get_args(MessageStream))
+_VALID_ROUTES = frozenset(get_args(RecipeRoute))
 
 
 @dataclass
@@ -78,7 +80,7 @@ class MessageTurn:
             raise ValueError(f"Unsupported message stream: {self.stream!r}")
         if self.content is None and self.tool_calls_from is None:
             raise ValueError("MessageTurn.content is required unless tool_calls_from is set.")
-        if self.content is not None and not isinstance(self.content, (str, list)):
+        if self.content is not None and not isinstance(self.content, str | list):
             raise TypeError("MessageTurn.content must be a string, a list of HF-style blocks, or None.")
         if isinstance(self.content, list):
             for block in self.content:
@@ -99,13 +101,16 @@ class TrainingRecipe:
 
     A recipe is either a *message recipe* (``messages`` plus optional
     ``bindings``) or a *blend recipe* (``blend`` mapping names to weighted
-    sub-recipes). ``weight`` is only meaningful inside a blend.
+    sub-recipes). ``weight`` and ``route`` are only meaningful inside a blend;
+    ``route: vqa`` gives sparse VQA annotations priority over normal weighted
+    selection.
     """
 
     messages: list[MessageTurn] | None = None
     bindings: dict[str, str] | None = None
     blend: dict[str, TrainingRecipe] | None = None
     weight: float | None = None
+    route: RecipeRoute | None = None
 
     def __post_init__(self) -> None:
         """Validate that exactly one of ``messages`` or ``blend`` is set."""
@@ -113,6 +118,10 @@ class TrainingRecipe:
             raise ValueError("TrainingRecipe must set only one of messages or blend.")
         if self.messages is None and self.blend is None:
             raise ValueError("TrainingRecipe must set one of messages or blend.")
+        if self.route is not None and self.route not in _VALID_ROUTES:
+            raise ValueError(f"Unsupported recipe route: {self.route!r}")
+        if self.blend is not None and self.route is not None:
+            raise ValueError("TrainingRecipe.route may only be set on a message recipe inside a blend.")
 
         if self.messages is not None:
             self._validate_message_recipe()
@@ -147,8 +156,9 @@ class TrainingRecipe:
         return cls.from_dict(data)
 
     def _validate_message_recipe(self) -> None:
-        """Ensure every templated binding is known and at least one turn is a target."""
-        assert self.messages is not None
+        """Validate bindings and require text or low-level action supervision."""
+        if self.messages is None:
+            raise ValueError("Cannot validate a message recipe without messages.")
         known_bindings = set(DEFAULT_BINDINGS) | set(self.bindings or {}) | {"task"}
 
         for turn in self.messages:
@@ -156,12 +166,19 @@ class TrainingRecipe:
             if missing:
                 raise ValueError(f"MessageTurn references unknown binding(s): {sorted(missing)}")
 
-        if not any(turn.target for turn in self.messages):
-            raise ValueError("Message recipes must contain at least one target turn.")
+        has_target = any(turn.target for turn in self.messages)
+        has_low_level = any(turn.stream == "low_level" for turn in self.messages)
+        if not (has_target or has_low_level):
+            raise ValueError(
+                "Message recipes must contain at least one supervised turn — "
+                "either ``target: true`` (text CE) or ``stream: low_level`` "
+                "(flow/action loss)."
+            )
 
     def _validate_blend_recipe(self) -> None:
         """Ensure each blend component is a non-empty, weighted message recipe."""
-        assert self.blend is not None
+        if self.blend is None:
+            raise ValueError("Cannot validate a blend recipe without blend components.")
         if not self.blend:
             raise ValueError("Blend recipes must contain at least one component.")
 
@@ -174,6 +191,13 @@ class TrainingRecipe:
                 raise ValueError(f"Blend component {name!r} must define weight.")
             if recipe.weight <= 0:
                 raise ValueError(f"Blend component {name!r} must have a positive weight.")
+
+    def referenced_binding_names(self) -> set[str]:
+        """Names of every binding referenced by this recipe's message turns."""
+        names: set[str] = set()
+        for turn in self.messages or []:
+            names |= self._referenced_bindings(turn)
+        return names
 
     def _referenced_bindings(self, turn: MessageTurn) -> set[str]:
         """Return the binding names that ``turn`` references via placeholders or attributes."""

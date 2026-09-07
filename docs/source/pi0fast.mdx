@@ -96,7 +96,7 @@ lerobot-train \
     --policy.type=pi0_fast \
     --output_dir=./outputs/pi0fast_training \
     --job_name=pi0fast_training \
-    --policy.pretrained_path=lerobot/pi0_fast_base \
+    --policy.pretrained_path=lerobot/pi0fast-base \
     --policy.dtype=bfloat16 \
     --policy.gradient_checkpointing=true \
     --policy.chunk_size=10 \
@@ -174,7 +174,7 @@ The model takes images, text instructions, and robot state as input, and outputs
 
 ## Reproducing π₀Fast results
 
-We reproduce the results of π₀Fast on the LIBERO benchmark using the LeRobot implementation. We take the LeRobot PiFast base model [lerobot/pi0fast-base](https://huggingface.co/lerobot/pi0fast-base) and finetune for an additional 40kk steps in bfloat16, with batch size of 256 on 8 H100 GPUs using the [HuggingFace LIBERO dataset](https://huggingface.co/datasets/HuggingFaceVLA/libero).
+We reproduce the results of π₀Fast on the LIBERO benchmark using the LeRobot implementation. We take the LeRobot PiFast base model [lerobot/pi0fast-base](https://huggingface.co/lerobot/pi0fast-base) and finetune for an additional 40k steps in bfloat16, with batch size of 256 on 8 H100 GPUs using the [HuggingFace LIBERO dataset](https://huggingface.co/datasets/HuggingFaceVLA/libero).
 
 The finetuned model can be found here:
 
@@ -187,7 +187,7 @@ lerobot-train \
   --dataset.repo_id=lerobot/libero \
   --output_dir=outputs/libero_pi0fast \
   --job_name=libero_pi0fast \
-  --policy.path=lerobot/pi0fast_base \
+  --policy.path=lerobot/pi0fast-base \
   --policy.dtype=bfloat16 \
   --steps=100000 \
   --save_freq=20000 \

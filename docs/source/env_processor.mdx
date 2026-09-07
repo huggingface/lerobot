@@ -88,20 +88,6 @@ policy_preprocessor = NormalizerProcessorStep(stats=dataset_stats)
 
 The same policy can work with different environment processors, and the same environment processor can work with different policies:
 
-````python
-# Use SmolVLA policy with LIBERO environment
-# Use SmolVLA policy with LIBERO environment
-libero_preprocessor, libero_postprocessor = make_env_pre_post_processors(
-    env_cfg=libero_cfg,
-    policy_cfg=smolvla_cfg,
-)
-smolvla_preprocessor, smolvla_postprocessor = make_pre_post_processors(smolvla_cfg)
-# Or use ACT policy with the same LIBERO environment
-libero_preprocessor, libero_postprocessor = make_env_pre_post_processors(
-    env_cfg=libero_cfg,
-    policy_cfg=act_cfg,
-)
-act_preprocessor, act_postprocessor = make_pre_post_processors(act_cfg)
 ```python
 # Use SmolVLA policy with LIBERO environment
 libero_preprocessor, libero_postprocessor = make_env_pre_post_processors(
@@ -116,6 +102,7 @@ libero_preprocessor, libero_postprocessor = make_env_pre_post_processors(
     policy_cfg=act_cfg,
 )
 act_preprocessor, act_postprocessor = make_pre_post_processors(act_cfg)
+```
 
 ### 3. **Easier Experimentation**
 
@@ -145,7 +132,7 @@ class LiberoVelocityProcessorStep(ObservationProcessorStep):
         state = torch.cat([eef_pos, eef_axisangle, eef_vel,
                           gripper_pos, gripper_vel], dim=-1)  # 14D
         return state
-````
+```
 
 ### 4. **Cleaner Environment Code**
 

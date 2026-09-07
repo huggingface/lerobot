@@ -22,12 +22,23 @@ plain editors and roundtrip cleanly through ``ruff format``.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 _DIR = Path(__file__).parent
 
 
 def load(name: str) -> str:
-    """Read prompt template ``name.txt`` from the ``prompts/`` directory."""
+    """Read prompt template ``name.txt`` from the ``prompts/`` directory.
+
+    A ``LEROBOT_PROMPT_OVERRIDE_<name>`` environment variable, when set to a
+    non-empty value, takes precedence over the packaged file. This lets prompt
+    search (e.g. GEPA) inject candidate templates into a remote job without
+    rebuilding the package; the override must keep the same ``{placeholder}``
+    fields the call site formats in.
+    """
+    override = os.environ.get(f"LEROBOT_PROMPT_OVERRIDE_{name}")
+    if override and override.strip():
+        return override
     path = _DIR / f"{name}.txt"
     return path.read_text(encoding="utf-8")

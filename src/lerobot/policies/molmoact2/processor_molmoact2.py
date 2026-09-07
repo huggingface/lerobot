@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2026 The Allen Institute for Artificial Intelligence and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,10 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""MolmoAct2 pre/post processing pipeline.
+
+Builds the multimodal prompt (images, discretised state, task text),
+tokenises it via the vendored MolmoAct2 processor, and handles quantile
+normalisation with optional per-dimension gripper masking.
+"""
+
 from __future__ import annotations
 
 import json
-import os
+import logging
+import math
 import re
 from contextlib import suppress
 from copy import deepcopy
@@ -27,10 +33,10 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
-from huggingface_hub import snapshot_download
 from torch import Tensor
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -41,10 +47,11 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
+    batch_to_transition,
     policy_action_to_transition,
+    transition_to_batch,
     transition_to_policy_action,
 )
-from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     ACTION,
     OBS_IMAGES,
@@ -54,14 +61,79 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.import_utils import _scipy_available, _transformers_available, require_package
 
-from .configuration_molmoact2 import MolmoAct2Config, infer_molmoact2_max_sequence_length
+from .configuration_molmoact2 import MolmoAct2Config
+from .utils_molmoact2 import (
+    hf_token as _hf_token,
+    position_ids_from_attention_mask as _position_ids_from_attention_mask,
+    resolve_checkpoint_location as _resolve_checkpoint_location,
+)
+
+logger = logging.getLogger(__name__)
+
+MOLMOACT2_DEFAULT_NUM_IMAGES = 2
+MOLMOACT2_IMAGE_TOKENS_PER_IMAGE = 196
+MOLMOACT2_FIXED_PROMPT_TOKEN_BUDGET = 80
+MOLMOACT2_TASK_TOKEN_BUDGET = 32
+MOLMOACT2_SEQUENCE_LENGTH_MARGIN = 32
+MOLMOACT2_SEQUENCE_LENGTH_MULTIPLE = 64
+# Collapse nearby prompt/action lengths onto the same torch.compile graph while
+# adding at most seven masked tokens per batch. BOS is inserted afterward, so
+# the final model width is ``8k + 1`` rather than a tensor-core-aligned multiple.
+MOLMOACT2_SEQUENCE_BUCKET_MULTIPLE = 8
+MOLMOACT2_DISCRETE_ACTION_WRAPPER_TOKENS = 4
+MOLMOACT2_MIN_DISCRETE_ACTION_TOKENS_PER_STEP = 6
+MOLMOACT2_DISCRETE_ACTION_TOKENS_PER_DIM = 0.95
+
+
+def _round_up(value: int, multiple: int) -> int:
+    return int(math.ceil(value / multiple) * multiple)
+
+
+def infer_molmoact2_max_sequence_length(
+    *,
+    num_images: int,
+    state_dim: int,
+    action_dim: int,
+    action_horizon: int,
+    include_discrete_action: bool,
+) -> int:
+    """Infer the padded text/image sequence cap from MolmoAct2's fixed token layout."""
+    if num_images < 1:
+        num_images = MOLMOACT2_DEFAULT_NUM_IMAGES
+    if state_dim < 0:
+        state_dim = 0
+    if action_dim < 1:
+        action_dim = 1
+    if action_horizon < 1:
+        action_horizon = 1
+
+    image_tokens = num_images * MOLMOACT2_IMAGE_TOKENS_PER_IMAGE
+    prompt_tokens = (
+        MOLMOACT2_FIXED_PROMPT_TOKEN_BUDGET
+        + MOLMOACT2_TASK_TOKEN_BUDGET
+        + state_dim
+        + MOLMOACT2_SEQUENCE_LENGTH_MARGIN
+    )
+    action_tokens = 0
+    if include_discrete_action:
+        action_tokens_per_step = max(
+            MOLMOACT2_MIN_DISCRETE_ACTION_TOKENS_PER_STEP,
+            math.ceil(action_dim * MOLMOACT2_DISCRETE_ACTION_TOKENS_PER_DIM),
+        )
+        action_tokens = MOLMOACT2_DISCRETE_ACTION_WRAPPER_TOKENS + action_horizon * action_tokens_per_step
+
+    return _round_up(
+        image_tokens + prompt_tokens + action_tokens,
+        MOLMOACT2_SEQUENCE_LENGTH_MULTIPLE,
+    )
+
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import Qwen2Tokenizer
 
-    from .hf_model.image_processing_molmoact2 import MolmoAct2ImageProcessor
-    from .hf_model.processing_molmoact2 import MolmoAct2Processor
-    from .hf_model.video_processing_molmoact2 import MolmoAct2VideoProcessor
+    from .molmoact2_hf_model.image_processing_molmoact2 import MolmoAct2ImageProcessor
+    from .molmoact2_hf_model.processing_molmoact2 import MolmoAct2Processor
+    from .molmoact2_hf_model.video_processing_molmoact2 import MolmoAct2VideoProcessor
 else:
     Qwen2Tokenizer = None
     MolmoAct2ImageProcessor = None
@@ -69,7 +141,7 @@ else:
     MolmoAct2VideoProcessor = None
 
 if TYPE_CHECKING or (_transformers_available and _scipy_available):
-    from .hf_model.action_tokenizer import UniversalActionProcessor
+    from .molmoact2_hf_model.action_tokenizer import UniversalActionProcessor
 else:
     UniversalActionProcessor = None
 
@@ -97,59 +169,39 @@ _QUESTION_PREFIX_PATTERNS = tuple(
 )
 
 
-def _hf_token() -> str | None:
-    return os.environ.get("HF_TOKEN") or os.environ.get("HF_ACCESS_TOKEN")
-
-
-def _resolve_checkpoint_location(
-    checkpoint_path: str,
-    *,
-    revision: str | None = None,
-    force_download: bool = False,
-) -> str:
-    checkpoint_path = str(checkpoint_path or "").strip()
-    if not checkpoint_path:
-        raise ValueError("MolmoAct2 policy requires `checkpoint_path`.")
-    local_path = Path(checkpoint_path).expanduser()
-    if local_path.exists():
-        return str(local_path)
-    return snapshot_download(
-        repo_id=checkpoint_path,
-        repo_type="model",
-        revision=revision,
-        force_download=force_download,
-        ignore_patterns=["*.py", "*.pyc", "__pycache__/*"],
-        token=_hf_token(),
-    )
-
-
 def _load_hf_norm_stats_for_tag(
     checkpoint_path: str,
     *,
     revision: str | None,
     force_download: bool,
     norm_tag: str | None,
+    norm_stats_path: str | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     norm_tag = str(norm_tag or "").strip()
     if not norm_tag:
         raise ValueError("MolmoAct2 HF checkpoint inference requires `policy.norm_tag` for normalization.")
 
-    checkpoint_location = Path(
-        _resolve_checkpoint_location(
-            checkpoint_path,
-            revision=revision,
-            force_download=force_download,
-        )
-    )
-    config_path = checkpoint_location / "config.json"
     norm_stats_filename = "norm_stats.json"
-    if config_path.exists():
-        with suppress(OSError, json.JSONDecodeError):
-            norm_stats_filename = str(
-                json.loads(config_path.read_text()).get("norm_stats_filename") or norm_stats_filename
+    if norm_stats_path is not None:
+        stats_path = Path(norm_stats_path).expanduser().resolve(strict=True)
+        norm_stats_filename = stats_path.name
+        if not stats_path.is_file():
+            raise ValueError(f"MolmoAct2 norm_stats_path must be a JSON file, got {stats_path}.")
+    else:
+        checkpoint_location = Path(
+            _resolve_checkpoint_location(
+                checkpoint_path,
+                revision=revision,
+                force_download=force_download,
             )
-
-    stats_path = checkpoint_location / norm_stats_filename
+        )
+        config_path = checkpoint_location / "config.json"
+        if config_path.exists():
+            with suppress(OSError, json.JSONDecodeError):
+                norm_stats_filename = str(
+                    json.loads(config_path.read_text()).get("norm_stats_filename") or norm_stats_filename
+                )
+        stats_path = checkpoint_location / norm_stats_filename
     if not stats_path.exists():
         raise FileNotFoundError(
             f"MolmoAct2 HF checkpoint is missing {norm_stats_filename!r}; cannot resolve norm_tag={norm_tag!r}."
@@ -219,6 +271,11 @@ def _load_local_molmoact2_processor(checkpoint_location: str) -> Any:
         checkpoint_location,
         token=_hf_token(),
     )
+    # ``MolmoAct2Processor.insert_bos`` preserves padding by locating the first
+    # valid token, so its batched path requires left-padded tokenizer output.
+    # Released checkpoints do not consistently persist this tokenizer setting
+    # and Qwen2 otherwise defaults to right padding.
+    tokenizer.padding_side = "left"
 
     chat_template_path = checkpoint_path / "chat_template.jinja"
     chat_template = chat_template_path.read_text() if chat_template_path.exists() else None
@@ -524,15 +581,29 @@ def _add_gripper_masks_to_stats(
             feature_stats["mask"] = [True] * dim
             continue
 
+        existing_mask = feature_stats.get("mask")
+        if torch.is_tensor(existing_mask):
+            existing_mask = existing_mask.detach().cpu().tolist()
+        if (
+            isinstance(existing_mask, list)
+            and len(existing_mask) == dim
+            and all(isinstance(value, bool) for value in existing_mask)
+        ):
+            _validate_masked_passthrough_stats(feature_stats, existing_mask, key)
+            feature_stats["mask"] = existing_mask
+            continue
+
         names = _flatten_feature_names((dataset_feature_names or {}).get(key))
         if names is None:
             names = _feature_names_from_meta(dataset_meta, key)
         if names is None:
             names = _flatten_feature_names(feature_stats.get("names"))
-        if names is None:
-            continue
-        if len(names) != dim:
-            continue
+        if names is None or len(names) != dim:
+            raise ValueError(
+                f"MolmoAct2 normalize_gripper=False cannot identify the gripper dimension for {key!r}: "
+                f"expected {dim} feature names, got {names!r}. Supply policy.dataset_feature_names, "
+                "use tagged stats with an explicit mask, or set normalize_gripper=True."
+            )
         mask = ["gripper" not in name.lower() for name in names]
         _validate_masked_passthrough_stats(feature_stats, mask, key)
         feature_stats["mask"] = mask
@@ -658,6 +729,9 @@ class MolmoAct2ClampNormalizedProcessorStep(ProcessorStep):
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
 
+    def get_config(self) -> dict[str, Any]:
+        return {"normalization_masks": deepcopy(self.normalization_masks)}
+
 
 @ProcessorStepRegistry.register(name="molmoact2_pack_inputs")
 @dataclass
@@ -665,7 +739,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     checkpoint_path: str
     checkpoint_revision: str | None = None
     checkpoint_force_download: bool = False
-    action_mode: str = "both"
+    action_mode: str = "continuous"
     discrete_action_tokenizer: str = "allenai/MolmoAct2-FAST-Tokenizer"
     image_keys: list[str] = field(default_factory=list)
     allow_image_key_fallback: bool = False
@@ -798,7 +872,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             raise ValueError(f"State batch size {state.shape[0]} does not match batch size {batch_size}.")
         return state
 
-    def _pad_action(self, action: Tensor, action_is_pad: Any | None) -> tuple[Tensor, Tensor, Tensor]:
+    def _pad_action(self, action: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         if action.ndim == 2:
             action = action.unsqueeze(1)
         if action.ndim != 3:
@@ -817,17 +891,10 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             (action.shape[0], self.max_action_dim), device=action.device, dtype=torch.bool
         )
         action_dim_is_pad[:, : action.shape[-1]] = False
-        if action_is_pad is None:
-            action_horizon_is_pad = torch.zeros(action.shape[:2], device=action.device, dtype=torch.bool)
-        else:
-            action_horizon_is_pad = torch.as_tensor(action_is_pad, device=action.device, dtype=torch.bool)
-            if action_horizon_is_pad.ndim == 1:
-                action_horizon_is_pad = action_horizon_is_pad.unsqueeze(0)
-            if tuple(action_horizon_is_pad.shape) != tuple(action.shape[:2]):
-                raise ValueError(
-                    "action_is_pad must match action horizon shape: "
-                    f"got {tuple(action_horizon_is_pad.shape)} for action {tuple(action.shape)}."
-                )
+        # LeRobot clamps future actions at episode ends and marks them as padding. The
+        # original MolmoAct2 training objective keeps supervising those clamped actions
+        # for fixed-horizon fine-tuning, so the horizon mask is intentionally all false.
+        action_horizon_is_pad = torch.zeros(action.shape[:2], device=action.device, dtype=torch.bool)
         return padded, action_horizon_is_pad, action_dim_is_pad
 
     def _build_labels(self, input_ids: Tensor, attention_mask: Tensor) -> Tensor:
@@ -892,10 +959,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         action_dim_is_pad = torch.ones((batch_size, self.max_action_dim), dtype=torch.bool)
         real_action_dim = int(self.env_action_dim or 0)
         if action is not None:
-            action_is_pad = complementary.get("action_is_pad")
-            if action_is_pad is None:
-                action_is_pad = complementary.get("action_horizon_is_pad")
-            action_padded, action_horizon_is_pad, action_dim_is_pad = self._pad_action(action, action_is_pad)
+            action_padded, action_horizon_is_pad, action_dim_is_pad = self._pad_action(action)
             real_action_dim = int(action.shape[-1])
         elif real_action_dim > 0:
             action_dim_is_pad[:, :real_action_dim] = False
@@ -929,8 +993,6 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             else:
                 full_texts.append(prompt)
 
-        text = full_texts if build_action_labels else prompt_texts
-        inputs = self.processor(text=text, images=flat_images, return_tensors="pt", padding=True)
         if action is None:
             action_horizon = self.chunk_size
         elif action.ndim == 2:
@@ -944,11 +1006,38 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             action_horizon=action_horizon,
             include_discrete_action=build_action_labels,
         )
-        if int(inputs["input_ids"].shape[1]) > max_sequence_length:
+        text = full_texts if build_action_labels else prompt_texts
+        inputs = self.processor(
+            text=text,
+            images=flat_images,
+            return_tensors="pt",
+            padding=True,
+            pad_to_multiple_of=MOLMOACT2_SEQUENCE_BUCKET_MULTIPLE,
+        )
+        valid_sequence_length = int(inputs["attention_mask"].sum(dim=1).max().item())
+        if valid_sequence_length > max_sequence_length:
             raise ValueError(
-                f"MolmoAct2 sequence length {int(inputs['input_ids'].shape[1])} exceeds "
+                f"MolmoAct2 valid sequence length {valid_sequence_length} exceeds "
                 f"max_sequence_length={max_sequence_length}."
             )
+        # The tokenizer pads before the vendored processor inserts BOS, so the
+        # final tensor width is ``8k + 1``. Bound that masked width separately
+        # from the valid-token cap to catch malformed/unbounded processor output.
+        max_padded_sequence_length = (
+            _round_up(max_sequence_length - 1, MOLMOACT2_SEQUENCE_BUCKET_MULTIPLE) + 1
+        )
+        padded_sequence_length = int(inputs["input_ids"].shape[1])
+        if padded_sequence_length > max_padded_sequence_length:
+            raise ValueError(
+                f"MolmoAct2 padded sequence length {padded_sequence_length} exceeds "
+                f"the bounded width {max_padded_sequence_length}."
+            )
+
+        # The local processor must left-pad so batched image placeholders and BOS
+        # insertion stay aligned. Native MolmoAct2 training assigns positions only
+        # across valid tokens, so keep the real prompt/image tokens at 0..N-1
+        # instead of shifting them by each row's left-padding length.
+        inputs["position_ids"] = _position_ids_from_attention_mask(inputs["attention_mask"])
 
         if build_action_labels:
             inputs["labels"] = self._build_labels(inputs["input_ids"], inputs["attention_mask"])
@@ -969,6 +1058,93 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         return features
 
 
+@ProcessorStepRegistry.register(name="molmoact2_state_frame_transform")
+@dataclass
+class MolmoAct2StateFrameTransformStep(ProcessorStep):
+    """Convert robot state from arm frame to model frame before normalization.
+
+    Required for zero-shot deployment of MolmoAct2-SO100_101 on SO-100/101
+    arms calibrated with LeRobot >= 0.5.0 (v3.0 convention). The checkpoint
+    was trained on data using a different joint convention (sign flip on
+    shoulder_lift, 90 deg offset on shoulder_lift and elbow_flex).
+
+    No-op when joint_signs and joint_offsets are None (default), so this
+    step has no effect on fine-tuned models or other embodiments.
+
+    state_model = signs * arm_state + offsets
+
+    See: https://huggingface.co/docs/lerobot/backwardcomp
+    """
+
+    joint_signs: list[float] | None = None
+    joint_offsets: list[float] | None = None
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        if self.joint_signs is None or self.joint_offsets is None:
+            return transition
+        observation = transition.get(TransitionKey.OBSERVATION)
+        if not isinstance(observation, dict) or OBS_STATE not in observation:
+            return transition
+        transition = transition.copy()
+        observation = observation.copy()
+        state = torch.as_tensor(observation[OBS_STATE], dtype=torch.float32).clone()
+        n = len(self.joint_signs)
+        signs = torch.tensor(self.joint_signs, dtype=torch.float32, device=state.device)
+        offsets = torch.tensor(self.joint_offsets, dtype=torch.float32, device=state.device)
+        state[..., :n] = signs * state[..., :n] + offsets
+        observation[OBS_STATE] = state
+        transition[TransitionKey.OBSERVATION] = observation
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+    def get_config(self) -> dict[str, Any]:
+        return {"joint_signs": self.joint_signs, "joint_offsets": self.joint_offsets}
+
+
+@ProcessorStepRegistry.register(name="molmoact2_action_frame_transform")
+@dataclass
+class MolmoAct2ActionFrameTransformStep(ProcessorStep):
+    """Convert model action from model frame back to arm frame after unnormalization.
+
+    Inverse of MolmoAct2StateFrameTransformStep. Required for zero-shot
+    MolmoAct2-SO100_101 on SO-100/101 arms. No-op when both fields are None.
+
+    action_arm = signs * (model_action - offsets)
+
+    See: https://huggingface.co/docs/lerobot/backwardcomp
+    """
+
+    joint_signs: list[float] | None = None
+    joint_offsets: list[float] | None = None
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        if self.joint_signs is None or self.joint_offsets is None:
+            return transition
+        action = transition.get(TransitionKey.ACTION)
+        if action is None:
+            return transition
+        transition = transition.copy()
+        action = torch.as_tensor(action, dtype=torch.float32).clone()
+        n = len(self.joint_signs)
+        signs = torch.tensor(self.joint_signs, dtype=torch.float32, device=action.device)
+        offsets = torch.tensor(self.joint_offsets, dtype=torch.float32, device=action.device)
+        action[..., :n] = signs * (action[..., :n] - offsets)
+        transition[TransitionKey.ACTION] = action
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+    def get_config(self) -> dict[str, Any]:
+        return {"joint_signs": self.joint_signs, "joint_offsets": self.joint_offsets}
+
+
 @ProcessorStepRegistry.register(name="molmoact2_clamp_action")
 @dataclass
 class MolmoAct2ClampActionProcessorStep(ProcessorStep):
@@ -985,6 +1161,114 @@ class MolmoAct2ClampActionProcessorStep(ProcessorStep):
         return features
 
 
+def _translate_pretrained_processor_overrides(
+    overrides: dict[str, dict[str, Any]] | None,
+    *,
+    standard_name: str,
+    molmoact2_name: str,
+) -> dict[str, dict[str, Any]]:
+    """Translate LeRobot's standard normalization override to the masked step."""
+    translated = {name: dict(values) for name, values in (overrides or {}).items()}
+    standard_override = translated.pop(standard_name, None)
+    if standard_override is not None:
+        translated[molmoact2_name] = {
+            **standard_override,
+            **translated.get(molmoact2_name, {}),
+        }
+    return translated
+
+
+def _prepare_pretrained_processor_overrides(
+    config: MolmoAct2Config,
+    preprocessor_overrides: dict[str, dict[str, Any]] | None,
+    postprocessor_overrides: dict[str, dict[str, Any]] | None,
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Translate generic overrides and make fine-tuning stats mask-aware."""
+    translated_preprocessor_overrides = _translate_pretrained_processor_overrides(
+        preprocessor_overrides,
+        standard_name="normalizer_processor",
+        molmoact2_name="molmoact2_masked_normalizer",
+    )
+    translated_postprocessor_overrides = _translate_pretrained_processor_overrides(
+        postprocessor_overrides,
+        standard_name="unnormalizer_processor",
+        molmoact2_name="molmoact2_masked_unnormalizer",
+    )
+
+    preprocessor_stats = translated_preprocessor_overrides.get("molmoact2_masked_normalizer", {}).get("stats")
+    postprocessor_stats = translated_postprocessor_overrides.get("molmoact2_masked_unnormalizer", {}).get(
+        "stats"
+    )
+    incoming_stats = preprocessor_stats or postprocessor_stats
+    if incoming_stats:
+        masked_stats = _add_gripper_masks_to_stats(
+            incoming_stats,
+            getattr(config, "_runtime_dataset_meta", None),
+            normalize_gripper=config.normalize_gripper,
+            dataset_feature_names=config.dataset_feature_names,
+        )
+        normalization_masks = _normalization_masks_from_stats(masked_stats)
+        translated_preprocessor_overrides.setdefault("molmoact2_masked_normalizer", {})["stats"] = (
+            masked_stats
+        )
+        translated_postprocessor_overrides.setdefault("molmoact2_masked_unnormalizer", {})["stats"] = (
+            masked_stats
+        )
+        translated_preprocessor_overrides.setdefault("molmoact2_clamp_normalized", {})[
+            "normalization_masks"
+        ] = normalization_masks
+
+    return translated_preprocessor_overrides, translated_postprocessor_overrides
+
+
+def make_molmoact2_pre_post_processors_from_pretrained(
+    config: MolmoAct2Config,
+    pretrained_path: str,
+    *,
+    revision: str | None = None,
+    preprocessor_overrides: dict[str, dict[str, Any]] | None = None,
+    postprocessor_overrides: dict[str, dict[str, Any]] | None = None,
+    preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
+    postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
+    """Load saved MolmoAct2 pipelines with LeRobot's runtime overrides.
+
+    LeRobot entry points use the standard normalizer registry names when
+    overriding the device, rename map, feature schema, and fine-tuning dataset
+    statistics. MolmoAct2 uses mask-aware normalization steps, so translate the
+    two names and add gripper masks before replacing saved fine-tuning stats.
+    When no stats are supplied (checkpoint resume), the serialized processor
+    stats and clamp masks remain authoritative.
+    """
+    prepared_preprocessor_overrides, prepared_postprocessor_overrides = (
+        _prepare_pretrained_processor_overrides(
+            config,
+            preprocessor_overrides,
+            postprocessor_overrides,
+        )
+    )
+    preprocessor = PolicyProcessorPipeline.from_pretrained(
+        pretrained_model_name_or_path=pretrained_path,
+        config_filename=preprocessor_config_filename,
+        overrides=prepared_preprocessor_overrides,
+        to_transition=batch_to_transition,
+        to_output=transition_to_batch,
+        revision=revision,
+    )
+    postprocessor = PolicyProcessorPipeline.from_pretrained(
+        pretrained_model_name_or_path=pretrained_path,
+        config_filename=postprocessor_config_filename,
+        overrides=prepared_postprocessor_overrides,
+        to_transition=policy_action_to_transition,
+        to_output=transition_to_policy_action,
+        revision=revision,
+    )
+    return preprocessor, postprocessor
+
+
 def make_molmoact2_pre_post_processors(
     config: MolmoAct2Config,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
@@ -998,12 +1282,13 @@ def make_molmoact2_pre_post_processors(
         env_action_dim = int(config.output_features[ACTION].shape[0])
 
     hf_metadata: dict[str, Any] = {}
-    if dataset_stats is None and str(config.norm_tag or "").strip():
+    if str(config.norm_tag or "").strip():
         dataset_stats, hf_metadata = _load_hf_norm_stats_for_tag(
             config.checkpoint_path,
             revision=config.checkpoint_revision,
             force_download=bool(config.checkpoint_force_download),
             norm_tag=config.norm_tag,
+            norm_stats_path=config.norm_stats_path,
         )
 
     image_keys = list(config.image_keys)
@@ -1031,6 +1316,10 @@ def make_molmoact2_pre_post_processors(
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
+        MolmoAct2StateFrameTransformStep(
+            joint_signs=config.joint_signs,
+            joint_offsets=config.joint_offsets,
+        ),
         MolmoAct2MaskedNormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
@@ -1065,6 +1354,10 @@ def make_molmoact2_pre_post_processors(
             features=config.output_features,
             norm_map=config.normalization_mapping,
             stats=masked_dataset_stats,
+        ),
+        MolmoAct2ActionFrameTransformStep(
+            joint_signs=config.joint_signs,
+            joint_offsets=config.joint_offsets,
         ),
         DeviceProcessorStep(device="cpu"),
     ]

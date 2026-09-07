@@ -16,9 +16,37 @@
 # limitations under the License.
 
 import logging
+import multiprocessing
 import os
 import signal
 import sys
+
+
+def ensure_multiprocessing_start_method(start_method: str | None) -> None:
+    """Set a multiprocessing start method once, or verify the existing method matches.
+
+    Passing ``None`` leaves Python's process-wide default untouched. This is useful
+    when LeRobot is embedded in an application that owns multiprocessing setup.
+    """
+    if start_method is None:
+        return
+
+    available_methods = multiprocessing.get_all_start_methods()
+    if start_method not in available_methods:
+        raise ValueError(
+            f"Multiprocessing start method must be one of {available_methods} on this platform, "
+            f"got {start_method!r}."
+        )
+
+    current_method = multiprocessing.get_start_method(allow_none=True)
+    if current_method is None:
+        multiprocessing.set_start_method(start_method)
+    elif current_method != start_method:
+        raise RuntimeError(
+            f"Multiprocessing start method is already {current_method!r}; cannot change it to "
+            f"{start_method!r}. Set the configured multiprocessing context to null to keep the "
+            "application's existing method, or launch LeRobot in a fresh process."
+        )
 
 
 class ProcessSignalHandler:

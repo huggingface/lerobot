@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+from contextlib import nullcontext
 
 import torch
 
@@ -37,16 +38,25 @@ def auto_select_torch_device() -> torch.device:
 
 # TODO(Steven): Remove log. log shouldn't be an argument, this should be handled by the logger level
 def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
-    """Given a string, return a torch.device with checks on whether the device is available."""
+    """Given a string, return a torch.device with checks on whether the device is available.
+
+    Raises:
+        ValueError: If the requested device family is known but not available on
+            this machine (``AssertionError`` was previously used and is easy to
+            mistake for a programmer bug under ``python -O`` where asserts vanish).
+    """
     try_device = str(try_device)
     if try_device.startswith("cuda"):
-        assert torch.cuda.is_available()
+        if not torch.cuda.is_available():
+            raise ValueError(f"Requested device {try_device!r} but CUDA is not available.")
         device = torch.device(try_device)
     elif try_device == "mps":
-        assert torch.backends.mps.is_available()
+        if not torch.backends.mps.is_available():
+            raise ValueError("Requested device 'mps' but MPS is not available.")
         device = torch.device("mps")
     elif try_device == "xpu":
-        assert torch.xpu.is_available()
+        if not torch.xpu.is_available():
+            raise ValueError("Requested device 'xpu' but XPU is not available.")
         device = torch.device("xpu")
     elif try_device == "cpu":
         device = torch.device("cpu")
@@ -57,6 +67,20 @@ def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
         if log:
             logging.warning(f"Using custom {try_device} device.")
     return device
+
+
+def resolve_safetensors_device(map_location: str | torch.device) -> str:
+    """Resolve a device string for a safetensors load, working around a device-mapping quirk.
+
+    safetensors' load maps the bare string "cuda" to cuda:0 regardless of the current device
+    (unlike torch's .to("cuda"), which honors torch.cuda.current_device()). Under multi-GPU
+    accelerate/FSDP every rank would then load its weights onto GPU 0, OOMing it before sharding.
+    Resolve "cuda" to the concrete current-device index so each rank loads onto its own GPU.
+    """
+    map_location = str(map_location)
+    if map_location == "cuda" and torch.cuda.is_available():
+        return f"cuda:{torch.cuda.current_device()}"
+    return map_location
 
 
 def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):
@@ -107,3 +131,28 @@ def is_amp_available(device: str):
         return False
     else:
         raise ValueError(f"Unknown device '{device}.")
+
+
+def get_autocast_context(device_type: str, dtype: torch.dtype = torch.bfloat16):
+    """Return a device-safe autocast context manager.
+
+    A hardcoded `torch.autocast(dtype=torch.bfloat16)` breaks on backends without AMP (MPS) and
+    misbehaves on pre-Ampere CUDA. Instead:
+      - no AMP support (e.g. mps): `nullcontext()`, i.e. the tensors' native dtype
+      - CPU with a dtype its autocast does not implement (notably float32): `nullcontext()`, since
+        `torch.autocast` would accept it and then warn-and-disable on every call
+      - CUDA asking for bf16 on compute capability < 8.0: fall back to fp16
+      - otherwise: `torch.autocast(device_type, dtype)`
+    """
+    if not is_amp_available(device_type):
+        return nullcontext()
+    if device_type == "cpu" and dtype not in (torch.bfloat16, torch.float16):
+        return nullcontext()
+    if (
+        device_type == "cuda"
+        and dtype == torch.bfloat16
+        and torch.cuda.is_available()
+        and torch.cuda.get_device_capability()[0] < 8
+    ):
+        dtype = torch.float16
+    return torch.autocast(device_type=device_type, dtype=dtype)

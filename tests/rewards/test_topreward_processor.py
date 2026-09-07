@@ -20,13 +20,13 @@ import pytest
 import torch
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import TransitionKey
 from lerobot.rewards.topreward.processor_topreward import (
     TOPREWARD_FEATURE_PREFIX,
     TOPREWARD_INPUT_KEYS,
     _expand_tasks,
     _prepare_video_batch,
 )
-from lerobot.types import TransitionKey
 from tests.utils import skip_if_package_missing
 
 # ---------------------------------------------------------------------------

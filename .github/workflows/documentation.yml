@@ -24,19 +24,24 @@ on:
         required: false
         type: string
 
-  # Triggers the workflow on push events to main for the docs folder
+  # Triggers on pushes to main that touch the docs or the sources the API reference is generated from.
+  # `src/**` is included because the API reference is built from docstrings via `[[autodoc]]`: without it,
+  # published API pages would go stale as soon as a docstring changed.
   push:
     branches:
       - main
     paths:
       - "docs/**"
+      - "src/**"
 
-  # Triggers the workflow on pull request events targeting main for the docs folder
+  # Same for pull requests, so a docstring change gets a preview build and a broken `[[autodoc]]` path
+  # fails the PR rather than main.
   pull_request:
     branches:
       - main
     paths:
       - "docs/**"
+      - "src/**"
 
   release:
     types: [published]
@@ -55,16 +60,29 @@ jobs:
       github.repository == 'huggingface/lerobot'
     permissions:
       contents: read
-    uses: huggingface/doc-builder/.github/workflows/build_main_documentation.yml@2430c1ec91d04667414e2fa31ecfc36c153ea391  # main
+    uses: huggingface/doc-builder/.github/workflows/build_main_documentation.yml@931031bf2b54aabb134ceb54980a6a2860a00f11  # main
     with:
       commit_sha: ${{ github.sha }}
       package: lerobot
+      # The shared workflow builds its venv with the runner's system Python, which is 3.10 on
+      # ubuntu-22.04. lerobot requires >=3.12, so without this the install fails during setup —
+      # before `pre_command` below ever runs. Added upstream in huggingface/doc-builder#808.
+      python_version: "3.12"
+      # doc-builder ships a mock-deps registry entry for lerobot, so the reusable workflow takes its
+      # "light install" path: `pip install ./lerobot --no-deps` plus a handful of real dependencies.
+      # That is not enough to import lerobot — draccus runs `register_subclass` at import time and
+      # `processor/converters.py` calls `functools.singledispatch.register(torch.Tensor)`, neither of
+      # which works against a mock. Install the package for real before the build.
+      pre_command: uv pip install "./lerobot[dataset]"
+      # `--version main` is load-bearing: without `--not_python_module`, doc-builder falls back to
+      # `lerobot.__version__` and only maps that to the default branch when it contains "dev". Our main
+      # branch carries a release version (0.6.2), so omitting this would publish the main docs to
+      # /lerobot/v0.6.2/ instead of /lerobot/main/ and disable notebook building.
       additional_args: >-
-        --not_python_module
         ${{
           (github.event_name == 'release' && format('--version {0}', github.event.release.tag_name)) ||
           (inputs.version != '' && format('--version {0}', inputs.version)) ||
-          ''
+          '--version main'
         }}
     secrets:
       token: ${{ secrets.HUGGINGFACE_PUSH }}
@@ -78,9 +96,12 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    uses: huggingface/doc-builder/.github/workflows/build_pr_documentation.yml@2430c1ec91d04667414e2fa31ecfc36c153ea391  # main
+    uses: huggingface/doc-builder/.github/workflows/build_pr_documentation.yml@931031bf2b54aabb134ceb54980a6a2860a00f11  # main
     with:
       commit_sha: ${{ github.event.pull_request.head.sha }}
       pr_number: ${{ github.event.number }}
       package: lerobot
-      additional_args: --not_python_module
+      # See the comment on build_main_docs. The PR workflow passes its own `--version pr_<n>`, so no
+      # additional_args are needed here.
+      python_version: "3.12"
+      pre_command: uv pip install "./lerobot[dataset]"

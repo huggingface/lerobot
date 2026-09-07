@@ -120,11 +120,11 @@ lerobot-train \
   --batch_size=4 \
   --eval.batch_size=1 \
   --eval.n_episodes=1 \
-  --eval_freq=1000
+  --env_eval_freq=1000
 ```
 
 ## Practical tips
 
 - Use the one-hot task conditioning for multi-task training (MT10/MT50 conventions) so policies have explicit task context.
 - Inspect the dataset task descriptions and the `info["is_success"]` keys when writing post-processing or logging so your success metrics line up with the benchmark.
-- Adjust `batch_size`, `steps`, and `eval_freq` to match your compute budget.
+- Adjust `batch_size`, `steps`, and `env_eval_freq` to match your compute budget.

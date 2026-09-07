@@ -30,13 +30,19 @@ This is a Gaussian Actor policy (Gaussian policy with a tanh squash) — the pol
 {% elif model_name == "eo1" %}
 [EO-1](https://huggingface.co/papers/2508.21112) is a Vision-Language-Action model for general robot control. It pairs a Qwen2.5-VL backbone for vision-language understanding with a continuous flow-matching action head that denoises action chunks.
 {% elif model_name == "groot" %}
-[GR00T N1.5](https://github.com/NVIDIA/Isaac-GR00T) is an open, cross-embodiment foundation model from NVIDIA for generalized humanoid robot reasoning and skills. It takes language and images as input and uses a flow-matching action transformer to predict actions conditioned on vision, language, and proprioception.
+[GR00T N1.7](https://github.com/NVIDIA/Isaac-GR00T) is an open, cross-embodiment foundation model from NVIDIA for generalized humanoid robot reasoning and skills. It uses a Cosmos-Reason2/Qwen3-VL backbone and a flow-matching action transformer to predict actions conditioned on vision, language, and proprioception.
 {% elif model_name == "multi_task_dit" %}
 [Multi-Task Diffusion Transformer (DiT)](https://huggingface.co/papers/2507.05331) extends Diffusion Policy with a large Diffusion Transformer and text + vision conditioning for multi-task robot learning. It supports both diffusion and flow-matching objectives and reaches high dexterity with only ~450M parameters.
 {% elif model_name == "wall_x" %}
 [WALL-OSS](https://huggingface.co/papers/2509.11766) is an open-source foundation model for embodied intelligence from XSquare Robot. Built on Qwen2.5-VL, it uses a tightly-coupled multimodal architecture with flow matching to unify semantic reasoning and high-frequency action generation for cross-embodiment control.
 {% elif model_name == "xvla" %}
 [X-VLA](https://huggingface.co/papers/2510.10274) is a soft-prompted, flow-matching Vision-Language-Action framework that treats each robot or hardware setup as a "task" encoded with a small set of learnable Soft Prompt embeddings, letting a single model reconcile diverse robot morphologies, sensors, and action spaces.
+{% elif model_name == "evo1" %}
+[EVO1](https://github.com/MINT-SJTU/Evo-1) is a Vision-Language-Action policy built around an InternVL3 backbone and a continuous flow-matching action head. It embeds camera images and the language instruction with InternVL3 and predicts future action chunks via flow matching.
+{% elif model_name == "fastwam" %}
+[FastWAM](https://arxiv.org/abs/2603.16666) is a World Action Model policy that keeps video world-modeling during training but predicts actions directly at inference time, initializing its visual world-model components from the Wan2.2 video-diffusion stack.
+{% elif model_name == "lingbot_va" %}
+[LingBot-VA](https://github.com/Robbyant/lingbot-va) is an autoregressive video-action world-model policy built on the Wan2.2 video-diffusion stack. It interleaves the prediction of future video latents and robot actions in a single autoregressive sequence, feeding observed keyframes back into its KV cache for closed-loop world modeling.
 {% else %}
 This is a **{{ model_name }}** policy trained with [LeRobot](https://github.com/huggingface/lerobot).
 {% endif %}
@@ -75,7 +81,10 @@ This policy has been trained and pushed to the Hub using [LeRobot](https://githu
   "groot": "groot",
   "xvla": "xvla",
   "multi_task_dit": "multi_task_dit",
-  "wall_x": "walloss"
+  "wall_x": "walloss",
+  "evo1": "evo1",
+  "fastwam": "fastwam",
+  "lingbot_va": "lingbot_va"
 } %}
 {% if policy_docs.get(model_name) %}Learn how to train and run it in the [LeRobot {{ model_name }} guide](https://huggingface.co/docs/lerobot/main/en/{{ policy_docs[model_name] }}), or browse the [full documentation](https://huggingface.co/docs/lerobot/index).
 {% else %}See the [full LeRobot documentation](https://huggingface.co/docs/lerobot/index).

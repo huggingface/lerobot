@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2026 The Allen Institute for Artificial Intelligence and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,20 +14,16 @@
 
 from __future__ import annotations
 
-import json
 import math
-import os
-from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from huggingface_hub import snapshot_download
+import torch
+from torch.optim.lr_scheduler import LambdaLR
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import (
-    AdamWConfig,
-    CosineDecayWithWarmupSchedulerConfig,
     LRSchedulerConfig,
     OptimizerConfig,
 )
@@ -37,145 +31,248 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 
 from ..rtc.configuration_rtc import RTCConfig
 
-MOLMOACT2_DEFAULT_NUM_IMAGES = 2
-MOLMOACT2_IMAGE_TOKENS_PER_IMAGE = 196
-MOLMOACT2_FIXED_PROMPT_TOKEN_BUDGET = 80
-MOLMOACT2_TASK_TOKEN_BUDGET = 32
-MOLMOACT2_SEQUENCE_LENGTH_MARGIN = 32
-MOLMOACT2_SEQUENCE_LENGTH_MULTIPLE = 64
-MOLMOACT2_DISCRETE_ACTION_WRAPPER_TOKENS = 4
-MOLMOACT2_MIN_DISCRETE_ACTION_TOKENS_PER_STEP = 6
-MOLMOACT2_DISCRETE_ACTION_TOKENS_PER_DIM = 0.95
 
+class MolmoAct2AdamW(torch.optim.AdamW):
+    """AdamW with component clipping and low-memory BF16 update compensation.
 
-def _hf_token() -> str | None:
-    return os.environ.get("HF_TOKEN") or os.environ.get("HF_ACCESS_TOKEN")
+    LeRobot's shared trainer clips the full policy as one vector before calling
+    ``Optimizer.step``.  Official MolmoAct2 instead clips each optimizer group
+    (LLM, ViT, connector, and action expert) independently.  Keeping the clip
+    here lets the policy match that behavior without changing the shared
+    trainer or any other policy.
 
-
-def _resolve_checkpoint_location(
-    checkpoint_path: str,
-    *,
-    revision: str | None = None,
-    force_download: bool = False,
-) -> str:
-    checkpoint_path = str(checkpoint_path or "").strip()
-    if not checkpoint_path:
-        raise ValueError("MolmoAct2 policy requires `checkpoint_path`.")
-    local_path = Path(checkpoint_path).expanduser()
-    if local_path.exists():
-        return str(local_path)
-    return snapshot_download(
-        repo_id=checkpoint_path,
-        repo_type="model",
-        revision=revision,
-        force_download=force_download,
-        ignore_patterns=["*.py", "*.pyc", "__pycache__/*"],
-        token=_hf_token(),
-    )
-
-
-def _load_hf_norm_metadata_for_tag(
-    checkpoint_path: str,
-    *,
-    revision: str | None,
-    force_download: bool,
-    norm_tag: str | None,
-) -> dict[str, Any]:
-    norm_tag = str(norm_tag or "").strip()
-    if not norm_tag:
-        return {}
-    checkpoint_location = Path(
-        _resolve_checkpoint_location(
-            checkpoint_path,
-            revision=revision,
-            force_download=force_download,
-        )
-    )
-    norm_stats_filename = "norm_stats.json"
-    config_path = checkpoint_location / "config.json"
-    if config_path.exists():
-        with suppress(OSError, json.JSONDecodeError):
-            norm_stats_filename = str(
-                json.loads(config_path.read_text()).get("norm_stats_filename") or norm_stats_filename
-            )
-    stats_path = checkpoint_location / norm_stats_filename
-    if not stats_path.exists():
-        raise FileNotFoundError(
-            f"MolmoAct2 HF checkpoint is missing {norm_stats_filename!r}; cannot resolve norm_tag={norm_tag!r}."
-        )
-    payload = json.loads(stats_path.read_text())
-    metadata_by_tag = payload.get("metadata_by_tag")
-    if not isinstance(metadata_by_tag, dict):
-        raise ValueError(f"MolmoAct2 norm stats file {stats_path} has no metadata_by_tag mapping.")
-    metadata = metadata_by_tag.get(norm_tag)
-    if not isinstance(metadata, dict):
-        available = sorted(str(tag) for tag in metadata_by_tag)
-        raise ValueError(f"Unknown MolmoAct2 norm_tag={norm_tag!r}. Available tags: {available}.")
-    return metadata
-
-
-@LRSchedulerConfig.register_subclass("molmoact2_cosine_decay_with_warmup")
-@dataclass
-class MolmoAct2CosineDecayWithWarmupSchedulerConfig(CosineDecayWithWarmupSchedulerConfig):
-    """MolmoAct2-local cosine scheduler with optional decay-step auto-match.
-
-    LeRobot's generic cosine scheduler keeps an explicit integer decay length.
-    For MolmoAct2, leaving num_decay_steps unset means "decay across this run's
-    training steps"; build() is the first point where num_training_steps is known.
+    Parameter and optimizer-state dtypes follow the Pi0.5-style storage policy:
+    the large VLM tensors remain BF16, while the action expert and explicitly
+    sensitive tensors remain FP32. A lazy BF16 Kahan-style residual preserves
+    VLM updates smaller than one BF16 parameter ULP. This costs one BF16 tensor
+    per trainable BF16 parameter, rather than the FP32 parameter and optimizer
+    copies required by the official AMP/FSDP recipe. Native AdamW remains the
+    fast path for FP32 parameters (including the complete action expert and
+    LoRA adapters).
     """
 
-    num_decay_steps: int | None
+    def __init__(self, params, *, group_grad_clip_norm: float, **kwargs) -> None:
+        if group_grad_clip_norm <= 0:
+            raise ValueError(f"MolmoAct2 group_grad_clip_norm must be positive, got {group_grad_clip_norm}.")
+        super().__init__(params, **kwargs)
+        self.group_grad_clip_norm = float(group_grad_clip_norm)
 
-    def build(self, optimizer, num_training_steps: int):
-        return CosineDecayWithWarmupSchedulerConfig(
-            peak_lr=self.peak_lr,
-            decay_lr=self.decay_lr,
-            num_warmup_steps=self.num_warmup_steps,
-            num_decay_steps=num_training_steps if self.num_decay_steps is None else self.num_decay_steps,
-        ).build(optimizer, num_training_steps=num_training_steps)
+    def _clip_grad_groups(self) -> tuple[torch.Tensor, ...]:
+        norms: list[torch.Tensor] = []
+        for group in self.param_groups:
+            params_with_grad = [param for param in group["params"] if param.grad is not None]
+            if not params_with_grad:
+                continue
+            norms.append(
+                torch.nn.utils.clip_grad_norm_(
+                    params_with_grad,
+                    max_norm=self.group_grad_clip_norm,
+                    error_if_nonfinite=False,
+                )
+            )
+        return tuple(norms)
+
+    def _step_native_non_bfloat16(self) -> None:
+        """Run PyTorch's native AdamW only for non-BF16 parameters."""
+        original_group_params: list[list[torch.Tensor]] = []
+        try:
+            for group in self.param_groups:
+                original_params = group["params"]
+                original_group_params.append(original_params)
+                group["params"] = [param for param in original_params if param.dtype != torch.bfloat16]
+            super().step()
+        finally:
+            for group, original_params in zip(self.param_groups, original_group_params, strict=True):
+                group["params"] = original_params
+
+    def _step_compensated_bfloat16(self) -> None:
+        """Apply AdamW to BF16 storage while retaining sub-ULP updates.
+
+        Adam moments intentionally remain in BF16 to keep the Pi0.5-style
+        memory envelope. ``effective_parameter`` is one per-parameter FP32
+        temporary, never a persistent model-sized master copy. The residual is
+        BF16 and is initialized lazily only for parameters that receive a
+        gradient, so frozen VLM weights and LoRA-only runs pay no extra cost.
+        """
+        for group in self.param_groups:
+            bfloat16_group = dict(group)
+            bfloat16_group["params"] = [param for param in group["params"] if param.dtype == torch.bfloat16]
+
+            params_with_grad: list[torch.Tensor] = []
+            grads: list[torch.Tensor] = []
+            exp_avgs: list[torch.Tensor] = []
+            exp_avg_sqs: list[torch.Tensor] = []
+            max_exp_avg_sqs: list[torch.Tensor] = []
+            state_steps: list[torch.Tensor] = []
+            self._init_group(
+                bfloat16_group,
+                params_with_grad,
+                grads,
+                exp_avgs,
+                exp_avg_sqs,
+                max_exp_avg_sqs,
+                state_steps,
+            )
+
+            beta1, beta2 = group["betas"]
+            lr = group["lr"]
+            if torch.is_tensor(lr):
+                lr = lr.item()
+            lr = float(lr)
+
+            for index, parameter in enumerate(params_with_grad):
+                grad = grads[index]
+                if group["maximize"]:
+                    grad = -grad
+
+                state = self.state[parameter]
+                compensation = state.get("compensation")
+                if compensation is None:
+                    compensation = torch.zeros_like(parameter, memory_format=torch.preserve_format)
+                    state["compensation"] = compensation
+
+                state_step = state_steps[index]
+                state_step.add_(1)
+                step_value = state_step.item()
+
+                exp_avg = exp_avgs[index]
+                exp_avg_sq = exp_avg_sqs[index]
+                exp_avg.lerp_(grad, 1 - beta1)
+                exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
+
+                bias_correction1 = 1 - beta1**step_value
+                bias_correction2_sqrt = (1 - beta2**step_value) ** 0.5
+                step_size = lr / bias_correction1
+                if group["amsgrad"]:
+                    max_exp_avg_sq = max_exp_avg_sqs[index]
+                    torch.maximum(max_exp_avg_sq, exp_avg_sq, out=max_exp_avg_sq)
+                    denom = (max_exp_avg_sq.sqrt() / bias_correction2_sqrt).add_(group["eps"])
+                else:
+                    denom = (exp_avg_sq.sqrt() / bias_correction2_sqrt).add_(group["eps"])
+
+                effective_parameter = parameter.float().add_(compensation)
+                if group["weight_decay"] != 0:
+                    effective_parameter.mul_(1 - lr * group["weight_decay"])
+                effective_parameter.addcdiv_(exp_avg, denom, value=-step_size)
+                parameter.copy_(effective_parameter)
+                compensation.copy_(effective_parameter.sub_(parameter))
+
+    @staticmethod
+    def _any_nonfinite_across_ranks(norms: tuple[torch.Tensor, ...]) -> bool:
+        """Match official MolmoAct2's all-rank non-finite step guard."""
+        local_nonfinite = any(not bool(torch.isfinite(norm).all().item()) for norm in norms)
+        if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+            return local_nonfinite
+
+        backend = str(torch.distributed.get_backend()).lower()
+        if "nccl" in backend:
+            flag_device = torch.device("cuda", torch.cuda.current_device())
+        else:
+            flag_device = torch.device("cpu")
+        nonfinite_flag = torch.tensor(int(local_nonfinite), device=flag_device, dtype=torch.int32)
+        torch.distributed.all_reduce(nonfinite_flag, op=torch.distributed.ReduceOp.MAX)
+        return bool(nonfinite_flag.item())
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        # LeRobot never supplies a closure, but preserve standard Optimizer
+        # semantics for callers that do.
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+        grad_norms = self._clip_grad_groups()
+        if self._any_nonfinite_across_ranks(grad_norms):
+            # Official MolmoAct2 skips the update on every rank and clears the
+            # invalid gradients.  In particular, Adam moments and step counts
+            # must not advance when one component has a non-finite norm.
+            self.zero_grad(set_to_none=True)
+            return loss
+        self._step_native_non_bfloat16()
+        self._step_compensated_bfloat16()
+        return loss
 
 
-def _round_up(value: int, multiple: int) -> int:
-    return int(math.ceil(value / multiple) * multiple)
+@OptimizerConfig.register_subclass("molmoact2_adamw")
+@dataclass
+class MolmoAct2AdamWConfig(OptimizerConfig):
+    """Policy-local AdamW preset with independent per-component clipping."""
 
+    lr: float = 1e-5
+    betas: tuple[float, float] = (0.9, 0.95)
+    eps: float = 1e-6
+    weight_decay: float = 0.0
+    # Zero disables the shared trainer's global clipping. The policy's existing
+    # optimizer_grad_clip_norm is passed through as the group-wise threshold.
+    grad_clip_norm: float = 0.0
+    group_grad_clip_norm: float = 1.0
 
-def infer_molmoact2_max_sequence_length(
-    *,
-    num_images: int,
-    state_dim: int,
-    action_dim: int,
-    action_horizon: int,
-    include_discrete_action: bool,
-) -> int:
-    """Infer the padded text/image sequence cap from MolmoAct2's fixed token layout."""
-    if num_images < 1:
-        num_images = MOLMOACT2_DEFAULT_NUM_IMAGES
-    if state_dim < 0:
-        state_dim = 0
-    if action_dim < 1:
-        action_dim = 1
-    if action_horizon < 1:
-        action_horizon = 1
-
-    image_tokens = num_images * MOLMOACT2_IMAGE_TOKENS_PER_IMAGE
-    prompt_tokens = (
-        MOLMOACT2_FIXED_PROMPT_TOKEN_BUDGET
-        + MOLMOACT2_TASK_TOKEN_BUDGET
-        + state_dim
-        + MOLMOACT2_SEQUENCE_LENGTH_MARGIN
-    )
-    action_tokens = 0
-    if include_discrete_action:
-        action_tokens_per_step = max(
-            MOLMOACT2_MIN_DISCRETE_ACTION_TOKENS_PER_STEP,
-            math.ceil(action_dim * MOLMOACT2_DISCRETE_ACTION_TOKENS_PER_DIM),
+    def build(self, params) -> torch.optim.Optimizer:
+        return MolmoAct2AdamW(
+            params,
+            lr=self.lr,
+            betas=self.betas,
+            eps=self.eps,
+            weight_decay=self.weight_decay,
+            group_grad_clip_norm=self.group_grad_clip_norm,
         )
-        action_tokens = MOLMOACT2_DISCRETE_ACTION_WRAPPER_TOKENS + action_horizon * action_tokens_per_step
 
-    return _round_up(
-        image_tokens + prompt_tokens + action_tokens,
-        MOLMOACT2_SEQUENCE_LENGTH_MULTIPLE,
-    )
+
+@LRSchedulerConfig.register_subclass("molmoact2_cosine_with_warmup")
+@dataclass
+class MolmoAct2CosineWithWarmupSchedulerConfig(LRSchedulerConfig):
+    """Official MolmoAct2 warmup followed by cosine decay.
+
+    The shared LeRobot Pi0 scheduler evaluates its cosine against the absolute
+    global step. That creates a learning-rate discontinuity at the end of
+    warmup (especially visible in short profiles). Native MolmoAct2 instead
+    starts cosine time at zero after warmup and applies the same multiplier to
+    every component-specific base LR.
+    """
+
+    num_warmup_steps: int
+    num_decay_steps: int
+    peak_lr: float
+    decay_lr: float
+
+    def build(self, optimizer: torch.optim.Optimizer, num_training_steps: int) -> LambdaLR:
+        if self.num_warmup_steps < 0:
+            raise ValueError(f"num_warmup_steps must be >= 0, got {self.num_warmup_steps}.")
+        if self.num_decay_steps < 1:
+            raise ValueError(f"num_decay_steps must be >= 1, got {self.num_decay_steps}.")
+        if self.peak_lr <= 0:
+            raise ValueError(f"peak_lr must be > 0, got {self.peak_lr}.")
+        if not 0 <= self.decay_lr < self.peak_lr:
+            raise ValueError(
+                f"decay_lr must be in [0, peak_lr), got decay_lr={self.decay_lr}, peak_lr={self.peak_lr}."
+            )
+
+        # Official Trainer uses its configured max_duration as the cosine
+        # endpoint. Keep that clock when LeRobot intentionally runs a shorter
+        # diagnostic gate (for example, 3K updates on the configured 24K schedule).
+        # Clamping here would silently compress the gate to the decay floor.
+        decay_steps = int(self.num_decay_steps)
+        warmup_steps = min(int(self.num_warmup_steps), decay_steps)
+        alpha = float(self.decay_lr / self.peak_lr)
+
+        def lr_lambda(current_step: int) -> float:
+            # LambdaLR installs lambda(0) before the first optimizer update and
+            # LeRobot advances it after every update. Official MolmoAct2 first
+            # increments global_step, then evaluates the LR before that
+            # update, so its kth optimizer update uses f(k), not f(k - 1).
+            step = max(int(current_step) + 1, 0)
+            if warmup_steps > 0 and step < warmup_steps:
+                return float(step / warmup_steps)
+            if step >= decay_steps:
+                return alpha
+            cosine_span = decay_steps - warmup_steps
+            if cosine_span <= 0:
+                return alpha
+            cosine_step = step - warmup_steps
+            cosine_decay = 0.5 * (1.0 + math.cos(math.pi * cosine_step / cosine_span))
+            return alpha + (1.0 - alpha) * cosine_decay
+
+        return LambdaLR(optimizer, lr_lambda, -1)
 
 
 @PreTrainedConfig.register_subclass("molmoact2")
@@ -191,11 +288,18 @@ class MolmoAct2Config(PreTrainedConfig):
     chunk_size: int = 30
     n_action_steps: int = 30
 
-    action_mode: str = "both"
-    inference_action_mode: str | None = None
+    # Official MolmoAct2 robot fine-tuning optimizes only the continuous
+    # flow-matching objective. Released checkpoints retain discrete-action
+    # weights and ``both`` remains available as an explicit ablation.
+    action_mode: str = "continuous"
+    inference_action_mode: str | None = "continuous"
     discrete_action_tokenizer: str = "allenai/MolmoAct2-FAST-Tokenizer"
     discrete_generation_max_steps: int | None = None
     norm_tag: str | None = None
+    # Optional standalone norm_stats.json.  This lets a generic base model use
+    # the exact embodiment statistics published with a downstream checkpoint
+    # without changing which model weights are loaded.
+    norm_stats_path: str | None = None
 
     setup_type: str = ""
     control_mode: str = ""
@@ -228,19 +332,41 @@ class MolmoAct2Config(PreTrainedConfig):
     eval_seed: int | None = None
     rtc_config: RTCConfig | None = None
 
-    # Default is full finetuning with gradients from the action expert flowing into the VLM.
-    enable_lora_vlm: bool = False
+    # Joint frame transform for cross-calibration compatibility.
+    # Some MolmoAct2 checkpoints were trained on data using a different joint
+    # convention than the current LeRobot calibration. Set both to apply a
+    # sign/offset correction at runtime (state before model, action after).
+    # See: https://huggingface.co/docs/lerobot/backwardcomp
+    # Default is None (no transform). Both must be set together.
+    joint_signs: list[float] | None = None
+    joint_offsets: list[float] | None = None
+
+    # Controls only the VLM side. The action expert is always fully fine-tuned.
+    train_mode_vlm: str = "lora"
     lora_rank: int = 64
     lora_alpha: int = 16
     lora_dropout: float = 0.05
     lora_bias: str = "none"
-    enable_lora_action_expert: bool = False
     enable_knowledge_insulation: bool = False
     freeze_embedding: bool = True
-    train_action_expert_only: bool = False
     gradient_checkpointing: bool = False
+    # Pi0.5-style public switch backed by MolmoAct2's official block-wise
+    # compilation strategy. The policy intentionally keeps the compiler
+    # backend/scope internal so there is only one supported execution plan.
+    compile_model: bool = False
 
-    model_dtype: str = "bfloat16"
+    # Pi0.5-style precision switch controlling parameter storage and autocast.
+    # ``bfloat16`` stores large text and vision matrices in bf16 while the full
+    # action expert, selected norm/head/LoRA parameters, and RoPE state stay
+    # fp32; operator compute follows bf16 autocast plus explicit sensitive fp32
+    # math.
+    # ``float32`` keeps both the full model and compute in fp32.
+    dtype: str = "bfloat16"
+    # Official fine-tuning from the released ``allenai/MolmoAct2`` HF base
+    # explicitly applies unmasked residual dropout 0.1 and disables the
+    # response-only variant.  The converted HF decoder therefore matches the
+    # official HF-checkpoint path with this ordinary residual-dropout value.
+    llm_residual_dropout: float = 0.1
     softmax_auxiliary_loss: bool = True
     softmax_auxiliary_loss_scale: float = 1e-4
     discrete_loss_token_weighting: str = "root_subsegments_root_tokens"
@@ -255,7 +381,7 @@ class MolmoAct2Config(PreTrainedConfig):
     optimizer_grad_clip_norm: float = 1.0
 
     scheduler_warmup_steps: int = 200
-    scheduler_decay_steps: int | None = None
+    scheduler_decay_steps: int = 24_000
     scheduler_decay_lr: float = 1e-6
 
     normalization_mapping: dict[str, NormalizationMode] = field(
@@ -272,6 +398,10 @@ class MolmoAct2Config(PreTrainedConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        if (self.joint_signs is None) != (self.joint_offsets is None):
+            raise ValueError("joint_signs and joint_offsets must both be set or both be None.")
+        if self.joint_signs is not None and len(self.joint_signs) != len(self.joint_offsets):
+            raise ValueError("joint_signs and joint_offsets must have the same length.")
         if self.action_mode not in {"continuous", "discrete", "both"}:
             raise ValueError(
                 f"Unsupported action_mode={self.action_mode!r}. "
@@ -286,12 +416,15 @@ class MolmoAct2Config(PreTrainedConfig):
             raise ValueError("MolmoAct2 action_mode='discrete' cannot run continuous inference.")
         if self.inference_action_mode == "discrete" and self.action_mode == "continuous":
             raise ValueError("MolmoAct2 action_mode='continuous' cannot run discrete inference.")
-        if self.train_action_expert_only and self.action_mode != "continuous":
-            raise ValueError("MolmoAct2 train_action_expert_only requires action_mode='continuous'.")
-        if self.train_action_expert_only and self.enable_lora_vlm:
-            raise ValueError("MolmoAct2 train_action_expert_only is incompatible with enable_lora_vlm.")
-        if self.enable_lora_action_expert and not self.enable_lora_vlm:
-            raise ValueError("MolmoAct2 enable_lora_action_expert requires enable_lora_vlm.")
+        if self.norm_stats_path is not None and not str(self.norm_tag or "").strip():
+            raise ValueError("MolmoAct2 norm_stats_path requires norm_tag to select an embodiment.")
+        if self.train_mode_vlm not in {"fft", "lora", "freeze"}:
+            raise ValueError(
+                f"Unsupported train_mode_vlm={self.train_mode_vlm!r}. "
+                "Expected one of {'fft', 'lora', 'freeze'}."
+            )
+        if self.train_mode_vlm == "freeze" and self.action_mode != "continuous":
+            raise ValueError("MolmoAct2 train_mode_vlm='freeze' requires action_mode='continuous'.")
         if self.chunk_size < 1:
             raise ValueError(f"chunk_size must be >= 1, got {self.chunk_size}.")
         if self.n_action_steps < 1:
@@ -302,10 +435,10 @@ class MolmoAct2Config(PreTrainedConfig):
             )
         if self.expected_max_action_dim != 32:
             raise ValueError("MolmoAct2 released checkpoints use expected_max_action_dim=32.")
-        if self.model_dtype not in {"float32", "bfloat16", "float16"}:
-            raise ValueError(
-                f"Unsupported model_dtype={self.model_dtype!r}. Expected 'float32', 'bfloat16', or 'float16'."
-            )
+        if self.dtype not in {"float32", "bfloat16"}:
+            raise ValueError(f"Unsupported dtype={self.dtype!r}. Expected 'float32' or 'bfloat16'.")
+        if not 0 <= self.llm_residual_dropout <= 1:
+            raise ValueError(f"llm_residual_dropout must be in [0, 1], got {self.llm_residual_dropout}.")
         if self.lora_rank < 1:
             raise ValueError(f"lora_rank must be >= 1, got {self.lora_rank}.")
         if self.lora_alpha < 1:
@@ -333,40 +466,10 @@ class MolmoAct2Config(PreTrainedConfig):
         if self.max_sequence_length is not None and self.max_sequence_length < 1:
             raise ValueError(f"max_sequence_length must be >= 1 or None, got {self.max_sequence_length}.")
 
-    def inferred_max_sequence_length(
-        self,
-        *,
-        num_images: int | None = None,
-        state_dim: int | None = None,
-        action_dim: int | None = None,
-        action_horizon: int | None = None,
-        include_discrete_action: bool | None = None,
-    ) -> int:
-        if self.max_sequence_length is not None:
-            return int(self.max_sequence_length)
-
-        if num_images is None:
-            num_images = len(self.image_keys) or len(self.image_features) or MOLMOACT2_DEFAULT_NUM_IMAGES
-        if state_dim is None:
-            state_feature = self.robot_state_feature
-            state_dim = int(state_feature.shape[0]) if state_feature is not None else 0
-        if action_dim is None:
-            action_feature = self.action_feature
-            action_dim = (
-                int(action_feature.shape[0]) if action_feature is not None else self.expected_max_action_dim
-            )
-        if action_horizon is None:
-            action_horizon = self.chunk_size
-        if include_discrete_action is None:
-            include_discrete_action = self.action_mode in {"discrete", "both"}
-
-        return infer_molmoact2_max_sequence_length(
-            num_images=int(num_images),
-            state_dim=int(state_dim),
-            action_dim=int(action_dim),
-            action_horizon=int(action_horizon),
-            include_discrete_action=bool(include_discrete_action),
-        )
+    def _save_pretrained(self, save_directory: Path) -> None:
+        """Save a portable config without initialization-only norm metadata."""
+        config_for_save = replace(self, norm_tag=None, norm_stats_path=None)
+        PreTrainedConfig._save_pretrained(config_for_save, save_directory)
 
     @property
     def observation_delta_indices(self) -> None:
@@ -381,16 +484,17 @@ class MolmoAct2Config(PreTrainedConfig):
         return None
 
     def get_optimizer_preset(self) -> OptimizerConfig:
-        return AdamWConfig(
+        return MolmoAct2AdamWConfig(
             lr=self.optimizer_lr,
             betas=self.optimizer_betas,
             eps=self.optimizer_eps,
             weight_decay=self.optimizer_weight_decay,
-            grad_clip_norm=self.optimizer_grad_clip_norm,
+            grad_clip_norm=0.0,
+            group_grad_clip_norm=self.optimizer_grad_clip_norm,
         )
 
     def get_scheduler_preset(self) -> LRSchedulerConfig | None:
-        return MolmoAct2CosineDecayWithWarmupSchedulerConfig(
+        return MolmoAct2CosineWithWarmupSchedulerConfig(
             peak_lr=self.optimizer_lr,
             decay_lr=self.scheduler_decay_lr,
             num_warmup_steps=self.scheduler_warmup_steps,
@@ -426,94 +530,3 @@ class MolmoAct2Config(PreTrainedConfig):
                 shape=(self.expected_max_action_dim,),
             )
             self.output_features[ACTION] = action_feature
-
-    def apply_norm_tag_metadata(self) -> None:
-        if not str(self.norm_tag or "").strip():
-            return
-        metadata = _load_hf_norm_metadata_for_tag(
-            self.checkpoint_path,
-            revision=self.checkpoint_revision,
-            force_download=bool(self.checkpoint_force_download),
-            norm_tag=self.norm_tag,
-        )
-        if metadata.get("action_horizon") is not None:
-            self.chunk_size = int(metadata["action_horizon"])
-        if metadata.get("n_action_steps") is not None:
-            self.n_action_steps = int(metadata["n_action_steps"])
-        if not self.setup_type and metadata.get("setup_type") is not None:
-            self.setup_type = str(metadata["setup_type"])
-        if not self.control_mode and metadata.get("control_mode") is not None:
-            self.control_mode = str(metadata["control_mode"])
-
-    def saved_policy_action_mode(self) -> str | None:
-        pretrained_path = getattr(self, "pretrained_path", None)
-        if pretrained_path is None:
-            return None
-        config_path = Path(pretrained_path) / "config.json"
-        if not config_path.exists():
-            return None
-        try:
-            mode = json.loads(config_path.read_text()).get("action_mode")
-        except (OSError, json.JSONDecodeError):
-            return None
-        if mode in {"continuous", "discrete", "both"}:
-            return str(mode)
-        return None
-
-    def training_action_mode(self, saved_policy_action_mode: str | None = None) -> str:
-        return saved_policy_action_mode or self.action_mode
-
-    def validate_inference_action_mode(self, saved_policy_action_mode: str | None = None) -> None:
-        requested_mode = self.inference_action_mode
-        if requested_mode is None:
-            return
-        training_mode = self.training_action_mode(saved_policy_action_mode)
-        if requested_mode == "continuous" and training_mode == "discrete":
-            raise ValueError(
-                "MolmoAct2 checkpoint was trained with action_mode='discrete' and cannot run "
-                "continuous inference."
-            )
-        if requested_mode == "discrete" and training_mode == "continuous":
-            raise ValueError(
-                "MolmoAct2 checkpoint was trained with action_mode='continuous' and cannot run "
-                "discrete inference. Train with action_mode='both' or action_mode='discrete' first."
-            )
-
-    def validate_checkpoint_action_mode(
-        self,
-        checkpoint_action_mode: str,
-        *,
-        has_action_expert: bool,
-    ) -> None:
-        if self.action_mode == "both" and checkpoint_action_mode != "both":
-            raise ValueError(
-                f"action_mode='both' requires checkpoint action_mode='both', got {checkpoint_action_mode!r}."
-            )
-        if self.action_mode == "discrete" and checkpoint_action_mode not in {"discrete", "both"}:
-            raise ValueError(
-                f"action_mode='discrete' requires checkpoint action_mode in {{'discrete', 'both'}}, "
-                f"got {checkpoint_action_mode!r}."
-            )
-        if self.action_mode in {"continuous", "both"} and not has_action_expert:
-            raise ValueError("Continuous MolmoAct2 training requires an action expert checkpoint.")
-
-    def resolve_inference_action_mode(
-        self,
-        requested_mode: str | None,
-        saved_policy_action_mode: str | None = None,
-    ) -> str:
-        training_mode = self.training_action_mode(saved_policy_action_mode)
-        if requested_mode is None:
-            requested_mode = self.inference_action_mode
-        if requested_mode is None:
-            raise ValueError(
-                "MolmoAct2 inference requires `inference_action_mode` to be set explicitly "
-                "to either 'continuous' or 'discrete'."
-            )
-        if requested_mode not in {"continuous", "discrete"}:
-            raise ValueError("MolmoAct2 inference_action_mode must be either 'continuous' or 'discrete'.")
-        if requested_mode == "continuous" and training_mode == "discrete":
-            raise ValueError("MolmoAct2 action_mode='discrete' checkpoint cannot run continuous inference.")
-        if requested_mode == "discrete" and training_mode == "continuous":
-            raise ValueError("MolmoAct2 action_mode='continuous' checkpoint cannot run discrete inference.")
-        return requested_mode

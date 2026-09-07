@@ -30,8 +30,8 @@ Phase 3 is why the ``plan`` module must be re-entered after the
 timestamps.
 
 Distributed execution is provided by Hugging Face Jobs (see
-``examples/annotations/run_hf_job.py``); the runner inside the job
-invokes ``lerobot-annotate`` which uses this in-process executor.
+``lerobot.jobs.annotate``, reached via ``--job.target=<flavor>``); the pod
+inside the job invokes ``lerobot-annotate`` which uses this in-process executor.
 Episode-level concurrency is controlled by
 ``ExecutorConfig.episode_parallelism``.
 """
