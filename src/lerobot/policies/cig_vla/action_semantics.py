@@ -84,6 +84,29 @@ class LiberoSafetyDeltaOSCActionSemantics(LiberoOSCActionSemantics):
 LiberoSafetyActionSemantics = LiberoSafetyDeltaOSCActionSemantics
 
 
+class VLABenchAbsoluteEEFActionSemantics(LiberoSafetyDeltaOSCActionSemantics):
+    """VLABench action: absolute EE pose (xyz + euler, robot-base frame) + gripper command.
+
+    Unlike LIBERO's OSC_POSE delta control, `VLABenchEnv._build_ctrl_from_action`
+    (see envs/vlabench.py) treats `action[:3]`/`action[3:6]` as an *absolute* end-effector
+    target for that step, not a per-step increment -- matching how VLABench's own
+    scripts/convert_to_lerobot.py logs `actions`. Reusing the parent's `translation_delta`
+    (which returns the raw action position as-is, correct only when actions already *are*
+    deltas) would make `TrajectoryGeometryTargetBuilder.build()` sum 16 absolute positions
+    into a nonsensical multi-meter "translation goal" instead of the actual net displacement.
+    This override differences consecutive chunk steps to recover the real per-step motion.
+    """
+
+    controller = "absolute_pose"
+    control_mode = "absolute"
+
+    def translation_delta(self, actions):
+        pos = super().translation_delta(actions)  # validates action_dim, returns actions[..., :3]
+        delta = torch.zeros_like(pos)
+        delta[:, 1:] = pos[:, 1:] - pos[:, :-1]
+        return delta
+
+
 class UnknownActionSemantics:
     def __init__(self):
         warnings.warn("Unknown action semantics: direction and safe-action losses are disabled", stacklevel=2)
@@ -110,8 +133,8 @@ class UnknownActionSemantics:
 
 
 def make_action_semantics(name: str):
-    return (
-        LiberoSafetyDeltaOSCActionSemantics()
-        if name in {"libero_osc", "libero_safety"}
-        else UnknownActionSemantics()
-    )
+    if name in {"libero_osc", "libero_safety"}:
+        return LiberoSafetyDeltaOSCActionSemantics()
+    if name == "vlabench":
+        return VLABenchAbsoluteEEFActionSemantics()
+    return UnknownActionSemantics()

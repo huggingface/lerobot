@@ -10,7 +10,7 @@ from lerobot.policies.common.flow_matching import euler_integrate
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_STATE
 
-from .action_semantics import LiberoSafetyActionSemantics
+from .action_semantics import make_action_semantics
 from .configuration_cig_vla import CIGVLAConfig
 from .flow_controller import FlowMatchingController
 from .flow_matching import compute_flow_loss, make_flow_training_sample, velocity_to_action_estimate
@@ -64,8 +64,16 @@ class CIGVLAPolicy(PreTrainedPolicy):
             config.bottleneck_mode,
         )
         self.dataset_stats = dataset_stats
-        self.target_builder = TrajectoryGeometryTargetBuilder(require_physical_scale=True)
-        self.action_semantics = LiberoSafetyActionSemantics()
+        # `config.action_semantics` picks the adapter that interprets the raw `action` tensor
+        # (delta vs. absolute pose, dims, denormalization) -- see action_semantics.py. This used
+        # to be hardcoded to LIBERO's delta-OSC_POSE semantics regardless of config, which is
+        # wrong for e.g. VLABench's absolute-EE-pose actions (see
+        # VLABenchAbsoluteEEFActionSemantics's docstring for why that silently corrupts the
+        # geometry/causal-intervention training targets rather than erroring).
+        self.action_semantics = make_action_semantics(config.action_semantics)
+        self.target_builder = TrajectoryGeometryTargetBuilder(
+            action_semantics=self.action_semantics, require_physical_scale=True
+        )
         self._action_queue: deque[Tensor] = deque(maxlen=config.n_action_steps)
 
     def get_optim_params(self):
@@ -75,11 +83,29 @@ class CIGVLAPolicy(PreTrainedPolicy):
         self._action_queue.clear()
 
     def _images(self, batch):
-        keys = sorted(key for key in batch if key.startswith("observation.images."))
+        # Camera count/naming isn't fixed to LIBERO-Safety's two (image, wrist_image) --
+        # Qwen3VLGroundingBackbone.build_inputs() just interleaves however many camera keys are
+        # present as separate image tokens, so this works for e.g. VLABench's three cameras
+        # (image/second_image/wrist_image) too. Sorted so key order is stable across batches.
+        #
+        # Exclude "*_is_pad": resolve_delta_timestamps() applies cfg.observation_delta_indices
+        # to visual keys too, and dataset_reader._get_query_indices() emits a same-prefixed
+        # f"{key}_is_pad" BoolTensor companion for every key that gets delta timestamps (see
+        # datasets/factory.py / datasets/dataset_reader.py). Those also start with
+        # "observation.images." but shape to (batch, len(delta_idx)) -- with LIBERO-Safety's
+        # hardcoded `!= 2` camera check removed, batch[key][index] on one of these hands a
+        # (1,)-shaped tensor to the Qwen processor as if it were a camera frame, which fails
+        # deep inside HF's image preprocessing with "Unsupported number of image dimensions: 1"
+        # rather than erroring here with a clear message.
+        keys = sorted(
+            key
+            for key in batch
+            if key.startswith("observation.images.") and not key.endswith("_is_pad")
+        )
         if not keys:
             keys = [key for key in ("observation.image", "observation.wrist_image") if key in batch]
-        if len(keys) != 2:
-            raise ValueError(f"CIG-VLA LIBERO-Safety expects exactly two cameras, got {keys}")
+        if not keys:
+            raise ValueError("CIG-VLA expects at least one observation.images.* camera in the batch, got none")
         return [[batch[key][index] for key in keys] for index in range(batch[keys[0]].shape[0])]
 
     def _tasks(self, batch):
@@ -90,9 +116,28 @@ class CIGVLAPolicy(PreTrainedPolicy):
             )
         return [tasks] if isinstance(tasks, str) else list(tasks)
 
+    def _state(self, batch):
+        """(batch, state_dim) proprio state for this single-observation-step model.
+
+        LIBERO-Safety's own adapter hands over an already-squeezed (batch, state_dim)
+        tensor, but the standard LeRobotDataset path (e.g. VLABench's
+        lerobot/vlabench_unified) keeps the observation-delta-timestep axis even when it
+        has length 1 (config.n_obs_steps == 1, config.observation_delta_indices == [0]) --
+        see resolve_delta_timestamps() / dataset_reader.py, which apply that delta to every
+        "observation.*" key, not just LIBERO-Safety's pre-flattened ones. Neither
+        InteractionGeometryHead nor FlowMatchingController model state history (both do a
+        single Linear over the last dim), and both assert/break on the extra axis -- e.g.
+        broadcasting the (batch, 1, 1, hidden) projected state against (batch, 5, hidden)
+        queries silently produces a 4-D tensor that only fails deep inside
+        nn.MultiheadAttention ("received 4-D query tensor") -- so normalize once here
+        rather than at every call site.
+        """
+        state = batch[OBS_STATE]
+        return state[:, -1] if state.ndim == 3 else state
+
     def _predict(self, batch):
         hidden, attention_mask = self.backbone.encode_multimodal(self._images(batch), self._tasks(batch))
-        return self.grounding_head(hidden, attention_mask, batch[OBS_STATE])
+        return self.grounding_head(hidden, attention_mask, self._state(batch))
 
     def compute_geometry_loss(self, prediction, target):
         valid = target.valid_mask
@@ -146,14 +191,15 @@ class CIGVLAPolicy(PreTrainedPolicy):
         }
 
     def forward(self, batch):
+        state = self._state(batch)
         prediction = self._predict(batch)
         target = self.target_builder.build(
-            batch[ACTION], batch[OBS_STATE], self.dataset_stats, batch.get("action_is_pad")
+            batch[ACTION], state, self.dataset_stats, batch.get("action_is_pad")
         )
         geometry_loss, metrics = self.compute_geometry_loss(prediction, target)
         bottleneck = prediction.detached() if self.config.detach_bottleneck_for_main_action else prediction
         flow = make_flow_training_sample(batch[ACTION], batch.get("action_is_pad"))
-        velocity = self.controller(bottleneck, batch[OBS_STATE], flow.noisy_actions, flow.timestep)
+        velocity = self.controller(bottleneck, state, flow.noisy_actions, flow.timestep)
         action_loss = compute_flow_loss(velocity, flow.target_velocity, flow.action_is_pad)
         causal_loss = action_loss * 0
         if self.config.enable_causal_intervention:
@@ -163,12 +209,8 @@ class CIGVLAPolicy(PreTrainedPolicy):
             offset = torch.zeros_like(causal_bottleneck.translation_goal)
             offset[:, 0] = self.config.translation_goal_shift_m
             intervened = causal_bottleneck.with_translation_offset(offset)
-            original_velocity = self.controller(
-                causal_bottleneck, batch[OBS_STATE], flow.noisy_actions, flow.timestep
-            )
-            changed_velocity = self.controller(
-                intervened, batch[OBS_STATE], flow.noisy_actions, flow.timestep
-            )
+            original_velocity = self.controller(causal_bottleneck, state, flow.noisy_actions, flow.timestep)
+            changed_velocity = self.controller(intervened, state, flow.noisy_actions, flow.timestep)
             original_estimate = velocity_to_action_estimate(
                 flow.noisy_actions, original_velocity, flow.timestep
             )
@@ -206,7 +248,7 @@ class CIGVLAPolicy(PreTrainedPolicy):
     @torch.no_grad()
     def predict_action_chunk(self, batch, bottleneck_override=None):
         bottleneck = bottleneck_override or self.predict_geometric_bottleneck(batch)
-        state = batch[OBS_STATE]
+        state = self._state(batch)
         action_dim = (
             self.config.action_feature.shape[0] if self.config.action_feature else self.config.max_action_dim
         )
