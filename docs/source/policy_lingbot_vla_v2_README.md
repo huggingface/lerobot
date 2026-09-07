@@ -99,7 +99,7 @@ python scripts/robotwin_to_lerobot.py \
 **2. Norm stats** (`bounds_99_woclip` needs the `q01/q99` quantiles):
 
 ```bash
-python gen_rebot_norm_stats.py \
+python scripts/gen_rebot_norm_stats.py \
   --dataset-root /path/to/lerobot_dataset \
   --quantiles --out norm_stats.robotwin.json
 ```
