@@ -201,6 +201,7 @@ reachy2 = [
     "grpcio<=1.73.1",
     "protobuf<=6.32.0",
 ]
+reachy_mini = ["reachy-mini @ git+https://github.com/pollen-robotics/reachy_mini.git", "lerobot[scipy-dep]"]
 # Seeed Studio reBot B601-DM follower (motorbridge / CAN) + StarArm102 / reBot Arm 102
 # leader (motorbridge-smart-servo / FashionStar UART servos).
 rebot = ["lerobot[motorbridge-dep]", "lerobot[motorbridge-smart-servo-dep]"]

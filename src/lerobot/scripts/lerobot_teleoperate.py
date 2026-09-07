@@ -97,6 +97,7 @@ from lerobot.robots import (  # noqa: F401
     omx_follower,
     openarm_follower,
     reachy2,
+    reachy_mini,
     rebot_b601_follower,
     so_follower,
     unitree_g1 as unitree_g1_robot,
