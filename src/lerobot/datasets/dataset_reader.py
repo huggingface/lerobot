@@ -435,7 +435,7 @@ class DatasetReader(BaseDatasetReader):
         """Decode video frames for a batch, grouped by physical MP4 file.
 
         TorchCodec RGB requests are grouped across items. PyAV (including depth)
-        keeps each item's window separate to avoid decoding long gaps between items.
+        merges only overlapping windows to avoid decoding gaps between items.
         Timestamps are within-episode; the episode's ``from_timestamp`` offset is applied here.
 
         Note: When using data workers (e.g. DataLoader with num_workers>0), do not
@@ -458,23 +458,43 @@ class DatasetReader(BaseDatasetReader):
 
         def _decode(path: str) -> tuple[str, torch.Tensor]:
             vid_key = group_meta[path]
-            windows = [group_ts[path]]
+            timestamps = group_ts[path]
+            windows = [timestamps]
+            order = None
             if self._video_backend != "torchcodec" or vid_key in self._meta.depth_keys:
-                windows = [
-                    group_ts[path][start : start + length] for _, p, start, length in segments if p == path
-                ]
+                bounds = sorted(
+                    (
+                        min(timestamps[start : start + length]),
+                        max(timestamps[start : start + length]),
+                        start,
+                        length,
+                    )
+                    for _, p, start, length in segments
+                    if p == path
+                )
+                windows = []
+                end = float("-inf")
+                for first, last, start, length in bounds:
+                    if not windows or first > end:
+                        windows.append([])
+                    windows[-1].extend(range(start, start + length))
+                    end = max(end, last)
+                order = [j for window in windows for j in window]
+                windows = [[timestamps[j] for j in window] for window in windows]
             decoded_windows = [
                 decode_video_frames(
                     path,
-                    timestamps,
+                    window,
                     self._tolerance_s,
                     self._video_backend,
                     return_uint8=self._return_uint8,
                     is_depth=vid_key in self._meta.depth_keys,
                 )
-                for timestamps in windows
+                for window in windows
             ]
             frames = decoded_windows[0] if len(decoded_windows) == 1 else torch.cat(decoded_windows)
+            if order is not None and order != list(range(len(timestamps))):
+                frames = frames[torch.argsort(torch.tensor(order))]
             if vid_key in self._meta.depth_keys:
                 depth_encoder = self._depth_encoder_configs[vid_key]
                 frames = dequantize_depth(

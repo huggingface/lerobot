@@ -212,7 +212,18 @@ def test_get_items_batched_matches_single(tmp_path, lerobot_dataset_factory, use
 
 
 @pytest.mark.parametrize("backend", ["torchcodec", "pyav", "video_reader"])
-def test_video_batch_keeps_pyav_windows_separate(monkeypatch, tmp_path, backend):
+@pytest.mark.parametrize(
+    "windows,episodes,expected",
+    [
+        ([[1.0, 1.0], [4.0]], [1, 0], [[4.0], [31.0, 31.0]]),
+        ([[4.0, 2.0], [1.0, 3.0], [10.0]], [0, 0, 0], [[1.0, 3.0, 4.0, 2.0], [10.0]]),
+        ([[1.0, 5.0], [2.0], [4.0, 6.0]], [0, 0, 0], [[1.0, 5.0, 2.0, 4.0, 6.0]]),
+        ([[1.0, 2.0], [3.0, 4.0], [2.0, 3.0]], [0, 0, 0], [[1.0, 2.0, 2.0, 3.0, 3.0, 4.0]]),
+    ],
+)
+def test_video_batch_merges_only_overlapping_pyav_windows(
+    monkeypatch, tmp_path, backend, windows, episodes, expected
+):
     reader = DatasetReader.__new__(DatasetReader)
     reader.root = tmp_path
     reader._video_backend = backend
@@ -235,16 +246,18 @@ def test_video_batch_keeps_pyav_windows_separate(monkeypatch, tmp_path, backend)
 
     monkeypatch.setattr("lerobot.datasets.dataset_reader.decode_video_frames", decode)
     monkeypatch.setattr("lerobot.datasets.dataset_reader.dequantize_depth", lambda frames, **kw: frames)
-    queries = [dict.fromkeys(calls, window) for window in ([1.0, 1.0], [4.0])]
-    items = reader._query_videos(queries, [1, 0])
+    queries = [dict.fromkeys(calls, window) for window in windows]
+    items = reader._query_videos(queries, episodes)
+    shifted = [[ts + ep * 30 for ts in window] for window, ep in zip(windows, episodes, strict=True)]
 
-    assert calls["depth"] == [[31.0, 31.0], [4.0]]
-    assert calls["rgb"] == ([[31.0, 31.0, 4.0]] if backend == "torchcodec" else calls["depth"])
+    assert calls["depth"] == expected
+    assert calls["rgb"] == (
+        [[ts for window in shifted for ts in window]] if backend == "torchcodec" else expected
+    )
     for key in calls:
-        assert items[0][key].shape == (2, 1, 1, 1)
-        assert items[0][key].flatten().tolist() == [31.0, 31.0]
-        assert items[1][key].shape == (1, 1, 1)
-        assert items[1][key].item() == 4.0
+        for item, window in zip(items, shifted, strict=True):
+            assert item[key].shape == ((len(window), 1, 1, 1) if len(window) > 1 else (1, 1, 1))
+            assert item[key].flatten().tolist() == window
 
 
 # ── File paths ───────────────────────────────────────────────────────
