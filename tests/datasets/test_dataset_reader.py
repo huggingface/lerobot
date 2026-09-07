@@ -200,35 +200,10 @@ def test_loading_timings_are_opt_in_batch_wall_times(
             "worker_loading_s": 8.0,
             "video_loading_s": 3.0 if use_videos else 0.0,
         }
-        assert got.keys() == want.keys()
-        for key in want:
-            if isinstance(want[key], torch.Tensor):
-                torch.testing.assert_close(got[key], want[key], rtol=0, atol=0)
-            else:
-                assert got[key] == want[key]
+        assert got.pop("task") == want.pop("task")
+        torch.testing.assert_close(got, want, rtol=0, atol=0)
     monkeypatch.setattr("lerobot.datasets.dataset_reader.perf_counter", lambda: 20.0)
     assert dataset.__getitems__([]) == []
-
-
-@pytest.mark.parametrize("num_workers", [0, 2])
-def test_loading_timings_survive_dataloader_workers(tmp_path, lerobot_dataset_factory, num_workers):
-    dataset = lerobot_dataset_factory(
-        root=tmp_path / "ds", total_episodes=1, total_frames=10, use_videos=True
-    )
-    dataset.reader._video_backend = "pyav"
-    dataset.reader.profile_loading = True
-    loader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=3,
-        num_workers=num_workers,
-        multiprocessing_context="spawn" if num_workers else None,
-    )
-    for batch in loader:
-        timing = batch.pop("_loader_timings")
-        total, video = timing["worker_loading_s"], timing["video_loading_s"]
-        assert total.shape == batch["index"].shape
-        assert torch.all(total == total[0])  # one source-batch duration, including the final short batch
-        assert torch.all((total >= video) & (video > 0))
 
 
 @pytest.mark.parametrize("use_delta", [False, True])

@@ -81,10 +81,12 @@ def test_preprocessing_removes_and_reports_worker_timings(training):
 
 
 @pytest.mark.parametrize("enabled", [None, False, True])
-def test_training_loader_enables_profiling(tmp_path, lerobot_dataset_factory, enabled):
+@pytest.mark.parametrize("num_workers,use_videos", [(0, False), (2, True)])
+def test_training_loader_profiling(tmp_path, lerobot_dataset_factory, enabled, num_workers, use_videos):
     dataset = lerobot_dataset_factory(
-        root=tmp_path / "ds", total_episodes=1, total_frames=10, use_videos=False
+        root=tmp_path / "ds", total_episodes=1, total_frames=10, use_videos=use_videos
     )
+    dataset.reader._video_backend = "pyav"
     cfg = SimpleNamespace(
         dataset=DatasetConfig(
             repo_id="test/dataset", **({} if enabled is None else {"profile_loading": enabled})
@@ -92,16 +94,23 @@ def test_training_loader_enables_profiling(tmp_path, lerobot_dataset_factory, en
         trainable_config=SimpleNamespace(),
         seed=1,
         resume=False,
-        num_workers=0,
+        num_workers=num_workers,
         batch_size=3,
         persistent_workers=False,
+        prefetch_factor=2,
+        dataloader_multiprocessing_context="spawn" if num_workers else None,
     )
     loader, _ = make_dataloaders(cfg, dataset, None, 0, SimpleNamespace(device_type="cpu"))
-    batch = next(iter(loader))
-    assert ("_loader_timings" in batch) is (enabled is not False)
-    if enabled is not False:
-        assert batch["_loader_timings"]["worker_loading_s"].dtype == torch.float32
-        assert torch.all(batch["_loader_timings"]["video_loading_s"] == 0)
+    for batch in loader:
+        assert ("_loader_timings" in batch) is (enabled is not False)
+        if enabled is not False:
+            total, video = (batch["_loader_timings"][key] for key in ("worker_loading_s", "video_loading_s"))
+            assert total.dtype == torch.float32 and total.shape == batch["index"].shape
+            assert torch.all(
+                total == total[0]
+            )  # Same duration per source batch, including the short last one.
+            assert torch.all(total >= video)
+            assert torch.all(video > 0) if use_videos else torch.all(video == 0)
 
 
 def test_default_profiling_does_not_break_streaming(caplog):
