@@ -309,59 +309,6 @@ and fixed inputs/noise):
 
 ## Benchmark
 
-### Closed-loop reproduction (this port, official weights)
-
-We loaded the official `lingbot-vla-v2-6b-robotwin` checkpoint
-(`global_step_50000`, the post-trained release) through this port and ran a
-closed-loop RoboTwin 2.0 evaluation on our own stack: 4× RTX 4090, bf16 eager
-policy server over WebSocket, SAPIEN/Vulkan rendering, `demo_clean`, domain
-randomization off, 30 episodes/task, seed 0, 10 Hz, action chunk 25 (per the
-upstream closed-loop recipe).
-
-| Task | Success (%) |
-| ----------------- | ----------: |
-| lift_pot | 100.0 |
-| open_laptop | 100.0 |
-| place_empty_cup | 100.0 |
-| press_stapler | 100.0 |
-| stack_blocks_two | 100.0 |
-| handover_block | 96.7 |
-| handover_mic | 96.7 |
-| pick_dual_bottles | 90.0 |
-| open_microwave | 86.7 |
-| stamp_seal | 76.7 |
-| **Avg (Top-10)** | **94.7** |
-
-The Top-10 average (94.7%) matches the upstream model card's Avg Clean (93.52%)
-within n=30 noise, confirming the port reproduces the released weights on the
-action path. `put_object_cabinet` (0/30) and `place_can_basket` are excluded:
-their scoring chain was broken by an environment-side patch in our setup, not a
-model defect — with scoring fixed and chunk 25, `put_object_cabinet` returns to
-26/30 = 86.7%.
-
-### Clean-only retraining (this port's training stack)
-
-A 6B base checkpoint retrained on RoboTwin **clean** data only (30k steps,
-FSDP2 + Muon + dual-query distillation) evaluated at **~76% `demo_clean`**. The
-upstream reference below is trained on clean+randomized mixed data; randomized
-data is disallowed for our use case, so the gap is expected. The per-task table
-and full training recipe will be added before the final release.
-
-### Inference latency (RTX 4090, model-only)
-
-Hand-written plain-PyTorch sparse-MoE backend (argsort → scatter → bmm →
-gather, no Triton/fused kernels), compile + dual CUDA-graph capture (denoise +
-prefix KV aliasing), eager attention, bf16:
-
-| Denoising steps | Latency (model-only) |
-| --------------- | -------------------: |
-| 7 | 174.8 ms |
-| 10 | 204.1 ms |
-
-Numerics are bit-identical to the eager reference path (max|Δ| = 0).
-
-### Upstream-reported reference
-
 Upstream-reported scores on **RoboTwin 2.0** (50 dual-arm manipulation tasks × 100
 episodes each, Sapien simulation, `demo_clean` / `demo_randomized` task configs,
 success judged by per-task `expert_check`):

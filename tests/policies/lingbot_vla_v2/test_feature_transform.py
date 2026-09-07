@@ -62,8 +62,8 @@ norm_stats: {norm_stats_path}
 def so101_feature_transform(tmp_path):
     from transformers import AutoProcessor
 
-    from lerobot.policies.lingbot_vla_v2.model_core.qwen3vl_in_vla import apply_lingbot_qwen3_vl_patch
     from lerobot.policies.lingbot_vla_v2.preprocessing.feature_transform import FeatureTransform
+    from lerobot.policies.lingbot_vla_v2.model_core.qwen3vl_in_vla import apply_lingbot_qwen3_vl_patch
 
     norm_stats_path = tmp_path / "norm_stats.json"
     norm_stats_path.write_text(

@@ -5,16 +5,19 @@
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
-
-import pytest
-
-# Importing the config pulls in the policy package __init__, which imports the
-# modeling module and its heavy deps (transformers, einops, ...). Skip on CI
-# tiers where those optional extras are not installed.
-pytest.importorskip("transformers")
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 from lerobot.policies import factory
 from lerobot.policies.lingbot_vla_v2.configuration_lingbot_vla_v2 import LingbotVLAV2Config
+
+# Override key for the LingBot feature-transform step. Written out (not derived) on
+# purpose: a typo here fails with a confusing KeyError, see the assertion below.
+FEATURE_TRANSFORM_STEP = "lingbot_vla_v2_feature_transform"
 
 
 def test_saved_checkpoint_filters_normalizer_overrides(monkeypatch):
@@ -45,19 +48,30 @@ def test_saved_checkpoint_filters_normalizer_overrides(monkeypatch):
 
     assert isinstance(preprocessor, DummyPipeline)
     assert isinstance(postprocessor, DummyPipeline)
-    assert len(loaded_calls) == 2
-
-    pre_filename, pre_overrides = loaded_calls[0]
-    assert pre_filename == "policy_preprocessor.json"
-    # Normalizer keys must be dropped (this pipeline has no such steps), the two
-    # real steps pass through untouched, and the serialized feature-transform
-    # config (self-contained checkpoints) rides along as a third key.
-    assert set(pre_overrides) == {
-        "device_processor",
-        "rename_observations_processor",
-        "lingbot_vla_v2_feature_transform",
-    }
+    assert [name for name, _ in loaded_calls] == [
+        "policy_preprocessor.json",
+        "policy_postprocessor.json",
+    ]
+    pre_overrides = loaded_calls[0][1]
+    post_overrides = loaded_calls[1][1]
+    # Normalizer overrides must be filtered out (the point of this test): the LingBot
+    # pipeline has no LeRobot normalizer / unnormalizer steps.
+    assert "normalizer_processor" not in pre_overrides
+    assert "unnormalizer_processor" not in post_overrides
+    # Generic overrides pass through untouched.
     assert pre_overrides["device_processor"] == {"device": "cuda"}
     assert pre_overrides["rename_observations_processor"] == {"rename_map": {}}
-
-    assert loaded_calls[1] == ("policy_postprocessor.json", {"device_processor": {"device": "cuda"}})
+    assert post_overrides == {"device_processor": {"device": "cuda"}}
+    # The config-derived feature-transform overrides are forwarded so fine-tuning on a
+    # new embodiment wins over the checkpoint's saved slot mapping (same rule as
+    # ``resolve_robot_config_and_stats``; see
+    # ``make_lingbot_vla_v2_pre_post_processors_from_pretrained``).
+    assert FEATURE_TRANSFORM_STEP in pre_overrides, (
+        f"expected the config-derived step overrides under {FEATURE_TRANSFORM_STEP!r}, "
+        f"got {sorted(pre_overrides)}"
+    )
+    cfg = LingbotVLAV2Config()
+    ft_overrides = pre_overrides[FEATURE_TRANSFORM_STEP]
+    assert ft_overrides["chunk_size"] == cfg.chunk_size
+    assert ft_overrides["cameras"] == cfg.canonical_cameras
+    assert ft_overrides["processor_path"] == (cfg.processor_path or cfg.tokenizer_path)

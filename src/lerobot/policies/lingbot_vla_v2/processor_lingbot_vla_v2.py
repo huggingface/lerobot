@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import torch
+from torchvision.transforms.v2.functional import resize
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import TransitionKey
@@ -61,6 +62,18 @@ else:
     AutoProcessor = None
 
 DEFAULT_TASK = "Execute the robot action."
+
+
+def _future_video_fps(dataset_fps: float, offset: int, action_is_pad=None):
+    """Use real spacing when LeRobot clamps a requested future to the episode end.
+
+    The default offset 49 is covered by the 50-step action pad mask. An infinite
+    FPS for a duplicated final frame encodes a zero temporal RoPE step.
+    """
+    if isinstance(action_is_pad, torch.Tensor) and offset < action_is_pad.shape[-1]:
+        valid_tail = (~action_is_pad.bool()).sum(dim=-1).sub(1).clamp(min=0, max=offset)
+        return float(dataset_fps) / valid_tail.float()
+    return float(dataset_fps) / max(1, offset)
 
 
 def _collate(values: list[torch.Tensor]) -> torch.Tensor:
@@ -212,6 +225,9 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
             item: dict[str, Any] = {OBS_STATE: state}
             for k in image_keys:
                 img = _cpu(observation[k][i])
+                # Match upstream BaseDataset Resize(image_size), for both current
+                # and future frames before Qwen processing and teacher targets.
+                img = resize(img, list(self.resize_imgs_with_padding), antialias=True)
                 # LeRobot images are float CHW in [0, 1]; the Qwen image processor
                 # expects [0, 255]. Scale only if clearly normalized.
                 if img.dtype.is_floating_point and float(img.max()) <= 1.0 + 1e-4:
@@ -224,7 +240,9 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
                 # apply side fall back to an all-False mask when absent.
                 org_actions = self._feature_transform.org_features["actions"]
                 pad_key = f"{org_actions[0]}_is_pad" if org_actions else "action_is_pad"
-                item[pad_key] = torch.zeros(self.chunk_size, dtype=torch.bool)
+                complementary = self._current_transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+                mask = complementary.get(pad_key, observation.get(pad_key))
+                item[pad_key] = _cpu(mask[i]).bool() if isinstance(mask, torch.Tensor) else torch.zeros(self.chunk_size, dtype=torch.bool)
             # Task text can arrive as a list of strings, a collated tensor of indices,
             # or a plain scalar; normalize to a string for the chat template.
             if isinstance(task, torch.Tensor):
@@ -280,7 +298,9 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
                         if self.future_frame_offset is not None
                         else max(1, self.chunk_size - 1)
                     )
-                    new_obs["future_video_effective_fps"] = self.dataset_fps / max(1, offset)
+                    new_obs["future_video_effective_fps"] = _future_video_fps(
+                        self.dataset_fps, offset, collated.get("action_is_pad") if action is not None else None
+                    )
 
         self._current_transition[TransitionKey.OBSERVATION] = new_obs
         if action is not None:

@@ -1,31 +1,16 @@
 """DTensor-aware Muon optimizer for FSDP2 and MoE expert weights.
 
-Vendored from the upstream LingBot-VLA v2 training stack
-(``lingbotvla/optim/muon.py``, Apache-2.0) with numerics kept identical. The
-``CombinedOptimizer`` at the bottom is the lerobot-side adaptation: it swaps
-upstream's nested ``{"optimizers": [...]}`` checkpoint format for a standard
-flat ``Optimizer.state_dict`` so the shared safetensors save/load path in
-``lerobot.optim.optimizers`` works unchanged.
-
 ``DistributedMuon`` keeps upstream ``torch.optim.Muon`` numerics for 2D
 weights and adds batched Newton-Schulz for 3D MoE expert stacks.
 
 For FSDP2-sharded 2D params, same-shape parameters are mega-batched:
 stacked into a single tensor, gathered with one NCCL call, orthogonalized
 with one batched NS pass, and scattered back locally.
-
-Under plain DDP / single-process, parameters are ordinary tensors and every
-parameter takes the local path: Newton-Schulz runs on the full gradient,
-which is the mathematically correct input. Under FSDP1 the gradients exposed
-to the optimizer are dim-0 row shards, so orthogonalizing them is silently
-wrong and world-size dependent — ``lerobot_train`` rejects that combination
-(see ``is_muon_optimizer``).
 """
 
-import math
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
-from typing import Any
+import math
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import torch
 import torch.distributed as dist
@@ -33,6 +18,7 @@ import torch.nn as nn
 from torch import Tensor
 from torch.distributed.tensor import DTensor, Replicate, Shard
 from torch.optim.optimizer import Optimizer
+
 
 try:
     from torch.optim._muon import (
@@ -55,7 +41,7 @@ except ImportError:  # pragma: no cover - torch < 2.9 fallback
 
     def _adjust_lr(  # type: ignore[no-redef]
         lr: float,
-        adjust_lr_fn: str | None,
+        adjust_lr_fn: Optional[str],
         param_shape: Sequence[int],
     ) -> float:
         """Torch 2.8 fallback for ``torch.optim._muon._adjust_lr``."""
@@ -70,19 +56,17 @@ except ImportError:  # pragma: no cover - torch < 2.9 fallback
 
 
 __all__ = [
-    "CombinedOptimizer",
     "DEFAULT_NS_COEFFICIENTS",
     "DEFAULT_NS_STEPS",
     "DistributedMuon",
     "batched_newton_schulz",
-    "is_muon_optimizer",
     "split_muon_adamw_params",
 ]
 
 
-DEFAULT_NS_COEFFICIENTS: tuple[float, float, float] = (DEFAULT_A, DEFAULT_B, DEFAULT_C)
+DEFAULT_NS_COEFFICIENTS: Tuple[float, float, float] = (DEFAULT_A, DEFAULT_B, DEFAULT_C)
 
-_DEFAULT_ADAMW_NAME_PATTERNS: tuple[str, ...] = (
+_DEFAULT_ADAMW_NAME_PATTERNS: Tuple[str, ...] = (
     "embed_tokens",
     "embedding",
     "lm_head",
@@ -95,7 +79,7 @@ _MEGABATCH_MAX_GROUP_SIZE = 32
 @torch.no_grad()
 def batched_newton_schulz(
     grad: Tensor,
-    ns_coefficients: tuple[float, float, float] = DEFAULT_NS_COEFFICIENTS,
+    ns_coefficients: Tuple[float, float, float] = DEFAULT_NS_COEFFICIENTS,
     ns_steps: int = DEFAULT_NS_STEPS,
     eps: float = EPS,
     compute_dtype: torch.dtype = torch.bfloat16,
@@ -159,10 +143,10 @@ def _is_muon_eligible_ndim(param: Tensor) -> bool:
 
 def split_muon_adamw_params(
     model: "nn.Module",
-    no_decay_modules: list[str] | None = None,
-    no_decay_params: list[str] | None = None,
-    extra_adamw_name_patterns: Sequence[str] | None = None,
-) -> tuple[list[Tensor], list[Tensor], list[str], list[str]]:
+    no_decay_modules: Optional[List[str]] = None,
+    no_decay_params: Optional[List[str]] = None,
+    extra_adamw_name_patterns: Optional[Sequence[str]] = None,
+) -> Tuple[List[Tensor], List[Tensor], List[str], List[str]]:
     """Split model parameters into Muon-eligible weights and AdamW fallback weights."""
     no_decay_modules = no_decay_modules or []
     no_decay_params = no_decay_params or []
@@ -178,10 +162,10 @@ def split_muon_adamw_params(
                 fqn = f"{module_name}.{pname}" if module_name else pname
                 forced_adamw_fqns.add(fqn)
 
-    muon_params: list[Tensor] = []
-    adamw_params: list[Tensor] = []
-    muon_names: list[str] = []
-    adamw_names: list[str] = []
+    muon_params: List[Tensor] = []
+    adamw_params: List[Tensor] = []
+    muon_names: List[str] = []
+    adamw_names: List[str] = []
 
     for name, param in model.named_parameters():
         if not param.requires_grad:
@@ -210,7 +194,7 @@ _KIND_MOE_LOCAL_3D = "moe_local_3d"
 _KIND_MOE_GATHER_3D = "moe_gather_3d"
 
 
-def _shard_dims(p: DTensor) -> list[int]:
+def _shard_dims(p: DTensor) -> List[int]:
     """Return the list of tensor dims along which ``p`` is sharded."""
     return [pl.dim for pl in p.placements if isinstance(pl, Shard)]
 
@@ -260,7 +244,7 @@ def _wrap_full_as_dtensor_like(full: Tensor, ref: Tensor) -> Tensor:
     return replicated.redistribute(device_mesh=mesh, placements=ref.placements)
 
 
-def _get_dtensor_shard_info(p: DTensor) -> tuple[Any, int, int, int]:
+def _get_dtensor_shard_info(p: DTensor) -> Tuple[Any, int, int, int]:
     """Extract (process_group, world_size, rank, shard_dim) from a sharded DTensor."""
     mesh = p.device_mesh
     for mesh_dim_idx, placement in enumerate(p.placements):
@@ -287,10 +271,10 @@ class DistributedMuon(Optimizer):
         weight_decay: float = 0.1,
         momentum: float = 0.95,
         nesterov: bool = True,
-        ns_coefficients: tuple[float, float, float] = DEFAULT_NS_COEFFICIENTS,
+        ns_coefficients: Tuple[float, float, float] = DEFAULT_NS_COEFFICIENTS,
         eps: float = EPS,
         ns_steps: int = DEFAULT_NS_STEPS,
-        adjust_lr_fn: str | None = None,
+        adjust_lr_fn: Optional[str] = None,
     ) -> None:
         if isinstance(lr, Tensor) and lr.numel() != 1:
             raise ValueError("Tensor lr must be 1-element")
@@ -303,7 +287,7 @@ class DistributedMuon(Optimizer):
         if adjust_lr_fn is not None and adjust_lr_fn not in ("original", "match_rms_adamw"):
             raise ValueError(f"Adjust learning rate function {adjust_lr_fn} is not supported")
 
-        defaults: dict[str, Any] = {
+        defaults: Dict[str, Any] = {
             "lr": lr,
             "weight_decay": weight_decay,
             "momentum": momentum,
@@ -357,8 +341,8 @@ class DistributedMuon(Optimizer):
             # CRITICAL: every rank must issue the same collective calls in the same
             # order, so we include ALL params (even grad=None) in the grouping and
             # skip the actual update for grad=None params inside the batch.
-            fsdp_2d_groups: dict[tuple, list[Tensor]] = defaultdict(list)
-            other_params: list[tuple[Tensor, str]] = []
+            fsdp_2d_groups: Dict[tuple, List[Tensor]] = defaultdict(list)
+            other_params: List[Tuple[Tensor, str]] = []
 
             for p in group["params"]:
                 kind = _classify_param(p)
@@ -406,15 +390,16 @@ class DistributedMuon(Optimizer):
                     assert isinstance(p, DTensor)
                     # Need full tensor for NS — gather, compute, slice back
                     full_update = _full_grad(
-                        DTensor.from_local(update_local, device_mesh=p.device_mesh, placements=p.placements, run_check=False)
+                        DTensor.from_local(update_local, device_mesh=p.device_mesh, placements=p.placements,
+                                           shape=p.shape, stride=p.stride(), run_check=False)
                     )
                     full_ortho = batched_newton_schulz(full_update, ns_coefficients, ns_steps, eps)
                     # Take this rank's local shard back
                     pg, ws, rk, sdim = _get_dtensor_shard_info(p)
                     global_size = p.shape[sdim]
-                    chunk_floor = global_size // ws
-                    rem = global_size % ws
-                    start = rk * chunk_floor + min(rk, rem)
+                    # DTensor Shard uses torch.chunk (ceil-sized chunks), not balanced splits.
+                    chunk_size = (global_size + ws - 1) // ws
+                    start = min(rk * chunk_size, global_size)
                     local_size = update_local.shape[sdim]
                     ortho_local = full_ortho.narrow(sdim, start, local_size).contiguous()
                 else:
@@ -430,7 +415,7 @@ class DistributedMuon(Optimizer):
 
         return loss
 
-    def _step_megabatch(self, params: list[Tensor], config: dict) -> None:
+    def _step_megabatch(self, params: List[Tensor], config: dict) -> None:
         """Process a batch of same-shape FSDP_GATHER_2D params with batched comms + NS."""
         N = len(params)
         if N == 0:
@@ -461,7 +446,7 @@ class DistributedMuon(Optimizer):
 
     def _step_megabatch_chunk(
         self,
-        params: list[Tensor],
+        params: List[Tensor],
         momentum: float,
         nesterov: bool,
         ns_coefficients: tuple,
@@ -480,8 +465,8 @@ class DistributedMuon(Optimizer):
         # This avoids issues with torch.compile which may produce non-DTensor grads.
         # Params with grad=None contribute zeros (they must still participate in
         # the collective to keep all ranks in sync).
-        local_updates: list[Tensor] = []
-        has_grad: list[bool] = []
+        local_updates: List[Tensor] = []
+        has_grad: List[bool] = []
         for p in params:
             if p.grad is None:
                 # No grad — contribute zeros to the collective
@@ -540,7 +525,7 @@ class DistributedMuon(Optimizer):
         else:
             real_chunks = []
             for r in range(world_size):
-                real_size = max_local_size if r < remainder else (global_dim_size // world_size)
+                real_size = max(0, min(max_local_size, global_dim_size - r * max_local_size))
                 real_chunks.append(gather_list[r].narrow(gather_dim, 0, real_size))
             stacked_full = torch.cat(real_chunks, dim=gather_dim)
         del gather_list
@@ -550,8 +535,7 @@ class DistributedMuon(Optimizer):
         del stacked_full
 
         # Phase 4: Local scatter + apply update
-        chunk_floor = global_dim_size // world_size
-        shard_start = rank * chunk_floor + min(rank, remainder)
+        shard_start = min(rank * max_local_size, global_dim_size)
         local_ortho_batch = stacked_ortho.narrow(
             gather_dim, shard_start, original_local_size
         ).contiguous()
@@ -572,7 +556,7 @@ class DistributedMuon(Optimizer):
     def _compute_ortho(
         update: Tensor,
         kind: str,
-        ns_coefficients: tuple[float, float, float],
+        ns_coefficients: Tuple[float, float, float],
         ns_steps: int,
         eps: float,
     ) -> Tensor:
@@ -600,156 +584,3 @@ class DistributedMuon(Optimizer):
             return batched_newton_schulz(full, ns_coefficients, ns_steps, eps)
 
         raise ValueError(f"Unknown DistributedMuon kind: {kind!r}")
-
-class CombinedOptimizer(Optimizer):
-    """Drive several inner optimizers (Muon + AdamW) as a single optimizer.
-
-    Unlike the upstream version this exposes a *standard* flat
-    ``state_dict()`` / ``load_state_dict()`` over the concatenated param
-    groups, so it serializes through lerobot's optimizer-state safetensors
-    path exactly like a plain ``torch.optim`` optimizer. Parameter indices
-    are remapped to each inner optimizer when loading.
-    """
-
-    def __init__(self, optimizers: Sequence[Optimizer]):
-        if not optimizers:
-            raise ValueError("CombinedOptimizer needs at least one inner optimizer.")
-        self.optimizers: list[Optimizer] = list(optimizers)
-        self.defaults: dict[str, Any] = {}
-        # Bookkeeping attributes normally created by Optimizer.__init__; torch's
-        # profiler and hook registry read these without guarding.
-        self._optimizer_step_pre_hooks = {}
-        self._optimizer_step_post_hooks = {}
-        self._optimizer_state_dict_pre_hooks = {}
-        self._optimizer_state_dict_post_hooks = {}
-        self._optimizer_load_state_dict_pre_hooks = {}
-        self._optimizer_load_state_dict_post_hooks = {}
-
-    @property
-    def param_groups(self):
-        groups: list[dict[str, Any]] = []
-        for opt in self.optimizers:
-            groups.extend(opt.param_groups)
-        return groups
-
-    @param_groups.setter
-    def param_groups(self, value) -> None:
-        # LR schedulers mutate the shared param-group dicts in place;
-        # wholesale reassignment is a no-op (mirrors upstream).
-        pass
-
-    @property
-    def state(self):
-        merged: dict[Any, Any] = {}
-        for opt in self.optimizers:
-            merged.update(opt.state)
-        return merged
-
-    def step(self, closure=None):
-        loss = None
-        if closure is not None:
-            with torch.enable_grad():
-                loss = closure()
-        for opt in self.optimizers:
-            opt.step()
-        return loss
-
-    def zero_grad(self, set_to_none: bool = True):
-        for opt in self.optimizers:
-            opt.zero_grad(set_to_none=set_to_none)
-
-    def state_dict(self) -> dict[str, Any]:
-        """Flat state dict over the concatenated groups, torch-style."""
-        param_mappings: dict[int, int] = {}
-        start_index = 0
-
-        def pack_group(group: dict[str, Any]) -> dict[str, Any]:
-            nonlocal start_index
-            packed = {k: v for k, v in group.items() if k != "params"}
-            param_mappings.update(
-                {
-                    id(p): i + start_index
-                    for i, p in enumerate(group["params"])
-                    if id(p) not in param_mappings
-                }
-            )
-            packed["params"] = [param_mappings[id(p)] for p in group["params"]]
-            start_index += len(packed["params"])
-            return packed
-
-        packed_groups = [pack_group(g) for g in self.param_groups]
-        # The merged state view is keyed by parameter objects; remap to indices.
-        saved_state = {
-            (param_mappings[id(k)] if id(k) in param_mappings else k): v
-            for k, v in self.state.items()
-        }
-        return {"state": saved_state, "param_groups": packed_groups}
-
-    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
-        """Distribute a flat state dict back into the inner optimizers."""
-        saved_groups = state_dict["param_groups"]
-        groups = self.param_groups
-        if len(groups) != len(saved_groups):
-            raise ValueError(
-                f"Loaded state dict has {len(saved_groups)} param groups; "
-                f"optimizer was built with {len(groups)}."
-            )
-
-        # Map flat indices back to parameters, sliced per inner optimizer. Each
-        # child Optimizer owns its own index namespace, so the second child must
-        # restart at zero rather than receive the global ids from `state_dict()`.
-        child_groups: list[list[dict[str, Any]]] = [[] for _ in self.optimizers]
-        group_owner: list[int] = []
-        for child_id, opt in enumerate(self.optimizers):
-            for _group in opt.param_groups:
-                group_owner.append(child_id)
-
-        global_to_child: list[tuple[int, int, int]] = []  # (global_idx, child_id, local_idx)
-        child_local_idx = [0] * len(self.optimizers)
-        global_idx = 0
-        for gi, (group, saved_group) in enumerate(zip(groups, saved_groups, strict=True)):
-            if len(group["params"]) != len(saved_group["params"]):
-                raise ValueError(
-                    f"Param group {gi} size mismatch: {len(saved_group['params'])} saved vs "
-                    f"{len(group['params'])} current."
-                )
-            child_id = group_owner[gi]
-            local_ids = list(range(child_local_idx[child_id], child_local_idx[child_id] + len(group["params"])))
-            renumbered = dict(saved_group)
-            renumbered["params"] = local_ids
-            child_groups[child_id].append(renumbered)
-            for local_idx in local_ids:
-                global_to_child.append((global_idx, child_id, local_idx))
-                global_idx += 1
-            child_local_idx[child_id] += len(local_ids)
-
-        for child_id, opt in enumerate(self.optimizers):
-            child_state = {}
-            for gidx, cid, local_idx in global_to_child:
-                if cid == child_id and gidx in state_dict["state"]:
-                    child_state[local_idx] = state_dict["state"][gidx]
-            opt.load_state_dict({"state": child_state, "param_groups": child_groups[child_id]})
-
-
-def is_muon_optimizer(optimizer: Any) -> bool:
-    """Whether ``optimizer`` (or any wrapped/dict-nested one) contains Muon."""
-    from collections.abc import Mapping
-
-    seen = set()
-    stack = [optimizer]
-    while stack:
-        opt = stack.pop()
-        if id(opt) in seen:
-            continue
-        seen.add(id(opt))
-        if isinstance(opt, DistributedMuon):
-            return True
-        if isinstance(opt, CombinedOptimizer):
-            stack.extend(opt.optimizers)
-        elif isinstance(opt, Mapping):
-            stack.extend(opt.values())
-        else:
-            inner = getattr(opt, "optimizer", None)  # accelerate wrappers
-            if inner is not None and inner is not opt:
-                stack.append(inner)
-    return False

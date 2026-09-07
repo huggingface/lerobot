@@ -272,6 +272,8 @@ def main():
     )
     parser.add_argument("--revision", default=None, help="Hub revision of the upstream checkpoint.")
     parser.add_argument("--robot-config-path", required=True, help="Per-embodiment robot config YAML.")
+    parser.add_argument("--profile", choices=["robotwin", "real"], default=None)
+    parser.add_argument("--dtype", choices=["float32", "bfloat16"], default="float32")
     parser.add_argument(
         "--norm-stats-path",
         default=None,
@@ -307,6 +309,8 @@ def main():
         help="Optionally push the converted checkpoint to this Hub repo.",
     )
     args = parser.parse_args()
+    if Path(args.output).exists():
+        raise FileExistsError(f"Refusing to overwrite conversion output: {args.output}")
 
     checkpoint_dir = _resolve_upstream_checkpoint(args.input, args.revision)
     logger.info("Converting upstream checkpoint from %s", checkpoint_dir)
@@ -339,7 +343,7 @@ def main():
         # Canonical features; training re-infers them from the dataset anyway.
         input_features={
             OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(55,)),
-            **{cam: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)) for cam in camera_keys},
+            **{cam: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 256, 256) if args.profile == "robotwin" else (3, 224, 224)) for cam in camera_keys},
         },
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(55,))},
         # Depth/DINO distillation branch: heads build from the dict (no teacher
@@ -349,6 +353,18 @@ def main():
     )
     for key, value in UPSTREAM_CONFIG_OVERRIDES.items():
         setattr(config, key, value)
+    config.dtype = args.dtype
+    if args.profile == "robotwin":
+        config.canonical_norm_type.update({k: "bounds_99_woclip" for k in ("arm.position", "end.position", "effector.position")})
+        config.loss_type = "L1_fm"
+        config.resize_imgs_with_padding = (256, 256)
+        config.image_min_pixels = config.image_max_pixels = 256 * 256
+        config.dataset_fps = 50
+        config.future_frame_offset = 49
+    elif args.profile == "real":
+        config.loss_type = "fm"
+    if args.tokenizer_path:
+        config.processor_path = args.tokenizer_path
     # ``use_depth`` above stays False deliberately: it is a dead compatibility
     # field the model never reads — the distillation branch keys on
     # ``align_params`` alone.
@@ -369,14 +385,7 @@ def main():
     # config, so the saved checkpoint no longer references machine-specific paths.
     preprocessor, postprocessor = make_lingbot_vla_v2_pre_post_processors(config)
 
-    # Restore the portable Hub tokenizer/processor ids before saving: the conversion may
-    # have loaded them from a local directory, but the checkpoint must not serialize it.
-    if args.tokenizer_path:
-        config.tokenizer_path = LingbotVLAV2Config().tokenizer_path
-        config.processor_path = None
-        for step in preprocessor.steps:
-            if getattr(step, "processor_path", None):
-                step.processor_path = config.tokenizer_path
+    # Explicit local paths are retained for offline training and evaluation.
 
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)

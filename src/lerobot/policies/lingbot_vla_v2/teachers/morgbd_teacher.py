@@ -24,8 +24,8 @@ upstream code path, and depends only on ``torch``.
 What it provides
 ----------------
 ``MoRGBDTeacher.from_pretrained(path)`` loads the published checkpoint with
-``torch.load(..., weights_only=True)`` and ``load_state_dict(strict=False)``
-and ``MoRGBDTeacher.infer_feat`` reproduces the upstream teacher semantics
+``torch.load(..., weights_only=True)`` with explicit alternate-key compatibility and
+complete runtime-weight validation. ``MoRGBDTeacher.infer_feat`` implements the teacher semantics
 used by the alignment recipe::
 
     feat, cls = teacher.infer_feat(
@@ -39,8 +39,8 @@ used by the alignment recipe::
     # feat: (B, 1024, 16, 16) patch features for 256 tokens on a square image
     # cls:  (B, 1024) class token of the last extracted layer
 
-Semantics reproduced exactly (including op order / dtype flow under bf16
-autocast): image resized to a 14-pixel-per-token grid (bilinear, antialias)
+Forward semantics (including op order / dtype flow under bf16 autocast):
+image resized to a 14-pixel-per-token grid (bilinear, antialias)
 and ImageNet-normalized; depth resized nearest to the same grid, invalids
 clamped to zero, validity mask ``> 0.01``; image and depth patch embeddings
 each add a bicubic-interpolated positional encoding offset by a distinct
@@ -50,23 +50,21 @@ ViT blocks; the four extracted layers (config: [5, 11, 17, 23]) are
 final-normed, image tokens are 1x1-projected and summed into the output
 feature map; the class token comes from the last extracted layer.
 
-The ``strict=False`` load quirk
--------------------------------
-The published checkpoint stores its depth patch embedding under
-``encoder.backbone.depth_mask_patch_embed.*`` while the model it configures
-(``depth_emb_mode: "conv_1c"``) constructs ``...depth_patch_embed.*``. With
-``strict=False`` the checkpoint keys are silently dropped and the module's
-depth patch embedding therefore stays at its construction initialization
-(``nn.Conv2d`` default init; the ViT init routines touch only linears).
-Second, the upstream model accepts the ``normal_head`` config entry but
-never constructs that stack, so the checkpoint's ``normal_head.*`` weights
-are dropped as well. Upstream ships and loads the checkpoint exactly this
-way, so this runtime reproduces both quirks rather than papering over
-them: the only tolerated missing keys are ``depth_patch_embed.*`` and the
-only tolerated unexpected keys are ``depth_mask_patch_embed.*`` /
-``normal_head.*`` — anything else raises. Any other incompatibility means
-the checkpoint is not the published one and must fail loudly, unlike the
-upstream silent drop.
+Checkpoint compatibility
+------------------------
+The runtime attribute and forward use ``depth_mask_patch_embed``, matching the
+published ``encoder.backbone.depth_mask_patch_embed.*`` checkpoint keys directly.
+The name does not change the ``conv_1c`` one-channel depth convolution or enable
+depth masking. Checkpoints using the alternate ``depth_patch_embed`` name are
+also accepted: only their ``proj.weight`` and ``proj.bias`` keys are mapped to
+the canonical names, with a warning and a load report. Simultaneous alternate
+and canonical keys are rejected. No missing runtime parameter is permitted,
+even with ``strict=False``.
+Only ``normal_head.*`` is excluded: this feature-only runtime does not construct
+or execute that decoder. Its ignored keys are recorded separately.
+Loading the actual depth embedding intentionally changes results versus the
+old random-initialization behavior; it does not establish equivalence to the
+older stableVLA teacher, whose token-sampling semantics also differ.
 
 Scope notes
 -----------
@@ -87,7 +85,7 @@ from __future__ import annotations
 
 import math
 import warnings
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -116,16 +114,30 @@ _DEFAULT_INIT_VALUES = 1.0
 _DEFAULT_MLP_RATIO = 4.0
 _DEFAULT_INTERPOLATE_OFFSET = 0.1
 
-# The only key groups tolerated by the strict=False load (see module
-# docstring). Everything else must match the constructed module exactly.
-# ``normal_head.*`` is unexpected too because the upstream model accepts the
-# ``normal_head`` config entry but never constructs that stack, so those
-# checkpoint weights are dropped by the upstream strict=False load as well.
-_QUIRK_MISSING_PREFIX = "encoder.backbone.depth_patch_embed."
-_QUIRK_UNEXPECTED_PREFIXES = (
-    "encoder.backbone.depth_mask_patch_embed.",
-    "normal_head.",
-)
+_DEPTH_EMBED_KEY_ALIASES = {
+    f"encoder.backbone.depth_patch_embed.proj.{suffix}":
+    f"encoder.backbone.depth_mask_patch_embed.proj.{suffix}"
+    for suffix in ("weight", "bias")
+}
+
+
+def _prepare_checkpoint_state(
+    state: Mapping[str, Tensor],
+) -> tuple[dict[str, Tensor], dict[str, str], list[str]]:
+    """Normalize only the two alternate depth keys, without mutating the input."""
+    normalized = dict(state)
+    remapped = {}
+    for old, new in _DEPTH_EMBED_KEY_ALIASES.items():
+        if old not in normalized:
+            continue
+        if new in normalized:
+            raise RuntimeError(f"Ambiguous MoRGBD checkpoint contains both {old!r} and {new!r}.")
+        normalized[new] = normalized.pop(old)
+        remapped[old] = new
+    ignored = sorted(key for key in normalized if key.startswith("normal_head."))
+    for key in ignored:
+        del normalized[key]
+    return normalized, remapped, ignored
 
 
 class _LayerScale(nn.Module):
@@ -267,9 +279,8 @@ class _RGBDDinoVisionTransformer(nn.Module):
         grid = img_size // patch_size
         num_patches = grid * grid
         self.patch_embed = _PatchEmbed(3, embed_dim, patch_size)
-        # Constructed (and, per the strict=False quirk, left at construction
-        # init by the published checkpoint) 1-channel depth patch embedding.
-        self.depth_patch_embed = _PatchEmbed(1, embed_dim, patch_size)
+        # Match the published checkpoint name; still a one-channel convolution.
+        self.depth_mask_patch_embed = _PatchEmbed(1, embed_dim, patch_size)
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + self.num_tokens, embed_dim))
@@ -326,7 +337,7 @@ class _RGBDDinoVisionTransformer(nn.Module):
         """Embed image + depth, add offset positional encodings, prepend cls."""
         batch_size = x_img.shape[0]
         img_tokens = self.patch_embed(x_img)
-        depth_tokens = self.depth_patch_embed(x_depth)
+        depth_tokens = self.depth_mask_patch_embed(x_depth)
         pos = self._interpolate_patch_pos_embed(
             x_img.shape[-2] // self.patch_size, x_img.shape[-1] // self.patch_size, img_tokens.dtype
         )
@@ -635,9 +646,11 @@ class MoRGBDTeacher(nn.Module):
         self.neck = _ConvStack(**neck) if neck is not None else None
         self.depth_head = _ConvStack(**depth_head) if depth_head is not None else None
         self.mask_head = _ConvStack(**mask_head) if mask_head is not None else None
-        # Populated by from_pretrained for the strict=False load report.
+        # Populated by from_pretrained; ignored decoder keys are not load holes.
         self.load_missing_keys: list[str] = []
         self.load_unexpected_keys: list[str] = []
+        self.load_remapped_keys: dict[str, str] = {}
+        self.load_ignored_keys: list[str] = []
 
     @property
     def device(self) -> torch.device:
@@ -649,7 +662,8 @@ class MoRGBDTeacher(nn.Module):
 
     @classmethod
     def from_pretrained(
-        cls, pretrained_model_name_or_path: str | Path, *, device: torch.device | str | None = None
+        cls, pretrained_model_name_or_path: str | Path, *, device: torch.device | str | None = None,
+        strict: bool = True,
     ) -> MoRGBDTeacher:
         """Load a published ``depth/model.pt`` checkpoint (weights_only)."""
         checkpoint_path = Path(pretrained_model_name_or_path).expanduser()
@@ -668,38 +682,37 @@ class MoRGBDTeacher(nn.Module):
                 f"(missing {error} entry)."
             ) from error
         model = cls(**model_config)
-        # strict=False reproduces the upstream load, including its quirk: the
-        # checkpoint's depth_mask_patch_embed.* keys are dropped and the
-        # constructed depth_patch_embed stays at its construction init.
-        report = model.load_state_dict(model_state, strict=False)
-        model._record_load_report(sorted(report.missing_keys), sorted(report.unexpected_keys))
+        model._load_checkpoint_state(model_state, strict=strict)
         model.requires_grad_(False)
         model.eval()
         if device is not None:
             model.to(device=torch.device(device))
         return model
 
-    def _record_load_report(self, missing: list[str], unexpected: list[str]) -> None:
-        self.load_missing_keys = missing
-        self.load_unexpected_keys = unexpected
-        bad_missing = [key for key in missing if not key.startswith(_QUIRK_MISSING_PREFIX)]
-        bad_unexpected = [
-            key
-            for key in unexpected
-            if not key.startswith(_QUIRK_UNEXPECTED_PREFIXES)
-        ]
-        if bad_missing or bad_unexpected:
+    def _load_checkpoint_state(
+        self, state: Mapping[str, Tensor], *, strict: bool = True, assign: bool = False,
+    ) -> None:
+        """Validate full runtime coverage after migration (also used by CPU preflight).
+
+        ``strict=False`` is retained for caller compatibility, but never permits
+        an incompletely initialized frozen teacher. ``assign=True`` supports
+        validation on a meta model without allocating another full weight copy.
+        """
+        active, remapped, ignored = _prepare_checkpoint_state(state)
+        report = self.load_state_dict(active, strict=strict, assign=assign)
+        self.load_missing_keys = sorted(report.missing_keys)
+        self.load_unexpected_keys = sorted(report.unexpected_keys)
+        self.load_remapped_keys = remapped
+        self.load_ignored_keys = ignored
+        if self.load_missing_keys or self.load_unexpected_keys:
             raise RuntimeError(
-                "Checkpoint does not match the first-party MoRGBD teacher beyond the "
-                "known strict=False quirk. Unexpected keys: "
-                f"{bad_unexpected}. Missing keys: {bad_missing}."
+                "MoRGBD checkpoint does not cover the complete runtime after key normalization. "
+                f"Unexpected keys: {self.load_unexpected_keys}. Missing keys: {self.load_missing_keys}."
             )
-        if missing or unexpected:
+        if remapped:
             warnings.warn(
-                "Published-checkpoint strict=False quirk reproduced: "
-                f"{missing} stay at construction initialization while "
-                f"{unexpected} from the checkpoint are dropped (matching the "
-                "upstream load).",
+                f"Adapted MoRGBD checkpoint keys to canonical runtime names: {remapped}. "
+                "The depth embedding is loaded from the checkpoint, not left at random initialization.",
                 stacklevel=3,
             )
 

@@ -1,54 +1,59 @@
 from __future__ import annotations
 
 import functools
-import os
 from collections import deque
 
 import einops
 import torch
-import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
+import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
+from typing import List, Optional, Tuple, Union
+
 from transformers import AutoConfig, AutoTokenizer, PretrainedConfig, PreTrainedModel
-from transformers.cache_utils import Cache
 from transformers.models.auto import CONFIG_MAPPING
+from transformers.cache_utils import Cache
 from transformers.utils import logging
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE
 
-from .configuration_lingbot_vla_v2 import (
-    LingbotVLAV2Config as LeRobotLingbotVLAV2Config,
-    resolve_robot_config_and_stats,
-)
-from .model_core.flex_attention import (
-    build_block_mask,
-    flex_attention_forward,
-    flex_attention_with_block_mask,
-)
-from .model_core.modeling_lingbot_vla_v2_base import (
-    FlowMatching as FlowMatchingV1,
-    replace_lnorm_with_adanorm,
-)
-from .model_core.moe_loss import sequence_wise_balance_loss as triton_sequence_wise_balance_loss
-from .model_core.qwen2_action_expert import (
-    Qwen2ForCausalLM,
-    Qwen2TokenMoeBlock,
-)
+from .configuration_lingbot_vla_v2 import LingbotVLAV2Config as LeRobotLingbotVLAV2Config
+from .configuration_lingbot_vla_v2 import resolve_robot_config_and_stats
+from .model_core.configuration_lingbot_vla_v2_internal import LingbotVLAV2Config
 from .model_core.qwen3vl_in_vla import (
     Qwen3VLForConditionalGeneration,
+    Qwen3VLTextModel,
+    Qwen3VLPreTrainedModel,
     apply_lingbot_qwen3_vl_patch,
     apply_rotary_pos_emb,
 )
+from .model_core.modeling_lingbot_vla_v2_base import (
+    AdaRMSNorm,
+    FixAdaRMSNorm,
+    replace_lnorm_with_adanorm,
+    FlowMatching as FlowMatchingV1,
+)
 from .model_core.utils import (
     block_suffix_to_fv_,
+    create_sinusoidal_pos_embedding,
     flash_varlen_prefix_attention,
     make_att_2d_masks,
     our_eager_attention_forward,
     our_sdpa_attention_forward,
     prefix_query_segments,
     prefix_query_token_spans,
+    sample_beta,
+)
+from .model_core.flex_attention import build_block_mask, flex_attention_forward, flex_attention_with_block_mask
+
+from .model_core.moe_loss import sequence_wise_balance_loss as triton_sequence_wise_balance_loss
+from .model_core.qwen2_action_expert import (
+    Qwen2ForCausalLM,
+    Qwen2TokenMoeBlock,
+    Qwen2FusedExperts,
+    FixQwen2RMSNorm,
 )
 
 try:
@@ -258,7 +263,14 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
         # calls — including the CUDA-graph capture itself — skip preprcess_grid_thw
         # entirely, which is what makes the tower capturable (its .item()/.tolist()
         # host syncs cannot be captured).
-        grid_cache_ready = self.position_embeddings is not None
+        trainable_position = torch.is_grad_enabled() and self.qwenvl.model.visual.pos_embed.weight.requires_grad
+        if trainable_position:
+            # An inference cache becomes stale as soon as the next update can
+            # change pos_embed. Keep only parameter-independent grid metadata.
+            self.pos_embeds = None
+        grid_cache_ready = self.position_embeddings is not None and (
+            trainable_position or self.pos_embeds is not None
+        )
         if (precompute_grid_thw and not grid_cache_ready) or (
             self._capture_grid_cache and not grid_cache_ready
         ):
@@ -527,6 +539,8 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
             use_cache=use_cache,
             fill_kv_cache=fill_kv_cache,
         )
+        split = False
+        detach_prefix = False
         if self.config.attention_implementation == "flex_cached":
             if block_mask is None:
                 block_mask = build_block_mask(
@@ -624,6 +638,20 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
             start = end
         return outputs_embeds, router_logits_list, block_mask, past_key_values
 
+    @torch.compiler.disable
+    def _checkpoint_layer_eager(self, *args):
+        """Keep checkpoint forward/replay on the same autograd implementation.
+
+        Regional compilation wraps decoder modules independently. If Dynamo's
+        recompile limit is reached between forward and backward, replay can
+        switch from AOTAutograd to eager and save a different tensor sequence.
+        Disable compilation recursively for BOTH calls of this checkpointed
+        layer. Vision and auxiliary heads can still be regionally compiled;
+        the non-checkpointed decoder path is unchanged. Do not disable the
+        checkpoint determinism check or unwrap/bypass FSDP module hooks.
+        """
+        return self._layer_forward(*args)
+
     def _checkpointed_layer(
         self,
         layer_idx,
@@ -638,7 +666,7 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
     ):
         """Gradient-checkpointed layer step (training only, KV cache disabled)."""
         outputs_embeds, router_logits_list, _, _ = torch_checkpoint(
-            self._layer_forward,
+            self._checkpoint_layer_eager,
             layer_idx,
             inputs_embeds,
             attention_mask,
@@ -664,18 +692,6 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
             return flex_attention_forward
         if self.config.attention_implementation == "sdpa":
             sdpa_backend = getattr(self.config, "sdpa_backend", None)
-            # cuDNN SDPA's backward kernel produces NaN gradients for this model
-            # (bf16, these seq lens / head dims) on torch 2.8 / cuDNN: every step's
-            # forward is fine but step 1's backward writes NaN into the weights and
-            # the whole run goes NaN. It is a *forward/inference-only* fast path —
-            # silently fall back to torch auto-selection under autograd so training
-            # can never enable it.
-            if sdpa_backend is not None and torch.is_grad_enabled():
-                logger.warning(
-                    f"sdpa_backend={sdpa_backend} is inference-only (cuDNN SDPA backward "
-                    f"returns NaN grads); using torch auto-selected SDPA backend for training."
-                )
-                sdpa_backend = None
             if sdpa_backend is not None:
                 return functools.partial(our_sdpa_attention_forward, sdpa_backend=sdpa_backend)
             return our_sdpa_attention_forward
@@ -777,6 +793,7 @@ class FlowMatchingV2(FlowMatchingV1):
             raise ValueError("LingbotVLAV2Policy requires image_grid_thw from the Qwen3-VL image processor.")
         bsize = images.shape[0]
         device = images.device
+        dtype = images.dtype
         if images.ndim == 3:
             bsize = 1
             num_images = images.shape[0]
@@ -1214,25 +1231,6 @@ class FlowMatchingV2(FlowMatchingV1):
         )
         if align_metrics:
             moe_metrics.update(align_metrics)
-        if os.environ.get("ALIGN_DEBUG"):
-            def _s(name, t):
-                if torch.is_tensor(t):
-                    tf = t.float()
-                    logging.get_logger(__name__).info(
-                        f"[ALIGN_DEBUG] {name}: shape={tuple(t.shape)} "
-                        f"nan={torch.isnan(tf).any().item()} absmax={tf.abs().max().item():.4f}"
-                    )
-            _s("outputs_embeds", outputs_embeds)
-            _s("suffix_out", suffix_out)
-            _s("v_t", v_t)
-            _s("u_t", u_t)
-            _s("losses(fm)", losses)
-            _s("loss_depth", loss_depth)
-            _s("loss_future_depth", loss_future_depth)
-            _s("loss_future_video", loss_future_video)
-            _s("future_video_targets", future_video_targets)
-            _s("future_video_current_patch", future_video_current_patch)
-            _s("depth_targets", depth_targets)
         return (
             losses,
             loss_depth,
@@ -1723,6 +1721,7 @@ class FlowMatchingV2(FlowMatchingV1):
         """
         if not images.is_cuda or getattr(self, "_vision_graph_disabled", False):
             return None
+        core = self.qwenvl_with_expert
         sig = (tuple(images.shape), images.dtype, str(images.device), tuple(flat_grid_thw.shape))
         gs = getattr(self, "_vision_graph_state", None)
         if gs is not None and gs["sig"] != sig:
@@ -2138,9 +2137,9 @@ class FlowMatchingV2(FlowMatchingV1):
             if mode == "global":
                 seq_lengths = None
             else:
-                batch = losses.shape[0]
-                n_tokens = router_logits_list[0].shape[0]
-                seq_lengths = [n_tokens // batch] * batch
+                B = losses.shape[0]
+                N = router_logits_list[0].shape[0]
+                seq_lengths = [N // B] * B
             seqwise_moe_layer_ids = sorted(getattr(self.config, "token_moe_layers", None) or [])
             # Per-layer e_score_correction_bias so the loss's f_i top-k matches the
             # router's actual (bias-corrected) selection.
@@ -2229,7 +2228,7 @@ class FlowMatchingV2(FlowMatchingV1):
                 # ---- moe_seqwise/* : per-layer raw sequence-wise balance loss (pre-coeff) + average ----
                 if seqwise_layer_losses and len(seqwise_layer_losses) == len(all_moe_indices):
                     sw_vals = []
-                    for lid, sw in zip(all_moe_indices, seqwise_layer_losses, strict=True):
+                    for lid, sw in zip(all_moe_indices, seqwise_layer_losses):
                         v = sw.detach()
                         moe_metrics[f"moe_seqwise/layer{lid:02d}"] = v
                         sw_vals.append(v)
@@ -2237,7 +2236,7 @@ class FlowMatchingV2(FlowMatchingV1):
                 # ---- moe_zloss/* : per-layer raw router z-loss (pre-coeff) + average/weighted loss ----
                 if router_z_layer_losses and len(router_z_layer_losses) == len(all_moe_indices):
                     zl_vals = []
-                    for lid, zl in zip(all_moe_indices, router_z_layer_losses, strict=True):
+                    for lid, zl in zip(all_moe_indices, router_z_layer_losses):
                         v = zl.detach()
                         moe_metrics[f"moe_zloss/layer{lid:02d}"] = v
                         zl_vals.append(v)
@@ -2289,18 +2288,6 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
 
         if not getattr(self.config, "use_lm_head", False):
             del self.model.qwenvl_with_expert.qwenvl.lm_head
-            # With lm_head removed, the backbone's final decoder layer output and the
-            # final RMSNorm feed no loss: the prefix representation consumed downstream
-            # is taken before them, so their weights get requires_grad=True yet a None
-            # gradient every step. Under DDP such params make the reducer emit NaN into
-            # the shared gradient bucket and corrupt the whole graph; freeze them.
-            # They still run in forward (inference sample_actions fills the KV cache
-            # through them) — only their gradient update is disabled.
-            tail = self.model.qwenvl_with_expert.qwenvl.model.language_model
-            last = tail.layers[-1]
-            for mod in (last.self_attn.o_proj, last.mlp, last.post_attention_layernorm, tail.norm):
-                for p in mod.parameters():
-                    p.requires_grad_(False)
         del self.model.qwenvl_with_expert.qwen_expert.lm_head
 
         # The Qwen3-VL backbone builds in bfloat16 while our added projection/AdaRMSNorm
@@ -2445,12 +2432,17 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
     # nn.Module registration — so teacher weights stay out of optimizers, DDP/FSDP
     # wrapping, and saved checkpoints. Each DDP rank builds its own frozen copy.
 
-    def _ensure_align_teachers(self) -> DepthTeacherBundle:  # noqa: F821
+    @torch.compiler.disable
+    def _ensure_align_teachers(self) -> "DepthTeacherBundle":
         if self._align_teachers is None:
             from .teachers.depth_teachers import DepthTeacherBundle
 
             device = next(self.model.parameters()).device
-            self._align_teachers = DepthTeacherBundle.build(self.config.align_params, device)
+            # Lazy teacher construction must not perturb the student's resumed
+            # per-rank noise/timestep RNG stream.
+            devices = [device.index if device.index is not None else torch.cuda.current_device()] if device.type == "cuda" else []
+            with torch.random.fork_rng(devices=devices):
+                self._align_teachers = DepthTeacherBundle.build(self.config.align_params, device)
         return self._align_teachers
 
     def _compute_align_targets(self, batch: dict) -> dict:
@@ -2619,7 +2611,7 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         else:
             loss_vla = losses[:, :, :action_dim].mean()
 
-        loss_dict: dict = {"l2_loss": loss_vla.item()}
+        loss_dict: dict = {"l1_loss" if self.config.loss_type == "L1_fm" else "l2_loss": loss_vla.item()}
         total_loss = loss_vla
         for loss_name, term in (
             ("depth_loss", loss_depth),

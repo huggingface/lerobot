@@ -106,6 +106,20 @@ class PerceiverAttention(nn.Module):
         return self.to_out(out)
 
 
+class TaskTokenResamplerLayer(nn.ModuleList):
+    """Callable attention/FFN pair with the legacy ``0``/``1`` checkpoint keys.
+
+    Regional compilation wraps each repeated layer in an OptimizedModule.
+    That wrapper can be called, but cannot be unpacked as a ModuleList. Keep
+    iteration inside this layer's forward so the parent only calls the block.
+    """
+
+    def forward(self, x, queries):
+        attn, ff = self
+        queries = attn(x, queries) + queries
+        return ff(queries) + queries
+
+
 class TaskTokenResampler(nn.Module):
     """Perceiver-style resampler whose queries come from the caller.
 
@@ -136,7 +150,7 @@ class TaskTokenResampler(nn.Module):
         self.layers = nn.ModuleList([])
         for _ in range(num_layers):
             self.layers.append(
-                nn.ModuleList(
+                TaskTokenResamplerLayer(
                     [
                         PerceiverAttention(dim=dim_mid, dim_head=dim_head, heads=num_heads),
                         FeedForward(dim=dim_mid, mult=ff_mult),
@@ -148,9 +162,8 @@ class TaskTokenResampler(nn.Module):
         queries = self.proj_in1(queries)
         x = self.proj_in2(x)
 
-        for attn, ff in self.layers:
-            queries = attn(x, queries) + queries
-            queries = ff(queries) + queries
+        for layer in self.layers:
+            queries = layer(x, queries)
 
         queries = self.proj_out(queries)
         queries = self.norm_out(queries)

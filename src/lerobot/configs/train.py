@@ -131,6 +131,8 @@ class TrainPipelineConfig(HubMixin):
     # Number of workers for the dataloader.
     num_workers: int = 4
     batch_size: int = 8
+    gradient_accumulation_steps: int = 1
+    compile_training: bool = False
     prefetch_factor: int = 4
     persistent_workers: bool = True
     # DataLoader worker start method. "spawn" is safer than "fork" with
@@ -283,6 +285,8 @@ class TrainPipelineConfig(HubMixin):
                 "Please specify one with `--policy.path` or `--reward_model.path`."
             )
 
+        if self.gradient_accumulation_steps < 1:
+            raise ValueError("gradient_accumulation_steps must be >= 1")
         active_cfg = self.trainable_config
         if self.rename_map and active_cfg.pretrained_path is None:
             raise ValueError(

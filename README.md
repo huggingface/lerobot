@@ -1,3 +1,12 @@
+> **This fork** hosts the accelerated LingBot-VLA 2.0 port for LeRobot: CUDA-graph inference
+> acceleration (final baked config, RTX 4090 numbers) and consumer-GPU (24GB) training recipes.
+> Native-depth distillation is complete: MoGe, MoRGBD, and DINO-video are first-party,
+> weight-compatible runtimes; developers download only published weights—no teacher repository
+> clone, checkout, environment variable, or third-party teacher dependency is required. See the
+> [full native-depth / DINO-video recipe](docs/source/lingbot_vla_v2_depth_dino_README.md).
+> Start at [`src/lerobot/policies/lingbot_vla_v2/README.md`](src/lerobot/policies/lingbot_vla_v2/README.md).
+> Everything below is upstream LeRobot, unchanged.
+
 <p align="center">
   <img alt="LeRobot, Hugging Face Robotics Library" src="./media/readme/lerobot-logo-thumbnail.png" width="100%">
 </p>

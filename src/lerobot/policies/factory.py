@@ -179,13 +179,11 @@ def make_pre_post_processors(
     Raises:
         ValueError: If no processor factory exists for the given policy configuration type.
     """
+    # NOTE: the `ProcessorStep`s are expected to be registered already — every
+    # policy package imports its `processor_*` module from its `__init__.py`,
+    # which `import lerobot.policies` runs — so no per-policy module import is
+    # needed here.
     if pretrained_path:
-        module_path = policy_cfg.__class__.__module__.replace("configuration_", "processor_")
-        try:
-            importlib.import_module(module_path)
-        except ModuleNotFoundError as e:
-            if e.name != module_path:
-                raise
         if isinstance(policy_cfg, GrootConfig):
             from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
 
