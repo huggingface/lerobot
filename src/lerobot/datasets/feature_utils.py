@@ -25,6 +25,7 @@ from lerobot.configs import VIDEO_ENCODER_INFO_KEYS, is_depth_map
 from lerobot.utils.constants import DEFAULT_FEATURES
 from lerobot.utils.utils import is_valid_numpy_dtype_string
 
+from .image_writer import check_image_range
 from .language import (
     LANGUAGE_PERSISTENT,
     is_language_column,
@@ -359,13 +360,18 @@ def validate_feature_image_or_video(
     Returns:
         str: An error message if validation fails, otherwise an empty string.
     """
-    # Note: The check of pixels range ([0,1] for float and [0,255] for uint8) is done by the image writer threads.
     error_message = ""
     if isinstance(value, np.ndarray):
         actual_shape = value.shape
         c, h, w = expected_shape
         if len(actual_shape) != 3 or (actual_shape != (c, h, w) and actual_shape != (h, w, c)):
             error_message += f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape '{(c, h, w)}' or '{(h, w, c)}'.\n"
+        else:
+            # Fail fast on out-of-range float RGB (a config bug) before it reaches the writer/encoder.
+            try:
+                check_image_range(value)
+            except ValueError as e:
+                error_message += f"The feature '{name}' cannot be saved as an image: {e}\n"
     elif isinstance(value, PILImage.Image):
         pass
     else:

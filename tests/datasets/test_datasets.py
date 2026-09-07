@@ -338,18 +338,42 @@ def test_add_frame_image_wrong_shape(image_dataset):
 
 
 def test_add_frame_image_wrong_range(image_dataset):
-    """This test will display the following error message from a thread:
-    ```
-    Error writing image ...test_add_frame_image_wrong_ran0/test/images/image/episode_000000/frame_000000.png:
-    The image data type is float, which requires values in the range [0.0, 1.0]. However, the provided range is [0.009678772038470007, 254.9776492089887].
-    Please adjust the range or provide a uint8 image with values in the range [0, 255]
-    ```
-    Hence the image won't be saved on disk and save_episode will raise `FileNotFoundError`.
-    """
+    """An out-of-range float RGB image makes `add_frame` raise instead of dropping frames downstream."""
     dataset = image_dataset
-    dataset.add_frame({"image": np.random.rand(*DUMMY_CHW) * 255, "task": "Dummy task"})
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(ValueError, match="requires values in the range"):
+        dataset.add_frame({"image": np.random.rand(*DUMMY_CHW) * 255, "task": "Dummy task"})
+
+
+def test_save_episode_discards_on_missing_png_frames(image_dataset, caplog):
+    """Non-streaming guard: fewer PNG on disk than recorded frames discards the episode."""
+    dataset = image_dataset
+    dataset.add_frame({"image": np.random.rand(*DUMMY_CHW), "task": "Dummy task"})
+    for png in dataset.writer._get_image_file_dir(0, "image").glob("*.png"):
+        png.unlink()  # simulate a dropped image write
+
+    with caplog.at_level(logging.WARNING):
         dataset.save_episode()
+
+    assert "number of stored frames does not match" in caplog.text
+    assert dataset.meta.total_episodes == 0
+
+
+def test_save_episode_discards_on_dropped_streaming_frames(tmp_path, empty_lerobot_dataset_factory, caplog):
+    """Streaming guard: frames dropped by encoder back-pressure discard the episode."""
+    vid_key = "video"
+    features = {vid_key: {"dtype": "video", "shape": DUMMY_HWC, "names": ["height", "width", "channels"]}}
+    dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "streaming", features=features, streaming_encoding=True
+    )
+    for _ in range(2):
+        dataset.add_frame({vid_key: np.random.rand(*DUMMY_HWC), "task": "Dummy task"})
+    dataset.writer._streaming_encoder._dropped_frames[vid_key] = 1  # simulate a dropped frame (full queue)
+
+    with caplog.at_level(logging.WARNING):
+        dataset.save_episode()
+
+    assert "number of stored frames does not match" in caplog.text
+    assert dataset.meta.total_episodes == 0
 
 
 def test_add_frame_image(image_dataset):

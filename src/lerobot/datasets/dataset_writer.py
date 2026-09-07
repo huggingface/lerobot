@@ -181,8 +181,7 @@ class DatasetWriter:
         return int(episode_index)
 
     def _delete_camera_frame_dirs(self, camera_keys: list[str]) -> None:
-        if self.image_writer is not None:
-            self._wait_image_writer()
+        self._wait_image_writer()
         episode_index = self._get_episode_buffer_index()
         for camera_key in camera_keys:
             img_dir = self._get_image_file_dir(episode_index, camera_key)
@@ -278,11 +277,40 @@ class DatasetWriter:
 
         validate_episode_buffer(episode_buffer, self._meta.total_episodes, self._meta.features)
 
+        # Flush async image writes.
+        self._wait_image_writer()
+
+        # A frame shortfall (dropped PNG write or encoder back-pressure) would misalign frames with
+        # the tabular data, so discard the episode.
+        episode_index = episode_buffer["episode_index"]
+        if isinstance(episode_index, np.ndarray):
+            episode_index = int(episode_index.flat[0])
+        episode_length = episode_buffer["size"]
+        streaming = self._streaming_encoder is not None
+        mismatched = {}
+        for key in self._meta.camera_keys:
+            if streaming and key in self._meta.video_keys:
+                produced = episode_length - self._streaming_encoder.dropped_frame_count(key)
+            else:
+                frame_path = self._get_image_file_path(episode_index, key, frame_index=0)
+                img_dir = frame_path.parent
+                produced = len(list(img_dir.glob(f"*{frame_path.suffix}"))) if img_dir.is_dir() else 0
+            if produced != episode_length:
+                mismatched[key] = produced
+        if mismatched:
+            details = ", ".join(f"{key}: {count} frame(s)" for key, count in mismatched.items())
+            logger.warning(
+                "\n" + "!" * 80 + f"\nEpisode {episode_index}: number of stored frames does not match the "
+                f"{episode_length} recorded frames ({details}).\n"
+                "Discarding this episode and moving on.\n" + "!" * 80
+            )
+            self.clear_episode_buffer(delete_images=True)
+            return
+
         # size and task are special cases that won't be added to hf_dataset
-        episode_length = episode_buffer.pop("size")
+        episode_buffer.pop("size")
         tasks = episode_buffer.pop("task")
         episode_tasks = list(set(tasks))
-        episode_index = episode_buffer["episode_index"]
 
         episode_buffer["index"] = np.arange(self._meta.total_frames, self._meta.total_frames + episode_length)
         episode_buffer["episode_index"] = np.full((episode_length,), episode_index)
@@ -304,9 +332,6 @@ class DatasetWriter:
                 stacked_values = stacked_values.reshape(episode_length)
 
             episode_buffer[key] = stacked_values
-
-        # Wait for image writer to end, so that episode stats over images can be computed
-        self._wait_image_writer()
 
         has_video_keys = len(self._meta.video_keys) > 0
         use_streaming = self._streaming_encoder is not None and has_video_keys
