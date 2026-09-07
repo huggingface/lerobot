@@ -152,3 +152,84 @@ def test_reader_retries_transient_remote_file_not_found(tmp_path: Path, monkeypa
     assert len(table) == 2
     assert attempts == 2
     filesystem.invalidate_cache.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "groups,expected_groups",
+    [
+        ([[0, 0], [1, 1], [2, 2]], [1]),
+        ([[0, 0], [0, 1, 1], [2, 2]], [1]),
+        ([[0, 0], [1, 1], [1, 1], [2, 2]], [1, 2]),
+        ([[0, 0], [0, 1], [1, 1], [1, 2], [2, 2]], [1, 2, 3]),
+        ([[0, 0], [0, 1], [1, 2], [2, 2]], [1, 2]),
+        # Min/max is only a candidate test: a mixed group's range can contain
+        # the target episode even when no row in that group does.
+        ([[0, 2], [1, 1], [3, 3]], [0, 1]),
+    ],
+)
+def test_reader_prunes_unrelated_row_groups(
+    tmp_path: Path, monkeypatch, groups: list[list[int]], expected_groups: list[int]
+) -> None:
+    path = tmp_path / "mixed.parquet"
+    flat_episodes = [episode for group in groups for episode in group]
+    source = _table(flat_episodes)
+    start = 0
+    with pq.ParquetWriter(path, source.schema) as writer:
+        for group in groups:
+            writer.write_table(source.slice(start, len(group)))
+            start += len(group)
+
+    loaded_groups: list[int] = []
+    original_groups = pq.ParquetFile.read_row_groups
+    original_group = pq.ParquetFile.read_row_group
+    original_read = pq.ParquetFile.read
+
+    def read_groups(self, row_groups, *args, **kwargs):
+        loaded_groups.extend(row_groups)
+        return original_groups(self, row_groups, *args, **kwargs)
+
+    def read_group(self, row_group, *args, **kwargs):
+        loaded_groups.append(row_group)
+        return original_group(self, row_group, *args, **kwargs)
+
+    def read(self, *args, **kwargs):
+        loaded_groups.extend(range(self.metadata.num_row_groups))
+        return original_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(pq.ParquetFile, "read_row_groups", read_groups)
+    monkeypatch.setattr(pq.ParquetFile, "read_row_group", read_group)
+    monkeypatch.setattr(pq.ParquetFile, "read", read)
+    reader = EpisodeParquetReader(tmp_path, columns=("frame_index", "value"))
+    expected_rows = flat_episodes.count(1)
+    table = reader.read_episode(path.name, episode_index=1, expected_rows=expected_rows)
+
+    assert loaded_groups == expected_groups
+    assert table.column_names == ["frame_index", "value"]
+    assert table.to_pydict() == {
+        "frame_index": list(range(expected_rows)),
+        "value": list(range(10, 10 + expected_rows)),
+    }
+
+
+@pytest.mark.parametrize("write_statistics", [False, ["frame_index", "value"]])
+def test_reader_keeps_row_groups_with_unknown_episode_statistics(
+    tmp_path: Path, write_statistics: bool | list[str]
+) -> None:
+    path = tmp_path / "unknown-statistics.parquet"
+    source = _table([0, 0, 1, 1, 1, 2])
+    pq.write_table(source, path, row_group_size=2, write_statistics=write_statistics)
+    reader = EpisodeParquetReader(tmp_path, columns=("episode_index", "frame_index", "value"))
+
+    table = reader.read_episode(path.name, episode_index=1, expected_rows=3)
+
+    assert table.to_pydict() == {"episode_index": [1, 1, 1], "frame_index": [0, 1, 2], "value": [10, 11, 12]}
+
+
+def test_pruned_reader_still_rejects_out_of_order_episode(tmp_path: Path) -> None:
+    path = tmp_path / "out-of-order.parquet"
+    source = _table([0, 0, 1, 1, 1, 1, 2, 2]).take(pa.array([0, 1, 2, 4, 3, 5, 6, 7]))
+    pq.write_table(source, path, row_group_size=2)
+    reader = EpisodeParquetReader(tmp_path, columns=("episode_index", "frame_index", "value"))
+
+    with pytest.raises(ValueError, match="non-contiguous frame indices"):
+        reader.read_episode(path.name, episode_index=1, expected_rows=4)

@@ -163,7 +163,7 @@ def ensure_mp4_sidecar(
                 if download is not None:
                     logging.info("Looking for published MP4 sidecar for %s@%s", spec.repo_id, spec.revision)
                     if download(temporary, spec) and EpisodeVideoManifest.validate_file_sidecar(
-                        temporary, spec
+                        temporary, spec, prepare_cache=False
                     ):
                         os.replace(temporary, destination)
                         return destination
@@ -171,7 +171,7 @@ def ensure_mp4_sidecar(
 
                 logging.info("Building MP4 sidecar for %s@%s", spec.repo_id, spec.revision)
                 build(temporary, spec)
-                if not EpisodeVideoManifest.validate_file_sidecar(temporary, spec):
+                if not EpisodeVideoManifest.validate_file_sidecar(temporary, spec, prepare_cache=False):
                     raise ValueError("Built MP4 sidecar failed revision and source validation")
                 os.replace(temporary, destination)
                 return destination

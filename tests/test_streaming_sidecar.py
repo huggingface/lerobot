@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import shutil
 import threading
@@ -20,6 +21,7 @@ import numpy as np
 import pytest
 from filelock import FileLock
 
+from lerobot.streaming import _mapped_index
 from lerobot.streaming.manifest import EpisodeVideoManifest, VideoFileRecord
 from lerobot.streaming.mp4 import Mp4Index
 from lerobot.streaming.sidecar import (
@@ -28,6 +30,11 @@ from lerobot.streaming.sidecar import (
     ensure_mp4_sidecar,
     sidecar_cache_path,
 )
+
+
+@pytest.fixture(autouse=True)
+def isolated_index_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path / "cache-home"))
 
 
 def _record(path: str = "videos/camera/chunk-000/file-000.mp4", size: int = 128) -> VideoFileRecord:
@@ -213,3 +220,152 @@ def test_lock_timeout_is_actionable(tmp_path: Path) -> None:
         pytest.raises(SidecarLockTimeoutError, match="Timed out waiting"),
     ):
         ensure_mp4_sidecar(spec, tmp_path, build=_write_valid, lock_timeout_s=0.01)
+
+
+def test_sidecar_arrays_are_read_only_file_backed(tmp_path: Path) -> None:
+    path = tmp_path / "index.npz"
+    _write_valid(path, _spec())
+    first = EpisodeVideoManifest.load_file_sidecar(path)
+    second = EpisodeVideoManifest.load_file_sidecar(path)
+    for records in (first, second):
+        array = next(iter(records.values())).mp4.sample_pts
+        assert not array.flags.writeable
+        assert isinstance(array.base, np.memmap)
+        np.testing.assert_array_equal(array, [0.0])
+
+
+def test_warm_validation_does_not_decompress_arrays(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "index.npz"
+    _write_valid(path, _spec())
+    assert EpisodeVideoManifest.validate_file_sidecar(path, _spec())
+
+    def unexpected_load(*args: object, **kwargs: object) -> None:
+        pytest.fail("A warm index must not reopen the compressed sidecar")
+
+    monkeypatch.setattr(np, "load", unexpected_load)
+    assert EpisodeVideoManifest.validate_file_sidecar(path, _spec())
+    records = EpisodeVideoManifest.load_file_sidecar(path)
+    np.testing.assert_array_equal(next(iter(records.values())).mp4.sample_pts, [0.0])
+
+
+def test_sidecar_replacement_preserves_live_arrays(tmp_path: Path) -> None:
+    path = tmp_path / "index.npz"
+    _write_valid(path, _spec())
+    old = EpisodeVideoManifest.load_file_sidecar(path)
+    replacement = _record()
+    replacement.mp4.sample_pts[0] = 42.0
+    EpisodeVideoManifest.save_file_sidecar(path, [replacement], spec=_spec())
+    new = EpisodeVideoManifest.load_file_sidecar(path)
+    np.testing.assert_array_equal(next(iter(old.values())).mp4.sample_pts, [0.0])
+    np.testing.assert_array_equal(next(iter(new.values())).mp4.sample_pts, [42.0])
+
+
+def test_sidecar_load_projects_source_files(tmp_path: Path) -> None:
+    path = tmp_path / "index.npz"
+    EpisodeVideoManifest.save_file_sidecar(path, [_record("a.mp4"), _record("b.mp4")], spec=_spec())
+    records = EpisodeVideoManifest.load_file_sidecar(path, file_paths=["b.mp4"])
+    assert list(records) == ["b.mp4"]
+    np.testing.assert_array_equal(records["b.mp4"].mp4.sample_pts, [0.0])
+
+
+def test_concurrent_index_conversion_runs_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "index.npz"
+    _write_valid(path, _spec())
+    original = np.load
+    calls = []
+
+    def counted_load(*args: object, **kwargs: object) -> object:
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(np, "load", counted_load)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        records = list(pool.map(EpisodeVideoManifest.load_file_sidecar, [path] * 4))
+    assert len(calls) == 1
+    for result in records:
+        np.testing.assert_array_equal(next(iter(result.values())).mp4.sample_pts, [0.0])
+
+
+def test_invalid_derived_index_is_recreated(tmp_path: Path) -> None:
+    path = tmp_path / "index.npz"
+    _write_valid(path, _spec())
+    cache_path, _ = _mapped_index.mapped_sidecar(path)
+    cache_path.write_bytes(b"interrupted")
+    records = EpisodeVideoManifest.load_file_sidecar(path)
+    np.testing.assert_array_equal(next(iter(records.values())).mp4.sample_pts, [0.0])
+
+
+@pytest.mark.parametrize("corruption", ["non-object", "fractional-count"])
+def test_invalid_derived_metadata_is_recreated(tmp_path: Path, corruption: str) -> None:
+    path = tmp_path / "index.npz"
+    _write_valid(path, _spec())
+    cache_path, payload = _mapped_index.mapped_sidecar(path)
+    raw = cache_path.read_bytes()
+    old_length = int.from_bytes(raw[-16:-8], "little")
+    if corruption == "non-object":
+        metadata = b"[]"
+    else:
+        payload["files"][0]["arrays"]["sample_pts"][1] = 0.5
+        metadata = json.dumps(payload).encode()
+    cache_path.write_bytes(
+        raw[: -16 - old_length] + metadata + len(metadata).to_bytes(8, "little") + raw[-8:]
+    )
+    records = EpisodeVideoManifest.load_file_sidecar(path)
+    np.testing.assert_array_equal(next(iter(records.values())).mp4.sample_pts, [0.0])
+
+
+def test_temporary_validation_does_not_prepare_index(tmp_path: Path) -> None:
+    path = tmp_path / "temporary.npz"
+    _write_valid(path, _spec())
+    assert EpisodeVideoManifest.validate_file_sidecar(path, _spec(), prepare_cache=False)
+    assert not list((tmp_path / "cache-home").glob("**/*.bin"))
+
+
+def test_wrong_revision_does_not_prepare_index(tmp_path: Path) -> None:
+    path = tmp_path / "index.npz"
+    _write_valid(path, _spec())
+    assert not EpisodeVideoManifest.validate_file_sidecar(path, _spec("wrong"))
+    assert not list((tmp_path / "cache-home").glob("**/*.bin"))
+
+
+def test_missing_array_is_rejected_without_publishing_index(tmp_path: Path) -> None:
+    path = tmp_path / "index.npz"
+    _write_valid(path, _spec())
+    with np.load(path, allow_pickle=False) as data:
+        arrays = {key: data[key] for key in data.files if key != "0/sample_offsets"}
+    np.savez_compressed(path, **arrays)
+    assert not EpisodeVideoManifest.validate_file_sidecar(path, _spec())
+    assert not list((tmp_path / "cache-home").glob("**/*.bin"))
+    assert not list((tmp_path / "cache-home").glob("**/*.tmp"))
+
+
+def test_read_only_source_uses_writable_local_index_cache(tmp_path: Path) -> None:
+    source_dir = tmp_path / "source"
+    path = source_dir / "index.npz"
+    _write_valid(path, _spec())
+    path.chmod(0o444)
+    source_dir.chmod(0o555)
+    try:
+        records = EpisodeVideoManifest.load_file_sidecar(path)
+        assert list(source_dir.iterdir()) == [path]
+        np.testing.assert_array_equal(next(iter(records.values())).mp4.sample_pts, [0.0])
+    finally:
+        source_dir.chmod(0o755)
+
+
+def test_full_index_cache_does_not_rebuild_valid_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _spec()
+    path = sidecar_cache_path(tmp_path, spec)
+    _write_valid(path, spec)
+
+    def full_disk(*args: object, **kwargs: object) -> None:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    def unexpected_build(*args: object) -> None:
+        pytest.fail("A full derived cache is not an invalid source sidecar")
+
+    monkeypatch.setattr(_mapped_index.tempfile, "NamedTemporaryFile", full_disk)
+    with pytest.raises(OSError, match="free space in HF_LEROBOT_HOME"):
+        ensure_mp4_sidecar(spec, tmp_path, build=unexpected_build)

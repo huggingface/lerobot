@@ -32,7 +32,7 @@ The default map-style `LeRobotDataset` behavior is unchanged when `--dataset.str
 
 ## MP4 sidecars and the first run
 
-Video streaming uses a small MP4 index sidecar. Dataset initialization first checks the
+Video streaming uses an MP4 index sidecar. Dataset initialization first checks the
 revision-keyed local cache, then looks for a valid published sidecar. If neither is available,
 LeRobot builds the sidecar locally while holding a process lock and installs it atomically. A
 failed or interrupted build does not replace the previous valid file.
@@ -40,6 +40,21 @@ failed or interrupted build does not replace the previous valid file.
 Training is read-only: it never uploads a sidecar or modifies the dataset repository. On a cluster
 with node-local caches, the first job may build once per node. A shared LeRobot cache avoids that
 duplication.
+
+The compressed v3 sidecar is converted once into a read-only, memory-mapped index under
+`$HF_LEROBOT_HOME/streaming-indexes`. Conversion is locked and published atomically; ranks
+sharing that cache reuse the same file-backed array pages instead of decompressing a private
+copy of every array. Each rank constructs records only for source files used by its episodes.
+The derived index needs disk space for the **uncompressed sample tables**, but stores no video
+payloads. Its first conversion has a cost; subsequent opens reuse it. Source-file replacement
+creates a new immutable index generation without invalidating live readers.
+
+This does not make all metadata constant-size: episode metadata and span tables still grow with
+the dataset, and shuffled rank shards can touch overlapping source files. OS-resident mapped
+pages also count toward RSS; use proportional set size (PSS) when measuring memory shared by ranks.
+Parquet reads prune row groups using episode statistics and then filter to the complete episode.
+Groups without statistics remain candidates, so files with no useful bounds can still require
+a whole-file projected read.
 
 Dataset maintainers can build a sidecar ahead of time:
 

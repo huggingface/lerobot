@@ -71,15 +71,13 @@ class EpisodeParquetReader:
             missing = sorted(set(self._read_columns) - available)
             if missing:
                 raise ValueError(f"Parquet file {relative_path} is missing projected columns: {missing}")
-            row_group = self._matching_row_group(parquet, episode_index)
-            table = (
-                parquet.read_row_group(row_group, columns=list(self._read_columns))
-                if row_group is not None
-                else parquet.read(columns=list(self._read_columns))
+            table = parquet.read_row_groups(
+                self._candidate_row_groups(parquet, episode_index), columns=list(self._read_columns)
             )
 
-        if row_group is None:
-            table = table.filter(pc.equal(table.column("episode_index"), episode_index))
+        # Statistics only exclude impossible groups. An episode can cross pure
+        # and mixed groups, and groups without bounds must remain candidates.
+        table = table.filter(pc.equal(table.column("episode_index"), episode_index))
         self._validate_complete_episode(table, episode_index, expected_rows, relative_path)
         if "episode_index" not in self.columns:
             table = table.drop_columns(["episode_index"])
@@ -100,7 +98,7 @@ class EpisodeParquetReader:
         raise RuntimeError("unreachable")
 
     @staticmethod
-    def _matching_row_group(parquet: pq.ParquetFile, episode_index: int) -> int | None:
+    def _candidate_row_groups(parquet: pq.ParquetFile, episode_index: int) -> list[int]:
         episode_column = next(
             index
             for index in range(parquet.metadata.num_columns)
@@ -110,13 +108,12 @@ class EpisodeParquetReader:
         for row_group in range(parquet.metadata.num_row_groups):
             statistics = parquet.metadata.row_group(row_group).column(episode_column).statistics
             if (
-                statistics is not None
-                and statistics.has_min_max
-                and int(statistics.min) == episode_index
-                and int(statistics.max) == episode_index
+                statistics is None
+                or not statistics.has_min_max
+                or int(statistics.min) <= episode_index <= int(statistics.max)
             ):
                 matches.append(row_group)
-        return matches[0] if len(matches) == 1 else None
+        return matches
 
     @staticmethod
     def _validate_complete_episode(

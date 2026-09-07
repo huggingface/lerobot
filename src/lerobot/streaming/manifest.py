@@ -10,16 +10,24 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
-import threading
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from zipfile import BadZipFile
 
 import numpy as np
 
+from lerobot.streaming._mapped_index import (
+    mapped_arrays,
+    mapped_sidecar,
+    sidecar_payload,
+    validate_source_arrays,
+)
 from lerobot.streaming.mp4 import (
     Mp4Index,
     Mp4SampleSlice,
@@ -59,9 +67,6 @@ class VideoFileRecord:
 
 class EpisodeVideoManifest:
     """Map episode-camera pairs to source byte spans and MP4 metadata."""
-
-    _FILE_SIDECAR_CACHE: dict[str, tuple[tuple[int, int], dict[str, VideoFileRecord]]] = {}
-    _FILE_SIDECAR_CACHE_LOCK = threading.Lock()
 
     def __init__(
         self,
@@ -112,7 +117,7 @@ class EpisodeVideoManifest:
                 token=token,
             )
         else:
-            records = cls.load_file_sidecar(sidecar_path)
+            records = cls.load_file_sidecar(sidecar_path, file_paths=rel_paths)
             missing = [path for path in rel_paths if path not in records]
             if missing:
                 raise ValueError(
@@ -258,9 +263,6 @@ class EpisodeVideoManifest:
             arrays[f"{file_idx}/sample_offsets"] = record.mp4.sample_offsets
             arrays[f"{file_idx}/sync_samples"] = record.mp4.sync_samples
         np.savez_compressed(sidecar_path, manifest_json=json.dumps(payload).encode("utf-8"), **arrays)
-        cache_key = str(sidecar_path.expanduser())
-        with EpisodeVideoManifest._FILE_SIDECAR_CACHE_LOCK:
-            EpisodeVideoManifest._FILE_SIDECAR_CACHE.pop(cache_key, None)
 
     @staticmethod
     def load_file_sidecar_metadata(sidecar_path: str | Path) -> dict[str, Any]:
@@ -272,55 +274,52 @@ class EpisodeVideoManifest:
         return payload["sidecar"]
 
     @staticmethod
-    def validate_file_sidecar(sidecar_path: str | Path, spec: SidecarSpec) -> bool:
+    def validate_file_sidecar(
+        sidecar_path: str | Path, spec: SidecarSpec, *, prepare_cache: bool = True
+    ) -> bool:
         """Return whether a sidecar matches its expected source specification."""
         try:
             from lerobot.streaming.sidecar import SidecarSpec
 
-            candidate = SidecarSpec.from_dict(EpisodeVideoManifest.load_file_sidecar_metadata(sidecar_path))
+            path = Path(sidecar_path).expanduser()
+            payload = sidecar_payload(path)
+            candidate = SidecarSpec.from_dict(payload["sidecar"])
             if not spec.matches(candidate):
                 return False
-            records = EpisodeVideoManifest.load_file_sidecar(sidecar_path)
-        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            expected = dict(candidate.source_files)
+            actual = {item["file_path"]: int(item["file_size"]) for item in payload["files"]}
+            if actual != expected:
+                return False
+            if prepare_cache:
+                mapped_sidecar(path)
+            else:
+                validate_source_arrays(path, payload)
+        except OSError as exc:
+            if exc.errno in (errno.EACCES, errno.EROFS, errno.ENOSPC, errno.EDQUOT, errno.ENOTDIR):
+                raise OSError(
+                    exc.errno,
+                    "Cannot access the MP4 index cache; check permissions and free space in HF_LEROBOT_HOME",
+                ) from exc
+            return False
+        except (ValueError, KeyError, TypeError, BadZipFile, EOFError):
             return False
 
-        expected = dict(candidate.source_files)
-        actual = {path: record.file_size for path, record in records.items()}
-        return actual == expected
+        return True
 
     @staticmethod
-    def load_file_sidecar(sidecar_path: str | Path) -> dict[str, VideoFileRecord]:
-        """Load indexed source records, reusing an unchanged process-local cache."""
-        path = Path(sidecar_path).expanduser()
-        cache_key = str(path)
-        stat = path.stat()
-        signature = (stat.st_mtime_ns, stat.st_size)
-        with EpisodeVideoManifest._FILE_SIDECAR_CACHE_LOCK:
-            cached = EpisodeVideoManifest._FILE_SIDECAR_CACHE.get(cache_key)
-        if cached is not None and cached[0] == signature:
-            return cached[1]
-
-        with np.load(path, allow_pickle=False) as data:
-            payload = json.loads(bytes(data["manifest_json"]).decode("utf-8"))
-            if payload.get("version") != 3:
-                raise ValueError(f"Unsupported MP4 sidecar schema in {path}")
-            records = {}
-            for file_idx, item in enumerate(payload["files"]):
-                arrays = {
-                    name: data[f"{file_idx}/{name}"]
-                    for name in [
-                        "sample_pts",
-                        "sample_durations",
-                        "sample_composition_offsets",
-                        "sample_sizes",
-                        "sample_offsets",
-                        "sync_samples",
-                    ]
-                }
-                mp4 = Mp4Index.from_dict(item["mp4"], arrays)
-                records[item["file_path"]] = VideoFileRecord(item["file_path"], int(item["file_size"]), mp4)
-        with EpisodeVideoManifest._FILE_SIDECAR_CACHE_LOCK:
-            EpisodeVideoManifest._FILE_SIDECAR_CACHE[cache_key] = (signature, records)
+    def load_file_sidecar(
+        sidecar_path: str | Path, *, file_paths: Sequence[str] | None = None
+    ) -> dict[str, VideoFileRecord]:
+        """Load selected source records with shared, read-only file-backed arrays."""
+        path, payload = mapped_sidecar(Path(sidecar_path).expanduser())
+        selected = None if file_paths is None else set(file_paths)
+        buffer = np.memmap(path, mode="r", dtype=np.uint8)
+        records = {}
+        for item in payload["files"]:
+            if selected is not None and item["file_path"] not in selected:
+                continue
+            mp4 = Mp4Index.from_dict(item["mp4"], mapped_arrays(buffer, item))
+            records[item["file_path"]] = VideoFileRecord(item["file_path"], int(item["file_size"]), mp4)
         return records
 
     def camera_id(self, camera_key: str) -> int:
