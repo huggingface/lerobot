@@ -230,6 +230,7 @@ def augment_dataset_with_quantile_stats(
     dataset = LeRobotDataset(
         repo_id=repo_id,
         root=root,
+        download_videos=not skip_images,
     )
 
     if not overwrite and has_quantile_stats(dataset.meta.stats):
