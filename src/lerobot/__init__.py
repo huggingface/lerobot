@@ -35,7 +35,12 @@ from lerobot.__version__ import __version__
 
 # Maps optional extras to the CLI entry-points they unlock.
 available_extras: dict[str, list[str]] = {
-    "dataset": ["lerobot-dataset-viz", "lerobot-imgtransform-viz", "lerobot-edit-dataset"],
+    "dataset": [
+        "lerobot-dataset-viz",
+        "lerobot-imgtransform-viz",
+        "lerobot-edit-dataset",
+        "lerobot-score-dataset",
+    ],
     "training": ["lerobot-train"],
     "hardware": [
         "lerobot-calibrate",

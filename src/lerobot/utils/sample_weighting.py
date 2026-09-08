@@ -86,6 +86,7 @@ class SampleWeightingConfig:
         type: Weighting strategy type ("rabc", "uniform", etc.)
         progress_path: Path to precomputed progress values (for RABC)
         head_mode: Which model head to use for progress ("sparse" or "dense")
+        signal_name: Explicit progress signal to use from a shared scoring sidecar
         kappa: Hard threshold for high-quality samples (RABC-specific)
         epsilon: Small constant for numerical stability
         extra_params: Additional type-specific parameters passed to the weighter
@@ -94,6 +95,7 @@ class SampleWeightingConfig:
     type: str = "rabc"
     progress_path: str | None = None
     head_mode: str = "sparse"
+    signal_name: str | None = None
     kappa: float = 0.01
     epsilon: float = 1e-6
     # Additional type-specific params can be added here or passed via extra_params
@@ -174,10 +176,16 @@ def _make_rabc_weighter(
                 "python -m lerobot.rewards.sarm.compute_rabc_weights --help"
             )
 
+    if "signal_name" in config.extra_params:
+        raise ValueError(
+            "Set SampleWeightingConfig.signal_name directly instead of passing it through extra_params"
+        )
+
     return RABCWeights(
         progress_path=progress_path,
         chunk_size=chunk_size,
         head_mode=config.head_mode,
+        signal_name=config.signal_name,
         kappa=config.kappa,
         epsilon=config.epsilon,
         device=device,
