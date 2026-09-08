@@ -17,6 +17,8 @@
 import logging
 import time
 from functools import cached_property
+from math import isfinite
+from numbers import Real
 
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
@@ -224,6 +226,17 @@ class SOFollower(Robot):
             present_pos = self.bus.sync_read("Present_Position", num_retry=self.config.num_read_retries)
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
+
+        # Return the same normalized targets that the motor bus accepts after saturation.
+        for motor, value in goal_pos.items():
+            if not isinstance(value, Real) or not isfinite(value):
+                continue
+
+            norm_mode = self.bus.motors[motor].norm_mode
+            if norm_mode is MotorNormMode.RANGE_M100_100:
+                goal_pos[motor] = min(100.0, max(-100.0, value))
+            elif norm_mode is MotorNormMode.RANGE_0_100:
+                goal_pos[motor] = min(100.0, max(0.0, value))
 
         # Send goal position to the arm
         self.bus.sync_write("Goal_Position", goal_pos)
