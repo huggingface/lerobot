@@ -172,6 +172,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 video_backend=cfg.dataset.video_backend,
                 data_root=cfg.dataset.streaming_data_root,
                 episode_pool_size=cfg.dataset.streaming_episode_pool_size,
+                sampling_strategy=cfg.dataset.streaming_sampling_strategy,
                 prefetch_episodes=cfg.dataset.streaming_prefetch_episodes,
                 byte_budget_gb=cfg.dataset.streaming_byte_budget_gb,
                 decode_threads=cfg.dataset.streaming_decode_threads,

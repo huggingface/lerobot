@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import Literal
 
 import numpy as np
 
@@ -28,20 +29,21 @@ class ExactCoveragePool:
       - Episodes are admitted in a seeded global permutation until either ``pool_size`` or the
         optional indexed-byte budget is reached.
       - Each resident episode carries a seeded shuffle of its own frame indices.
-      - Each draw picks a resident episode with probability proportional to its *remaining* frames
-        (i.e. a uniform draw over all remaining frames in the pool, the map-style ideal) and pops
-        one frame.
+      - By default each draw picks an episode proportional to its *remaining* frames, uniformly
+        sampling the remaining resident frames, not the whole dataset. Alternatively, ``round_robin``
+        shuffles the resident episodes each round and pops one frame per episode; newly admitted
+        episodes join the next round. This improves episode diversity but is not globally uniform.
       - An episode is evicted only when its last frame is emitted; a new episode is then admitted.
       - The epoch ends when the admission order is exhausted and every resident episode is drained.
 
     Newly admitted episodes are surfaced via :attr:`newly_admitted` (drain it to drive prefetch)
     and evictions via :attr:`evicted` (drain to release cache bytes). The planner does no I/O and
-    is fully unit-testable. It yields ``(episode_index, frame_index)``; map to a decode timestamp
-    with ``frame_index / max(frame_count - 1, 1)``.
+    is fully unit-testable. It yields ``(episode_index, frame_index)``; the dataset resolves the
+    corresponding timestamps from its tabular data.
 
     Determinism: the order is a pure function of ``(seed, epoch)``, the episode frame counts, and
-    optional byte sizes/budget. Resume is a deterministic fast-forward: re-instantiate with the
-    same inputs and skip ``n`` samples (tabular only, no decode).
+    sampling strategy and optional byte sizes/budget. Resume is a deterministic fast-forward:
+    re-instantiate with the same inputs and skip ``n`` samples (tabular only, no decode).
     """
 
     def __init__(
@@ -53,8 +55,13 @@ class ExactCoveragePool:
         epoch: int = 0,
         episode_byte_sizes: Mapping[int, int] | None = None,
         byte_budget: int | None = None,
+        sampling_strategy: Literal["remaining", "round_robin"] = "remaining",
     ):
         """Build a seeded admission plan under optional compressed-byte limits."""
+        if sampling_strategy not in ("remaining", "round_robin"):
+            raise ValueError("sampling_strategy must be 'remaining' or 'round_robin'")
+        self.sampling_strategy = sampling_strategy
+        self._round: list[int] = []
         self._counts = {int(ep): int(n) for ep, n in episode_frame_counts if int(n) > 0}
         self._rng = np.random.default_rng([seed, epoch])
         order = np.array(sorted(self._counts), dtype=np.int64)
@@ -152,15 +159,20 @@ class ExactCoveragePool:
         """Emit the next episode and frame index in the coverage plan."""
         if self._remaining_total == 0:
             raise StopIteration
-        # Uniform draw over all remaining frames in the pool: walk the residents by cumulative
-        # remaining count. O(pool_size) per draw (~1024) -> negligible next to decode.
-        target = int(self._rng.integers(self._remaining_total))
-        chosen = None
-        for ep, (_frames, remaining) in self._remaining.items():
-            if target < remaining:
-                chosen = ep
-                break
-            target -= remaining
+        if self.sampling_strategy == "round_robin":
+            if not self._round:
+                self._round = list(self._remaining)
+                self._rng.shuffle(self._round)
+            chosen = self._round.pop()
+        else:
+            # Preserve the default's RNG calls and remaining-frame weighting.
+            target = int(self._rng.integers(self._remaining_total))
+            chosen = next(iter(self._remaining))
+            for ep, (_frames, remaining) in self._remaining.items():
+                if target < remaining:
+                    chosen = ep
+                    break
+                target -= remaining
         frames, remaining = self._remaining[chosen]
         remaining -= 1
         frame_index = int(frames[remaining])

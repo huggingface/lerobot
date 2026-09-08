@@ -39,7 +39,10 @@ def _assert_item_equal(left: dict, right: dict) -> None:
             assert left[key] == right[key], key
 
 
-def test_streaming_matches_map_style_with_exact_coverage(tmp_path: Path, lerobot_dataset_factory) -> None:
+@pytest.mark.parametrize("sampling_strategy", ["remaining", "round_robin"])
+def test_streaming_matches_map_style_with_exact_coverage(
+    tmp_path: Path, lerobot_dataset_factory, sampling_strategy: str
+) -> None:
     root = tmp_path / "dataset"
     map_dataset = lerobot_dataset_factory(
         root=root,
@@ -53,6 +56,7 @@ def test_streaming_matches_map_style_with_exact_coverage(tmp_path: Path, lerobot
         root=root,
         shuffle=False,
         buffer_size=3,
+        sampling_strategy=sampling_strategy,
     )
 
     samples = list(streaming)
@@ -63,10 +67,12 @@ def test_streaming_matches_map_style_with_exact_coverage(tmp_path: Path, lerobot
         _assert_item_equal(sample, map_dataset[int(sample["index"])])
 
 
+@pytest.mark.parametrize("sampling_strategy", ["remaining", "round_robin"])
 def test_parallel_decode_queue_preserves_planner_order(
     tmp_path: Path,
     lerobot_dataset_factory,
     monkeypatch,
+    sampling_strategy: str,
 ) -> None:
     root = tmp_path / "dataset"
     lerobot_dataset_factory(
@@ -84,6 +90,7 @@ def test_parallel_decode_queue_preserves_planner_order(
             buffer_size=3,
             decode_threads=1,
             decoded_queue_size=1,
+            sampling_strategy=sampling_strategy,
         )
     )
     parallel = StreamingLeRobotDataset(
@@ -93,6 +100,7 @@ def test_parallel_decode_queue_preserves_planner_order(
         buffer_size=3,
         decode_threads=3,
         decoded_queue_size=5,
+        sampling_strategy=sampling_strategy,
     )
     original_make_item = parallel._make_episode_item
     state_lock = threading.Lock()
@@ -148,10 +156,12 @@ def test_default_decoder_limit_covers_the_configured_episode_pool(
 
 
 @pytest.mark.parametrize("video_backend", ["torchcodec", "pyav"])
+@pytest.mark.parametrize("sampling_strategy", ["remaining", "round_robin"])
 def test_streaming_rgb_video_matches_map_style(
     tmp_path: Path,
     lerobot_dataset_factory,
     video_backend: str,
+    sampling_strategy: str,
 ) -> None:
     root = tmp_path / "dataset"
     map_dataset = lerobot_dataset_factory(
@@ -167,6 +177,7 @@ def test_streaming_rgb_video_matches_map_style(
         shuffle=False,
         buffer_size=2,
         video_backend=video_backend,
+        sampling_strategy=sampling_strategy,
     )
 
     for sample in streaming:
@@ -329,7 +340,10 @@ def test_streaming_rejects_episode_larger_than_rank_byte_budget(
         next(iter(streaming))
 
 
-def test_streaming_rank_shards_are_disjoint(tmp_path: Path, lerobot_dataset_factory, monkeypatch) -> None:
+@pytest.mark.parametrize("sampling_strategy", ["remaining", "round_robin"])
+def test_streaming_rank_shards_are_disjoint(
+    tmp_path: Path, lerobot_dataset_factory, monkeypatch, sampling_strategy: str
+) -> None:
     root = tmp_path / "dataset"
     map_dataset = lerobot_dataset_factory(
         root=root,
@@ -350,6 +364,7 @@ def test_streaming_rank_shards_are_disjoint(tmp_path: Path, lerobot_dataset_fact
                         root=root,
                         shuffle=False,
                         buffer_size=2,
+                        sampling_strategy=sampling_strategy,
                     )
                 )
             )
@@ -491,11 +506,13 @@ def test_streaming_resume_reproduces_remaining_stream(tmp_path: Path, lerobot_da
 
 
 @pytest.mark.parametrize(("batch_size", "offset"), [(None, 17), (4, 20)])
+@pytest.mark.parametrize("sampling_strategy", ["remaining", "round_robin"])
 def test_streaming_worker_resume_reproduces_remaining_stream(
     tmp_path: Path,
     lerobot_dataset_factory,
     batch_size: int | None,
     offset: int,
+    sampling_strategy: str,
 ) -> None:
     root = tmp_path / "dataset"
     lerobot_dataset_factory(
@@ -517,6 +534,7 @@ def test_streaming_worker_resume_reproduces_remaining_stream(
             DUMMY_REPO_ID,
             root=root,
             seed=31,
+            sampling_strategy=sampling_strategy,
             shuffle=True,
             buffer_size=2,
         )
@@ -525,6 +543,7 @@ def test_streaming_worker_resume_reproduces_remaining_stream(
         DUMMY_REPO_ID,
         root=root,
         seed=31,
+        sampling_strategy=sampling_strategy,
         shuffle=True,
         buffer_size=2,
     )
@@ -533,7 +552,10 @@ def test_streaming_worker_resume_reproduces_remaining_stream(
     assert load(resumed) == full[offset:]
 
 
-def test_streaming_state_dict_round_trip_mid_epoch(tmp_path: Path, lerobot_dataset_factory) -> None:
+@pytest.mark.parametrize("sampling_strategy", ["remaining", "round_robin"])
+def test_streaming_state_dict_round_trip_mid_epoch(
+    tmp_path: Path, lerobot_dataset_factory, sampling_strategy: str
+) -> None:
     root = tmp_path / "dataset"
     lerobot_dataset_factory(
         root=root,
@@ -546,6 +568,7 @@ def test_streaming_state_dict_round_trip_mid_epoch(tmp_path: Path, lerobot_datas
         DUMMY_REPO_ID,
         root=root,
         seed=17,
+        sampling_strategy=sampling_strategy,
         shuffle=True,
         buffer_size=3,
     )
@@ -558,6 +581,7 @@ def test_streaming_state_dict_round_trip_mid_epoch(tmp_path: Path, lerobot_datas
         DUMMY_REPO_ID,
         root=root,
         seed=17,
+        sampling_strategy=sampling_strategy,
         shuffle=True,
         buffer_size=3,
     )

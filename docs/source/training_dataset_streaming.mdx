@@ -82,6 +82,7 @@ The production defaults are:
 | Option                              |        Default | Meaning                                             |
 | ----------------------------------- | -------------: | --------------------------------------------------- |
 | `streaming_episode_pool_size`       |             32 | Maximum complete episodes mixed by each rank        |
+| `streaming_sampling_strategy`       |    `remaining` | Remaining-frame weighting or shuffled `round_robin` |
 | `streaming_prefetch_episodes`       |              8 | Episodes fetched ahead of the active pool           |
 | `streaming_byte_budget_gb`          |              8 | Maximum synthesized MP4 bytes per rank              |
 | `streaming_decode_threads`          |              2 | Parallel sample assembly and video decode workers   |
@@ -90,6 +91,13 @@ The production defaults are:
 | `streaming_native_http_connections` |          unset | Native HTTP connection cap per rank                 |
 | `streaming_native_http_subranges`   |              1 | Concurrent subranges per native HTTP range read     |
 | `streaming_data_root`               |          unset | Optional local, Hub, bucket, or fsspec payload root |
+
+For more even episode mixing, opt in with `--dataset.streaming_sampling_strategy=round_robin`.
+Each round shuffles the currently resident episodes and samples one shuffled frame from each;
+episodes admitted during a round join the next one. Both strategies retain exactly-once epoch
+coverage and the same resource bounds. Neither is a global uniform permutation: round-robin
+favors shorter episodes in finite prefixes and can increase decoder churn and reduce throughput.
+Keep the same strategy, seed and pool settings when resuming a checkpoint.
 
 The active episode set is capped by both episode count and the exact synthesized mini-MP4 sizes
 computed from the sidecar. An episode larger than the complete rank budget fails before training

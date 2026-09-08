@@ -137,6 +137,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         max_open_decoders: int | None = None,
         native_http_connections: int | None = None,
         native_http_subranges: int = 1,
+        sampling_strategy: Literal["remaining", "round_robin"] = "remaining",
     ):
         """Initialize a StreamingLeRobotDataset.
 
@@ -165,6 +166,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             data_root (str | Path | None, optional): Dataset payload root. Supports local paths, ``hf://``,
                 and fsspec URLs.
             episode_pool_size (int | None, optional): Number of complete episodes in the sampling pool.
+            sampling_strategy: ``remaining`` samples proportional to remaining resident frames.
+                ``round_robin`` shuffles residents each round and samples each once. Newly admitted
+                episodes join the next round. Resume requires the same strategy and planner settings.
             prefetch_episodes (int, optional): Episodes prefetched beyond the active pool.
             byte_budget_gb (float, optional): Per-rank upper bound for synthesized episode video bytes.
             decode_threads (int, optional): Parallel sample assembly and video decode workers.
@@ -233,6 +237,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             raise ValueError("native_http_connections must be positive")
         if native_http_subranges <= 0:
             raise ValueError("native_http_subranges must be positive")
+        if sampling_strategy not in ("remaining", "round_robin"):
+            raise ValueError("sampling_strategy must be 'remaining' or 'round_robin'")
+        self.sampling_strategy = sampling_strategy
         self.episode_pool_size = episode_pool_size or min(buffer_size, 32)
         self.prefetch_episodes = prefetch_episodes
         self.byte_budget = int(byte_budget_gb * 1024**3)
@@ -385,6 +392,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         planner = ExactCoveragePool(
             [(episode, self._episode_frame_count(episode)) for episode in consumer_episodes],
             pool_size=self.episode_pool_size,
+            sampling_strategy=self.sampling_strategy,
             seed=self.seed,
             epoch=epoch,
             episode_byte_sizes=episode_byte_sizes,

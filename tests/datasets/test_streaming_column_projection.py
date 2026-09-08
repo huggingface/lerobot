@@ -26,12 +26,14 @@ from tests.fixtures.constants import DUMMY_REPO_ID
 
 @pytest.mark.parametrize("image_window", [False, True])
 @pytest.mark.parametrize("decode_threads", [1, 3])
+@pytest.mark.parametrize("sampling_strategy", ["remaining", "round_robin"])
 def test_temporal_reads_decode_only_requested_images(
     tmp_path: Path,
     lerobot_dataset_factory: Any,
     monkeypatch: pytest.MonkeyPatch,
     image_window: bool,
     decode_threads: int,
+    sampling_strategy: str,
 ) -> None:
     root = tmp_path / "dataset"
     reference = lerobot_dataset_factory(
@@ -55,6 +57,7 @@ def test_temporal_reads_decode_only_requested_images(
         episode_pool_size=2,
         decode_threads=decode_threads,
         decoded_queue_size=4,
+        sampling_strategy=sampling_strategy,
     )
     decode_image = datasets.Image.decode_example
     calls = 0

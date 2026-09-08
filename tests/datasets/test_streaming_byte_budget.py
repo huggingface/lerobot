@@ -147,12 +147,14 @@ def test_prefetch_reserves_bytes_before_fetch(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("prefetch", [0, 2])
 @pytest.mark.parametrize("decode_threads,queue_size", [(1, 1), (2, 2), (4, 8)])
+@pytest.mark.parametrize("sampling_strategy", ["remaining", "round_robin"])
 def test_rotation_keeps_bytes_until_last_decode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     prefetch: int,
     decode_threads: int,
     queue_size: int,
+    sampling_strategy: str,
 ) -> None:
     manifest = EpisodeVideoManifest(video_keys=["camera"], files=[], spans={})
     monkeypatch.setattr(manifest, "episode_byte_size", lambda episode: 60)
@@ -163,6 +165,7 @@ def test_rotation_keeps_bytes_until_last_decode(
     ds.shuffle = True
     ds._next_epoch = ds._resume_offset = ds._state_offset = 0
     ds.seed = 42
+    ds.sampling_strategy = sampling_strategy
     ds.max_num_shards = ds.episode_pool_size = 1
     ds.prefetch_episodes = prefetch
     ds.byte_budget = 60

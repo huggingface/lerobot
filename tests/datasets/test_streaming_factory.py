@@ -40,6 +40,7 @@ def test_factory_wires_production_streaming_settings(monkeypatch):
         video_backend="pyav",
         streaming_data_root="memory://payload",
         streaming_episode_pool_size=7,
+        streaming_sampling_strategy="round_robin",
         streaming_prefetch_episodes=3,
         streaming_byte_budget_gb=2.5,
         streaming_decode_threads=2,
@@ -62,6 +63,7 @@ def test_factory_wires_production_streaming_settings(monkeypatch):
     assert captured["args"] == ("owner/dataset",)
     assert captured["kwargs"]["data_root"] == "memory://payload"
     assert captured["kwargs"]["episode_pool_size"] == 7
+    assert captured["kwargs"]["sampling_strategy"] == "round_robin"
     assert captured["kwargs"]["prefetch_episodes"] == 3
     assert captured["kwargs"]["byte_budget_gb"] == 2.5
     assert captured["kwargs"]["decode_threads"] == 2

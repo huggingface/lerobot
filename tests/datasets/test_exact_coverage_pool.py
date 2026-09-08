@@ -144,3 +144,76 @@ def test_prefetch_candidates_follow_deterministic_pending_frontier():
     assert len(candidates) == 3
     assert not set(candidates) & set(pool.resident)
     assert candidates == pool.prefetch_candidates(3)
+
+
+def test_default_sampling_order_is_unchanged() -> None:
+    assert list(ExactCoveragePool([(0, 3), (1, 2), (2, 4)], 2, seed=7)) == [
+        (0, 0),
+        (0, 2),
+        (2, 3),
+        (2, 2),
+        (2, 1),
+        (0, 1),
+        (1, 1),
+        (2, 0),
+        (1, 0),
+    ]
+
+
+@pytest.mark.parametrize("seed", [0, 7, 42])
+@pytest.mark.parametrize("pool_size", [1, 3, 20])
+def test_round_robin_visits_each_round_resident_once(seed: int, pool_size: int) -> None:
+    pool = ExactCoveragePool(
+        EPISODES,
+        pool_size,
+        seed=seed,
+        sampling_strategy="round_robin",
+        episode_byte_sizes=dict(EPISODES),
+        byte_budget=12,
+    )
+    output = []
+    admitted = list(pool.newly_admitted)
+    evicted = []
+    while pool.resident:
+        # Admissions during this round must wait until the next round.
+        snapshot = set(pool.resident)
+        round_episodes = []
+        for _ in snapshot:
+            pool.newly_admitted.clear()
+            pool.evicted.clear()
+            sample = next(pool)
+            output.append(sample)
+            round_episodes.append(sample[0])
+            admitted.extend(pool.newly_admitted)
+            evicted.extend(pool.evicted)
+            assert pool.resident_bytes <= 12
+            assert len(pool.resident) <= pool_size
+        assert Counter(round_episodes) == Counter(snapshot)
+    assert Counter(output) == EXPECTED
+    assert Counter(admitted) == Counter(ep for ep, _ in EPISODES)
+    assert Counter(evicted) == Counter(admitted)
+    with pytest.raises(StopIteration):
+        next(pool)
+
+
+def test_round_robin_replay_seed_and_epoch() -> None:
+    def samples(seed: int, epoch: int) -> list[tuple[int, int]]:
+        return list(ExactCoveragePool(EPISODES, 3, seed=seed, epoch=epoch, sampling_strategy="round_robin"))
+
+    expected = samples(7, 0)
+    assert samples(7, 0) == expected
+    assert samples(8, 0) != expected
+    assert samples(7, 1) != expected
+    restored = ExactCoveragePool(EPISODES, 3, seed=7, sampling_strategy="round_robin")
+    for _ in range(13):
+        next(restored)
+    assert list(restored) == expected[13:]
+
+
+def test_round_robin_empty_pool() -> None:
+    assert list(ExactCoveragePool([(0, 0)], 3, seed=0, sampling_strategy="round_robin")) == []
+
+
+def test_invalid_sampling_strategy() -> None:
+    with pytest.raises(ValueError, match="sampling_strategy"):
+        ExactCoveragePool(EPISODES, 3, seed=0, sampling_strategy="invalid")

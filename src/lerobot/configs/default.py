@@ -16,6 +16,7 @@
 
 import logging
 from dataclasses import dataclass, field
+from typing import Literal
 
 from lerobot.transforms import ImageTransformsConfig
 from lerobot.utils.import_utils import get_safe_default_video_backend
@@ -57,6 +58,8 @@ class DatasetConfig:
     streaming_data_root: str | None = None
     # Number of complete episodes mixed by the rank-level exact-coverage sampler.
     streaming_episode_pool_size: int = 32
+    # Round-robin trades frame-weighted sampling for more even resident-episode mixing.
+    streaming_sampling_strategy: Literal["remaining", "round_robin"] = "remaining"
     # Complete episodes fetched ahead of the current admission frontier.
     streaming_prefetch_episodes: int = 8
     # Hard per-rank cap for synthesized episode-video bytes.
@@ -85,6 +88,8 @@ class DatasetConfig:
             )
         if not (0.0 <= self.eval_split < 1.0):
             raise ValueError(f"eval_split must be in [0.0, 1.0), got {self.eval_split}")
+        if self.streaming_sampling_strategy not in ("remaining", "round_robin"):
+            raise ValueError("streaming_sampling_strategy must be 'remaining' or 'round_robin'")
         if self.streaming_episode_pool_size <= 0:
             raise ValueError("streaming_episode_pool_size must be positive")
         if self.streaming_prefetch_episodes < 0:
