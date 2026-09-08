@@ -67,7 +67,7 @@ When a trajectory contains more than `max_frames` frames, the processor uniforml
 
 - `prediction.remaining_time_s` contains `v_end`, the final queried frame's predicted remaining time.
 - The tensor stays on the model device.
-- Potential, progress normalization, interpolation, and thresholding belong to workflow adapters.
+- Potential, progress normalization, interpolation, and thresholding belong to workflow consumers.
 
 If a checkpoint has multiple absolute-value heads, LeRobot averages them before selecting the final frame.
 
@@ -134,7 +134,7 @@ uv run lerobot-score-dataset \
     --camera_description="a fixed third-person camera"
 ```
 
-RynnValue runs on causal trajectory prefixes at the configured inference frequency. The adapter linearly interpolates between inference frames and writes:
+RynnValue runs on causal trajectory prefixes at the configured inference frequency. The scorer linearly interpolates between inference frames and writes:
 
 - `reward.rynnvalue.remaining_time_s`;
 - `reward.rynnvalue.potential`;

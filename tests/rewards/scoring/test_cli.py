@@ -76,6 +76,7 @@ def test_run_score_dataset_loads_robometer_and_calls_shared_workflow(monkeypatch
         episodes=[1],
         device="cpu",
         image_key="observation.images.wrist",
+        default_task="pick up the cube",
         batch_size=8,
         num_subsampled_frames=6,
     )
@@ -95,6 +96,7 @@ def test_run_score_dataset_loads_robometer_and_calls_shared_workflow(monkeypatch
     assert reward_config.pretrained_path == "user/robometer"
     assert reward_config.pretrained_revision == "model-revision"
     assert reward_config.image_key == "observation.images.wrist"
+    assert reward_config.default_task == "pick up the cube"
     assert "observation.images.wrist" in reward_config.input_features
     assert "observation.images.top" not in reward_config.input_features
     dataset, model, kwargs = captured["score"]

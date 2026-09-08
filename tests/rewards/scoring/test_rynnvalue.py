@@ -67,7 +67,7 @@ def test_horizon_normalization_is_bounded_and_not_episode_relative():
         remaining_time_to_progress(remaining_time, horizon_s=0)
 
 
-def test_make_rynnvalue_frame_scorer_preserves_adapter_selected_prefixes(monkeypatch):
+def test_make_rynnvalue_frame_scorer_preserves_scorer_selected_prefixes(monkeypatch):
     captured: dict[str, object] = {}
 
     class FakeEncoder:
@@ -149,6 +149,7 @@ def test_rynnvalue_frame_scorer_emits_dense_native_and_derived_signals():
     np.testing.assert_array_equal(result.signals[IS_INFERENCE_FRAME_SIGNAL], [True, False, True, False, True])
     np.testing.assert_allclose(result.signals[PROGRESS_SIGNAL], [0, 0.25, 0.5, 0.75, 1])
     assert result.descriptors[REMAINING_TIME_SIGNAL].unit == "s"
+    assert result.descriptors[REMAINING_TIME_SIGNAL].comparison_scope == "task"
     assert result.descriptors[PROGRESS_SIGNAL].bounds == (0.0, 1.0)
     assert scorer.options["inference_fps"] == 1.0
     assert scorer.options["horizon_s"] == 4.0
@@ -219,7 +220,7 @@ def test_score_rynnvalue_dataset_builds_reproducible_provenance(monkeypatch, tmp
                 "lerobot_version": __import__("lerobot").__version__,
                 "dataset": {"repo_id": "user/dataset", "revision": "dataset-commit"},
                 "model": {"type": "rynnvalue", "id": "user/rynnvalue", "revision": "model-commit"},
-                "adapter": {
+                "scorer": {
                     "id": "lerobot.rynnvalue.causal_prefix",
                     "version": 1,
                     "options": fake_scorer.options,

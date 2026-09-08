@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""RynnValue adapter for the shared offline frame-scoring workflow."""
+"""RynnValue scorer for the shared offline frame-scoring workflow."""
 
 from __future__ import annotations
 
@@ -47,19 +47,18 @@ RYNNVALUE_SIGNAL_DESCRIPTORS = {
         ),
         unit="s",
         direction="lower",
-        missing_values="forbidden",
+        comparison_scope="task",
     ),
     POTENTIAL_SIGNAL: SignalDescriptor(
         description="Negative RynnValue remaining time, suitable as a higher-is-better state potential.",
         unit="s",
         direction="higher",
-        missing_values="forbidden",
+        comparison_scope="task",
     ),
     IS_INFERENCE_FRAME_SIGNAL: SignalDescriptor(
         description="Whether RynnValue ran on this frame rather than its value being interpolated.",
         unit=None,
         direction="none",
-        missing_values="forbidden",
     ),
 }
 
@@ -67,8 +66,8 @@ PROGRESS_DESCRIPTOR = SignalDescriptor(
     description="RynnValue progress derived from an explicitly configured remaining-time horizon.",
     unit=None,
     direction="higher",
-    missing_values="forbidden",
     bounds=(0.0, 1.0),
+    comparison_scope="task",
 )
 
 
@@ -185,7 +184,7 @@ class RynnValueFrameScorer:
 
     @property
     def options(self) -> dict[str, Any]:
-        """JSON-serializable adapter settings used in scoring provenance."""
+        """JSON-serializable scorer settings used in scoring provenance."""
         return {
             "batch_size": self.batch_size,
             "camera_description": self.camera_description,
@@ -285,7 +284,7 @@ def make_rynnvalue_frame_scorer(
     max_frames: int | None = 8,
     horizon_s: float | None = None,
 ) -> RynnValueFrameScorer:
-    """Construct the standard RynnValue offline scoring adapter."""
+    """Construct the standard RynnValue offline scorer."""
     processor_source = config.pretrained_path or config.model_id
     processor_revision = (
         config.pretrained_revision if config.pretrained_path is not None else config.model_revision
@@ -296,7 +295,7 @@ def make_rynnvalue_frame_scorer(
         image_key=config.image_key,
         task_key=config.task_key,
         default_task=config.default_task,
-        # Prefix selection belongs to this adapter and must not be repeated by
+        # Prefix selection belongs to this scorer and must not be repeated by
         # the processor.
         max_frames=None,
         robot_description=config.robot_description,
@@ -362,7 +361,7 @@ def score_rynnvalue_dataset(
             "id": resolved_model_id,
             "revision": model_revision if model_revision is not None else config.pretrained_revision,
         },
-        "adapter": {
+        "scorer": {
             "id": "lerobot.rynnvalue.causal_prefix",
             "version": 1,
             "options": scorer.options,

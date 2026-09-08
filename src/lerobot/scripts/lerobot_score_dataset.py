@@ -97,9 +97,9 @@ def run_score_dataset(cfg: ScoreDatasetConfig) -> ScoringSummary:
         previous_feature = reward_config.input_features.pop(previous_image_key, None)
         if previous_feature is not None:
             reward_config.input_features.setdefault(cfg.image_key, previous_feature)
+    if cfg.default_task is not None:
+        reward_config.default_task = cfg.default_task
     if isinstance(reward_config, RynnValueConfig):
-        if cfg.default_task is not None:
-            reward_config.default_task = cfg.default_task
         if cfg.robot_description is not None:
             reward_config.robot_description = cfg.robot_description
         if cfg.camera_description is not None:

@@ -163,6 +163,23 @@ def test_encoder_batches_and_pads_native_processor_outputs(monkeypatch):
     assert fake.calls[0]["camera_description"] == "a front camera"
 
 
+def test_encoder_treats_four_dimensional_input_as_one_trajectory(monkeypatch):
+    fake = _patch_processor(monkeypatch)
+    encoder = RynnValueEncoderProcessorStep(max_frames=None)
+    transition = {
+        TransitionKey.OBSERVATION: {
+            "observation.images.top": torch.zeros(5, 3, 8, 8),
+        },
+        TransitionKey.COMPLEMENTARY_DATA: {"task": "pick cube"},
+    }
+
+    encoded = encoder(transition)[TransitionKey.OBSERVATION]
+
+    assert len(fake.calls) == 1
+    assert len(fake.calls[0]["images"]) == 5
+    assert encoded[f"{RYNNVALUE_FEATURE_PREFIX}input_ids"].shape[0] == 1
+
+
 def test_encoder_can_override_checkpoint_meta_setting(monkeypatch):
     fake = _patch_processor(monkeypatch)
     RynnValueEncoderProcessorStep(use_meta=True)

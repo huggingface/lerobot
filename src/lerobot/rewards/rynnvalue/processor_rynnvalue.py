@@ -128,10 +128,10 @@ class RynnValueEncoderProcessorStep(ProcessorStep):
         frames = observation[self.image_key]
         tensor = frames.detach().cpu() if isinstance(frames, Tensor) else torch.as_tensor(frames)
         if tensor.ndim == 4:
-            tensor = tensor.unsqueeze(1)
+            tensor = tensor.unsqueeze(0)
         elif tensor.ndim != 5:
             raise ValueError(
-                f"Expected RynnValue frames with shape (B,C,H,W) or (B,T,C,H,W); got {tuple(tensor.shape)}"
+                f"Expected RynnValue frames with shape (T,C,H,W) or (B,T,C,H,W); got {tuple(tensor.shape)}"
             )
 
         tasks = _expand_text(
