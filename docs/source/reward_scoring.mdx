@@ -9,7 +9,7 @@ LeRobot's offline scoring workflow runs a reward model over dataset episodes and
                        ▼
              ┌───────────────────┐
              │ model-specific    │
-             │ scoring adapter   │
+             │ frame scorer      │
              └─────────┬─────────┘
                        │ FrameSignals for one episode
                        ▼
@@ -26,7 +26,7 @@ LeRobot's offline scoring workflow runs a reward model over dataset episodes and
        annotation / filtering / weighting / evaluation
 ```
 
-The model adapter owns model-specific sampling and preprocessing. The shared runner owns episode bounds, validation, resume, atomic writes, and deterministic merging.
+The model-specific scorer owns sampling, preprocessing, and conversion from native predictions to `FrameSignals`. The shared runner selects episodes and validates the returned signals. The writer owns atomic episode parts, resume, deterministic streaming merge, and final publication.
 
 ## Score a Dataset
 
@@ -45,7 +45,7 @@ Pass `--push_to_hub=true` to upload the completed sidecar to `reward_signals/rob
 
 For an immutable run, pass commit hashes through `--dataset_revision` and `--reward_model_revision`. The requested revisions are stored in provenance and must match when resuming.
 
-The command is resumable by default. Every completed episode is first committed atomically under a hidden `.parquet.parts` directory. A retry skips those episodes only when the dataset revision, model revision, adapter options, episode selection, and schema are unchanged. Completed parts are streamed into the final Parquet file in episode order, so finalization holds only one episode at a time in memory. An identical rerun validates and reuses the published sidecar without rescoring it.
+The command is resumable by default. Every completed episode is first written atomically under a hidden `.parquet.parts` directory. A retry skips those episodes only when the dataset revision, model revision, scorer options, episode selection, and schema are unchanged. Completed parts are streamed into the final Parquet file in episode order, so finalization holds only one episode at a time in memory. An identical rerun validates and reuses the published sidecar without rescoring it.
 
 ## Python API
 
@@ -71,7 +71,7 @@ descriptors = get_signal_descriptors(table)
 provenance = get_scoring_provenance(table)
 ```
 
-Application code for RoboMeter should use `score_robometer_dataset()`. Adapter authors use `score_dataset(dataset, scorer, ...)`, and consumers use `read_frame_signals()`.
+Application code for RoboMeter should use `score_robometer_dataset()`. Scorer authors use `score_dataset(dataset, scorer, ...)`, and consumers use `read_frame_signals()`.
 
 A scorer returns one `FrameSignals` object per episode. Frame indices may be dense or sparse, but must be episode-local, unique, strictly increasing, and aligned with one-dimensional numeric signal arrays.
 
@@ -81,13 +81,15 @@ Every new sidecar contains:
 
 - `index`, `episode_index`, and `frame_index` identity columns;
 - namespaced signal columns such as `reward.robometer.progress`;
-- semantic descriptors: a description, optimization direction, optional unit and bounds, and a missing-value policy;
-- provenance for the dataset, model, adapter options, and LeRobot version.
+- semantic descriptors: a description, optimization direction, optional unit, bounds and comparison scope, plus whether NaN is allowed;
+- provenance for the dataset, model, scorer options, and LeRobot version.
 
-`bounds` describes the signal's theoretical or semantic range, not the minimum and maximum observed in one run. Signals reject missing values by default. An adapter may explicitly allow `NaN` when missing frames are meaningful, as in some legacy SARM outputs.
+`bounds` describes the signal's theoretical or semantic range, not the minimum and maximum observed in one run. `comparison_scope` states whether direct comparisons are meaningful within an episode, task, dataset, or globally. Signals reject NaN by default; a scorer may explicitly allow it when missing frames are meaningful, as in some legacy SARM outputs.
+
+Descriptors and provenance are encoded in the Parquet schema metadata. They are not repeated as columns on every frame row.
 
 The reader also recognizes older LeRobot `progress_sparse` and `progress_dense` Parquet sidecars. It preserves their column names and attaches explicit legacy provenance rather than pretending they were produced by the new schema.
 
 ## Scope
 
-Offline scoring is for annotation, inspection, filtering, and later relabeling. It is not used inside the environment control loop. Online RL will use a separate transition-time adapter over the same native model APIs, without Parquet IO or sidecar merging.
+Offline scoring is for annotation, inspection, filtering, and later relabeling. It is not used inside the environment control loop. Online RL will call the same native model APIs through a transition-time consumer, without Parquet IO or sidecar merging.

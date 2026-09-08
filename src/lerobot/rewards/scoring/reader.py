@@ -50,7 +50,7 @@ def get_signal_descriptors(table: pa.Table) -> dict[str, SignalDescriptor]:
 
 
 def get_scoring_provenance(table: pa.Table) -> dict[str, Any]:
-    """Return the dataset, model, and adapter lineage stored with a table."""
+    """Return the dataset, model, and scorer lineage stored with a table."""
     return decode_provenance(table)
 
 
@@ -65,9 +65,8 @@ def _read_legacy_progress(table: pa.Table, path: Path) -> pa.Table:
         descriptors[name] = SignalDescriptor(
             description="Progress imported from a legacy LeRobot reward-model sidecar.",
             direction="higher",
-            missing_values="nan"
-            if np.issubdtype(values.dtype, np.floating) and np.isnan(values).any()
-            else "forbidden",
+            comparison_scope="episode",
+            allow_nan=bool(np.issubdtype(values.dtype, np.floating) and np.isnan(values).any()),
         )
     old_metadata = table.schema.metadata or {}
     provenance: dict[str, Any] = {"legacy_output": True, "source_path": str(path)}

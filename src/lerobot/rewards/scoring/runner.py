@@ -134,7 +134,7 @@ def _validate_frame_signals(
         if values.dtype.kind == "f":
             if np.isinf(values).any():
                 raise ValueError(f"Signal {name!r} must not contain infinite values")
-            if descriptor.missing_values == "forbidden" and np.isnan(values).any():
+            if not descriptor.allow_nan and np.isnan(values).any():
                 raise ValueError(f"Signal {name!r} contains forbidden NaN values")
             values_for_bounds = values[np.isfinite(values)]
         else:

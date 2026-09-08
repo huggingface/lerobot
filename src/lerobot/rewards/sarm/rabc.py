@@ -30,19 +30,13 @@ See: https://arxiv.org/abs/2509.25358 for the SARM paper.
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
 from huggingface_hub import hf_hub_download
 
-from lerobot.utils.import_utils import _pandas_available
+from lerobot.rewards.scoring import get_signal_descriptors, read_frame_signals
 from lerobot.utils.sample_weighting import SampleWeighter
-
-if TYPE_CHECKING or _pandas_available:
-    import pandas as pd
-else:
-    pd = None  # type: ignore[assignment]
 
 
 def resolve_hf_path(path: str | Path) -> Path:
@@ -63,7 +57,7 @@ class RABCWeights(SampleWeighter):
     This class implements the SampleWeighter ABC for use with the generic
     sample weighting infrastructure in lerobot.
 
-    Progress values are loaded from a legacy or shared-scoring parquet artifact.
+    Progress values are loaded from a legacy or shared-scoring Parquet sidecar.
     During training, computes:
         - progress_delta = progress[t + chunk_size] - progress[t]
         - rabc_weight based on the delta (paper Eq. 8-9)
@@ -73,7 +67,7 @@ class RABCWeights(SampleWeighter):
                       Supports HuggingFace URLs (hf://datasets/...).
         chunk_size: Number of frames ahead for computing progress delta.
         head_mode: Which SARM head to use ("sparse" or "dense").
-        signal_name: Explicit progress column in a shared scoring artifact.
+        signal_name: Explicit progress column in a shared scoring sidecar.
             When omitted, the legacy ``progress_<head_mode>`` column is used.
         kappa: Hard threshold for high-quality samples (default: 0.01).
         epsilon: Small constant for numerical stability (default: 1e-6).
@@ -101,34 +95,48 @@ class RABCWeights(SampleWeighter):
         self.fallback_weight = fallback_weight
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Keep legacy SARM artifacts as the default while allowing namespaced
+        # Keep legacy SARM sidecars as the default while allowing namespaced
         # columns from the shared scoring workflow.
         self.progress_column = signal_name or f"progress_{head_mode}"
 
         # Load progress values
         logging.info(f"Loading SARM progress values from {self.progress_path}")
-        self.df = pd.read_parquet(self.progress_path)
+        table = read_frame_signals(self.progress_path)
+        descriptors = get_signal_descriptors(table)
 
         # Check if the requested head mode column exists
-        if self.progress_column not in self.df.columns:
+        if self.progress_column not in table.column_names:
             available = [
                 column
-                for column in self.df.columns
+                for column in table.column_names
                 if column not in {"index", "episode_index", "frame_index"}
             ]
             raise ValueError(
                 f"Column '{self.progress_column}' not found. Available signal columns: {available}"
             )
+        descriptor = descriptors[self.progress_column]
+        if descriptor.direction != "higher":
+            raise ValueError(
+                f"RA-BC requires a signal where higher values indicate better progress, "
+                f"but {self.progress_column!r} declares direction={descriptor.direction!r}"
+            )
+
+        global_indices = table["index"].to_numpy(zero_copy_only=False)
+        progress_values = table[self.progress_column].to_numpy(zero_copy_only=False)
+        episode_indices = table["episode_index"].to_numpy(zero_copy_only=False)
+        if progress_values.dtype.kind not in "iuf":
+            raise ValueError(f"RA-BC signal {self.progress_column!r} must be numeric")
 
         logging.info(f"Using progress column: {self.progress_column}")
 
         self.progress_lookup: dict[int, float] = {}
         self.episode_lookup: dict[int, int] = {}
 
-        for _, row in self.df.iterrows():
-            global_idx = int(row["index"])
-            progress = row[self.progress_column]
-            episode_idx = int(row["episode_index"])
+        for global_idx, progress, episode_idx in zip(
+            global_indices, progress_values, episode_indices, strict=True
+        ):
+            global_idx = int(global_idx)
+            episode_idx = int(episode_idx)
 
             if not np.isnan(progress):
                 self.progress_lookup[global_idx] = float(progress)
@@ -136,11 +144,12 @@ class RABCWeights(SampleWeighter):
 
         # Build episode boundaries for delta computation
         self.episode_boundaries: dict[int, dict[str, int]] = {}
-        for episode_idx in self.df["episode_index"].unique():
-            ep_df = self.df[self.df["episode_index"] == episode_idx]
+        for episode_idx in np.unique(episode_indices):
+            episode_mask = episode_indices == episode_idx
+            episode_global_indices = global_indices[episode_mask]
             self.episode_boundaries[int(episode_idx)] = {
-                "start": int(ep_df["index"].min()),
-                "end": int(ep_df["index"].max()) + 1,
+                "start": int(episode_global_indices.min()),
+                "end": int(episode_global_indices.max()) + 1,
             }
 
         logging.info(f"Loaded {len(self.progress_lookup)} frame progress values")

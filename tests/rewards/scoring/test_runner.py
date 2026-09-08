@@ -33,6 +33,7 @@ PROGRESS_DESCRIPTOR = SignalDescriptor(
     description="Normalized task progress.",
     direction="higher",
     bounds=(0.0, 1.0),
+    comparison_scope="task",
 )
 
 
@@ -331,9 +332,17 @@ def test_score_dataset_rejects_invalid_frame_signals(tmp_path, frame_indices, va
             SignalDescriptor(
                 description="Progress.",
                 direction="higher",
-                missing_values="optional",  # type: ignore[arg-type]
+                comparison_scope="batch",  # type: ignore[arg-type]
             ),
-            "Invalid missing_values",
+            "Invalid comparison_scope",
+        ),
+        (
+            SignalDescriptor(
+                description="Progress.",
+                direction="higher",
+                allow_nan="yes",  # type: ignore[arg-type]
+            ),
+            "allow_nan",
         ),
         (
             SignalDescriptor(description="Progress.", direction="higher", bounds=(1.0, 0.0)),
@@ -365,8 +374,9 @@ def test_score_dataset_preserves_explicitly_allowed_nan_values(tmp_path):
     descriptor = SignalDescriptor(
         description="Sparse handled-frame signal.",
         direction="higher",
-        missing_values="nan",
         bounds=(0.0, 1.0),
+        comparison_scope="episode",
+        allow_nan=True,
     )
 
     def scorer(dataset: FakeDataset, episode_index: int) -> FrameSignals:

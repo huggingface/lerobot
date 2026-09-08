@@ -43,7 +43,7 @@ _DESCRIPTORS_KEY = b"lerobot.reward_scoring.descriptors"
 _EPISODE_INDICES_KEY = b"lerobot.reward_scoring.episode_indices"
 _LEGACY_SOURCE_KEY = b"lerobot.reward_scoring.legacy_source"
 _DIRECTIONS = {"higher", "lower", "none"}
-_MISSING_VALUES = {"forbidden", "nan"}
+_COMPARISON_SCOPES = {"episode", "task", "dataset", "global"}
 
 
 def require_pyarrow() -> None:
@@ -73,8 +73,13 @@ def validate_signal_descriptor(name: str, descriptor: SignalDescriptor) -> None:
         raise ValueError(f"Descriptor for signal {name!r} must have a non-empty description")
     if not isinstance(descriptor.direction, str) or descriptor.direction not in _DIRECTIONS:
         raise ValueError(f"Invalid direction for signal {name!r}: {descriptor.direction!r}")
-    if not isinstance(descriptor.missing_values, str) or descriptor.missing_values not in _MISSING_VALUES:
-        raise ValueError(f"Invalid missing_values for signal {name!r}: {descriptor.missing_values!r}")
+    if descriptor.comparison_scope is not None and (
+        not isinstance(descriptor.comparison_scope, str)
+        or descriptor.comparison_scope not in _COMPARISON_SCOPES
+    ):
+        raise ValueError(f"Invalid comparison_scope for signal {name!r}: {descriptor.comparison_scope!r}")
+    if not isinstance(descriptor.allow_nan, bool):
+        raise ValueError(f"allow_nan for signal {name!r} must be a bool")
     if descriptor.unit is not None and (not isinstance(descriptor.unit, str) or not descriptor.unit.strip()):
         raise ValueError(f"Descriptor unit for signal {name!r} must be non-empty or None")
     if descriptor.bounds is not None:
@@ -147,7 +152,10 @@ def decode_signal_descriptors(table: pa.Table) -> dict[str, SignalDescriptor]:
                 or not isinstance(value.get("description"), str)
                 or not isinstance(value.get("direction"), str)
                 or not (value.get("unit") is None or isinstance(value.get("unit"), str))
-                or not isinstance(value.get("missing_values"), str)
+                or not (
+                    value.get("comparison_scope") is None or isinstance(value.get("comparison_scope"), str)
+                )
+                or not isinstance(value.get("allow_nan"), bool)
                 or not (
                     value.get("bounds") is None
                     or (
@@ -166,7 +174,8 @@ def decode_signal_descriptors(table: pa.Table) -> dict[str, SignalDescriptor]:
                 direction=value["direction"],
                 bounds=tuple(value["bounds"]) if value["bounds"] is not None else None,
                 unit=value["unit"],
-                missing_values=value["missing_values"],
+                comparison_scope=value["comparison_scope"],
+                allow_nan=value["allow_nan"],
             )
             validate_signal_descriptor(name, descriptor)
             descriptors[name] = descriptor
@@ -312,7 +321,7 @@ def validate_frame_signal_table(table: pa.Table) -> None:
         if np.issubdtype(values.dtype, np.floating):
             if np.isinf(values).any():
                 raise ValueError(f"Signal column {name!r} must not contain infinite values")
-            if descriptor.missing_values == "forbidden" and np.isnan(values).any():
+            if not descriptor.allow_nan and np.isnan(values).any():
                 raise ValueError(f"Signal column {name!r} contains forbidden NaN values")
             values_for_bounds = values[np.isfinite(values)]
         else:

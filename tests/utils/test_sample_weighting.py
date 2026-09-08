@@ -65,6 +65,7 @@ def test_config_default_values():
     assert config.type == "rabc"
     assert config.progress_path is None
     assert config.head_mode == "sparse"
+    assert config.signal_name is None
     assert config.kappa == 0.01
     assert config.epsilon == 1e-6
     assert config.extra_params == {}
@@ -76,6 +77,7 @@ def test_config_custom_values():
         type="rabc",
         progress_path="/path/to/progress.parquet",
         head_mode="dense",
+        signal_name="reward.robometer.progress",
         kappa=0.05,
         epsilon=1e-8,
         extra_params={"fallback_weight": 0.5},
@@ -83,6 +85,7 @@ def test_config_custom_values():
     assert config.type == "rabc"
     assert config.progress_path == "/path/to/progress.parquet"
     assert config.head_mode == "dense"
+    assert config.signal_name == "reward.robometer.progress"
     assert config.kappa == 0.05
     assert config.epsilon == 1e-8
     assert config.extra_params == {"fallback_weight": 0.5}
@@ -362,20 +365,37 @@ def test_rabc_get_stats(sample_progress_parquet):
 
 
 def test_rabc_accepts_namespaced_signal(tmp_path):
-    """Shared scoring artifacts can select a progress signal explicitly."""
-    import pandas as pd
+    """Shared scoring sidecars can select a progress signal explicitly."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
 
     from lerobot.rewards.sarm.rabc import RABCWeights
+    from lerobot.rewards.scoring import SignalDescriptor
+    from lerobot.rewards.scoring.schema import attach_metadata
 
     path = tmp_path / "robometer.parquet"
-    pd.DataFrame(
+    table = pa.table(
         {
             "index": [0, 1],
             "episode_index": [0, 0],
             "frame_index": [0, 1],
             "reward.robometer.progress": [0.0, 1.0],
         }
-    ).to_parquet(path)
+    )
+    table = attach_metadata(
+        table,
+        descriptors={
+            "reward.robometer.progress": SignalDescriptor(
+                description="RoboMeter progress.",
+                direction="higher",
+                bounds=(0.0, 1.0),
+                comparison_scope="task",
+            )
+        },
+        provenance={"model": {"type": "robometer"}},
+        episode_indices=[0],
+    )
+    pq.write_table(table, path)
 
     weighter = RABCWeights(
         progress_path=path,
@@ -388,6 +408,42 @@ def test_rabc_accepts_namespaced_signal(tmp_path):
     assert weighter.get_stats()["signal_name"] == "reward.robometer.progress"
 
 
+def test_rabc_rejects_lower_is_better_signal(tmp_path):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from lerobot.rewards.sarm.rabc import RABCWeights
+    from lerobot.rewards.scoring import SignalDescriptor
+    from lerobot.rewards.scoring.schema import attach_metadata
+
+    signal_name = "reward.example.remaining_time_s"
+    table = attach_metadata(
+        pa.table(
+            {
+                "index": [0, 1],
+                "episode_index": [0, 0],
+                "frame_index": [0, 1],
+                signal_name: [2.0, 1.0],
+            }
+        ),
+        descriptors={
+            signal_name: SignalDescriptor(
+                description="Predicted remaining time.",
+                direction="lower",
+                unit="s",
+                comparison_scope="task",
+            )
+        },
+        provenance={"model": {"type": "example"}},
+        episode_indices=[0],
+    )
+    path = tmp_path / "remaining_time.parquet"
+    pq.write_table(table, path)
+
+    with pytest.raises(ValueError, match="higher values indicate better progress"):
+        RABCWeights(progress_path=path, chunk_size=1, signal_name=signal_name)
+
+
 def test_factory_creates_rabc_weighter(sample_progress_parquet):
     """Test factory creates RABCWeights with valid config."""
     from lerobot.rewards.sarm.rabc import RABCWeights
@@ -396,6 +452,7 @@ def test_factory_creates_rabc_weighter(sample_progress_parquet):
         type="rabc",
         progress_path=str(sample_progress_parquet),
         head_mode="sparse",
+        signal_name="progress_sparse",
         kappa=0.01,
     )
     policy = Mock()
@@ -407,6 +464,19 @@ def test_factory_creates_rabc_weighter(sample_progress_parquet):
 
     assert isinstance(weighter, RABCWeights)
     assert isinstance(weighter, SampleWeighter)
+    assert weighter.progress_column == "progress_sparse"
+
+
+def test_factory_rejects_signal_name_in_extra_params(sample_progress_parquet):
+    config = SampleWeightingConfig(
+        progress_path=str(sample_progress_parquet),
+        extra_params={"signal_name": "progress_sparse"},
+    )
+    policy = Mock()
+    policy.config.chunk_size = 5
+
+    with pytest.raises(ValueError, match="signal_name directly"):
+        make_sample_weighter(config, policy, torch.device("cpu"))
 
 
 def test_rabc_weights_normalization(sample_progress_parquet):

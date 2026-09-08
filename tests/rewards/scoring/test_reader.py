@@ -27,7 +27,7 @@ pa = pytest.importorskip("pyarrow")
 pq = pytest.importorskip("pyarrow.parquet")
 
 
-def test_read_frame_signals_recognizes_legacy_progress_artifact(tmp_path):
+def test_read_frame_signals_recognizes_legacy_progress_sidecar(tmp_path):
     path = tmp_path / "robometer_progress.parquet"
     table = pa.table(
         {
@@ -45,7 +45,8 @@ def test_read_frame_signals_recognizes_legacy_progress_artifact(tmp_path):
     descriptor = get_signal_descriptors(loaded)["progress_sparse"]
     assert descriptor.direction == "higher"
     assert descriptor.bounds is None
-    assert descriptor.missing_values == "forbidden"
+    assert descriptor.comparison_scope == "episode"
+    assert descriptor.allow_nan is False
     assert get_scoring_provenance(loaded) == {
         "legacy_output": True,
         "reward_model_path": "lerobot/Robometer-4B",
@@ -61,7 +62,7 @@ def test_read_frame_signals_rejects_unrecognized_parquet(tmp_path):
         read_frame_signals(path)
 
 
-def test_read_frame_signals_preserves_missing_values_in_legacy_progress(tmp_path):
+def test_read_frame_signals_allows_nan_in_legacy_progress(tmp_path):
     path = tmp_path / "sarm_progress.parquet"
     table = pa.table(
         {
@@ -75,6 +76,6 @@ def test_read_frame_signals_preserves_missing_values_in_legacy_progress(tmp_path
 
     loaded = read_frame_signals(path)
 
-    assert get_signal_descriptors(loaded)["progress_sparse"].missing_values == "nan"
+    assert get_signal_descriptors(loaded)["progress_sparse"].allow_nan is True
     assert loaded["progress_sparse"].to_numpy(zero_copy_only=False)[0] == 2.0
     assert np.isnan(loaded["progress_sparse"].to_numpy(zero_copy_only=False)[1])

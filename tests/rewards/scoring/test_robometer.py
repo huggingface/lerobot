@@ -233,7 +233,7 @@ def test_robometer_vertical_slice_preserves_legacy_progress_values_and_adds_succ
 
     table = read_frame_signals(summary.output_path)
     # The old progress_sparse fixture produced [0.0, 0.5, 1.0] for these
-    # processed frames. The new artifact preserves those values exactly.
+    # processed frames. The new sidecar preserves those values exactly.
     assert table[PROGRESS_SIGNAL].to_pylist() == [0.0, 0.5, 1.0]
     assert table[SUCCESS_PROBABILITY_SIGNAL].to_pylist() == [0.0, 0.25, 0.5]
     assert table.schema.field(PROGRESS_SIGNAL).type == pa.float32()
@@ -299,7 +299,7 @@ def test_score_robometer_dataset_builds_reproducible_provenance(monkeypatch, tmp
                 "lerobot_version": __import__("lerobot").__version__,
                 "dataset": {"repo_id": "user/dataset", "revision": "dataset-commit"},
                 "model": {"type": "robometer", "id": "user/robometer", "revision": "model-commit"},
-                "adapter": {
+                "scorer": {
                     "id": "lerobot.robometer.frame_prefix",
                     "version": 1,
                     "options": fake_scorer.options,

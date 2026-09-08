@@ -22,23 +22,24 @@ from typing import Literal
 import numpy as np
 
 SignalDirection = Literal["higher", "lower", "none"]
-MissingValues = Literal["forbidden", "nan"]
+SignalComparisonScope = Literal["episode", "task", "dataset", "global"]
 
 
 @dataclass(frozen=True)
 class SignalDescriptor:
     """Stable semantics attached to one named signal.
 
-    ``bounds`` describes theoretical or semantic bounds. ``missing_values`` is
-    strict by default; ``"nan"`` exists for signals such as legacy SARM output
-    where some frames were intentionally not scored.
+    ``bounds`` describes theoretical or semantic bounds. ``comparison_scope``
+    states where direct comparisons are meaningful. NaN values are rejected
+    unless ``allow_nan`` is explicitly enabled.
     """
 
     description: str
     direction: SignalDirection
     bounds: tuple[float, float] | None = None
     unit: str | None = None
-    missing_values: MissingValues = "forbidden"
+    comparison_scope: SignalComparisonScope | None = None
+    allow_nan: bool = False
 
 
 @dataclass(frozen=True)

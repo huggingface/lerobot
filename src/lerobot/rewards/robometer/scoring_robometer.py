@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""RoboMeter adapter for the shared offline frame-scoring workflow."""
+"""RoboMeter scorer for the shared offline frame-scoring workflow."""
 
 from __future__ import annotations
 
@@ -44,11 +44,13 @@ ROBOMETER_SIGNAL_DESCRIPTORS = {
         description="RoboMeter task progress for the trajectory prefix ending at this frame.",
         direction="higher",
         bounds=(0.0, 1.0),
+        comparison_scope="task",
     ),
     SUCCESS_PROBABILITY_SIGNAL: SignalDescriptor(
         description="RoboMeter success probability for the trajectory prefix ending at this frame.",
         direction="higher",
         bounds=(0.0, 1.0),
+        comparison_scope="task",
     ),
 }
 
@@ -66,7 +68,7 @@ def build_subsample_indices(num_frames: int, num_subsampled_frames: int) -> list
 
 
 def make_robometer_scoring_encoder(config: RobometerConfig) -> RobometerEncoderProcessorStep:
-    """Build an encoder that preserves prefixes already selected by this adapter."""
+    """Build an encoder that preserves prefixes already selected by this scorer."""
     return RobometerEncoderProcessorStep(
         base_model_id=config.base_model_id,
         image_key=config.image_key,
@@ -137,7 +139,7 @@ class RobometerFrameScorer:
 
     @property
     def options(self) -> dict[str, Any]:
-        """JSON-serializable adapter settings used in scoring provenance."""
+        """JSON-serializable scorer settings used in scoring provenance."""
         return {
             "batch_size": self.batch_size,
             "base_model_id": self.base_model_id,
@@ -209,7 +211,7 @@ def make_robometer_frame_scorer(
     batch_size: int = 32,
     num_subsampled_frames: int = DEFAULT_NUM_SUBSAMPLED_FRAMES,
 ) -> RobometerFrameScorer:
-    """Construct the standard RoboMeter offline scoring adapter."""
+    """Construct the standard RoboMeter offline frame scorer."""
     return RobometerFrameScorer(
         model=model,
         encoder=make_robometer_scoring_encoder(config),
@@ -261,7 +263,7 @@ def score_robometer_dataset(
             "id": resolved_model_id,
             "revision": model_revision if model_revision is not None else config.pretrained_revision,
         },
-        "adapter": {
+        "scorer": {
             "id": "lerobot.robometer.frame_prefix",
             "version": 1,
             "options": scorer.options,
