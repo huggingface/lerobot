@@ -53,6 +53,23 @@ def test_create_sinusoidal_pos_embedding_matches_openpi_formula():
     torch.testing.assert_close(emb, expected, rtol=1e-9, atol=1e-9)
 
 
+def test_create_sinusoidal_pos_embedding_matches_known_values():
+    time = torch.tensor([0.0, 1.0], dtype=torch.float32)
+
+    embeddings = create_sinusoidal_pos_embedding(
+        time, dimension=4, min_period=1.0, max_period=100.0, device=time.device
+    )
+
+    expected = torch.tensor(
+        [
+            [0.0, 0.0, 1.0, 1.0],
+            [math.sin(2 * math.pi), math.sin(2 * math.pi / 100), 1.0, math.cos(2 * math.pi / 100)],
+        ],
+        dtype=torch.float64,
+    )
+    torch.testing.assert_close(embeddings, expected)
+
+
 def test_create_sinusoidal_pos_embedding_per_action_time_matches_scalar():
     """Per-action time (training-time RTC) must embed each row exactly like the scalar path."""
     dim, min_period, max_period = 8, 4e-3, 4.0
@@ -112,26 +129,37 @@ def test_prepare_attention_masks_4d():
     assert torch.equal(out_bf16, expected.to(torch.bfloat16))
 
 
-def test_pad_vector_openpi_semantics():
-    v = torch.arange(6.0).reshape(2, 3)
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_pad_vector_openpi_semantics(dtype):
+    v = torch.arange(6, dtype=dtype).reshape(2, 3)
     padded = pad_vector(v, 5)
     assert padded.shape == (2, 5)
+    assert padded.dtype == v.dtype and padded.device == v.device
     assert torch.equal(padded[:, :3], v) and not padded[:, 3:].any()
     # Already large enough (>=): returned unchanged, same object.
     assert pad_vector(v, 3) is v
     assert pad_vector(v, 2) is v
     # 3D input.
-    v3 = torch.ones(2, 4, 3)
-    assert pad_vector(v3, 7).shape == (2, 4, 7)
+    v3 = torch.arange(24, dtype=dtype).reshape(2, 4, 3)
+    padded3 = pad_vector(v3, 7)
+    assert padded3.shape == (2, 4, 7)
+    assert padded3.dtype == v3.dtype and padded3.device == v3.device
+    torch.testing.assert_close(padded3[..., :3], v3)
+    torch.testing.assert_close(padded3[..., 3:], torch.zeros(2, 4, 4, dtype=dtype))
 
 
-def test_pad_vector_truncate_semantics():
-    v = torch.arange(6.0).reshape(2, 3)
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_pad_vector_truncate_semantics(dtype):
+    v = torch.arange(6, dtype=dtype).reshape(2, 3)
     out = pad_vector(v, 2, truncate=True)
     assert out.shape == (2, 2) and torch.equal(out, v[:, :2])
+    assert out.dtype == v.dtype and out.device == v.device
     out = pad_vector(v, 5, truncate=True)
     assert out.shape == (2, 5) and torch.equal(out[:, :3], v) and not out[:, 3:].any()
-    assert pad_vector(v, 0, truncate=True).shape == (2, 0)
+    assert out.dtype == v.dtype and out.device == v.device
+    empty = pad_vector(v, 0, truncate=True)
+    assert empty.shape == (2, 0)
+    assert empty.dtype == v.dtype and empty.device == v.device
     assert pad_vector(v, 3, truncate=True) is v
 
 
@@ -147,6 +175,24 @@ def test_resize_with_pad_torch_centered(channels_last):
     else:
         assert out.shape == (2, 3, 64, 64)
         assert not out[:, :, :16].any() and not out[:, :, -16:].any()
+
+
+@pytest.mark.parametrize("channels_last", [True, False])
+@pytest.mark.parametrize(
+    "dtype,mode,value", [(torch.float32, "bilinear", 1.0), (torch.uint8, "nearest", 255)]
+)
+def test_resize_with_pad_torch_unbatched_preserves_pixels_and_layout(channels_last, dtype, mode, value):
+    image = torch.full((3, 4, 8), value, dtype=dtype)
+    expected = torch.zeros(1, 3, 4, 4, dtype=dtype)
+    # 4x8 -> 2x4, with one row of black padding above and below.
+    expected[:, :, 1:3] = value
+    if channels_last:
+        image = image.permute(1, 2, 0)
+        expected = expected.permute(0, 2, 3, 1)
+
+    resized = resize_with_pad_torch(image, height=4, width=4, mode=mode)
+
+    torch.testing.assert_close(resized, expected)
 
 
 def test_resize_with_pad_torch_uint8_roundtrip():
