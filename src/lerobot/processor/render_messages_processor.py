@@ -24,25 +24,28 @@ import numpy as np
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.configs.recipe import TrainingRecipe, render_message_turns
 from lerobot.lerobot_types import EnvTransition, TransitionKey
-from lerobot.utils.constants import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT, QUERY_KIND, QUERY_TEXT
+from lerobot.utils.constants import (
+    LANGUAGE_EVENTS,
+    LANGUAGE_PERSISTENT,
+    MESSAGES_RENDERED,
+    QUERY_KIND,
+    QUERY_TEXT,
+)
 from lerobot.utils.utils import unwrap_scalar
 
-from .pipeline import ProcessorStep, ProcessorStepRegistry
+from .pipeline import ComplementaryDataProcessorStep, ProcessorStep, ProcessorStepRegistry
 
 
 @dataclass
-@ProcessorStepRegistry.register(name="render_messages_processor")
-class RenderMessagesStep(ProcessorStep):
-    """Render the semantic messages consumed by text-capable policies.
+@ProcessorStepRegistry.register(name="render_training_messages_processor")
+class RenderTrainingMessagesStep(ProcessorStep):
+    """Render training annotations and keep observations/actions aligned when filtering samples.
 
-    Runtime requests become either a VQA user turn or the checkpoint recipe
-    prefix before its subtask target. During recipe training, raw language
-    columns become messages plus supervision sidecars. Existing messages pass
-    through unchanged when no raw training language is present.
+    This is a general ProcessorStep because sparse samples can be dropped from
+    the entire transition, not just from complementary data.
     """
 
     recipe: TrainingRecipe | None = None
-    render_training: bool = True
     dataset_ctx: Any | None = None
 
     def __post_init__(self) -> None:
@@ -52,28 +55,21 @@ class RenderMessagesStep(ProcessorStep):
     def get_config(self) -> dict[str, Any]:
         return {
             "recipe": asdict(self.recipe) if self.recipe is not None else None,
-            "render_training": self.render_training,
         }
 
     def __call__(self, transition: EnvTransition) -> EnvTransition | None:
-        """Render one runtime request or one batch of training annotations."""
+        """Render one sample or one batch of training annotations."""
         complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
         kind = complementary_data.get(QUERY_KIND)
         has_raw_language = LANGUAGE_PERSISTENT in complementary_data or LANGUAGE_EVENTS in complementary_data
 
         if kind is not None:
-            if has_raw_language:
-                raise ValueError(
-                    "Runtime query metadata cannot be combined with raw training language columns."
-                )
-            return self._render_generation_request(transition, complementary_data, kind)
+            raise ValueError("Runtime queries require RenderRuntimeMessagesStep, not the training renderer.")
 
-        if "messages" in complementary_data and not has_raw_language:
-            return transition
-        if not self.render_training:
+        if MESSAGES_RENDERED in complementary_data and not has_raw_language:
             return transition
         if self.recipe is None:
-            raise ValueError("Recipe-backed training requires a recipe in RenderMessagesStep.")
+            raise ValueError("Recipe-backed training requires a recipe in RenderTrainingMessagesStep.")
 
         persistent = complementary_data.get(LANGUAGE_PERSISTENT) or []
         events = complementary_data.get(LANGUAGE_EVENTS) or []
@@ -95,7 +91,7 @@ class RenderMessagesStep(ProcessorStep):
 
         timestamp = complementary_data.get("timestamp")
         if timestamp is None:
-            raise KeyError("RenderMessagesStep requires sample timestamp in complementary data.")
+            raise KeyError("RenderTrainingMessagesStep requires sample timestamp in complementary data.")
 
         sample_idx = complementary_data.get("index", 0)
         rendered = _render_sample(
@@ -122,39 +118,6 @@ class RenderMessagesStep(ProcessorStep):
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary_data
         return new_transition
 
-    def _render_generation_request(
-        self,
-        transition: EnvTransition,
-        complementary_data: dict[str, Any],
-        kind: str,
-    ) -> EnvTransition:
-        text = complementary_data.get(QUERY_TEXT)
-        if not isinstance(text, str):
-            raise TypeError(f"Text generation requires complementary data {QUERY_TEXT!r} to be a string.")
-
-        if kind == "vqa":
-            messages = [{"role": "user", "content": text}]
-        elif kind == "next_subtask":
-            if self.recipe is None:
-                raise ValueError(
-                    "Subtask generation requires a checkpoint recipe with an assistant target "
-                    "that supervises `${subtask}`."
-                )
-            bindings = dict.fromkeys(self.recipe.referenced_binding_names())
-            bindings.update(complementary_data)
-            bindings["task"] = text
-            messages = render_message_turns(self.recipe.prompt_turns("subtask"), bindings)["messages"]
-        else:
-            raise ValueError(f"Unsupported query kind: {kind!r}. Expected one of: 'vqa', 'next_subtask'.")
-
-        new_transition = transition.copy()
-        new_complementary_data = dict(complementary_data)
-        new_complementary_data.pop(QUERY_KIND)
-        new_complementary_data.pop(QUERY_TEXT)
-        new_complementary_data["messages"] = messages
-        new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary_data
-        return new_transition
-
     def _call_batch(
         self,
         transition: EnvTransition,
@@ -169,7 +132,7 @@ class RenderMessagesStep(ProcessorStep):
         """
         timestamp = complementary_data.get("timestamp")
         if timestamp is None:
-            raise KeyError("RenderMessagesStep requires sample timestamp in complementary data.")
+            raise KeyError("RenderTrainingMessagesStep requires sample timestamp in complementary data.")
 
         non_empty_batch_sizes = {len(batch) for batch in (persistent_batch, events_batch) if batch}
         if len(non_empty_batch_sizes) > 1:
@@ -198,7 +161,7 @@ class RenderMessagesStep(ProcessorStep):
                 if rendered is None:
                     continue
             keep_indices.append(i)
-            messages.append(rendered["messages"])
+            messages.append(rendered[MESSAGES_RENDERED])
             message_streams.append(rendered["message_streams"])
             target_message_indices.append(rendered["target_message_indices"])
 
@@ -216,7 +179,7 @@ class RenderMessagesStep(ProcessorStep):
         new_complementary_data = dict(new_transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
         new_complementary_data.pop(LANGUAGE_PERSISTENT, None)
         new_complementary_data.pop(LANGUAGE_EVENTS, None)
-        new_complementary_data["messages"] = messages
+        new_complementary_data[MESSAGES_RENDERED] = messages
         new_complementary_data["message_streams"] = message_streams
         new_complementary_data["target_message_indices"] = target_message_indices
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary_data
@@ -225,7 +188,61 @@ class RenderMessagesStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """Pass features through unchanged; rendering only touches complementary data."""
+        """Preserve feature shapes; filtering changes only the batch length."""
+        return features
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="render_runtime_messages_processor")
+class RenderRuntimeMessagesStep(ComplementaryDataProcessorStep):
+    """Render VQA and next-subtask prompts using the checkpoint's saved recipe.
+
+    Ordinary action inputs and already-rendered conversations pass through.
+    Chat templates, images and tokenization remain policy-owned.
+    """
+
+    recipe: TrainingRecipe | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.recipe, dict):
+            self.recipe = TrainingRecipe.from_dict(self.recipe)
+
+    def get_config(self) -> dict[str, Any]:
+        return {"recipe": asdict(self.recipe) if self.recipe is not None else None}
+
+    def complementary_data(self, complementary_data: dict[str, Any]) -> dict[str, Any]:
+        kind = complementary_data.get(QUERY_KIND)
+        if kind is None:
+            return complementary_data
+        if LANGUAGE_PERSISTENT in complementary_data or LANGUAGE_EVENTS in complementary_data:
+            raise ValueError("Runtime rendering cannot be combined with raw training language columns.")
+        text = complementary_data.get(QUERY_TEXT)
+        if not isinstance(text, str):
+            raise TypeError(f"Text generation requires complementary data {QUERY_TEXT!r} to be a string.")
+
+        if kind == "vqa":
+            messages = [{"role": "user", "content": text}]
+        elif kind == "next_subtask":
+            if self.recipe is None:
+                raise ValueError(
+                    "Subtask generation requires a checkpoint recipe with an assistant target "
+                    "that supervises `${subtask}`."
+                )
+            bindings = dict.fromkeys(self.recipe.referenced_binding_names())
+            bindings.update(complementary_data)
+            bindings["task"] = text
+            messages = render_message_turns(self.recipe.prompt_turns("subtask"), bindings)[MESSAGES_RENDERED]
+        else:
+            raise ValueError(f"Unsupported query kind: {kind!r}. Expected one of: 'vqa', 'next_subtask'.")
+
+        complementary_data.pop(QUERY_KIND)
+        complementary_data.pop(QUERY_TEXT)
+        complementary_data[MESSAGES_RENDERED] = messages
+        return complementary_data
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
 
 
@@ -297,7 +314,7 @@ def _fallback_low_level_render(task: Any) -> dict[str, Any] | None:
             if rendered is None:
                 missing_indices.append(index)
                 continue
-            messages.append(rendered["messages"])
+            messages.append(rendered[MESSAGES_RENDERED])
             message_streams.append(rendered["message_streams"])
             target_message_indices.append(rendered["target_message_indices"])
         if missing_indices:
@@ -308,14 +325,14 @@ def _fallback_low_level_render(task: Any) -> dict[str, Any] | None:
                 f"missing task at indices {missing_indices}."
             )
         return {
-            "messages": messages,
+            MESSAGES_RENDERED: messages,
             "message_streams": message_streams,
             "target_message_indices": target_message_indices,
         }
     if not isinstance(task, str) or not task:
         return None
     return {
-        "messages": [{"role": "user", "content": task}],
+        MESSAGES_RENDERED: [{"role": "user", "content": task}],
         "message_streams": ["low_level"],
         "target_message_indices": [],
     }

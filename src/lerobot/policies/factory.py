@@ -33,6 +33,8 @@ from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
+    RenderRuntimeMessagesStep,
+    RenderTrainingMessagesStep,
     batch_to_transition,
     policy_action_to_transition,
     transition_to_batch,
@@ -138,8 +140,8 @@ class ProcessorConfigKwargs(TypedDict, total=False):
         preprocessor_overrides: A dictionary of overrides for the preprocessor configuration.
         postprocessor_overrides: A dictionary of overrides for the postprocessor configuration.
         dataset_stats: Dataset statistics for normalization.
-        rebuild_pretrained_processors: Whether a training flow should rebuild processors from
-            the active policy config instead of loading the checkpoint's saved pipelines.
+        for_training: Preserve training message rendering, including when resuming saved processors.
+            Defaults to runtime rendering. Does not change whether pipelines are loaded or built.
     """
 
     preprocessor_config_filename: str | None
@@ -148,7 +150,7 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     postprocessor_overrides: dict[str, Any] | None
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
     dataset_meta: Any | None
-    rebuild_pretrained_processors: bool
+    for_training: bool
 
 
 def make_pre_post_processors(
@@ -181,24 +183,6 @@ def make_pre_post_processors(
     Raises:
         ValueError: If no processor factory exists for the given policy configuration type.
     """
-    if pretrained_path and kwargs.get("rebuild_pretrained_processors", False):
-        dataset_stats = kwargs.get("dataset_stats")
-        if not dataset_stats:
-            raise ValueError(
-                "Rebuilding pretrained processors requires non-empty training dataset statistics."
-            )
-        logging.info(
-            "Building processor pipelines from the active policy config instead of loading them from %s.",
-            pretrained_path,
-        )
-        return _make_processors_from_policy_config(
-            config=policy_cfg,
-            dataset_stats=dataset_stats,
-            dataset_meta=kwargs.get("dataset_meta"),
-            preprocessor_overrides=kwargs.get("preprocessor_overrides"),
-            postprocessor_overrides=kwargs.get("postprocessor_overrides"),
-        )
-
     if pretrained_path:
         if isinstance(policy_cfg, GrootConfig):
             from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
@@ -267,15 +251,35 @@ def make_pre_post_processors(
                 preprocessor,
                 postprocessor,
             )
+        _set_message_rendering_mode(preprocessor, for_training=kwargs.get("for_training", False))
         return preprocessor, postprocessor
 
     # Create new processors from the policy config, resolving the per-policy factory
     # function by naming convention (lazy import keeps optional dependencies optional).
-    return _make_processors_from_policy_config(
+    preprocessor, postprocessor = _make_processors_from_policy_config(
         config=policy_cfg,
         dataset_stats=kwargs.get("dataset_stats"),
         dataset_meta=kwargs.get("dataset_meta"),
+        preprocessor_overrides=kwargs.get("preprocessor_overrides"),
+        postprocessor_overrides=kwargs.get("postprocessor_overrides"),
     )
+    _set_message_rendering_mode(preprocessor, for_training=kwargs.get("for_training", False))
+    return preprocessor, postprocessor
+
+
+def _set_message_rendering_mode(preprocessor: PolicyProcessorPipeline, *, for_training: bool) -> None:
+    """Select the renderer without rebuilding checkpoint normalization or other steps.
+
+    The saved renderer's recipe is authoritative, including when the caller's
+    policy config has a different recipe. Both renderers have no tensor state.
+    """
+    if not for_training:
+        preprocessor.steps = [
+            RenderRuntimeMessagesStep(recipe=step.recipe)
+            if isinstance(step, RenderTrainingMessagesStep)
+            else step
+            for step in preprocessor.steps
+        ]
 
 
 def make_policy(
@@ -560,10 +564,17 @@ def _apply_processor_overrides(
     """Rebuild an in-memory pipeline with the standard validated override semantics."""
     if not overrides:
         return pipeline
-    return PolicyProcessorPipeline.from_config(
+    configured = PolicyProcessorPipeline.from_config(
         pipeline.get_config(),
         state_dict=pipeline.state_dict(),
         overrides=overrides,
         to_transition=pipeline.to_transition,
         to_output=pipeline.to_output,
     )
+
+    for original, rebuilt in zip(pipeline.steps, configured.steps, strict=True):
+        if isinstance(original, RenderTrainingMessagesStep) and isinstance(
+            rebuilt, RenderTrainingMessagesStep
+        ):
+            rebuilt.dataset_ctx = original.dataset_ctx
+    return configured

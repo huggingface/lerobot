@@ -45,7 +45,7 @@ def normalize_semantic_messages(
 ) -> list[list[Mapping[str, Any]]]:
     """Normalize one conversation or a batch of conversations and validate its shape."""
     if not isinstance(messages, Sequence) or isinstance(messages, str | bytes) or not messages:
-        raise ValueError(f"{policy_name} text generation requires preprocessed `messages`.")
+        raise ValueError(f"{policy_name} text generation requires preprocessed `messages_rendered`.")
 
     if isinstance(messages[0], Mapping):
         conversations = [list(messages)]

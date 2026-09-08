@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-"""Runtime behavior of the unified recipe/message processor."""
+"""Runtime behavior of the runtime message processor."""
 
 from dataclasses import asdict
 
@@ -8,7 +8,7 @@ import pytest
 
 from lerobot.configs.recipe import MessageTurn, TrainingRecipe, render_message_turns
 from lerobot.lerobot_types import TransitionKey
-from lerobot.processor import RenderMessagesStep
+from lerobot.processor import RenderRuntimeMessagesStep
 from lerobot.processor.converters import create_transition
 from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT
 
@@ -31,7 +31,7 @@ def _recipe() -> TrainingRecipe:
 
 def _render(kind: str, text: str, *, recipe: TrainingRecipe | None = None):
     transition = create_transition(complementary_data={QUERY_KIND: kind, QUERY_TEXT: text})
-    return RenderMessagesStep(recipe, render_training=False)(transition)
+    return RenderRuntimeMessagesStep(recipe)(transition)
 
 
 def test_vqa_preserves_caller_text_and_consumes_request_metadata():
@@ -40,7 +40,7 @@ def test_vqa_preserves_caller_text_and_consumes_request_metadata():
     output = _render("vqa", text)
     data = output[TransitionKey.COMPLEMENTARY_DATA]
 
-    assert data["messages"] == [{"role": "user", "content": text}]
+    assert data["messages_rendered"] == [{"role": "user", "content": text}]
     assert QUERY_KIND not in data
     assert QUERY_TEXT not in data
 
@@ -50,9 +50,11 @@ def test_next_subtask_uses_the_training_recipe_prefix():
     training = render_message_turns(
         recipe.messages or [],
         {"task": "tidy", "subtask": "pick up cup"},
-    )["messages"]
+    )["messages_rendered"]
 
-    inference = _render("next_subtask", "tidy", recipe=recipe)[TransitionKey.COMPLEMENTARY_DATA]["messages"]
+    inference = _render("next_subtask", "tidy", recipe=recipe)[TransitionKey.COMPLEMENTARY_DATA][
+        "messages_rendered"
+    ]
 
     assert inference == training[:-1]
     assert training[-1] == {"role": "assistant", "content": "pick up cup"}
@@ -81,21 +83,21 @@ def test_next_subtask_tolerates_optional_runtime_bindings_that_are_absent():
 
     data = _render("next_subtask", "tidy", recipe=recipe)[TransitionKey.COMPLEMENTARY_DATA]
 
-    assert data["messages"] == [
+    assert data["messages_rendered"] == [
         {"role": "system", "content": "Memory: "},
         {"role": "user", "content": "Goal: tidy"},
     ]
 
 
 def test_ordinary_action_inputs_and_existing_messages_pass_through():
-    step = RenderMessagesStep(_recipe(), render_training=False)
+    step = RenderRuntimeMessagesStep(_recipe())
     action_transition = create_transition(complementary_data={"task": "pick up cup"})
     messages_transition = create_transition(
-        complementary_data={"messages": [{"role": "user", "content": "already rendered"}]}
+        complementary_data={"messages_rendered": [{"role": "user", "content": "already rendered"}]}
     )
 
-    assert step(action_transition) is action_transition
-    assert step(messages_transition) is messages_transition
+    assert step(action_transition) == action_transition
+    assert step(messages_transition) == messages_transition
 
 
 def test_runtime_rendering_is_stateless_and_does_not_mutate_inputs():
@@ -105,7 +107,7 @@ def test_runtime_rendering_is_stateless_and_does_not_mutate_inputs():
         complementary_data={QUERY_KIND: "next_subtask", QUERY_TEXT: "tidy", "task": "old task"}
     )
 
-    output = RenderMessagesStep(recipe, render_training=False)(transition)
+    output = RenderRuntimeMessagesStep(recipe)(transition)
 
     assert asdict(recipe) == original_recipe
     assert transition[TransitionKey.COMPLEMENTARY_DATA]["task"] == "old task"
@@ -118,7 +120,7 @@ def test_runtime_requests_validate_kind_text_and_recipe():
     with pytest.raises(ValueError, match="Unsupported query kind"):
         _render("caption", "describe this")
     with pytest.raises(TypeError, match="query_text"):
-        RenderMessagesStep(render_training=False)(
+        RenderRuntimeMessagesStep()(
             create_transition(complementary_data={QUERY_KIND: "vqa", QUERY_TEXT: 123})
         )
 
@@ -129,4 +131,41 @@ def test_runtime_query_cannot_mix_with_raw_training_language():
     )
 
     with pytest.raises(ValueError, match="cannot be combined"):
-        RenderMessagesStep(render_training=False)(transition)
+        RenderRuntimeMessagesStep()(transition)
+
+
+def test_runtime_renderer_preserves_observations_and_actions():
+    from lerobot.processor import ComplementaryDataProcessorStep
+
+    observation = {"observation.state": object()}
+    action = object()
+    transition = create_transition(
+        observation=observation,
+        action=action,
+        complementary_data={QUERY_KIND: "vqa", QUERY_TEXT: "what?"},
+    )
+    step = RenderRuntimeMessagesStep()
+    assert isinstance(step, ComplementaryDataProcessorStep)
+    output = step(transition)
+    assert output[TransitionKey.OBSERVATION] is observation
+    assert output[TransitionKey.ACTION] is action
+    assert transition[TransitionKey.COMPLEMENTARY_DATA] == {QUERY_KIND: "vqa", QUERY_TEXT: "what?"}
+
+
+def test_rendered_messages_survive_conversion_and_batching():
+    from lerobot.processor import PolicyProcessorPipeline
+    from lerobot.processor.batch_processor import AddBatchDimensionComplementaryDataStep
+    from lerobot.processor.converters import batch_to_transition, transition_to_batch
+
+    messages = [{"role": "user", "content": "already rendered"}]
+    batch = {"messages_rendered": messages, "message_streams": ["low_level"], "target_message_indices": []}
+    round_trip = transition_to_batch(batch_to_transition(batch))
+    assert {key: round_trip[key] for key in batch} == batch
+    pipeline = PolicyProcessorPipeline(
+        steps=[RenderRuntimeMessagesStep(), AddBatchDimensionComplementaryDataStep()]
+    )
+    result = pipeline(batch)
+    assert result["messages_rendered"] == [messages]
+    assert result["message_streams"] == [["low_level"]]
+    assert result["target_message_indices"] == [[]]
+    assert "messages" not in result

@@ -248,7 +248,7 @@ def test_render_message_turns_substitutes_without_dataset_dependencies():
     rendered = render_message_turns(turns, {"task": "tidy", "subtask": "pick up cup"})
 
     assert rendered == {
-        "messages": [
+        "messages_rendered": [
             {"role": "user", "content": "Goal: tidy"},
             {"role": "assistant", "content": "pick up cup"},
         ],

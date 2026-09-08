@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, get_args
 
+from lerobot.utils.constants import MESSAGES_RENDERED
+
 MessageRole = Literal["user", "assistant", "system", "tool"]
 MessageStream = Literal["high_level", "low_level"]
 RecipeRoute = Literal["vqa"]
@@ -290,7 +292,7 @@ def render_message_turns(
             target_indices.append(message_index)
 
     return {
-        "messages": messages,
+        MESSAGES_RENDERED: messages,
         "message_streams": streams,
         "target_message_indices": target_indices,
     }

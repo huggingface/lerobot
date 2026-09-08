@@ -201,26 +201,47 @@ def make_my_policy_pre_post_processors(
 
 ### Text-capable policies
 
-A policy with a language head uses the same input processor for training,
-action inference, and text generation. Put `RenderMessagesStep` before the
-policy-native chat template and tokenizer:
+Language policies share recipe rendering between two processor steps:
+
+- `RenderTrainingMessagesStep` resolves annotated samples and emits
+  `messages_rendered`, `message_streams`, and `target_message_indices`. It remains
+  a general `ProcessorStep` because dropping sparse samples also filters their
+  observations and actions.
+- `RenderRuntimeMessagesStep` is a `ComplementaryDataProcessorStep`. It renders
+  text-generation requests and leaves ordinary action inputs unchanged.
 
 The policy config exposes `use_language_recipe: bool`, `recipe_path: str | None`,
-and the resolved `recipe: TrainingRecipe | None`. These fields are the opt-in
-contract used by the shared training path when it rebuilds a pretrained
-checkpoint's processors for language fine-tuning.
+and the resolved `recipe: TrainingRecipe | None`. Serialize the resolved recipe
+in the config and processor so deployment does not depend on a local YAML path.
+
+Put the renderer before policy-native chat formatting and tokenization:
 
 ```python
 input_steps = [
-    RenderMessagesStep(config.recipe, render_training=config.use_language_recipe),
+    (RenderTrainingMessagesStep(config.recipe)
+     if config.use_language_recipe else RenderRuntimeMessagesStep(config.recipe)),
     # observation transforms
     # policy-native roles, image placement, chat template, and tokenization
     # device placement
 ]
 ```
 
-The interactive rollout runtime adds `query_kind` and `query_text` to an
-observation before running this pipeline. `RenderMessagesStep` supports:
+`make_pre_post_processors(..., for_training=True)` preserves the training
+renderer chosen by the policy factory; the default replaces training renderers
+with runtime renderers. Policies with recipe training disabled retain their
+runtime-only step. When loading a checkpoint, the factory
+changes only the renderer and keeps its saved recipe and the other saved steps,
+including normalization statistics. Resume passes `for_training=True`.
+Fresh training and fine-tuning build processors from the active config and
+training dataset statistics; only resume and inference load saved pipelines.
+Fresh factories derive normalization and relative-action settings themselves,
+and receive device and observation-renaming overrides from the training script.
+
+`messages_rendered` contains recipe-expanded semantic messages, before native
+chat formatting or tokenization. The training sidecars index this same list.
+Message helpers live in `lerobot.utils.language`.
+
+The interactive rollout adds `query_kind` and `query_text`. Runtime rendering supports:
 
 - `vqa`: preserve the caller's question as a user message.
 - `next_subtask`: render the checkpoint recipe up to, but not including, the

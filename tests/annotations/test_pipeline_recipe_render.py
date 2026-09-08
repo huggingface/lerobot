@@ -164,7 +164,7 @@ def test_canonical_recipe_renders_nonempty_from_pipeline_output(
         )
         if result is None:
             continue
-        if result["messages"]:
+        if result["messages_rendered"]:
             rendered_any = True
             assert result["target_message_indices"]
             break

@@ -53,6 +53,7 @@ QUERY_TEXT = "query_text"
 # processors do not need to import the optional datasets/pyarrow stack.
 LANGUAGE_PERSISTENT = "language_persistent"
 LANGUAGE_EVENTS = "language_events"
+MESSAGES_RENDERED = "messages_rendered"
 
 ROBOTS = "robots"
 TELEOPERATORS = "teleoperators"

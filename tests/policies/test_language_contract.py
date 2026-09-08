@@ -4,7 +4,7 @@
 
 import pytest
 
-from lerobot.policies.language import (
+from lerobot.utils.language import (
     join_semantic_message_text,
     last_semantic_message_text,
     normalize_semantic_messages,

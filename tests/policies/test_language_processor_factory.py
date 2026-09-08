@@ -18,7 +18,7 @@ from lerobot.processor import (
 
 
 def test_language_finetuning_rebuilds_processors_from_active_config(monkeypatch):
-    expected = (object(), object())
+    expected = (SimpleNamespace(steps=[]), SimpleNamespace(steps=[]))
     calls = []
 
     def build(**kwargs):
@@ -33,14 +33,14 @@ def test_language_finetuning_rebuilds_processors_from_active_config(monkeypatch)
 
     result = factory.make_pre_post_processors(
         config,
-        pretrained_path="old-checkpoint",
+        pretrained_path=None,
         dataset_stats=stats,
         preprocessor_overrides=preprocessor_overrides,
         postprocessor_overrides=postprocessor_overrides,
-        rebuild_pretrained_processors=True,
+        for_training=True,
     )
 
-    assert result is expected
+    assert result == expected
     assert calls == [
         {
             "config": config,
@@ -114,11 +114,129 @@ def test_language_rollout_loads_checkpoint_processors_even_when_dataset_stats_ar
     rebuild.assert_not_called()
 
 
-def test_rebuilding_pretrained_processors_requires_training_stats():
-    with pytest.raises(ValueError, match="non-empty training dataset statistics"):
-        factory.make_pre_post_processors(
-            SimpleNamespace(),
-            pretrained_path="checkpoint",
-            dataset_stats={},
-            rebuild_pretrained_processors=True,
-        )
+def _act_config():
+    from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+    from lerobot.policies.act.configuration_act import ACTConfig
+
+    return ACTConfig(
+        device="cpu",
+        input_features={"observation.state": PolicyFeature(type=FeatureType.STATE, shape=(1,))},
+        output_features={"action": PolicyFeature(type=FeatureType.ACTION, shape=(1,))},
+        normalization_mapping={"STATE": NormalizationMode.MEAN_STD, "ACTION": NormalizationMode.MEAN_STD},
+    )
+
+
+def _stats(mean):
+    return {
+        key: {"mean": torch.tensor([mean]), "std": torch.tensor([2.0])}
+        for key in ("observation.state", "action")
+    }
+
+
+@pytest.mark.parametrize("resume", [False, True])
+def test_training_entrypoint_builds_config_or_restores_saved_stats(tmp_path, resume):
+    from lerobot.scripts.lerobot_train import _make_training_processors
+
+    config = _act_config()
+    pre, post = factory.make_pre_post_processors(config, dataset_stats=_stats(10.0))
+    pre.save_pretrained(tmp_path)
+    post.save_pretrained(tmp_path)
+    config.pretrained_path = str(tmp_path)
+    cfg = SimpleNamespace(
+        trainable_config=config, policy=config, resume=resume, rename_map={}, is_reward_model_training=False
+    )
+    pre, post = _make_training_processors(
+        cfg, SimpleNamespace(config=config), SimpleNamespace(stats=_stats(20.0)), torch.device("cpu")
+    )
+    result = pre({"observation.state": torch.tensor([[22.0]])})
+    torch.testing.assert_close(result["observation.state"], torch.tensor([[6.0 if resume else 1.0]]))
+    torch.testing.assert_close(post(torch.tensor([[1.0]])), torch.tensor([[12.0 if resume else 22.0]]))
+
+
+@pytest.mark.parametrize("for_training", [False, True])
+def test_checkpoint_renderer_uses_saved_recipe_and_stats(tmp_path, for_training):
+    from lerobot.configs.recipe import MessageTurn, TrainingRecipe
+    from lerobot.processor import RenderRuntimeMessagesStep, RenderTrainingMessagesStep
+
+    recipe = TrainingRecipe(
+        messages=[
+            MessageTurn(role="user", content="Saved goal: ${task}", stream="high_level"),
+            MessageTurn(role="assistant", content="${subtask}", stream="high_level", target=True),
+        ]
+    )
+    config = _act_config()
+    pre, post = factory.make_pre_post_processors(config, dataset_stats=_stats(10.0))
+    pre.steps = [RenderTrainingMessagesStep(recipe), *pre.steps]
+    pre.save_pretrained(tmp_path)
+    post.save_pretrained(tmp_path)
+    # A runtime config must never replace the recipe stored with the processors.
+    config.recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="WRONG", stream="low_level")])
+    loaded, _ = factory.make_pre_post_processors(
+        config, pretrained_path=str(tmp_path), for_training=for_training, dataset_stats=_stats(99.0)
+    )
+    assert isinstance(
+        loaded.steps[0], RenderTrainingMessagesStep if for_training else RenderRuntimeMessagesStep
+    )
+    assert loaded.steps[0].recipe == recipe
+    batch = {"observation.state": torch.tensor([[12.0]])}
+    if for_training:
+        batch["task"] = "tidy"
+    else:
+        batch.update(query_kind="next_subtask", query_text="tidy")
+    result = loaded(batch)
+    torch.testing.assert_close(result["observation.state"], torch.tensor([[1.0]]))
+    assert result["messages_rendered"] == [
+        [{"role": "user", "content": "tidy" if for_training else "Saved goal: tidy"}]
+    ]
+    assert "messages" not in result
+    if not for_training:
+        assert "target_message_indices" not in result
+
+
+def test_fresh_overrides_preserve_nonserialized_training_context():
+    from lerobot.processor import RenderTrainingMessagesStep
+
+    context = object()
+    pipeline = PolicyProcessorPipeline(
+        steps=[RenderTrainingMessagesStep(dataset_ctx=context), DeviceProcessorStep(device="cpu")]
+    )
+    configured = factory._apply_processor_overrides(pipeline, {"device_processor": {"device": "cpu"}})
+    assert configured.steps[0].dataset_ctx is context
+
+
+def test_finetuning_preserves_statistics_adapted_by_policy_factory(monkeypatch):
+    from lerobot.policies.act import processor_act
+    from lerobot.scripts.lerobot_train import _make_training_processors
+
+    original_factory = processor_act.make_act_pre_post_processors
+
+    def adapted_factory(config, dataset_stats):
+        # Model a policy-specific normalization transform with real processor state.
+        adapted = {key: {**stats, "mean": stats["mean"] + 10.0} for key, stats in dataset_stats.items()}
+        return original_factory(config, adapted)
+
+    monkeypatch.setattr(processor_act, "make_act_pre_post_processors", adapted_factory)
+    config = _act_config()
+    config.pretrained_path = "unused-model-weights-path"
+    cfg = SimpleNamespace(
+        trainable_config=config, policy=config, resume=False, rename_map={}, is_reward_model_training=False
+    )
+    pre, post = _make_training_processors(
+        cfg, SimpleNamespace(config=config), SimpleNamespace(stats=_stats(20.0)), torch.device("cpu")
+    )
+    torch.testing.assert_close(
+        pre({"observation.state": torch.tensor([[32.0]])})["observation.state"], torch.tensor([[1.0]])
+    )
+    torch.testing.assert_close(post(torch.tensor([[1.0]])), torch.tensor([[32.0]]))
+
+
+def test_disabled_recipe_training_retains_runtime_only_renderer():
+    from lerobot.configs.recipe import MessageTurn, TrainingRecipe
+    from lerobot.processor import RenderRuntimeMessagesStep
+
+    recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="${task}", stream="low_level")])
+    step = RenderRuntimeMessagesStep(recipe)
+    pre = PolicyProcessorPipeline(steps=[step])
+    factory._set_message_rendering_mode(pre, for_training=True)
+    assert pre.steps[0] is step
+    assert "messages_rendered" not in pre({"task": "tidy", "language_events": []})

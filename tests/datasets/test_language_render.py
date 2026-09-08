@@ -121,9 +121,9 @@ def test_substitution_if_present_multimodal_and_tool_calls():
         task="clean kitchen",
     )
 
-    assert rendered["messages"][0]["content"][1]["text"] == "clean kitchen: skip wiping"
-    assert rendered["messages"][1]["content"] == "plan 0"
-    assert rendered["messages"][1]["tool_calls"][0]["function"]["name"] == "say"
+    assert rendered["messages_rendered"][0]["content"][1]["text"] == "clean kitchen: skip wiping"
+    assert rendered["messages_rendered"][1]["content"] == "plan 0"
+    assert rendered["messages_rendered"][1]["tool_calls"][0]["function"]["name"] == "say"
     assert rendered["message_streams"] == ["high_level", "high_level"]
     assert rendered["target_message_indices"] == [1]
 
@@ -222,7 +222,7 @@ def test_unreferenced_default_bindings_are_not_resolved():
         task="tidy the table",
     )
     assert rendered is not None
-    assert rendered["messages"][1]["content"] == "subtask 1"
+    assert rendered["messages_rendered"][1]["content"] == "subtask 1"
 
 
 def test_emitted_at_raises_on_ambiguous_per_camera_vqa():
@@ -277,9 +277,9 @@ def test_per_camera_blend_renders_both_views(camera, expected_query, expected_an
         sample_idx=0,
     )
 
-    assert rendered["messages"][0]["content"][0]["feature"] == camera
-    assert rendered["messages"][0]["content"][1]["text"] == expected_query
-    assert rendered["messages"][1]["content"] == expected_answer
+    assert rendered["messages_rendered"][0]["content"][0]["feature"] == camera
+    assert rendered["messages_rendered"][0]["content"][1]["text"] == expected_query
+    assert rendered["messages_rendered"][1]["content"] == expected_answer
 
 
 def test_resolve_task_picks_rephrasing_deterministically_per_sample():
@@ -307,7 +307,7 @@ def test_resolve_task_picks_rephrasing_deterministically_per_sample():
             sample_idx=sample_idx,
             dataset_ctx={"task": "canonical kitchen task"},
         )
-        seen.add(rendered["messages"][0]["content"])
+        seen.add(rendered["messages_rendered"][0]["content"])
     # Every rephrasing should be reachable across enough samples.
     assert seen == {r["content"] for r in rephrasings}
     # Same sample_idx → same pick (determinism).
@@ -327,7 +327,7 @@ def test_resolve_task_picks_rephrasing_deterministically_per_sample():
         sample_idx=42,
         dataset_ctx={"task": "canonical"},
     )
-    assert a["messages"][0]["content"] == b["messages"][0]["content"]
+    assert a["messages_rendered"][0]["content"] == b["messages_rendered"][0]["content"]
 
 
 def test_resolve_task_falls_back_to_canonical_without_rephrasings():
@@ -345,7 +345,7 @@ def test_resolve_task_falls_back_to_canonical_without_rephrasings():
         sample_idx=0,
         dataset_ctx={"task": "clean the kitchen"},
     )
-    assert rendered["messages"][0]["content"] == "clean the kitchen"
+    assert rendered["messages_rendered"][0]["content"] == "clean the kitchen"
 
 
 def test_resolve_task_explicit_override_beats_rephrasings():
@@ -368,7 +368,7 @@ def test_resolve_task_explicit_override_beats_rephrasings():
         task="explicit override wins",
         dataset_ctx={"task": "canonical"},
     )
-    assert rendered["messages"][0]["content"] == "explicit override wins"
+    assert rendered["messages_rendered"][0]["content"] == "explicit override wins"
 
 
 def test_flow_only_low_level_recipe_renders_without_target():
@@ -398,7 +398,7 @@ def test_flow_only_low_level_recipe_renders_without_target():
     )
 
     assert rendered is not None
-    assert rendered["messages"] == [{"role": "user", "content": "subtask 0"}]
+    assert rendered["messages_rendered"] == [{"role": "user", "content": "subtask 0"}]
     assert rendered["message_streams"] == ["low_level"]
     assert rendered["target_message_indices"] == []
 
@@ -444,14 +444,14 @@ def test_vqa_frame_is_consumed_over_the_weighted_blend():
         rendered = render_sample(
             recipe=recipe, persistent=PERSISTENT, events=EVENTS_AT_1, t=1.0, sample_idx=sample_idx, task="x"
         )
-        assert rendered["messages"][-1]["content"] == '{"count": 2}', sample_idx
+        assert rendered["messages_rendered"][-1]["content"] == '{"count": 2}', sample_idx
     # A frame WITHOUT a VQA event selects only from the ordinary components;
     # the routed VQA weight is not spent on action-only fallback samples.
     for sample_idx in range(20):
         rendered = render_sample(
             recipe=recipe, persistent=PERSISTENT, events=[], t=1.0, sample_idx=sample_idx, task="x"
         )
-        assert rendered["messages"][-1]["content"] == "a subtask", sample_idx
+        assert rendered["messages_rendered"][-1]["content"] == "a subtask", sample_idx
 
 
 def test_emitted_at_persistent_tolerates_small_timestamp_drift():
@@ -523,6 +523,6 @@ def test_low_level_branch_renders_active_subtask():
         task="clean kitchen",
     )
 
-    assert rendered["messages"][-1] == {"role": "assistant", "content": "subtask 0"}
+    assert rendered["messages_rendered"][-1] == {"role": "assistant", "content": "subtask 0"}
     assert rendered["message_streams"][-1] == "low_level"
     assert rendered["target_message_indices"] == [1]

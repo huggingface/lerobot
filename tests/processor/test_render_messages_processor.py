@@ -11,7 +11,7 @@ from lerobot.configs.recipe import MessageTurn, TrainingRecipe  # noqa: E402
 from lerobot.lerobot_types import TransitionKey  # noqa: E402
 from lerobot.processor.converters import create_transition  # noqa: E402
 from lerobot.processor.render_messages_processor import (  # noqa: E402
-    RenderMessagesStep,
+    RenderTrainingMessagesStep,
     _fallback_low_level_render,
     _select_batch_indices,
 )
@@ -28,10 +28,10 @@ def test_render_messages_step_renders_task_fallback_without_language_columns():
     )
     transition = create_transition(complementary_data={"task": "do it"})
 
-    out = RenderMessagesStep(recipe)(transition)
+    out = RenderTrainingMessagesStep(recipe)(transition)
     data = out[TransitionKey.COMPLEMENTARY_DATA]
 
-    assert data["messages"] == [{"role": "user", "content": "do it"}]
+    assert data["messages_rendered"] == [{"role": "user", "content": "do it"}]
     assert data["message_streams"] == ["low_level"]
     assert data["target_message_indices"] == []
     assert data["task"] == "do it"
@@ -46,15 +46,7 @@ def test_render_messages_step_noops_without_language_columns_or_task():
     )
     transition = create_transition(complementary_data={})
 
-    assert RenderMessagesStep(recipe)(transition) == transition
-
-
-def test_render_messages_step_can_disable_training_fallback():
-    recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="${task}", stream="low_level")])
-    transition = create_transition(complementary_data={"task": "pick up the cup"})
-
-    assert RenderMessagesStep(recipe, render_training=False)(transition) is transition
-    assert RenderMessagesStep(recipe, render_training=False).get_config()["render_training"] is False
+    assert RenderTrainingMessagesStep(recipe)(transition) == transition
 
 
 def test_raw_language_remains_authoritative_when_messages_are_already_present():
@@ -68,7 +60,7 @@ def test_raw_language_remains_authoritative_when_messages_are_already_present():
         complementary_data={
             "task": "pick the cube",
             "timestamp": 0.0,
-            "messages": [{"role": "user", "content": "stale"}],
+            "messages_rendered": [{"role": "user", "content": "stale"}],
             "language_persistent": [
                 {
                     "role": "assistant",
@@ -81,10 +73,10 @@ def test_raw_language_remains_authoritative_when_messages_are_already_present():
         }
     )
 
-    output = RenderMessagesStep(recipe)(transition)
+    output = RenderTrainingMessagesStep(recipe)(transition)
     data = output[TransitionKey.COMPLEMENTARY_DATA]
 
-    assert data["messages"] == [
+    assert data["messages_rendered"] == [
         {"role": "user", "content": "pick the cube"},
         {"role": "assistant", "content": "reach carefully"},
     ]
@@ -118,12 +110,12 @@ def test_render_messages_step_renders_and_drops_raw_language():
         }
     )
 
-    out = RenderMessagesStep(recipe)(transition)
+    out = RenderTrainingMessagesStep(recipe)(transition)
     data = out[TransitionKey.COMPLEMENTARY_DATA]
 
     assert "language_persistent" not in data
     assert "language_events" not in data
-    assert data["messages"][-1]["content"] == "reach carefully"
+    assert data["messages_rendered"][-1]["content"] == "reach carefully"
     assert data["message_streams"] == ["high_level", "low_level"]
     assert data["target_message_indices"] == [1]
 
@@ -150,10 +142,10 @@ def test_render_messages_step_falls_back_to_low_level_task_when_recipe_misses():
         }
     )
 
-    out = RenderMessagesStep(recipe)(transition)
+    out = RenderTrainingMessagesStep(recipe)(transition)
     data = out[TransitionKey.COMPLEMENTARY_DATA]
 
-    assert data["messages"] == [{"role": "user", "content": "pick the cube"}]
+    assert data["messages_rendered"] == [{"role": "user", "content": "pick the cube"}]
     assert data["message_streams"] == ["low_level"]
     assert data["target_message_indices"] == []
 
@@ -184,10 +176,10 @@ def test_render_messages_step_falls_back_per_sample_in_batched_language():
         },
     )
 
-    out = RenderMessagesStep(recipe)(transition)
+    out = RenderTrainingMessagesStep(recipe)(transition)
     data = out[TransitionKey.COMPLEMENTARY_DATA]
 
-    assert data["messages"] == [
+    assert data["messages_rendered"] == [
         [{"role": "user", "content": "pick the cube"}],
         [{"role": "user", "content": "open the drawer"}],
     ]
@@ -216,7 +208,7 @@ def test_render_messages_step_rejects_mismatched_non_empty_language_batches():
     )
 
     with pytest.raises(ValueError, match="must have equal lengths"):
-        RenderMessagesStep(recipe)(transition)
+        RenderTrainingMessagesStep(recipe)(transition)
 
 
 def test_render_messages_step_rejects_an_entirely_unrenderable_batch():
@@ -244,7 +236,7 @@ def test_render_messages_step_rejects_an_entirely_unrenderable_batch():
     )
 
     with pytest.raises(ValueError, match="produced no renderable samples"):
-        RenderMessagesStep(recipe)(transition)
+        RenderTrainingMessagesStep(recipe)(transition)
 
 
 def test_select_batch_indices_slices_numpy_action():
@@ -280,3 +272,39 @@ def test_select_batch_indices_rejects_misaligned_list():
 def test_fallback_low_level_render_rejects_partially_missing_task_batch():
     with pytest.raises(ValueError, match=r"missing task at indices \[1\]"):
         _fallback_low_level_render(["pick cube", None, "place cube"])
+
+
+def test_training_renderer_rejects_runtime_queries():
+    transition = create_transition(complementary_data={"query_kind": "vqa", "query_text": "what?"})
+    with pytest.raises(ValueError, match="require RenderRuntimeMessagesStep"):
+        RenderTrainingMessagesStep()(transition)
+
+
+def test_training_filter_keeps_messages_observations_and_actions_aligned():
+    recipe = TrainingRecipe(
+        messages=[
+            MessageTurn(
+                role="assistant", content="${subtask}", stream="high_level", target=True, if_present="subtask"
+            )
+        ]
+    )
+    transition = create_transition(
+        observation={"observation.state": torch.tensor([[10.0], [20.0]])},
+        action=torch.tensor([[1.0], [2.0]]),
+        complementary_data={
+            "language_persistent": [
+                [],
+                [{"role": "assistant", "content": "keep me", "style": "subtask", "timestamp": 0.0}],
+            ],
+            "timestamp": torch.tensor([0.0, 0.0]),
+            "task": [None, None],
+        },
+    )
+    output = RenderTrainingMessagesStep(recipe)(transition)
+    torch.testing.assert_close(output[TransitionKey.OBSERVATION]["observation.state"], torch.tensor([[20.0]]))
+    torch.testing.assert_close(output[TransitionKey.ACTION], torch.tensor([[2.0]]))
+    assert output[TransitionKey.COMPLEMENTARY_DATA]["messages_rendered"] == [
+        [{"role": "assistant", "content": "keep me"}]
+    ]
+    assert output[TransitionKey.COMPLEMENTARY_DATA]["target_message_indices"] == [[0]]
+    assert transition[TransitionKey.ACTION].shape[0] == 2
