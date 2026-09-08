@@ -169,3 +169,26 @@ def test_rendered_messages_survive_conversion_and_batching():
     assert result["message_streams"] == [["low_level"]]
     assert result["target_message_indices"] == [[]]
     assert "messages" not in result
+
+
+def test_same_pipeline_handles_training_then_text_and_action_inference():
+    import torch
+
+    from lerobot.processor import PolicyProcessorPipeline, RenderTrainingMessagesStep
+
+    pipeline = PolicyProcessorPipeline(
+        steps=[RenderRuntimeMessagesStep(_recipe()), RenderTrainingMessagesStep(_recipe())]
+    )
+    training = pipeline({"task": "tidy", "action": torch.zeros(1, 1)})
+    assert training["messages_rendered"] == [{"role": "user", "content": "tidy"}]
+    assert training["message_streams"] == ["low_level"]
+    inference = pipeline({"query_kind": "next_subtask", "query_text": "tidy"})
+    assert inference["messages_rendered"] == [
+        {"role": "system", "content": "Robot assistant"},
+        {"role": "user", "content": "Goal: tidy"},
+    ]
+    assert "target_message_indices" not in inference
+    assert "message_streams" not in inference
+    action_input = pipeline({"task": "tidy"})
+    assert "messages_rendered" not in action_input
+    assert action_input["task"] == "tidy"

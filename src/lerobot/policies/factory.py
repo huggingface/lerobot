@@ -33,8 +33,6 @@ from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
-    RenderRuntimeMessagesStep,
-    RenderTrainingMessagesStep,
     batch_to_transition,
     policy_action_to_transition,
     transition_to_batch,
@@ -75,7 +73,7 @@ def _reconnect_relative_absolute_steps(
     if relative_step is None:
         return
     for step in postprocessor.steps:
-        if isinstance(step, AbsoluteActionsProcessorStep):
+        if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
             step.relative_step = relative_step
 
 
@@ -140,8 +138,6 @@ class ProcessorConfigKwargs(TypedDict, total=False):
         preprocessor_overrides: A dictionary of overrides for the preprocessor configuration.
         postprocessor_overrides: A dictionary of overrides for the postprocessor configuration.
         dataset_stats: Dataset statistics for normalization.
-        for_training: Preserve training message rendering, including when resuming saved processors.
-            Defaults to runtime rendering. Does not change whether pipelines are loaded or built.
     """
 
     preprocessor_config_filename: str | None
@@ -150,7 +146,6 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     postprocessor_overrides: dict[str, Any] | None
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
     dataset_meta: Any | None
-    for_training: bool
 
 
 def make_pre_post_processors(
@@ -251,35 +246,15 @@ def make_pre_post_processors(
                 preprocessor,
                 postprocessor,
             )
-        _set_message_rendering_mode(preprocessor, for_training=kwargs.get("for_training", False))
         return preprocessor, postprocessor
 
     # Create new processors from the policy config, resolving the per-policy factory
     # function by naming convention (lazy import keeps optional dependencies optional).
-    preprocessor, postprocessor = _make_processors_from_policy_config(
+    return _make_processors_from_policy_config(
         config=policy_cfg,
         dataset_stats=kwargs.get("dataset_stats"),
         dataset_meta=kwargs.get("dataset_meta"),
-        preprocessor_overrides=kwargs.get("preprocessor_overrides"),
-        postprocessor_overrides=kwargs.get("postprocessor_overrides"),
     )
-    _set_message_rendering_mode(preprocessor, for_training=kwargs.get("for_training", False))
-    return preprocessor, postprocessor
-
-
-def _set_message_rendering_mode(preprocessor: PolicyProcessorPipeline, *, for_training: bool) -> None:
-    """Select the renderer without rebuilding checkpoint normalization or other steps.
-
-    The saved renderer's recipe is authoritative, including when the caller's
-    policy config has a different recipe. Both renderers have no tensor state.
-    """
-    if not for_training:
-        preprocessor.steps = [
-            RenderRuntimeMessagesStep(recipe=step.recipe)
-            if isinstance(step, RenderTrainingMessagesStep)
-            else step
-            for step in preprocessor.steps
-        ]
 
 
 def make_policy(
@@ -508,8 +483,6 @@ def _make_processors_from_policy_config(
     config: PreTrainedConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
     dataset_meta: Any | None = None,
-    preprocessor_overrides: dict[str, Any] | None = None,
-    postprocessor_overrides: dict[str, Any] | None = None,
 ) -> tuple[Any, Any]:
     """Create pre- and post-processors from a policy configuration using dynamic imports.
 
@@ -521,8 +494,6 @@ def _make_processors_from_policy_config(
         dataset_stats: Dataset statistics for normalization.
         dataset_meta: Dataset metadata, forwarded only to factories that declare a
             ``dataset_meta`` parameter (e.g. groot, molmoact2).
-        preprocessor_overrides: Runtime overrides applied to the newly built input pipeline.
-        postprocessor_overrides: Runtime overrides applied to the newly built output pipeline.
     Returns:
         A tuple containing the input (pre-processor) and output (post-processor) pipelines.
     """
@@ -550,31 +521,4 @@ def _make_processors_from_policy_config(
     call_kwargs: dict[str, Any] = {"dataset_stats": dataset_stats}
     if "dataset_meta" in inspect.signature(function).parameters:
         call_kwargs["dataset_meta"] = dataset_meta
-    preprocessor, postprocessor = function(config, **call_kwargs)
-    preprocessor = _apply_processor_overrides(preprocessor, preprocessor_overrides)
-    postprocessor = _apply_processor_overrides(postprocessor, postprocessor_overrides)
-    _reconnect_relative_absolute_steps(preprocessor, postprocessor)
-    return preprocessor, postprocessor
-
-
-def _apply_processor_overrides(
-    pipeline: PolicyProcessorPipeline,
-    overrides: dict[str, Any] | None,
-) -> PolicyProcessorPipeline:
-    """Rebuild an in-memory pipeline with the standard validated override semantics."""
-    if not overrides:
-        return pipeline
-    configured = PolicyProcessorPipeline.from_config(
-        pipeline.get_config(),
-        state_dict=pipeline.state_dict(),
-        overrides=overrides,
-        to_transition=pipeline.to_transition,
-        to_output=pipeline.to_output,
-    )
-
-    for original, rebuilt in zip(pipeline.steps, configured.steps, strict=True):
-        if isinstance(original, RenderTrainingMessagesStep) and isinstance(
-            rebuilt, RenderTrainingMessagesStep
-        ):
-            rebuilt.dataset_ctx = original.dataset_ctx
-    return configured
+    return function(config, **call_kwargs)

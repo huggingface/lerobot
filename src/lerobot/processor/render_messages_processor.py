@@ -43,6 +43,7 @@ class RenderTrainingMessagesStep(ProcessorStep):
 
     This is a general ProcessorStep because sparse samples can be dropped from
     the entire transition, not just from complementary data.
+    Runs only on raw annotations or action targets, and skips runtime queries.
     """
 
     recipe: TrainingRecipe | None = None
@@ -63,8 +64,12 @@ class RenderTrainingMessagesStep(ProcessorStep):
         kind = complementary_data.get(QUERY_KIND)
         has_raw_language = LANGUAGE_PERSISTENT in complementary_data or LANGUAGE_EVENTS in complementary_data
 
+        # Both renderers live in the same saved pipeline. Explicit text queries
+        # belong to the runtime renderer; ordinary observations have no targets.
         if kind is not None:
-            raise ValueError("Runtime queries require RenderRuntimeMessagesStep, not the training renderer.")
+            return transition
+        if not has_raw_language and transition.get(TransitionKey.ACTION) is None:
+            return transition
 
         if MESSAGES_RENDERED in complementary_data and not has_raw_language:
             return transition

@@ -214,28 +214,32 @@ The policy config exposes `use_language_recipe: bool`, `recipe_path: str | None`
 and the resolved `recipe: TrainingRecipe | None` (from `lerobot.language.recipe`). Serialize the resolved recipe
 in the config and processor so deployment does not depend on a local YAML path.
 
-Put the renderer before policy-native chat formatting and tokenization:
+Put both renderers before policy-native chat formatting and tokenization:
 
 ```python
-input_steps = [
-    (RenderTrainingMessagesStep(config.recipe)
-     if config.use_language_recipe else RenderRuntimeMessagesStep(config.recipe)),
+input_steps = [RenderRuntimeMessagesStep(config.recipe)]
+if config.use_language_recipe:
+    input_steps.append(RenderTrainingMessagesStep(config.recipe))
+input_steps += [
     # observation transforms
     # policy-native roles, image placement, chat template, and tokenization
     # device placement
 ]
 ```
 
-`make_pre_post_processors(..., for_training=True)` preserves the training
-renderer chosen by the policy factory; the default replaces training renderers
-with runtime renderers. Policies with recipe training disabled retain their
-runtime-only step. When loading a checkpoint, the factory
-changes only the renderer and keeps its saved recipe and the other saved steps,
-including normalization statistics. Resume passes `for_training=True`.
-Fresh training and fine-tuning build processors from the active config and
-training dataset statistics; only resume and inference load saved pipelines.
-Fresh factories derive normalization and relative-action settings themselves,
-and receive device and observation-renaming overrides from the training script.
+The same pipeline is saved and loaded for training and inference. Runtime
+rendering runs only for an explicit `query_kind`. Training rendering skips
+runtime queries and processes samples with raw annotations or action targets;
+ordinary observation-only inputs pass through. Annotated text-only training is
+supported without an action tensor. Training without annotations needs action
+targets to enable the task fallback.
+
+The shared factory only constructs or loads processors. Fresh training and
+fine-tuning construct them from the active config and dataset statistics;
+resume and inference load saved pipelines, including their recipe and statistics.
+Fresh factories derive normalization and relative-action settings themselves.
+The training script supplies the live device and retains the rename map without
+reconstructing processor steps.
 
 `messages_rendered` contains recipe-expanded semantic messages, before native
 chat formatting or tokenization. The training sidecars index this same list.

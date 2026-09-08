@@ -26,7 +26,7 @@ def test_render_messages_step_renders_task_fallback_without_language_columns():
             MessageTurn(role="assistant", content="${subtask}", stream="low_level", target=True),
         ]
     )
-    transition = create_transition(complementary_data={"task": "do it"})
+    transition = create_transition(action=torch.zeros(1), complementary_data={"task": "do it"})
 
     out = RenderTrainingMessagesStep(recipe)(transition)
     data = out[TransitionKey.COMPLEMENTARY_DATA]
@@ -274,10 +274,9 @@ def test_fallback_low_level_render_rejects_partially_missing_task_batch():
         _fallback_low_level_render(["pick cube", None, "place cube"])
 
 
-def test_training_renderer_rejects_runtime_queries():
+def test_training_renderer_skips_runtime_queries():
     transition = create_transition(complementary_data={"query_kind": "vqa", "query_text": "what?"})
-    with pytest.raises(ValueError, match="require RenderRuntimeMessagesStep"):
-        RenderTrainingMessagesStep()(transition)
+    assert RenderTrainingMessagesStep()(transition) is transition
 
 
 def test_training_filter_keeps_messages_observations_and_actions_aligned():
