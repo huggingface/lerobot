@@ -53,6 +53,12 @@ def _stats(mean):
     }
 
 
+@pytest.fixture
+def training_dependencies():
+    pytest.importorskip("datasets", reason="training setup requires lerobot[dataset]")
+    pytest.importorskip("accelerate", reason="training setup requires lerobot[training]")
+
+
 def _run_training_until_processors(monkeypatch, cfg, stats):
     """Exercise the real train entrypoint, stopping before optimizer/model training."""
     import inspect
@@ -105,7 +111,7 @@ def _run_training_until_processors(monkeypatch, cfg, stats):
 @pytest.mark.parametrize("recipe_mode", ["disabled", "builtin", "yaml"])
 @pytest.mark.parametrize("resume", [False, True])
 def test_training_entrypoint_only_rebuilds_for_language_finetuning(
-    tmp_path, resume, recipe_mode, monkeypatch
+    tmp_path, resume, recipe_mode, monkeypatch, training_dependencies
 ):
     config = _act_config()
     pre, post = factory.make_pre_post_processors(config, dataset_stats=_stats(10.0))
@@ -167,7 +173,7 @@ def test_checkpoint_renderer_uses_saved_recipe_and_stats(tmp_path, for_training)
         assert "target_message_indices" not in result
 
 
-def test_finetuning_preserves_statistics_adapted_by_policy_factory(monkeypatch):
+def test_finetuning_preserves_statistics_adapted_by_policy_factory(monkeypatch, training_dependencies):
     from lerobot.policies.act import processor_act
 
     original_factory = processor_act.make_act_pre_post_processors
@@ -202,7 +208,9 @@ def test_disabled_recipe_training_retains_runtime_only_renderer():
     assert "messages_rendered" not in pre({"task": "tidy", "language_events": []})
 
 
-def test_fresh_training_preserves_relative_action_links_and_batch_renaming(monkeypatch):
+def test_fresh_training_preserves_relative_action_links_and_batch_renaming(
+    monkeypatch, training_dependencies
+):
     from lerobot.policies.act import processor_act
     from lerobot.scripts.lerobot_train import _preprocess_dataset_batch
 
