@@ -5,7 +5,7 @@ from textwrap import dedent
 
 import pytest
 
-from lerobot.configs.recipe import (
+from lerobot.language.recipe import (
     MessageTurn,
     TrainingRecipe,
     language_recipe_enabled,

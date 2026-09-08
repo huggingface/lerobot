@@ -21,7 +21,7 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
-from lerobot.configs.recipe import DEFAULT_BINDINGS, TrainingRecipe, render_message_turns
+from lerobot.language.recipe import DEFAULT_BINDINGS, TrainingRecipe, render_message_turns
 from lerobot.utils.constants import LANGUAGE_PERSISTENT, MESSAGES_RENDERED
 from lerobot.utils.utils import unwrap_scalar
 

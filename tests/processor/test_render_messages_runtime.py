@@ -6,7 +6,7 @@ from dataclasses import asdict
 
 import pytest
 
-from lerobot.configs.recipe import MessageTurn, TrainingRecipe, render_message_turns
+from lerobot.language.recipe import MessageTurn, TrainingRecipe, render_message_turns
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import RenderRuntimeMessagesStep
 from lerobot.processor.converters import create_transition

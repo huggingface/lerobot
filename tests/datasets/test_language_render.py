@@ -4,7 +4,6 @@ import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
-from lerobot.configs.recipe import MessageTurn, TrainingRecipe  # noqa: E402
 from lerobot.datasets.language_render import (  # noqa: E402
     EMITTED_AT_TOLERANCE_S,
     active_at,
@@ -13,6 +12,7 @@ from lerobot.datasets.language_render import (  # noqa: E402
     nth_prev,
     render_sample,
 )
+from lerobot.language.recipe import MessageTurn, TrainingRecipe  # noqa: E402
 
 
 def persistent_row(role, content, style, timestamp, tool_calls=None, camera=None):

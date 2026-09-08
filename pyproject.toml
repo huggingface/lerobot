@@ -576,10 +576,10 @@ check_untyped_defs = true
 # ignore_errors = false
 
 [[tool.mypy.overrides]]
-module = "lerobot.configs.*"
+module = ["lerobot.configs.*", "lerobot.language.*"]
 ignore_errors = false
 
-# extra strictness for configs
+# extra strictness for configs and language recipes
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true

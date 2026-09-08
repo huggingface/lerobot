@@ -43,8 +43,8 @@ from lerobot.annotations.steerable_pipeline.modules import (  # noqa: E402
 )
 from lerobot.annotations.steerable_pipeline.validator import StagingValidator  # noqa: E402
 from lerobot.annotations.steerable_pipeline.writer import LanguageColumnsWriter  # noqa: E402
-from lerobot.configs.recipe import MessageTurn, TrainingRecipe  # noqa: E402
 from lerobot.datasets.language_render import render_sample  # noqa: E402
+from lerobot.language.recipe import MessageTurn, TrainingRecipe  # noqa: E402
 
 from ._helpers import make_canned_responder  # noqa: E402
 

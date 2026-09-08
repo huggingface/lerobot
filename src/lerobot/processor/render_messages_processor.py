@@ -22,7 +22,7 @@ from typing import Any
 import numpy as np
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.configs.recipe import TrainingRecipe, render_message_turns
+from lerobot.language.recipe import TrainingRecipe, render_message_turns
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     LANGUAGE_EVENTS,

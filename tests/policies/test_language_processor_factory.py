@@ -155,7 +155,7 @@ def test_training_entrypoint_builds_config_or_restores_saved_stats(tmp_path, res
 
 @pytest.mark.parametrize("for_training", [False, True])
 def test_checkpoint_renderer_uses_saved_recipe_and_stats(tmp_path, for_training):
-    from lerobot.configs.recipe import MessageTurn, TrainingRecipe
+    from lerobot.language.recipe import MessageTurn, TrainingRecipe
     from lerobot.processor import RenderRuntimeMessagesStep, RenderTrainingMessagesStep
 
     recipe = TrainingRecipe(
@@ -231,7 +231,7 @@ def test_finetuning_preserves_statistics_adapted_by_policy_factory(monkeypatch):
 
 
 def test_disabled_recipe_training_retains_runtime_only_renderer():
-    from lerobot.configs.recipe import MessageTurn, TrainingRecipe
+    from lerobot.language.recipe import MessageTurn, TrainingRecipe
     from lerobot.processor import RenderRuntimeMessagesStep
 
     recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="${task}", stream="low_level")])
