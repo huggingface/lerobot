@@ -109,8 +109,13 @@ class WandBLogger:
             save_code=False,
             # TODO(rcadene): split train and eval, and run async eval with job_type="eval"
             job_type="train_eval",
-            resume="must" if cfg.resume else None,
+            resume=self.cfg.resume or ("must" if cfg.resume else None),
             mode=self.cfg.mode if self.cfg.mode in ["online", "offline", "disabled"] else "online",
+            settings=wandb.Settings(
+                console=self.cfg.console,
+                console_multipart=self.cfg.console_multipart,
+                console_chunk_max_seconds=self.cfg.console_chunk_max_seconds,
+            ),
         )
         run_id = wandb.run.id
         # NOTE: We will override the cfg.wandb.run_id with the wandb run id.
