@@ -1,6 +1,6 @@
 # Installation
 
-This guide uses `conda` (via miniforge) to manage environments (recommended). If you prefer another environment manager (e.g. `uv`, `venv`), ensure you have Python >=3.12 and support PyTorch >= 2.10, then skip ahead to [Environment Setup](#step-2-environment-setup).
+This guide uses `conda` (via miniforge) to manage environments (recommended). If you prefer another environment manager (e.g. `uv`, `venv`), ensure you have Python >=3.12, then skip ahead to [Environment Setup](#step-2-environment-setup). The base `lerobot` package supports PyTorch >=2.7,<2.12 and torchvision >=0.22,<0.27. On platforms with a TorchCodec 0.11 wheel, `dataset`, `training`, `core_scripts`, and other extras that include `dataset` require PyTorch 2.11.x and torchvision 0.26.x.
 
 ## Step 1 (`conda` only): Install [`miniforge`](https://conda-forge.org/download/)
 
@@ -20,7 +20,7 @@ Create a virtual environment with Python 3.12:
 conda create -y -n lerobot python=3.12
 ```
 </hfoption>
-<hfoption id="uv (PyTorch >= 2.10 only)">
+<hfoption id="uv">
 ```bash
 uv python install 3.12
 uv venv --python 3.12
@@ -47,7 +47,7 @@ conda activate lerobot
 > ```
 
 </hfoption>
-<hfoption id="uv (PyTorch >= 2.10 only)">
+<hfoption id="uv">
 ```bash
 # Linux/macOS
 source .venv/bin/activate
@@ -72,7 +72,7 @@ source .venv/bin/activate
 LeRobot uses [TorchCodec](https://github.com/meta-pytorch/torchcodec) for video decoding by default, which requires `ffmpeg`.
 
 > [!NOTE]
-> **Platform support:** TorchCodec is **not available** on macOS Intel (x86_64), Linux ARM (aarch64, arm64, armv7l), or Windows with PyTorch < 2.8. On these platforms, LeRobot automatically falls back to `pyav` — so you do not need to install `ffmpeg` and can skip to Step 3.
+> **Platform support:** The TorchCodec 0.11 wheels used by LeRobot support Linux x86_64 and ARM64, macOS Apple Silicon, and Windows x86_64. On those platforms, extras that include `dataset` install the matching PyTorch 2.11.x, torchvision 0.26.x, and TorchCodec 0.11.x tuple. On macOS Intel, Linux armv7l, and Windows ARM64, neither TorchCodec nor its PyTorch and torchvision compatibility constraints apply; LeRobot automatically falls back to `pyav`, so you can skip to Step 3. These platforms retain the base PyTorch >=2.7,<2.12 and torchvision >=0.22,<0.27 ranges, but actually installable versions depend on upstream PyTorch and torchvision wheel availability.
 
 If your platform supports TorchCodec, install `ffmpeg` using one of the methods below:
 
@@ -179,6 +179,8 @@ LeRobot provides **feature-scoped extras** that map to common workflows. If you 
 | `training` | `dataset` + `accelerate`, `wandb`           | Training policies                   |
 | `hardware` | `pynput`, `pyserial`, `deepdiff`            | Connecting to real robots           |
 | `viz`      | `rerun-sdk`                                 | Visualization during recording/eval |
+
+On a TorchCodec wheel platform, `dataset` and composite extras such as `training` and `core_scripts` resolve PyTorch 2.11.x, torchvision 0.26.x, and TorchCodec 0.11.x. On other platforms, these extras do not add the TorchCodec-specific PyTorch or torchvision constraints and use the PyAV decoder. They retain the base PyTorch >=2.7,<2.12 and torchvision >=0.22,<0.27 ranges, while actually installable versions still depend on upstream wheel availability.
 
 **Composite Extras** combine feature extras for common CLI scripts:
 
