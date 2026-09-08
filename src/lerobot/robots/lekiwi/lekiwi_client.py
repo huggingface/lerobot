@@ -23,8 +23,9 @@ import numpy as np
 
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STATE
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_not_connected
 from lerobot.utils.errors import DeviceNotConnectedError
+from lerobot.utils.lifecycle import Cleanup, idempotent_connect
 
 from ..robot import Robot
 from .config_lekiwi import LeKiwiClientConfig
@@ -117,11 +118,13 @@ class LeKiwiClient(Robot):
 
     @property
     def is_calibrated(self) -> bool:
-        pass
+        return True
 
-    @check_if_already_connected
-    def connect(self) -> None:
+    @idempotent_connect
+    def connect(self, calibrate: bool = True) -> None:
         """Establishes ZMQ sockets with the remote mobile robot"""
+        # Sockets cannot be resumed: release the handles a previous partial connection left behind.
+        self.disconnect()
 
         zmq = self._zmq
         self.zmq_context = zmq.Context()
@@ -336,11 +339,19 @@ class LeKiwiClient(Robot):
         action_sent[ACTION] = actions
         return action_sent
 
-    @check_if_not_connected
-    def disconnect(self):
+    def disconnect(self) -> None:
         """Cleans ZMQ comms"""
-
-        self.zmq_observation_socket.close()
-        self.zmq_cmd_socket.close()
-        self.zmq_context.term()
-        self._is_connected = False
+        with Cleanup(self) as cleanup:
+            if self.zmq_observation_socket is not None:
+                with cleanup.step("the observation socket"):
+                    self.zmq_observation_socket.close()
+                    self.zmq_observation_socket = None
+            if self.zmq_cmd_socket is not None:
+                with cleanup.step("the command socket"):
+                    self.zmq_cmd_socket.close()
+                    self.zmq_cmd_socket = None
+            if self.zmq_context is not None:
+                with cleanup.step("the ZMQ context"):
+                    self.zmq_context.term()
+                    self.zmq_context = None
+            self._is_connected = False

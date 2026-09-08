@@ -25,7 +25,8 @@ from lerobot.motors.calibration_gui import RangeFinderGUI
 from lerobot.motors.feetech import (
     FeetechMotorsBus,
 )
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_not_connected
+from lerobot.utils.lifecycle import Cleanup, idempotent_connect
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -87,23 +88,22 @@ class HopeJrArm(Robot):
     def is_connected(self) -> bool:
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
-    @check_if_already_connected
+    @idempotent_connect
     def connect(self, calibrate: bool = True) -> None:
         """
         We assume that at connection time, arm is in a rest position,
         and torque can be safely disabled to run calibration.
         """
-
-        self.bus.connect(handshake=False)
+        if not self.bus.is_connected:
+            self.bus.connect(handshake=False)
         if not self.is_calibrated and calibrate:
             self.calibrate()
 
-        # Connect the cameras
         for cam in self.cameras.values():
-            cam.connect()
+            if not cam.is_connected:
+                cam.connect()
 
         self.configure()
-        logger.info(f"{self} connected.")
 
     @property
     def is_calibrated(self) -> bool:
@@ -172,10 +172,10 @@ class HopeJrArm(Robot):
         self.bus.sync_write("Goal_Position", goal_pos)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
-    @check_if_not_connected
-    def disconnect(self):
-        self.bus.disconnect(self.config.disable_torque_on_disconnect)
-        for cam in self.cameras.values():
-            cam.disconnect()
-
-        logger.info(f"{self} disconnected.")
+    def disconnect(self) -> None:
+        with Cleanup(self) as cleanup:
+            with cleanup.step("the motor bus"):
+                self.bus.disconnect(self.config.disable_torque_on_disconnect)
+            for name, cam in self.cameras.items():
+                with cleanup.step(f"camera '{name}'"):
+                    cam.disconnect()

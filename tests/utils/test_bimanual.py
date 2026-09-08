@@ -104,7 +104,7 @@ def test_connect_repairs_a_partial_connection(connected_side):
     assert right.calls == ([] if connected_side == "right" else [("connect", False)])
 
 
-def test_connect_failure_preserves_an_arm_connected_before_the_call():
+def test_connect_failure_releases_an_arm_connected_before_the_call():
     left = FakeArm(connected=True)
     connect_error = RuntimeError("right failed")
     right = FakeArm(connect_error=connect_error)
@@ -113,9 +113,10 @@ def test_connect_failure_preserves_an_arm_connected_before_the_call():
     with pytest.raises(RuntimeError, match="right failed") as exc_info:
         device.connect()
 
-    assert left.is_connected
-    assert left.calls == []
-    assert any("right arm" in note for note in exc_info.value.__notes__)
+    assert exc_info.value is connect_error
+    assert not left.is_connected
+    assert left.calls == [("disconnect",)]
+    assert any("while connecting" in note for note in exc_info.value.__notes__)
 
 
 def test_connect_failure_rolls_back_arms_started_by_the_call():

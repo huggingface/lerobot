@@ -23,6 +23,7 @@ import numpy as np
 
 from lerobot.lerobot_types import RobotAction
 from lerobot.utils.decorators import check_if_not_connected
+from lerobot.utils.lifecycle import idempotent_connect
 
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
@@ -85,6 +86,7 @@ class GamepadTeleop(Teleoperator):
     def feedback_features(self) -> dict:
         return {}
 
+    @idempotent_connect
     def connect(self) -> None:
         if self.hidapi_fallback:
             from .gamepad_utils import GamepadControllerHID as Gamepad

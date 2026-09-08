@@ -24,6 +24,7 @@ from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
 from lerobot.utils.decorators import check_if_not_connected
+from lerobot.utils.lifecycle import Cleanup, idempotent_connect
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -125,6 +126,7 @@ class OpenArmFollower(Robot):
         """Check if robot is connected."""
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
+    @idempotent_connect
     def connect(self, calibrate: bool = True) -> None:
         """
         Connect to the robot and optionally calibrate.
@@ -132,59 +134,21 @@ class OpenArmFollower(Robot):
         We assume that at connection time, the arms are in a safe rest position,
         and torque can be safely disabled to run calibration if needed.
         """
+        logger.info(f"Connecting arm on {self.config.port}...")
+        if not self.bus.is_connected:
+            self.bus.connect()
+        if not self.is_calibrated and calibrate:
+            logger.info(
+                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
+            )
+            self.calibrate()
 
-        if self.is_connected:
-            return
-
-        bus_was_connected = self.bus.is_connected
-        cameras_started: list[tuple[str, Any]] = []
-        try:
-            # Connect to CAN bus
-            logger.info(f"Connecting arm on {self.config.port}...")
-            if not bus_was_connected:
-                self.bus.connect()
-
-            # Run calibration if needed
-            if not self.is_calibrated and calibrate:
-                logger.info(
-                    "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
-                )
-                self.calibrate()
-
-            for name, cam in self.cameras.items():
-                if cam.is_connected:
-                    continue
-                cameras_started.append((name, cam))
+        for cam in self.cameras.values():
+            if not cam.is_connected:
                 cam.connect()
 
-            self.configure()
-            self.bus.enable_torque()
-        except Exception as connect_error:
-            connect_error.add_note(f"while connecting {self}")
-            rollback_errors: list[Exception] = []
-            for name, cam in reversed(cameras_started):
-                if not cam.is_connected:
-                    continue
-                try:
-                    cam.disconnect()
-                except Exception as exc:
-                    exc.add_note(f"while rolling back camera '{name}' of {self}")
-                    rollback_errors.append(exc)
-            if not bus_was_connected and self.bus.is_connected:
-                try:
-                    self.bus.disconnect(self.config.disable_torque_on_disconnect)
-                except Exception as exc:
-                    exc.add_note(f"while rolling back the motor bus of {self}")
-                    rollback_errors.append(exc)
-
-            if rollback_errors:
-                raise ExceptionGroup(
-                    f"Failed to connect {self} and to fully roll back",
-                    [connect_error, *rollback_errors],
-                ) from None
-            raise
-
-        logger.info(f"{self} connected.")
+        self.configure()
+        self.bus.enable_torque()
 
     @property
     def is_calibrated(self) -> bool:
@@ -372,32 +336,11 @@ class OpenArmFollower(Robot):
 
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
-    def disconnect(self):
+    def disconnect(self) -> None:
         """Disconnect from robot."""
-
-        errors: list[Exception] = []
-
-        # Disconnect CAN bus
-        if self.bus.is_connected:
-            try:
+        with Cleanup(self) as cleanup:
+            with cleanup.step("the motor bus"):
                 self.bus.disconnect(self.config.disable_torque_on_disconnect)
-            except Exception as exc:
-                exc.add_note(f"while disconnecting the motor bus of {self}")
-                errors.append(exc)
-
-        # Disconnect cameras
-        for name, cam in self.cameras.items():
-            if not cam.is_connected:
-                continue
-            try:
-                cam.disconnect()
-            except Exception as exc:
-                exc.add_note(f"while disconnecting camera '{name}' of {self}")
-                errors.append(exc)
-
-        if len(errors) == 1:
-            raise errors[0]
-        if errors:
-            raise ExceptionGroup(f"Failed to disconnect {self}", errors)
-
-        logger.info(f"{self} disconnected.")
+            for name, cam in self.cameras.items():
+                with cleanup.step(f"camera '{name}'"):
+                    cam.disconnect()
