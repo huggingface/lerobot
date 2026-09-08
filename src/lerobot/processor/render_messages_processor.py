@@ -17,12 +17,11 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.language.recipe import TrainingRecipe, render_message_turns
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     LANGUAGE_EVENTS,
@@ -34,6 +33,9 @@ from lerobot.utils.constants import (
 from lerobot.utils.utils import unwrap_scalar
 
 from .pipeline import ComplementaryDataProcessorStep, ProcessorStep, ProcessorStepRegistry
+
+if TYPE_CHECKING:
+    from lerobot.datasets.recipe import TrainingRecipe
 
 
 @dataclass
@@ -51,6 +53,9 @@ class RenderTrainingMessagesStep(ProcessorStep):
 
     def __post_init__(self) -> None:
         if isinstance(self.recipe, dict):
+            # Import only for recipes: the datasets package requires optional extras.
+            from lerobot.datasets.recipe import TrainingRecipe
+
             self.recipe = TrainingRecipe.from_dict(self.recipe)
 
     def get_config(self) -> dict[str, Any]:
@@ -210,6 +215,9 @@ class RenderRuntimeMessagesStep(ComplementaryDataProcessorStep):
 
     def __post_init__(self) -> None:
         if isinstance(self.recipe, dict):
+            # Import only for recipes: the datasets package requires optional extras.
+            from lerobot.datasets.recipe import TrainingRecipe
+
             self.recipe = TrainingRecipe.from_dict(self.recipe)
 
     def get_config(self) -> dict[str, Any]:
@@ -233,6 +241,8 @@ class RenderRuntimeMessagesStep(ComplementaryDataProcessorStep):
                     "Subtask generation requires a checkpoint recipe with an assistant target "
                     "that supervises `${subtask}`."
                 )
+            from lerobot.datasets.recipe import render_message_turns
+
             bindings = dict.fromkeys(self.recipe.referenced_binding_names())
             bindings.update(complementary_data)
             bindings["task"] = text

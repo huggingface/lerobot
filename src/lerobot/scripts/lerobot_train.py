@@ -62,6 +62,7 @@ from lerobot.configs import JobConfig, parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
 from lerobot.datasets.factory import make_train_eval_datasets
+from lerobot.datasets.recipe import language_recipe_enabled
 from lerobot.distributed import (
     ParallelDims,
     finalize_sharded_policy,
@@ -71,7 +72,6 @@ from lerobot.distributed import (
 )
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.jobs import submit_to_hf
-from lerobot.language.recipe import language_recipe_enabled
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.policies.factory import ProcessorConfigKwargs

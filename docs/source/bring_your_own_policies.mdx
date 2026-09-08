@@ -211,8 +211,10 @@ Language policies share recipe rendering between two processor steps:
   text-generation requests and leaves ordinary action inputs unchanged.
 
 The policy config exposes `use_language_recipe: bool`, `recipe_path: str | None`,
-and the resolved `recipe: TrainingRecipe | None` (from `lerobot.language.recipe`). Serialize the resolved recipe
+and the resolved `recipe: TrainingRecipe | None` (from `lerobot.datasets.recipe`). Serialize the resolved recipe
 in the config and processor so deployment does not depend on a local YAML path.
+Recipe-backed rendering requires the `dataset` extra because recipes currently
+live under `lerobot.datasets`.
 
 Put both renderers before policy-native chat formatting and tokenization:
 

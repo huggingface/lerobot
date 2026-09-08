@@ -12,7 +12,7 @@ from lerobot.datasets.language_render import (  # noqa: E402
     nth_prev,
     render_sample,
 )
-from lerobot.language.recipe import MessageTurn, TrainingRecipe  # noqa: E402
+from lerobot.datasets.recipe import MessageTurn, TrainingRecipe  # noqa: E402
 
 
 def persistent_row(role, content, style, timestamp, tool_calls=None, camera=None):

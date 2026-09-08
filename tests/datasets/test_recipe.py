@@ -5,7 +5,10 @@ from textwrap import dedent
 
 import pytest
 
-from lerobot.language.recipe import (
+pytest.importorskip("datasets", reason="recipes require lerobot[dataset]")
+pytest.importorskip("av", reason="recipes require lerobot[dataset]")
+
+from lerobot.datasets.recipe import (  # noqa: E402
     MessageTurn,
     TrainingRecipe,
     language_recipe_enabled,

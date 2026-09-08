@@ -576,7 +576,7 @@ check_untyped_defs = true
 # ignore_errors = false
 
 [[tool.mypy.overrides]]
-module = ["lerobot.configs.*", "lerobot.language.*"]
+module = ["lerobot.configs.*", "lerobot.datasets.recipe"]
 ignore_errors = false
 
 # extra strictness for configs and language recipes

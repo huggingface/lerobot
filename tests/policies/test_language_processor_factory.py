@@ -54,8 +54,13 @@ def _stats(mean):
 
 
 @pytest.fixture
-def training_dependencies():
-    pytest.importorskip("datasets", reason="training setup requires lerobot[dataset]")
+def dataset_dependencies():
+    pytest.importorskip("datasets", reason="recipes require lerobot[dataset]")
+    pytest.importorskip("av", reason="recipes require lerobot[dataset]")
+
+
+@pytest.fixture
+def training_dependencies(dataset_dependencies):
     pytest.importorskip("accelerate", reason="training setup requires lerobot[training]")
 
 
@@ -134,8 +139,8 @@ def test_training_entrypoint_only_rebuilds_for_language_finetuning(
 
 
 @pytest.mark.parametrize("for_training", [False, True])
-def test_checkpoint_renderer_uses_saved_recipe_and_stats(tmp_path, for_training):
-    from lerobot.language.recipe import MessageTurn, TrainingRecipe
+def test_checkpoint_renderer_uses_saved_recipe_and_stats(tmp_path, for_training, dataset_dependencies):
+    from lerobot.datasets.recipe import MessageTurn, TrainingRecipe
     from lerobot.processor import RenderRuntimeMessagesStep, RenderTrainingMessagesStep
 
     recipe = TrainingRecipe(
@@ -197,8 +202,8 @@ def test_finetuning_preserves_statistics_adapted_by_policy_factory(monkeypatch, 
     torch.testing.assert_close(post(torch.tensor([[1.0]])), torch.tensor([[32.0]]))
 
 
-def test_disabled_recipe_training_retains_runtime_only_renderer():
-    from lerobot.language.recipe import MessageTurn, TrainingRecipe
+def test_disabled_recipe_training_retains_runtime_only_renderer(dataset_dependencies):
+    from lerobot.datasets.recipe import MessageTurn, TrainingRecipe
     from lerobot.processor import RenderRuntimeMessagesStep
 
     recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="${task}", stream="low_level")])

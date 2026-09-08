@@ -2,18 +2,31 @@
 
 """Runtime behavior of the runtime message processor."""
 
+from __future__ import annotations
+
 from dataclasses import asdict
+from typing import TYPE_CHECKING
 
 import pytest
 
-from lerobot.language.recipe import MessageTurn, TrainingRecipe, render_message_turns
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import RenderRuntimeMessagesStep
 from lerobot.processor.converters import create_transition
 from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT
 
+if TYPE_CHECKING:
+    from lerobot.datasets.recipe import TrainingRecipe
+
+
+@pytest.fixture
+def dataset_dependencies():
+    pytest.importorskip("datasets", reason="recipes require lerobot[dataset]")
+    pytest.importorskip("av", reason="recipes require lerobot[dataset]")
+
 
 def _recipe() -> TrainingRecipe:
+    from lerobot.datasets.recipe import MessageTurn, TrainingRecipe
+
     return TrainingRecipe(
         messages=[
             MessageTurn(role="system", content="Robot assistant", stream="high_level"),
@@ -45,7 +58,9 @@ def test_vqa_preserves_caller_text_and_consumes_request_metadata():
     assert QUERY_TEXT not in data
 
 
-def test_next_subtask_uses_the_training_recipe_prefix():
+def test_next_subtask_uses_the_training_recipe_prefix(dataset_dependencies):
+    from lerobot.datasets.recipe import render_message_turns
+
     recipe = _recipe()
     training = render_message_turns(
         recipe.messages or [],
@@ -60,7 +75,9 @@ def test_next_subtask_uses_the_training_recipe_prefix():
     assert training[-1] == {"role": "assistant", "content": "pick up cup"}
 
 
-def test_next_subtask_tolerates_optional_runtime_bindings_that_are_absent():
+def test_next_subtask_tolerates_optional_runtime_bindings_that_are_absent(dataset_dependencies):
+    from lerobot.datasets.recipe import MessageTurn, TrainingRecipe
+
     recipe = TrainingRecipe(
         messages=[
             MessageTurn(role="system", content="Memory: ${memory}", stream="high_level"),
@@ -90,7 +107,7 @@ def test_next_subtask_tolerates_optional_runtime_bindings_that_are_absent():
 
 
 def test_ordinary_action_inputs_and_existing_messages_pass_through():
-    step = RenderRuntimeMessagesStep(_recipe())
+    step = RenderRuntimeMessagesStep()
     action_transition = create_transition(complementary_data={"task": "pick up cup"})
     messages_transition = create_transition(
         complementary_data={"messages_rendered": [{"role": "user", "content": "already rendered"}]}
@@ -100,7 +117,7 @@ def test_ordinary_action_inputs_and_existing_messages_pass_through():
     assert step(messages_transition) == messages_transition
 
 
-def test_runtime_rendering_is_stateless_and_does_not_mutate_inputs():
+def test_runtime_rendering_is_stateless_and_does_not_mutate_inputs(dataset_dependencies):
     recipe = _recipe()
     original_recipe = asdict(recipe)
     transition = create_transition(
@@ -171,7 +188,7 @@ def test_rendered_messages_survive_conversion_and_batching():
     assert "messages" not in result
 
 
-def test_same_pipeline_handles_training_then_text_and_action_inference():
+def test_same_pipeline_handles_training_then_text_and_action_inference(dataset_dependencies):
     import torch
 
     from lerobot.processor import PolicyProcessorPipeline, RenderTrainingMessagesStep
