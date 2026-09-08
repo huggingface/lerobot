@@ -23,9 +23,13 @@ supervised target span must end with an EOS token so the LM head learns
 to stop instead of rambling to ``max_length`` at inference).
 """
 
+from pathlib import Path
+
+import pytest
 import torch
 
 from lerobot.configs.recipe import MessageTurn, TrainingRecipe
+from lerobot.datasets.language_render import render_sample
 from lerobot.policies.pi052.text_processor_pi052 import (
     PI052TextTokenizerStep,
     _flatten_say_tool_calls,
@@ -157,6 +161,91 @@ def test_pi052_text_tokenizer_supervises_eos_at_target_end():
     assert int(labels[last]) == _eos_char_id()
     # The token right after the EOS (the trailing newline) is NOT supervised.
     assert int(labels[last + 1]) == -100
+
+
+@pytest.mark.parametrize("recipe_name", ["subtask_mem", "subtask_mem_vqa_speech"])
+@pytest.mark.parametrize("timestamp", [0.0, 1.5])
+def test_memory_recipe_supervises_one_combined_response_without_future_context(recipe_name, timestamp):
+    recipe = TrainingRecipe.from_yaml(Path(f"src/lerobot/configs/recipes/{recipe_name}.yaml"))
+    assert "memory_update" not in recipe.blend
+    assert sum(branch.weight for branch in recipe.blend.values()) == pytest.approx(1.0)
+    high_level = recipe.blend["high_level_memory_subtask"]
+    rows = [
+        {"role": "assistant", "style": "memory", "content": "cup in box", "timestamp": 0.0},
+        {"role": "assistant", "style": "subtask", "content": "pick plate", "timestamp": 0.0},
+        {"role": "assistant", "style": "memory", "content": "cup and plate in box", "timestamp": 1.0},
+        {"role": "assistant", "style": "subtask", "content": "pick spoon", "timestamp": 1.0},
+        {"role": "assistant", "style": "memory", "content": "future success", "timestamp": 2.0},
+    ]
+    rendered = render_sample(
+        recipe=high_level, persistent=rows, events=[], t=timestamp, sample_idx=0, task="clear table"
+    )
+    assert rendered is not None
+    assert rendered["target_message_indices"] == [len(rendered["messages"]) - 1]
+    target = rendered["messages"][-1]["content"]
+    if timestamp == 0:
+        assert target == "Memory: cup in box\nSubtask: pick plate"
+        assert not any("Previous memory:" in m["content"] for m in rendered["messages"])
+    else:
+        assert rendered["messages"][1]["content"] == "Previous memory: cup in box"
+        assert target == "Memory: cup and plate in box\nSubtask: pick spoon"
+    assert "future success" not in str(rendered)
+    assert target not in str(rendered["messages"][:-1])
+
+    step = PI052TextTokenizerStep(max_length=1024)
+    step._tokenizer = _CharTokenizer()
+    output = step(
+        {
+            TransitionKey.OBSERVATION: {},
+            TransitionKey.COMPLEMENTARY_DATA: {**rendered, "index": torch.tensor(0)},
+        }
+    )
+    labels = output[TransitionKey.COMPLEMENTARY_DATA]["text_labels"][0]
+    supervised = labels[labels != -100]
+    # Both fields and EOS are one target; the prior memory remains unsupervised context.
+    assert step._tokenizer.decode(supervised) == target + step._tokenizer.eos_token
+    assert not output[TransitionKey.COMPLEMENTARY_DATA]["predict_actions"].item()
+
+    low_level = render_sample(
+        recipe=recipe.blend["low_level_execution"],
+        persistent=rows,
+        events=[],
+        t=timestamp,
+        sample_idx=0,
+        task="clear table",
+    )
+    assert low_level["messages"] == [
+        {"role": "user", "content": "pick plate" if timestamp == 0 else "pick spoon"}
+    ]
+    assert low_level["target_message_indices"] == []
+    assert low_level["message_streams"] == ["low_level"]
+
+
+@pytest.mark.parametrize("recipe_name", ["subtask_mem", "subtask_mem_vqa_speech"])
+def test_memory_recipe_skips_joint_target_without_memory_annotations(recipe_name):
+    recipe = TrainingRecipe.from_yaml(Path(f"src/lerobot/configs/recipes/{recipe_name}.yaml"))
+    rendered = render_sample(
+        recipe=recipe.blend["high_level_memory_subtask"],
+        persistent=[{"role": "assistant", "style": "subtask", "content": "pick cup", "timestamp": 0.0}],
+        events=[],
+        t=0.0,
+        sample_idx=0,
+        task="clear table",
+    )
+    assert rendered is None
+
+
+def test_memory_recipe_variants_share_the_same_high_level_contract():
+    plain = TrainingRecipe.from_yaml(Path("src/lerobot/configs/recipes/subtask_mem.yaml"))
+    extended = TrainingRecipe.from_yaml(Path("src/lerobot/configs/recipes/subtask_mem_vqa_speech.yaml"))
+    assert (
+        plain.blend["high_level_memory_subtask"].messages
+        == extended.blend["high_level_memory_subtask"].messages
+    )
+    assert (
+        plain.blend["high_level_memory_subtask"].bindings
+        == extended.blend["high_level_memory_subtask"].bindings
+    )
 
 
 class _CharTokenizer:

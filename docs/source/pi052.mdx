@@ -52,12 +52,12 @@ annotations only if the recipe trains those capabilities.
 
 The provided recipes are:
 
-| Recipe                                | Required annotations                                                    | Trains                                                             |
-| ------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `recipes/subtask.yaml`                | `subtask`                                                               | Subtask prediction and subtask-conditioned actions                 |
-| `recipes/subtask_joint.yaml`          | `subtask`                                                               | Paper-style joint sequence: subtask text and actions in one sample |
-| `recipes/subtask_mem.yaml`            | `subtask`, `memory`                                                     | Subtasks, actions, and memory updates                              |
-| `recipes/subtask_mem_vqa_speech.yaml` | `subtask`, `memory`, `vqa`; interjection/speech rows for those branches | Subtasks, actions, memory, VQA, and spoken replies                 |
+| Recipe                                | Required annotations                                                    | Trains                                                                 |
+| ------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `recipes/subtask.yaml`                | `subtask`                                                               | Subtask prediction and subtask-conditioned actions                     |
+| `recipes/subtask_joint.yaml`          | `subtask`                                                               | Paper-style joint sequence: subtask text and actions in one sample     |
+| `recipes/subtask_mem.yaml`            | `subtask`, `memory`                                                     | One combined memory/subtask response, plus subtask-conditioned actions |
+| `recipes/subtask_mem_vqa_speech.yaml` | `subtask`, `memory`, `vqa`; interjection/speech rows for those branches | Combined memory/subtask responses, actions, VQA, and spoken replies    |
 
 The blend recipes factorize training into separate high-level (task → subtask)
 and low-level (subtask → actions) samples, matching how inference decomposes
@@ -68,6 +68,55 @@ Checkpoints trained with the joint recipe must set
 `--policy.joint_subtask_conditioning=true` at inference so the flow prefix
 rebuilds the same layout (task turn with state, then the generated subtask as a
 causal assistant turn); leave it `false` for the blend recipes.
+
+### Memory as a combined scratchpad response
+
+The memory recipes train a single high-level assistant target:
+
+```text
+Memory: The cup and plate are in the box. The spoon remains on the table.
+Subtask: Pick up the spoon.
+```
+
+The prompt contains the task, the previous annotated memory (when available), and
+an instruction to update memory from observed progress and choose a subtask.
+`prior_memory` resolves the memory before the currently active memory row;
+`${memory}` and `${subtask}` supply the two fields of the same supervised target.
+Low-level samples still condition actions on **only the subtask**. This does not
+require `joint_subtask_conditioning=true`, which is a different action-prefix layout.
+
+`subtask_mem.yaml` uses 40% combined high-level supervision and 60% low-level
+execution. The VQA/speech variant uses 35% combined high-level supervision and
+preserves its 40% action, 10% speech, and two 7.5% camera-VQA branches. There is
+no separate `memory_update` training branch.
+
+Provide a continuous subtask timeline wherever memory targets are present. A
+missing memory row skips the high-level target; an absent previous memory omits
+that context turn. Annotate memory using only events observed by its timestamp,
+not future outcomes or an assumption that the previous command succeeded. Align
+memory updates with planning decisions and include unchanged-memory examples if
+the deployed planner will be queried between task boundaries. Training uses
+annotated prior memory; deployment must tolerate its own imperfect predictions.
+Memory alone does not guarantee that an unfinished subtask will be repeated.
+Include consecutive planning examples with the same subtask until observations
+support completion; a periodic planning call is a reassessment, not an instruction
+to advance. Explicit completion prediction or a runtime transition gate would be
+an additional contract, not a property supplied by this recipe.
+
+**Runtime integration is still required.** The older language runtime on this
+branch generates subtask and memory in separate calls. Its PI052 subtask prompt
+does not consume memory, and it does not parse the combined response. The newer
+rollout autosteer path also expects a plain subtask string. Neither should receive
+the combined response unchanged as an action instruction. A compatible adapter
+must validate both fields, retain Memory for the next planning prompt, apply only
+Subtask to actions, and clear memory on episode reset. Invalid responses must not
+partially update either field. Simply changing a recipe does not implement this loop.
+
+These recipes replace the earlier separate memory-update training mixture; they
+do not convert existing checkpoints. Preserve an old checkpoint's training recipe
+and saved processor configuration when resuming it. For new fine-tuning, budget
+enough tokens for task, prior memory, both output fields, and EOS; inspect rendered
+examples for truncation before launching a long run.
 
 Use `lerobot-annotate` to generate these columns. The repository includes a
 Hugging Face Jobs launcher that you can edit for your source and destination
@@ -101,6 +150,7 @@ lerobot-train \
     --policy.type=pi052 \
     --policy.pretrained_path=lerobot/pi052_base \
     --policy.recipe_path=recipes/subtask_mem.yaml \
+    --policy.tokenizer_max_length=256 \
     --policy.dtype=bfloat16 \
     --policy.device=cuda \
     --policy.freeze_vision_encoder=false \
