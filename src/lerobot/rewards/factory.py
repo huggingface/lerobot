@@ -39,7 +39,8 @@ def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:
 
     Args:
         name: The name of the reward model. Supported names are "reward_classifier",
-              "sarm", "robometer", "topreward".
+              "sarm", "robometer", and "topreward". Registered integrations
+              such as RynnValue are discovered from their config class.
 
     Returns:
         The reward model class corresponding to the given name.
@@ -79,7 +80,9 @@ def make_reward_model_config(reward_type: str, **kwargs) -> RewardModelConfig:
 
     Args:
         reward_type: The type of the reward model. Supported types include
-                     "reward_classifier", "sarm", "robometer", "topreward".
+                     "reward_classifier", "sarm", "robometer", and "topreward".
+                     Registered integrations such as RynnValue are discovered
+                     from their config class.
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
@@ -192,7 +195,6 @@ def make_reward_pre_post_processors(
             config=reward_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
-
     else:
         try:
             processors = _make_processors_from_reward_model_config(
