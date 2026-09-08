@@ -31,6 +31,9 @@ class PI052Config(PI05Config):
     recipe_path: str | None = "recipes/subtask_mem.yaml"
     """Recipe path, or ``None`` for the plain PI0.5 prompt."""
 
+    memory_scratchpad: bool = False
+    """Opt in to combined memory/subtask inference for newly scratchpad-trained checkpoints."""
+
     apply_chat_template: bool = False
     """Apply the tokenizer's chat template."""
 

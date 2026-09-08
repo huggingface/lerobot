@@ -77,6 +77,18 @@ def test_resolver_temporal_semantics():
     )
 
 
+@pytest.mark.parametrize("seconds_ago", [-1.0, float("nan"), float("inf")])
+def test_active_at_rejects_noncausal_or_nonfinite_lookback(seconds_ago):
+    with pytest.raises(ValueError, match="seconds_ago"):
+        active_at(1.0, persistent=PERSISTENT, style="subtask", seconds_ago=seconds_ago)
+
+
+def test_active_at_lookback_stays_in_episode_and_reuses_active_row():
+    assert active_at(0.5, persistent=PERSISTENT, style="subtask", seconds_ago=1.0) is None
+    assert active_at(1.5, persistent=PERSISTENT, style="subtask", seconds_ago=1.0)["content"] == "subtask 0"
+    assert active_at(2.0, persistent=PERSISTENT, style="subtask", seconds_ago=1.0)["content"] == "subtask 1"
+
+
 def test_persistent_relative_resolvers_reject_event_styles():
     with pytest.raises(ValueError, match="event-only"):
         active_at(1.0, persistent=PERSISTENT, style="vqa")

@@ -17,8 +17,11 @@
 from __future__ import annotations
 
 import logging
+import re
+import time
 from typing import Any
 
+from lerobot.configs.recipe import PLACEHOLDER_RE
 from lerobot.runtime import RuntimeState
 from lerobot.runtime.adapter import BaseLanguageAdapter
 
@@ -30,7 +33,69 @@ _LOC_TOKENIZER_CACHE: dict[str, Any] = {}
 class PI052PolicyAdapter(BaseLanguageAdapter):
     """Runtime bridge for PI052 policies."""
 
+    @property
+    def _uses_scratchpad(self) -> bool:
+        return bool(getattr(getattr(self.policy, "config", None), "memory_scratchpad", False))
+
+    def _scratchpad_history(self, state: RuntimeState) -> dict[str, Any]:
+        """Episode-local applied updates, timestamped in seconds rather than chunks."""
+        entry = state.extra.get("pi052_scratchpad")
+        if (
+            entry is None
+            or entry["task"] != state.task
+            or (entry["updates"] and not state.language_context.get("subtask"))
+        ):
+            entry = {"task": state.task, "updates": []}
+            state.extra["pi052_scratchpad"] = entry
+            state.set_context("memory", None)
+            state.set_context("subtask", None)
+        return entry
+
+    def _regenerate_context(self, observation: dict[str, Any] | None, state: RuntimeState) -> None:
+        if not self._uses_scratchpad:
+            return super()._regenerate_context(observation, state)
+        if not self.gen.enable_memory or not self.gen.enable_subtask:
+            raise ValueError("Scratchpad inference requires both memory and subtask generation enabled.")
+        if getattr(self.policy.config, "joint_subtask_conditioning", False):
+            raise ValueError("Scratchpad blend inference requires joint_subtask_conditioning=false.")
+        with state.lock:
+            entry = self._scratchpad_history(state)
+            revision = state.revision
+            task = state.task
+        text = self._generate_filtered("subtask", observation, state)
+        # One response, validated in full before either state field can change.
+        match = re.fullmatch(
+            r"Memory:[ \t]*(.*?)\nSubtask:[ \t]*([^\n]+)\s*", (text or "").strip(), re.DOTALL
+        )
+        if match is None:
+            raise ValueError("Scratchpad response must contain Memory: and Subtask: fields.")
+        memory, subtask = (part.strip() for part in match.groups())
+        if not memory or not subtask or re.search(r"(?m)^(Memory|Subtask):", memory):
+            raise ValueError("Scratchpad fields must be nonempty and unambiguous.")
+        with state.lock:
+            if state.revision != revision or state.task != task or state.stop or state.mode != "action":
+                return  # a stop/reset/operator update invalidated this generation
+            previous = state.language_context.get("subtask")
+            state.set_context("memory", memory, label="memory")
+            state.set_context("subtask", subtask, label="subtask")
+            self.diag.repeat = self.diag.repeat + 1 if previous == subtask else 0
+            now = time.monotonic()
+            updates = entry["updates"]
+            updates.append((now, memory, subtask))
+            # Retain the entry active at t-1 and all newer updates, not all episode history.
+            while len(updates) > 1 and updates[1][0] <= now - 1.0:
+                updates.pop(0)
+
     def select_action(self, observation: dict[str, Any], state: RuntimeState) -> Any:
+        if self._uses_scratchpad:
+            entry = state.extra.get("pi052_scratchpad")
+            if (
+                not entry
+                or not entry["updates"]
+                or entry["task"] != state.task
+                or not state.language_context.get("subtask")
+            ):
+                raise ValueError("Generate a valid scratchpad subtask before requesting actions.")
         import torch  # noqa: PLC0415
 
         from lerobot.utils.constants import (  # noqa: PLC0415
@@ -132,6 +197,40 @@ class PI052PolicyAdapter(BaseLanguageAdapter):
         *,
         user_text: str | None = None,
     ) -> list[dict[str, Any]]:
+        if kind == "subtask" and self._uses_scratchpad:
+            from ..processor_pi052 import _load_recipe  # noqa: PLC0415
+
+            recipe = _load_recipe(self.policy.config.recipe_path)
+            branch = (recipe.blend or {}).get("high_level_memory_subtask")
+            if branch is None or not branch.messages:
+                raise ValueError("Scratchpad inference requires the combined memory/subtask recipe.")
+            bindings = branch.bindings or {}
+            if (
+                bindings.get("current_subtask")
+                != "active_at(t, style=subtask, role=assistant, seconds_ago=1.0)"
+                or bindings.get("prior_memory")
+                != "active_at(t, style=memory, role=assistant, seconds_ago=1.0)"
+            ):
+                raise ValueError("Scratchpad runtime requires a one-second memory/subtask lookback.")
+            cutoff = time.monotonic() - 1.0
+            with state.lock:
+                entry = self._scratchpad_history(state)
+                previous = next((row for row in reversed(entry["updates"]) if row[0] <= cutoff), None)
+                values = {
+                    "task": state.task,
+                    "prior_memory": "" if previous is None else previous[1],
+                    "current_subtask": "" if previous is None else previous[2],
+                }
+            messages = []
+            for turn in branch.messages:
+                if turn.target:
+                    break
+                if not isinstance(turn.content, str):
+                    raise ValueError("Scratchpad prompt turns must contain text.")
+                messages.append(
+                    {"role": turn.role, "content": PLACEHOLDER_RE.sub(lambda m: values[m[1]], turn.content)}
+                )
+            return messages
         if kind in ("subtask", "plan"):
             return [{"role": "user", "content": state.task or ""}]
         if kind == "memory":

@@ -14,9 +14,134 @@
 
 from types import SimpleNamespace
 
+import pytest
+
+from lerobot.configs.recipe import load_recipe
+from lerobot.datasets.language_render import render_sample
 from lerobot.policies.pi052.inference.pi052_adapter import PI052PolicyAdapter
 from lerobot.runtime import RuntimeState
 from lerobot.runtime.adapter import split_plan_and_say
+
+
+def _scratchpad_adapter():
+    policy = SimpleNamespace(
+        config=SimpleNamespace(
+            memory_scratchpad=True,
+            recipe_path="recipes/subtask_mem.yaml",
+            joint_subtask_conditioning=False,
+        )
+    )
+    return PI052PolicyAdapter(policy=policy)
+
+
+@pytest.mark.parametrize("now", [0.5, 1.0, 1.5, 5.0, 5.5, 6.0, 8.0])
+def test_scratchpad_runtime_prompt_matches_training_one_second_history(monkeypatch, now):
+    from lerobot.policies.pi052.inference import pi052_adapter as module
+
+    monkeypatch.setattr(module.time, "monotonic", lambda: now)
+    adapter = _scratchpad_adapter()
+    updates = [(0.0, "cup in box", "pick plate"), (5.0, "plate in box", "pick spoon")]
+    state = RuntimeState(
+        task="clear table",
+        language_context={"subtask": "pick plate"},
+        extra={
+            "pi052_scratchpad": {"task": "clear table", "updates": updates},
+        },
+    )
+    rows = []
+    for timestamp, memory, subtask in updates:
+        rows.extend(
+            [
+                {"role": "assistant", "style": "memory", "content": memory, "timestamp": timestamp},
+                {"role": "assistant", "style": "subtask", "content": subtask, "timestamp": timestamp},
+            ]
+        )
+    recipe = load_recipe("src/lerobot/configs/recipes/subtask_mem.yaml").blend["high_level_memory_subtask"]
+    training = render_sample(recipe=recipe, persistent=rows, events=[], t=now, sample_idx=0, task=state.task)
+    assert adapter.build_messages("subtask", state) == training["messages"][:-1]
+
+
+def test_scratchpad_combined_update_repeat_and_reset(monkeypatch):
+    from lerobot.policies.pi052.inference import pi052_adapter as module
+
+    now = [10.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: now[0])
+    adapter = _scratchpad_adapter()
+    state = RuntimeState(task="clear table")
+    prompts = []
+
+    def generate(kind, observation, runtime_state):
+        assert kind == "subtask"  # no second memory-generation call
+        prompts.append(adapter.build_messages(kind, runtime_state))
+        return "Memory: Cup in box.\nSubtask: Pick up the plate."
+
+    adapter.generate_text = generate
+    adapter._regenerate_context({}, state)
+    assert state.language_context == {"memory": "Cup in box.", "subtask": "Pick up the plate."}
+    assert "Current subtask: \n" in prompts[0][0]["content"]
+    now[0] = 12.0
+    adapter._regenerate_context({}, state)
+    assert "Current subtask: Pick up the plate.\n" in prompts[1][0]["content"]
+    assert adapter.diag.repeat == 1
+    state.set_context("subtask", None)  # existing scene-reset signal
+    now[0] = 14.0
+    adapter._regenerate_context({}, state)
+    assert "Memory: \nCurrent subtask: \n" in prompts[2][0]["content"]
+    assert state.extra["pi052_scratchpad"]["updates"] == [(14.0, "Cup in box.", "Pick up the plate.")]
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        "",
+        "Subtask: pick cup",
+        "Memory: \nSubtask: pick cup",
+        "Memory: ok\nSubtask: ",
+        "Memory: ok\nSubtask: pick cup\nSubtask: pick plate",
+    ],
+)
+def test_scratchpad_invalid_response_does_not_partially_update_or_start_actions(response):
+    adapter = _scratchpad_adapter()
+    state = RuntimeState(task="clear table")
+    adapter.generate_text = lambda *args: response
+    with pytest.raises(ValueError, match="Scratchpad"):
+        adapter._regenerate_context({}, state)
+    assert state.language_context == {}
+    with pytest.raises(ValueError, match="valid scratchpad"):
+        adapter.select_action({}, state)
+
+
+def test_scratchpad_reset_during_generation_discards_response():
+    adapter = _scratchpad_adapter()
+    state = RuntimeState(task="clear table")
+
+    def generate(*args):
+        state.set_context("subtask", "operator instruction")
+        return "Memory: stale memory\nSubtask: stale instruction"
+
+    adapter.generate_text = generate
+    adapter._regenerate_context({}, state)
+    assert state.language_context == {"subtask": "operator instruction"}
+    assert not state.extra["pi052_scratchpad"]["updates"]
+
+
+def test_scratchpad_actions_receive_only_validated_subtask(monkeypatch):
+    from lerobot.policies.pi052.inference import pi052_adapter as module
+
+    adapter = _scratchpad_adapter()
+    adapter.generate_text = lambda *args: "Memory: Cup in box.\nSubtask: Pick up the plate."
+    state = RuntimeState(task="clear table")
+    adapter._regenerate_context({}, state)
+    prompts = []
+
+    def build(policy, messages, **kwargs):
+        prompts.append(messages)
+        return {"lang_tokens": "tokens", "lang_masks": "mask"}
+
+    monkeypatch.setattr(module, "_build_text_batch", build)
+    adapter.policy.predict_action_chunk = lambda batch: "actions"
+    assert adapter.select_action({}, state) == "actions"
+    assert prompts == [[{"role": "user", "content": "Pick up the plate."}]]
 
 
 def test_pi052_adapter_builds_recipe_prompts_from_runtime_state():

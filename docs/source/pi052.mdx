@@ -78,10 +78,37 @@ Memory: The cup and plate are in the box. The spoon remains on the table.
 Subtask: Pick up the spoon.
 ```
 
-The prompt contains the task, the previous annotated memory (when available), and
-an instruction to update memory from observed progress and choose a subtask.
-`prior_memory` resolves the memory before the currently active memory row;
-`${memory}` and `${subtask}` supply the two fields of the same supervised target.
+The input is one user message with the following fields, followed by an instruction
+to update memory and repeat an unfinished subtask unless observations justify a change:
+
+```text
+Goal: Clear the table.
+Memory: Cup is in the box.
+Current subtask: Pick up the plate.
+```
+
+`current_subtask` binds
+`active_at(t, style=subtask, role=assistant, seconds_ago=1.0)`; `prior_memory`
+uses the same one-second lookback on memory. Targets use the assistant subtask
+and memory active **now** at `t`. This is a time lookup, not `nth_prev` over
+distinct annotations. No new user-role annotation timeline is needed.
+
+For a subtask boundary at 5 seconds, samples before the boundary teach continuation;
+samples from 5 to just before 6 seconds pair the old input instruction with the new
+target; from 6 seconds onward input and target match again. Keep training frames
+throughout subtasks, not only at boundaries, so the model learns both hold and switch.
+Before one second of episode history is available, absent input fields are empty;
+history must never carry across episodes. Negative or non-finite lookbacks are rejected.
+
+**Inference must match this temporal contract:** timestamp generated/applied memory
+and subtask updates, and build the prompt from the latest entries at or before
+the observation time minus one second. Do not blindly use the previous distinct
+subtask or a chunk index. One chunk is one second only when its executed length
+and control rate make it so. At a three-second planning cadence, the most recent
+applied update will often satisfy the lookup, but generation latency and faster
+updates make timestamped history necessary. The opt-in PI052 adapter below uses
+that timestamped history rather than annotation indices or action-chunk counts.
+
 Low-level samples still condition actions on **only the subtask**. This does not
 require `joint_subtask_conditioning=true`, which is a different action-prefix layout.
 
@@ -91,8 +118,7 @@ preserves its 40% action, 10% speech, and two 7.5% camera-VQA branches. There is
 no separate `memory_update` training branch.
 
 Provide a continuous subtask timeline wherever memory targets are present. A
-missing memory row skips the high-level target; an absent previous memory omits
-that context turn. Annotate memory using only events observed by its timestamp,
+missing memory row skips the high-level target. Annotate memory using only events observed by its timestamp,
 not future outcomes or an assumption that the previous command succeeded. Align
 memory updates with planning decisions and include unchanged-memory examples if
 the deployed planner will be queried between task boundaries. Training uses
@@ -103,14 +129,23 @@ support completion; a periodic planning call is a reassessment, not an instructi
 to advance. Explicit completion prediction or a runtime transition gate would be
 an additional contract, not a property supplied by this recipe.
 
-**Runtime integration is still required.** The older language runtime on this
-branch generates subtask and memory in separate calls. Its PI052 subtask prompt
-does not consume memory, and it does not parse the combined response. The newer
-rollout autosteer path also expects a plain subtask string. Neither should receive
-the combined response unchanged as an action instruction. A compatible adapter
-must validate both fields, retain Memory for the next planning prompt, apply only
-Subtask to actions, and clear memory on episode reset. Invalid responses must not
-partially update either field. Simply changing a recipe does not implement this loop.
+**Adapter-based runtime:** set `--policy.memory_scratchpad=true` when training a
+new checkpoint with these recipes. The saved flag opts its PI052 adapter into one
+combined generation call. The adapter renders the input template from the recipe,
+using generated memory/subtask state active one second before the observation.
+It validates both output fields before updating either, stores a timestamped
+memory/subtask update, and conditions actions on only the subtask. Repeated
+subtasks are accepted normally and memory can update without a subtask change.
+A task change or scene reset that clears the subtask invalidates scratchpad
+history. Actions are refused until an initial valid response is available.
+Leave runtime memory and subtask generation enabled for these checkpoints.
+
+The flag defaults to `false`, preserving the older separate-call behavior of
+existing checkpoints. **This adapter integration is not the newer interactive
+rollout autosteer/RTC integration used in the separate bussing-evaluation checkout.**
+That engine still needs the same timestamped history, parsing, and reset contract
+before it can use scratchpad-trained checkpoints. Do not pass a combined response
+unchanged as its action instruction.
 
 These recipes replace the earlier separate memory-update training mixture; they
 do not convert existing checkpoints. Preserve an old checkpoint's training recipe
@@ -150,6 +185,7 @@ lerobot-train \
     --policy.type=pi052 \
     --policy.pretrained_path=lerobot/pi052_base \
     --policy.recipe_path=recipes/subtask_mem.yaml \
+    --policy.memory_scratchpad=true \
     --policy.tokenizer_max_length=256 \
     --policy.dtype=bfloat16 \
     --policy.device=cuda \

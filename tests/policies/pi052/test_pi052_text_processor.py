@@ -175,6 +175,8 @@ def test_memory_recipe_supervises_one_combined_response_without_future_context(r
         {"role": "assistant", "style": "subtask", "content": "pick plate", "timestamp": 0.0},
         {"role": "assistant", "style": "memory", "content": "cup and plate in box", "timestamp": 1.0},
         {"role": "assistant", "style": "subtask", "content": "pick spoon", "timestamp": 1.0},
+        {"role": "user", "style": "subtask", "content": "pick plate", "timestamp": 1.0},
+        {"role": "user", "style": "subtask", "content": "future instruction", "timestamp": 2.0},
         {"role": "assistant", "style": "memory", "content": "future success", "timestamp": 2.0},
     ]
     rendered = render_sample(
@@ -183,13 +185,18 @@ def test_memory_recipe_supervises_one_combined_response_without_future_context(r
     assert rendered is not None
     assert rendered["target_message_indices"] == [len(rendered["messages"]) - 1]
     target = rendered["messages"][-1]["content"]
+    prompt = rendered["messages"][0]["content"]
+    assert len(rendered["messages"]) == 2
+    assert prompt.startswith("Goal: clear table\nMemory: ")
     if timestamp == 0:
         assert target == "Memory: cup in box\nSubtask: pick plate"
-        assert not any("Previous memory:" in m["content"] for m in rendered["messages"])
+        assert "Memory: \nCurrent subtask: \n" in prompt
     else:
-        assert rendered["messages"][1]["content"] == "Previous memory: cup in box"
+        assert "Memory: cup in box\nCurrent subtask: pick plate\n" in prompt
+        assert "pick spoon" not in prompt
         assert target == "Memory: cup and plate in box\nSubtask: pick spoon"
     assert "future success" not in str(rendered)
+    assert "future instruction" not in str(rendered)
     assert target not in str(rendered["messages"][:-1])
 
     step = PI052TextTokenizerStep(max_length=1024)
@@ -219,6 +226,61 @@ def test_memory_recipe_supervises_one_combined_response_without_future_context(r
     ]
     assert low_level["target_message_indices"] == []
     assert low_level["message_streams"] == ["low_level"]
+
+
+@pytest.mark.parametrize("recipe_name", ["subtask_mem", "subtask_mem_vqa_speech"])
+def test_memory_recipe_can_supervise_continuing_the_current_subtask(recipe_name):
+    recipe = TrainingRecipe.from_yaml(Path(f"src/lerobot/configs/recipes/{recipe_name}.yaml"))
+    rows = [
+        {"role": "assistant", "style": "memory", "content": "cup in box", "timestamp": 0.0},
+        {"role": "assistant", "style": "memory", "content": "plate pickup in progress", "timestamp": 1.0},
+        {"role": "assistant", "style": "subtask", "content": "pick plate", "timestamp": 0.0},
+        {"role": "user", "style": "subtask", "content": "pick plate", "timestamp": 1.0},
+        {"role": "assistant", "style": "subtask", "content": "pick plate", "timestamp": 1.0},
+    ]
+    rendered = render_sample(
+        recipe=recipe.blend["high_level_memory_subtask"],
+        persistent=rows,
+        events=[],
+        t=1.0,
+        sample_idx=0,
+        task="clear table",
+    )
+    assert "Current subtask: pick plate\n" in rendered["messages"][0]["content"]
+    assert rendered["messages"][1]["content"] == "Memory: plate pickup in progress\nSubtask: pick plate"
+    assert rendered["target_message_indices"] == [1]
+
+
+@pytest.mark.parametrize("recipe_name", ["subtask_mem", "subtask_mem_vqa_speech"])
+@pytest.mark.parametrize("timestamp", [0.0, 0.99, 1.0, 4.999, 5.0, 5.999, 6.0, 9.0])
+def test_memory_recipe_one_second_lookback_learns_holds_and_boundaries(recipe_name, timestamp):
+    recipe = TrainingRecipe.from_yaml(Path(f"src/lerobot/configs/recipes/{recipe_name}.yaml"))
+    rows = [
+        {"role": "assistant", "style": "subtask", "content": "pick plate", "timestamp": 0.0},
+        {"role": "assistant", "style": "memory", "content": "cup in box", "timestamp": 0.0},
+        {"role": "assistant", "style": "subtask", "content": "pick spoon", "timestamp": 5.0},
+        {"role": "assistant", "style": "memory", "content": "plate in box", "timestamp": 5.0},
+    ]
+    rendered = render_sample(
+        recipe=recipe.blend["high_level_memory_subtask"],
+        persistent=rows,
+        events=[],
+        t=timestamp,
+        sample_idx=0,
+        task="clear table",
+    )
+    cutoff = timestamp - 1.0
+    current = "" if cutoff < 0 else ("pick plate" if cutoff < 5 else "pick spoon")
+    memory = "" if cutoff < 0 else ("cup in box" if cutoff < 5 else "plate in box")
+    assert rendered["messages"][0]["content"].startswith(
+        f"Goal: clear table\nMemory: {memory}\nCurrent subtask: {current}\n"
+    )
+    expected = (
+        "Memory: cup in box\nSubtask: pick plate"
+        if timestamp < 5
+        else "Memory: plate in box\nSubtask: pick spoon"
+    )
+    assert rendered["messages"][1]["content"] == expected
 
 
 @pytest.mark.parametrize("recipe_name", ["subtask_mem", "subtask_mem_vqa_speech"])

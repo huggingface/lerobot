@@ -1,19 +1,25 @@
 # Adds spoken interjection responses and camera-grounded VQA to combined memory/subtask training.
 # Missing optional annotations skip only their sub-recipe; `say` tool calls tokenize as `<say>...</say>`.
-# Requires a continuous subtask timeline. Runtime must parse and retain the generated memory.
+# Input memory/subtask are active at t-1 second; assistant targets are active at t.
+# Runtime must parse and retain the generated memory.
 
 blend:
 
   high_level_memory_subtask:
     weight: 0.35
     bindings:
-      prior_memory: "nth_prev(style=memory, offset=1)"
+      prior_memory: "active_at(t, style=memory, role=assistant, seconds_ago=1.0)"
+      current_subtask: "active_at(t, style=subtask, role=assistant, seconds_ago=1.0)"
+      memory: "active_at(t, style=memory, role=assistant)"
+      subtask: "active_at(t, style=subtask, role=assistant)"
     messages:
-      - {role: user, content: "${task}", stream: high_level}
-      - {role: assistant, content: "Previous memory: ${prior_memory}", stream: high_level, if_present: prior_memory}
       - role: user
         stream: high_level
-        content: "Update the memory from observed progress and choose the next subtask. Reply with Memory: followed by Subtask:."
+        content: |-
+          Goal: ${task}
+          Memory: ${prior_memory}
+          Current subtask: ${current_subtask}
+          Update memory from observed progress. Repeat the current subtask unless observations support completion or show that it needs to change. Reply with Memory: followed by Subtask:.
       - role: assistant
         stream: high_level
         target: true
@@ -24,6 +30,8 @@ blend:
 
   low_level_execution:
     weight: 0.40
+    bindings:
+      subtask: "active_at(t, style=subtask, role=assistant)"
     messages:
       # The low-level stream trains action flow on the generated or annotated subtask.
       - {role: user, content: "${subtask}", stream: low_level, if_present: subtask}
