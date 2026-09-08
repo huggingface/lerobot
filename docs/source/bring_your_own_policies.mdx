@@ -234,12 +234,14 @@ ordinary observation-only inputs pass through. Annotated text-only training is
 supported without an action tensor. Training without annotations needs action
 targets to enable the task fallback.
 
-The shared factory only constructs or loads processors. Fresh training and
-fine-tuning construct them from the active config and dataset statistics;
-resume and inference load saved pipelines, including their recipe and statistics.
+The shared factory only constructs or loads processors. Language-recipe
+fine-tuning constructs them from the active config and dataset statistics so a
+saved processor cannot override the new recipe. Resume and inference load saved
+pipelines, including their recipe and statistics. Non-language training retains
+its existing construction and checkpoint-loading behavior.
 Fresh factories derive normalization and relative-action settings themselves.
-The training script supplies the live device and retains the rename map without
-reconstructing processor steps.
+Fresh factories use the configured device; the existing dataset batch
+preprocessing applies the training rename map.
 
 `messages_rendered` contains recipe-expanded semantic messages, before native
 chat formatting or tokenization. The training sidecars index this same list.

@@ -102,17 +102,26 @@ def _run_training_until_processors(monkeypatch, cfg, stats):
     return pipelines
 
 
+@pytest.mark.parametrize("recipe_mode", ["disabled", "builtin", "yaml"])
 @pytest.mark.parametrize("resume", [False, True])
-def test_training_entrypoint_builds_config_or_restores_saved_stats(tmp_path, resume, monkeypatch):
+def test_training_entrypoint_only_rebuilds_for_language_finetuning(
+    tmp_path, resume, recipe_mode, monkeypatch
+):
     config = _act_config()
     pre, post = factory.make_pre_post_processors(config, dataset_stats=_stats(10.0))
     pre.save_pretrained(tmp_path)
     post.save_pretrained(tmp_path)
     config.pretrained_path = str(tmp_path)
+    config.use_language_recipe = recipe_mode == "builtin"
+    config.recipe_path = "active-recipe.yaml" if recipe_mode == "yaml" else None
     cfg = SimpleNamespace(
         trainable_config=config, policy=config, resume=resume, rename_map={}, is_reward_model_training=False
     )
+    load = MagicMock(wraps=factory.PolicyProcessorPipeline.from_pretrained)
+    monkeypatch.setattr(factory.PolicyProcessorPipeline, "from_pretrained", load)
     pre, post = _run_training_until_processors(monkeypatch, cfg, _stats(20.0))
+    uses_checkpoint = resume or recipe_mode == "disabled"
+    assert load.call_count == (2 if uses_checkpoint else 0)
     result = pre({"observation.state": torch.tensor([[22.0]])})
     torch.testing.assert_close(result["observation.state"], torch.tensor([[6.0 if resume else 1.0]]))
     torch.testing.assert_close(post(torch.tensor([[1.0]])), torch.tensor([[12.0 if resume else 22.0]]))
@@ -171,6 +180,7 @@ def test_finetuning_preserves_statistics_adapted_by_policy_factory(monkeypatch):
     monkeypatch.setattr(processor_act, "make_act_pre_post_processors", adapted_factory)
     config = _act_config()
     config.pretrained_path = "unused-model-weights-path"
+    config.use_language_recipe = True
     cfg = SimpleNamespace(
         trainable_config=config, policy=config, resume=False, rename_map={}, is_reward_model_training=False
     )
@@ -192,9 +202,9 @@ def test_disabled_recipe_training_retains_runtime_only_renderer():
     assert "messages_rendered" not in pre({"task": "tidy", "language_events": []})
 
 
-def test_fresh_training_preserves_relative_action_links_and_rename_map(monkeypatch):
+def test_fresh_training_preserves_relative_action_links_and_batch_renaming(monkeypatch):
     from lerobot.policies.act import processor_act
-    from lerobot.processor import RenameObservationsProcessorStep
+    from lerobot.scripts.lerobot_train import _preprocess_dataset_batch
 
     original_factory = processor_act.make_act_pre_post_processors
     created = []
@@ -210,7 +220,6 @@ def test_fresh_training_preserves_relative_action_links_and_rename_map(monkeypat
 
     monkeypatch.setattr(processor_act, "make_act_pre_post_processors", linked_factory)
     config = _act_config()
-    config.device = "unavailable-device"
     cfg = SimpleNamespace(
         trainable_config=config,
         policy=config,
@@ -222,8 +231,8 @@ def test_fresh_training_preserves_relative_action_links_and_rename_map(monkeypat
     assert pre.steps[0] is created[0]
     assert post.steps[-1] is created[1]
     assert post.steps[-1].relative_step is pre.steps[0]
-    assert config.device == "unavailable-device"
-    rename = next(step for step in pre.steps if isinstance(step, RenameObservationsProcessorStep))
-    assert rename.rename_map == cfg.rename_map
-    pre({"observation.state": torch.tensor([[10.0]])})
+    processed = _preprocess_dataset_batch(
+        {"observation.old_state": torch.tensor([[10.0]])}, [], cfg.rename_map, pre
+    )
+    torch.testing.assert_close(processed["observation.state"], torch.tensor([[5.0]]))
     torch.testing.assert_close(post(torch.tensor([[1.0]])), torch.tensor([[12.0]]))

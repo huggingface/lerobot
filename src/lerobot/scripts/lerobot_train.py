@@ -28,7 +28,6 @@ torchrun --nproc-per-node=8 $(which lerobot-train) \
 ```
 """
 
-import copy
 import dataclasses
 import logging
 import sys
@@ -72,14 +71,11 @@ from lerobot.distributed import (
 )
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.jobs import submit_to_hf
+from lerobot.language.recipe import language_recipe_enabled
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.policies.factory import ProcessorConfigKwargs
-from lerobot.processor.rename_processor import (
-    RenameObservationsProcessorStep,
-    rename_batch_keys,
-    rename_stats,
-)
+from lerobot.processor.rename_processor import rename_batch_keys, rename_stats
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR
@@ -499,14 +495,20 @@ def train(cfg: TrainPipelineConfig):
 
     # --- processors (overrides built once, as one typed mapping) -------------------------------
     active_cfg = cfg.trainable_config
-    # Fresh training/fine-tuning uses the active config; resume restores saved processors.
-    processor_pretrained_path = active_cfg.pretrained_path if cfg.resume else None
+    processor_pretrained_path = active_cfg.pretrained_path
+    if not cfg.resume and language_recipe_enabled(
+        use_language_recipe=getattr(active_cfg, "use_language_recipe", False),
+        recipe_path=getattr(active_cfg, "recipe_path", None),
+    ):
+        # Language fine-tuning must use the active recipe, not the saved processor recipe.
+        processor_pretrained_path = None
 
     processor_kwargs = ProcessorConfigKwargs()
     processor_dataset_stats = rename_stats(dataset.meta.stats, cfg.rename_map)
-    if not cfg.resume:
+    if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
         processor_kwargs["dataset_stats"] = processor_dataset_stats
-    processor_kwargs["dataset_meta"] = dataset.meta
+    if cfg.is_reward_model_training:
+        processor_kwargs["dataset_meta"] = dataset.meta
     if not cfg.is_reward_model_training and processor_pretrained_path is not None:
         preprocessor_overrides = {
             "device_processor": {"device": device.type},
@@ -526,6 +528,9 @@ def train(cfg: TrainPipelineConfig):
         # been adapted by the policy (e.g. EVO1 pads state/action stats to max_state_dim),
         # and force-feeding raw dataset stats over them crashes normalization (#4006).
         # This mirrors the `dataset_stats` kwarg above, which is also skipped on resume.
+        if not cfg.resume:
+            preprocessor_overrides["normalizer_processor"]["stats"] = processor_dataset_stats
+            postprocessor_overrides["unnormalizer_processor"]["stats"] = processor_dataset_stats
         if getattr(active_cfg, "use_relative_actions", False):
             preprocessor_overrides["relative_actions_processor"] = {
                 "enabled": True,
@@ -542,23 +547,12 @@ def train(cfg: TrainPipelineConfig):
             **processor_kwargs,
         )
     else:
-        processor_config = cfg.policy
-        if not cfg.resume:
-            # Fresh factories get the live device without changing the model config.
-            processor_config = copy.copy(cfg.policy)
-            processor_config.device = device.type
         preprocessor, postprocessor = make_pre_post_processors(
-            policy_cfg=processor_config,
+            policy_cfg=cfg.policy,
             pretrained_path=processor_pretrained_path,
             pretrained_revision=getattr(cfg.policy, "pretrained_revision", None),
             **processor_kwargs,
         )
-
-    if not cfg.is_reward_model_training and not cfg.resume:
-        # Preserve the rename map for rollout without rebuilding processor instances.
-        for processor_step in preprocessor.steps:
-            if isinstance(processor_step, RenameObservationsProcessorStep):
-                processor_step.rename_map = dict(cfg.rename_map)
 
     # Created BEFORE prepare on the unsharded parameters — accelerate's FSDP2 path requires the
     # model and optimizer in one prepare() call and rebinds the param groups itself.
