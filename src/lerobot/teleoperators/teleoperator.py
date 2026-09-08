@@ -122,7 +122,12 @@ class Teleoperator(abc.ABC):
     @abc.abstractmethod
     def connect(self, calibrate: bool = True) -> None:
         """
-        Establish communication with the teleoperator.
+        Establish communication with the teleoperator and make it ready for use.
+
+        This method is idempotent: calling it when the teleoperator is already fully
+        connected is a no-op. Implementations that own multiple resources should
+        resume a partial connection when possible and clean up resources acquired
+        by the call if connection fails.
 
         Args:
             calibrate (bool): If True, automatically calibrate the teleoperator after connecting if it's not
@@ -139,10 +144,11 @@ class Teleoperator(abc.ABC):
     @abc.abstractmethod
     def calibrate(self) -> None:
         """
-        Calibrate the teleoperator if applicable. If not, this should be a no-op.
+        Explicitly calibrate the teleoperator if applicable. If not, this should be a no-op.
 
         This method should collect any necessary data (e.g., motor offsets) and update the
-        :pyattr:`calibration` dictionary accordingly.
+        :pyattr:`calibration` dictionary accordingly. Implementations may offer
+        recalibration even when :pyattr:`is_calibrated` is already ``True``.
         """
         pass
 
@@ -173,6 +179,8 @@ class Teleoperator(abc.ABC):
         """
         Apply any one-time or runtime configuration to the teleoperator.
         This may include setting motor parameters, control modes, or initial state.
+
+        Calling this method repeatedly should safely reapply the desired configuration.
         """
         pass
 
@@ -204,5 +212,10 @@ class Teleoperator(abc.ABC):
 
     @abc.abstractmethod
     def disconnect(self) -> None:
-        """Disconnect from the teleoperator and perform any necessary cleanup."""
+        """Disconnect from the teleoperator and perform any necessary cleanup.
+
+        This method is idempotent and may be called after a partial or failed
+        connection. Implementations that own multiple resources should attempt to
+        release all of them before reporting cleanup failures.
+        """
         pass

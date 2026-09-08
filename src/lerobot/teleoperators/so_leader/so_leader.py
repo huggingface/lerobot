@@ -22,7 +22,7 @@ from lerobot.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
 )
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_not_connected
 
 from ..teleoperator import Teleoperator
 from .config_so_leader import SOLeaderTeleopConfig
@@ -65,16 +65,32 @@ class SOLeader(Teleoperator):
     def is_connected(self) -> bool:
         return self.bus.is_connected
 
-    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        self.bus.connect()
-        if not self.is_calibrated and calibrate:
-            logger.info(
-                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
-            )
-            self.calibrate()
+        if self.is_connected:
+            return
 
-        self.configure()
+        try:
+            self.bus.connect()
+            if not self.is_calibrated and calibrate:
+                logger.info(
+                    "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
+                )
+                self.calibrate()
+
+            self.configure()
+        except Exception as connect_error:
+            connect_error.add_note(f"while connecting {self}")
+            if self.bus.is_connected:
+                try:
+                    self.bus.disconnect()
+                except Exception as disconnect_error:
+                    disconnect_error.add_note(f"while rolling back the connection of {self}")
+                    raise ExceptionGroup(
+                        f"Failed to connect {self} and to fully roll back",
+                        [connect_error, disconnect_error],
+                    ) from None
+            raise
+
         logger.info(f"{self} connected.")
 
     @property
@@ -157,8 +173,9 @@ class SOLeader(Teleoperator):
         if goals:
             self.bus.sync_write("Goal_Position", goals)
 
-    @check_if_not_connected
     def disconnect(self) -> None:
+        if not self.bus.is_connected:
+            return
         self.bus.disconnect()
         logger.info(f"{self} disconnected.")
 

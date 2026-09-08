@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 from lerobot.lerobot_types import RobotAction
 from lerobot.motors import MotorCalibration
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_not_connected
 from lerobot.utils.import_utils import _motorbridge_smart_servo_available, require_package
 
 from ..teleoperator import Teleoperator
@@ -68,8 +68,10 @@ class RebotArm102Leader(Teleoperator):
     def is_connected(self) -> bool:
         return self.bus is not None
 
-    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        if self.is_connected:
+            return
+
         logger.info(f"Connecting {self} on {self.config.port}...")
         bus = FashionStarServo(self.config.port, baudrate=self.config.baudrate)
         try:
@@ -200,8 +202,9 @@ class RebotArm102Leader(Teleoperator):
     def send_feedback(self, feedback: dict[str, float]) -> None:
         raise NotImplementedError("Feedback is not implemented for the reBot Arm 102 leader.")
 
-    @check_if_not_connected
     def disconnect(self) -> None:
+        if self.bus is None:
+            return
         self.bus.close()
         self.bus = None
         logger.info(f"{self} disconnected.")

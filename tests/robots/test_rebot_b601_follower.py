@@ -78,6 +78,10 @@ def test_features_match_joints():
 
 def test_connect_disconnect(follower):
     assert follower.is_connected
+    follower.connect(calibrate=False)
+    assert follower.is_connected
+
+    follower.disconnect()
     follower.disconnect()
     assert not follower.is_connected
 

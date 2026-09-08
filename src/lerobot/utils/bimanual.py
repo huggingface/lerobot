@@ -16,8 +16,6 @@
 
 from typing import Any
 
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
-
 
 class BimanualMixin:
     """Lifecycle delegation for bimanual robots and teleoperators.
@@ -44,20 +42,94 @@ class BimanualMixin:
     def is_calibrated(self) -> bool:
         return self.left_arm.is_calibrated and self.right_arm.is_calibrated
 
-    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        self.left_arm.connect(calibrate)
-        self.right_arm.connect(calibrate)
+        """Connect both arms, repairing a partial connection when possible.
+
+        Calling this method when both arms are already connected is a no-op. If
+        an arm fails to connect, arms whose connection started during this call
+        are disconnected again. An arm that was connected before the call is
+        left untouched.
+        """
+        if self.is_connected:
+            return
+
+        started: list[tuple[str, Any]] = []
+        try:
+            for side, arm in (("left", self.left_arm), ("right", self.right_arm)):
+                if arm.is_connected:
+                    continue
+
+                started.append((side, arm))
+                try:
+                    arm.connect(calibrate)
+                except Exception as exc:
+                    exc.add_note(f"while connecting the {side} arm of {type(self).__name__}")
+                    raise
+        except Exception as connect_error:
+            rollback_errors: list[Exception] = []
+            for side, arm in reversed(started):
+                try:
+                    arm.disconnect()
+                except Exception as exc:
+                    exc.add_note(f"while rolling back the {side} arm connection of {type(self).__name__}")
+                    rollback_errors.append(exc)
+
+            if rollback_errors:
+                raise ExceptionGroup(
+                    f"Failed to connect {type(self).__name__} and to fully roll back",
+                    [connect_error, *rollback_errors],
+                ) from None
+            raise
 
     def calibrate(self) -> None:
-        self.left_arm.calibrate()
-        self.right_arm.calibrate()
+        """Explicitly calibrate both arms, including arms already calibrated."""
+        errors: list[Exception] = []
+        try:
+            self.left_arm.calibrate()
+        except Exception as exc:
+            exc.add_note(f"while calibrating the left arm of {type(self).__name__}")
+            errors.append(exc)
+        try:
+            self.right_arm.calibrate()
+        except Exception as exc:
+            exc.add_note(f"while calibrating the right arm of {type(self).__name__}")
+            errors.append(exc)
+
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise ExceptionGroup(f"Failed to calibrate {type(self).__name__}", errors)
 
     def configure(self) -> None:
-        self.left_arm.configure()
-        self.right_arm.configure()
+        """Apply configuration to both arms, attempting both after a failure."""
+        errors: list[Exception] = []
+        try:
+            self.left_arm.configure()
+        except Exception as exc:
+            exc.add_note(f"while configuring the left arm of {type(self).__name__}")
+            errors.append(exc)
+        try:
+            self.right_arm.configure()
+        except Exception as exc:
+            exc.add_note(f"while configuring the right arm of {type(self).__name__}")
+            errors.append(exc)
 
-    @check_if_not_connected
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise ExceptionGroup(f"Failed to configure {type(self).__name__}", errors)
+
     def disconnect(self) -> None:
-        self.left_arm.disconnect()
-        self.right_arm.disconnect()
+        """Disconnect both arms, attempting the second even after a failure."""
+        errors: list[Exception] = []
+        for side, arm in (("left", self.left_arm), ("right", self.right_arm)):
+            try:
+                arm.disconnect()
+            except Exception as exc:
+                exc.add_note(f"while disconnecting the {side} arm of {type(self).__name__}")
+                errors.append(exc)
+
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise ExceptionGroup(f"Failed to disconnect {type(self).__name__}", errors)

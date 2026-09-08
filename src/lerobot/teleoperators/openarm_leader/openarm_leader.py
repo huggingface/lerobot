@@ -21,7 +21,7 @@ from typing import Any
 from lerobot.lerobot_types import RobotAction
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_not_connected
 
 from ..teleoperator import Teleoperator
 from .config_openarm_leader import OpenArmLeaderConfig
@@ -85,7 +85,6 @@ class OpenArmLeader(Teleoperator):
         """Check if teleoperator is connected."""
         return self.bus.is_connected
 
-    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         """
         Connect to the teleoperator.
@@ -94,21 +93,37 @@ class OpenArmLeader(Teleoperator):
         arm can be moved by hand.
         """
 
-        # Connect to CAN bus
-        logger.info(f"Connecting arm on {self.config.port}...")
-        self.bus.connect()
+        if self.is_connected:
+            return
 
-        # Run calibration if needed
-        if not self.is_calibrated and calibrate:
-            logger.info(
-                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
-            )
-            self.calibrate()
+        try:
+            # Connect to CAN bus
+            logger.info(f"Connecting arm on {self.config.port}...")
+            self.bus.connect()
 
-        self.configure()
+            # Run calibration if needed
+            if not self.is_calibrated and calibrate:
+                logger.info(
+                    "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
+                )
+                self.calibrate()
 
-        if self.is_calibrated:
-            self.bus.set_zero_position()
+            self.configure()
+
+            if self.is_calibrated:
+                self.bus.set_zero_position()
+        except Exception as connect_error:
+            connect_error.add_note(f"while connecting {self}")
+            if self.bus.is_connected:
+                try:
+                    self.bus.disconnect(disable_torque=self.config.manual_control)
+                except Exception as disconnect_error:
+                    disconnect_error.add_note(f"while rolling back the connection of {self}")
+                    raise ExceptionGroup(
+                        f"Failed to connect {self} and to fully roll back",
+                        [connect_error, disconnect_error],
+                    ) from None
+            raise
 
         logger.info(f"{self} connected.")
 
@@ -214,9 +229,11 @@ class OpenArmLeader(Teleoperator):
     def send_feedback(self, feedback: dict[str, float]) -> None:
         raise NotImplementedError("Feedback is not yet implemented for OpenArm leader.")
 
-    @check_if_not_connected
     def disconnect(self) -> None:
         """Disconnect from teleoperator."""
+
+        if not self.bus.is_connected:
+            return
 
         # Disconnect CAN bus
         # For manual control, ensure torque is disabled before disconnecting

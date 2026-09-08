@@ -18,12 +18,12 @@ import logging
 import math
 import time
 from functools import cached_property
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors import MotorCalibration
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_not_connected
 from lerobot.utils.import_utils import _motorbridge_available, require_package
 
 from ..robot import Robot
@@ -99,36 +99,107 @@ class RebotB601Follower(Robot):
 
     @property
     def is_connected(self) -> bool:
-        return self.bus is not None and all(cam.is_connected for cam in self.cameras.values())
+        return (
+            self.bus is not None
+            and set(self.motors) == set(self.motor_names)
+            and all(cam.is_connected for cam in self.cameras.values())
+        )
 
-    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        if self.is_connected:
+            return
+
         logger.info(f"Connecting {self} on {self.config.port} (adapter={self.config.can_adapter})...")
-        if self.config.can_adapter == "damiao":
-            self.bus = MotorBridgeController.from_dm_serial(
-                serial_port=self.config.port,
-                baud=self.config.dm_serial_baud,
-            )
-        elif self.config.can_adapter == "socketcan":
-            self.bus = MotorBridgeController(channel=self.config.port)
-        else:
-            raise ValueError(
-                f"Unsupported can_adapter '{self.config.can_adapter}'. Use 'damiao' or 'socketcan'."
-            )
+        bus_started = self.bus is None
+        motors_started: list[str] = []
+        cameras_started: list[tuple[str, Any]] = []
+        try:
+            if self.bus is None:
+                if self.config.can_adapter == "damiao":
+                    self.bus = MotorBridgeController.from_dm_serial(
+                        serial_port=self.config.port,
+                        baud=self.config.dm_serial_baud,
+                    )
+                elif self.config.can_adapter == "socketcan":
+                    self.bus = MotorBridgeController(channel=self.config.port)
+                else:
+                    raise ValueError(
+                        f"Unsupported can_adapter '{self.config.can_adapter}'. Use 'damiao' or 'socketcan'."
+                    )
 
-        for motor_name, (send_id, recv_id) in self.config.motor_can_ids.items():
-            self.motors[motor_name] = self.bus.add_damiao_motor(send_id, recv_id, MOTOR_MODELS[motor_name])
+            for motor_name, (send_id, recv_id) in self.config.motor_can_ids.items():
+                if motor_name in self.motors:
+                    continue
+                self.motors[motor_name] = self.bus.add_damiao_motor(
+                    send_id, recv_id, MOTOR_MODELS[motor_name]
+                )
+                motors_started.append(motor_name)
 
-        if not self.is_calibrated and calibrate:
-            logger.info(
-                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
-            )
-            self.calibrate()
+            if not self.is_calibrated and calibrate:
+                logger.info(
+                    "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
+                )
+                self.calibrate()
 
-        for cam in self.cameras.values():
-            cam.connect()
+            for name, cam in self.cameras.items():
+                if cam.is_connected:
+                    continue
+                cameras_started.append((name, cam))
+                cam.connect()
 
-        self.configure()
+            self.configure()
+        except Exception as connect_error:
+            connect_error.add_note(f"while connecting {self}")
+            rollback_errors: list[Exception] = []
+
+            for name, cam in reversed(cameras_started):
+                if not cam.is_connected:
+                    continue
+                try:
+                    cam.disconnect()
+                except Exception as exc:
+                    exc.add_note(f"while rolling back camera '{name}' of {self}")
+                    rollback_errors.append(exc)
+
+            motors_to_close = list(self.motors) if bus_started else motors_started
+            for motor_name in reversed(motors_to_close):
+                motor = self.motors[motor_name]
+                if self.config.disable_torque_on_disconnect:
+                    try:
+                        motor.disable()
+                    except Exception as exc:
+                        exc.add_note(f"while rolling back motor '{motor_name}' of {self}")
+                        rollback_errors.append(exc)
+                try:
+                    motor.clear_error()
+                except Exception as exc:
+                    exc.add_note(f"while clearing motor '{motor_name}' during rollback of {self}")
+                    rollback_errors.append(exc)
+                try:
+                    motor.close()
+                except Exception as exc:
+                    exc.add_note(f"while closing motor '{motor_name}' during rollback of {self}")
+                    rollback_errors.append(exc)
+                else:
+                    self.motors.pop(motor_name)
+
+            if bus_started and self.bus is not None:
+                try:
+                    self.bus.close()
+                except Exception as exc:
+                    exc.add_note(f"while rolling back the motor bus of {self}")
+                    rollback_errors.append(exc)
+                else:
+                    self.bus = None
+                    self.motors = {}
+
+            if rollback_errors:
+                raise ExceptionGroup(
+                    f"Failed to connect {self} and to fully roll back",
+                    [connect_error, *rollback_errors],
+                ) from None
+            raise
+
         logger.info(f"{self} connected.")
 
     @property
@@ -309,19 +380,48 @@ class RebotB601Follower(Robot):
 
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
-    @check_if_not_connected
     def disconnect(self) -> None:
-        for motor in self.motors.values():
+        errors: list[Exception] = []
+        for motor_name, motor in self.motors.items():
             if self.config.disable_torque_on_disconnect:
-                motor.disable()
-            motor.clear_error()
-            motor.close()
+                try:
+                    motor.disable()
+                except Exception as exc:
+                    exc.add_note(f"while disabling motor '{motor_name}' of {self}")
+                    errors.append(exc)
+            try:
+                motor.clear_error()
+            except Exception as exc:
+                exc.add_note(f"while clearing motor '{motor_name}' of {self}")
+                errors.append(exc)
+            try:
+                motor.close()
+            except Exception as exc:
+                exc.add_note(f"while closing motor '{motor_name}' of {self}")
+                errors.append(exc)
 
-        self.bus.close()
-        self.bus = None
-        self.motors = {}
+        if self.bus is not None:
+            try:
+                self.bus.close()
+            except Exception as exc:
+                exc.add_note(f"while disconnecting the motor bus of {self}")
+                errors.append(exc)
+            else:
+                self.bus = None
+                self.motors = {}
 
-        for cam in self.cameras.values():
-            cam.disconnect()
+        for name, cam in self.cameras.items():
+            if not cam.is_connected:
+                continue
+            try:
+                cam.disconnect()
+            except Exception as exc:
+                exc.add_note(f"while disconnecting camera '{name}' of {self}")
+                errors.append(exc)
+
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise ExceptionGroup(f"Failed to disconnect {self}", errors)
 
         logger.info(f"{self} disconnected.")
