@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from lerobot.lerobot_types import TransitionKey
-from lerobot.processor import RenderRuntimeMessagesStep
+from lerobot.processor import RenderRuntimeMessagesStep, RenderTrainingMessagesStep
 from lerobot.processor.converters import create_transition
 from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT
 
@@ -209,3 +209,18 @@ def test_same_pipeline_handles_training_then_text_and_action_inference(dataset_d
     action_input = pipeline({"task": "tidy"})
     assert "messages_rendered" not in action_input
     assert action_input["task"] == "tidy"
+
+
+@pytest.mark.parametrize(
+    "complementary_data",
+    [
+        {"task": "tidy"},
+        {"language_persistent": [], "language_events": []},
+        {"query_kind": "vqa", "query_text": "hi"},
+    ],
+)
+def test_training_renderer_without_recipe_is_a_noop(complementary_data):
+    import torch
+
+    transition = create_transition(action=torch.ones(1), complementary_data=complementary_data)
+    assert RenderTrainingMessagesStep()(transition) is transition

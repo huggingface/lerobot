@@ -203,26 +203,25 @@ def make_my_policy_pre_post_processors(
 
 Language policies share recipe rendering between two processor steps:
 
-- `RenderTrainingMessagesStep` resolves annotated samples and emits
-  `messages_rendered`, `message_streams`, and `target_message_indices`. It remains
-  a general `ProcessorStep` because dropping sparse samples also filters their
-  observations and actions.
-- `RenderRuntimeMessagesStep` is a `ComplementaryDataProcessorStep`. It renders
-  text-generation requests and leaves ordinary action inputs unchanged.
+- `RenderTrainingMessagesStep` converts dataset language annotations into rendered messages.
+- `RenderRuntimeMessagesStep` converts user prompts into rendered messages.
 
-The policy config exposes `use_language_recipe: bool`, `recipe_path: str | None`,
-and the resolved `recipe: TrainingRecipe | None` (from `lerobot.datasets.recipe`). Serialize the resolved recipe
-in the config and processor so deployment does not depend on a local YAML path.
+Policy-specific processors then apply chat formatting and tokenization.
+
+The policy config stores the resolved `recipe: TrainingRecipe | None` (from
+`lerobot.datasets.recipe`). An optional `recipe_path` can load a YAML recipe;
+resolve it before constructing processors. A resolved recipe enables recipe
+training, and `None` makes the training renderer a no-op. Serialize the resolved
+recipe in the config and processor so deployment does not depend on a local YAML path.
 Recipe-backed rendering requires the `dataset` extra because recipes currently
 live under `lerobot.datasets`.
 
 Put both renderers before policy-native chat formatting and tokenization:
 
 ```python
-input_steps = [RenderRuntimeMessagesStep(config.recipe)]
-if config.use_language_recipe:
-    input_steps.append(RenderTrainingMessagesStep(config.recipe))
-input_steps += [
+input_steps = [
+    RenderRuntimeMessagesStep(config.recipe),
+    RenderTrainingMessagesStep(config.recipe),
     # observation transforms
     # policy-native roles, image placement, chat template, and tokenization
     # device placement
@@ -231,8 +230,8 @@ input_steps += [
 
 The same pipeline is saved and loaded for training and inference. Runtime
 rendering runs only for an explicit `query_kind`. Training rendering skips
-runtime queries and processes samples with raw annotations or action targets;
-ordinary observation-only inputs pass through. Annotated text-only training is
+runtime queries and, when a recipe is configured, processes samples with raw
+annotations or action targets. Ordinary observation-only inputs pass through. Annotated text-only training is
 supported without an action tensor. Training without annotations needs action
 targets to enable the task fallback.
 

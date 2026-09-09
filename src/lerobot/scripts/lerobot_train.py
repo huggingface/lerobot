@@ -62,7 +62,6 @@ from lerobot.configs import JobConfig, parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
 from lerobot.datasets.factory import make_train_eval_datasets
-from lerobot.datasets.recipe import language_recipe_enabled
 from lerobot.distributed import (
     ParallelDims,
     finalize_sharded_policy,
@@ -496,10 +495,13 @@ def train(cfg: TrainPipelineConfig):
     # --- processors (overrides built once, as one typed mapping) -------------------------------
     active_cfg = cfg.trainable_config
     processor_pretrained_path = active_cfg.pretrained_path
-    if not cfg.resume and language_recipe_enabled(
-        use_language_recipe=getattr(active_cfg, "use_language_recipe", False),
-        recipe_path=getattr(active_cfg, "recipe_path", None),
-    ):
+    if not cfg.resume and getattr(active_cfg, "recipe", None) is not None:
+        if processor_pretrained_path is not None and is_main_process():
+            logging.warning(
+                "Language recipe fine-tuning rebuilds processors from the active configuration; "
+                "saved processors from %s will not be loaded.",
+                processor_pretrained_path,
+            )
         # Language fine-tuning must use the active recipe, not the saved processor recipe.
         processor_pretrained_path = None
 

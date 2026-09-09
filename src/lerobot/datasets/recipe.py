@@ -358,16 +358,3 @@ def resolve_recipe_override(
         if recipe is None:
             raise
         return recipe
-
-
-def language_recipe_enabled(
-    *,
-    use_language_recipe: bool = False,
-    recipe_path: str | Path | None = None,
-) -> bool:
-    """Whether training requested a built-in recipe or an external override.
-
-    Text-capable policy configs opt into the shared training path by exposing
-    ``use_language_recipe``, ``recipe_path``, and a resolved ``recipe``.
-    """
-    return use_language_recipe or recipe_path is not None

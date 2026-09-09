@@ -11,7 +11,6 @@ pytest.importorskip("av", reason="recipes require lerobot[dataset]")
 from lerobot.datasets.recipe import (  # noqa: E402
     MessageTurn,
     TrainingRecipe,
-    language_recipe_enabled,
     load_recipe,
     render_message_turns,
     resolve_recipe_override,
@@ -276,7 +275,3 @@ def test_resolve_recipe_override_normalizes_inline_dict_and_loads_explicit_path(
     assert resolve_recipe_override(normalized, tmp_path / "stale.yaml") is normalized
     with pytest.raises(FileNotFoundError):
         resolve_recipe_override(None, tmp_path / "missing.yaml")
-
-    assert language_recipe_enabled(use_language_recipe=True)
-    assert language_recipe_enabled(recipe_path=override)
-    assert not language_recipe_enabled()

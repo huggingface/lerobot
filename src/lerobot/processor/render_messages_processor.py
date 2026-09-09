@@ -45,7 +45,8 @@ class RenderTrainingMessagesStep(ProcessorStep):
 
     This is a general ProcessorStep because sparse samples can be dropped from
     the entire transition, not just from complementary data.
-    Runs only on raw annotations or action targets, and skips runtime queries.
+    Without a recipe, inputs pass through unchanged. Otherwise, runs only on raw
+    annotations or action targets, and skips runtime queries.
     """
 
     recipe: TrainingRecipe | None = None
@@ -65,6 +66,9 @@ class RenderTrainingMessagesStep(ProcessorStep):
 
     def __call__(self, transition: EnvTransition) -> EnvTransition | None:
         """Render one sample or one batch of training annotations."""
+        if self.recipe is None:
+            return transition
+
         complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
         kind = complementary_data.get(QUERY_KIND)
         has_raw_language = LANGUAGE_PERSISTENT in complementary_data or LANGUAGE_EVENTS in complementary_data
@@ -78,8 +82,6 @@ class RenderTrainingMessagesStep(ProcessorStep):
 
         if MESSAGES_RENDERED in complementary_data and not has_raw_language:
             return transition
-        if self.recipe is None:
-            raise ValueError("Recipe-backed training requires a recipe in RenderTrainingMessagesStep.")
 
         persistent = complementary_data.get(LANGUAGE_PERSISTENT) or []
         events = complementary_data.get(LANGUAGE_EVENTS) or []

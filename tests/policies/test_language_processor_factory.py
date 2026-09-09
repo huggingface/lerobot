@@ -24,7 +24,7 @@ def test_language_rollout_loads_checkpoint_processors_even_when_dataset_stats_ar
     monkeypatch.setattr(factory, "_make_processors_from_policy_config", rebuild)
 
     result = factory.make_pre_post_processors(
-        SimpleNamespace(use_language_recipe=True, recipe_path="recipe.yaml"),
+        SimpleNamespace(recipe={"messages": []}, recipe_path="recipe.yaml"),
         pretrained_path="checkpoint",
         dataset_stats={"action": {"mean": 42.0}},
     )
@@ -64,7 +64,7 @@ def training_dependencies(dataset_dependencies):
     pytest.importorskip("accelerate", reason="training setup requires lerobot[training]")
 
 
-def _run_training_until_processors(monkeypatch, cfg, stats):
+def _run_training_until_processors(monkeypatch, cfg, stats, *, main_process=False):
     """Exercise the real train entrypoint, stopping before optimizer/model training."""
     import inspect
 
@@ -75,6 +75,7 @@ def _run_training_until_processors(monkeypatch, cfg, stats):
 
     cfg.job = SimpleNamespace(is_remote=False)
     cfg.validate = lambda: None
+    cfg.to_dict = lambda: {}
     cfg.parallelism = None
     cfg.wandb = SimpleNamespace(enable=False)
     cfg.seed = None
@@ -85,7 +86,7 @@ def _run_training_until_processors(monkeypatch, cfg, stats):
     monkeypatch.setattr(trainer, "make_accelerator", lambda _: accelerator)
     monkeypatch.setattr(trainer.ParallelDims, "from_config", lambda *args: None)
     monkeypatch.setattr(trainer, "init_logging", lambda **kwargs: None)
-    monkeypatch.setattr(trainer, "is_main_process", lambda: False)
+    monkeypatch.setattr(trainer, "is_main_process", lambda: main_process)
     monkeypatch.setattr(
         trainer,
         "make_train_eval_datasets",
@@ -113,25 +114,39 @@ def _run_training_until_processors(monkeypatch, cfg, stats):
     return pipelines
 
 
-@pytest.mark.parametrize("recipe_mode", ["disabled", "builtin", "yaml"])
+@pytest.mark.parametrize("recipe_mode", ["absent", "disabled", "builtin", "yaml"])
+@pytest.mark.parametrize("main_process", [False, True])
 @pytest.mark.parametrize("resume", [False, True])
 def test_training_entrypoint_only_rebuilds_for_language_finetuning(
-    tmp_path, resume, recipe_mode, monkeypatch, training_dependencies
+    tmp_path, resume, recipe_mode, main_process, monkeypatch, caplog, training_dependencies
 ):
     config = _act_config()
     pre, post = factory.make_pre_post_processors(config, dataset_stats=_stats(10.0))
     pre.save_pretrained(tmp_path)
     post.save_pretrained(tmp_path)
     config.pretrained_path = str(tmp_path)
-    config.use_language_recipe = recipe_mode == "builtin"
-    config.recipe_path = "active-recipe.yaml" if recipe_mode == "yaml" else None
+    from lerobot.datasets.recipe import MessageTurn, TrainingRecipe, resolve_recipe_override
+
+    recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="${task}", stream="low_level")])
+    if recipe_mode == "yaml":
+        recipe_path = tmp_path / "active-recipe.yaml"
+        recipe_path.write_text("messages:\n  - {role: user, content: '${task}', stream: low_level}\n")
+        config.recipe = resolve_recipe_override(None, recipe_path)
+    elif recipe_mode != "absent":
+        config.recipe = recipe if recipe_mode == "builtin" else None
     cfg = SimpleNamespace(
         trainable_config=config, policy=config, resume=resume, rename_map={}, is_reward_model_training=False
     )
     load = MagicMock(wraps=factory.PolicyProcessorPipeline.from_pretrained)
     monkeypatch.setattr(factory.PolicyProcessorPipeline, "from_pretrained", load)
-    pre, post = _run_training_until_processors(monkeypatch, cfg, _stats(20.0))
-    uses_checkpoint = resume or recipe_mode == "disabled"
+    pre, post = _run_training_until_processors(monkeypatch, cfg, _stats(20.0), main_process=main_process)
+    uses_checkpoint = resume or recipe_mode in ("absent", "disabled")
+    warnings = [
+        record.getMessage() for record in caplog.records if "saved processors from" in record.getMessage()
+    ]
+    assert len(warnings) == int(main_process and not uses_checkpoint)
+    if warnings:
+        assert str(tmp_path) in warnings[0]
     assert load.call_count == (2 if uses_checkpoint else 0)
     result = pre({"observation.state": torch.tensor([[22.0]])})
     torch.testing.assert_close(result["observation.state"], torch.tensor([[6.0 if resume else 1.0]]))
@@ -191,7 +206,9 @@ def test_finetuning_preserves_statistics_adapted_by_policy_factory(monkeypatch, 
     monkeypatch.setattr(processor_act, "make_act_pre_post_processors", adapted_factory)
     config = _act_config()
     config.pretrained_path = "unused-model-weights-path"
-    config.use_language_recipe = True
+    from lerobot.datasets.recipe import MessageTurn, TrainingRecipe
+
+    config.recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="${task}", stream="low_level")])
     cfg = SimpleNamespace(
         trainable_config=config, policy=config, resume=False, rename_map={}, is_reward_model_training=False
     )
@@ -202,20 +219,24 @@ def test_finetuning_preserves_statistics_adapted_by_policy_factory(monkeypatch, 
     torch.testing.assert_close(post(torch.tensor([[1.0]])), torch.tensor([[32.0]]))
 
 
-def test_disabled_recipe_training_retains_runtime_only_renderer(dataset_dependencies):
-    from lerobot.datasets.recipe import MessageTurn, TrainingRecipe
-    from lerobot.processor import RenderRuntimeMessagesStep
+def test_pipeline_without_recipe_preserves_training_inputs_and_renders_vqa():
+    from lerobot.processor import RenderRuntimeMessagesStep, RenderTrainingMessagesStep
 
-    recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="${task}", stream="low_level")])
-    step = RenderRuntimeMessagesStep(recipe)
-    pre = PolicyProcessorPipeline(steps=[step])
-    assert pre.steps[0] is step
-    assert "messages_rendered" not in pre({"task": "tidy", "language_events": []})
+    pre = PolicyProcessorPipeline(steps=[RenderRuntimeMessagesStep(), RenderTrainingMessagesStep()])
+    training = {"task": "tidy", "language_events": [], "action": torch.tensor([[1.0]])}
+    output = pre(training)
+    assert "messages_rendered" not in output
+    assert output["task"] == training["task"]
+    torch.testing.assert_close(output["action"], training["action"])
+    assert pre({"query_kind": "vqa", "query_text": "What is on the table?"})["messages_rendered"] == [
+        {"role": "user", "content": "What is on the table?"}
+    ]
 
 
 def test_fresh_training_preserves_relative_action_links_and_batch_renaming(
-    monkeypatch, training_dependencies
+    monkeypatch, caplog, training_dependencies
 ):
+    from lerobot.datasets.recipe import MessageTurn, TrainingRecipe
     from lerobot.policies.act import processor_act
     from lerobot.scripts.lerobot_train import _preprocess_dataset_batch
 
@@ -233,6 +254,7 @@ def test_fresh_training_preserves_relative_action_links_and_batch_renaming(
 
     monkeypatch.setattr(processor_act, "make_act_pre_post_processors", linked_factory)
     config = _act_config()
+    config.recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="${task}", stream="low_level")])
     cfg = SimpleNamespace(
         trainable_config=config,
         policy=config,
@@ -240,7 +262,8 @@ def test_fresh_training_preserves_relative_action_links_and_batch_renaming(
         rename_map={"observation.old_state": "observation.state"},
         is_reward_model_training=False,
     )
-    pre, post = _run_training_until_processors(monkeypatch, cfg, _stats(0.0))
+    pre, post = _run_training_until_processors(monkeypatch, cfg, _stats(0.0), main_process=True)
+    assert not any("saved processors from" in record.getMessage() for record in caplog.records)
     assert pre.steps[0] is created[0]
     assert post.steps[-1] is created[1]
     assert post.steps[-1].relative_step is pre.steps[0]
