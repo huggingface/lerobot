@@ -92,3 +92,31 @@ def finalize_sharded_policy(policy: nn.Module, parallel_dims: "ParallelDims") ->
         for method_name in getattr(type(policy), "_fsdp_forward_methods", ()):
             if callable(getattr(policy, method_name, None)):
                 register_fsdp_forward_method(policy, method_name)
+
+
+def disable_buffer_broadcast_if_static(policy: nn.Module) -> bool:
+    """Turn off DDP's per-forward buffer broadcast when no buffer can change during training.
+
+    `DistributedDataParallel` with `broadcast_buffers=True` broadcasts every buffer from rank 0
+    at the start of each forward, through a coalesced broadcast that blocks the host until all
+    ranks have joined. That is only needed for buffers that training mutates, which in practice
+    means BatchNorm running statistics. A policy with no BatchNorm module (ACT uses
+    FrozenBatchNorm2d, whose buffers are constants) keeps identical buffers on every rank
+    without the broadcast, so the call is pure overhead: one rank barrier per step.
+
+    Args:
+        policy: The policy as returned by `accelerator.prepare()`.
+
+    Returns:
+        True when the broadcast was switched off.
+    """
+    from torch.nn.modules.batchnorm import _BatchNorm
+    from torch.nn.parallel import DistributedDataParallel
+
+    if not isinstance(policy, DistributedDataParallel) or not policy.broadcast_buffers:
+        return False
+    if any(isinstance(m, _BatchNorm) for m in policy.module.modules()):
+        return False
+    policy.broadcast_buffers = False
+    logging.info("DDP buffer broadcast disabled: the policy has no BatchNorm module, so no buffer changes.")
+    return True

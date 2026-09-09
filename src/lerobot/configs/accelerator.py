@@ -101,6 +101,11 @@ class DDPConfig:
     find_unused_parameters: bool = True
     gradient_as_bucket_view: bool = False
     static_graph: bool = False
+    # Broadcast module buffers from rank 0 at every forward. Only needed when a buffer changes
+    # during training (BatchNorm running stats). `lerobot_train` turns it off after `prepare`
+    # when the policy has no BatchNorm module, because the call blocks every rank until all
+    # of them reach the forward; see `disable_buffer_broadcast_if_static`.
+    broadcast_buffers: bool = True
 
     def build_kwargs_handler(self) -> "DistributedDataParallelKwargs":
         """Build the DDP kwargs handler for `Accelerator(kwargs_handlers=[...])`.
@@ -115,6 +120,7 @@ class DDPConfig:
             find_unused_parameters=self.find_unused_parameters,
             gradient_as_bucket_view=self.gradient_as_bucket_view,
             static_graph=self.static_graph,
+            broadcast_buffers=self.broadcast_buffers,
         )
 
 
