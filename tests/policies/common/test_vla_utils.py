@@ -17,9 +17,8 @@
 """Behavior-pinning tests for the shared VLA helpers.
 
 These helpers are the canonical versions of functions that used to be copy-pasted across
-the openpi-derived policies (pi0, pi05, pi0_fast, smolvla, eo1, xvla). The expected
-values below encode the historical per-policy behavior exactly; a failure here means a
-behavior change that would silently affect released checkpoints.
+the openpi-derived policies (pi0, pi05, pi0_fast, smolvla, eo1, xvla). These tests pin
+LeRobot's per-policy conventions, including adaptations from upstream OpenPI.
 """
 
 import math
@@ -164,16 +163,17 @@ def test_pad_vector_truncate_semantics(dtype):
 
 
 @pytest.mark.parametrize("channels_last", [True, False])
-def test_resize_with_pad_torch_centered(channels_last):
-    img = torch.rand(2, 3, 30, 60) if not channels_last else torch.rand(2, 30, 60, 3)
+@pytest.mark.parametrize("batch_size", [1, 2])
+def test_resize_with_pad_torch_centered(channels_last, batch_size):
+    img = torch.rand(batch_size, 3, 30, 60) if not channels_last else torch.rand(batch_size, 30, 60, 3)
     out = resize_with_pad_torch(img, 64, 64)
     if channels_last:
-        assert out.shape == (2, 64, 64, 3)
+        assert out.shape == (batch_size, 64, 64, 3)
         # Aspect ratio preserved: 30x60 -> 32x64, padded 16 top and 16 bottom (centered).
         assert not out[:, :16].any() and not out[:, -16:].any()
         assert out[:, 16:48].abs().sum() > 0
     else:
-        assert out.shape == (2, 3, 64, 64)
+        assert out.shape == (batch_size, 3, 64, 64)
         assert not out[:, :, :16].any() and not out[:, :, -16:].any()
 
 
@@ -181,8 +181,9 @@ def test_resize_with_pad_torch_centered(channels_last):
 @pytest.mark.parametrize(
     "dtype,mode,value", [(torch.float32, "bilinear", 1.0), (torch.uint8, "nearest", 255)]
 )
-def test_resize_with_pad_torch_unbatched_preserves_pixels_and_layout(channels_last, dtype, mode, value):
+def test_resize_with_pad_torch_unbatched_adds_batch_dimension(channels_last, dtype, mode, value):
     image = torch.full((3, 4, 8), value, dtype=dtype)
+    # LeRobot's historical helper keeps the added batch dimension for both channel layouts.
     expected = torch.zeros(1, 3, 4, 4, dtype=dtype)
     # 4x8 -> 2x4, with one row of black padding above and below.
     expected[:, :, 1:3] = value
