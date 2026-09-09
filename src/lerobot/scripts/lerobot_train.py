@@ -64,6 +64,7 @@ from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
 from lerobot.datasets.factory import make_train_eval_datasets
 from lerobot.distributed import (
     ParallelDims,
+    disable_buffer_broadcast_if_static,
     finalize_sharded_policy,
     is_main_process,
     make_accelerator,
@@ -582,6 +583,7 @@ def train(cfg: TrainPipelineConfig):
             policy, optimizer, dataloader, lr_scheduler
         )
     finalize_sharded_policy(policy, parallel_dims)
+    disable_buffer_broadcast_if_static(policy)
     perf_hooks.mark("prepared")
     if cfg.resume:
         resume_after_prepare(cfg, accelerator, policy, optimizer, lr_scheduler)
