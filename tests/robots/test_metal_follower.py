@@ -96,7 +96,7 @@ def test_action_features_include_all_motors(follower):
 def test_velocity_feedforward_config_defaults():
     config = MetalFollowerConfig()
     assert config.velocity_feedforward is True
-    assert config.velocity_ff_alpha == 0.08
+    assert config.velocity_ff_alpha == 0.04
     assert config.velocity_ff_max_deg_s == 120.0
 
 

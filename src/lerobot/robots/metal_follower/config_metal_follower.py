@@ -86,15 +86,15 @@ class MetalFollowerConfigBase:
     )
 
     # Per-motor MIT follow gains {name: (kp, kd)}, applied at connect();
-    # Tuned for a smooth follow: high stiffness with heavy damping.
+    # Softer follow defaults; damping stays within the driver's MIT range (0-5).
     # If the follow feels mushy rather than smooth, raise velocity_ff_alpha before lowering kd.
     # Mutating the resolved dict at runtime retunes the arm live.
     gains: dict[str, tuple[float, float]] = field(
         default_factory=lambda: {
-            "shoulder_pan": (160.0, 6.5),
-            "shoulder_lift": (390.0, 11.0),
-            "elbow_flex": (320.0, 11.0),
-            "wrist_flex": (160.0, 5.0),
+            "shoulder_pan": (100.0, 5.0),
+            "shoulder_lift": (100.0, 5.0),
+            "elbow_flex": (100.0, 5.0),
+            "wrist_flex": (50.0, 5.0),
             "wrist_yaw": (20.0, 0.6),
             "wrist_roll": (20.0, 0.6),
             "gripper": (20.0, 0.6),
@@ -112,7 +112,7 @@ class MetalFollowerConfigBase:
 
     # Filtered finite-difference velocity feedforward for MIT position control.
     velocity_feedforward: bool = True
-    velocity_ff_alpha: float = 0.08
+    velocity_ff_alpha: float = 0.04
     velocity_ff_max_deg_s: float = 120.0
 
     # Whether to disable torque when disconnecting
