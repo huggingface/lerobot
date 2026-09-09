@@ -64,6 +64,7 @@ from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
 from lerobot.datasets.factory import make_train_eval_datasets
 from lerobot.distributed import (
     ParallelDims,
+    apply_torch_compile,
     disable_buffer_broadcast_if_static,
     finalize_sharded_policy,
     is_main_process,
@@ -558,6 +559,8 @@ def train(cfg: TrainPipelineConfig):
 
     # Created BEFORE prepare on the unsharded parameters — accelerate's FSDP2 path requires the
     # model and optimizer in one prepare() call and rebinds the param groups itself.
+    policy = apply_torch_compile(policy, cfg.accelerator.compile)
+
     if is_main_process():
         logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)

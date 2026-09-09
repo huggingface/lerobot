@@ -48,6 +48,8 @@ class ACTPolicy(PreTrainedPolicy):
 
     config_class = ACTConfig
     name = "act"
+    # Submodules `--accelerator.compile` wraps; the loss glue in `forward` stays eager.
+    _compile_regions = ("model",)
     # FSDP2 wrap units: one unit per transformer layer of both stacks.
     _fsdp_wrap_modules = ["ACTEncoderLayer", "ACTDecoderLayer"]
 
