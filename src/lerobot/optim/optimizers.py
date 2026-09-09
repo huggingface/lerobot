@@ -86,6 +86,21 @@ class OptimizerConfig(draccus.ChoiceRegistry, abc.ABC):
         raise NotImplementedError
 
 
+def _all_cuda_float(params: OptimizerParams) -> bool:
+    """True when every parameter (flat list or param groups) is a floating CUDA tensor."""
+    if isinstance(params, dict):
+        return False
+    tensors: list[torch.Tensor] = []
+    for p in params:
+        if isinstance(p, dict):
+            tensors.extend(p["params"])
+        else:
+            tensors.append(p)
+    return len(tensors) > 0 and all(
+        isinstance(t, torch.Tensor) and t.is_cuda and t.is_floating_point() for t in tensors
+    )
+
+
 @OptimizerConfig.register_subclass("adam")
 @dataclass
 class AdamConfig(OptimizerConfig):
@@ -113,6 +128,13 @@ class AdamWConfig(OptimizerConfig):
     def build(self, params: OptimizerParams) -> torch.optim.Optimizer:
         kwargs = asdict(self)
         kwargs.pop("grad_clip_norm")
+        # One fused kernel per parameter group instead of the per-parameter python loop
+        # (which reads every step counter back with .item()). Only when every parameter
+        # is a CUDA float tensor, which is what the fused kernel supports.
+        if not isinstance(params, dict):
+            params = list(params)  # may be a generator; it is read twice below
+        if _all_cuda_float(params):
+            kwargs["fused"] = True
         return torch.optim.AdamW(params, **kwargs)
 
 
