@@ -175,7 +175,9 @@ class CompileConfig:
     # None = auto: on when the policy declares `_compile_regions` and the run is not sharded.
     enabled: bool | None = None
     backend: str = "inductor"
-    mode: str | None = None
+    # CUDA graphs: the eager step is bound by ~1000 kernel launches, and inductor's default
+    # mode replaces them with as many Triton launches; only graph replay removes the cost.
+    mode: str | None = "reduce-overhead"
     regional: bool = True
     # Keep eager RNG semantics inside compiled regions (dropout, the VAE's randn_like), so a
     # compiled run reproduces the eager one to fp32 rounding at the same seed.
