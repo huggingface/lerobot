@@ -21,6 +21,7 @@ _window = os.environ.get("PROF_STEPS")
 _rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
 _series: list[dict] = []
 _prof = None
+_step_ctx = None
 _t_import = time.perf_counter()
 _marks: dict[str, float] = {"import": _t_import}
 
@@ -56,13 +57,18 @@ def step_begin(step: int) -> None:
         )
         _prof.__enter__()
     if _prof is not None:
-        torch.profiler.record_function(f"## step {step}").__enter__()
+        global _step_ctx
+        _step_ctx = torch.profiler.record_function(f"ProfilerStep#{step}")
+        _step_ctx.__enter__()
 
 
 def step_end(step: int, wall_s: float, data_s: float, update_s: float) -> None:
-    global _prof
+    global _prof, _step_ctx
     if not enabled():
         return
+    if _step_ctx is not None:
+        _step_ctx.__exit__(None, None, None)
+        _step_ctx = None
     _series.append({
         "step": step, "wall_s": wall_s, "data_s": data_s, "update_s": update_s,
         "gpu_alloc_gb": torch.cuda.memory_allocated() / 2**30,
