@@ -37,6 +37,7 @@ from torch import Tensor
 
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_IMAGES
+from lerobot.utils.dtype import get_dtype
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..pretrained import PreTrainedPolicy
@@ -68,6 +69,12 @@ class GrootPolicy(PreTrainedPolicy):
     name = "groot"
     config_class = GrootConfig
 
+    _fp32_modules = (
+        "_groot_model.action_head",
+        "_groot_model.backbone.model.model.language_model.rotary_emb",
+        "_groot_model.backbone.model.model.visual.rotary_pos_emb",
+    )
+
     def supports_rtc(self) -> bool:
         return True
 
@@ -83,6 +90,7 @@ class GrootPolicy(PreTrainedPolicy):
         self._action_queue_steps = self._resolve_action_queue_steps()
         self._warned_native_relative_rtc_prefix_disabled = False
 
+        self.post_init()
         self.reset()
 
     def _create_groot_model(self):
@@ -108,20 +116,13 @@ class GrootPolicy(PreTrainedPolicy):
             **model_kwargs,
             tune_vlln=self.config.tune_vlln,
             transformers_loading_kwargs={"trust_remote_code": True},
+            dtype=torch.float32,
         )
         backbone = getattr(model, "backbone", None)
         qwen_model = getattr(backbone, "model", None)
         if qwen_model is not None:
             _tie_unused_qwen_lm_head(qwen_model)
-        if self.config.model_params_fp32:
-            self._cast_model_parameters_to_fp32(model)
         return model
-
-    @staticmethod
-    def _cast_model_parameters_to_fp32(model: torch.nn.Module) -> None:
-        for parameter in model.parameters():
-            if parameter.is_floating_point():
-                parameter.data = parameter.data.to(torch.float32)
 
     @staticmethod
     def _build_weight_decay_parameter_groups(model: torch.nn.Module) -> list[dict[str, object]]:
@@ -158,6 +159,7 @@ class GrootPolicy(PreTrainedPolicy):
         pretrained_name_or_path: str | Path,
         *,
         config: GrootConfig | None = None,
+        dtype: str | torch.dtype | None = None,
         force_download: bool = False,
         resume_download: bool | None = None,
         proxies: dict | None = None,
@@ -229,6 +231,7 @@ class GrootPolicy(PreTrainedPolicy):
             return super().from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
                 config=config,
+                dtype=dtype,
                 force_download=force_download,
                 resume_download=resume_download,
                 proxies=proxies,
@@ -279,6 +282,8 @@ class GrootPolicy(PreTrainedPolicy):
             raise ValueError(message)
         # Create a fresh policy instance - this will automatically load the GR00T model
         # in __init__ via _create_groot_model()
+        if dtype is not None and dtype != "auto":
+            config.dtype = str(get_dtype(dtype)).removeprefix("torch.")
         policy = cls(config)
 
         policy.eval()

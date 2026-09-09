@@ -21,7 +21,7 @@ It is rebased on the native ``transformers.models.qwen2_5_vl`` classes and only 
 - ``BlockSparseMLP`` / ``SparseMoeBlock``: hard-routed (token-type indexed) expert MLPs.
 - ``Qwen2_5_VLDecoderLayer_with_MoE``: native decoder layer whose MLP is replaced by the sparse MoE
   block and whose forward casts activations to the parameter dtypes (Wall-X keeps the layernorms in
-  float32 while the projections run in bfloat16, see ``to_bfloat16_for_selected_params``).
+  float32 while the projections run in bfloat16, see ``WallXPolicy._fp32_modules``).
 - ``Qwen2_5_VLMoEModel``: native text model with MoE decoder layers and a ``moe_token_types``-aware
   causal-mask override (tokens of type 1 — the action tokens — attend to each other bidirectionally,
   everything else stays causal).

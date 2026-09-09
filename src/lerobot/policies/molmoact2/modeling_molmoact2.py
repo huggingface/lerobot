@@ -69,15 +69,6 @@ else:
 logger = logging.getLogger(__name__)
 
 
-def _torch_dtype(dtype: str) -> torch.dtype:
-    """Convert a dtype name string to a torch.dtype."""
-    if dtype == "float32":
-        return torch.float32
-    if dtype == "bfloat16":
-        return torch.bfloat16
-    raise ValueError(f"Unsupported dtype: {dtype}")
-
-
 def _call_module_without_gradient_checkpointing_layer(
     module: torch.nn.Module,
     *args: Any,
@@ -622,6 +613,20 @@ class MolmoAct2Policy(PreTrainedPolicy):
     config_class = MolmoAct2Config
     name = "molmoact2"
 
+    _fp32_modules = (
+        "model.model.action_expert",
+        "model.model.action_expert_depth_gate",
+        "model.model.transformer.blocks.*.attn_norm",
+        "model.model.transformer.blocks.*.ff_norm",
+        "model.model.transformer.blocks.*.self_attn.q_norm",
+        "model.model.transformer.blocks.*.self_attn.k_norm",
+        "model.model.transformer.ln_f",
+        "model.model.transformer.rotary_emb",
+        "model.model.transformer.rotary_embs.*",
+        "model.model.vision_backbone.image_vit.transformer.resblocks.*.attention_norm",
+        "model.model.vision_backbone.image_vit.transformer.resblocks.*.ffn_norm",
+    )
+
     @classmethod
     def from_pretrained(
         cls,
@@ -663,6 +668,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self._compiled_module_names: tuple[str, ...] = ()
         self._load_hf_model()
         _validate_inference_action_mode(self.config, self._checkpoint_action_mode)
+        # Finalize the base model before PEFT creates its FP32 adapters, as in the native loader.
+        self.post_init()
         if self.config.train_mode_vlm == "lora":
             self._apply_lora_adapters()
         self._apply_compile()
@@ -676,7 +683,6 @@ class MolmoAct2Policy(PreTrainedPolicy):
             revision=self.config.checkpoint_revision,
             force_download=bool(self.config.checkpoint_force_download),
         )
-        storage_dtype = _torch_dtype(self.config.dtype)
         if HFMolmoAct2Config is None or MolmoAct2ForConditionalGeneration is None:
             raise RuntimeError("transformers is required to load MolmoAct2 checkpoints.")
         hf_config = HFMolmoAct2Config.from_pretrained(
@@ -689,17 +695,12 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self.model = MolmoAct2ForConditionalGeneration.from_pretrained(
             checkpoint_location,
             config=hf_config,
-            dtype=storage_dtype,
+            dtype=torch.float32,
             low_cpu_mem_usage=True,
             token=_hf_token(),
         )
         # Keep Hub loading limited to local code plus safetensors, and verify the
         # local implementation exactly matches the checkpoint key space.
-        self._apply_bfloat16_parameter_policy()
-        # In bfloat16 mode, establish the final target dtype tree before this last
-        # strict load. This preserves the checkpoint's original fp32 values for
-        # the action expert and other fp32-targeted modules instead of widening
-        # already-rounded bf16 tensors.
         _strict_load_safetensors_weights(self.model, checkpoint_location)
         hf_max_action_dim = int(getattr(self.model.config, "max_action_dim", -1))
         if hf_max_action_dim != int(self.config.expected_max_action_dim):
@@ -854,48 +855,6 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 for param in embeddings.parameters():
                     param.requires_grad = False
 
-    def _apply_bfloat16_parameter_policy(self) -> None:
-        """Apply the fixed low-memory MolmoAct2 parameter-storage policy.
-
-        Large text and vision matrices stay in bf16. The complete action
-        expert, norms, RoPE state, depth gates, and LoRA adapters use fp32
-        parameters and therefore fp32 Adam state when trainable. Eligible
-        action-expert operators still execute in bf16 under autocast.
-        """
-        if self.config.dtype != "bfloat16":
-            return
-
-        self.model.to(dtype=torch.bfloat16)
-        backbone = self._backbone()
-
-        action_expert = getattr(backbone, "action_expert", None)
-        if action_expert is not None:
-            action_expert.to(dtype=torch.float32)
-
-        depth_gate = getattr(backbone, "action_expert_depth_gate", None)
-        if depth_gate is not None:
-            depth_gate.to(dtype=torch.float32)
-
-        fp32_module_types = tuple(
-            module_type
-            for module_type in (
-                torch.nn.LayerNorm,
-                ActionExpertRMSNorm,
-                MolmoAct2RMSNorm,
-            )
-            if isinstance(module_type, type)
-        )
-        for module in self.model.modules():
-            if isinstance(module, fp32_module_types):
-                module.to(dtype=torch.float32)
-            if isinstance(MolmoAct2RotaryEmbedding, type) and isinstance(module, MolmoAct2RotaryEmbedding):
-                module.to(dtype=torch.float32)
-                # ``original_inv_freq`` is an alias rather than a registered
-                # buffer, so Module.to() does not update it automatically.
-                module.original_inv_freq = module.inv_freq
-                module._pos_sin_cache = torch.empty(0, device=module.inv_freq.device, dtype=torch.float32)
-                module._pos_cos_cache = torch.empty(0, device=module.inv_freq.device, dtype=torch.float32)
-
     def get_optim_params(self) -> list[dict[str, Any]]:
         """Return optimizer param groups with per-component learning rates."""
         vit_params: list[Tensor] = []
@@ -949,13 +908,13 @@ class MolmoAct2Policy(PreTrainedPolicy):
         }
 
     def _autocast_context(self):
-        compute_dtype = _torch_dtype(self.config.dtype)
+        compute_dtype = self.dtype
         device_type = next(self.parameters()).device.type
         autocast_available = torch.amp.autocast_mode.is_autocast_available(device_type)
-        if compute_dtype == torch.bfloat16:
+        if compute_dtype in (torch.float16, torch.bfloat16):
             if not autocast_available:
                 raise RuntimeError(
-                    f"MolmoAct2 dtype='bfloat16' requires autocast support on device type {device_type!r}."
+                    f"MolmoAct2 dtype={compute_dtype} requires autocast support on device type {device_type!r}."
                 )
             return torch.autocast(device_type=device_type, dtype=compute_dtype)
         if autocast_available:

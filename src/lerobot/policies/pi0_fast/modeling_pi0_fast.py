@@ -14,14 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import builtins
 import logging
 from collections import deque
-from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
+from typing import TYPE_CHECKING, TypedDict, Unpack
 
 import numpy as np
 import torch
+from safetensors.torch import load_file
 from torch import Tensor, nn
 
 from lerobot.utils.import_utils import _scipy_available, _transformers_available, require_package
@@ -47,7 +46,7 @@ else:
     PiGemmaModel = None
     PaliGemmaForConditionalGenerationWithPiGemma = None
 
-from lerobot.configs import PreTrainedConfig
+from lerobot.policies.utils import log_model_loading_keys
 from lerobot.utils.constants import (
     ACTION,
     ACTION_TOKEN_MASK,
@@ -55,9 +54,10 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
 )
+from lerobot.utils.device_utils import resolve_safetensors_device
 
 from ..common.vla_utils import pad_vector, prepare_attention_masks_4d, resize_with_pad_torch
-from ..pretrained import PreTrainedPolicy, T
+from ..pretrained import PreTrainedPolicy
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi0_fast import PI0FastConfig
 
@@ -109,7 +109,6 @@ class PI0FastPaliGemma(nn.Module):
         self,
         vlm_config,
         use_adarms=None,
-        precision: Literal["bfloat16", "float32"] = "bfloat16",
     ):
         if use_adarms is None:
             use_adarms = [False, False]
@@ -143,33 +142,8 @@ class PI0FastPaliGemma(nn.Module):
             del self.paligemma.model.language_model
             self.paligemma.model.language_model = PiGemmaModel(text_config)
 
-        self.to_bfloat16_for_selected_params(precision)
-
-    def to_bfloat16_for_selected_params(self, precision: Literal["bfloat16", "float32"] = "bfloat16"):
-        if precision == "bfloat16":
-            self.to(dtype=torch.bfloat16)
-        elif precision == "float32":
-            self.to(dtype=torch.float32)
-            return
-        else:
-            raise ValueError(f"Invalid precision: {precision}")
-
-        # Keep full vision path in float32 so we never toggle (toggle causes optimizer
-        # "same dtype" error). Align with PI05.
-        params_to_keep_float32 = [
-            "vision_tower",
-            "multi_modal_projector",
-            "input_layernorm",
-            "post_attention_layernorm",
-            "model.norm",
-        ]
-
-        for name, param in self.named_parameters():
-            if any(selector in name for selector in params_to_keep_float32):
-                param.data = param.data.to(dtype=torch.float32)
-
     def embed_image(self, image: torch.Tensor):
-        # Vision tower and multi_modal_projector are kept in float32 (params_to_keep_float32). Align with PI05.
+        # Vision tower and multi_modal_projector are kept in float32 (declared by the policy). Align with PI05.
         out_dtype = image.dtype
         if image.dtype != torch.float32:
             image = image.to(torch.float32)
@@ -231,17 +205,17 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         self.paligemma_with_expert = PI0FastPaliGemma(
             paligemma_config,
             use_adarms=[False, True],
-            precision=config.dtype,
         )
 
         # Initialize gradient checkpointing flag
         self.gradient_checkpointing_enabled = False
 
+    def _compile_model(self):
         # Compile model if requested
-        if config.compile_model:
+        if self.config.compile_model:
             torch.set_float32_matmul_precision("high")
-            self.sample_actions_fast = torch.compile(self.sample_actions_fast, mode=config.compile_mode)
-            self.forward = torch.compile(self.forward, mode=config.compile_mode)
+            self.sample_actions_fast = torch.compile(self.sample_actions_fast, mode=self.config.compile_mode)
+            self.forward = torch.compile(self.forward, mode=self.config.compile_mode)
 
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
@@ -438,12 +412,11 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             )
         )
 
-        # Convert embeddings to bfloat16 if needed
-        if (
-            self.paligemma_with_expert.paligemma.model.language_model.layers[0].self_attn.q_proj.weight.dtype
-            == torch.bfloat16
-        ):
-            prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
+        # Align embeddings with the language model weights.
+        dtype = self.paligemma_with_expert.paligemma.model.language_model.layers[
+            0
+        ].self_attn.q_proj.weight.dtype
+        prefix_embs = prefix_embs.to(dtype=dtype)
 
         # for next-token prediction, input tokens [0:T-1] to predict tokens [1:T]
         input_embs = prefix_embs
@@ -532,11 +505,10 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             images, img_masks, tokens, masks, fast_action_tokens=None, fast_action_masks=None
         )
 
-        if (
-            self.paligemma_with_expert.paligemma.model.language_model.layers[0].self_attn.q_proj.weight.dtype
-            == torch.bfloat16
-        ):
-            prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
+        dtype = self.paligemma_with_expert.paligemma.model.language_model.layers[
+            0
+        ].self_attn.q_proj.weight.dtype
+        prefix_embs = prefix_embs.to(dtype=dtype)
 
         generated_action_tokens = torch.zeros((bsize, max_decoding_steps), dtype=torch.long, device=device)
 
@@ -571,8 +543,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             if t < max_decoding_steps - 1:
                 # embed the newly generated token
                 next_token_emb = self.paligemma_with_expert.embed_language_tokens(next_token)
-                if prefix_embs.dtype == torch.bfloat16:
-                    next_token_emb = next_token_emb.to(dtype=torch.bfloat16)
+                next_token_emb = next_token_emb.to(dtype=prefix_embs.dtype)
 
                 # append to embeddings
                 prefix_embs = torch.cat([prefix_embs, next_token_emb], dim=1)
@@ -640,12 +611,11 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             images, img_masks, tokens_in, masks_in, fast_action_tokens=None, fast_action_masks=None
         )
 
-        # Ensure correct precision (bfloat16/float32)
-        if (
-            self.paligemma_with_expert.paligemma.model.language_model.layers[0].self_attn.q_proj.weight.dtype
-            == torch.bfloat16
-        ):
-            prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
+        # Align embeddings with the language model weights.
+        dtype = self.paligemma_with_expert.paligemma.model.language_model.layers[
+            0
+        ].self_attn.q_proj.weight.dtype
+        prefix_embs = prefix_embs.to(dtype=dtype)
 
         # Create position IDs (cumsum of mask - 1)
         position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
@@ -691,8 +661,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             # Embed the single previous token
             # We use embed_language_tokens directly to avoid overhead of full prefix embedding
             next_token_emb = self.paligemma_with_expert.embed_language_tokens(next_token)
-            if prefix_embs.dtype == torch.bfloat16:
-                next_token_emb = next_token_emb.to(dtype=torch.bfloat16)
+            next_token_emb = next_token_emb.to(dtype=prefix_embs.dtype)
 
             # Update Pad Mask: append 1s for the new valid token
             new_column = torch.ones((bsize, 1), dtype=torch.bool, device=device)
@@ -743,6 +712,14 @@ class PI0FastPolicy(PreTrainedPolicy):
     config_class = PI0FastConfig
     name = "pi0_fast"
 
+    _fp32_modules = (
+        "model.paligemma_with_expert.paligemma.model.vision_tower",
+        "model.paligemma_with_expert.paligemma.model.multi_modal_projector",
+        "model.paligemma_with_expert.paligemma.model.language_model.layers.*.input_layernorm",
+        "model.paligemma_with_expert.paligemma.model.language_model.layers.*.post_attention_layernorm",
+        "model.paligemma_with_expert.paligemma.model.language_model.norm",
+    )
+
     def __init__(
         self,
         config: PI0FastConfig,
@@ -786,126 +763,24 @@ class PI0FastPolicy(PreTrainedPolicy):
         if config.gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
 
+        self.post_init()
         self.model.to(config.device)
-
+        if config.compile_model:
+            self.model._compile_model()
         self.reset()
 
     @classmethod
-    def from_pretrained(
-        cls: builtins.type[T],
-        pretrained_name_or_path: str | Path,
-        *,
-        config: PreTrainedConfig | None = None,
-        force_download: bool = False,
-        resume_download: bool | None = None,
-        proxies: dict | None = None,
-        token: str | bool | None = None,
-        cache_dir: str | Path | None = None,
-        local_files_only: bool = False,
-        revision: str | None = None,
-        strict: bool = True,
-        **kwargs,
-    ) -> T:
-        """Override the from_pretrained method to handle key remapping and display important disclaimer."""
-        print(
-            "The PI0Fast model is a direct port of the OpenPI implementation. \n"
-            "This implementation follows the original OpenPI structure for compatibility. \n"
-            "Original implementation: https://github.com/Physical-Intelligence/openpi"
-        )
-        if pretrained_name_or_path is None:
-            raise ValueError("pretrained_name_or_path is required")
+    def from_pretrained(cls, pretrained_name_or_path, *, strict: bool = True, **kwargs):
+        return super().from_pretrained(pretrained_name_or_path, strict=strict, **kwargs)
 
-        # Use provided config if available, otherwise create default config
-        if config is None:
-            config = PreTrainedConfig.from_pretrained(
-                pretrained_name_or_path=pretrained_name_or_path,
-                force_download=force_download,
-                resume_download=resume_download,
-                proxies=proxies,
-                token=token,
-                cache_dir=cache_dir,
-                local_files_only=local_files_only,
-                revision=revision,
-                **kwargs,
-            )
-
-        # Initialize model without loading weights
-        # Check if dataset_stats were provided in kwargs
-        model = cls(config, **kwargs)
-
-        # Load state dict (expects keys with "model." prefix)
-        try:
-            print(f"Loading model from: {pretrained_name_or_path}")
-            try:
-                from transformers.utils import cached_file
-
-                resolved_file = cached_file(
-                    pretrained_name_or_path,
-                    "model.safetensors",
-                    cache_dir=kwargs.get("cache_dir"),
-                    force_download=kwargs.get("force_download", False),
-                    resume_download=kwargs.get("resume_download"),
-                    proxies=kwargs.get("proxies"),
-                    token=kwargs.get("token"),
-                    revision=kwargs.get("revision"),
-                    local_files_only=kwargs.get("local_files_only", False),
-                )
-                from safetensors.torch import load_file
-
-                original_state_dict = load_file(resolved_file)
-                print("✓ Loaded state dict from model.safetensors")
-            except Exception as e:
-                print(f"Could not load state dict from remote files: {e}")
-                print("Returning model without loading pretrained weights")
-                return model
-
-            # First, fix any key differences (see openpi model.py, _fix_pytorch_state_dict_keys)
-            fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
-
-            # Then add "model." prefix for all keys that don't already have it
-            remapped_state_dict = {}
-            remap_count = 0
-
-            for key, value in fixed_state_dict.items():
-                if not key.startswith("model."):
-                    new_key = f"model.{key}"
-                    remapped_state_dict[new_key] = value
-                    remap_count += 1
-                else:
-                    remapped_state_dict[key] = value
-
-            if remap_count > 0:
-                print(f"Remapped {remap_count} state dict keys")
-
-            # Load the remapped state dict into the model
-            missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
-
-            if missing_keys:
-                print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
-                if len(missing_keys) <= 5:
-                    for key in missing_keys:
-                        print(f"  - {key}")
-                else:
-                    for key in missing_keys[:5]:
-                        print(f"  - {key}")
-                    print(f"  ... and {len(missing_keys) - 5} more")
-
-            if unexpected_keys:
-                print(f"Unexpected keys when loading state dict: {len(unexpected_keys)} keys")
-                if len(unexpected_keys) <= 5:
-                    for key in unexpected_keys:
-                        print(f"  - {key}")
-                else:
-                    for key in unexpected_keys[:5]:
-                        print(f"  - {key}")
-                    print(f"  ... and {len(unexpected_keys) - 5} more")
-
-            if not missing_keys and not unexpected_keys:
-                print("All keys loaded successfully!")
-
-        except Exception as e:
-            print(f"Warning: Could not load state dict: {e}")
-
+    @classmethod
+    def _load_as_safetensor(cls, model, model_file: str, map_location: str, strict: bool):
+        state_dict = load_file(model_file, device=resolve_safetensors_device(map_location))
+        state_dict = model._fix_pytorch_state_dict_keys(state_dict, model.config)
+        state_dict = {
+            key if key.startswith("model.") else f"model.{key}": value for key, value in state_dict.items()
+        }
+        log_model_loading_keys(*model.load_state_dict(state_dict, strict=strict))
         return model
 
     def _fix_pytorch_state_dict_keys(

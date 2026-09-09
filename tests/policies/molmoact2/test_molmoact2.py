@@ -2039,11 +2039,10 @@ def test_molmoact2_pi05_style_precision_config():
     assert MolmoAct2Config().dtype == "bfloat16"
     assert MolmoAct2Config(dtype="float32").dtype == "float32"
 
-    with pytest.raises(ValueError, match="Unsupported dtype"):
-        MolmoAct2Config(dtype="float64")
-
-    with pytest.raises(ValueError, match="Unsupported dtype"):
-        MolmoAct2Config(dtype="float16")
+    assert MolmoAct2Config(dtype="float64").dtype == "float64"
+    assert MolmoAct2Config(dtype="float16").dtype == "float16"
+    with pytest.raises(ValueError, match="Invalid dtype"):
+        MolmoAct2Config(dtype="int8")
 
 
 def test_molmoact2_pi05_compile_defaults():
@@ -2441,7 +2440,7 @@ def test_bfloat16_parameter_policy_keeps_action_expert_float32():
     policy.config = SimpleNamespace(dtype="bfloat16")
     policy.model = DummyModel()
 
-    policy._apply_bfloat16_parameter_policy()
+    policy.post_init()
 
     assert policy.model.lm_head.weight.dtype == torch.bfloat16
     assert policy.model.model.transformer.matrix.weight.dtype == torch.bfloat16
@@ -2459,8 +2458,8 @@ def test_bfloat16_parameter_policy_keeps_action_expert_float32():
     rotary_emb = policy.model.model.transformer.rotary_emb
     assert rotary_emb.inv_freq.dtype == torch.float32
     assert rotary_emb.original_inv_freq is rotary_emb.inv_freq
-    assert rotary_emb._pos_sin_cache.numel() == 0
-    assert rotary_emb._pos_cos_cache.numel() == 0
+    assert rotary_emb._pos_sin_cache.dtype == torch.float32
+    assert rotary_emb._pos_cos_cache.dtype == torch.float32
 
     optimizer = torch.optim.AdamW(policy.model.model.action_expert.block.parameters())
     with policy._autocast_context():
@@ -2478,7 +2477,7 @@ def test_bfloat16_parameter_policy_keeps_action_expert_float32():
     float32_policy.config = SimpleNamespace(dtype="float32")
     float32_policy.model = DummyModel()
 
-    float32_policy._apply_bfloat16_parameter_policy()
+    float32_policy.post_init()
 
     assert all(param.dtype == torch.float32 for param in float32_policy.model.parameters())
 
@@ -2638,11 +2637,12 @@ def test_bfloat16_policy_autocast_bridges_fp32_heads_to_bf16_blocks():
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
     policy.config = SimpleNamespace(dtype="bfloat16")
-    policy.fp32_head = torch.nn.Linear(4, 4).to(dtype=torch.float32)
+    policy._fp32_modules = ("action_expert",)
+    policy.action_expert = torch.nn.Linear(4, 4).to(dtype=torch.float32)
     policy.bf16_block = torch.nn.Linear(4, 4).to(dtype=torch.bfloat16)
 
     with policy._autocast_context():
-        hidden = policy.fp32_head(torch.ones(2, 4, dtype=torch.float32))
+        hidden = policy.action_expert(torch.ones(2, 4, dtype=torch.float32))
         output = policy.bf16_block(hidden)
 
     assert hidden.dtype == torch.bfloat16
@@ -2669,7 +2669,7 @@ def test_bfloat16_policy_rejects_device_without_autocast(monkeypatch):
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
     policy.config = SimpleNamespace(dtype="bfloat16")
-    policy.layer = torch.nn.Linear(2, 2)
+    policy.layer = torch.nn.Linear(2, 2).bfloat16()
     monkeypatch.setattr(
         torch.amp.autocast_mode,
         "is_autocast_available",
@@ -2680,7 +2680,7 @@ def test_bfloat16_policy_rejects_device_without_autocast(monkeypatch):
         policy._autocast_context()
 
 
-def test_bfloat16_checkpoint_reload_happens_after_dtype_tree_is_applied(monkeypatch):
+def test_bfloat16_initialization_preserves_original_fp32_checkpoint_values(monkeypatch):
     class DummyTransformer(torch.nn.Module):
         def __init__(self):
             super().__init__()
@@ -2736,8 +2736,8 @@ def test_bfloat16_checkpoint_reload_happens_after_dtype_tree_is_applied(monkeypa
 
     def fake_strict_load(model, checkpoint_location):
         assert checkpoint_location == "/tmp/bfloat16-checkpoint"
-        assert model.model.transformer.matrix.weight.dtype == torch.bfloat16
-        assert model.model.vision_backbone.weight.dtype == torch.bfloat16
+        assert model.model.transformer.matrix.weight.dtype == torch.float32
+        assert model.model.vision_backbone.weight.dtype == torch.float32
         assert model.model.action_expert.action_embed.weight.dtype == torch.float32
         assert model.model.action_expert.block.weight.dtype == torch.float32
         assert model.model.transformer.rotary_emb.inv_freq.dtype == torch.float32
@@ -2769,8 +2769,10 @@ def test_bfloat16_checkpoint_reload_happens_after_dtype_tree_is_applied(monkeypa
     )
 
     policy._load_hf_model()
+    policy.post_init()
+    assert policy.dtype == torch.bfloat16
 
-    assert load_dtype is torch.bfloat16
+    assert load_dtype is torch.float32
     assert torch.equal(policy.model.model.action_expert.action_embed.weight, action_sentinel)
     rotary_emb = policy.model.model.transformer.rotary_emb
     assert torch.equal(rotary_emb.inv_freq, rope_sentinel)

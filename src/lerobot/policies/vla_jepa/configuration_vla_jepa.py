@@ -123,7 +123,7 @@ class VLAJEPAConfig(PreTrainedConfig):
     # Action-dimension names identifying the gripper. When these match `action_feature_names`,
     # the resolved index wins over `gripper_dim`.
     gripper_joint_names: list[str] = field(default_factory=lambda: ["gripper"])
-    torch_dtype: str = "bfloat16"
+    dtype: str = "bfloat16"
 
     optimizer_lr: float = 1e-4
     optimizer_betas: tuple[float, float] = (0.9, 0.95)

@@ -51,6 +51,7 @@ class GaussianActorPolicy(
         self._init_encoders()
         self._init_actor(continuous_action_dim)
         self._init_discrete_critic()
+        self.post_init()
 
     def get_optim_params(self) -> dict:
         optim_params = {

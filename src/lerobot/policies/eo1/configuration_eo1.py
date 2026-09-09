@@ -74,12 +74,7 @@ class EO1Config(PreTrainedConfig):
     supervise_padding_action_dims: bool = True
     supervise_padding_actions: bool = True
 
-    # Policy-level dtype request for the Qwen backbone.
-    # - "auto": follow the backbone config/checkpoint default dtype. For Qwen2.5-VL this resolves to bf16.
-    #           The EO1 flow-matching head still keeps its own parameters in fp32.
-    # - "bfloat16": force the backbone to initialize/load in bf16 regardless of the saved config default.
-    # - "float32": force the backbone to initialize/load in fp32 for maximum numerical conservatism.
-    dtype: str = "auto"  # Options: "auto", "bfloat16", "float32"
+    dtype: str = "bfloat16"
     force_fp32_autocast: bool = True
 
     # Optional attention backend request passed through to the Qwen backbone.

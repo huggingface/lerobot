@@ -184,3 +184,77 @@ def test_lerobot_eo1_inference(monkeypatch):
     torch.testing.assert_close(action_0, fixed_chunk[:, 0, :ACTION_DIM])
     torch.testing.assert_close(action_1, fixed_chunk[:, 1, :ACTION_DIM])
     assert sample_calls["count"] == 1
+
+
+@pytest.fixture(scope="module")
+def tiny_qwen_checkpoint(tmp_path_factory):
+    from transformers import Qwen2_5_VLConfig, Qwen2_5_VLForConditionalGeneration
+
+    config = Qwen2_5_VLConfig(
+        text_config={
+            "vocab_size": 64,
+            "hidden_size": 32,
+            "intermediate_size": 64,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 2,
+        },
+        vision_config={
+            "depth": 1,
+            "hidden_size": 32,
+            "intermediate_size": 64,
+            "num_heads": 4,
+            "in_channels": 3,
+            "out_hidden_size": 32,
+            "patch_size": 2,
+            "temporal_patch_size": 1,
+            "spatial_merge_size": 2,
+            "fullatt_block_indexes": [0],
+        },
+    )
+    model = Qwen2_5_VLForConditionalGeneration._from_config(config, dtype=torch.bfloat16)
+    directory = tmp_path_factory.mktemp("eo1_qwen")
+    model.save_pretrained(directory)
+    rope = {name: buffer.clone() for name, buffer in model.named_buffers() if "inv_freq" in name}
+    assert rope and all(buffer.dtype == torch.float32 for buffer in rope.values())
+    return directory, model.config.to_dict(), rope
+
+
+@pytest.mark.parametrize("dtype", ["float32", "bfloat16", "float16", None])
+@pytest.mark.parametrize("from_config", [False, True])
+def test_eo1_qwen_uses_requested_precision_and_preserves_fp32_buffers(
+    dtype, from_config, tiny_qwen_checkpoint, monkeypatch
+):
+    from transformers import Qwen2_5_VLForConditionalGeneration
+
+    directory, backbone_config, reference_rope = tiny_qwen_checkpoint
+    config = make_eo1_config()
+    config.dtype = dtype
+    config.vlm_base = str(directory)
+    config.vlm_config = backbone_config
+    if from_config:
+        config.pretrained_path = directory
+
+    method = "_from_config" if from_config else "from_pretrained"
+    original = getattr(Qwen2_5_VLForConditionalGeneration, method)
+    requested_dtypes = []
+
+    def load_backbone(*args, **kwargs):
+        requested_dtypes.append(kwargs["dtype"])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(Qwen2_5_VLForConditionalGeneration, method, load_backbone)
+    policy = EO1Policy(config)
+    requested = dtype if dtype is not None else torch.get_default_dtype()
+    assert requested_dtypes == [requested]
+    expected = getattr(torch, dtype) if dtype is not None else torch.get_default_dtype()
+    assert policy.dtype == expected
+    assert policy.config.dtype == str(expected).removeprefix("torch.")
+    assert all(p.dtype == expected for p in policy.model.vlm_backbone.parameters())
+    for name, buffer in policy.model.vlm_backbone.named_buffers():
+        if name in reference_rope:
+            assert buffer.dtype == torch.float32
+            assert torch.equal(buffer, reference_rope[name])
+    for name, parameter in policy.named_parameters():
+        if not name.startswith("model.vlm_backbone."):
+            assert parameter.dtype == torch.float32

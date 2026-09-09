@@ -28,9 +28,9 @@ DEFAULT_IMAGE_SIZE = 224
 @PreTrainedConfig.register_subclass("pi0_fast")
 @dataclass
 class PI0FastConfig(PreTrainedConfig):
+    dtype: str | None = "float32"
     paligemma_variant: str = "gemma_2b"
     action_expert_variant: str = "gemma_300m"
-    dtype: str = "float32"  # Options: "bfloat16", "float32"
 
     chunk_size: int = 50  # Number of action steps to predict, in openpi called "action_horizon"
     n_action_steps: int = 50  # Number of action steps to execute
@@ -110,9 +110,6 @@ class PI0FastConfig(PreTrainedConfig):
 
         if self.paligemma_variant not in ["gemma_300m", "gemma_2b"]:
             raise ValueError(f"Invalid paligemma_variant: {self.paligemma_variant}")
-
-        if self.dtype not in ["bfloat16", "float32"]:
-            raise ValueError(f"Invalid dtype: {self.dtype}")
 
     def validate_features(self) -> None:
         """Validate and set up input/output features."""

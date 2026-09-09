@@ -104,6 +104,7 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         else:
             raise ValueError(f"Unsupported objective: {config.objective}")
 
+        self.post_init()
         self.reset()
 
     def get_optim_params(self) -> list:

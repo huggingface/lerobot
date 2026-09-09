@@ -80,7 +80,13 @@ def test_groot_n1_7_model_parameters_use_fp32_checkpoint_and_optimizer_precision
     module.trainable = torch.nn.Parameter(torch.ones(3, dtype=torch.bfloat16))
     module.frozen = torch.nn.Parameter(torch.ones(3, dtype=torch.bfloat16), requires_grad=False)
 
-    GrootPolicy._cast_model_parameters_to_fp32(module)
+    policy = object.__new__(GrootPolicy)
+    torch.nn.Module.__init__(policy)
+    policy.config = GrootConfig(device="cpu")
+    policy._groot_model = module
+    policy.post_init()
+    assert policy.config.dtype == "float32"
+    assert not hasattr(policy.config, "model_params_fp32")
 
     assert module.trainable.dtype == torch.float32
     assert module.frozen.dtype == torch.float32

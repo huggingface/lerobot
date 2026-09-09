@@ -470,3 +470,31 @@ def test_vae_adapter_empty_build_encode_decode_shapes():
 
     # list input is accepted and equals the batched path
     assert torch.equal(vae.encode([video[0]]), latents)
+
+
+def test_component_loaders_accept_dtype_and_keep_loader_exceptions(monkeypatch):
+    from types import SimpleNamespace
+
+    from lerobot.policies.fastwam.wan import components
+
+    def load_vae(*args, **kwargs):
+        assert kwargs["torch_dtype"] == torch.bfloat16
+        model = nn.Linear(4, 4, dtype=torch.bfloat16)
+        model.config = SimpleNamespace(latents_mean=[0.0] * 48, latents_std=[1.0] * 48)
+        return model
+
+    def load_text_encoder(*args, **kwargs):
+        assert kwargs["dtype"] == torch.float16
+        model = nn.Module()
+        model.shared = nn.Embedding(4, 4, dtype=torch.float16)
+        model.wo = nn.Linear(4, 4, dtype=torch.float32)
+        model.config = SimpleNamespace(d_model=4)
+        return model
+
+    monkeypatch.setattr(components.AutoencoderKLWan, "from_pretrained", load_vae)
+    monkeypatch.setattr(components.UMT5EncoderModel, "from_pretrained", load_text_encoder)
+    vae = components.load_pretrained_wan_vae(dtype=torch.bfloat16, device="cpu")
+    encoder = components.load_pretrained_wan_text_encoder(dtype=torch.float16, device="cpu")
+    assert vae.vae.weight.dtype == torch.bfloat16
+    assert encoder.model.shared.weight.dtype == torch.float16
+    assert encoder.model.wo.weight.dtype == torch.float32

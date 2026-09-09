@@ -84,6 +84,7 @@ class DiffusionPolicy(PreTrainedPolicy):
 
         self.diffusion = DiffusionModel(config)
 
+        self.post_init()
         self.reset()
 
     def get_optim_params(self) -> dict:

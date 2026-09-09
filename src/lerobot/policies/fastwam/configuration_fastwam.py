@@ -198,7 +198,7 @@ class FastWAMConfig(PreTrainedConfig):
     tokenizer_max_len: int = 128
     load_text_encoder: bool = True
     mot_checkpoint_mixed_attn: bool = False
-    torch_dtype: str = "bfloat16"
+    dtype: str = "bfloat16"
     prompt_template: str = (
         "A video recorded from a robot's point of view executing the following instruction: {task}"
     )

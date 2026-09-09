@@ -507,7 +507,9 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         super().__init__(config)
 
         # Initialize vision transformer and language model components
-        self.visual = Qwen2_5_VisionTransformerPretrainedModel._from_config(config.vision_config)
+        self.visual = Qwen2_5_VisionTransformerPretrainedModel._from_config(
+            config.vision_config, dtype=torch.float32
+        )
         configure_wall_x_vision_attention(self.visual, vision_attn_implementation)
         self.model = Qwen2_5_VLMoEModel(config)
         self.vocab_size = config.vocab_size
@@ -540,21 +542,6 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
 
         # Initialize weights and apply final processing
         self.post_init()
-
-    def to_bfloat16_for_selected_params(self):
-        self.to(dtype=torch.bfloat16)
-
-        params_to_keep_float32 = []
-
-        for name, _param in self.named_parameters():
-            if "input_layernorm" in name or "post_attention_layernorm" in name or "model.norm" in name:
-                params_to_keep_float32.append(name)
-            if "action_preprocessor" in name:
-                params_to_keep_float32.append(name)
-
-        for name, param in self.named_parameters():
-            if name in params_to_keep_float32:
-                param.data = param.data.to(torch.float32)
 
     def define_action_token_id(self):
         """
@@ -1250,7 +1237,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
                     agent_pos_mask,
                 )
                 proprioception_mask = input_ids == self.action_token_id_set["propri_token_id"]
-                proprio_embed = proprio_embed.to(torch.bfloat16)
+                proprio_embed = proprio_embed.to(inputs_embeds.dtype)
                 inputs_embeds[proprioception_mask] = proprio_embed.reshape(-1, inputs_embeds.shape[-1])
 
             if attention_mask is not None:
@@ -1820,6 +1807,13 @@ class WallXPolicy(PreTrainedPolicy):
     config_class = WallXConfig
     name = "wall_x"
 
+    _fp32_modules = (
+        "model.action_preprocessor",
+        "model.model.layers.*.input_layernorm",
+        "model.model.layers.*.post_attention_layernorm",
+        "model.model.norm",
+    )
+
     def __init__(self, config: WallXConfig, **kwargs):
         require_package("transformers", extra="wallx")
         require_package("peft", extra="wallx")
@@ -1836,9 +1830,8 @@ class WallXPolicy(PreTrainedPolicy):
             attn_implementation=config.attn_implementation,
             vision_attn_implementation=config.vision_attn_implementation,
         )
+        self.post_init()
         self.model.to(config.device)
-        self.model.to_bfloat16_for_selected_params()
-
         self.reset()
 
     def reset(self):
