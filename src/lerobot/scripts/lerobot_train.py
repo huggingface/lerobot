@@ -65,6 +65,7 @@ from lerobot.datasets.factory import make_train_eval_datasets
 from lerobot.distributed import (
     ParallelDims,
     apply_torch_compile,
+    bind_process_to_gpu_numa,
     disable_buffer_broadcast_if_static,
     finalize_sharded_policy,
     is_main_process,
@@ -440,6 +441,7 @@ def train(cfg: TrainPipelineConfig):
         set_seed(cfg.seed, accelerator=accelerator)
 
     device = accelerator.device
+    bind_process_to_gpu_numa(device)  # before the DataLoader workers fork, so they inherit it
     if cfg.cudnn_deterministic:
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False

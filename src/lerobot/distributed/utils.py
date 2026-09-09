@@ -16,6 +16,7 @@
 """Rank utilities and post-`prepare()` sharding finalization."""
 
 import logging
+import os
 from typing import TYPE_CHECKING
 
 import torch
@@ -150,3 +151,44 @@ def apply_torch_compile(policy: nn.Module, compile_cfg) -> nn.Module:
         return policy
     logging.info("torch.compile applied to the whole policy (%s)", kwargs)
     return torch.compile(policy, **kwargs)
+
+
+def bind_process_to_gpu_numa(device: torch.device) -> bool:
+    """Pin this process (and the DataLoader workers it forks later) to the CPUs of the NUMA node
+    its GPU hangs off.
+
+    On a two-socket node the launcher scatters the ranks over all cores; a rank whose host thread
+    runs on the far socket pays cross-socket latency on every kernel launch and on the pinned
+    host-to-device copies, and rank skew is what every allreduce waits on. Reads the GPU's PCI
+    address from torch and the node's CPU list from sysfs; a no-op (False) when either is
+    missing, on a single NUMA node, or when the affinity is already narrower.
+
+    Args:
+        device: The CUDA device this process drives.
+
+    Returns:
+        True when the affinity was changed.
+    """
+    if device.type != "cuda" or not hasattr(os, "sched_setaffinity"):
+        return False
+    try:
+        props = torch.cuda.get_device_properties(device)
+        pci = f"{props.pci_domain_id:04x}:{props.pci_bus_id:02x}:{props.pci_device_id:02x}.0"
+        with open(f"/sys/bus/pci/devices/{pci}/numa_node") as f:
+            node = int(f.read().strip())
+        if node < 0:
+            return False
+        with open(f"/sys/devices/system/node/node{node}/cpulist") as f:
+            cpulist = f.read().strip()
+    except (AttributeError, OSError, ValueError):
+        return False
+    cpus: set[int] = set()
+    for part in cpulist.split(","):
+        lo, _, hi = part.partition("-")
+        cpus.update(range(int(lo), int(hi or lo) + 1))
+    current = os.sched_getaffinity(0)
+    if not cpus or current <= cpus:
+        return False
+    os.sched_setaffinity(0, cpus & current or cpus)
+    logging.info("Pinned to NUMA node %d (%d CPUs) for %s", node, len(cpus & current or cpus), device)
+    return True
