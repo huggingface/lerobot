@@ -52,7 +52,7 @@ from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
-from .configs import BaseStrategyConfig, DAggerStrategyConfig, RolloutConfig
+from .configs import RolloutConfig
 from .inference import (
     InferenceEngine,
     RTCInferenceConfig,
@@ -478,8 +478,11 @@ def build_rollout_context(
 
     # --- 5. Dataset -------------
     dataset = None
-    if cfg.dataset is not None and not isinstance(cfg.strategy, BaseStrategyConfig):
+    if cfg.dataset is not None:
         logger.info("Setting up dataset (repo_id=%s)...", cfg.dataset.repo_id)
+        # Strategy-owned columns join the robot/policy features above the resume/create
+        # split, so ``ctx.data.dataset_features`` describes the same schema on both paths.
+        dataset_features.update(cfg.strategy.extra_dataset_features())
         if cfg.resume:
             dataset = LeRobotDataset.resume(
                 cfg.dataset.repo_id,
@@ -495,13 +498,6 @@ def build_rollout_context(
                 * len(robot.cameras if hasattr(robot, "cameras") else []),
             )
         else:
-            if isinstance(cfg.strategy, DAggerStrategyConfig):
-                dataset_features["intervention"] = {
-                    "dtype": "bool",
-                    "shape": (1,),
-                    "names": None,
-                }
-
             repo_name = cfg.dataset.repo_id.split("/", 1)[-1]
             if not repo_name.startswith("rollout_"):
                 raise ValueError(
