@@ -18,6 +18,7 @@
 import logging
 from typing import TYPE_CHECKING
 
+import torch
 import torch.distributed as dist
 from torch import nn
 
@@ -120,3 +121,32 @@ def disable_buffer_broadcast_if_static(policy: nn.Module) -> bool:
     policy.broadcast_buffers = False
     logging.info("DDP buffer broadcast disabled: the policy has no BatchNorm module, so no buffer changes.")
     return True
+
+
+
+def apply_torch_compile(policy: nn.Module, compile_cfg) -> nn.Module:
+    """Compile the policy per `CompileConfig`, before `accelerator.prepare()`.
+
+    Regional (default): the policy names its compute core in `_compile_regions` (ACT: `model`);
+    each named submodule is replaced by its `torch.compile` wrapper, and the loss glue around it
+    (which reads scalars back with `.item()`) stays eager. Non-regional: the whole policy.
+    """
+    regions = getattr(policy, "_compile_regions", ())
+    enabled = compile_cfg.enabled
+    if enabled is None:
+        enabled = bool(regions)
+    if not enabled:
+        return policy
+    import torch._inductor.config as inductor_config
+
+    inductor_config.fallback_random = compile_cfg.fallback_random
+    kwargs = {"backend": compile_cfg.backend, "mode": compile_cfg.mode}
+    if not compile_cfg.regional:
+        regions = ()
+    if regions:
+        for name in regions:
+            setattr(policy, name, torch.compile(getattr(policy, name), **kwargs))
+        logging.info("torch.compile applied to %s (%s)", ", ".join(regions), kwargs)
+        return policy
+    logging.info("torch.compile applied to the whole policy (%s)", kwargs)
+    return torch.compile(policy, **kwargs)
