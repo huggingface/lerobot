@@ -22,6 +22,9 @@ _rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
 _series: list[dict] = []
 _prof = None
 _step_ctx = None
+_step_ev = None
+_step_t0 = 0.0
+_phases: list = []
 _t_import = time.perf_counter()
 _marks: dict[str, float] = {"import": _t_import}
 
@@ -45,10 +48,23 @@ def _bounds():
     return int(a), int(b)
 
 
-def step_begin(step: int) -> None:
-    global _prof
+def phase(name: str) -> None:
+    """Mark a point inside the step: CPU time now, and a CUDA event for when the GPU gets here."""
     if not enabled():
         return
+    ev = torch.cuda.Event(enable_timing=True)
+    ev.record()
+    _phases.append((name, time.perf_counter(), ev))
+
+
+def step_begin(step: int) -> None:
+    global _prof, _step_ev, _step_t0
+    if not enabled():
+        return
+    _phases.clear()
+    _step_t0 = time.perf_counter()
+    _step_ev = torch.cuda.Event(enable_timing=True)
+    _step_ev.record()
     if _window and step == _bounds()[0]:
         os.makedirs(os.path.join(_out, "trace"), exist_ok=True)
         _prof = torch.profiler.profile(
@@ -69,8 +85,13 @@ def step_end(step: int, wall_s: float, data_s: float, update_s: float) -> None:
     if _step_ctx is not None:
         _step_ctx.__exit__(None, None, None)
         _step_ctx = None
+    ph = {}
+    if _phases:
+        torch.cuda.synchronize()
+        for name, t, ev in _phases:
+            ph[name] = {"cpu_ms": (t - _step_t0) * 1000, "gpu_ms": _step_ev.elapsed_time(ev)}
     _series.append({
-        "step": step, "wall_s": wall_s, "data_s": data_s, "update_s": update_s,
+        "step": step, "wall_s": wall_s, "data_s": data_s, "update_s": update_s, "phases": ph,
         "gpu_alloc_gb": torch.cuda.memory_allocated() / 2**30,
         "gpu_peak_gb": torch.cuda.max_memory_allocated() / 2**30,
         "gpu_reserved_gb": torch.cuda.memory_reserved() / 2**30,

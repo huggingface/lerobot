@@ -215,11 +215,13 @@ def update_policy(
                     output_dict[f"sample_weight_{key}"] = value
             else:
                 loss, output_dict = policy(batch)
+            perf_hooks.phase("fwd")
 
             # TODO(rcadene): policy.unnormalize_outputs(out_dict)
 
         # Use accelerator's backward method
         accelerator.backward(loss)
+        perf_hooks.phase("bwd")
 
         # Gradients are complete only on sync micro-batches; clipping partial gradients would
         # be meaningless. Always pass the full parameter list: accelerate's FSDP2 path requires
@@ -227,10 +229,12 @@ def update_policy(
         grad_norm = None
         if accelerator.sync_gradients and grad_clip_norm > 0:
             grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
+        perf_hooks.phase("clip")
 
         # Optimizer step (a no-op on non-final micro-batches under gradient accumulation)
         with lock if lock is not None else nullcontext():
             optimizer.step()
+        perf_hooks.phase("opt")
         optimizer.zero_grad()
 
         # Step through pytorch scheduler at every batch instead of epoch
@@ -244,7 +248,9 @@ def update_policy(
     ):
         accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
+    perf_hooks.phase("pre_item")
     train_metrics.loss = loss.item()
+    perf_hooks.phase("item")
     if grad_norm is not None:
         train_metrics.grad_norm = grad_norm.item()
     train_metrics.lr = optimizer.param_groups[0]["lr"]
@@ -736,6 +742,7 @@ def train(cfg: TrainPipelineConfig):
         train_tracker.dataloading_s = preprocessing_start - step_start
         batch = _preprocess_dataset_batch(batch, dataset.meta.camera_keys, cfg.rename_map, preprocessor)
         train_tracker.preprocessing_s = time.perf_counter() - preprocessing_start
+        perf_hooks.phase("batch")
         probe_hooks.batch(batch)
 
         train_tracker, output_dict = update_policy(
