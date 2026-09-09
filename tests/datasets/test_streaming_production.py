@@ -404,8 +404,13 @@ def test_streaming_rejects_multiple_sampling_workers(tmp_path: Path, lerobot_dat
     )
     loader = torch.utils.data.DataLoader(streaming, batch_size=None, num_workers=2)
 
-    with pytest.raises(RuntimeError, match="one DataLoader worker per rank"):
-        list(loader)
+    iterator = iter(loader)
+    try:
+        with pytest.raises(RuntimeError, match="one DataLoader worker per rank"):
+            list(iterator)
+    finally:
+        iterator._shutdown_workers()
+        assert not any(worker.is_alive() for worker in iterator._workers)
 
 
 def test_streaming_persistent_workers_advance_epochs(tmp_path: Path, lerobot_dataset_factory) -> None:

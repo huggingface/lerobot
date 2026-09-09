@@ -30,14 +30,29 @@ from tests.fixtures.constants import DUMMY_REPO_ID
 def test_temporal_reads_decode_only_requested_images(
     tmp_path: Path,
     lerobot_dataset_factory: Any,
+    info_factory: Any,
+    episodes_factory: Any,
+    tasks_factory: Any,
     monkeypatch: pytest.MonkeyPatch,
     image_window: bool,
     decode_threads: int,
     sampling_strategy: str,
 ) -> None:
     root = tmp_path / "dataset"
+    info = info_factory(total_episodes=3, total_frames=18, total_tasks=1, use_videos=False)
+    tasks = tasks_factory(total_tasks=1)
+    episodes = episodes_factory(
+        features=info.features, total_episodes=3, total_frames=18, tasks=tasks
+    ).to_list()
+    # Random multinomial lengths can contain empty episodes, making the local fixture incomplete.
+    for episode, start, end in zip(episodes, (0, 3, 9), (3, 9, 18), strict=True):
+        episode.update(length=end - start, dataset_from_index=start, dataset_to_index=end)
     reference = lerobot_dataset_factory(
-        root=root, repo_id=DUMMY_REPO_ID, total_episodes=3, total_frames=18, use_videos=False
+        root=root,
+        repo_id=DUMMY_REPO_ID,
+        info=info,
+        tasks=tasks,
+        episodes_metadata=datasets.Dataset.from_list(episodes),
     )
     deltas = {
         "action": [offset / reference.fps for offset in range(16)],
