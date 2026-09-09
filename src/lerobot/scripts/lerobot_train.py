@@ -82,7 +82,7 @@ from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR
 from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
-from lerobot.utils import perf_hooks, probe_hooks
+from lerobot.utils import probe_hooks
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
@@ -218,13 +218,11 @@ def update_policy(
                     output_dict[f"sample_weight_{key}"] = value
             else:
                 loss, output_dict = policy(batch)
-            perf_hooks.phase("fwd")
 
             # TODO(rcadene): policy.unnormalize_outputs(out_dict)
 
         # Use accelerator's backward method
         accelerator.backward(loss)
-        perf_hooks.phase("bwd")
 
         # Gradients are complete only on sync micro-batches; clipping partial gradients would
         # be meaningless. Always pass the full parameter list: accelerate's FSDP2 path requires
@@ -232,12 +230,10 @@ def update_policy(
         grad_norm = None
         if accelerator.sync_gradients and grad_clip_norm > 0:
             grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
-        perf_hooks.phase("clip")
 
         # Optimizer step (a no-op on non-final micro-batches under gradient accumulation)
         with lock if lock is not None else nullcontext():
             optimizer.step()
-        perf_hooks.phase("opt")
         optimizer.zero_grad()
 
         # Step through pytorch scheduler at every batch instead of epoch
@@ -251,9 +247,7 @@ def update_policy(
     ):
         accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
-    perf_hooks.phase("pre_item")
     train_metrics.loss = loss.item()
-    perf_hooks.phase("item")
     if grad_norm is not None:
         train_metrics.grad_norm = grad_norm.item()
     train_metrics.lr = optimizer.param_groups[0]["lr"]
@@ -450,7 +444,6 @@ def train(cfg: TrainPipelineConfig):
     torch.backends.cuda.matmul.allow_tf32 = True
 
     # --- data (the main process downloads once; peers read the populated cache) ----------------
-    perf_hooks.mark("dataset_begin")
     if is_main_process():
         logging.info("Creating dataset")
         dataset, eval_dataset = make_train_eval_datasets(cfg)
@@ -479,7 +472,6 @@ def train(cfg: TrainPipelineConfig):
                 "Use it directly for inference via compute_reward() (e.g. offline precompute)."
             )
     else:
-        perf_hooks.mark("policy_begin")
         logging.info("Creating policy")
         policy = make_policy(
             cfg=cfg.policy,
@@ -589,7 +581,6 @@ def train(cfg: TrainPipelineConfig):
         )
     finalize_sharded_policy(policy, parallel_dims)
     disable_buffer_broadcast_if_static(policy)
-    perf_hooks.mark("prepared")
     if cfg.resume:
         resume_after_prepare(cfg, accelerator, policy, optimizer, lr_scheduler)
 
@@ -739,17 +730,14 @@ def train(cfg: TrainPipelineConfig):
             f"Start offline training on a fixed dataset, with effective batch size: {effective_batch_size}"
         )
 
-    perf_hooks.mark("loop_start")
     for _ in range(step, cfg.steps):
         probe_hooks.begin_step(step + 1)
-        perf_hooks.step_begin(step + 1)
         step_start = time.perf_counter()
         batch = next(dl_iter)
         preprocessing_start = time.perf_counter()
         train_tracker.dataloading_s = preprocessing_start - step_start
         batch = _preprocess_dataset_batch(batch, dataset.meta.camera_keys, cfg.rename_map, preprocessor)
         train_tracker.preprocessing_s = time.perf_counter() - preprocessing_start
-        perf_hooks.phase("batch")
         probe_hooks.batch(batch)
 
         train_tracker, output_dict = update_policy(
@@ -766,9 +754,6 @@ def train(cfg: TrainPipelineConfig):
         probe_hooks.step_metrics(
             train_tracker.loss.val, output_dict,
             train_tracker.grad_norm.val if cfg.optimizer.grad_clip_norm > 0 else None,
-        )
-        perf_hooks.step_end(
-            step + 1, train_tracker.step_s.val, train_tracker.dataloading_s.val, train_tracker.update_s.val
         )
 
         # Pull one optimizer step of the live weights into the EMA shadow (main process only).
@@ -931,9 +916,7 @@ def train(cfg: TrainPipelineConfig):
 
     if is_main_process():
         progbar.close()
-    perf_hooks.mark("loop_end")
     probe_hooks.flush()
-    perf_hooks.flush()
     logging.info("End of training")
 
     # --- publish (collective-safe: all ranks; the model commit gathers sharded weights) ---------
