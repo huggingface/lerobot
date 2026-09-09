@@ -323,14 +323,13 @@ class TestDepthUnitMetadata:
         np.testing.assert_allclose(float(np.asarray(stats["mean"]).reshape(-1)[0]), expected, rtol=0.05)
         np.testing.assert_allclose(float(np.asarray(stats["count"]).reshape(-1)[0]), count)
 
-        if not use_videos:
-            depth = read_dataset[0][DEPTH_KEY]
-            assert torch.allclose(depth, torch.full_like(depth, expected))
+        from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 
-            from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
-
-            stream_dataset = StreamingLeRobotDataset(
-                repo_id=DUMMY_REPO_ID, root=tmp_path / "ds", depth_output_unit=output_unit
-            )
-            stream_depth = next(iter(stream_dataset))[DEPTH_KEY]
-            assert torch.allclose(stream_depth, torch.full_like(stream_depth, expected))
+        stream_dataset = StreamingLeRobotDataset(
+            repo_id=DUMMY_REPO_ID, root=tmp_path / "ds", depth_output_unit=output_unit
+        )
+        stream_item = next(iter(stream_dataset))
+        stream_depth = stream_item[DEPTH_KEY]
+        reference_depth = read_dataset[int(stream_item["index"])][DEPTH_KEY]
+        assert torch.allclose(stream_depth, reference_depth)
+        assert torch.allclose(stream_depth, torch.full_like(stream_depth, expected), rtol=0.05)

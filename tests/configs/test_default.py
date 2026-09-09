@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import draccus
 import pytest
 
 from lerobot.configs.default import DatasetConfig
@@ -36,6 +37,40 @@ def test_dataset_config_none_episodes_ok():
 
 def test_dataset_config_empty_episodes_ok():
     DatasetConfig(repo_id="user/repo", episodes=[])
+
+
+def test_dataset_config_derives_streaming_decoder_limit_by_default():
+    assert DatasetConfig(repo_id="user/repo").streaming_max_open_decoders is None
+
+
+def test_streaming_sampling_strategy_cli_and_round_trip() -> None:
+    assert DatasetConfig(repo_id="user/repo").streaming_sampling_strategy == "remaining"
+    config = draccus.parse(
+        DatasetConfig,
+        args=["--repo_id=user/repo", "--streaming=true", "--streaming_sampling_strategy=round_robin"],
+    )
+    assert config.streaming_sampling_strategy == "round_robin"
+    restored = draccus.decode(DatasetConfig, draccus.encode(config))
+    assert restored.streaming_sampling_strategy == "round_robin"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("streaming_sampling_strategy", "invalid", "sampling_strategy"),
+        ("streaming_episode_pool_size", 0, "episode_pool_size"),
+        ("streaming_prefetch_episodes", -1, "prefetch_episodes"),
+        ("streaming_byte_budget_gb", 0, "byte_budget_gb"),
+        ("streaming_decode_threads", 0, "decode_threads"),
+        ("streaming_decoded_queue_size", 0, "decoded_queue_size"),
+        ("streaming_max_open_decoders", 0, "max_open_decoders"),
+        ("streaming_native_http_connections", 0, "native_http_connections"),
+        ("streaming_native_http_subranges", 0, "native_http_subranges"),
+    ],
+)
+def test_dataset_config_rejects_invalid_streaming_resource_limits(field, value, message):
+    with pytest.raises(ValueError, match=message):
+        DatasetConfig(repo_id="user/repo", **{field: value})
 
 
 def test_dataset_config_ignores_negative_excluded_episodes(caplog):
