@@ -190,6 +190,7 @@ def _loop_ctx(engine, robot=None, stop_event=None, **cfg_overrides):
         "duration": 0.0,
         "use_torch_compile": False,
         "interpolation_multiplier": 1,
+        "interpolation_rotation_dims": [],
         "display_data": False,
         "autosteer_interval_s": 0.0,
     }
