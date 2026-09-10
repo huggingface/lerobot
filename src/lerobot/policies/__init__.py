@@ -22,6 +22,7 @@ from .factory import get_policy_class, make_policy, make_policy_config, make_pre
 from .fastwam.configuration_fastwam import FastWAMConfig as FastWAMConfig
 from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig as GaussianActorConfig
 from .groot.configuration_groot import GrootConfig as GrootConfig
+from .lawam.configuration_lawam import LaWAMConfig as LaWAMConfig
 from .lingbot_va.configuration_lingbot_va import LingBotVAConfig as LingBotVAConfig
 from .molmoact2.configuration_molmoact2 import MolmoAct2Config as MolmoAct2Config
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig as MultiTaskDiTConfig
@@ -50,6 +51,7 @@ __all__ = [
     "GaussianActorConfig",
     "Evo1Config",
     "GrootConfig",
+    "LaWAMConfig",
     "LingBotVAConfig",
     "MolmoAct2Config",
     "MultiTaskDiTConfig",
