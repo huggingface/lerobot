@@ -259,6 +259,22 @@ Supported values include `auto`, `cpu`, `cu126`, `cu128`, `cu129`, `cu130`, plus
 </hfoptions>
 <!-- prettier-ignore-end -->
 
+### PyTorch 2.14 in a separate Linux environment
+
+The locked source environment still uses PyTorch 2.11 and torchvision 0.26 from the CUDA 12.8 index. Linux dependency bounds also allow PyTorch 2.14, torchvision 0.29, and TorchCodec 0.13. macOS and Windows bounds are unchanged.
+
+For a separate Python 3.12 environment using CUDA 12.6, run these commands from your source checkout after installing the shared FFmpeg libraries described above:
+
+```bash
+uv venv --python 3.12 .venv-cu126
+uv pip install --python .venv-cu126/bin/python --no-sources --torch-backend cu126 \
+    -e ".[dataset]" "torch==2.14.0" "torchvision==0.29.0" "torchcodec==0.13.0"
+```
+
+This recipe was tested on Linux x86_64 with `uv` 0.11.30. Add the extra for your policy when needed. Torch-TensorRT 2.14 can be installed separately with its matching CUDA packages; this does not add a LeRobot export command.
+
+`--no-sources` bypasses the checkout's CUDA 12.8 source selection for this install only. `uv sync --locked` still restores the locked versions in the environment it manages, so keep the export environment separate. Fresh `pip` installs do not use the project's lock or `uv` source settings and may select newer versions within the widened bounds.
+
 ### Troubleshooting
 
 If you encounter build errors, you may need to install additional system dependencies: `cmake`, `build-essential`, and `ffmpeg libs`.

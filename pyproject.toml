@@ -59,8 +59,10 @@ keywords = ["lerobot", "huggingface", "robotics",  "machine learning", "artifici
 
 dependencies = [
     # Core ML
-    "torch>=2.7,<2.12.0",
-    "torchvision>=0.22.0,<0.27.0",
+    "torch>=2.7,<2.15.0; sys_platform == 'linux'",
+    "torch>=2.7,<2.12.0; sys_platform != 'linux'",
+    "torchvision>=0.22.0,<0.30.0; sys_platform == 'linux'",
+    "torchvision>=0.22.0,<0.27.0; sys_platform != 'linux'",
     "numpy>=2.0.0,<2.3.0", # NOTE: Explicitly listing numpy helps the resolver converge faster. Upper bound imposed by opencv-python-headless.
     "opencv-python-headless>=4.9.0,<4.14.0",
     "Pillow>=10.0.0,<13.0.0",
@@ -115,10 +117,11 @@ dataset = [
     #   - macOS x86_64 (Intel) and linux armv7l: no wheels in any released version -> fall through to the PyAV decoder.
     # Each platform gets its own line so the resolver picks the minimum version that has a wheel for it.
 
-    # Other torch/torchcodec pairings (informational): 0.8.1 = ffmpeg>=8 support, 0.10 = system-wide ffmpeg support, 0.12 needs torch==2.12.
-    "torchcodec>=0.3.0,<0.12.0; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')) or (sys_platform == 'darwin' and platform_machine == 'arm64')",
+    # TorchCodec 0.13 supports torch >=2.11; retain older wheels on macOS and Windows.
+    "torchcodec>=0.3.0,<0.14.0; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')",
+    "torchcodec>=0.3.0,<0.12.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "torchcodec>=0.7.0,<0.12.0; sys_platform == 'win32'",
-    "torchcodec>=0.11.0,<0.12.0; sys_platform == 'linux' and (platform_machine == 'aarch64' or platform_machine == 'arm64')",
+    "torchcodec>=0.11.0,<0.14.0; sys_platform == 'linux' and (platform_machine == 'aarch64' or platform_machine == 'arm64')",
     "jsonlines>=4.0.0,<5.0.0",
 ]
 training = [
