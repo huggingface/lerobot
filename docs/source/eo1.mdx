@@ -158,7 +158,9 @@ See [Language columns and recipes](./language_and_recipes) for the annotation
 schema and recipe structure. `recipe_path` may point to an explicit external
 YAML override; LeRobot does not provide shared default recipe files.
 The default system prompt is part of EO1's recipe and can be replaced by a custom
-system turn. `EO1PrepareModelMessagesStep` adds images and state/action tokens
+system turn. Rendered inputs without a system turn, including VQA prompts,
+remain without one. The action-only path without rendered messages keeps the
+default system prompt. `EO1PrepareModelMessagesStep` adds images and state/action tokens
 to the rendered messages before Qwen formatting and tokenization.
 
 ### Key Training Parameters

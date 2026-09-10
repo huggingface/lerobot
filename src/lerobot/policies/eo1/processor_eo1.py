@@ -133,10 +133,6 @@ class EO1PrepareModelMessagesStep(ComplementaryDataProcessorStep):
                     raise TypeError("EO-1 messages and streams must be batched lists.")
 
                 rendered = []
-                if not any(message.get("role") == "system" for message in row_messages):
-                    rendered.append(
-                        {"role": "system", "content": [{"type": "text", "text": EO1_DEFAULT_SYSTEM_MESSAGE}]}
-                    )
                 message_indices = []
                 image_blocks = [{"type": "image", "image": images[key][i]} for key in self._image_keys]
                 injected_images = False

@@ -418,17 +418,17 @@ def test_model_messages_preserve_system_prompt_and_target_alignment(system_promp
     step = EO1PrepareModelMessagesStep(config.input_features, CHUNK_SIZE)
     output = step(transition)[TransitionKey.COMPLEMENTARY_DATA]
     messages = output["messages"][0]
-    assert [message["role"] for message in messages] == ["system", "user", "assistant"]
-    assert messages[0]["content"] == [
-        {"type": "text", "text": system_prompt or "You are a helpful physical assistant."}
-    ]
-    assert output["target_message_indices"] == [[2]]
-    assert messages[2]["content"] == [{"type": "text", "text": "pick up the cup"}]
-    assert any(block["type"] == "image" for block in messages[1]["content"])
+    expected_roles = ["user", "assistant"] if system_prompt is None else ["system", "user", "assistant"]
+    assert [message["role"] for message in messages] == expected_roles
+    if system_prompt is not None:
+        assert messages[0]["content"] == [{"type": "text", "text": system_prompt}]
+    assert output["target_message_indices"] == [[1 if system_prompt is None else 2]]
+    assert messages[-1]["content"] == [{"type": "text", "text": "pick up the cup"}]
+    assert any(block["type"] == "image" for block in messages[-2]["content"])
 
 
 @pytest.mark.parametrize("query_kind", ["vqa", "next_subtask", None])
-def test_model_messages_keep_default_system_prompt_for_runtime_and_action_inputs(query_kind):
+def test_model_messages_use_recipe_system_prompt_and_only_fall_back_for_action_inputs(query_kind):
     from lerobot.lerobot_types import TransitionKey
     from lerobot.policies.eo1.processor_eo1 import EO1PrepareModelMessagesStep
     from lerobot.processor.converters import create_transition
@@ -453,9 +453,12 @@ def test_model_messages_keep_default_system_prompt_for_runtime_and_action_inputs
     output = EO1PrepareModelMessagesStep(config.input_features, CHUNK_SIZE)(transition)
     messages = output[TransitionKey.COMPLEMENTARY_DATA]["messages"][0]
     system_messages = [message for message in messages if message["role"] == "system"]
-    assert system_messages == [
-        {"role": "system", "content": [{"type": "text", "text": "You are a helpful physical assistant."}]}
-    ]
+    if query_kind == "vqa":
+        assert system_messages == []
+    else:
+        assert system_messages == [
+            {"role": "system", "content": [{"type": "text", "text": "You are a helpful physical assistant."}]}
+        ]
 
 
 def test_saved_message_processor_registry_name_still_loads():
