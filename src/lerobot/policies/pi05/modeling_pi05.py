@@ -38,6 +38,7 @@ if TYPE_CHECKING or _transformers_available:
         PiGemmaForCausalLM,
         _gated_residual,
         layernorm_forward,
+        sdpa_attention_forward,
     )
 else:
     CONFIG_MAPPING = None
@@ -45,6 +46,7 @@ else:
     PiGemmaForCausalLM = None
     _gated_residual = None
     layernorm_forward = None
+    sdpa_attention_forward = None
     PaliGemmaForConditionalGenerationWithPiGemma = None
     cached_file = None
 from lerobot.configs import PreTrainedConfig
@@ -175,6 +177,8 @@ def _reduce_training_rtc_loss(
         denominator = postfix_mask.sum(dim=(1, 2))
         return numerator / denominator.clamp(min=1)
     return (losses * postfix_mask).sum() / postfix_mask.sum().clamp(min=1)
+
+
 _SAFETENSORS_FILE = "model.safetensors"
 
 
@@ -214,8 +218,10 @@ def compute_layer_complete(inputs_embeds, attention_mask, position_ids, adarms_c
     batch_size = query_states.shape[0]
     paligemma_layer = layers[0]
     scaling = paligemma_layer.self_attn.scaling
-    # Attention computation
-    att_output, _ = modeling_gemma.eager_attention_forward(
+    # Keep score/softmax accumulation out of BF16 eager matmuls: large Q/K
+    # activations at low flow timesteps can otherwise produce exploding gradients.
+    # This changes no parameters or masks and keeps the KI-off gradient paths live.
+    att_output, _ = sdpa_attention_forward(
         paligemma_layer.self_attn,
         query_states,
         key_states,
@@ -645,7 +651,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             def image_embed_func(img, img_mask):
                 if img.ndim == 5:
                     return self.paligemma_with_expert.embed_image(
-                        img, frame_mask=img_mask,
+                        img,
+                        frame_mask=img_mask,
                         temporal_attention_every=self.config.memory_temporal_attention_every,
                     )
                 return self.paligemma_with_expert.embed_image(img)
@@ -657,9 +664,12 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         else:
             img_embs = [
                 self.paligemma_with_expert.embed_image(
-                    img, frame_mask=img_mask,
+                    img,
+                    frame_mask=img_mask,
                     temporal_attention_every=self.config.memory_temporal_attention_every,
-                ) if img.ndim == 5 else self.paligemma_with_expert.embed_image(img)
+                )
+                if img.ndim == 5
+                else self.paligemma_with_expert.embed_image(img)
                 for img, img_mask in zip(images, img_masks, strict=True)
             ]
 

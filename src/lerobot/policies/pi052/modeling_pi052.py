@@ -1077,9 +1077,11 @@ class PI052Policy(PI05Policy):
                 "nothing to train."
             )
 
-        # Keep metrics detached on-device until logging to avoid extra CUDA synchronization.
+        # The shared MetricsTracker accepts Python scalars, not detached tensors.
+        # Transfer the small metric vector once so flow/text losses are not dropped.
         loss_dict["loss"] = total.detach().mean()
-        return total, loss_dict
+        values = torch.stack(list(loss_dict.values())).tolist()
+        return total, dict(zip(loss_dict, values, strict=True))
 
     def _embed_supervised_prefix(
         self,

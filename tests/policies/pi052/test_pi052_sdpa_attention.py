@@ -28,6 +28,8 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 pytest.importorskip("transformers")
 
@@ -145,3 +147,79 @@ def test_sdpa_parity_backward():
     torch.testing.assert_close(g_q_s, g_q_e, atol=1e-5, rtol=1e-4)
     torch.testing.assert_close(g_k_s, g_k_e, atol=1e-5, rtol=1e-4)
     torch.testing.assert_close(g_v_s, g_v_e, atol=1e-5, rtol=1e-4)
+
+
+def test_bf16_large_scores_backward_matches_fp32():
+    """BF16 score rounding must not turn separated logits into an artificial tie."""
+    module = _mock_self_attn(1, training=True)
+    q = torch.tensor([[[[128.0, 128.0]]]], dtype=torch.bfloat16, requires_grad=True)
+    k = torch.tensor([[[[128.0, 0.0], [128.0, 0.125]]]], dtype=torch.bfloat16, requires_grad=True)
+    v = torch.tensor([[[[0.0, 0.0], [1.0, 1.0]]]], dtype=torch.bfloat16, requires_grad=True)
+    mask = torch.zeros(1, 1, 1, 2, dtype=torch.bfloat16)
+    reference_inputs = [x.detach().float().requires_grad_() for x in (q, k, v)]
+    rq, rk, rv = reference_inputs
+    # Independent FP32 reference: scores 16384 and 16400, not two rounded 16384s.
+    reference = ((rq @ rk.transpose(-1, -2)).softmax(-1) @ rv).transpose(1, 2)
+    expected_grads = torch.autograd.grad(reference.sum(), reference_inputs)
+    output, _ = sdpa_attention_forward(module, q, k, v, mask, scaling=1.0)
+    gradients = torch.autograd.grad(output.sum(), (q, k, v))
+    torch.testing.assert_close(output.float(), reference, atol=1e-5, rtol=1e-5)
+    for actual, expected in zip(gradients, expected_grads, strict=True):
+        assert torch.isfinite(actual).all()
+        # Fused BF16 backward can leave ~3e-5 cancellation residuals near p=1;
+        # eager BF16 score materialization instead produces gradients of order 64.
+        torch.testing.assert_close(actual.float(), expected, atol=1e-4, rtol=0.02)
+
+
+@pytest.mark.parametrize("use_checkpointing", [False, True])
+def test_joint_layer_defaults_to_sdpa_and_keeps_prefix_gradients(monkeypatch, use_checkpointing):
+    """Exercise the real shared PI05/PI052 joint layer, including KI-off backprop."""
+    from transformers.models.gemma.configuration_gemma import GemmaConfig
+
+    from lerobot.policies.pi05 import modeling_pi05
+    from lerobot.policies.pi_gemma import _get_pi_gemma_decoder_layer_base
+
+    torch.manual_seed(14)
+    config = GemmaConfig(
+        hidden_size=32,
+        intermediate_size=64,
+        num_attention_heads=8,
+        num_key_value_heads=1,
+        head_dim=4,
+        num_hidden_layers=1,
+    )
+    layer_class = _get_pi_gemma_decoder_layer_base()
+    prefix_layer = layer_class(config, 0)
+    config.use_adarms = True
+    config.adarms_cond_dim = 32
+    action_layer = layer_class(config, 0)
+    for norm in (action_layer.input_layernorm, action_layer.post_attention_layernorm):
+        nn.init.normal_(norm.dense.weight, std=0.01)
+    layers = nn.ModuleList([prefix_layer, action_layer])
+    rotary = modeling_gemma.GemmaRotaryEmbedding(config)
+    prefix = torch.randn(2, 3, 32, requires_grad=True)
+    suffix = torch.randn(2, 2, 32, requires_grad=True)
+    cond = torch.randn(2, 32, requires_grad=True)
+    mask = _block_bidirectional_mask(2, 5, [3, 2], torch.float32)
+    positions = torch.arange(5)[None].expand(2, -1)
+    calls = []
+
+    def counted_sdpa(*args, **kwargs):
+        calls.append(True)
+        return sdpa_attention_forward(*args, **kwargs)
+
+    monkeypatch.setattr(modeling_pi05, "sdpa_attention_forward", counted_sdpa)
+    args = ([prefix, suffix], mask, positions, [None, cond])
+    kwargs = {"layers": layers, "rotary_emb": rotary}
+    if use_checkpointing:
+        outputs = checkpoint(modeling_pi05.compute_layer_complete, *args, use_reentrant=False, **kwargs)
+    else:
+        outputs = modeling_pi05.compute_layer_complete(*args, **kwargs)
+    assert outputs[1].shape == suffix.shape
+    outputs[1].square().mean().backward()
+    assert calls, "The joint layer must not fall back to BF16 eager attention"
+    for tensor in (prefix, suffix, cond):
+        assert tensor.grad is not None and torch.isfinite(tensor.grad).all()
+        assert tensor.grad.abs().sum() > 0
+    assert prefix_layer.self_attn.k_proj.weight.grad.abs().sum() > 0
+    assert prefix_layer.self_attn.v_proj.weight.grad.abs().sum() > 0

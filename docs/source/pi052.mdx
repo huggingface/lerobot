@@ -127,17 +127,17 @@ the expected prompt, text target, and action endpoints before scaling up.
 
 ### Main training controls
 
-| Option                              |                    Default | Purpose                                                             |
-| ----------------------------------- | -------------------------: | ------------------------------------------------------------------- |
-| `policy.recipe_path`                | `None` | Optional override of the embedded 70/30 subtask recipe              |
-| `policy.text_loss_weight`           |                      `1.0` | Language-head cross-entropy weight; `0` disables text training      |
-| `policy.flow_loss_weight`           |                     `10.0` | Continuous action flow-loss weight                                  |
-| `policy.enable_fast_action_loss`    |                     `true` | Adds discrete FAST action-token supervision                         |
-| `policy.fast_action_loss_weight`    |                      `1.0` | FAST cross-entropy weight                                           |
-| `policy.knowledge_insulation`       |                     `true` | Blocks action-loss gradients through the VLM K/V path               |
-| `policy.flow_num_repeats`           |                        `5` | Reuses one VLM prefix for independent denoising targets             |
-| `policy.lm_head_lr_scale`           |                      `1.0` | Scales language-head learning rate; `1.0` uses the base rate        |
-| `policy.fast_skip_tokens`           |                     `1152` | FAST id offset; skips `<seg>`+`<loc>` so VQA and FAST never collide |
+| Option                           | Default | Purpose                                                             |
+| -------------------------------- | ------: | ------------------------------------------------------------------- |
+| `policy.recipe_path`             |  `None` | Optional override of the embedded 70/30 subtask recipe              |
+| `policy.text_loss_weight`        |   `1.0` | Language-head cross-entropy weight; `0` disables text training      |
+| `policy.flow_loss_weight`        |  `10.0` | Continuous action flow-loss weight                                  |
+| `policy.enable_fast_action_loss` |  `true` | Adds discrete FAST action-token supervision                         |
+| `policy.fast_action_loss_weight` |   `1.0` | FAST cross-entropy weight                                           |
+| `policy.knowledge_insulation`    |  `true` | Blocks action-loss gradients through the VLM K/V path               |
+| `policy.flow_num_repeats`        |     `5` | Reuses one VLM prefix for independent denoising targets             |
+| `policy.lm_head_lr_scale`        |   `1.0` | Scales language-head learning rate; `1.0` uses the base rate        |
+| `policy.fast_skip_tokens`        |  `1152` | FAST id offset; skips `<seg>`+`<loc>` so VQA and FAST never collide |
 
 `fast_skip_tokens=1152` places FAST codes below PaliGemma's `<loc>` range.
 openpi's pi0-FAST convention is `128` (FAST occupies the `<loc>` ids); use that
@@ -243,6 +243,13 @@ safety behavior, and recording controls. The former `--sim`, `--mode`, and
 
 ## Troubleshooting
 
+- **Large flow-loss gradients:** joint prefix/action attention uses PyTorch SDPA
+  by default, including when knowledge insulation is disabled. This avoids
+  materializing attention scores in BF16, which can destabilize gradients at
+  low flow timesteps with large query/key activations. Existing checkpoints and
+  normalization layers are unchanged; KI-off still trains through VLM keys and
+  values. Monitor the separate `flow_loss`, `text_loss`, and pre-clipping gradient
+  norm rather than relying on the finite total loss alone.
 - **No text loss or generated subtasks:** confirm the selected recipe can bind
   the annotations on sampled frames and that `policy.text_loss_weight > 0`.
 - **Subtasks look plausible but actions fail:** verify subtask boundaries,
