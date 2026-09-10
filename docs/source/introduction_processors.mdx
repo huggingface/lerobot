@@ -64,6 +64,10 @@ It's a typed dictionary that represents a complete robot-environment interaction
 - **INFO**: Arbitrary metadata
 - **COMPLEMENTARY_DATA**: Task descriptions, indices, padding flags, inter-step data
 
+Batch converters keep indexing metadata such as `index`, `episode_index`, and `frame_index` in `COMPLEMENTARY_DATA`.
+In a `batch_to_transition` / `transition_to_batch` round trip, `frame_index` retains its original scalar or tensor value.
+If the input omits `frame_index`, the converters do not add it.
+
 ### ProcessorStep: The Building Block
 
 A `ProcessorStep` is a single transformation unit that processes transitions. It's an abstract base class with two required methods:
