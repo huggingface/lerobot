@@ -109,7 +109,7 @@ git clone --branch stable --depth 1 https://github.com/facebookresearch/pytorch3
 sed -i 's/"-std=c++17"/"-std=c++20"/g' pytorch3d/setup.py
 pip install ./pytorch3d --no-build-isolation
 
-cd envs && git clone https://github.com/NVlabs/curobo.git && cd curobo
+cd envs && git clone --branch v0.7.8 --depth 1 https://github.com/NVlabs/curobo.git && cd curobo
 # CuRobo declares its own `lerp` for plain floats, which now clashes with the standard library
 # one. Guard only that overload; the float2, float3 and float4 ones take different argument
 # types, so they do not clash and must stay.
