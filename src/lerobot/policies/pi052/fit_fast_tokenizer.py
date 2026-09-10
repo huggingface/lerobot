@@ -477,8 +477,14 @@ def resolve_fast_tokenizer(
     exclude_episodes: list[int] | None = None,
 ) -> str:
     """Return the configured tokenizer, fitting a cached dataset-specific one when requested."""
-    if not getattr(config, "auto_fit_fast_tokenizer", False) or dataset_repo_id is None:
+    if not getattr(config, "auto_fit_fast_tokenizer", False):
         return config.action_tokenizer_name
+    if dataset_repo_id is None:
+        raise ValueError(
+            "FAST tokenizer fitting requires an explicit dataset source. Fit the tokenizer with "
+            "fit_fast_tokenizer before training, then set action_tokenizer_name to the saved path "
+            "and auto_fit_fast_tokenizer=False."
+        )
 
     relative_action_mask = None
     if getattr(config, "use_relative_actions", False):

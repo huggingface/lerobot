@@ -25,9 +25,9 @@ from lerobot.policies.pi0_fast.modeling_pi0_fast import (  # noqa: E402
     _reduce_fast_token_loss,
 )
 from lerobot.policies.pi0_fast.processor_pi0_fast import (  # noqa: E402
+    Pi0FastActionTokenizerStep,
     Pi0FastPrepareStateAndLanguageTokenizerProcessorStep,
 )
-from lerobot.processor.tokenizer_processor import ActionTokenizerProcessorStep  # noqa: E402
 from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS  # noqa: E402
 
 
@@ -55,10 +55,9 @@ def test_pi0_fast_uses_openpi_quantile_normalization_by_default():
 
 
 def test_pi0_fast_action_tokens_have_no_second_bos():
-    step = ActionTokenizerProcessorStep.__new__(ActionTokenizerProcessorStep)
+    step = Pi0FastActionTokenizerStep.__new__(Pi0FastActionTokenizerStep)
     step.max_action_tokens = 8
     step.fast_skip_tokens = 128
-    step.prepend_bos = False
     step.action_tokenizer = lambda _: torch.tensor([4, 9])
     step._paligemma_tokenizer = _FakePaliGemmaTokenizer()
 
@@ -70,13 +69,12 @@ def test_pi0_fast_action_tokens_have_no_second_bos():
     assert _FakePaliGemmaTokenizer.bos_token_id not in tokens[0, mask[0]].tolist()
 
 
-def test_action_tokenizer_serializes_bos_layout():
-    step = ActionTokenizerProcessorStep.__new__(ActionTokenizerProcessorStep)
+def test_action_tokenizer_uses_policy_local_bos_layout():
+    step = Pi0FastActionTokenizerStep.__new__(Pi0FastActionTokenizerStep)
     step.trust_remote_code = True
     step.max_action_tokens = 8
     step.fast_skip_tokens = 128
     step.paligemma_tokenizer_name = "paligemma"
-    step.prepend_bos = False
     step.action_tokenizer_name = "fast"
     step.action_tokenizer_input_object = None
 
@@ -86,7 +84,6 @@ def test_action_tokenizer_serializes_bos_layout():
         "fast_skip_tokens": 128,
         "paligemma_tokenizer_name": "paligemma",
         "allow_truncation": True,
-        "prepend_bos": False,
         "action_tokenizer_name": "fast",
     }
 

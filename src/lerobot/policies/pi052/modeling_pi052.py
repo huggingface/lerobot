@@ -40,6 +40,7 @@ from ..pi05.modeling_pi05 import (
     make_att_2d_masks,
 )
 from .configuration_pi052 import PI052Config
+from .processor_pi052 import make_pi052_pre_post_processors  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -1943,15 +1944,18 @@ class PI052Policy(PI05Policy):
         ``backbone_lr_scale`` (the rest of the PaliGemma tower), and
         ``action_expert_lr_scale`` (the Gemma expert + action/time projection
         heads). The cosine scheduler multiplies every group by the same lambda
-        each step so the ratios are preserved across decay. When all three are
-        ``1.0`` this returns ``self.parameters()`` (back-compat with existing
-        checkpoints and configs).
+        each step so the ratios are preserved across decay. AdamW backend
+        options stay in these policy-local parameter groups.
         """
         head_scale = float(getattr(self.config, "lm_head_lr_scale", 1.0))
         backbone_scale = float(getattr(self.config, "backbone_lr_scale", 1.0))
         expert_scale = float(getattr(self.config, "action_expert_lr_scale", 1.0))
+        backend = {
+            "foreach": getattr(self.config, "optimizer_foreach", False),
+            "fused": getattr(self.config, "optimizer_fused", True),
+        }
         if head_scale == 1.0 and backbone_scale == 1.0 and expert_scale == 1.0:
-            return self.parameters()
+            return [{"params": self.parameters(), **backend}]
 
         # Keep the tied LM projection and embeddings in the same optimizer group.
         head_substrings = (
@@ -2001,6 +2005,8 @@ class PI052Policy(PI05Policy):
             head_scale,
             len(head_params),
         )
+        for group in groups:
+            group.update(backend)
         return groups
 
     @torch.no_grad()

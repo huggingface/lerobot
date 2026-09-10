@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import hashlib
-import math
 import re
 from collections.abc import Sequence
 from typing import Any
@@ -42,19 +41,13 @@ def active_at(
     role: str | None = None,
     tool_name: str | None = None,
     camera: str | None = None,
-    seconds_ago: float = 0.0,
 ) -> LanguageRow | None:
-    """Return the persistent row active at ``t - seconds_ago`` (default: ``t``).
+    """Return the persistent row of ``style`` that is active at time ``t``.
 
     A persistent row is "active" at ``t`` when its own ``timestamp`` is the
     most recent one ``<= t`` for the given ``style``/``role``/``tool_name``/
     ``camera`` selector. Only valid for persistent styles.
     """
-    # Time lookback, not a previous distinct row: within a long subtask the
-    # input and target should be equal. Never admit a future-facing offset.
-    if not math.isfinite(seconds_ago) or seconds_ago < 0:
-        raise ValueError("seconds_ago must be finite and non-negative")
-    t -= seconds_ago
     _validate_persistent_resolver("active_at", style)
     matches = [
         row
@@ -398,8 +391,6 @@ def _parse_resolver_args(args: str) -> dict[str, Any]:
         key, value = (item.strip() for item in part.split("=", 1))
         if key == "offset":
             kwargs[key] = int(value)
-        elif key == "seconds_ago":
-            kwargs[key] = float(value)
         else:
             kwargs[key] = value.strip("\"'")
     return kwargs

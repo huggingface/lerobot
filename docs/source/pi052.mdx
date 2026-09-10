@@ -50,102 +50,25 @@ At minimum, annotate a continuous `subtask` timeline so each training frame has
 an active low-level instruction. Add `memory`, VQA, interjections, and speech
 annotations only if the recipe trains those capabilities.
 
-The provided recipes are:
+PI052 embeds its default recipe in `PI052Config`, like EO-1. It samples
+30% high-level task → subtask prediction and 70% low-level subtask-conditioned
+action training. Each configuration owns its recipe dictionary, and saved
+checkpoints carry that dictionary into inference.
 
-| Recipe                                | Required annotations                                                    | Trains                                                                 |
-| ------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `recipes/subtask.yaml`                | `subtask`                                                               | Subtask prediction and subtask-conditioned actions                     |
-| `recipes/subtask_joint.yaml`          | `subtask`                                                               | Paper-style joint sequence: subtask text and actions in one sample     |
-| `recipes/subtask_mem.yaml`            | `subtask`, `memory`                                                     | One combined memory/subtask response, plus subtask-conditioned actions |
-| `recipes/subtask_mem_vqa_speech.yaml` | `subtask`, `memory`, `vqa`; interjection/speech rows for those branches | Combined memory/subtask responses, actions, VQA, and spoken replies    |
+Use `--policy.recipe_path=/path/to/custom.yaml` to override the default.
+The shared recipes in `src/lerobot/configs/recipes/` retain main's semantics;
+PI052 does not replace them. For goal-only training, use an inline recipe with
+one low-level user message containing `${task}`, or set `recipe=None` and
+disable text/FAST losses for the plain PI05 pipeline.
 
-The blend recipes factorize training into separate high-level (task → subtask)
-and low-level (subtask → actions) samples, matching how inference decomposes
-π(a|o, subtask)·π(subtask|o, task). `recipes/subtask_joint.yaml` instead uses
-the π0.5 paper's single-sequence layout — the supervised subtask span is
-attended causally and conditions the FAST and flow losses in the same forward.
-Checkpoints trained with the joint recipe must set
-`--policy.joint_subtask_conditioning=true` at inference so the flow prefix
-rebuilds the same layout (task turn with state, then the generated subtask as a
-causal assistant turn); leave it `false` for the blend recipes.
+The default factorizes inference as π(a|o, subtask)·π(subtask|o, task).
+A custom joint-sequence recipe instead needs
+`--policy.joint_subtask_conditioning=true` to reconstruct its training prefix.
 
-### Memory as a combined scratchpad response
-
-The memory recipes train a single high-level assistant target:
-
-```text
-Memory: The cup and plate are in the box. The spoon remains on the table.
-Subtask: Pick up the spoon.
-```
-
-The input is one user message with the following fields, followed by an instruction
-to update memory and repeat an unfinished subtask unless observations justify a change:
-
-```text
-Goal: Clear the table.
-Memory: Cup is in the box.
-Current subtask: Pick up the plate.
-```
-
-`current_subtask` binds
-`active_at(t, style=subtask, role=assistant, seconds_ago=1.0)`; `prior_memory`
-uses the same one-second lookback on memory. Targets use the assistant subtask
-and memory active **now** at `t`. This is a time lookup, not `nth_prev` over
-distinct annotations. No new user-role annotation timeline is needed.
-
-For a subtask boundary at 5 seconds, samples before the boundary teach continuation;
-samples from 5 to just before 6 seconds pair the old input instruction with the new
-target; from 6 seconds onward input and target match again. Keep training frames
-throughout subtasks, not only at boundaries, so the model learns both hold and switch.
-Before one second of episode history is available, absent input fields are empty;
-history must never carry across episodes. Negative or non-finite lookbacks are rejected.
-
-**Inference must match this temporal contract:** timestamp generated/applied memory
-and subtask updates, and build the prompt from the latest entries at or before
-the observation time minus one second. Do not blindly use the previous distinct
-subtask or a chunk index. One chunk is one second only when its executed length
-and control rate make it so. At a three-second planning cadence, the most recent
-applied update will often satisfy the lookup, but generation latency and faster
-updates make timestamped history necessary. A scratchpad-aware controller must use
-that timestamped history rather than annotation indices or action-chunk counts.
-
-Low-level samples still condition actions on **only the subtask**. This does not
-require `joint_subtask_conditioning=true`, which is a different action-prefix layout.
-
-`subtask_mem.yaml` uses 40% combined high-level supervision and 60% low-level
-execution. The VQA/speech variant uses 35% combined high-level supervision and
-preserves its 40% action, 10% speech, and two 7.5% camera-VQA branches. There is
-no separate `memory_update` training branch.
-
-Provide a continuous subtask timeline wherever memory targets are present. A
-missing memory row skips the high-level target. Annotate memory using only events observed by its timestamp,
-not future outcomes or an assumption that the previous command succeeded. Align
-memory updates with planning decisions and include unchanged-memory examples if
-the deployed planner will be queried between task boundaries. Training uses
-annotated prior memory; deployment must tolerate its own imperfect predictions.
-Memory alone does not guarantee that an unfinished subtask will be repeated.
-Include consecutive planning examples with the same subtask until observations
-support completion; a periodic planning call is a reassessment, not an instruction
-to advance. Explicit completion prediction or a runtime transition gate would be
-an additional contract, not a property supplied by this recipe.
-
-**Runtime limitation:** these combined-response recipes remain available for training,
-but the shared rollout runtime applies a generated string as a subtask. It does not
-yet implement the timestamped memory history, atomic field parsing, and reset contract
-required for combined scratchpads. Set `--policy.memory_scratchpad=true` on these
-checkpoints to prevent accidental use through ordinary autosteer; `generate_text`
-then raises an actionable error. Do not pass a combined memory/subtask response
-unchanged as an action instruction. The old adapter-specific CLI is no longer used.
-
-For ordinary subtask prediction, use `recipes/subtask.yaml` and leave
-`memory_scratchpad=false`. The checkpoint embeds its recipe and supports the shared
-`generate_text` interface used by both synchronous and RTC inference.
-
-These recipes replace the earlier separate memory-update training mixture; they
-do not convert existing checkpoints. Preserve an old checkpoint's training recipe
-and saved processor configuration when resuming it. For new fine-tuning, budget
-enough tokens for task, prior memory, both output fields, and EOS; inspect rendered
-examples for truncation before launching a long run.
+Combined memory/subtask scratchpads are not the default and require a custom
+recipe plus a memory-aware runtime controller. Keep `memory_scratchpad=false`
+for ordinary subtask generation; older scratchpad checkpoints retain their
+explicit guard against passing combined responses directly to action control.
 
 Use `lerobot-annotate` to generate these columns. The repository includes a
 Hugging Face Jobs launcher that you can edit for your source and destination
@@ -171,15 +94,13 @@ recipe resolver.
 ## Train Pi052
 
 This example initializes Pi052 from the native Pi052 initialization checkpoint
-and trains the default subtask-and-memory recipe:
+and trains the embedded 70/30 subtask recipe:
 
 ```bash
 lerobot-train \
     --dataset.repo_id=${HF_USER}/my_language_annotated_dataset \
     --policy.type=pi052 \
     --policy.pretrained_path=lerobot/pi052_base \
-    --policy.recipe_path=recipes/subtask_mem.yaml \
-    --policy.memory_scratchpad=true \
     --policy.tokenizer_max_length=256 \
     --policy.dtype=bfloat16 \
     --policy.device=cuda \
@@ -192,15 +113,14 @@ lerobot-train \
     --wandb.enable=true
 ```
 
-For subtask-only data, change the recipe to `recipes/subtask.yaml` and disable
-memory during rollout. Start with a small run and confirm that W&B examples show
+Start with a small run and confirm that W&B examples show
 the expected prompt, text target, and action endpoints before scaling up.
 
 ### Main training controls
 
 | Option                              |                    Default | Purpose                                                             |
 | ----------------------------------- | -------------------------: | ------------------------------------------------------------------- |
-| `policy.recipe_path`                | `recipes/subtask_mem.yaml` | Selects the language/action objective mixture                       |
+| `policy.recipe_path`                | `None` | Optional override of the embedded 70/30 subtask recipe              |
 | `policy.text_loss_weight`           |                      `1.0` | Language-head cross-entropy weight; `0` disables text training      |
 | `policy.flow_loss_weight`           |                     `10.0` | Continuous action flow-loss weight                                  |
 | `policy.enable_fast_action_loss`    |                     `true` | Adds discrete FAST action-token supervision                         |
@@ -223,20 +143,14 @@ than selecting a checkpoint from total loss alone.
 
 ### Dataset-specific FAST tokenizer
 
-The universal FAST tokenizer works out of the box. For a large or
-embodiment-specific dataset, Pi052 can fit and cache a tokenizer on normalized
-actions before training:
-
-```bash
-lerobot-train \
-    ... \
-    --policy.auto_fit_fast_tokenizer=true \
-    --policy.fast_tokenizer_fit_samples=4096
-```
-
-The fit runs once per dataset/tokenizer configuration. Keep
-`auto_fit_fast_tokenizer=false` when you do not want the extra preprocessing
-pass.
+The universal FAST tokenizer works out of the box. Dataset-specific fitting is
+an explicit preparation step, not a hook in the shared training loop.
+Call `lerobot.policies.pi052.fit_fast_tokenizer.fit_fast_tokenizer` with the
+dataset source, split, action normalization statistics and relative-action
+settings used by training. Then pass the returned directory with
+`--policy.action_tokenizer_name=/path/to/fitted/tokenizer` and leave
+`--policy.auto_fit_fast_tokenizer=false`. Saved processor artifacts remain
+self-contained.
 
 ## Training performance
 

@@ -14,13 +14,44 @@
 
 """PI0.5 with hierarchical text generation and flow-matched actions."""
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from lerobot.configs import PreTrainedConfig
-from lerobot.optim.optimizers import AdamWConfig
 
 from ..pi05.configuration_pi05 import PI05Config
+
+
+def _pi052_default_recipe() -> dict:
+    """Embed the subtask contract without importing optional dataset dependencies."""
+    return {
+        "blend": {
+            "high_level_subtask": {
+                "weight": 0.30,
+                "messages": [
+                    {"role": "user", "content": "${task}", "stream": "high_level"},
+                    {
+                        "role": "assistant",
+                        "content": "${subtask}",
+                        "stream": "high_level",
+                        "target": True,
+                        "if_present": "subtask",
+                    },
+                ],
+            },
+            "low_level_execution": {
+                "weight": 0.70,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "${subtask}",
+                        "stream": "low_level",
+                        "if_present": "subtask",
+                    }
+                ],
+            },
+        }
+    }
 
 
 @PreTrainedConfig.register_subclass("pi052")
@@ -29,11 +60,11 @@ class PI052Config(PI05Config):
     """PI0.5 with recipe-driven text and action supervision."""
 
     # Recipe / language stack ---------------------------------------------
-    recipe_path: str | None = "recipes/subtask_mem.yaml"
-    """Recipe path, or ``None`` for the plain PI0.5 prompt."""
+    recipe_path: str | None = None
+    """Optional file override for the embedded default recipe."""
 
-    recipe: dict | None = None
-    """Serialized training/runtime language contract, embedded in saved checkpoints."""
+    recipe: dict | None = field(default_factory=_pi052_default_recipe)
+    """Serialized training/runtime contract; ``None`` selects the plain PI0.5 prompt."""
 
     memory_scratchpad: bool = False
     """Opt in to combined memory/subtask inference for newly scratchpad-trained checkpoints."""
@@ -136,24 +167,13 @@ class PI052Config(PI05Config):
     use_flashrt_fp8_mlp: bool = False
     """Use calibrated FlashRT FP8 MLP kernels."""
 
-    # Keep serialized PI052 AdamW options local because PI05Config lacks them.
+    # Applied to PI052 parameter groups, leaving the shared AdamW config unchanged.
     optimizer_foreach: bool | None = False
     optimizer_fused: bool | None = True
 
-    def get_optimizer_preset(self) -> AdamWConfig:
-        return AdamWConfig(
-            lr=self.optimizer_lr,
-            betas=self.optimizer_betas,
-            eps=self.optimizer_eps,
-            weight_decay=self.optimizer_weight_decay,
-            grad_clip_norm=self.optimizer_grad_clip_norm,
-            foreach=self.optimizer_foreach,
-            fused=self.optimizer_fused,
-        )
-
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.recipe_path is not None or self.recipe is not None:
+        if self.recipe_path is not None:
             from lerobot.datasets.recipe import resolve_recipe_override
 
             path = self.recipe_path

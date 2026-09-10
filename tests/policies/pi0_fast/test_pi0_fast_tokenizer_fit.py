@@ -79,14 +79,14 @@ def test_only_global_rank_zero_fits_shared_tokenizer(monkeypatch):
     assert fit_module._is_global_leader()
 
 
-def test_pretrained_pi0_fast_overrides_only_fitted_tokenizer(monkeypatch):
+def test_pretrained_pi0_fast_keeps_saved_tokenizer(monkeypatch):
     config = PI0FastConfig(auto_fit_fast_tokenizer=True)
     calls = []
 
     monkeypatch.setattr(
         fit_module,
         "resolve_fast_tokenizer",
-        lambda config, dataset_repo_id, *args: "/cache/fitted-tokenizer",
+        lambda *args: pytest.fail("Loading a checkpoint must not fit a new tokenizer"),
     )
 
     def fake_from_pretrained(cls, *args, **kwargs):
@@ -101,6 +101,4 @@ def test_pretrained_pi0_fast_overrides_only_fitted_tokenizer(monkeypatch):
         dataset_repo_id="user/dataset",
     )
 
-    assert calls[0]["overrides"] == {
-        "action_tokenizer_processor": {"action_tokenizer_name": "/cache/fitted-tokenizer"}
-    }
+    assert calls[0]["overrides"] == {}

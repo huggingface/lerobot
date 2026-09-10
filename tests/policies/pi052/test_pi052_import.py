@@ -21,6 +21,9 @@ def test_pi052_config_import_does_not_load_model_or_dataset_processor():
 import sys
 from lerobot.policies import PI052Config
 assert PI052Config.__name__ == "PI052Config"
+config = PI052Config(device="cpu")
+assert config.recipe_path is None
+assert config.recipe["blend"]["high_level_subtask"]["weight"] == 0.3
 assert "lerobot.policies.pi052.modeling_pi052" not in sys.modules
 assert "lerobot.policies.pi052.processor_pi052" not in sys.modules
 """

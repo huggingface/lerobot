@@ -149,7 +149,6 @@ def update_policy(
     lr_scheduler=None,
     lock=None,
     sample_weighter=None,
-    log_metrics: bool = True,
 ) -> tuple[MetricsTracker, dict | None]:
     """
     Performs a single training step to update the policy's weights.
@@ -244,20 +243,13 @@ def update_policy(
     ):
         accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
+    train_metrics.loss = loss.item()
+    if grad_norm is not None:
+        train_metrics.grad_norm = grad_norm.item()
     train_metrics.lr = optimizer.param_groups[0]["lr"]
+    train_metrics.update_s = time.perf_counter() - start_time
     if torch.cuda.is_available():
         train_metrics.gpu_mem_gb = torch.cuda.max_memory_allocated() / (1024**3)
-    train_metrics.accumulate_tensor("loss", loss)
-    train_metrics.accumulate_tensor("grad_norm", grad_norm)
-    train_metrics.update_s = time.perf_counter() - start_time
-    # Synchronize accumulated GPU metrics only when logging.
-    if log_metrics:
-        train_metrics.materialize_tensors()
-        # Materialize detached loss components during the same logging synchronization.
-        if output_dict:
-            output_dict = {
-                k: (v.item() if isinstance(v, torch.Tensor) else v) for k, v in output_dict.items()
-            }
     # Aggregate the policy's scalar outputs for logging and rank-reduction across the log window.
     if output_dict:
         train_metrics.update_metrics(output_dict)
@@ -519,13 +511,6 @@ def train(cfg: TrainPipelineConfig):
         processor_kwargs["dataset_stats"] = processor_dataset_stats
     if cfg.is_reward_model_training:
         processor_kwargs["dataset_meta"] = dataset.meta
-
-    if cfg.policy.type in {"pi0_fast", "pi052"}:
-        processor_kwargs["dataset_repo_id"] = cfg.dataset.repo_id
-        processor_kwargs["dataset_revision"] = cfg.dataset.revision
-        processor_kwargs["dataset_episodes"] = cfg.dataset.episodes
-        processor_kwargs["dataset_exclude_episodes"] = cfg.dataset.exclude_episodes
-        processor_kwargs["dataset_root"] = cfg.dataset.root
     if not cfg.is_reward_model_training and processor_pretrained_path is not None:
         preprocessor_overrides = {
             "device_processor": {"device": device.type},
@@ -755,10 +740,7 @@ def train(cfg: TrainPipelineConfig):
         batch = _preprocess_dataset_batch(batch, dataset.meta.camera_keys, cfg.rename_map, preprocessor)
         train_tracker.preprocessing_s = time.perf_counter() - preprocessing_start
 
-        # Synchronize GPU metrics only for updates that will be logged.
-        log_metrics = cfg.log_freq > 0 and (step + 1) % cfg.log_freq == 0
-
-        train_tracker, output_dict = update_policy(
+        train_tracker, _ = update_policy(
             train_tracker,
             policy,
             batch,
@@ -767,7 +749,6 @@ def train(cfg: TrainPipelineConfig):
             accelerator=accelerator,
             lr_scheduler=lr_scheduler,
             sample_weighter=sample_weighter,
-            log_metrics=log_metrics,
         )
         train_tracker.step_s = time.perf_counter() - step_start
 

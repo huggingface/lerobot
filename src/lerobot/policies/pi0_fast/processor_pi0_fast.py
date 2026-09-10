@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -38,6 +38,21 @@ from lerobot.processor import (
 from lerobot.utils.constants import OBS_STATE
 
 from .configuration_pi0_fast import PI0FastConfig
+
+
+@ProcessorStepRegistry.register(name="pi0_fast_action_tokenizer")
+@dataclass
+class Pi0FastActionTokenizerStep(ActionTokenizerProcessorStep):
+    """FAST-only suffix: the language prompt already supplies the sequence BOS."""
+
+    def _tokenize_action(self, action):
+        # Reserve room for the shared tokenizer's BOS, then remove it without
+        # losing a suffix token at the length limit or changing shared state.
+        tokenizer = copy(self)
+        tokenizer.max_action_tokens += 1
+        return tuple(
+            value[..., 1:] for value in ActionTokenizerProcessorStep._tokenize_action(tokenizer, action)
+        )
 
 
 @ProcessorStepRegistry.register(name="pi0_fast_prepare_state_tokenizer_processor_step")
@@ -165,12 +180,11 @@ def make_pi0_fast_pre_post_processors(
             padding_side="right",
             padding="max_length",
         ),
-        ActionTokenizerProcessorStep(
+        Pi0FastActionTokenizerStep(
             action_tokenizer_name=action_tokenizer_path,
             max_action_tokens=config.max_action_tokens,
             fast_skip_tokens=config.fast_skip_tokens,
             paligemma_tokenizer_name=config.text_tokenizer_name,
-            prepend_bos=False,
         ),
         steps.to_device,
     ]

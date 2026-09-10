@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -24,7 +26,14 @@ from lerobot.policies.pi052.fit_fast_tokenizer import (
     _normalize_actions,
     _select_episode_indices,
     _validate_fast_reconstruction,
+    resolve_fast_tokenizer,
 )
+
+
+def test_auto_fit_requires_explicit_dataset_source():
+    config = SimpleNamespace(auto_fit_fast_tokenizer=True, action_tokenizer_name="universal")
+    with pytest.raises(ValueError, match="explicit dataset source"):
+        resolve_fast_tokenizer(config, None)
 
 
 def test_fast_tokenizer_fit_uses_training_mean_std_normalization():

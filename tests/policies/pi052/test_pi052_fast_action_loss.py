@@ -138,7 +138,7 @@ def test_fast_ce_averages_each_action_sample_equally():
 
 
 def test_pi052_rejects_fast_loss_without_recipe():
-    config = SimpleNamespace(recipe_path=None, enable_fast_action_loss=True)
+    config = SimpleNamespace(recipe=None, recipe_path=None, enable_fast_action_loss=True)
 
     with pytest.raises(ValueError, match="recipe_path"):
         make_pi052_pre_post_processors(config)
