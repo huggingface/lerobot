@@ -117,23 +117,10 @@ dataset = [
     #   - macOS x86_64 (Intel) and linux armv7l: no wheels in any released version -> fall through to the PyAV decoder.
     # Each platform gets its own line so the resolver picks the minimum version that has a wheel for it.
     #
-    # Ceilings raised from <0.12.0 so a torch >=2.12 install can pick a newer torchcodec, and
-    # capped below 0.14.0 because that is where the PyPI wheel starts linking CUDA 13: readelf on
-    # the core libraries shows no CUDA in 0.13.0 and libcudart.so.13 plus libnvrtc.so.13 from
-    # 0.14.0 on. torchcodec declares NO torch dependency at any version, so the resolver cannot
-    # enforce the pairing in either direction, and admitting a CUDA 13 build would break
-    # `import torchcodec` for anyone following the CUDA 12 fallback recipe in the install guide.
-    # Staying below 0.14.0 also keeps the pyav fallback working: 0.13.0 and earlier raise when
-    # their shared libraries are missing, which is what makes the probe in
-    # `utils/import_utils.get_safe_default_video_backend` select pyav. From 0.14.0 the import
-    # succeeds and sets an internal flag instead, so the probe picks torchcodec and the failure
-    # moves into the decoder.
-    #
-    # From 0.14.0 the PyPI torchcodec wheel is built against CUDA 13 and loads libnvrtc.so.13 at
-    # import time. The ceiling above stays below that, so a CUDA 12 pin does NOT need to redirect
-    # torchcodec: leave it on PyPI. The install guide recommends the cu126 index, which does
-    # publish a matching build; cu129 has nothing between 0.11.1 and 0.15.0, and its 0.11.1 needs
-    # an NPP library that nothing in the resolution supplies.
+    # The <0.14 cap avoids CUDA 13-linked PyPI TorchCodec wheels on Linux x86_64.
+    # It is not a CUDA 12 guarantee on aarch64: PyPI 0.13 already needs CUDA 13 there.
+    # TorchCodec does not declare a torch dependency, so CUDA 12 installs must follow
+    # the platform-specific package pairing in the installation guide.
     "torchcodec>=0.3.0,<0.14.0; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')",
     # macOS arm64: torch 2.12+, torchvision 0.27+ and torchcodec 0.12+ ship only
     # macosx_14_0 wheels, so the darwin ceilings stay below those to keep the
