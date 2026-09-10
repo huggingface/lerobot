@@ -62,8 +62,17 @@ one low-level user message containing `${task}`, or set `recipe=None` and
 disable text/FAST losses for the plain PI05 pipeline.
 
 The default factorizes inference as π(a|o, subtask)·π(subtask|o, task).
-A custom joint-sequence recipe instead needs
-`--policy.joint_subtask_conditioning=true` to reconstruct its training prefix.
+A custom joint-sequence recipe needs a matching runtime processor that renders
+the task and generated assistant span with the same causal marks as training.
+The old policy-side joint prompt builder is no longer used by rollout.
+
+Rollout owns planning cadence (`--autosteer_interval_s=3`), interactive commands,
+and synchronous/RTC scheduling. PI052 only generates text when queried; ordinary
+action calls never generate another subtask behind the runtime's back.
+`subtask_replan_steps`, `joint_subtask_conditioning`, and `apply_chat_template`
+are no longer policy CLI options. Older checkpoint configs with the default
+joint setting load through a compatibility decoder; checkpoints explicitly
+requesting the old joint layout fail with guidance rather than changing prompts.
 
 Combined memory/subtask scratchpads are not the default and require a custom
 recipe plus a memory-aware runtime controller. Keep `memory_scratchpad=false`
@@ -129,7 +138,6 @@ the expected prompt, text target, and action endpoints before scaling up.
 | `policy.flow_num_repeats`           |                        `5` | Reuses one VLM prefix for independent denoising targets             |
 | `policy.lm_head_lr_scale`           |                      `1.0` | Scales language-head learning rate; `1.0` uses the base rate        |
 | `policy.fast_skip_tokens`           |                     `1152` | FAST id offset; skips `<seg>`+`<loc>` so VQA and FAST never collide |
-| `policy.joint_subtask_conditioning` |                    `false` | Rebuilds the joint-sequence prefix at inference (see recipes)       |
 
 `fast_skip_tokens=1152` places FAST codes below PaliGemma's `<loc>` range.
 openpi's pi0-FAST convention is `128` (FAST occupies the `<loc>` ids); use that

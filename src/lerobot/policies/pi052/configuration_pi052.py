@@ -14,8 +14,12 @@
 
 """PI0.5 with hierarchical text generation and flow-matched actions."""
 
+import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+import draccus
+from draccus.parsers.decoding import decode_dataclass
 
 from lerobot.configs import PreTrainedConfig
 
@@ -67,10 +71,7 @@ class PI052Config(PI05Config):
     """Serialized training/runtime contract; ``None`` selects the plain PI0.5 prompt."""
 
     memory_scratchpad: bool = False
-    """Opt in to combined memory/subtask inference for newly scratchpad-trained checkpoints."""
-
-    apply_chat_template: bool = False
-    """Apply the tokenizer's chat template."""
+    """Legacy checkpoint guard: combined responses require a scratchpad-aware controller."""
 
     # Balance frequent recipe text supervision against the paper's α=10 flow weight.
     text_loss_weight: float = 1.0
@@ -103,12 +104,6 @@ class PI052Config(PI05Config):
 
     fast_action_loss_weight: float = 1.0
     """FAST action-token loss weight."""
-
-    subtask_replan_steps: int = 0
-    """Steps between subtask generations; non-positive replans every chunk."""
-
-    joint_subtask_conditioning: bool = False
-    """Condition actions on the task and generated subtask."""
 
     auto_fit_fast_tokenizer: bool = False
     """Fit and cache a dataset-specific FAST tokenizer."""
@@ -204,3 +199,27 @@ class PI052Config(PI05Config):
             self.use_flex_attention or self.use_manual_attention or self.use_flashrt_adarms
         ):
             raise ValueError("KI attention and AdaRMS optimizations require knowledge_insulation=True")
+
+
+@draccus.decode.register(PI052Config)
+def _decode_pi052_config(raw: dict, path: tuple[str, ...] = ()) -> PI052Config:
+    """Read older checkpoint configs without exposing obsolete runtime CLI options."""
+    config = dict(raw)
+    policy_type = config.pop("type", "pi052")
+    if policy_type != "pi052":
+        raise ValueError(f"Expected a pi052 config, got {policy_type!r}")
+    if config.pop("joint_subtask_conditioning", False):
+        raise ValueError(
+            "This checkpoint requests the legacy joint-subtask prompt layout. "
+            "The shared runtime needs a matching joint-sequence processor before it can be deployed; "
+            "do not silently switch it to the default subtask-only action prompt."
+        )
+    for key in ("subtask_replan_steps", "apply_chat_template"):
+        if key in config:
+            config.pop(key)
+            logging.warning(
+                "Ignoring legacy PI052 checkpoint option %s; rollout owns autosteer_interval_s "
+                "and the saved recipe/processors own prompt formatting.",
+                key,
+            )
+    return decode_dataclass(PI052Config, config, path)

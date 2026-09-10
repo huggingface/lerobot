@@ -1317,15 +1317,11 @@ class PI05Policy(PreTrainedPolicy):
 
         # Action queue logic for n_action_steps > 1
         if len(self._action_queue) == 0:
-            action_batch = self._prepare_action_batch(batch)
-            actions = self.predict_action_chunk(action_batch)[:, : self.config.n_action_steps]
+            actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
             # Transpose to get shape (n_action_steps, batch_size, action_dim)
             self._action_queue.extend(actions.transpose(0, 1))
 
         return self._action_queue.popleft()
-
-    def _prepare_action_batch(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
-        return batch
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
