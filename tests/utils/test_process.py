@@ -17,6 +17,7 @@
 import multiprocessing
 import os
 import signal
+import sys
 import threading
 from unittest.mock import patch
 
@@ -26,6 +27,20 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.utils.process import ProcessSignalHandler  # noqa: E402
 
+# SIGHUP and SIGQUIT are not defined on every platform (e.g. Windows). Look them up with
+# getattr: a bare `signal.SIGHUP` raises AttributeError while this module is being imported,
+# which aborts collection of the whole test session before any skip mark can apply.
+SIGHUP = getattr(signal, "SIGHUP", None)
+SIGQUIT = getattr(signal, "SIGQUIT", None)
+
+# On Windows, os.kill() only delivers CTRL_C_EVENT / CTRL_BREAK_EVENT; for any other signal it
+# calls TerminateProcess, so a process cannot send itself a catchable signal. Tests that rely on
+# it would kill the pytest process instead of exercising the handler.
+requires_self_signal = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="os.kill() cannot deliver a catchable signal to the current process on Windows",
+)
+
 
 # Fixture to reset shutdown_event_counter and original signal handlers before and after each test
 @pytest.fixture(autouse=True)
@@ -33,8 +48,8 @@ def reset_globals_and_handlers():
     # Store original signal handlers
     original_handlers = {
         sig: signal.getsignal(sig)
-        for sig in [signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT]
-        if hasattr(signal, sig.name)
+        for sig in [signal.SIGINT, signal.SIGTERM, SIGHUP, SIGQUIT]
+        if sig is not None
     }
 
     yield
@@ -60,6 +75,7 @@ def test_setup_process_handlers_event_with_processes():
     assert not shutdown_event.is_set(), "Event should initially be unset"
 
 
+@requires_self_signal
 @pytest.mark.parametrize("use_threads", [True, False])
 @pytest.mark.parametrize(
     "sig",
@@ -68,12 +84,14 @@ def test_setup_process_handlers_event_with_processes():
         signal.SIGTERM,
         # SIGHUP and SIGQUIT are not reliably available on all platforms (e.g. Windows)
         pytest.param(
-            signal.SIGHUP,
-            marks=pytest.mark.skipif(not hasattr(signal, "SIGHUP"), reason="SIGHUP not available"),
+            SIGHUP,
+            marks=pytest.mark.skipif(SIGHUP is None, reason="SIGHUP not available"),
+            id="SIGHUP",
         ),
         pytest.param(
-            signal.SIGQUIT,
-            marks=pytest.mark.skipif(not hasattr(signal, "SIGQUIT"), reason="SIGQUIT not available"),
+            SIGQUIT,
+            marks=pytest.mark.skipif(SIGQUIT is None, reason="SIGQUIT not available"),
+            id="SIGQUIT",
         ),
     ],
 )
@@ -95,6 +113,7 @@ def test_signal_handler_sets_event(use_threads, sig):
     assert handler.counter == 1
 
 
+@requires_self_signal
 @pytest.mark.parametrize("use_threads", [True, False])
 @patch("sys.exit")
 def test_force_shutdown_on_second_signal(mock_sys_exit, use_threads):
