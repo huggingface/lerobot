@@ -234,16 +234,6 @@ class Classifier(PreTrainedRewardModel):
 
         return ClassifierOutput(logits=logits, probabilities=probabilities, hidden_states=encoder_outputs)
 
-    def compute_reward(self, batch: dict[str, Tensor]) -> Tensor:
-        """Returns 1.0 for success, 0.0 for failure based on image observations."""
-        images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
-        output = self.predict(images)
-
-        if self.config.num_classes == 2:
-            return (output.probabilities > 0.5).float()
-        else:
-            return torch.argmax(output.probabilities, dim=1).float()
-
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Tensor]]:
         """Standard forward pass for training compatible with train.py."""
         # Extract images and labels
