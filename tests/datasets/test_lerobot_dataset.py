@@ -19,6 +19,7 @@ Tests focus on mode contracts (read-only, write-only, resume), guards,
 property delegation, and the full create-record-finalize-read lifecycle.
 """
 
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -146,6 +147,28 @@ def test_init_data_only_uses_cached_parquet_without_videos(tmp_path, lerobot_dat
 
     assert len(reloaded) == len(cached)
     snapshot_download.assert_not_called()
+
+
+def test_init_default_config_attempts_download_when_videos_missing(
+    tmp_path, lerobot_dataset_factory, monkeypatch
+):
+    """With the default download_videos=True, a cache without video files is insufficient — download is attempted."""
+    cached = lerobot_dataset_factory(
+        root=tmp_path / "ds",
+        total_episodes=1,
+        total_frames=10,
+        use_videos=True,
+    )
+    assert cached.meta.video_keys
+    shutil.rmtree(cached.root / "videos")
+
+    snapshot_download = Mock(return_value=None)
+    monkeypatch.setattr(lerobot_dataset_module, "snapshot_download", snapshot_download)
+    monkeypatch.setattr(lerobot_dataset_module, "get_safe_version", lambda repo_id, revision: revision)
+
+    LeRobotDataset(repo_id=cached.repo_id, root=cached.root)
+
+    snapshot_download.assert_called()
 
 
 def test_getitem_works_in_read_mode(tmp_path, lerobot_dataset_factory):
