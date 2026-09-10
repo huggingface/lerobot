@@ -218,17 +218,20 @@ def compute_layer_complete(inputs_embeds, attention_mask, position_ids, adarms_c
     batch_size = query_states.shape[0]
     paligemma_layer = layers[0]
     scaling = paligemma_layer.self_attn.scaling
-    # Keep score/softmax accumulation out of BF16 eager matmuls: large Q/K
-    # activations at low flow timesteps can otherwise produce exploding gradients.
-    # This changes no parameters or masks and keeps the KI-off gradient paths live.
+    # Large Q/K activations at low flow timesteps destabilize BF16 eager scores
+    # and can amplify reduced-precision SDPA backward as well. Keep attention in
+    # FP32, then restore the model dtype. Parameters, masks and KI-off paths stay
+    # unchanged; the casts retain gradients into both experts.
+    attention_dtype = query_states.dtype
     att_output, _ = sdpa_attention_forward(
         paligemma_layer.self_attn,
-        query_states,
-        key_states,
-        value_states,
-        attention_mask,
+        query_states.float(),
+        key_states.float(),
+        value_states.float(),
+        attention_mask.float() if attention_mask is not None else None,
         scaling,
     )
+    att_output = att_output.to(attention_dtype)
     # Get head_dim from the current layer, not from the model
     head_dim = paligemma_layer.self_attn.head_dim
     att_output = att_output.reshape(batch_size, -1, 1 * 8 * head_dim)

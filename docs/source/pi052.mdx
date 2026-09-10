@@ -243,9 +243,9 @@ safety behavior, and recording controls. The former `--sim`, `--mode`, and
 
 ## Troubleshooting
 
-- **Large flow-loss gradients:** joint prefix/action attention uses PyTorch SDPA
-  by default, including when knowledge insulation is disabled. This avoids
-  materializing attention scores in BF16, which can destabilize gradients at
+- **Large flow-loss gradients:** KI-off joint prefix/action attention uses PyTorch
+  SDPA with FP32 attention arithmetic by default, casting its output back to the
+  model dtype. This avoids reduced-precision attention, which can destabilize gradients at
   low flow timesteps with large query/key activations. Existing checkpoints and
   normalization layers are unchanged; KI-off still trains through VLM keys and
   values. Monitor the separate `flow_loss`, `text_loss`, and pre-clipping gradient

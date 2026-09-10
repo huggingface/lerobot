@@ -172,7 +172,8 @@ def test_bf16_large_scores_backward_matches_fp32():
 
 
 @pytest.mark.parametrize("use_checkpointing", [False, True])
-def test_joint_layer_defaults_to_sdpa_and_keeps_prefix_gradients(monkeypatch, use_checkpointing):
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_joint_layer_defaults_to_sdpa_and_keeps_prefix_gradients(monkeypatch, use_checkpointing, dtype):
     """Exercise the real shared PI05/PI052 joint layer, including KI-off backprop."""
     from transformers.models.gemma.configuration_gemma import GemmaConfig
 
@@ -195,16 +196,20 @@ def test_joint_layer_defaults_to_sdpa_and_keeps_prefix_gradients(monkeypatch, us
     action_layer = layer_class(config, 0)
     for norm in (action_layer.input_layernorm, action_layer.post_attention_layernorm):
         nn.init.normal_(norm.dense.weight, std=0.01)
-    layers = nn.ModuleList([prefix_layer, action_layer])
+    layers = nn.ModuleList([prefix_layer, action_layer]).to(dtype)
+    for layer in layers:
+        layer.input_layernorm.float()
+        layer.post_attention_layernorm.float()
     rotary = modeling_gemma.GemmaRotaryEmbedding(config)
-    prefix = torch.randn(2, 3, 32, requires_grad=True)
-    suffix = torch.randn(2, 2, 32, requires_grad=True)
+    prefix = torch.randn(2, 3, 32, dtype=dtype, requires_grad=True)
+    suffix = torch.randn(2, 2, 32, dtype=dtype, requires_grad=True)
     cond = torch.randn(2, 32, requires_grad=True)
     mask = _block_bidirectional_mask(2, 5, [3, 2], torch.float32)
     positions = torch.arange(5)[None].expand(2, -1)
     calls = []
 
     def counted_sdpa(*args, **kwargs):
+        assert all(x.dtype == torch.float32 for x in args[1:4])
         calls.append(True)
         return sdpa_attention_forward(*args, **kwargs)
 
@@ -216,6 +221,7 @@ def test_joint_layer_defaults_to_sdpa_and_keeps_prefix_gradients(monkeypatch, us
     else:
         outputs = modeling_pi05.compute_layer_complete(*args, **kwargs)
     assert outputs[1].shape == suffix.shape
+    assert outputs[1].dtype == dtype
     outputs[1].square().mean().backward()
     assert calls, "The joint layer must not fall back to BF16 eager attention"
     for tensor in (prefix, suffix, cond):
