@@ -23,6 +23,8 @@ import torch
 import torch.distributed as dist
 from torch import nn
 
+from lerobot.configs.accelerator import CompileConfig
+
 if TYPE_CHECKING:
     from lerobot.distributed.parallel_dims import ParallelDims
 
@@ -124,8 +126,7 @@ def disable_buffer_broadcast_if_static(policy: nn.Module) -> bool:
     return True
 
 
-
-def apply_torch_compile(policy: nn.Module, compile_cfg) -> nn.Module:
+def apply_torch_compile(policy: nn.Module, compile_cfg: CompileConfig) -> nn.Module:
     """Compile the policy per `CompileConfig`, before `accelerator.prepare()`.
 
     Regional (default): the policy names its compute core in `_compile_regions` (ACT: `model`);
