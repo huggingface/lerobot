@@ -15,10 +15,12 @@
 # limitations under the License.
 
 from contextlib import contextmanager
+from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from lerobot.motors import MotorNormMode
 from lerobot.robots.so_follower import (
     SO100Follower,
     SO100FollowerConfig,
@@ -130,6 +132,26 @@ def test_send_action(follower):
 
     goal_pos = {m: (i + 1) * 10 for i, m in enumerate(follower.bus.motors)}
     follower.bus.sync_write.assert_called_once_with("Goal_Position", goal_pos)
+
+
+@pytest.mark.parametrize(
+    "value, expected_body, expected_gripper",
+    [(100.5, 100.0, 100.0), (-100.5, -100.0, 0.0)],
+)
+def test_send_action_clamps_normalized_targets(follower, value, expected_body, expected_gripper):
+    follower.bus.motors["shoulder_pan"] = replace(
+        follower.bus.motors["shoulder_pan"], norm_mode=MotorNormMode.RANGE_M100_100
+    )
+    follower.connect()
+
+    action = {"shoulder_pan.pos": value, "gripper.pos": value}
+    returned = follower.send_action(action)
+
+    expected_action = {"shoulder_pan.pos": expected_body, "gripper.pos": expected_gripper}
+    assert returned == expected_action
+    follower.bus.sync_write.assert_called_once_with(
+        "Goal_Position", {"shoulder_pan": expected_body, "gripper": expected_gripper}
+    )
 
 
 def test_configure_writes_position_pid_coefficients():
