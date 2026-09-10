@@ -329,7 +329,7 @@ jobs:
   # Isolated image: full RoboTwin 2.0 stack — SAPIEN, mplib, CuRobo,
   # pytorch3d, + simulation assets (~4 GB).
   # Build takes ~20 min on first run; subsequent runs hit the layer cache.
-  # Requires an NVIDIA GPU runner with CUDA 12.1 drivers.
+  # Requires an NVIDIA GPU runner with a CUDA 13 driver (580.65 or newer).
   robotwin-integration-test:
     name: RoboTwin 2.0 — build image + 1-episode eval
     runs-on:
@@ -373,6 +373,9 @@ jobs:
           file: docker/Dockerfile.benchmark.robotwin
           push: false
           load: true
+          # The image derives its CUDA toolkit from the torch in lerobot-gpu:latest, so it has
+          # to resolve the current base rather than a copy cached on the runner.
+          pull: true
           tags: lerobot-benchmark-robotwin:ci
           cache-from: type=local,src=/tmp/.buildx-cache-robotwin
           cache-to: type=local,dest=/tmp/.buildx-cache-robotwin,mode=max
