@@ -29,9 +29,15 @@ from lerobot.motors.feetech.tables import STS_SMS_SERIES_CONTROL_TABLE
 try:
     import scservo_sdk as scs
 
-    from tests.mocks.mock_feetech import MockMotors, MockPortHandler
+    from tests.mocks.mock_feetech import MockMotors, MockPortHandler, _split_into_byte_chunks
 except (ImportError, ModuleNotFoundError):
     pytest.skip("scservo_sdk not available", allow_module_level=True)
+
+# Present_Position (56-57), Present_Load (60-61) and Present_Current (69-70) span one 15-byte block on STS
+# servos. The registers in between (velocity, voltage, temperature, ...) are part of the block on the wire
+# but must be ignored by the reader.
+TELEMETRY_NAMES = ["Present_Position", "Present_Load", "Present_Current"]
+TELEMETRY_BLOCK_START, TELEMETRY_BLOCK_LENGTH = 56, 15
 
 
 @pytest.fixture(autouse=True)
@@ -322,6 +328,135 @@ def test__sync_read_comm(raise_on_error, mock_motors, dummy_motors):
         assert read_comm == scs.COMM_RX_TIMEOUT
 
     assert mock_motors.stubs[stub].called
+
+
+def _encode_telemetry(
+    positions: dict[int, int], loads: dict[int, int], currents: dict[int, int]
+) -> dict[str, dict[int, int]]:
+    """Encode signed telemetry values the way an STS servo reports them (Present_Current has no sign bit)."""
+    return {
+        "Present_Position": {id_: encode_sign_magnitude(val, 15) for id_, val in positions.items()},
+        "Present_Load": {id_: encode_sign_magnitude(val, 10) for id_, val in loads.items()},
+        "Present_Current": dict(currents),
+    }
+
+
+def _build_telemetry_block_stub(
+    mock_motors: MockMotors, encoded: dict[str, dict[int, int]], filler: int = 0xAB
+) -> str:
+    """Stub one sync read of the whole telemetry block, with `filler` in the bytes no register maps to."""
+    ids_data = {}
+    for id_ in encoded["Present_Position"]:
+        block = [filler] * TELEMETRY_BLOCK_LENGTH
+        for data_name in TELEMETRY_NAMES:
+            addr, length = STS_SMS_SERIES_CONTROL_TABLE[data_name]
+            offset = addr - TELEMETRY_BLOCK_START
+            block[offset : offset + length] = _split_into_byte_chunks(encoded[data_name][id_], length)
+        ids_data[id_] = block
+    return mock_motors.build_sync_read_block_stub(TELEMETRY_BLOCK_START, TELEMETRY_BLOCK_LENGTH, ids_data)
+
+
+def test_sync_read_block(mock_motors, dummy_motors):
+    """A block read decodes each register exactly like one sync_read per register would."""
+    positions = {1: -1337, 2: 42, 3: 3672}
+    loads = {1: 300, 2: -512, 3: -7}
+    currents = {1: 12, 2: 0, 3: 999}
+    encoded = _encode_telemetry(positions, loads, currents)
+    block_stub = _build_telemetry_block_stub(mock_motors, encoded)
+    single_stubs = [
+        mock_motors.build_sync_read_stub(*STS_SMS_SERIES_CONTROL_TABLE[name], encoded[name])
+        for name in TELEMETRY_NAMES
+    ]
+    bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
+    bus.connect(handshake=False)
+
+    block_values = bus.sync_read_block(TELEMETRY_NAMES, normalize=False)
+    single_values = {name: bus.sync_read(name, normalize=False) for name in TELEMETRY_NAMES}
+
+    assert block_values == single_values
+    assert block_values["Present_Position"] == {"dummy_1": -1337, "dummy_2": 42, "dummy_3": 3672}
+    assert block_values["Present_Load"] == {"dummy_1": 300, "dummy_2": -512, "dummy_3": -7}
+    assert block_values["Present_Current"] == {"dummy_1": 12, "dummy_2": 0, "dummy_3": 999}
+    assert mock_motors.stubs[block_stub].calls == 1
+    assert all(mock_motors.stubs[stub].calls == 1 for stub in single_stubs)
+
+
+def test_sync_read_block_normalize(mock_motors, dummy_motors, dummy_calibration):
+    """With normalize=True only registers in `normalized_data` (Present_Position) are scaled."""
+    positions = {1: 1000, 2: 2000, 3: 3000}
+    loads = {1: 300, 2: -512, 3: -7}
+    currents = {1: 12, 2: 0, 3: 999}
+    encoded = _encode_telemetry(positions, loads, currents)
+    block_stub = _build_telemetry_block_stub(mock_motors, encoded)
+    position_stub = mock_motors.build_sync_read_stub(
+        *STS_SMS_SERIES_CONTROL_TABLE["Present_Position"], encoded["Present_Position"]
+    )
+    bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors, calibration=dummy_calibration)
+    bus.connect(handshake=False)
+
+    block_values = bus.sync_read_block(TELEMETRY_NAMES)
+    normalized_positions = bus.sync_read("Present_Position")
+
+    assert block_values["Present_Position"] == normalized_positions
+    assert all(isinstance(val, float) for val in block_values["Present_Position"].values())
+    assert block_values["Present_Load"] == {"dummy_1": 300, "dummy_2": -512, "dummy_3": -7}
+    assert block_values["Present_Current"] == {"dummy_1": 12, "dummy_2": 0, "dummy_3": 999}
+    assert mock_motors.stubs[block_stub].calls == 1
+    assert mock_motors.stubs[position_stub].calls == 1
+
+
+def test_sync_read_block_single_transaction(mock_motors, dummy_motors):
+    """Reading a block for a subset of motors sends exactly one sync read packet on the bus."""
+    encoded = _encode_telemetry({1: 100, 3: -300}, {1: 1, 3: -3}, {1: 5, 3: 7})
+    block_stub = _build_telemetry_block_stub(mock_motors, encoded)
+    bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
+    bus.connect(handshake=False)
+
+    with patch.object(bus.sync_reader, "txRxPacket", wraps=bus.sync_reader.txRxPacket) as mock_txrx:
+        block_values = bus.sync_read_block(TELEMETRY_NAMES, ["dummy_1", "dummy_3"], normalize=False)
+
+    assert mock_txrx.call_count == 1
+    assert mock_motors.stubs[block_stub].calls == 1
+    assert block_values == {
+        "Present_Position": {"dummy_1": 100, "dummy_3": -300},
+        "Present_Load": {"dummy_1": 1, "dummy_3": -3},
+        "Present_Current": {"dummy_1": 5, "dummy_3": 7},
+    }
+
+
+def test_sync_read_block_deduplicates_names(mock_motors, dummy_motors):
+    encoded = _encode_telemetry({1: 1, 2: 2, 3: 3}, {1: 4, 2: 5, 3: 6}, {1: 7, 2: 8, 3: 9})
+    block_stub = _build_telemetry_block_stub(mock_motors, encoded)
+    bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
+    bus.connect(handshake=False)
+
+    block_values = bus.sync_read_block(
+        ["Present_Position", "Present_Current", "Present_Position", "Present_Load"], normalize=False
+    )
+
+    assert list(block_values) == ["Present_Position", "Present_Current", "Present_Load"]
+    assert mock_motors.stubs[block_stub].calls == 1
+
+
+@pytest.mark.parametrize(
+    "data_names, error, match",
+    [
+        ([], ValueError, "'data_names' should contain at least one register name."),
+        ("Present_Position", TypeError, "'data_names' should be a sequence of register names"),
+        (
+            ["Present_Position", "Not_A_Register"],
+            KeyError,
+            "Address for 'Not_A_Register' not found in sts3215 control table.",
+        ),
+    ],
+    ids=["empty", "single_str", "unknown_register"],
+)
+def test_sync_read_block_invalid_names(data_names, error, match, mock_motors, dummy_motors):
+    bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
+    bus.connect(handshake=False)
+
+    with pytest.raises(error, match=re.escape(match)):
+        bus.sync_read_block(data_names)
 
 
 @pytest.mark.parametrize(

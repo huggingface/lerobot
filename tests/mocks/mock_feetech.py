@@ -270,9 +270,20 @@ class MockStatusPacket(MockFeetechPacket):
         Returns:
             bytes: The raw 'Sync Read' status packet ready to be sent through serial.
         """
-        params = _split_into_byte_chunks(value, param_length)
-        length = param_length + 2
-        return cls.build(scs_id, params=params, length=length, error=error)
+        return cls.read_block(scs_id, _split_into_byte_chunks(value, param_length), error)
+
+    @classmethod
+    def read_block(cls, scs_id: int, data: list[int], error: int = 0) -> bytes:
+        """Builds a 'Read' status packet carrying an arbitrary byte payload (e.g. a multi-register block).
+
+        Args:
+            scs_id (int): ID of the servo responding.
+            data (list[int]): Raw bytes to be returned in the packet, in bus order.
+
+        Returns:
+            bytes: The raw 'Read' / 'Sync Read' status packet ready to be sent through serial.
+        """
+        return cls.build(scs_id, params=data, length=len(data) + 2, error=error)
 
 
 class MockPortHandler(scs.PortHandler):
@@ -402,6 +413,31 @@ class MockMotors(MockSerial):
         )
         sync_read_response = self._build_send_fn(return_packets, num_invalid_try)
         stub_name = f"Sync_Read_{address}_{length}_" + "_".join([str(id_) for id_ in ids_values])
+        self.stub(
+            name=stub_name,
+            receive_bytes=sync_read_request,
+            send_fn=sync_read_response,
+        )
+        return stub_name
+
+    def build_sync_read_block_stub(
+        self,
+        address: int,
+        length: int,
+        ids_data: dict[int, list[int]],
+        reply: bool = True,
+        num_invalid_try: int = 0,
+    ) -> str:
+        """Like `build_sync_read_stub`, but each motor replies with a raw byte block of `length` bytes."""
+        assert all(len(data) == length for data in ids_data.values())
+        sync_read_request = MockInstructionPacket.sync_read(list(ids_data), address, length)
+        return_packets = (
+            b"".join(MockStatusPacket.read_block(id_, data) for id_, data in ids_data.items())
+            if reply
+            else b""
+        )
+        sync_read_response = self._build_send_fn(return_packets, num_invalid_try)
+        stub_name = f"Sync_Read_Block_{address}_{length}_" + "_".join([str(id_) for id_ in ids_data])
         self.stub(
             name=stub_name,
             receive_bytes=sync_read_request,
