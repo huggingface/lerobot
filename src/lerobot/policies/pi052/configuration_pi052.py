@@ -18,9 +18,6 @@ import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-import draccus
-from draccus.parsers.decoding import decode_dataclass
-
 from lerobot.configs import PreTrainedConfig
 
 from ..pi05.configuration_pi05 import PI05Config
@@ -200,26 +197,22 @@ class PI052Config(PI05Config):
         ):
             raise ValueError("KI attention and AdaRMS optimizations require knowledge_insulation=True")
 
-
-@draccus.decode.register(PI052Config)
-def _decode_pi052_config(raw: dict, path: tuple[str, ...] = ()) -> PI052Config:
-    """Read older checkpoint configs without exposing obsolete runtime CLI options."""
-    config = dict(raw)
-    policy_type = config.pop("type", "pi052")
-    if policy_type != "pi052":
-        raise ValueError(f"Expected a pi052 config, got {policy_type!r}")
-    if config.pop("joint_subtask_conditioning", False):
-        raise ValueError(
-            "This checkpoint requests the legacy joint-subtask prompt layout. "
-            "The shared runtime needs a matching joint-sequence processor before it can be deployed; "
-            "do not silently switch it to the default subtask-only action prompt."
-        )
-    for key in ("subtask_replan_steps", "apply_chat_template"):
-        if key in config:
-            config.pop(key)
-            logging.warning(
-                "Ignoring legacy PI052 checkpoint option %s; rollout owns autosteer_interval_s "
-                "and the saved recipe/processors own prompt formatting.",
-                key,
+    @classmethod
+    def _migrate_pretrained_config(cls, config: dict) -> dict:
+        """Migrate checkpoint data without registering a custom policy-choice decoder."""
+        config = dict(config)
+        if config.pop("joint_subtask_conditioning", False):
+            raise ValueError(
+                "This checkpoint requests the legacy joint-subtask prompt layout. "
+                "The shared runtime needs a matching joint-sequence processor before it can be deployed; "
+                "do not silently switch it to the default subtask-only action prompt."
             )
-    return decode_dataclass(PI052Config, config, path)
+        for key in ("subtask_replan_steps", "apply_chat_template"):
+            if key in config:
+                config.pop(key)
+                logging.warning(
+                    "Ignoring legacy PI052 checkpoint option %s; rollout owns autosteer_interval_s "
+                    "and the saved recipe/processors own prompt formatting.",
+                    key,
+                )
+        return config

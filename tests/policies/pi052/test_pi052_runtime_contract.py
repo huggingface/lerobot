@@ -2,7 +2,7 @@
 
 import json
 from collections import deque
-from dataclasses import fields
+from dataclasses import dataclass, fields
 from types import SimpleNamespace
 
 import draccus
@@ -61,10 +61,10 @@ def test_obsolete_runtime_options_are_not_policy_fields():
     assert not names & {"subtask_replan_steps", "joint_subtask_conditioning", "apply_chat_template"}
 
 
-def test_tagged_config_roundtrip_uses_policy_local_decoder():
+def test_tagged_config_roundtrip_uses_standard_choice_decoder():
     config = PI052Config(device="cpu")
     encoded = draccus.encode(config, PreTrainedConfig)
-    assert draccus.decode(PI052Config, encoded).recipe == config.recipe
+    assert draccus.decode(PreTrainedConfig, dict(encoded)).recipe == config.recipe
     assert encoded["type"] == "pi052"
 
 
@@ -83,9 +83,27 @@ def test_legacy_checkpoint_defaults_load_without_rewriting_source(tmp_path, capl
     assert "subtask_replan_steps" not in draccus.encode(restored)
 
 
-def test_legacy_joint_prompt_request_is_not_silently_ignored():
+def test_legacy_joint_prompt_request_is_not_silently_ignored(tmp_path):
+    config = PI052Config(device="cpu")
+    config.save_pretrained(tmp_path)
+    path = tmp_path / "config.json"
+    raw = json.loads(path.read_text())
+    raw["joint_subtask_conditioning"] = True
+    path.write_text(json.dumps(raw))
     with pytest.raises(ValueError, match="legacy joint-subtask prompt layout"):
-        draccus.decode(PI052Config, {"device": "cpu", "joint_subtask_conditioning": True})
+        PreTrainedConfig.from_pretrained(tmp_path)
+
+
+def test_pi052_can_be_used_in_the_training_cli_policy_choice():
+    from draccus.argparsing import ArgumentParser
+
+    @dataclass
+    class Pipeline:
+        policy: PreTrainedConfig | None = None
+
+    parser = ArgumentParser(config_class=Pipeline)
+    config = parser.parse_args(["--policy.type=pi052", "--policy.device=cpu"])
+    assert isinstance(config.policy, PI052Config)
 
 
 def test_single_action_calls_do_not_generate_or_rewrite_runtime_subtask():

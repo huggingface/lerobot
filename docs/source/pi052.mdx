@@ -71,7 +71,7 @@ and synchronous/RTC scheduling. PI052 only generates text when queried; ordinary
 action calls never generate another subtask behind the runtime's back.
 `subtask_replan_steps`, `joint_subtask_conditioning`, and `apply_chat_template`
 are no longer policy CLI options. Older checkpoint configs with the default
-joint setting load through a compatibility decoder; checkpoints explicitly
+joint setting load through a checkpoint migration hook; checkpoints explicitly
 requesting the old joint layout fail with guidance rather than changing prompts.
 
 Combined memory/subtask scratchpads are not the default and require a custom

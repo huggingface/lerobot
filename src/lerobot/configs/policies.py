@@ -162,6 +162,11 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
                 return ft
         return None
 
+    @classmethod
+    def _migrate_pretrained_config(cls, config: dict[str, Any]) -> dict[str, Any]:
+        """Normalize legacy checkpoint fields before strict CLI/config parsing."""
+        return config
+
     def _save_pretrained(self, save_directory: Path) -> None:
         # Encode against the base class so draccus includes the choice "type" key,
         # which `from_pretrained` needs to resolve the concrete subclass.
@@ -227,6 +232,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
                 f"Available policy types: {cls.get_known_choices()}"
             ) from e
 
+        config = config_cls._migrate_pretrained_config(config)
         with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
             json.dump(config, f)
             config_file = f.name
