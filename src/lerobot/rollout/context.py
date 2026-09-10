@@ -314,6 +314,9 @@ def build_rollout_context(
     # --- 1. Policy (heavy I/O, but no hardware yet) -------------------
     logger.info("Loading policy from '%s'...", cfg.policy.pretrained_path)
     policy_config = cfg.policy
+    assert policy_config is not None  # Validated by RolloutConfig.__post_init__.
+    # Policy constructors and custom processors must use the resolved rollout device too.
+    policy_config.device = cfg.device
 
     if is_rtc:
         _validate_trained_rtc_rollout_config(policy_config, cfg.inference)
