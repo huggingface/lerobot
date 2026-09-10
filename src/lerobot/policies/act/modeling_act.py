@@ -33,7 +33,6 @@ from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
-from lerobot.utils import probe_hooks
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 
 from ..pretrained import PreTrainedPolicy
@@ -146,7 +145,6 @@ class ACTPolicy(PreTrainedPolicy):
             batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
 
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
-        probe_hooks.model_outputs(actions_hat, mu_hat, log_sigma_x2_hat)
 
         abs_err = F.l1_loss(batch[ACTION], actions_hat, reduction="none")
         valid_mask = ~batch["action_is_pad"].unsqueeze(-1)

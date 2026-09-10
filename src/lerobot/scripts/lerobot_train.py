@@ -82,7 +82,6 @@ from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR
 from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
-from lerobot.utils import probe_hooks
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
@@ -731,14 +730,12 @@ def train(cfg: TrainPipelineConfig):
         )
 
     for _ in range(step, cfg.steps):
-        probe_hooks.begin_step(step + 1)
         step_start = time.perf_counter()
         batch = next(dl_iter)
         preprocessing_start = time.perf_counter()
         train_tracker.dataloading_s = preprocessing_start - step_start
         batch = _preprocess_dataset_batch(batch, dataset.meta.camera_keys, cfg.rename_map, preprocessor)
         train_tracker.preprocessing_s = time.perf_counter() - preprocessing_start
-        probe_hooks.batch(batch)
 
         train_tracker, output_dict = update_policy(
             train_tracker,
@@ -751,10 +748,6 @@ def train(cfg: TrainPipelineConfig):
             sample_weighter=sample_weighter,
         )
         train_tracker.step_s = time.perf_counter() - step_start
-        probe_hooks.step_metrics(
-            train_tracker.loss.val, output_dict,
-            train_tracker.grad_norm.val if cfg.optimizer.grad_clip_norm > 0 else None,
-        )
 
         # Pull one optimizer step of the live weights into the EMA shadow (main process only).
         # The shadow tracks optimizer updates, not micro-batches: gate on the sync step under
@@ -916,7 +909,6 @@ def train(cfg: TrainPipelineConfig):
 
     if is_main_process():
         progbar.close()
-    probe_hooks.flush()
     logging.info("End of training")
 
     # --- publish (collective-safe: all ranks; the model commit gathers sharded weights) ---------
