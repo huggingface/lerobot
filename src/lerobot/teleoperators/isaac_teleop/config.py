@@ -17,7 +17,8 @@
 """Configuration dataclasses for NVIDIA Isaac Teleop-backed teleoperators.
 
 :class:`IsaacTeleopConfig` holds the session fields shared by every device;
-:class:`XRControllerConfig` adds the XR controller's own knobs.
+:class:`XRControllerConfig` adds the XR controller's own knobs and registers as
+``--teleop.type=isaac_teleop`` on the global :class:`TeleoperatorConfig` registry.
 """
 
 from __future__ import annotations
@@ -29,21 +30,10 @@ from lerobot.teleoperators.config import TeleoperatorConfig
 
 @dataclass(kw_only=True)
 class IsaacTeleopConfig(TeleoperatorConfig):
-    """Shared config for all Isaac Teleop-backed teleoperators.
+    """Shared config for all Isaac Teleop-backed teleoperators."""
 
-    Deliberately NOT a draccus choice type: the example scripts type their ``teleop`` field
-    as the concrete device config, so ``--teleop.<field>`` parses as a plain nested dataclass
-    with no ``--teleop.type`` selector. These devices are constructed by the example scripts,
-    not routed through ``make_teleoperator_from_config``.
-    """
-
-    app_name: str = "LeTeleop"
+    app_name: str = "LeRobot Teleop"
     """Application name for the OpenXR / Isaac Teleop session."""
-
-    auto_launch_cloudxr: bool = True
-    """Auto-launch the CloudXR runtime on :meth:`connect`. Set ``False`` (or export
-    ``LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH=1``, which wins) when CloudXR runs externally.
-    """
 
     cloudxr_env_file: str | None = None
     """Optional CloudXR device-profile ``.env`` (an INPUT profile selecting the headset
@@ -61,13 +51,21 @@ _DEFAULT_BASE_T_ANCHOR: list[list[float]] = [
     [0.0, 0.0, 0.0, 1.0],
 ]
 
+# Default duration [s] for the reset-to-origin slew (on connect and on every declutch): long
+# enough to follow in VR, short enough not to stall the operator between segments.
+_RESET_DURATION_S = 2.0
 
+
+@TeleoperatorConfig.register_subclass("isaac_teleop")
 @dataclass(kw_only=True)
 class XRControllerConfig(IsaacTeleopConfig):
     """Config for Isaac Teleop XR (VR) controller teleoperation.
 
-    Carries the clutch retargeter in-pipeline and emits an absolute base-frame EE pose; the
-    gripper mapping stays in the owning loop.
+    Carries the clutch retargeter in-pipeline and emits an absolute base-frame EE pose;
+    :class:`~lerobot.teleoperators.isaac_teleop.xr_controller.XRController` maps it to the
+    follower's joint space internally (its ``RobotProfile``, derived from ``--robot.type`` --
+    see ``XRController.__init__``), so ``get_action()`` returns a plain joint-space action
+    usable with the stock ``lerobot-teleoperate`` / ``lerobot-record`` identity action processor.
     """
 
     hand_side: str = "right"
@@ -76,8 +74,8 @@ class XRControllerConfig(IsaacTeleopConfig):
 
     clutch_threshold: float = 0.5
     """Squeeze value above which the clutch engages (held-to-enable). Passed to the in-pipeline
-    clutch retargeter, which is the only place the comparison happens; the loop reads engagement
-    back off the device rather than re-deriving it."""
+    clutch retargeter, which is the only place the comparison happens; ``get_action`` reads
+    engagement back off the device rather than re-deriving it."""
 
     clutch_position_scale: float = 0.5
     """Controller-to-EE translation gain the in-pipeline clutch retargeter applies to the
@@ -86,7 +84,8 @@ class XRControllerConfig(IsaacTeleopConfig):
     2x the SO-101's ~0.35 m reach, so 1:1 motion drives the commanded EE target outside the
     reachable envelope within a single engaged segment; the ``0.5`` default maps a full sweep
     inside reach (0.4 m of controller motion -> 0.2 m of EE motion). Translation only --
-    orientation stays 1:1. See https://github.com/NVIDIA/IsaacTeleop/issues/733."""
+    orientation stays 1:1. Overridden per-arm by ``RobotProfile.clutch_position_scale`` unless
+    explicitly set. See https://github.com/NVIDIA/IsaacTeleop/issues/733."""
 
     engage_gate: bool = True
     """Refuse the clutch's latch until the operator's wrist matches the pose it is about to
@@ -118,7 +117,8 @@ class XRControllerConfig(IsaacTeleopConfig):
     hand while disengaged, swapped for a leader gripper locked to the hand once the clutch
     engages, with the safety harness recolouring it and the engage gate holding the latch.
     The same object ``examples/robot_viz`` runs. Needs a Linux ``isaacteleop`` built with
-    ``-DBUILD_VIZ=ON``; warns and runs without it otherwise."""
+    ``-DBUILD_VIZ=ON``; warns and runs without it otherwise. Only arms whose ``RobotProfile``
+    sets ``robot_twin=True`` (SO-101/SO-100 today) get one regardless of this flag."""
 
     twin_gl_device: int = -1
     """Which GPU to build the twin's OpenGL context on. ``-1`` takes the first that yields
@@ -157,6 +157,14 @@ class XRControllerConfig(IsaacTeleopConfig):
     the robot base frame. Defaults to OpenXR (X=Right, Y=Up, Z=Backward) -> robot
     (X=Forward, Y=Left, Z=Up). Plain nested lists so the config stays serializable.
     """
+
+    reset_to_origin: bool = True
+    """Slew the arm to its reset pose on connect and on every declutch, re-homing the clutch
+    there. ``False`` re-homes in place instead (no motion), which the clutch's engage-relative
+    delta still requires -- see ``XRController._start_reset``."""
+
+    reset_duration: float = _RESET_DURATION_S
+    """Duration [s] of the reset-to-origin slew."""
 
     def __post_init__(self):
         if self.hand_side not in ("left", "right"):

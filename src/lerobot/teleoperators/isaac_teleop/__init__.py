@@ -17,12 +17,13 @@
 """NVIDIA Isaac Teleop teleoperators for LeRobot.
 
 Each input device is an :class:`IsaacTeleopTeleoperator` subclass; :class:`XRController`
-(XR/VR controller) ships today.
+(``--teleop.type=isaac_teleop``) ships today. Importing this package registers it
+on the global :class:`~lerobot.teleoperators.config.TeleoperatorConfig` choice registry.
 """
 
 from .base import IsaacTeleopTeleoperator
-from .config_isaac_teleop import IsaacTeleopConfig, XRControllerConfig
-from .teleop_xr_controller import XRController
+from .config import IsaacTeleopConfig, XRControllerConfig
+from .xr_controller import XRController
 from .xr_controller_processor import MapXRControllerActionToRobotAction
 
 __all__ = [

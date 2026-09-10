@@ -135,11 +135,13 @@ from lerobot.robots import (  # noqa: F401
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
+    TeleopEvents,
     bi_openarm_leader,
     bi_openarm_mini,
     bi_rebot_102_leader,
     bi_so_leader,
     homunculus,
+    isaac_teleop,
     koch_leader,
     make_teleoperator_from_config,
     omx_leader,
@@ -317,9 +319,15 @@ def record_loop(
         with timer.section("teleop"):
             # Get action from teleop
             if isinstance(teleop, Teleoperator):
-                act = teleop.get_action()
-                if robot.name == "unitree_g1":
+                if robot.name == "unitree_g1" or teleop.name == "isaac_teleop":
                     teleop.send_feedback(obs)
+                act = teleop.get_action()
+                if hasattr(teleop, "get_teleop_events"):
+                    teleop_events = teleop.get_teleop_events()
+                    if teleop_events.get(TeleopEvents.TERMINATE_EPISODE):
+                        events["exit_early"] = True
+                    if teleop_events.get(TeleopEvents.RERECORD_EPISODE):
+                        events["rerecord_episode"] = True
 
                 # Applies a pipeline to the raw teleop action, default is IdentityProcessor
                 act_processed_teleop = teleop_action_processor((act, obs))
@@ -402,7 +410,9 @@ def record(
     )
 
     robot = make_robot_from_config(cfg.robot)
-    teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
+    teleop = (
+        make_teleoperator_from_config(cfg.teleop, robot_config=cfg.robot) if cfg.teleop is not None else None
+    )
 
     # Fall back to identity pipelines when the caller doesn't supply processors.
     if (
@@ -570,8 +580,12 @@ def record(
 
         if robot.is_connected:
             robot.disconnect()
+        # A failing teleop.disconnect() must not skip the cleanup below (listener, display).
         if teleop and teleop.is_connected:
-            teleop.disconnect()
+            try:
+                teleop.disconnect()
+            except Exception:
+                logging.exception("teleop.disconnect() failed; continuing cleanup.")
 
         if listener is not None:
             listener.stop()

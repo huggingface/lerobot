@@ -18,33 +18,31 @@
 
 Isaac Teleop is a multi-modal framework: a single ``TeleopSession`` can be driven by
 XR controllers, hand tracking, Manus gloves, etc. Each modality is a
-:class:`Teleoperator` subclass in its own ``teleop_<device>.py``.
+:class:`Teleoperator` subclass in its own ``xr_controller.py``-style module.
 
 :class:`IsaacTeleopTeleoperator` owns what those devices share — the session
 lifecycle, the per-step staleness/worker-health guard, and the no-op calibration
-tracking devices need. A concrete device implements :meth:`_build_pipeline` (its
-retargeting graph) and :meth:`get_action` (usually via :meth:`_step`).
+tracking devices need. A concrete device implements :meth:`_build_pipeline` and
+:meth:`get_action`.
 
-``isaacteleop`` is an optional NVIDIA dependency (install instructions in the example's
-``README.md``); its imports are guarded behind an availability check at module top, so this
-module imports without it and constructing a device fails fast with install instructions.
+``isaacteleop`` is an optional NVIDIA dependency (not on PyPI; install via the ``isaac-teleop``
+extra, which points at the NVIDIA package index -- see ``pyproject.toml``); its imports are
+guarded behind ``_isaacteleop_available``, so this module imports without it and constructing a
+device fails fast with install instructions.
 """
 
 from __future__ import annotations
 
 import abc
 import logging
-import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from lerobot.teleoperators.teleoperator import Teleoperator
-from lerobot.utils.import_utils import is_package_available
+from lerobot.utils.import_utils import _isaacteleop_available
 
-from .config_isaac_teleop import IsaacTeleopConfig
-
-_isaacteleop_available = is_package_available("isaacteleop")
+from .config import IsaacTeleopConfig
 
 if TYPE_CHECKING or _isaacteleop_available:
     from isaacteleop.cloudxr import CloudXRLauncher
@@ -64,17 +62,13 @@ else:
 
 logger = logging.getLogger(__name__)
 
-# Gripper closedness [0, 1] -> SO-101 follower motor units [0, 100] (RANGE_0_100, 100 = OPEN).
-# The XR processor inverts via ``pos = (1 - c) * SCALE``.
-_GRIPPER_MOTOR_SCALE = 100.0
-
 
 def _require_isaacteleop() -> None:
     """Fail fast with install pointers when the optional ``isaacteleop`` package is missing."""
     if not _isaacteleop_available:
         raise ImportError(
             "The 'isaacteleop' package is required for Isaac Teleop devices but is not "
-            "installed. See examples/isaac_teleop_to_so101/README.md for install instructions."
+            'installed. Install with: uv pip install -e ".[isaac-teleop]"'
         )
 
 
@@ -129,12 +123,11 @@ class IsaacTeleopTeleoperator(Teleoperator):
         pass
 
     def connect(self, calibrate: bool = True) -> None:
-        """Auto-launch the CloudXR runtime (unless opted out) and open the session.
+        """Attach to the CloudXR runtime and open the session.
 
-        The CloudXR launch blocks ~30s and, on the first run, prompts on stdin for the
-        EULA (accept once via ``python -m isaacteleop.cloudxr --accept-eula``). Opt out
-        when CloudXR runs externally via ``config.auto_launch_cloudxr=False`` or
-        ``LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH=1`` (env var wins).
+        CloudXR runs as a persistent service; :class:`CloudXRLauncher` attaches to it (rather
+        than spawning a fresh instance) and mutates the process env (``XR_RUNTIME_JSON`` etc.)
+        accordingly.
         """
         if self._session is not None:
             raise RuntimeError("Already connected. Call disconnect() first.")
@@ -151,15 +144,15 @@ class IsaacTeleopTeleoperator(Teleoperator):
                 pipeline=pipeline,
                 joint_publisher=self._joint_publisher,
             )
-            self._session = TeleopSession(session_config)
-            self._session.__enter__()
+            session = TeleopSession(session_config)
+            session.__enter__()
         except Exception:
-            self._session = None
             try:
                 self._stop_cloudxr_runtime()
             except Exception:
                 logger.exception("Failed to stop CloudXR runtime during connect() rollback")
             raise
+        self._session = session
         logger.info("Isaac Teleop session started: %s", self.config.app_name)
 
     @property
@@ -192,8 +185,7 @@ class IsaacTeleopTeleoperator(Teleoperator):
         finally:
             # Reap the CloudXR runtime even if session teardown raised, and even if no
             # session was ever established (e.g. the launcher came up but session creation
-            # failed before this point); a no-op when we never launched CloudXR (opt-out /
-            # externally-owned runtime), so we never stop a runtime we don't own.
+            # failed before this point).
             #
             # NOT when the twin's render thread is still inside that runtime: reaping it
             # from under a live OpenXR caller is worse than leaking it.
@@ -205,32 +197,13 @@ class IsaacTeleopTeleoperator(Teleoperator):
     # ------------------------------------------------------------------
 
     def _ensure_cloudxr_runtime(self) -> None:
-        """Auto-launch the CloudXR runtime once, unless opted out.
+        """Attach to the CloudXR runtime once. Idempotent (no-op once the handle is held).
 
-        Idempotent (no-op once the launcher is up). ``LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH``
-        is checked first and wins over ``config.auto_launch_cloudxr``. Constructing
-        :class:`CloudXRLauncher` mutates the process env (``XR_RUNTIME_JSON`` etc.) and
-        blocks until the runtime is ready or raises :class:`RuntimeError`.
+        Constructing :class:`CloudXRLauncher` mutates the process env (``XR_RUNTIME_JSON``
+        etc.) and blocks until the runtime is ready or raises :class:`RuntimeError`.
         """
         if self._cloudxr_launcher is not None:
             return
-
-        if os.environ.get("LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH", "").strip() == "1":
-            logger.info(
-                "LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH=1 set; skipping CloudXR auto-launch "
-                "(assuming CloudXR is already running externally)"
-            )
-            return
-
-        if not self.config.auto_launch_cloudxr:
-            logger.info(
-                "config.auto_launch_cloudxr is False; skipping CloudXR auto-launch "
-                "(assuming CloudXR is already running externally)"
-            )
-            return
-
-        logger.info("Launching CloudXR runtime (first run may prompt for EULA and take ~30s)...")
-
         self._cloudxr_launcher = CloudXRLauncher(
             install_dir=str(Path.home() / ".cloudxr"),
             env_config=self.config.cloudxr_env_file,
@@ -238,7 +211,7 @@ class IsaacTeleopTeleoperator(Teleoperator):
         )
 
     def _stop_cloudxr_runtime(self) -> None:
-        """Stop the auto-launched CloudXR runtime, if any.
+        """Detach from the CloudXR runtime, if attached.
 
         Clean stop nulls the handle. On :class:`RuntimeError` the handle is RETAINED so
         the launcher's ``atexit`` hook owns the retry — a later :meth:`connect` then
@@ -255,7 +228,7 @@ class IsaacTeleopTeleoperator(Teleoperator):
             logger.info("CloudXR runtime stopped")
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
-        pass  # Haptic feedback not yet implemented.
+        pass  # Overridden by devices that need the robot's observation (see XRController).
 
     # ------------------------------------------------------------------
     # Stepping (shared)

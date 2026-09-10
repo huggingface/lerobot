@@ -3796,7 +3796,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27.0,<1.0.0" },
     { name = "huggingface-hub", specifier = ">=1.6.0,<2.0.0" },
     { name = "ipykernel", marker = "extra == 'notebook'", specifier = ">=6.0.0,<7.0.0" },
-    { name = "isaacteleop", extras = ["cloudxr", "retargeters-lite"], marker = "sys_platform == 'linux' and extra == 'isaac-teleop'", specifier = ">=1.5rc1,<2", index = "https://pypi.nvidia.com/" },
+    { name = "isaacteleop", extras = ["cloudxr", "retargeters-lite"], marker = "sys_platform == 'linux' and extra == 'isaac-teleop'", specifier = ">=1.5rc1,<1.6", index = "https://pypi.nvidia.com/" },
     { name = "jsonlines", marker = "extra == 'dataset'", specifier = ">=4.0.0,<5.0.0" },
     { name = "jupyter", marker = "extra == 'notebook'", specifier = ">=1.0.0,<2.0.0" },
     { name = "kernels", marker = "extra == 'fineart-vla-kernels'", specifier = ">=0.14.1,<0.15.0" },

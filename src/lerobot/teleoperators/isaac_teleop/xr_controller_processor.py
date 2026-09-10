@@ -16,9 +16,9 @@
 
 """Processor step that maps XR controller actions to robot EE targets.
 
-Analogous to ``MapPhoneActionToRobotAction``, this bridges the clutch-rebased EE pose to
-the IK pipeline's input contract (``EEBoundsAndSafety`` -> ``InverseKinematicsEEToJoints``).
-Pure (no ``isaacteleop``), so it is unit-testable without the XR runtime.
+Bridges the clutch-rebased EE pose to the IK pipeline's input contract (``EEBoundsAndSafety``
+-> ``InverseKinematicsEEToJoints``). Pure (no ``isaacteleop``), so it is unit-testable without
+the XR runtime.
 """
 
 from __future__ import annotations
@@ -30,7 +30,11 @@ from lerobot.lerobot_types import RobotAction
 from lerobot.processor import ProcessorStepRegistry, RobotActionProcessorStep
 from lerobot.utils.rotation import Rotation
 
-from .base import _GRIPPER_MOTOR_SCALE
+# Gripper closedness [0, 1] -> follower motor units. The XR processor inverts via
+# ``pos = gripper_open + closedness * (gripper_close - gripper_open)``; defaults reproduce the
+# SO-101 mapping (100 = fully open).
+_DEFAULT_GRIPPER_OPEN = 100.0
+_DEFAULT_GRIPPER_CLOSE = 0.0
 
 
 @ProcessorStepRegistry.register("map_xr_controller_action_to_robot_action")
@@ -48,13 +52,13 @@ class MapXRControllerActionToRobotAction(RobotActionProcessorStep):
 
     The gripper endpoints are in the follower's own action units, so a robot whose jaw is
     not the SO-101's RANGE_0_100 (the reBot B601-RS drives its gripper in degrees) only has
-    to state its two endpoints. Defaults reproduce the SO-101 mapping: 100 = fully open.
+    to state its two endpoints.
 
     Input keys: ``ee_pose`` ``(7,)`` ``[x,y,z,qx,qy,qz,qw]``, ``closedness`` float in [0, 1].
     """
 
-    gripper_open: float = _GRIPPER_MOTOR_SCALE
-    gripper_close: float = 0.0
+    gripper_open: float = _DEFAULT_GRIPPER_OPEN
+    gripper_close: float = _DEFAULT_GRIPPER_CLOSE
 
     def action(self, action: RobotAction) -> RobotAction:
         ee_pose = action.pop("ee_pose")

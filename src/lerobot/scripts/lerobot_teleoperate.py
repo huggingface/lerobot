@@ -110,6 +110,7 @@ from lerobot.teleoperators import (  # noqa: F401
     bi_so_leader,
     gamepad,
     homunculus,
+    isaac_teleop,
     keyboard,
     koch_leader,
     make_teleoperator_from_config,
@@ -201,7 +202,7 @@ def teleop_loop(
                 # given that it is the identity processor as default
                 obs = robot.get_observation()
 
-                if robot.name == "unitree_g1":
+                if robot.name == "unitree_g1" or teleop.name == "isaac_teleop":
                     teleop.send_feedback(obs)
 
             with timer.section("teleop"):
@@ -263,7 +264,7 @@ def teleoperate(cfg: TeleoperateConfig):
         else cfg.display_compressed_images
     )
 
-    teleop = make_teleoperator_from_config(cfg.teleop)
+    teleop = make_teleoperator_from_config(cfg.teleop, robot_config=cfg.robot)
     robot = make_robot_from_config(cfg.robot)
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
@@ -288,7 +289,13 @@ def teleoperate(cfg: TeleoperateConfig):
     finally:
         if cfg.display_data:
             shutdown_visualization(cfg.display_mode)
-        teleop.disconnect()
+        # A failing teleop.disconnect() must not skip robot.disconnect() -- the one that
+        # actually disables torque -- so it gets its own try/except rather than sharing this
+        # finally block's flow with the call below.
+        try:
+            teleop.disconnect()
+        except Exception:
+            logging.exception("teleop.disconnect() failed; still disconnecting the robot.")
         robot.disconnect()
 
 

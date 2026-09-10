@@ -213,23 +213,15 @@ intelrealsense = [
     "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54,<2.57.0 ; sys_platform == 'darwin'",
 ]
-# NVIDIA Isaac Teleop (XR teleoperation, see examples/isaac_teleop_to_so101/).
-# 1.5 is currently pre-release and its Linux wheels live on the NVIDIA index only (public PyPI
-# carries an sdist that does not build), so isaacteleop is pinned to the `nvidia` index below and
-# the specifier names a pre-release to opt this one package into pre-release resolution.
-# [retargeters-lite] (scipy) rather than the full [retargeters]: the example builds its
-# pipelines from source nodes only -- IK is LeRobot's Placo path -- and isaacteleop.retargeters
-# lazy-loads every entry, so nothing here reaches the dex-retargeting/nlopt/torch stack. The
-# SO101 retargeters upstream would drop into that same tier (they declare no extra). The wheels
-# are manylinux only (and need glibc >= 2.35), hence the sys_platform marker: on macOS/Windows
-# the extra degrades to the IK deps instead of failing to resolve. Deliberately NOT part of
-# [all]: CI runs `uv sync --locked --extra all` and must not depend on a pre-release off a
-# third-party index.
+
+# NVIDIA Isaac Teleop (XR teleoperation).
+# TODO: lock to 1.5.x final release tag
 isaac-teleop = [
-    "isaacteleop[cloudxr,retargeters-lite]>=1.5rc1,<2 ; sys_platform == 'linux'",
+    "isaacteleop[cloudxr,retargeters-lite]>=1.5rc1,<1.6 ; sys_platform == 'linux'",
     "lerobot[kinematics]",
     "lerobot[scipy-dep]",
 ]
+
 phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0", "lerobot[scipy-dep]"]
 
 # Policies

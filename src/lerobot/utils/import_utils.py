@@ -157,6 +157,7 @@ _pyrealsense2_available = is_package_available("pyrealsense2") or is_package_ava
 _zmq_available = is_package_available("pyzmq", import_name="zmq")
 _hebi_available = is_package_available("hebi-py", import_name="hebi")
 _teleop_available = is_package_available("teleop")
+_isaacteleop_available = is_package_available("isaacteleop")
 _placo_available = is_package_available("placo")
 _hidapi_available = is_package_available("hidapi", import_name="hid")
 

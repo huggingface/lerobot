@@ -93,7 +93,7 @@ class FindJointLimitsConfig:
 
 @draccus.wrap()
 def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig) -> None:
-    teleop = make_teleoperator_from_config(cfg.teleop)
+    teleop = make_teleoperator_from_config(cfg.teleop, robot_config=cfg.robot)
     robot = make_robot_from_config(cfg.robot)
 
     print(f"Connecting to robot: {cfg.robot.type}...")

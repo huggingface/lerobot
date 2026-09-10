@@ -17,11 +17,12 @@
 """XR (VR) controller device for NVIDIA Isaac Teleop, exposed to LeRobot.
 
 A clutched device: the controller grip pose drives an in-pipeline ``SO101ClutchRetargeter``
-and a safety rate limiter, so :meth:`XRController.get_action` returns an absolute base-frame
-EE pose rather than a raw controller pose. Unlike the other devices here this one **holds
-state across frames** — the clutch's latched home and origin live in the retargeter — so it
-must be stepped every frame with real ``ExecutionEvents``. The gripper mapping stays in the
-owning loop.
+and a safety rate limiter. :meth:`XRController._get_raw_action` (Isaac Teleop's own clutch,
+session and preview machinery -- unchanged from the standalone example) returns an absolute
+base-frame EE pose; the public :meth:`XRController.get_action` wraps it with the IK, gate,
+hold-when-idle and reset-to-origin/declutch handling that used to live in the example's
+``teleoperate.py``/``record.py`` loops, so this device is a drop-in ``--teleop.type`` for the
+stock ``lerobot-teleoperate``/``lerobot-record`` (identity action processor, no bespoke loop).
 
 The **robot twin, the drag preview, the leader ghost, the safety harness and the engage
 gate** are all Isaac Teleop's ``viz.robot.ClutchPreview`` -- the same object
@@ -41,10 +42,18 @@ sees the rebased one.
 
 ``isaacteleop`` imports are guarded behind the availability flag so this module imports
 without it (construction fails fast via the base class).
+
+**Needs the follower's measured joints** for FK-seeded clutch homing and the reset-to-origin
+slew, which a ``Teleoperator`` has no channel to read on its own (``lerobot-teleoperate`` /
+``lerobot-record`` construct the robot and the teleoperator independently, and only the robot
+object holds live joint state). ``lerobot_teleoperate.py`` / ``lerobot_record.py`` special-case
+this device to call ``send_feedback(robot.get_observation())`` once per frame, the same way
+they already special-case ``unitree_g1``.
 """
 
 from __future__ import annotations
 
+import contextlib
 import importlib.metadata
 import logging
 import time
@@ -53,9 +62,17 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from lerobot.lerobot_types import RobotAction
+from lerobot.model.kinematics import RobotKinematics
+from lerobot.teleoperators.utils import TeleopEvents
+from lerobot.utils.import_utils import _isaacteleop_available
 
-from .base import IsaacTeleopTeleoperator, _isaacteleop_available
-from .config_isaac_teleop import XRControllerConfig
+from .base import IsaacTeleopTeleoperator
+from .config import XRControllerConfig
+from .robot_profiles import ROBOT_PROFILES, build_xr_joint_pipeline, robot_profile_key
+from .robot_twin import build_twin
+
+if TYPE_CHECKING:
+    from lerobot.robots.config import RobotConfig
 
 if TYPE_CHECKING or _isaacteleop_available:
     from isaacteleop.retargeting_engine.deviceio_source_nodes import ControllersSource
@@ -67,30 +84,20 @@ if TYPE_CHECKING or _isaacteleop_available:
         TensorGroup,
         ValueInput,
     )
-    from isaacteleop.retargeting_engine.interface.tensor_group_type import (
-        OptionalType,
-        TensorGroupType,
-    )
-    from isaacteleop.retargeting_engine.tensor_types import (
-        BoolType,
-        ControllerInput,
-        TransformMatrix,
-    )
+    from isaacteleop.retargeting_engine.interface.tensor_group_type import OptionalType
+    from isaacteleop.retargeting_engine.tensor_types import TransformMatrix
 else:
     ControllersSource = None
-    ControllerInput = None
     ExecutionEvents = None
     ExecutionState = None
     OptionalTensorGroup = None
     OptionalType = None
-    TensorGroupType = None
-    BoolType = None
     OutputCombiner = None
     TensorGroup = None
     ValueInput = None
     TransformMatrix = None
 
-# The engage-relative clutch retargeter landed in isaacteleop 1.5; the rest of this example works
+# The engage-relative clutch retargeter landed in isaacteleop 1.5; the rest of this device works
 # against older releases. Resolve it tolerantly here and fail with an actionable message from
 # XRController's constructor (see _require_clutch_retargeter) -- a hard import error here would
 # take down the whole isaac_teleop package import instead.
@@ -108,15 +115,12 @@ if _isaacteleop_available:
 
 # `isaacteleop.viz.robot`'s package __init__ reaches the compiled Televiz extension, so a
 # wheel built without -DBUILD_VIZ=ON has the clutch but no preview. Resolved tolerantly and
-# reported from connect() -- a hard import here would take the whole example down.
+# reported from connect() -- a hard import here would take the whole device down.
 ClutchPreview = None
-_PREVIEW_IMPORT_ERROR: Exception | None = None
 clutch_preview: Any = None
 if _isaacteleop_available:
-    try:
+    with contextlib.suppress(ImportError):
         from isaacteleop.viz.robot import ClutchPreview, OperatorFrame, clutch_preview
-    except ImportError as exc:
-        _PREVIEW_IMPORT_ERROR = exc
 
 # The retargeters the preview's graph needs. These are plain numpy nodes and carry no viz
 # dependency, so they resolve on any build.
@@ -167,23 +171,7 @@ def _transform_group(matrix: np.ndarray):
     return group
 
 
-# There is deliberately no constant for the measured-EE leaf: the producer side reads
-# ``SO101ClutchRetargeter.MEASURED_BASE_T_EE_INPUT`` directly, so the producer key here and
-# the consumer key there cannot drift apart. Re-declaring the literal would defeat that.
-
 _MIN_ISAACTELEOP_VERSION = "1.4.0"
-
-
-# There is deliberately no constant for the measured-EE leaf: the producer side reads
-# ``SO101ClutchRetargeter.MEASURED_BASE_T_EE_INPUT`` directly, so the producer key here and
-# the consumer key there cannot drift apart. Re-declaring the literal would defeat that.
-
-_MIN_ISAACTELEOP_VERSION = "1.4.0"
-
-
-# Below this a direction is too near vertical to carry a bearing and its azimuth is noise.
-# A gripper aimed straight down is a real posture, so this holds the last yaw, never raises.
-_MIN_HORIZONTAL = 1e-3
 
 
 def _require_clutch_retargeter() -> None:
@@ -191,8 +179,7 @@ def _require_clutch_retargeter() -> None:
 
     Called from :meth:`XRController.__init__` rather than ``_build_pipeline``: the latter runs
     inside ``connect()``, *after* ``_ensure_cloudxr_runtime()``, so a purely static version
-    mismatch would otherwise cost a ~30 s runtime launch and possibly an interactive EULA prompt
-    before being reported.
+    mismatch would otherwise cost attaching to the CloudXR runtime before being reported.
 
     The probe is a CAPABILITY check, not a name check, and that distinction is load-bearing:
     ``SO101ClutchRetargeter`` also exists in isaacteleop 1.4, as a *different* retargeter (clutches
@@ -200,11 +187,6 @@ def _require_clutch_retargeter() -> None:
     name alone would therefore pass against 1.4 and then drive the arm wrongly, with no error.
     ``MEASURED_BASE_T_EE_INPUT`` exists only on the engage-relative implementation this device
     needs, so it is the signal that actually discriminates.
-
-    ``_MIN_ISAACTELEOP_VERSION`` is deliberately still ``1.4.0``: the engage-relative clutch has
-    not shipped in a published wheel yet, so naming a version PyPI cannot resolve would be worse
-    advice than the capability probe above. Bump it -- and the install pins in ``README.md`` and
-    ``docs/source/isaac_teleop.mdx`` -- when that wheel ships.
     """
     if SO101ClutchRetargeter is not None and hasattr(SO101ClutchRetargeter, "MEASURED_BASE_T_EE_INPUT"):
         return
@@ -224,73 +206,122 @@ def _require_clutch_retargeter() -> None:
 # Placeholder home for the retargeter, which must be constructed in ``_build_pipeline()`` (inside
 # ``connect()``) — long before the arm's real EE pose is known. Safe because the session holds
 # ``STOPPED`` until :meth:`XRController.start` is called, and the clutch cannot latch while
-# STOPPED, so the home value is irrelevant in that window. The owning loop supplies the real one
-# via :meth:`XRController.set_home_base_T_ee` before the first RUNNING frame.
+# STOPPED, so the home value is irrelevant in that window. :meth:`get_action` seeds the real one
+# via :meth:`set_home_base_T_ee` before the first RUNNING frame (see :meth:`_finish_reset`).
 _PLACEHOLDER_HOME_BASE_T_EE = np.eye(4, dtype=np.float64)
 
 
 class XRController(IsaacTeleopTeleoperator):
-    """Clutched XR controller teleoperator emitting an absolute base-frame EE pose.
+    """Clutched XR controller teleoperator emitting a joint-space follower action.
 
     Reads the grip pose + squeeze + trigger off a ``ControllersSource`` rebased into the robot
-    base frame, and drives them through an in-pipeline ``SO101ClutchRetargeter``.
-    :meth:`get_action` returns the clutch-rebased absolute EE pose, the raw analog trigger, and
-    whether the clutch is engaged; the owning loop owns the gripper mapping and the safety gate.
+    base frame, and drives them through an in-pipeline ``SO101ClutchRetargeter``
+    (:meth:`_get_raw_action`, Isaac Teleop's own clutch/session/preview machinery). The public
+    :meth:`get_action` wraps that with LeRobot's IK, the command gate, hold-when-idle, and the
+    reset-to-origin slew that runs on connect and on every declutch.
 
-    Lifecycle, which the owning loop must drive:
+    The follower's kinematics come from ``robot_profiles.ROBOT_PROFILES``, keyed off
+    ``robot_config`` (see :meth:`__init__`) -- the ``--robot.*`` config from the same CLI
+    invocation, passed in by ``make_teleoperator_from_config`` since the teleoperator and the
+    robot are otherwise constructed independently.
 
-    1. :meth:`connect` builds the pipeline and opens the session. The session holds ``STOPPED``,
-       so the clutch cannot latch.
-    2. The loop waits for the headset and homes the arm, stepping this device throughout.
-    3. The loop calls :meth:`set_home_base_T_ee` with the arm's measured EE pose, then
-       :meth:`start` — which flips the session to ``RUNNING`` and allows the clutch to engage.
-
-    Holding ``STOPPED`` for steps 1-2 is a readiness interlock, not a formality: the graph is
-    stepped throughout the connect wait and the homing slew, and the operator is tracked during
-    both. Without it a squeeze while donning the headset would latch a home the arm has not
-    reached.
+    Call :meth:`send_feedback` with ``robot.get_observation()`` once per frame, BEFORE
+    :meth:`get_action` -- see the module docstring.
     """
 
     config_class = XRControllerConfig
-    name = "isaac_teleop_controller"
+    name = "isaac_teleop"
 
-    def __init__(self, config: XRControllerConfig, *, twin: Any | None = None):
+    def __init__(self, config: XRControllerConfig, *, robot_config: RobotConfig | None = None):
+        # robot_config is the --robot.* config from the same CLI invocation (see
+        # make_teleoperator_from_config): the only channel this device has to learn which
+        # follower it's driving, since the teleoperator and the robot are otherwise
+        # constructed independently. Falls back to the SO-101 profile if absent (e.g. direct
+        # construction, or a caller that hasn't been updated to pass it through).
+        if robot_config is not None:
+            profile_key = robot_profile_key(robot_config.type, getattr(robot_config, "motor_family", None))
+        else:
+            profile_key = "so101_follower"
+            logger.warning(
+                "XRController constructed without robot_config; defaulting to the %r kinematics "
+                "profile. Pass robot_config (e.g. via make_teleoperator_from_config(..., "
+                "robot_config=cfg.robot)) so this is derived from --robot.type instead.",
+                profile_key,
+            )
+        profile = ROBOT_PROFILES.get(profile_key)
+        if profile is None:
+            robot_type = robot_config.type if robot_config is not None else None
+            raise ValueError(
+                f"No RobotProfile for --robot.type={robot_type!r} (key={profile_key!r}). "
+                f"Supported: {sorted(ROBOT_PROFILES)}."
+            )
+        self._profile = profile
+
+        # Built BEFORE the base __init__: the twin creates the OpenXR session the trackers
+        # then share, so it has to exist by the time connect() assembles the TeleopSessionConfig
+        # (via the joint_publisher passed below).
+        twin = None
+        if config.robot_twin and profile.robot_twin:
+            twin = build_twin(config)
+        elif config.robot_twin:
+            logger.info("robot_type=%s: not an SO-101; running without the robot twin preview.", profile_key)
+        self._twin = twin
+
         super().__init__(config, joint_publisher=None if twin is None else twin.twin)
         self.config: XRControllerConfig = config
-        # Before connect(), so a static version mismatch is reported without first paying for the
-        # CloudXR runtime launch (and a possible interactive EULA prompt).
+        # Before connect(), so a static version mismatch is reported without first paying for
+        # attaching to the CloudXR runtime.
         _require_clutch_retargeter()
 
-        # Whether the last get_action() read a tracked controller; the owning loop polls this
-        # to wait for the operator to connect before driving the arm.
+        self._kinematics = RobotKinematics(
+            urdf_path=profile.urdf(),
+            target_frame_name=profile.ee_frame,
+            joint_names=profile.urdf_joint_names,
+        )
+        self._joint_pipeline = build_xr_joint_pipeline(profile, self._kinematics)
+        if profile.clutch_position_scale is not None:
+            self.config.clutch_position_scale = profile.clutch_position_scale
+
+        # Whether the last _get_raw_action() read a tracked controller.
         self._is_tracking = False
-        # The in-pipeline clutch, built in _build_pipeline() and retained so get_action() can read
-        # its engagement state back after each step.
+        # The in-pipeline clutch, built in _build_pipeline() and retained so _get_raw_action()
+        # can read its engagement state back after each step.
         self._retargeter: SO101ClutchRetargeter | None = None
         # Readiness interlock: STOPPED until start() is called. Never None on the wire — passing
         # None makes TeleopSession.step auto-fire RUNNING, which would defeat the interlock.
-        # Safe to name the enum here: the base __init__ above calls _require_isaacteleop(), which
-        # raises before returning when isaacteleop is absent.
         self._execution_state: ExecutionState = ExecutionState.STOPPED
-        # The arm's measured base_T_ee for this frame. CONSUMED AND CLEARED by get_action().
+        # The arm's measured base_T_ee for this frame. CONSUMED AND CLEARED by _get_raw_action().
         self._measured_base_T_ee: np.ndarray | None = None
-        # Whether set_home_base_T_ee() has run. start() refuses without it: the placeholder home
-        # is identity, and an unseeded ORIENTATION has no measured-input rescue path.
+        # Whether set_home_base_T_ee() has run. start() refuses without it.
         self._home_seeded = False
 
-        # Isaac Teleop's own ClutchPreview, built in connect() once the graph exists (it
-        # binds to the clutch retargeter). None when there is no twin to drive.
-        self._twin = twin
         self._preview: Any = None
-        # anchor_T_base and its inverse, from the config's static rebase. The graph runs in
-        # the anchor frame; these carry the arm's measured pose in and the commanded pose
-        # back out. See the module docstring on why that is equivalent.
         # The rebase fed to the graph each step. Its yaw is measured off the preview arm
         # while disengaged and frozen through the engagement; until then it is the axis
         # convention from the config and nothing more.
         self._frame = OperatorFrame(np.asarray(config.base_T_anchor, dtype=np.float64))
         self._was_engaged = False
         self._clock: float | None = None
+
+        # -- get_action()'s own state: gate, hold, IK pipeline reset edge, reset-to-origin --
+        # The follower's measured joints, from the last send_feedback() call.
+        self._last_observed: dict[str, float] | None = None
+        # The last joint-space action get_action() returned; held while idle.
+        self._last_commanded: dict[str, float] | None = None
+        # Whether the joint pipeline (EEBoundsAndSafety's rate limiter, the IK warm start) was
+        # anchored for the CURRENT engagement; re-anchored on every engage edge.
+        self._pipeline_was_engaged = False
+        # Armed on the first engaged frame of a segment; a segment that starts disengaged is
+        # not treated as an immediate declutch. Mirrors the example's DeclutchLatch.
+        self._declutch_armed = False
+        # Set on declutch, consumed (and cleared) by get_teleop_events() -- the episode
+        # boundary lerobot_record.py's record_loop polls for.
+        self._episode_boundary_pending = False
+        # Reset-to-origin state (see _start_reset/_step_reset/_finish_reset).
+        self._resetting = False
+        self._reset_start_pose: dict[str, float] | None = None
+        self._reset_start_time: float | None = None
+        self._reset_target: dict[str, float] | None = None
 
     # ------------------------------------------------------------------
     # Pipeline construction
@@ -301,8 +332,8 @@ class XRController(IsaacTeleopTeleoperator):
 
         Everything runs in the **XR anchor frame** -- there is no ``ControllerTransform``
         rebase node, because ``ClutchPreview`` places its arm and ghost through
-        ``viz.robot.frames`` and so requires that frame. :meth:`get_action` rebases the one
-        pose LeRobot's IK consumes on the way out.
+        ``viz.robot.frames`` and so requires that frame. :meth:`_get_raw_action` rebases the
+        one pose LeRobot's IK consumes on the way out.
 
         ``ControllerPoseSource`` is a parallel branch rather than a link in the clutch's
         chain: its Optional output is the only tracking-validity oracle in the graph. The
@@ -393,6 +424,9 @@ class XRController(IsaacTeleopTeleoperator):
             # (a live session behind a raised connect would leak the CloudXR runtime).
             self.disconnect()
             raise
+        # Readiness interlock: seed the clutch home and re-home on every declutch. See
+        # _start_reset()/_step_reset(); get_action() drains this before doing anything else.
+        self._start_reset()
 
     def disconnect(self) -> None:
         self._execution_state = ExecutionState.STOPPED
@@ -402,17 +436,23 @@ class XRController(IsaacTeleopTeleoperator):
         self._home_seeded = False
         self._was_engaged = False
         self._clock = None
+        self._last_observed = None
+        self._last_commanded = None
+        self._pipeline_was_engaged = False
+        self._declutch_armed = False
+        self._episode_boundary_pending = False
+        self._resetting = False
+        self._reset_start_pose = None
+        self._reset_start_time = None
+        self._reset_target = None
         super().disconnect()
 
     # ------------------------------------------------------------------
-    # Readiness interlock and per-frame inputs (driven by the owning loop)
+    # Readiness interlock and per-frame inputs
     # ------------------------------------------------------------------
 
     def start(self) -> None:
         """Flip the session to ``RUNNING``, allowing the clutch to engage on a squeeze.
-
-        Call once the arm is at its home pose and :meth:`set_home_base_T_ee` has been given that
-        pose. Before this, squeezing does nothing. Takes effect on the next :meth:`get_action`.
 
         Raises:
             RuntimeError: If :meth:`set_home_base_T_ee` has not been called. The placeholder home
@@ -431,55 +471,29 @@ class XRController(IsaacTeleopTeleoperator):
         self._execution_state = ExecutionState.RUNNING
 
     def stop(self) -> None:
-        """Return the session to ``STOPPED``, disengaging the clutch and re-arming its latch.
-
-        Takes effect on the next :meth:`get_action`; the value reported by ``get_action`` still
-        reflects the last computed frame until then.
-        """
+        """Return the session to ``STOPPED``, disengaging the clutch and re-arming its latch."""
         self._execution_state = ExecutionState.STOPPED
 
     def set_home_base_T_ee(self, base_T_ee: np.ndarray) -> None:  # noqa: N802, N803  (frameA_T_frameB convention)
         """Seed the clutch's held pose from the arm's measured ``base_T_ee`` [m].
 
-        The retargeting graph is built in :meth:`connect`, long before the arm has been homed, so
-        the retargeter starts on an identity placeholder. **Call this while the clutch is not
-        engaged** -- in practice before :meth:`start`, while the session still holds ``STOPPED``
-        and latching is impossible, which makes the ordering unambiguous: the new home takes
-        effect before the first ``RUNNING`` frame. Calling it later re-arms the clutch's pending
-        latch rather than jumping the arm, but is not the intended use.
+        **Call this while the clutch is not engaged** -- in practice before :meth:`start`, while
+        the session still holds ``STOPPED`` and latching is impossible.
 
         Raises:
             RuntimeError: If not connected.
         """
         if not self.is_connected or self._retargeter is None:
             raise RuntimeError("Not connected. Call connect() first.")
-        # Into the anchor frame the graph runs in. The clutch's algebra is equivariant under
-        # this rebase, so seeding here and rebasing the output back out is exactly the same
-        # command as rebasing the controller on the way in.
-        # No conversion: the clutch consumes a controller already rebased into the robot's
-        # frame, so its home is in that frame too, and a moving rebase never touches it.
         self._retargeter.set_home_base_T_ee(np.asarray(base_T_ee, dtype=np.float64))
         self._home_seeded = True
 
     def set_measured_base_T_ee(self, base_T_ee: np.ndarray) -> None:  # noqa: N802, N803  (frameA_T_frameB convention)
-        """Supply the arm's measured ``base_T_ee`` [m] for the NEXT :meth:`get_action` only.
+        """Supply the arm's measured ``base_T_ee`` [m] for the NEXT :meth:`_get_raw_action` only.
 
         The clutch latches its home *position* from this on the engage frame, so an arm that
-        sagged or was pushed while disengaged is not commanded back to a stale target. The home
-        orientation is never taken from it.
-
-        The value is **consumed and cleared** by :meth:`get_action`. That is deliberate: a value
-        that persisted would silently feed a stale forward-kinematics result forever the day the
-        loop stopped calling this, whereas consume-on-read makes "stale by one frame"
-        unrepresentable — the pose is either this frame's or absent, and absent lands on the
-        retargeter's documented last-commanded fallback.
-
-        No timestamp travels with the pose, and none is checked. "This frame" therefore means the
-        caller's frame, not the retargeting graph's: on a ``frame_deadline_miss``
-        (see ``base.py``'s stale-frame warning) the clutch can latch its home off forward
-        kinematics that is one or two frames — roughly 33–66 ms at 30 Hz — old. At clutch speeds
-        that is a small position error on the engage frame, not a stability problem, so it is
-        recorded rather than mechanised.
+        sagged or was pushed while disengaged is not commanded back to a stale target. The value
+        is **consumed and cleared** on read -- see the example this was ported from for why.
         """
         self._measured_base_T_ee = np.asarray(base_T_ee, dtype=np.float64)
 
@@ -493,12 +507,6 @@ class XRController(IsaacTeleopTeleoperator):
         The correspondence is the **preview arm's base against the real arm's base**, the
         one pair the operator can see both of: turn the wrist until the virtual arm is
         parallel to the real one, then squeeze.
-
-        Not the aim ray against the jaw, which was tried first and is degenerate by
-        construction -- the preview's ``base_yaw_bias`` exists precisely to keep its JAW
-        pointing where the controller does, so the aim ray carries no information about the
-        arm's heading. And with ``shoulder_pan`` near zero an SO-101's jaw sits within a few
-        degrees of base +X, so the measured yaw collapsed to nothing.
         """
         if self._twin is None:
             return None, None
@@ -518,63 +526,34 @@ class XRController(IsaacTeleopTeleoperator):
     def engageable(self) -> bool:
         """Whether the clutch would latch on a squeeze right now, as of the last frame.
 
-        ``True`` throughout an engagement as well -- it is the gate's own ``engaged or
-        aligned``, which is what an affordance should say: *the clutch is yours*. Always
-        ``True`` without a preview, so a caller needs no second branch. The preview already
-        paints this onto the arm; the property is for anything else that wants to know.
+        Always ``True`` without a preview, so a caller needs no second branch.
         """
         return True if self._twin is None else bool(self._twin.gate.permitted)
 
     # ------------------------------------------------------------------
-    # Action features
+    # Action / feedback features
     # ------------------------------------------------------------------
 
     @property
     def action_features(self) -> dict:
-        return {
-            "ee_pose": {
-                "dtype": "float32",
-                "shape": (7,),
-                "names": {"x": 0, "y": 1, "z": 2, "qx": 3, "qy": 4, "qz": 5, "qw": 6},
-            },
-            # ``get_action`` returns a scalar for this, so the advertised shape is () (0-d)
-            # to stay consistent with the returned value.
-            "trigger": {
-                "dtype": "float32",
-                "shape": (),
-                "names": None,
-            },
-            "engaged": {
-                "dtype": "bool",
-                "shape": (),
-                "names": None,
-            },
-            # Returned per-frame as well as via the :attr:`is_tracking` property, so that both
-            # halves of the command gate travel in one object and omitting one is not possible.
-            "is_tracking": {
-                "dtype": "bool",
-                "shape": (),
-                "names": None,
-            },
-        }
+        return {f"{name}.pos": float for name in self._profile.motor_names}
 
     @property
     def feedback_features(self) -> dict:
-        return {}
+        return {f"{name}.pos": float for name in self._profile.motor_names}
 
     @property
     def is_tracking(self) -> bool:
-        """Whether the last :meth:`get_action` read a tracked controller. ``False`` until the
-        headset is connected over CloudXR and its controllers are live; the owning loop polls
-        it to wait for the operator before commanding the arm."""
+        """Whether the last :meth:`_get_raw_action` read a tracked controller."""
         return self._is_tracking
 
     # ------------------------------------------------------------------
-    # Action extraction
+    # Raw action extraction (Isaac Teleop's clutch/session/preview -- unchanged from the
+    # standalone example; get_action() below is the only new consumer of this.)
     # ------------------------------------------------------------------
 
-    def get_action(self) -> RobotAction:
-        """Drive the preview and the graph one frame, and return the EE target.
+    def _get_raw_action(self) -> RobotAction:
+        """Drive the preview and the graph one frame, and return the raw EE target.
 
         The frame order is ``robot_viz``'s, and the whole of it lives in ``ClutchPreview``:
         ``before_step`` anchors the arm to the head and emits the engage-permission leaf,
@@ -594,9 +573,7 @@ class XRController(IsaacTeleopTeleoperator):
         Returns:
             ``{"ee_pose": (7,), "trigger": float, "engaged": bool, "is_tracking": bool}``,
             with ``ee_pose`` in the robot base frame and ``trigger`` the in-graph gripper
-            closedness (the same scalar that swings the ghost's jaw). **The command gate is
-            the conjunction** ``engaged and is_tracking``; both are returned together so
-            omitting one is not possible.
+            closedness (the same scalar that swings the ghost's jaw).
         """
         now = time.perf_counter()
         dt = 1.0 / 30.0 if self._clock is None else max(1e-4, now - self._clock)
@@ -679,3 +656,187 @@ class XRController(IsaacTeleopTeleoperator):
             "engaged": engaged,
             "is_tracking": self._is_tracking,
         }
+
+    # ------------------------------------------------------------------
+    # Measured-pose feedback (see the module docstring)
+    # ------------------------------------------------------------------
+
+    def send_feedback(self, feedback: dict[str, Any]) -> None:
+        """Cache the follower's measured joints, from ``robot.get_observation()``.
+
+        :meth:`get_action` needs this every frame for the clutch's engage-edge homing (see
+        :meth:`set_measured_base_T_ee`) and for the reset-to-origin slew's IK seed and
+        interpolation start. Filters to this device's own ``robot_profile`` joints; extra keys
+        (cameras, a different robot's motors) are ignored.
+        """
+        self._last_observed = {
+            name: float(feedback[f"{name}.pos"])
+            for name in self._profile.motor_names
+            if f"{name}.pos" in feedback
+        }
+        if len(self._last_observed) != len(self._profile.motor_names):
+            # Partial observation (e.g. the follower's motors don't match this profile) --
+            # not enough to FK or slew from. Treat as "no observation yet".
+            self._last_observed = None
+
+    def _fk(self, joints: dict[str, float]) -> np.ndarray:
+        q = np.array([joints[name] for name in self._profile.motor_names], dtype=float)
+        return self._kinematics.forward_kinematics(q)
+
+    # ------------------------------------------------------------------
+    # get_action(): gate, IK, hold-when-idle, reset-to-origin/declutch (embeds what the
+    # standalone example did in teleoperate.py/record.py/common.py).
+    # ------------------------------------------------------------------
+
+    def _step_session(self) -> RobotAction:
+        """Feed the current measured pose in, then step the raw session one frame."""
+        if self._last_observed is not None:
+            self.set_measured_base_T_ee(self._fk(self._last_observed))
+        return self._get_raw_action()
+
+    def _start_reset(self) -> None:
+        """Begin the reset-to-origin slew (or an in-place re-home if ``reset_to_origin=False``).
+
+        Runs on connect and on every declutch. Holds the session ``STOPPED`` throughout: a
+        squeeze mid-reset must not latch the clutch against a home the arm has not reached.
+        """
+        self.stop()
+        self._resetting = True
+        self._reset_start_pose = None  # captured lazily in _step_reset(), once observed
+        self._reset_start_time = None
+        self._reset_target = None
+        # Re-arm the engage edge: the rate limiter still references the pre-reset command.
+        self._pipeline_was_engaged = False
+
+    def _step_reset(self) -> RobotAction:
+        """One frame of the reset-to-origin slew.
+
+        Always steps the raw session (STOPPED, so the clutch cannot latch) so tracking/preview
+        state stays live. Interpolates in wall-clock time rather than a fixed step count, so it
+        is invariant to the caller's ``--fps``.
+        """
+        self._step_session()
+
+        if self._last_observed is None:
+            # No measured pose yet: nothing to interpolate from or seed the clutch with.
+            return self._hold()
+
+        if self._reset_start_pose is None:
+            self._reset_start_pose = dict(self._last_observed)
+            self._reset_start_time = time.perf_counter()
+            self._reset_target = {
+                name: self._profile.reset_pose.get(name, self._reset_start_pose.get(name, 0.0))
+                for name in self._profile.motor_names
+            }
+
+        if self.config.reset_to_origin:
+            elapsed = time.perf_counter() - self._reset_start_time
+            alpha = min(1.0, elapsed / max(self.config.reset_duration, 1e-6))
+        else:
+            alpha = 1.0  # re-home in place, no motion
+
+        # Bare joint names for FK; robot.send_action() (like every other teleoperator's
+        # get_action()) needs the ".pos"-suffixed action-feature convention instead.
+        joints = {
+            name: self._reset_start_pose[name]
+            + alpha * (self._reset_target[name] - self._reset_start_pose[name])
+            for name in self._profile.motor_names
+        }
+        action = {f"{name}.pos": value for name, value in joints.items()}
+        self._last_commanded = action
+
+        if alpha >= 1.0:
+            self._resetting = False
+            self.set_home_base_T_ee(self._fk(joints))
+            self.start()
+
+        return action
+
+    def _hold(self) -> RobotAction:
+        """Hold the last commanded pose while idle.
+
+        Re-sending the freshly measured joints instead would ratchet the arm downward: under
+        gravity a P-only servo settles below its goal by a steady-state error, so each
+        re-command of the measurement would lower the goal by that error again. Falls back to
+        the measured pose before any command has been sent (right after connect()).
+        """
+        if self._last_commanded is not None:
+            return dict(self._last_commanded)
+        if self._last_observed is not None:
+            # _last_observed is keyed by bare joint name (see send_feedback); the action-feature
+            # convention (and robot.send_action()) needs the ".pos" suffix.
+            return {f"{name}.pos": value for name, value in self._last_observed.items()}
+        raise RuntimeError(
+            "XRController.get_action() called before any observation arrived via send_feedback(); "
+            "the owning script must call send_feedback(robot.get_observation()) once per frame, "
+            "before get_action()."
+        )
+
+    def get_teleop_events(self) -> dict[TeleopEvents, bool]:
+        """Report the declutch-ends-episode signal via the standard ``TeleopEvents`` protocol.
+
+        Mirrors ``GamepadTeleop``/``KeyboardEndEffectorTeleop``. ``lerobot_record.py``'s
+        ``record_loop`` polls this each frame; a declutch is reported once as
+        ``TERMINATE_EPISODE`` and cleared here, so it is seen exactly once regardless of polling
+        rate.
+        """
+        pending = self._episode_boundary_pending
+        self._episode_boundary_pending = False
+        return {
+            TeleopEvents.IS_INTERVENTION: self._last_commanded is not None,
+            TeleopEvents.TERMINATE_EPISODE: pending,
+            TeleopEvents.SUCCESS: False,
+            TeleopEvents.RERECORD_EPISODE: False,
+        }
+
+    def get_action(self) -> RobotAction:
+        """Return a joint-space action for the configured ``robot_profile``.
+
+        Composes, every frame: the reset-to-origin slew (see :meth:`_start_reset`), the command
+        gate (clutch engaged AND controller tracked), LeRobot's EE->joint IK, and the
+        hold-when-idle latch -- so the caller can just do
+        ``robot.send_action(teleop.get_action())`` like any other teleoperator.
+        """
+        if self._resetting:
+            return self._step_reset()
+
+        raw = self._step_session()
+        engaged = bool(raw["engaged"])
+
+        if engaged:
+            self._declutch_armed = True
+        elif self._declutch_armed:
+            # Declutch: end the segment and re-home. The example's DeclutchLatch, inlined.
+            self._declutch_armed = False
+            self._episode_boundary_pending = True
+            self._start_reset()
+            return self._step_reset()
+
+        if self._profile.home_orientation_from_measured and not engaged and self._last_observed is not None:
+            # Re-home the clutch's ORIENTATION off the live pose while disengaged, so an arm
+            # that sags there does not have the sag reconciled in one frame on the next engage.
+            # Per-arm (see RobotProfile.home_orientation_from_measured): only safe where
+            # measured-minus-commanded is sag alone.
+            self.set_home_base_T_ee(self._fk(self._last_observed))
+
+        if engaged and not self._pipeline_was_engaged:
+            # Re-anchor the pipeline at the measured pose: EEBoundsAndSafety's rate limiter and
+            # the IK warm start otherwise still reference the stale pre-disengage command.
+            self._joint_pipeline.reset()
+        self._pipeline_was_engaged = engaged
+
+        gated = engaged and bool(raw["is_tracking"]) and self._last_observed is not None
+        if not gated:
+            return self._hold()
+
+        ee_action = {
+            "ee_pose": np.asarray(raw["ee_pose"], dtype=np.float32),
+            "closedness": float(raw["trigger"]),
+        }
+        # _last_observed is keyed by bare joint name (see send_feedback); the joint pipeline's
+        # IK step reads its ".pos"-suffixed seed straight off the raw observation convention
+        # (like robot.get_observation()'s own keys), so it needs the suffix restored here too.
+        obs_for_pipeline = {f"{name}.pos": value for name, value in self._last_observed.items()}
+        action = self._joint_pipeline((ee_action, obs_for_pipeline))
+        self._last_commanded = dict(action)
+        return action
