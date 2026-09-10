@@ -197,6 +197,34 @@ def test_depth_frame_not_color_converted(img_array_factory):
     np.testing.assert_array_equal(camera._postprocess_image(depth, depth_frame=True), depth)
 
 
+@pytest.mark.parametrize(
+    ("depth_units_m", "raw_depth", "expected_mm"),
+    [
+        (0.001, [[0, 1, 1234]], [[0, 1, 1234]]),
+        (0.0001, [[0, 1, 1294]], [[0, 0, 129]]),
+    ],
+)
+def test_depth_frame_values_are_normalized_to_millimeters(depth_units_m, raw_depth, expected_mm):
+    depth_frame = MagicMock()
+    depth_frame.get_units.return_value = depth_units_m
+    depth_frame.get_data.return_value = np.asarray(raw_depth, dtype=np.uint16)
+
+    depth_mm = RealSenseCamera._depth_frame_to_millimeters(depth_frame)
+
+    assert depth_mm.dtype == np.uint16
+    np.testing.assert_array_equal(depth_mm, np.asarray(expected_mm, dtype=np.uint16))
+
+
+@pytest.mark.parametrize("depth_units_m", [0.0, -0.001, float("nan"), float("inf")])
+def test_depth_frame_rejects_invalid_depth_scale(depth_units_m):
+    depth_frame = MagicMock()
+    depth_frame.get_units.return_value = depth_units_m
+    depth_frame.get_data.return_value = np.zeros((1, 1), dtype=np.uint16)
+
+    with pytest.raises(RuntimeError, match="Invalid RealSense depth scale"):
+        RealSenseCamera._depth_frame_to_millimeters(depth_frame)
+
+
 def test_read_before_connect():
     config = RealSenseCameraConfig(serial_number_or_name="042")
     camera = RealSenseCamera(config)
