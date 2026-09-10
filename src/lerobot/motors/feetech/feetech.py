@@ -40,6 +40,16 @@ if TYPE_CHECKING or _feetech_sdk_available:
 else:
     scs = None
 
+try:
+    import serial
+except ImportError:
+    serial = None  # type: ignore[assignment]
+
+try:
+    import termios as _termios
+except ImportError:
+    _termios = None
+
 DEFAULT_PROTOCOL_VERSION = 0
 DEFAULT_BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT_MS = 1000
@@ -170,7 +180,12 @@ class FeetechMotorsBus(SerialMotorsBus):
         expected_model_nb = self.model_number_table[model]
 
         for baudrate in search_baudrates:
-            self.set_baudrate(baudrate)
+            try:
+                self.set_baudrate(baudrate)
+            except Exception as e:
+                if self._skip_unsupported_baudrate(e):
+                    continue
+                raise
             id_model = self.broadcast_ping()
             if id_model:
                 found_id, found_model = next(iter(id_model.items()))
@@ -192,7 +207,12 @@ class FeetechMotorsBus(SerialMotorsBus):
         expected_model_nb = self.model_number_table[model]
 
         for baudrate in search_baudrates:
-            self.set_baudrate(baudrate)
+            try:
+                self.set_baudrate(baudrate)
+            except Exception as e:
+                if self._skip_unsupported_baudrate(e):
+                    continue
+                raise
             for id_ in range(scs.MAX_ID + 1):
                 found_model = self.ping(id_)
                 if found_model is not None:
