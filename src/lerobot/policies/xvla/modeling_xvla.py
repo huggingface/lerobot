@@ -18,23 +18,22 @@
 
 from __future__ import annotations
 
-import builtins
 import logging
-import os
 import re
 from collections import deque
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import torch
+from safetensors.torch import load_file
 from torch import Tensor, nn
 
-from lerobot.configs import PreTrainedConfig
+from lerobot.policies.utils import log_model_loading_keys
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS, OBS_STATE
+from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..common.vla_utils import pad_vector, resize_with_pad
-from ..pretrained import PreTrainedPolicy, T
+from ..pretrained import PreTrainedPolicy
 from ..utils import populate_queues
 from .action_hub import build_action_space
 from .configuration_xvla import XVLAConfig
@@ -108,22 +107,6 @@ class XVLAModel(nn.Module):
 
         # Apply freezing based on config
         self._apply_freezing()
-
-        # Apply dtype casting based on config
-        self._apply_dtype()
-
-    def _get_target_dtype(self) -> torch.dtype:
-        """Get the target dtype based on config."""
-        if self.config.dtype == "bfloat16":
-            return torch.bfloat16
-        return torch.float32
-
-    def _apply_dtype(self) -> None:
-        """
-        Apply dtype casting to model components based on config.
-        """
-        target_dtype = self._get_target_dtype()
-        self.to(dtype=target_dtype)
 
     def _apply_freezing(self) -> None:
         """
@@ -207,7 +190,7 @@ class XVLAModel(nn.Module):
         """
         Forward pass for the XVLA model.
         """
-        target_dtype = self._get_target_dtype()
+        target_dtype = next(self.transformer.parameters()).dtype
         image_input = image_input.to(dtype=target_dtype)
         proprio = proprio.to(dtype=target_dtype)
         action = action.to(dtype=target_dtype)
@@ -244,7 +227,7 @@ class XVLAModel(nn.Module):
     ) -> torch.Tensor:
         self.eval()
 
-        target_dtype = self._get_target_dtype()
+        target_dtype = next(self.transformer.parameters()).dtype
         image_input = image_input.to(dtype=target_dtype)
         proprio = proprio.to(dtype=target_dtype)
 
@@ -284,6 +267,7 @@ class XVLAPolicy(PreTrainedPolicy):
         florence_config = config.get_florence_config()
         proprio_dim = config.max_state_dim if config.use_proprio else 0
         self.model = XVLAModel(config=config, florence_config=florence_config, proprio_dim=proprio_dim)
+        self.post_init()
         self.reset()
 
     def reset(self) -> None:
@@ -421,73 +405,8 @@ class XVLAPolicy(PreTrainedPolicy):
         return self._queues[ACTION].popleft()
 
     @classmethod
-    def from_pretrained(
-        cls: builtins.type[T],
-        pretrained_name_or_path: str | Path,
-        *,
-        config: PreTrainedConfig | None = None,
-        force_download: bool = False,
-        resume_download: bool | None = None,
-        proxies: dict | None = None,
-        token: str | bool | None = None,
-        cache_dir: str | Path | None = None,
-        local_files_only: bool = False,
-        revision: str | None = None,
-        strict: bool = False,
-        **kwargs,
-    ):
-        """
-        Loads XVLA model weights with:
-        - automatic prefix 'model.' added to all keys
-        - skip list for layers that should remain randomly initialized
-        """
-        import safetensors.torch
-
-        # step 1: load config
-        # TODO: jadechoghari, fix this
-        if config is None:
-            config = PreTrainedConfig.from_pretrained(
-                pretrained_name_or_path=pretrained_name_or_path,
-                force_download=force_download,
-                resume_download=resume_download,
-                proxies=proxies,
-                token=token,
-                cache_dir=cache_dir,
-                local_files_only=local_files_only,
-                revision=revision,
-                **kwargs,
-            )
-
-        model_id = str(pretrained_name_or_path)
-        instance = cls(config, **kwargs)
-        # step 2: locate model.safetensors
-        if os.path.isdir(model_id):
-            logging.info("Loading weights from local directory")
-            model_file = os.path.join(model_id, "model.safetensors")
-        else:
-            try:
-                from huggingface_hub import hf_hub_download
-                from huggingface_hub.utils import HfHubHTTPError
-
-                model_file = hf_hub_download(
-                    repo_id=model_id,
-                    filename="model.safetensors",
-                    revision=revision,
-                    cache_dir=cache_dir,
-                    force_download=force_download,
-                    proxies=proxies,
-                    resume_download=resume_download,
-                    token=token,
-                    local_files_only=local_files_only,
-                )
-            except HfHubHTTPError as e:
-                raise FileNotFoundError(f"model.safetensors not found on the Hub at {model_id}") from e
-
-        logging.info(f"Loading checkpoint from {model_file}")
-        # step 3: load state dict, remapping checkpoints saved with the old vendored
-        # Florence-2 module layout to the native transformers layout
-        # (see openpi model.py `_fix_pytorch_state_dict_keys` / pi0 for the same pattern)
-        state_dict = safetensors.torch.load_file(model_file)
+    def _load_as_safetensor(cls, model, model_file: str, map_location: str, strict: bool):
+        state_dict = load_file(model_file, device=resolve_safetensors_device(map_location))
         if _is_vendored_florence_state_dict(state_dict):
             logging.info(
                 "Detected XVLA checkpoint with the old vendored Florence-2 layout; "
@@ -502,15 +421,8 @@ class XVLAPolicy(PreTrainedPolicy):
             state_dict[embed_key] = state_dict[shared_key]
         elif embed_key in state_dict and shared_key not in state_dict:
             state_dict[shared_key] = state_dict[embed_key]
-        # step 4: load into instance
-        instance.load_state_dict(state_dict, strict=True)
-        logging.info("Loaded XVLA checkpoint")
-        # step 5: finalize
-        # Reapply dtype after loading state dict
-        instance.model._apply_dtype()
-        instance.to(config.device)
-        instance.eval()
-        return instance
+        log_model_loading_keys(*model.load_state_dict(state_dict, strict=strict))
+        return model
 
 
 def _is_vendored_florence_state_dict(state_dict: dict[str, Tensor], prefix: str = "model.vlm.") -> bool:

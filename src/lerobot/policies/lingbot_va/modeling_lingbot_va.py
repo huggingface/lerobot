@@ -48,7 +48,6 @@ from .utils import (
     WanTransformer3DModel,
     WanVAEStreamingWrapper,
     _sample_timestep_id,
-    _torch_dtype,
     clean_prompt,
     data_seq_to_patch,
     denormalize_latents,
@@ -72,8 +71,6 @@ class LingBotVAPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
-        self.dtype = _torch_dtype(config.dtype)
-
         # Trainable dual-stream transformer (the only sub-module saved in the LeRobot checkpoint).
         self.transformer = WanTransformer3DModel(
             patch_size=tuple(config.patch_size),
@@ -91,8 +88,6 @@ class LingBotVAPolicy(PreTrainedPolicy):
             rope_max_seq_len=config.rope_max_seq_len,
             attn_mode=config.attn_mode,
         )
-        # Run the transformer in config.dtype (bf16); norm/modulation paths upcast to fp32 internally.
-        self.transformer = self.transformer.to(self.dtype)
 
         # Frozen modules are stored OUTSIDE the nn.Module registry (plain dict) so they are
         # neither saved into model.safetensors nor moved by ``.to()``. They are lazily loaded
@@ -101,6 +96,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
 
         self.last_predicted_frames: Tensor | None = None
         self.last_predicted_latents: Tensor | None = None
+        self.post_init()
         self.reset()
 
     # Frozen-module lazy loading (VAE + UMT5 + tokenizer)
@@ -114,12 +110,12 @@ class LingBotVAPolicy(PreTrainedPolicy):
         # sub-folders -- both in the released diffusers-style HF repos and in the local
         # ``--bundle-frozen`` output dir. ``from_pretrained(path, subfolder=...)`` resolves
         # them for either a HF repo id or a local directory.
-        vae = load_vae(path, torch_dtype=self.dtype, torch_device=device, subfolder="vae")
+        vae = load_vae(path, dtype=self.dtype, torch_device=device, subfolder="vae")
         # The UMT5-XXL text encoder (~11 GB) runs once per episode; keep it on its own
         # (CPU by default) device so the 5B transformer + VAE fit on a single GPU.
         text_encoder = load_text_encoder(
             path,
-            torch_dtype=self.dtype,
+            dtype=self.dtype,
             torch_device=self.config.text_encoder_device,
             subfolder="text_encoder",
         )
@@ -133,7 +129,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         # RoboTwin's T-shape layout encodes the half-resolution wrist cameras through a second
         # streaming VAE (separate causal cache) alongside the full-res head camera.
         if self.config.camera_layout == "robotwin_tshape":
-            vae_half = load_vae(path, torch_dtype=self.dtype, torch_device=device, subfolder="vae")
+            vae_half = load_vae(path, dtype=self.dtype, torch_device=device, subfolder="vae")
             self._frozen["streaming_vae_half"] = WanVAEStreamingWrapper(vae_half.eval())
 
     @property

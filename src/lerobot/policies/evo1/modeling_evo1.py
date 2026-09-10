@@ -42,6 +42,11 @@ class Evo1Policy(PreTrainedPolicy):
     config_class = Evo1Config
     name = "evo1"
 
+    _fp32_modules = (
+        "model.action_head",
+        "model.embedder.model.language_model.rotary_emb",
+    )
+
     def supports_rtc(self) -> bool:
         return True
 
@@ -59,6 +64,8 @@ class Evo1Policy(PreTrainedPolicy):
         self.model.set_finetune_flags()
         self._keep_frozen_embedder_eval()
         self.init_rtc_processor()
+        self.post_init()
+        self.model.to(config.device)
         self.reset()
 
     def init_rtc_processor(self):

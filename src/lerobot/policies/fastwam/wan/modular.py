@@ -839,7 +839,7 @@ class FastWAM(torch.nn.Module):
         text_dim: int | None = None,
         proprio_dim: int | None = None,
         device: str = "cpu",
-        torch_dtype: torch.dtype = torch.float32,
+        dtype: torch.dtype = torch.float32,
         video_train_shift: float = 5.0,
         video_infer_shift: float = 5.0,
         video_num_train_timesteps: int = 1000,
@@ -883,7 +883,7 @@ class FastWAM(torch.nn.Module):
         self.text_dim = int(text_dim)
         self.proprio_dim = None if proprio_dim is None else int(proprio_dim)
         if self.proprio_dim is not None:
-            self.proprio_encoder = nn.Linear(self.proprio_dim, self.text_dim).to(torch_dtype)
+            self.proprio_encoder = nn.Linear(self.proprio_dim, self.text_dim).to(dtype)
         else:
             self.proprio_encoder = None
 
@@ -907,18 +907,24 @@ class FastWAM(torch.nn.Module):
         self.train_scheduler = self.train_video_scheduler
         self.infer_scheduler = self.infer_video_scheduler
 
-        self.device = torch.device(device)
-        self.torch_dtype = torch_dtype
         self.loss_lambda_video = float(loss_lambda_video)
         self.loss_lambda_action = float(loss_lambda_action)
 
-        self.to(self.device)
+        self.to(device)
+
+    @property
+    def device(self) -> torch.device:
+        return next(self.mot.parameters()).device
+
+    @property
+    def dtype(self) -> torch.dtype:
+        return next(self.mot.parameters()).dtype
 
     @classmethod
     def from_wan22_pretrained(
         cls,
         device: str = "cuda",
-        torch_dtype: torch.dtype = torch.bfloat16,
+        dtype: torch.dtype = torch.bfloat16,
         model_id: str = "Wan-AI/Wan2.2-TI2V-5B",
         tokenizer_model_id: str = WAN_T5_TOKENIZER,
         text_encoder_model_id: str = WAN22_DIFFUSERS_MODEL_ID,
@@ -948,10 +954,10 @@ class FastWAM(torch.nn.Module):
         video_expert = load_wan_video_dit(
             resolve_wan_dit_paths(model_id),
             dit_config=video_dit_config,
-            torch_dtype=torch_dtype,
+            dtype=dtype,
             device=device,
         )
-        action_expert = ActionDiT(**action_dit_config).to(device=device, dtype=torch_dtype)
+        action_expert = ActionDiT(**action_dit_config).to(device=device, dtype=dtype)
         if int(action_expert.num_heads) != int(video_expert.num_heads):
             raise ValueError("ActionDiT `num_heads` must match video expert for MoT mixed attention.")
         if int(action_expert.attn_head_dim) != int(video_expert.attn_head_dim):
@@ -964,11 +970,9 @@ class FastWAM(torch.nn.Module):
             mot_checkpoint_mixed_attn=mot_checkpoint_mixed_attn,
         )
 
-        vae = load_pretrained_wan_vae(torch_dtype=torch_dtype, device=device)
+        vae = load_pretrained_wan_vae(dtype=dtype, device=device)
         text_encoder = (
-            load_pretrained_wan_text_encoder(
-                model_id=text_encoder_model_id, torch_dtype=torch_dtype, device=device
-            )
+            load_pretrained_wan_text_encoder(model_id=text_encoder_model_id, dtype=dtype, device=device)
             if load_text_encoder
             else None
         )
@@ -984,7 +988,7 @@ class FastWAM(torch.nn.Module):
             text_dim=int(video_dit_config["text_dim"]),
             proprio_dim=proprio_dim,
             device=device,
-            torch_dtype=torch_dtype,
+            dtype=dtype,
             video_train_shift=video_train_shift,
             video_infer_shift=video_infer_shift,
             video_num_train_timesteps=video_num_train_timesteps,
@@ -1160,7 +1164,7 @@ class FastWAM(torch.nn.Module):
                     f"got {tuple(image_is_pad.shape)} vs expected ({batch_size}, {num_frames})"
                 )
 
-        input_video = video.to(device=self.device, dtype=self.torch_dtype, non_blocking=True)
+        input_video = video.to(device=self.device, dtype=self.dtype, non_blocking=True)
         input_latents = self._encode_video_latents(input_video, tiled=tiled)
 
         first_frame_latents = None
@@ -1173,7 +1177,7 @@ class FastWAM(torch.nn.Module):
             raise ValueError(
                 f"`context/context_mask` must be [B,L,D]/[B,L], got {tuple(context.shape)} and {tuple(context_mask.shape)}"
             )
-        context = context.to(device=self.device, dtype=self.torch_dtype, non_blocking=True)
+        context = context.to(device=self.device, dtype=self.dtype, non_blocking=True)
         context_mask = context_mask.to(device=self.device, dtype=torch.bool, non_blocking=True)
         if self.proprio_encoder is not None:
             if proprio is None:
@@ -1190,9 +1194,9 @@ class FastWAM(torch.nn.Module):
             context, context_mask = self._append_proprio_to_context(
                 context=context,
                 context_mask=context_mask,
-                proprio=proprio.to(device=self.device, dtype=self.torch_dtype),
+                proprio=proprio.to(device=self.device, dtype=self.dtype),
             )
-        action = action.to(device=self.device, dtype=self.torch_dtype, non_blocking=True)
+        action = action.to(device=self.device, dtype=self.dtype, non_blocking=True)
 
         if action_is_pad is not None:
             action_is_pad = action_is_pad.to(device=self.device, dtype=torch.bool, non_blocking=True)
@@ -1616,7 +1620,7 @@ class FastWAM(torch.nn.Module):
             raise ValueError(f"`proprio` must be [D] or [1,D], got shape {tuple(proprio.shape)}")
         if proprio.shape[1] != self.proprio_dim:
             raise ValueError(f"`proprio` last dim must be {self.proprio_dim}, got {proprio.shape[1]}")
-        return proprio.to(device=self.device, dtype=self.torch_dtype)
+        return proprio.to(device=self.device, dtype=self.dtype)
 
     def _prepare_infer_context(self, prompt, context, context_mask, proprio):
         use_prompt = prompt is not None
@@ -1648,7 +1652,7 @@ class FastWAM(torch.nn.Module):
             raise ValueError(
                 f"`context/context_mask` must be [B,L,D]/[B,L], got {tuple(context.shape)} and {tuple(context_mask.shape)}"
             )
-        context = context.to(device=self.device, dtype=self.torch_dtype, non_blocking=True)
+        context = context.to(device=self.device, dtype=self.dtype, non_blocking=True)
         context_mask = context_mask.to(device=self.device, dtype=torch.bool, non_blocking=True)
         return context, context_mask
 
@@ -1659,7 +1663,7 @@ class FastWAM(torch.nn.Module):
             generator=generator,
             device=rand_device,
             dtype=torch.float32,
-        ).to(device=self.device, dtype=self.torch_dtype)
+        ).to(device=self.device, dtype=self.dtype)
 
     def _make_video_latents(self, num_video_frames: int, height: int, width: int, seed, rand_device):
         latent_t = (num_video_frames - 1) // self.vae.temporal_downsample_factor + 1
@@ -1671,7 +1675,7 @@ class FastWAM(torch.nn.Module):
             generator=generator,
             device=rand_device,
             dtype=torch.float32,
-        ).to(device=self.device, dtype=self.torch_dtype)
+        ).to(device=self.device, dtype=self.dtype)
 
     @torch.no_grad()
     def infer_joint(
@@ -1721,12 +1725,12 @@ class FastWAM(torch.nn.Module):
                 raise ValueError(
                     f"`action` must have shape [1, T, a_dim] or [T, a_dim], got {tuple(action.shape)} with action_horizon={action_horizon}"
                 )
-            action = action.to(device=self.device, dtype=self.torch_dtype)
+            action = action.to(device=self.device, dtype=self.dtype)
         proprio = self._normalize_infer_proprio(proprio)
         latents_video = self._make_video_latents(num_video_frames, height, width, seed, rand_device)
         latents_action = self._make_action_latents(action_horizon, seed, rand_device)
 
-        input_image = input_image.to(device=self.device, dtype=self.torch_dtype)
+        input_image = input_image.to(device=self.device, dtype=self.dtype)
         first_frame_latents = self._encode_input_image_latents_tensor(input_image=input_image, tiled=tiled)
         latents_video[:, :, 0:1] = first_frame_latents.clone()
         fuse_flag = bool(getattr(self.video_expert, "fuse_vae_embedding_in_latents", False))
@@ -1809,7 +1813,7 @@ class FastWAM(torch.nn.Module):
         proprio = self._normalize_infer_proprio(proprio)
         latents_action = self._make_action_latents(action_horizon, seed, rand_device)
 
-        input_image = input_image.to(device=self.device, dtype=self.torch_dtype)
+        input_image = input_image.to(device=self.device, dtype=self.dtype)
         first_frame_latents = self._encode_input_image_latents_tensor(input_image=input_image, tiled=tiled)
         fuse_flag = bool(getattr(self.video_expert, "fuse_vae_embedding_in_latents", False))
 

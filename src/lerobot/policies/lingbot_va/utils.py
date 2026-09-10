@@ -139,15 +139,13 @@ def denormalize_latents(latents: torch.Tensor, latents_mean, latents_std, z_dim)
     return latents / inv_std + mean
 
 
-def load_vae(vae_path, torch_dtype, torch_device, subfolder=None):
-    vae = AutoencoderKLWan.from_pretrained(vae_path, subfolder=subfolder, torch_dtype=torch_dtype)
+def load_vae(vae_path, dtype, torch_device, subfolder=None):
+    vae = AutoencoderKLWan.from_pretrained(vae_path, subfolder=subfolder, torch_dtype=dtype)
     return vae.to(torch_device)
 
 
-def load_text_encoder(text_encoder_path, torch_dtype, torch_device, subfolder=None):
-    text_encoder = UMT5EncoderModel.from_pretrained(
-        text_encoder_path, subfolder=subfolder, torch_dtype=torch_dtype
-    )
+def load_text_encoder(text_encoder_path, dtype, torch_device, subfolder=None):
+    text_encoder = UMT5EncoderModel.from_pretrained(text_encoder_path, subfolder=subfolder, dtype=dtype)
     return text_encoder.to(torch_device)
 
 
@@ -164,10 +162,6 @@ def clean_prompt(text: str) -> str:
     """
     text = html.unescape(html.unescape(text)).strip()
     return re.sub(r"\s+", " ", text).strip()
-
-
-def _torch_dtype(name: str) -> torch.dtype:
-    return {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}[name]
 
 
 def _sample_timestep_id(

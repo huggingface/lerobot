@@ -193,10 +193,6 @@ class _FakeQwenInterface(nn.Module):
         self.config = config
         self.model = _FakeQwenBackbone(hidden_size=QWEN_HIDDEN_SIZE)
 
-    @staticmethod
-    def _get_torch_dtype(dtype_name: str) -> torch.dtype:
-        return torch.float32 if dtype_name == "float32" else torch.bfloat16
-
     def expand_tokenizer(self) -> tuple[list[str], list[int], int]:
         max_action_tokens = self.config.chunk_size * self.config.num_action_tokens_per_timestep
         action_tokens = [self.config.special_action_token.format(idx) for idx in range(max_action_tokens)]

@@ -58,7 +58,6 @@ class WanTextEncoder(torch.nn.Module):
 
     def __init__(
         self,
-        dtype: torch.dtype = torch.bfloat16,
         device: str | torch.device = "cuda",
         *,
         pretrained: torch.nn.Module,
@@ -67,7 +66,8 @@ class WanTextEncoder(torch.nn.Module):
         # UMT5-XXL is a fixed pretrained encoder — never trained from scratch, so a real
         # `UMT5EncoderModel` (with weights) must always be supplied (loaded from the
         # diffusers repo by `load_pretrained_wan_text_encoder`). No random/offline build.
-        self.model = pretrained.to(device=device, dtype=dtype)
+        # Preserve the loader's FP16-only FP32 exceptions (UMT5 feed-forward outputs).
+        self.model = pretrained.to(device=device)
         self.dim = int(self.model.config.d_model)
 
     def forward(self, ids: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -109,18 +109,18 @@ def build_wan_tokenizer(*, model_id: str = WAN_T5_TOKENIZER, tokenizer_max_len: 
     return WanTokenizer(name=model_id, seq_len=int(tokenizer_max_len))
 
 
-def load_pretrained_wan_vae(*, torch_dtype: torch.dtype, device: str) -> WanVideoVAE38:
+def load_pretrained_wan_vae(*, dtype: torch.dtype, device: str) -> WanVideoVAE38:
     """Load real Wan2.2 VAE weights from the diffusers repo (offline base creation)."""
     require_package("diffusers", extra="fastwam")
-    vae = AutoencoderKLWan.from_pretrained(WAN22_DIFFUSERS_MODEL_ID, subfolder="vae", torch_dtype=torch_dtype)
-    return WanVideoVAE38(dtype=torch_dtype, device=device, pretrained=vae)
+    vae = AutoencoderKLWan.from_pretrained(WAN22_DIFFUSERS_MODEL_ID, subfolder="vae", torch_dtype=dtype)
+    return WanVideoVAE38(dtype=dtype, device=device, pretrained=vae)
 
 
 def load_pretrained_wan_text_encoder(
     *,
     model_id: str = WAN22_DIFFUSERS_MODEL_ID,
     subfolder: str | None = "text_encoder",
-    torch_dtype: torch.dtype,
+    dtype: torch.dtype,
     device: str,
 ) -> WanTextEncoder:
     """Load UMT5-XXL encoder weights (defaults to the Wan2.2 diffusers repo).
@@ -129,8 +129,8 @@ def load_pretrained_wan_text_encoder(
     embedding table is indexed by the tokenizer's vocabulary.
     """
     require_package("transformers", extra="fastwam")
-    encoder = UMT5EncoderModel.from_pretrained(model_id, subfolder=subfolder, torch_dtype=torch_dtype)
-    return WanTextEncoder(dtype=torch_dtype, device=device, pretrained=encoder)
+    encoder = UMT5EncoderModel.from_pretrained(model_id, subfolder=subfolder, dtype=dtype)
+    return WanTextEncoder(device=device, pretrained=encoder)
 
 
 def resolve_wan_dit_paths(
@@ -159,13 +159,13 @@ def load_wan_video_dit(
     paths: list[str | Path],
     *,
     dit_config: dict[str, Any],
-    torch_dtype: torch.dtype,
+    dtype: torch.dtype,
     device: str,
 ) -> WanVideoDiT:
     model = WanVideoDiT(**dit_config)
     state_dict = _read_wan_dit_safetensors(paths)
     model.load_state_dict(state_dict, strict=False)
-    return model.to(device=device, dtype=torch_dtype)
+    return model.to(device=device, dtype=dtype)
 
 
 def _read_wan_dit_safetensors(paths: list[str | Path]) -> dict[str, torch.Tensor]:

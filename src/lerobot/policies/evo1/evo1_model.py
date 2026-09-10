@@ -43,7 +43,7 @@ class Evo1Model(nn.Module):
             image_size=int(config.image_resolution[0]),
             device=self._device,
             num_language_layers=config.vlm_num_layers,
-            model_dtype=config.vlm_dtype,
+            dtype=torch.float32,
             use_flash_attn=config.use_flash_attn,
             max_text_length=config.max_text_length,
             enable_gradient_checkpointing=enable_gradient_checkpointing,
@@ -74,7 +74,7 @@ class Evo1Model(nn.Module):
             num_categories=config.num_categories,
             state_dim=config.max_state_dim,
             state_hidden_dim=config.state_hidden_dim,
-        ).to(self._device)
+        )
 
     def get_vl_embeddings(
         self,

@@ -25,6 +25,8 @@ from ..rtc.configuration_rtc import RTCConfig
 @dataclass
 class SmolVLAConfig(PreTrainedConfig):
     # Input / output structure.
+    dtype: str = "bfloat16"
+
     n_obs_steps: int = 1
     chunk_size: int = 50
     n_action_steps: int = 50

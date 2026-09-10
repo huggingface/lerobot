@@ -145,6 +145,16 @@ class SmolVLAPolicy(PreTrainedPolicy):
     config_class = SmolVLAConfig
     name = "smolvla"
 
+    _fp32_modules = (
+        "model.state_proj",
+        "model.action_in_proj",
+        "model.action_out_proj",
+        "model.action_time_mlp_in",
+        "model.action_time_mlp_out",
+        "model.vlm_with_expert.vlm.model.text_model.rotary_emb",
+        "model.vlm_with_expert.lm_expert.rotary_emb",
+    )
+
     def supports_rtc(self) -> bool:
         return True
 
@@ -165,6 +175,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self.config = config
         self.init_rtc_processor()
         self.model = VLAFlowMatching(config, rtc_processor=self.rtc_processor)
+        self.post_init()
         self.reset()
 
     def reset(self):

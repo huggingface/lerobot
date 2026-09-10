@@ -88,7 +88,7 @@ class VLAJEPAModel(nn.Module):
         if config.enable_world_model:
             self.video_encoder = AutoModel.from_pretrained(
                 config.jepa_encoder_name,
-                torch_dtype=self.qwen._get_torch_dtype(config.torch_dtype),
+                dtype=torch.float32,
             )
             self.video_processor = AutoVideoProcessor.from_pretrained(config.jepa_encoder_name)
             num_views = config.num_world_model_views
@@ -385,6 +385,13 @@ class VLAJEPAPolicy(PreTrainedPolicy):
     config_class = VLAJEPAConfig
     name = "vla_jepa"
 
+    _fp32_modules = (
+        "model.action_model",
+        "model.video_predictor",
+        "model.qwen.model.model.language_model.rotary_emb",
+        "model.qwen.model.model.visual.rotary_pos_emb",
+    )
+
     def __init__(self, config: VLAJEPAConfig, **kwargs) -> None:
         super().__init__(config)
         config.validate_features()
@@ -392,6 +399,7 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         # `make_policy` before this): keeps `__init__` from mutating a config it does not own, and
         # makes the derived dims visible to the processor factory too.
         self.model = VLAJEPAModel(config)
+        self.post_init()
         self.reset()
 
     def reset(self) -> None:

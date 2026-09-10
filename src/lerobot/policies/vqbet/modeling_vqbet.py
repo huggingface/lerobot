@@ -63,6 +63,7 @@ class VQBeTPolicy(PreTrainedPolicy):
 
         self.vqbet = VQBeTModel(config)
 
+        self.post_init()
         self.reset()
 
     def get_optim_params(self) -> dict:

@@ -53,29 +53,43 @@ class EO1Policy(PreTrainedPolicy):
     config_class = EO1Config
     name = "eo1"
 
+    _fp32_modules = (
+        "model.state_proj",
+        "model.action_in_proj",
+        "model.action_out_proj",
+        "model.action_time_mlp_in",
+        "model.action_time_mlp_out",
+        "model.vlm_backbone.model.language_model.rotary_emb",
+        "model.vlm_backbone.model.visual.rotary_pos_emb",
+    )
+
     def __init__(self, config: EO1Config, **kwargs):
         require_package("transformers", extra="eo1")
         super().__init__(config)
         config.validate_features()
         self.config = config
 
+        # An unspecified policy dtype uses PyTorch's default, while Transformers
+        # would interpret dtype=None as a request to infer the checkpoint dtype.
+        dtype = config.dtype if config.dtype is not None else torch.get_default_dtype()
         if config.pretrained_path is None:
             # Initialize from pretrained VLM
             vlm_backbone = Qwen2_5_VLForConditionalGeneration.from_pretrained(
                 config.vlm_base,
-                dtype=config.dtype,
+                dtype=dtype,
                 attn_implementation=config.attn_implementation,
             )
         else:
             vlm_backbone = Qwen2_5_VLForConditionalGeneration._from_config(
                 config.vlm_backbone_config,
-                dtype=config.vlm_backbone_config.dtype if config.dtype == "auto" else config.dtype,
+                dtype=dtype,
             )
 
         self.model = EO1VisionFlowMatchingModel(config, vlm_backbone)
         if config.gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
 
+        self.post_init()
         self.model.to(config.device)
         self.reset()
 
@@ -164,7 +178,6 @@ class EO1VisionFlowMatchingModel(nn.Module):
         super().__init__()
 
         self.config = config
-        # Preserve the backbone dtype selected at construction time so Qwen's fp32 rotary buffers stay intact.
         self.vlm_backbone = vlm_backbone
         self.hidden_size = self.vlm_backbone.config.text_config.hidden_size
         max_state_dim = config.max_state_dim

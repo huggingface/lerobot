@@ -244,6 +244,9 @@ class GrootConfig(PreTrainedConfig):
     """Configuration for Groot policy wrapper."""
 
     # Basic policy settings
+    # The native fine-tuning recipe uses FP32 parameters with BF16 autocast.
+    dtype: str = "float32"
+
     n_obs_steps: int = 1
     chunk_size: int = 40
     n_action_steps: int = 40
@@ -343,8 +346,6 @@ class GrootConfig(PreTrainedConfig):
     optimizer_weight_decay: float = 1e-5
     warmup_ratio: float = 0.05
     use_bf16: bool = True
-    # The native N1.7 fine-tuning recipe keeps model parameters in FP32 and computes under BF16 autocast.
-    model_params_fp32: bool = True
 
     # TODO(Steven): Remove these deprecated fields in a future release.
     # Deprecated Isaac-GR00T runner / GR00T N1.5 fields, plus the (never-wired) LoRA fields — all

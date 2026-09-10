@@ -69,6 +69,7 @@ class ACTPolicy(PreTrainedPolicy):
         if config.temporal_ensemble_coeff is not None:
             self.temporal_ensembler = ACTTemporalEnsembler(config.temporal_ensemble_coeff, config.chunk_size)
 
+        self.post_init()
         self.reset()
 
     def get_optim_params(self) -> dict:
@@ -454,9 +455,8 @@ class ACT(nn.Module):
         else:
             # When not using the VAE encoder, we set the latent to be all zeros.
             mu = log_sigma_x2 = None
-            # TODO(rcadene, alexander-soare): remove call to `.to` to speedup forward ; precompute and use buffer
-            latent_sample = torch.zeros([batch_size, self.config.latent_dim], dtype=torch.float32).to(
-                batch[OBS_STATE].device
+            latent_sample = self.encoder_latent_input_proj.weight.new_zeros(
+                batch_size, self.config.latent_dim
             )
 
         # Prepare transformer encoder inputs.

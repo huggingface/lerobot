@@ -111,7 +111,7 @@ class InternVL3Embedder(nn.Module):
         image_size=448,
         device="cuda",
         num_language_layers: int | None = 14,
-        model_dtype: str | torch.dtype = "bfloat16",
+        dtype: torch.dtype = torch.float32,
         use_flash_attn: bool = True,
         max_text_length: int = 1024,
         enable_gradient_checkpointing: bool = True,
@@ -130,12 +130,6 @@ class InternVL3Embedder(nn.Module):
         require_package("transformers", extra="evo1")
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, **hub_kwargs)
-        if isinstance(model_dtype, str):
-            try:
-                model_dtype = getattr(torch, model_dtype)
-            except AttributeError as exc:
-                raise ValueError(f"Unsupported EVO1 vlm_dtype '{model_dtype}'") from exc
-        self.model_dtype = model_dtype
 
         attn_implementation = (
             "flash_attention_2" if (use_flash_attn and is_flash_attn_2_available()) else "eager"
@@ -147,11 +141,11 @@ class InternVL3Embedder(nn.Module):
 
         self.model = AutoModel.from_pretrained(
             model_name,
-            torch_dtype=model_dtype,
+            dtype=dtype,
             attn_implementation=attn_implementation,
             low_cpu_mem_usage=True,
             **hub_kwargs,
-        ).to(self._requested_device)
+        )
 
         checkpoint_image_size = getattr(self.model.config.vision_config, "image_size", None)
         if isinstance(checkpoint_image_size, (list, tuple)):
@@ -261,10 +255,10 @@ class InternVL3Embedder(nn.Module):
         """
         max_views = int(image_masks.shape[1])
         batch_size = int(image_masks.shape[0])
-        mean = torch.tensor(IMAGENET_MEAN, device=self.device, dtype=self.model_dtype)
-        std = torch.tensor(IMAGENET_STD, device=self.device, dtype=self.model_dtype)
+        mean = torch.tensor(IMAGENET_MEAN, device=self.device, dtype=self.model.dtype)
+        std = torch.tensor(IMAGENET_STD, device=self.device, dtype=self.model.dtype)
         pixel_values = _batched_pixel_values(
-            camera_images, max_views, self.image_size, mean, std, self.model_dtype, self.device
+            camera_images, max_views, self.image_size, mean, std, self.model.dtype, self.device
         )
         # InternVL3 preprocessing uses a single tile per image (max_num=1).
         batch_num_tiles_list = [[1] * max_views for _ in range(batch_size)]

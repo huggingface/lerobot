@@ -23,6 +23,7 @@ from torch import Tensor
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.dtype import get_dtype
 from lerobot.utils.import_utils import require_package
 
 from .configuration_fastwam import FastWAMConfig
@@ -88,6 +89,8 @@ class FastWAMPolicy(PreTrainedPolicy):
                 for layer in mot.layers:
                     if "video" in layer.blocks:
                         layer.blocks["video"].requires_grad_(False)
+        self.post_init()
+        self.model.to(config.device)
         self.reset()
 
     @classmethod
@@ -255,17 +258,18 @@ class FastWAMPolicy(PreTrainedPolicy):
         across checkpoints) and are intentionally excluded from `model.safetensors`
         — see `FastWAM.__init__`. The tokenizer comes from `google/umt5-xxl`.
         """
-        dtype = _dtype_from_name(config.torch_dtype)
-        device = config.device
-        video_expert = WanVideoDiT(**config.video_dit_config).to(device=device, dtype=dtype)
-        action_expert = ActionDiT(**config.action_dit_config).to(device=device, dtype=dtype)
+        dtype = get_dtype(config.dtype)
+        # Finalize precision on CPU before moving the model to the requested device.
+        device = "cpu"
+        video_expert = WanVideoDiT(**config.video_dit_config).to(device=device)
+        action_expert = ActionDiT(**config.action_dit_config).to(device=device)
         mot = MoT(
             mixtures={"video": video_expert, "action": action_expert},
             mot_checkpoint_mixed_attn=config.mot_checkpoint_mixed_attn,
         )
         text_encoder = (
             load_pretrained_wan_text_encoder(
-                model_id=config.text_encoder_model_id, torch_dtype=dtype, device=device
+                model_id=config.text_encoder_model_id, dtype=dtype, device=device
             )
             if config.load_text_encoder
             else None
@@ -274,7 +278,7 @@ class FastWAMPolicy(PreTrainedPolicy):
             video_expert=video_expert,
             action_expert=action_expert,
             mot=mot,
-            vae=load_pretrained_wan_vae(torch_dtype=dtype, device=device),
+            vae=load_pretrained_wan_vae(dtype=dtype, device=device),
             text_encoder=text_encoder,
             tokenizer=build_wan_tokenizer(
                 model_id=config.tokenizer_model_id, tokenizer_max_len=config.tokenizer_max_len
@@ -282,7 +286,7 @@ class FastWAMPolicy(PreTrainedPolicy):
             text_dim=int(config.video_dit_config["text_dim"]),
             proprio_dim=config.proprio_dim,
             device=device,
-            torch_dtype=dtype,
+            dtype=dtype,
             video_train_shift=float(config.video_scheduler["train_shift"]),
             video_infer_shift=float(config.video_scheduler["infer_shift"]),
             video_num_train_timesteps=int(config.video_scheduler["num_train_timesteps"]),
@@ -364,13 +368,6 @@ def _slice_infer_value(value: Any, *, index: int, batch_size: int) -> Any:
     if isinstance(value, (list, tuple)) and len(value) == batch_size:
         return value[index]
     return value
-
-
-def _dtype_from_name(name: str) -> torch.dtype:
-    dtype_map = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}
-    if name not in dtype_map:
-        raise ValueError(f"Unsupported torch dtype `{name}`.")
-    return dtype_map[name]
 
 
 def batch_device(batch: dict[str, Any]) -> torch.device:

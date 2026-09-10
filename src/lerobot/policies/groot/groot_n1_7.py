@@ -74,7 +74,6 @@ def _tie_unused_qwen_lm_head(model: nn.Module) -> None:
 
 
 GR00T_N1_7_DEFAULTS: dict[str, Any] = {
-    "model_dtype": "bfloat16",
     "dtype": "bfloat16",
     "model_name": "nvidia/Cosmos-Reason2-2B",
     "backbone_model_type": "qwen",
@@ -86,8 +85,6 @@ GR00T_N1_7_DEFAULTS: dict[str, Any] = {
     "select_layer": 16,
     "reproject_vision": False,
     "use_flash_attention": False,
-    "load_bf16": False,
-    "backbone_trainable_params_fp32": True,
     "image_crop_size": N1_7_DEFAULT_IMAGE_CROP_SIZE,
     "image_target_size": N1_7_DEFAULT_IMAGE_TARGET_SIZE,
     "shortest_image_edge": None,
@@ -261,9 +258,7 @@ class Qwen3Backbone(nn.Module):
         select_layer: int = -1,
         reproject_vision: bool = False,
         use_flash_attention: bool = False,
-        load_bf16: bool = False,
         tune_top_llm_layers: int = 0,
-        trainable_params_fp32: bool = False,
         transformers_loading_kwargs: dict[str, Any] | None = None,
         load_pretrained_weights: bool = True,
     ):
@@ -285,8 +280,7 @@ class Qwen3Backbone(nn.Module):
             except ImportError:
                 logger.warning("flash_attn is not installed. Falling back to SDPA attention.")
                 extra_kwargs["attn_implementation"] = "sdpa"
-        if load_bf16:
-            extra_kwargs["torch_dtype"] = torch.bfloat16
+        extra_kwargs["dtype"] = torch.float32
 
         if load_pretrained_weights:
             self.model = Qwen3VLForConditionalGeneration.from_pretrained(
@@ -307,10 +301,6 @@ class Qwen3Backbone(nn.Module):
 
         self.select_layer = select_layer
         self.set_trainable_parameters(tune_llm, tune_visual, tune_top_llm_layers)
-        if load_bf16 and trainable_params_fp32:
-            for parameter in self.parameters():
-                if parameter.requires_grad:
-                    parameter.data = parameter.data.to(torch.float32)
 
     def set_trainable_parameters(
         self, tune_llm: bool, tune_visual: bool, tune_top_llm_layers: int = 0
@@ -840,9 +830,7 @@ class GR00TN17(PreTrainedModel):
             select_layer=config.select_layer,
             reproject_vision=config.reproject_vision,
             use_flash_attention=config.use_flash_attention,
-            load_bf16=config.load_bf16,
             tune_top_llm_layers=config.tune_top_llm_layers,
-            trainable_params_fp32=config.backbone_trainable_params_fp32,
             transformers_loading_kwargs=transformers_loading_kwargs,
             load_pretrained_weights=load_backbone_weights,
         )

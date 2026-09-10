@@ -16,21 +16,25 @@ from __future__ import annotations
 import abc
 import builtins
 import dataclasses
+import itertools
 import logging
 import os
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, TypeVar, Unpack
 
+import torch
 from huggingface_hub import hf_hub_download, save_torch_state_dict
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
+from safetensors import safe_open
 from safetensors.torch import load_model as load_model_as_safetensor
 from torch import Tensor, nn
 
 from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import resolve_safetensors_device
+from lerobot.utils.dtype import get_dtype
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.import_utils import _peft_available, require_package
 
@@ -66,6 +70,12 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     config_class: None
     name: None
 
+    # Paths from the policy root, e.g. "model.action_head" or "model.layers.*.norm".
+    # Each '*' matches exactly one path component. A module path protects all its
+    # floating parameters and buffers; a tensor path protects only that tensor.
+    # Declare these paths on the policy class, not its nested modules.
+    _fp32_modules: ClassVar[tuple[str, ...]] = ()
+
     # --- declarative parallelism/acceleration surface ----------------------------------------
     # Module CLASS names forming the FSDP2 wrap units (and, once wired, the activation-
     # checkpointing units). Resolved onto the accelerate plugin right before
@@ -95,6 +105,88 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 f"`model = {self.__class__.__name__}.from_pretrained(PRETRAINED_MODEL_NAME)`"
             )
         self.config = config
+
+    @property
+    def _fp32_tensor_names(self) -> set[str]:
+        """Full names of floating parameters/buffers protected by the policy's rules.
+
+        Include non-persistent buffers and every alias of a shared tensor if any
+        alias matches. Resolve the current registrations on each access, so changing
+        modules or parameter ties cannot leave a stale name set.
+        """
+        if not self._fp32_modules:
+            return set()
+
+        paths = [path.split(".") for path in self._fp32_modules]
+        for path, parts in zip(self._fp32_modules, paths, strict=True):
+            if any(not part or ("*" in part and part != "*") for part in parts):
+                raise ValueError(
+                    f"Invalid FP32 path {path!r}: use names separated by dots and '*' for one level."
+                )
+        aliases: dict[Tensor, list[str]] = {}
+        for name, tensor in itertools.chain(
+            self.named_parameters(remove_duplicate=False), self.named_buffers(remove_duplicate=False)
+        ):
+            if tensor.is_floating_point():
+                aliases.setdefault(tensor, []).append(name)
+
+        names: set[str] = set()
+        for tensor_names in aliases.values():
+            for name in tensor_names:
+                parts = name.split(".")
+                if any(
+                    len(path) <= len(parts)
+                    and all(
+                        pattern == "*" or pattern == part for pattern, part in zip(path, parts, strict=False)
+                    )
+                    for path in paths
+                ):
+                    names.update(tensor_names)
+                    break
+        return names
+
+    @property
+    def dtype(self) -> torch.dtype:
+        """The actual floating dtype, preferring parameters outside the FP32 exceptions.
+
+        Like ``nn.Module.to()``, this reports the current tensors rather than a cached
+        configuration value. A policy with only FP32 exceptions reports their dtype.
+        """
+        keep_names = self._fp32_tensor_names
+        fallback = None
+        for name, tensor in itertools.chain(self.named_parameters(), self.named_buffers()):
+            if tensor.is_floating_point():
+                if name not in keep_names:
+                    return tensor.dtype
+                if fallback is None:
+                    fallback = tensor.dtype
+        return fallback if fallback is not None else get_dtype(self.config.dtype)
+
+    def post_init(self) -> None:
+        """Finalize parameter precision after a subclass has constructed all its modules.
+
+        Construct real tensors in FP32, then call this once at the end of ``__init__``,
+        before compilation or optimizer creation. Each tensor goes directly to its
+        final dtype so FP32 exceptions never make a lossy round trip through BF16.
+        Integer buffers, tied parameters and existing gradients are preserved.
+        Once conversion is complete, config.dtype records the actual model dtype.
+        """
+        dtype = get_dtype(self.config.dtype)
+        keep_names = self._fp32_tensor_names
+
+        # Visit registered tensors directly. Frozen components kept outside the module
+        # registry (e.g. FastWAM's UMT5 encoder) are loaded with config.dtype by their
+        # own loaders, which may have additional precision rules.
+        with torch.no_grad():
+            for name, tensor in itertools.chain(self.named_parameters(), self.named_buffers()):
+                if not tensor.is_floating_point():
+                    continue
+                target = torch.float32 if name in keep_names else dtype
+                tensor.data = tensor.to(dtype=target)
+                if isinstance(tensor, nn.Parameter) and tensor.grad is not None:
+                    tensor.grad.data = tensor.grad.to(dtype=target)
+
+        self.config.dtype = str(self.dtype).removeprefix("torch.")
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -140,6 +232,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             # Non-sharded multi-rank (DDP): every rank holds a full dict — the explicit rank
             # gate prevents N ranks racing on the same files. Single process: never taken.
             return
+        self.config.dtype = str(model_to_save.dtype).removeprefix("torch.")
         self.config._save_pretrained(save_directory)
         save_torch_state_dict(state_dict, str(save_directory), max_shard_size=_SINGLE_FILE_SHARD_SIZE)
 
@@ -149,6 +242,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         pretrained_name_or_path: str | Path,
         *,
         config: PreTrainedConfig | None = None,
+        dtype: str | torch.dtype | None = None,
         force_download: bool = False,
         resume_download: bool | None = None,
         proxies: dict | None = None,
@@ -162,6 +256,12 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """
         The policy is set in evaluation mode by default using `policy.eval()` (dropout modules are
         deactivated). To train it, you should first set it back in training mode with `policy.train()`.
+
+        ``dtype`` overrides the saved configuration and accepts a torch.dtype or its name.
+        ``None`` uses config.dtype (or PyTorch's default). ``"auto"`` uses config.dtype,
+        falling back to the first floating checkpoint tensor when it is unspecified.
+        Declared FP32 exceptions apply to both initialization and checkpoint loading.
+        A supplied config is reused and updated with the resolved dtype and pretrained_path.
         """
         if config is None:
             config = PreTrainedConfig.from_pretrained(
@@ -176,11 +276,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 **kwargs,
             )
         model_id = str(pretrained_name_or_path)
-        instance = cls(config, **kwargs)
         if os.path.isdir(model_id):
             print("Loading weights from local directory")
             model_file = os.path.join(model_id, SAFETENSORS_SINGLE_FILE)
-            policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
         else:
             try:
                 model_file = hf_hub_download(
@@ -194,12 +292,37 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                     token=token,
                     local_files_only=local_files_only,
                 )
-                policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
             except HfHubHTTPError as e:
                 raise FileNotFoundError(
                     f"{SAFETENSORS_SINGLE_FILE} not found on the HuggingFace Hub in {model_id}"
                 ) from e
 
+        if dtype == "auto":
+            dtype = config.dtype
+            if dtype is None:
+                with safe_open(model_file, framework="pt", device="cpu") as checkpoint:
+                    dtypes = {
+                        "F16": torch.float16,
+                        "BF16": torch.bfloat16,
+                        "F32": torch.float32,
+                        "F64": torch.float64,
+                    }
+                    keys = checkpoint.keys()
+                    dtype = next(
+                        (
+                            dtypes[code]
+                            for key in keys
+                            if (code := checkpoint.get_slice(key).get_dtype()) in dtypes
+                        ),
+                        torch.get_default_dtype(),
+                    )
+        config.dtype = str(get_dtype(config.dtype if dtype is None else dtype)).removeprefix("torch.")
+        config.pretrained_path = Path(pretrained_name_or_path)
+        instance = cls(config, **kwargs)
+        # Copy CPU checkpoint tensors into the already configured parameter dtypes.
+        # Loading a full FP32 state dict onto the accelerator would defeat dtype
+        # selection's memory savings while the checkpoint and model coexist.
+        policy = cls._load_as_safetensor(instance, model_file, "cpu", strict)
         policy.to(config.device)
         policy.eval()
         return policy

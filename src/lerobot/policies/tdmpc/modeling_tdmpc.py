@@ -82,6 +82,7 @@ class TDMPCPolicy(PreTrainedPolicy):
         for param in self.model_target.parameters():
             param.requires_grad = False
 
+        self.post_init()
         self.reset()
 
     def get_optim_params(self) -> dict:

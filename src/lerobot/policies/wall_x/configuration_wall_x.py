@@ -32,6 +32,8 @@ class WallXConfig(PreTrainedConfig):
     """
 
     # ==================== Input / Output Structure ====================
+    dtype: str = "bfloat16"
+
     n_obs_steps: int = 1
     chunk_size: int = 32  # action_horizon in wall-x
     n_action_steps: int = 32
