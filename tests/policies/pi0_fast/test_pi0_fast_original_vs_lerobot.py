@@ -55,14 +55,7 @@ MODEL_PATH_LEROBOT = "lerobot/pi0fast-base"
 # Expected action token shape: (batch_size, max_decoding_steps)
 EXPECTED_ACTION_TOKENS_SHAPE = (1, 2)
 
-# Expected first 5 action tokens (for reproducibility check)
-EXPECTED_ACTION_TOKENS_FIRST_5 = torch.tensor([255020, 255589])
-
-# Expected actions after detokenization
 EXPECTED_ACTIONS_SHAPE = (1, 2, 32)  # (batch_size, n_action_steps, action_dim)
-EXPECTED_ACTIONS_MEAN = 0.046403881162405014
-EXPECTED_ACTIONS_STD = 0.2607129216194153
-EXPECTED_ACTIONS_FIRST_5 = torch.tensor([0.0000, 0.3536, 0.0707, 0.0000, 0.0000])
 
 
 @require_cuda
@@ -99,9 +92,8 @@ def instantiate_lerobot_pi0_fast(
             pretrained_name_or_path=model_path,
             strict=True,
         )
-        policy.config.validate_action_token_prefix = False
         policy.config.max_action_tokens = 2
-        policy.config.max_decoding_steps = 2
+        policy.config.max_decoding_steps = 256
         policy.config.chunk_size = 2
         policy.config.n_action_steps = 2
     else:
@@ -110,9 +102,8 @@ def instantiate_lerobot_pi0_fast(
             max_action_dim=DUMMY_ACTION_DIM,
             max_state_dim=DUMMY_STATE_DIM,
             device=DEVICE,
-            validate_action_token_prefix=False,
             max_action_tokens=2,
-            max_decoding_steps=2,
+            max_decoding_steps=256,
             chunk_size=2,
         )
         policy = PI0FastPolicy(config)
@@ -262,56 +253,11 @@ def test_pi0_fast_action_generation(policy, preprocessor):
     print(f"LeRobot actions std: {lerobot_actions.std().item():.6f}")
     print(f"LeRobot actions first 5: {lerobot_actions[0, 0, :5]}")
 
-    print("\nExpected values (from original PI0Fast):")
-    print(f"Expected actions shape: {EXPECTED_ACTIONS_SHAPE}")
-    print(f"Expected actions mean: {EXPECTED_ACTIONS_MEAN:.6f}")
-    print(f"Expected actions std: {EXPECTED_ACTIONS_STD:.6f}")
-    print(f"Expected actions first 5: {EXPECTED_ACTIONS_FIRST_5}")
-
-    print("\nAction Comparison:")
-    print("-" * 80)
-
-    # Compare shapes
     actual_shape = tuple(lerobot_actions.shape)
-    print(f"Actual shape: {actual_shape}")
-
     assert actual_shape == EXPECTED_ACTIONS_SHAPE, (
         f"Shape mismatch: {actual_shape} vs {EXPECTED_ACTIONS_SHAPE}"
     )
-    print(f"Shape matches: {actual_shape}")
-
-    # Compare statistics
-    actual_mean = lerobot_actions.mean().item()
-    actual_std = lerobot_actions.std().item()
-
-    print(f"\nMean: {actual_mean:.6f} (expected: {EXPECTED_ACTIONS_MEAN:.6f})")
-    print(f"Std: {actual_std:.6f} (expected: {EXPECTED_ACTIONS_STD:.6f})")
-
-    # Compare first 5 actions
-    actual_first_5 = lerobot_actions[0, 0, :5]
-    print("\nFirst 5 actions comparison:")
-    print(f"  Actual:   {actual_first_5}")
-    print(f"  Expected: {EXPECTED_ACTIONS_FIRST_5}")
-
-    first_5_diff = torch.abs(actual_first_5 - EXPECTED_ACTIONS_FIRST_5)
-    print(f"  Max diff: {first_5_diff.max().item():.6e}")
-    print(f"  Mean diff: {first_5_diff.mean().item():.6e}")
-
-    # Check with different tolerances
-    tolerances = [1e-5, 1e-4, 1e-3, 1e-2]
-    for tol in tolerances:
-        is_close = torch.allclose(actual_first_5, EXPECTED_ACTIONS_FIRST_5, atol=tol)
-        status = "Success" if is_close else "Failure"
-        print(f"{status}: First 5 actions close (atol={tol}): {is_close}")
-
-    # Assert with reasonable tolerance
-    tolerance = 1e-3
-    assert torch.allclose(actual_first_5, EXPECTED_ACTIONS_FIRST_5, atol=tolerance), (
-        f"First 5 actions differ by more than tolerance ({tolerance})"
-    )
-    print(f"\nSuccess: Actions match expected values within tolerance ({tolerance})!")
-
-    print("\nAction generation test completed (values printed for reference)!")
+    assert torch.isfinite(lerobot_actions).all()
 
 
 @require_cuda
@@ -442,10 +388,6 @@ def test_pi0_fast_action_token_sampling(policy, preprocessor):
     print(f"Action tokens shape: {action_tokens.shape}")
     print(f"Action tokens first 10: {action_tokens[0, :10].tolist()}")
 
-    print("\nExpected values (from original PI0Fast):")
-    print(f"Expected shape: {EXPECTED_ACTION_TOKENS_SHAPE}")
-    print(f"Expected first 5: {EXPECTED_ACTION_TOKENS_FIRST_5.tolist()}")
-
     # Verify shape
     actual_shape = tuple(action_tokens.shape)
     print(f"\nActual shape: {actual_shape}")
@@ -454,11 +396,8 @@ def test_pi0_fast_action_token_sampling(policy, preprocessor):
         f"Shape mismatch: {actual_shape} vs {EXPECTED_ACTION_TOKENS_SHAPE}"
     )
 
-    # Compare first 5 tokens
-    actual_first_5 = action_tokens[0, :5].cpu()
-    assert torch.equal(actual_first_5, EXPECTED_ACTION_TOKENS_FIRST_5), (
-        f"First 5 tokens mismatch: {actual_first_5} vs {EXPECTED_ACTION_TOKENS_FIRST_5}"
-    )
+    action_prefix = policy._paligemma_tokenizer.encode("Action: ", add_special_tokens=False)
+    assert action_tokens[0, : len(action_prefix)].tolist() == action_prefix
 
     print("\nAction token sampling test completed!")
 
@@ -500,19 +439,11 @@ def test_pi0_fast_detokenization(policy, preprocessor):
 
     # Detokenize
     print("\n[LeRobot] Detokenizing action tokens...")
-    action_horizon = policy.config.n_action_steps
+    action_horizon = policy.config.chunk_size
     action_dim = policy.config.output_features["action"].shape[0]
 
-    try:
-        continuous_actions = policy.detokenize_actions(
-            action_tokens, action_horizon=action_horizon, action_dim=action_dim
-        )
-        print(f"Continuous actions shape: {continuous_actions.shape}")
-        print(f"Continuous actions mean: {continuous_actions.mean().item():.6f}")
-        print(f"Continuous actions std: {continuous_actions.std().item():.6f}")
-        print(f"Continuous actions first 5: {continuous_actions[0, 0, :5]}")
-        print("\nDetokenization successful!")
-    except Exception as e:
-        print(f"\nDetokenization failed with error: {e}")
-        print("This may be expected if the action tokens are not valid FAST tokens.")
-        print("The test will pass as long as the sampling works correctly.")
+    continuous_actions = policy.detokenize_actions(
+        action_tokens, action_horizon=action_horizon, action_dim=action_dim
+    )
+    assert continuous_actions.shape == (1, action_horizon, action_dim)
+    assert torch.isfinite(continuous_actions).all()

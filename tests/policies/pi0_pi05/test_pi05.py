@@ -16,8 +16,12 @@
 
 """Test script to verify PI0.5 (pi05) support in PI0 policy"""
 
+from types import SimpleNamespace
+
 import pytest
 import torch
+from safetensors.torch import save_file
+from torch import nn
 
 pytest.importorskip("transformers")
 
@@ -29,6 +33,93 @@ from lerobot.policies.pi05 import (  # noqa: E402
 )
 from lerobot.utils.random_utils import set_seed
 from tests.utils import require_cuda, require_hf_token  # noqa: E402
+
+
+class _CheckpointPolicy(PI05Policy):
+    def __init__(self, config, **kwargs):
+        nn.Module.__init__(self)
+        self.config = config
+        self.loaded_state_dict = None
+
+    def load_state_dict(self, state_dict, strict=True, assign=False):
+        self.loaded_state_dict = state_dict
+        return [], []
+
+
+class _NativeCheckpointPolicy(PI05Policy):
+    use_native_pretrained_loader = True
+
+    def __init__(self, config, **kwargs):
+        nn.Module.__init__(self)
+        self.config = config
+        self.weight = nn.Parameter(torch.zeros(1))
+
+
+def test_from_pretrained_loads_existing_single_file_checkpoint(tmp_path):
+    save_file({"weight": torch.tensor([1.0])}, tmp_path / "model.safetensors")
+
+    policy = _CheckpointPolicy.from_pretrained(tmp_path, config=SimpleNamespace())
+
+    assert policy.loaded_state_dict is not None
+    torch.testing.assert_close(policy.loaded_state_dict["model.weight"], torch.tensor([1.0]))
+
+
+def test_pi05_checkpoint_loader_forwards_hub_options(monkeypatch, tmp_path):
+    import lerobot.policies.pi05.modeling_pi05 as modeling_pi05
+
+    checkpoint = tmp_path / "model.safetensors"
+    save_file({"weight": torch.tensor([1.0])}, checkpoint)
+    calls = []
+
+    def fake_cached_file(model_id, filename, **kwargs):
+        calls.append((model_id, filename, kwargs))
+        return str(checkpoint)
+
+    monkeypatch.setattr(modeling_pi05, "cached_file", fake_cached_file)
+    _CheckpointPolicy.from_pretrained(
+        "org/model",
+        config=SimpleNamespace(),
+        force_download=True,
+        resume_download=True,
+        proxies={"https": "proxy"},
+        token="secret",
+        cache_dir=tmp_path / "cache",
+        local_files_only=True,
+        revision="commit",
+    )
+
+    assert len(calls) == 1
+    model_id, filename, kwargs = calls[0]
+    assert model_id == "org/model"
+    assert filename == "model.safetensors"
+    assert kwargs["revision"] == "commit"
+    assert kwargs["cache_dir"] == tmp_path / "cache"
+    assert kwargs["force_download"] is True
+    assert kwargs["resume_download"] is True
+    assert kwargs["proxies"] == {"https": "proxy"}
+    assert kwargs["token"] == "secret"
+    assert kwargs["local_files_only"] is True
+
+
+def test_pi05_checkpoint_loader_rejects_missing_weights(tmp_path):
+    with pytest.raises(FileNotFoundError, match="model.safetensors"):
+        _CheckpointPolicy.from_pretrained(tmp_path, config=SimpleNamespace())
+
+
+def test_native_checkpoint_uses_standard_lerobot_loader(tmp_path):
+    save_file({"weight": torch.tensor([2.0])}, tmp_path / "model.safetensors")
+
+    policy = _NativeCheckpointPolicy.from_pretrained(
+        tmp_path, config=SimpleNamespace(device="cpu"), strict=True
+    )
+
+    torch.testing.assert_close(policy.weight, torch.tensor([2.0]))
+
+
+def test_pi052_uses_native_checkpoint_loader():
+    from lerobot.policies.pi052.modeling_pi052 import PI052Policy
+
+    assert PI052Policy.use_native_pretrained_loader
 
 
 @require_cuda
