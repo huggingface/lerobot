@@ -210,6 +210,9 @@ def test_joint_layer_defaults_to_sdpa_and_keeps_prefix_gradients(monkeypatch, us
 
     def counted_sdpa(*args, **kwargs):
         assert all(x.dtype == torch.float32 for x in args[1:4])
+        assert torch.backends.cuda.math_sdp_enabled()
+        assert not torch.backends.cuda.flash_sdp_enabled()
+        assert not torch.backends.cuda.mem_efficient_sdp_enabled()
         calls.append(True)
         return sdpa_attention_forward(*args, **kwargs)
 

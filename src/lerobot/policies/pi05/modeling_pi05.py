@@ -24,6 +24,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from safetensors.torch import load_file
 from torch import Tensor, nn
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from lerobot.utils.import_utils import _transformers_available, require_package
 
@@ -220,17 +221,19 @@ def compute_layer_complete(inputs_embeds, attention_mask, position_ids, adarms_c
     scaling = paligemma_layer.self_attn.scaling
     # Large Q/K activations at low flow timesteps destabilize BF16 eager scores
     # and can amplify reduced-precision SDPA backward as well. Keep attention in
-    # FP32, then restore the model dtype. Parameters, masks and KI-off paths stay
-    # unchanged; the casts retain gradients into both experts.
+    # FP32 with the math backend (fused kernels still show low-timestep gradient
+    # amplification), then restore the model dtype. Parameters, masks and
+    # KI-off paths stay unchanged; casts retain gradients into both experts.
     attention_dtype = query_states.dtype
-    att_output, _ = sdpa_attention_forward(
-        paligemma_layer.self_attn,
-        query_states.float(),
-        key_states.float(),
-        value_states.float(),
-        attention_mask.float() if attention_mask is not None else None,
-        scaling,
-    )
+    with sdpa_kernel(SDPBackend.MATH):
+        att_output, _ = sdpa_attention_forward(
+            paligemma_layer.self_attn,
+            query_states.float(),
+            key_states.float(),
+            value_states.float(),
+            attention_mask.float() if attention_mask is not None else None,
+            scaling,
+        )
     att_output = att_output.to(attention_dtype)
     # Get head_dim from the current layer, not from the model
     head_dim = paligemma_layer.self_attn.head_dim
