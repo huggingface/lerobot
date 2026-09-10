@@ -147,11 +147,17 @@ class EO1Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def generate_text(self, batch: dict[str, Tensor]) -> str:
-        """Decode one response from EO-1 model-ready inputs."""
+        """Decode one response conditioned on images and projected robot state."""
         self.eval()
         processor = self._get_text_processor()
         input_names = ("input_ids", "attention_mask", "pixel_values", "image_grid_thw", "mm_token_type_ids")
         inputs = {name: batch[name] for name in input_names if name in batch}
+        inputs["inputs_embeds"] = self.model.embed_prefix(
+            inputs["input_ids"],
+            states=self.prepare_state(batch[OBS_STATE]),
+            state_token_id=batch["state_token_id"],
+            action_token_id=batch["action_token_id"],
+        )
         prompt_length = inputs["input_ids"].shape[1]
         do_sample = self.config.text_temperature > 0
         tokenizer = processor.tokenizer

@@ -141,13 +141,12 @@ class EO1PrepareModelMessagesStep(ComplementaryDataProcessorStep):
                 )
                 if inserted_observation_turn:
                     observation_content = [*image_blocks]
-                    if not generation_request:
-                        observation_content.append(
-                            {
-                                "type": "text",
-                                "text": f"{STATE_START_TOKEN}{DEFAULT_STATE_TOKEN}{STATE_END_TOKEN}",
-                            }
-                        )
+                    observation_content.append(
+                        {
+                            "type": "text",
+                            "text": f"{STATE_START_TOKEN}{DEFAULT_STATE_TOKEN}{STATE_END_TOKEN}",
+                        }
+                    )
                 for message in row_messages:
                     converted = dict(message)
                     tool_calls = converted.pop("tool_calls", None)
@@ -169,14 +168,12 @@ class EO1PrepareModelMessagesStep(ComplementaryDataProcessorStep):
                     if say_text:
                         blocks.append({"type": "text", "text": say_text})
                     if converted.get("role") == "user" and not injected_images:
-                        state_blocks = []
-                        if not generation_request:
-                            state_blocks.append(
-                                {
-                                    "type": "text",
-                                    "text": f"{STATE_START_TOKEN}{DEFAULT_STATE_TOKEN}{STATE_END_TOKEN}",
-                                }
-                            )
+                        state_blocks = [
+                            {
+                                "type": "text",
+                                "text": f"{STATE_START_TOKEN}{DEFAULT_STATE_TOKEN}{STATE_END_TOKEN}",
+                            }
+                        ]
                         blocks = [*image_blocks, *state_blocks, *blocks]
                         injected_images = True
                     if (

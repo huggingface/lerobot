@@ -472,3 +472,156 @@ def test_saved_message_processor_registry_name_still_loads():
     assert saved_config["steps"][0]["registry_name"] == "eo1_conversation_template_processor"
     restored = PolicyProcessorPipeline.from_config(saved_config)
     assert isinstance(restored.steps[0], EO1PrepareModelMessagesStep)
+
+
+@pytest.mark.parametrize("query_kind", ["next_subtask", "vqa"])
+@pytest.mark.parametrize("include_user", [False, True])
+def test_training_and_generation_share_state_conditioned_prefix(query_kind, include_user):
+    from lerobot.datasets.recipe import MessageTurn, TrainingRecipe, render_message_turns
+    from lerobot.lerobot_types import TransitionKey
+    from lerobot.policies.eo1.processor_eo1 import EO1PrepareModelMessagesStep
+    from lerobot.processor.converters import create_transition
+
+    turns = [MessageTurn(role="system", content="Robot assistant", stream="high_level")]
+    if include_user:
+        turns.append(MessageTurn(role="user", content="${task}", stream="high_level"))
+    turns.append(MessageTurn(role="assistant", content="${subtask}", stream="high_level", target=True))
+    recipe = TrainingRecipe(messages=turns)
+    rendered = render_message_turns(recipe.messages, {"task": "tidy", "subtask": "pick up cup"})
+    config = make_eo1_config()
+    formatter = EO1PrepareModelMessagesStep(config.input_features, CHUNK_SIZE)
+    observation = {
+        OBS_STATE: torch.zeros(1, STATE_DIM),
+        "observation.images.image": torch.zeros(1, 3, 8, 8),
+    }
+    training = formatter(
+        create_transition(
+            observation=observation,
+            complementary_data={"task": ["tidy"], **{key: [value] for key, value in rendered.items()}},
+        )
+    )[TransitionKey.COMPLEMENTARY_DATA]
+    request = create_transition(
+        observation=observation,
+        complementary_data={"task": ["tidy"], QUERY_KIND: query_kind, QUERY_TEXT: "tidy"},
+    )
+    runtime = formatter(RenderRuntimeMessagesStep(recipe)(request))[TransitionKey.COMPLEMENTARY_DATA]
+    runtime_user = next(message for message in runtime["messages"][0] if message["role"] == "user")
+    training_user = next(message for message in training["messages"][0] if message["role"] == "user")
+    state_text = "<|state_start|><|state_pad|><|state_end|>"
+    for user in (training_user, runtime_user):
+        assert sum(block.get("text") == state_text for block in user["content"]) == 1
+    if query_kind == "next_subtask" or include_user:
+        # Compare multimodal prefixes without asking Python to compare image tensors as booleans.
+        assert len(training_user["content"]) == len(runtime_user["content"])
+        for training_block, runtime_block in zip(
+            training_user["content"], runtime_user["content"], strict=True
+        ):
+            assert training_block["type"] == runtime_block["type"]
+            if training_block["type"] == "image":
+                torch.testing.assert_close(training_block["image"], runtime_block["image"])
+            else:
+                assert training_block == runtime_block
+    assert runtime["target_message_indices"] == [[]]
+
+
+def test_real_qwen_generation_uses_projected_state_and_cached_image_prefix(monkeypatch):
+    from transformers import Qwen2_5_VLConfig, Qwen2_5_VLForConditionalGeneration
+
+    qwen_config = Qwen2_5_VLConfig(
+        text_config={
+            "vocab_size": 64,
+            "hidden_size": 32,
+            "intermediate_size": 64,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 2,
+            "rope_parameters": {"rope_type": "default", "rope_theta": 1000000.0, "mrope_section": [1, 1, 2]},
+            "bos_token_id": 1,
+            "eos_token_id": 2,
+            "pad_token_id": 0,
+        },
+        vision_config={
+            "depth": 1,
+            "hidden_size": 32,
+            "intermediate_size": 64,
+            "num_heads": 4,
+            "patch_size": 2,
+            "temporal_patch_size": 1,
+            "spatial_merge_size": 2,
+            "window_size": 4,
+            "out_hidden_size": 32,
+            "fullatt_block_indexes": [0],
+        },
+        image_token_id=40,
+        video_token_id=43,
+        vision_start_token_id=41,
+        vision_end_token_id=42,
+    )
+    backbone = Qwen2_5_VLForConditionalGeneration(qwen_config).eval()
+    monkeypatch.setattr(
+        "lerobot.policies.eo1.modeling_eo1.Qwen2_5_VLForConditionalGeneration.from_pretrained",
+        lambda *args, **kwargs: backbone,
+    )
+    policy = EO1Policy(make_eo1_config())
+    with torch.no_grad():
+        policy.model.state_proj.weight.fill_(0.25)
+        policy.model.state_proj.bias.zero_()
+
+    decoded = []
+    generated = []
+    prefill_embeddings = []
+    cache_lengths = []
+    image_calls = []
+
+    def decode(token_ids, **kwargs):
+        decoded.append(token_ids.clone())
+        return ["generated response"]
+
+    policy._text_processor = SimpleNamespace(tokenizer=DummyTokenizer(), batch_decode=decode)
+    real_generate = backbone.generate
+
+    def generate_three_tokens(**kwargs):
+        kwargs.update(max_new_tokens=3, min_new_tokens=3, eos_token_id=None)
+        result = real_generate(**kwargs)
+        generated.append(result.clone())
+        return result
+
+    monkeypatch.setattr(backbone, "generate", generate_three_tokens)
+
+    def capture_prefill(module, args, kwargs):
+        cache = kwargs.get("past_key_values")
+        cache_lengths.append(0 if cache is None else cache.get_seq_length())
+        if kwargs.get("inputs_embeds") is not None:
+            prefill_embeddings.append(kwargs["inputs_embeds"].detach().clone())
+
+    prefill_hook = backbone.model.register_forward_pre_hook(capture_prefill, with_kwargs=True)
+    image_hook = backbone.model.visual.register_forward_hook(lambda *args: image_calls.append(True))
+    input_ids = torch.tensor([[0, 1, 41, 40, 42, STATE_TOKEN_ID, 10]])
+    batch = {
+        "input_ids": input_ids,
+        "attention_mask": input_ids.ne(0).long(),
+        "pixel_values": torch.zeros(4, 12),
+        "image_grid_thw": torch.tensor([[1, 2, 2]]),
+        "mm_token_type_ids": torch.tensor([[0, 0, 0, 1, 0, 0, 0]]),
+        "state_token_id": STATE_TOKEN_ID,
+        "action_token_id": ACTION_TOKEN_ID,
+    }
+    try:
+        for state in (torch.zeros(1, STATE_DIM - 1), torch.ones(1, STATE_DIM - 1)):
+            assert policy.generate_text({**batch, OBS_STATE: state}) == "generated response"
+    finally:
+        prefill_hook.remove()
+        image_hook.remove()
+
+    assert len(prefill_embeddings) == 2
+    torch.testing.assert_close(prefill_embeddings[0][:, 5], torch.zeros(1, 32))
+    # Three state coordinates equal one; the fourth is zero-padded before projection.
+    torch.testing.assert_close(prefill_embeddings[1][:, 5], torch.full((1, 32), 0.75))
+    non_state = input_ids[0] != STATE_TOKEN_ID
+    torch.testing.assert_close(prefill_embeddings[0][:, non_state], prefill_embeddings[1][:, non_state])
+    assert cache_lengths == [0, 7, 8, 0, 7, 8]
+    assert len(image_calls) == 2  # Encode the image once per request, not per generated token.
+    for full_output, decoded_tokens in zip(generated, decoded, strict=True):
+        torch.testing.assert_close(full_output[:, :7], input_ids)
+        torch.testing.assert_close(decoded_tokens, full_output[:, 7:])
+        assert decoded_tokens.shape == (1, 3)
