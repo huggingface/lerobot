@@ -680,6 +680,60 @@ def test_dagger_full_transition_cycle():
     assert (old, new) == (DAggerPhase.PAUSED, DAggerPhase.AUTONOMOUS)
 
 
+def test_dagger_resume_feeds_fresh_observation_before_resume():
+    """PAUSED -> AUTONOMOUS must publish a fresh (post-correction) observation
+    to the engine after reset and before resume.
+
+    Regression test for #3747: observations are only published during
+    AUTONOMOUS ticks, so after a correction the engine still holds the
+    pre-correction observation. The RTC background thread wakes on resume()
+    and can start inference from that stale observation before the main
+    loop's next notify, producing a chunk that snaps the arm back toward its
+    pre-correction pose.
+    """
+    from lerobot.rollout import DAggerStrategyConfig
+    from lerobot.rollout.strategies import DAggerPhase
+    from lerobot.rollout.strategies.dagger import DAggerStrategy
+
+    strategy = DAggerStrategy(DAggerStrategyConfig())
+
+    engine = MagicMock()
+    interpolator = MagicMock()
+
+    teleop = MagicMock()
+    teleop.feedback_features = {}  # non-actuated: skip smooth-handover branches
+
+    fresh_obs = {"joint_pos": 1.23}
+    processed_obs = {"observation.state": torch.tensor([1.23])}
+    robot = MagicMock()
+    robot.get_observation.return_value = fresh_obs
+    processors = MagicMock()
+    processors.robot_observation_processor.return_value = processed_obs
+
+    ctx = SimpleNamespace(
+        hardware=SimpleNamespace(teleop=teleop, robot_wrapper=robot),
+        processors=processors,
+    )
+
+    strategy._apply_transition(
+        DAggerPhase.PAUSED,
+        DAggerPhase.AUTONOMOUS,
+        engine,
+        interpolator,
+        ctx,
+        prev_action=None,
+    )
+
+    processors.robot_observation_processor.assert_called_once_with(fresh_obs)
+    engine.notify_observation.assert_called_once_with(processed_obs)
+
+    # The stale-observation race is only closed if the fresh observation is
+    # published after the engine reset and before the background thread is
+    # allowed to run again.
+    call_order = [name for name, _, _ in engine.mock_calls]
+    assert call_order.index("reset") < call_order.index("notify_observation") < call_order.index("resume")
+
+
 def test_dagger_invalid_transition_ignored():
     from lerobot.rollout.strategies import DAggerEvents, DAggerPhase
 
