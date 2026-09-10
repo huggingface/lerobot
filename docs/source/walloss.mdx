@@ -100,7 +100,8 @@ lerobot-train \
 
 ### Train with language annotations
 
-Set `recipe_path` to train from LeRobot's optional language columns:
+WALL-X includes a built-in recipe for language training. Set `recipe_path`
+to override it when training from LeRobot's optional language columns:
 
 ```bash
 lerobot-train \
@@ -118,7 +119,7 @@ lerobot-train \
 Targeted assistant turns receive next-token cross-entropy, while `low_level`
 recipe streams receive continuous flow-action supervision. A row may receive
 either objective or both. User prompts, images, proprioception, action-query
-tokens, and padding are excluded from text loss. Without `recipe_path`,
+tokens, and padding are excluded from text loss. With `policy.recipe=null`,
 WALL-OSS keeps its original action-only training path.
 
 See [Language columns and recipes](./language_and_recipes) for the annotation

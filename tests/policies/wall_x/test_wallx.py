@@ -40,7 +40,8 @@ from lerobot.policies.wall_x.processor_wall_x import (  # noqa: E402
 from lerobot.policies.wall_x.qwen_model import Qwen2_5_VLMoEModel, Qwen2_5_VLTextConfig  # noqa: E402
 from lerobot.policies.wall_x.utils import _extract_text_target_spans  # noqa: E402
 from lerobot.processor import (  # noqa: E402
-    RenderMessagesStep,
+    RenderRuntimeMessagesStep,
+    RenderTrainingMessagesStep,
     batch_to_transition,
     transition_to_batch,
 )
@@ -155,7 +156,7 @@ def test_policy_combines_text_and_flow_losses_with_configured_weights(monkeypatc
     policy.model = lambda **kwargs: outputs
     monkeypatch.setattr(policy, "_pretokenized_inputs", lambda batch, **kwargs: batch)
 
-    loss, metrics = policy.forward({**_model_inputs(), "messages": [[{"role": "user"}]]})
+    loss, metrics = policy.forward({**_model_inputs(), "messages_rendered": [[{"role": "user"}]]})
 
     assert loss.item() == 7.0
     assert metrics["flow_loss"].item() == 3.0
@@ -196,10 +197,8 @@ def test_policy_answers_a_rendered_vqa_question():
     assert not hasattr(WallXPolicy, "generate_texts")
 
     question = "What is the capital of France?"
-    rendered = RenderMessagesStep(render_training=False)(
-        batch_to_transition({QUERY_KIND: "vqa", QUERY_TEXT: question})
-    )
-    messages = transition_to_batch(rendered)["messages"]
+    rendered = RenderRuntimeMessagesStep()(batch_to_transition({QUERY_KIND: "vqa", QUERY_TEXT: question}))
+    messages = transition_to_batch(rendered)["messages_rendered"]
     assert messages == [{"role": "user", "content": question}]
     assert (
         _tokenizer_step()._generation_text(messages, ["front view"])
@@ -265,9 +264,9 @@ def test_wall_x_runtime_query_is_rendered_by_the_default_input_pipeline():
         )
     )
 
-    assert isinstance(preprocessor.steps[0], RenderMessagesStep)
-    assert preprocessor.steps[0].render_training is False
-    assert batch["messages"] == [
+    assert isinstance(preprocessor.steps[0], RenderRuntimeMessagesStep)
+    assert isinstance(preprocessor.steps[1], RenderTrainingMessagesStep)
+    assert batch["messages_rendered"] == [
         {"role": "user", "content": "clear the table\nPredict the next action in language.\n"}
     ]
     assert QUERY_KIND not in batch
@@ -280,7 +279,7 @@ def test_wall_x_loads_an_explicit_external_recipe(tmp_path):
     config = WallXConfig(device="cpu", recipe_path=str(path))
 
     assert config.recipe is not None
-    assert config.recipe.messages is not None
+    assert config.recipe["messages"] is not None
 
 
 @require_cuda
@@ -405,3 +404,24 @@ def test_subtask_prompt_is_token_exact_with_the_trained_template():
     # Compare the user turn only: upstream appends its own assistant target, ours ends
     # at the generation prompt.
     assert ours.split("<|im_start|>assistant")[0] == upstream.split("<|im_start|>assistant")[0]
+
+
+@pytest.mark.parametrize("recipe_enabled", [False, True])
+def test_recipe_config_round_trip_and_optional_rendering(recipe_enabled):
+    import draccus
+
+    config = WallXConfig(device="cpu")
+    if not recipe_enabled:
+        config.recipe = None
+    restored = draccus.decode(WallXConfig, draccus.encode(config))
+    assert restored.recipe == config.recipe
+    runtime = RenderRuntimeMessagesStep(restored.recipe)
+    training = RenderTrainingMessagesStep(restored.recipe)
+    if recipe_enabled:
+        assert runtime.recipe is not None
+        assert training.recipe == runtime.recipe
+    else:
+        from lerobot.processor.converters import create_transition
+
+        transition = create_transition(action=torch.ones(1), complementary_data={"task": "tidy"})
+        assert training(transition) is transition

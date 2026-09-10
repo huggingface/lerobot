@@ -57,8 +57,8 @@ from lerobot.utils.import_utils import (
     _wallx_deps_available,
     require_package,
 )
+from lerobot.utils.language import require_single_text_output
 
-from ..language import require_single_text_output
 from ..pretrained import PreTrainedPolicy
 from ..utils import populate_queues
 from .configuration_wall_x import WallXConfig
@@ -1932,7 +1932,7 @@ class WallXPolicy(PreTrainedPolicy):
         Returns:
             tuple: (loss, loss_dict)
         """
-        recipe_supervision = "messages" in batch
+        recipe_supervision = "messages_rendered" in batch
         batch = self._pretokenized_inputs(batch, compute_position_ids=True)
 
         # Call the underlying model's forward with mode="train"

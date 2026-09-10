@@ -21,21 +21,21 @@ from typing import TYPE_CHECKING, Any
 import torch
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.configs.recipe import language_recipe_enabled
 from lerobot.lerobot_types import EnvTransition, TransitionKey
-from lerobot.policies.language import normalize_semantic_messages, semantic_message_content_text
 from lerobot.processor import (
     ComplementaryDataProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
-    RenderMessagesStep,
+    RenderRuntimeMessagesStep,
+    RenderTrainingMessagesStep,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
+from lerobot.utils.language import normalize_semantic_messages, semantic_message_content_text
 
 from .configuration_wall_x import WallXConfig
 
@@ -79,15 +79,9 @@ def make_wall_x_pre_post_processors(
 
     steps = make_default_policy_processor_steps(config, dataset_stats)
 
-    render_training = language_recipe_enabled(
-        use_language_recipe=config.use_language_recipe,
-        recipe_path=config.recipe_path,
-    )
-    if render_training and config.recipe is None:
-        raise ValueError("WALL-X language training requires a recipe in policy config.")
-
     input_steps = [
-        RenderMessagesStep(config.recipe, render_training=render_training),
+        RenderRuntimeMessagesStep(config.recipe),
+        RenderTrainingMessagesStep(config.recipe),
         steps.rename_observations,
         steps.add_batch_dim,
         WallXTaskProcessor(),  # Process task description
@@ -320,7 +314,7 @@ class WallXTokenizerStep(ProcessorStep):
         if not isinstance(tasks, list) or len(tasks) != batch_size:
             raise ValueError(f"WALL-X expected exactly {batch_size} task strings.")
 
-        messages = complementary.get("messages")
+        messages = complementary.get("messages_rendered")
         texts = []
         if messages is not None:
             message_batch = normalize_semantic_messages(messages, policy_name="WALL-X", batch_size=batch_size)
