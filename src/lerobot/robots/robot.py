@@ -14,6 +14,7 @@
 
 import abc
 import builtins
+import logging
 from pathlib import Path
 
 import draccus
@@ -23,6 +24,8 @@ from lerobot.motors import MotorCalibration
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, ROBOTS
 
 from .config import RobotConfig
+
+logger = logging.getLogger(__name__)
 
 
 # TODO(aliberts): action/obs typing such as Generic[ObsType, ActType] similar to gym.Env ?
@@ -72,6 +75,41 @@ class Robot(abc.ABC):
         Automatically disconnects, ensuring resources are released even on error.
         """
         self.disconnect()
+
+    def _release_after_failed_connect(self) -> None:
+        """Releases whatever was already acquired when connect() fails partway through.
+
+        A camera left connected keeps its background read thread and its native
+        pipeline alive with no owner. Those are only torn down at interpreter
+        shutdown, which is too late for backends that must be stopped explicitly
+        and can abort the process instead of surfacing the original error.
+
+        Failures here are logged rather than raised so they cannot mask it.
+        """
+        for cam in getattr(self, "cameras", {}).values():
+            try:
+                if cam.is_connected:
+                    cam.disconnect()
+            except Exception:
+                logger.exception(f"Failed to disconnect {cam} after {self} failed to connect.")
+
+        self._release_bus_after_failed_connect()
+
+    def _release_bus_after_failed_connect(self) -> None:
+        """Releases the motors bus after a failed connect().
+
+        Override this when the bus does not follow the ``disconnect(disable_torque)``
+        shape, as is the case for CAN-backed robots that hold a controller handle.
+        """
+        bus = getattr(self, "bus", None)
+        if bus is None:
+            return
+
+        try:
+            if bus.is_connected:
+                bus.disconnect(self.config.disable_torque_on_disconnect)
+        except Exception:
+            logger.exception(f"Failed to disconnect the bus after {self} failed to connect.")
 
     def __del__(self) -> None:
         """

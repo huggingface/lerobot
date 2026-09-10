@@ -14,9 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from typing import Any
 
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+
+logger = logging.getLogger(__name__)
 
 
 class BimanualMixin:
@@ -47,7 +50,16 @@ class BimanualMixin:
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         self.left_arm.connect(calibrate)
-        self.right_arm.connect(calibrate)
+        try:
+            self.right_arm.connect(calibrate)
+        except BaseException:
+            # Otherwise the left arm keeps its bus and cameras open with no owner.
+            try:
+                if self.left_arm.is_connected:
+                    self.left_arm.disconnect()
+            except Exception:
+                logger.exception(f"Failed to disconnect {self.left_arm} after {self} failed to connect.")
+            raise
 
     def calibrate(self) -> None:
         self.left_arm.calibrate()

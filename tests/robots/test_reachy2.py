@@ -166,6 +166,29 @@ def reachy2(request):
             robot.disconnect()
 
 
+def test_connect_releases_camera_and_sdk_when_a_camera_fails(reachy2):
+    # A camera failure used to leave earlier cameras and the SDK handle open, so they were
+    # only torn down at interpreter shutdown rather than when connect() failed (see #4550).
+    good_cam = _make_reachy2_camera_mock(name="good_cam")
+    good_cam.is_connected = False
+    good_cam.connect.side_effect = lambda *a, **kw: setattr(good_cam, "is_connected", True)
+    good_cam.disconnect.side_effect = lambda: setattr(good_cam, "is_connected", False)
+
+    bad_cam = _make_reachy2_camera_mock(name="bad_cam")
+    bad_cam.is_connected = False
+    bad_cam.connect.side_effect = ConnectionError("Failed to open bad_cam.")
+
+    reachy2.cameras = {"good": good_cam, "bad": bad_cam}
+
+    with pytest.raises(ConnectionError, match="bad_cam"):
+        reachy2.connect()
+
+    good_cam.disconnect.assert_called_once_with()
+    assert not good_cam.is_connected
+    assert reachy2.reachy is None
+    assert not reachy2.is_connected
+
+
 def test_connect_disconnect(reachy2):
     assert not reachy2.is_connected
 

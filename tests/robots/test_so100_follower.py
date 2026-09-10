@@ -88,6 +88,52 @@ def test_connect_disconnect(follower):
     assert not follower.is_connected
 
 
+def _make_camera_mock(name: str, fails: bool = False) -> MagicMock:
+    """Return a camera mock that tracks its own connection state."""
+    cam = MagicMock(name=name)
+    cam.is_connected = False
+
+    def _connect(warmup=True):
+        if fails:
+            raise ConnectionError(f"Failed to open {name}.")
+        cam.is_connected = True
+
+    def _disconnect():
+        cam.is_connected = False
+
+    cam.connect.side_effect = _connect
+    cam.disconnect.side_effect = _disconnect
+    return cam
+
+
+def test_connect_releases_already_connected_camera_when_a_later_one_fails(follower):
+    # A camera left connected keeps its read thread and native pipeline alive with no owner,
+    # which aborts the process at interpreter shutdown instead of surfacing the error (see #4550).
+    good_cam = _make_camera_mock("good_cam")
+    bad_cam = _make_camera_mock("bad_cam", fails=True)
+    follower.cameras = {"front": good_cam, "arm": bad_cam}
+
+    with pytest.raises(ConnectionError, match="bad_cam"):
+        follower.connect()
+
+    good_cam.disconnect.assert_called_once_with()
+    assert not good_cam.is_connected
+    assert not follower.bus.is_connected
+    assert not follower.is_connected
+
+
+def test_connect_reports_original_error_when_cleanup_also_fails(follower):
+    good_cam = _make_camera_mock("good_cam")
+    good_cam.disconnect.side_effect = RuntimeError("disconnect exploded")
+    bad_cam = _make_camera_mock("bad_cam", fails=True)
+    follower.cameras = {"front": good_cam, "arm": bad_cam}
+
+    with pytest.raises(ConnectionError, match="bad_cam"):
+        follower.connect()
+
+    assert not follower.bus.is_connected
+
+
 def test_get_observation(follower):
     follower.connect()
     obs = follower.get_observation()
