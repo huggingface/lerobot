@@ -268,17 +268,24 @@ PyPI default torch wheel is currently a cu130-bundled Linux wheel, driver floor 
 
 To pick a specific CUDA variant:
 
-**Using `pip` or `conda`**: install everything from the CUDA 12 index in one command, so nothing is re-resolved afterwards:
+**Using `pip` in a `conda` or `venv` environment**: the following example is tested with Python 3.12 on Linux x86_64 and the current source checkout. Install compatible CUDA 12 builds first, then resolve LeRobot's dependencies with the same CUDA pins:
 
 ```bash
 pip install --index-url https://download.pytorch.org/whl/cu126 \
-    torch torchvision torchcodec
-pip install --no-deps -e .          # source, then add the rest of the extras you need
+    'torch==2.14.0+cu126' \
+    'torchvision==0.29.0+cu126' \
+    'torchcodec==0.13.0+cu126' \
+    'numpy>=2.0,<2.3'
+pip install -e '.[dataset]' \
+    'torch==2.14.0+cu126' \
+    'torchvision==0.29.0+cu126' \
+    'torchcodec==0.13.0+cu126'
+pip check
 ```
 
-Use one command for the CUDA 12 set. A second `pip install` that can see PyPI will resolve `torch` again, and the PyPI wheels depend on CUDA 13 runtime packages even at older torch versions, so the CUDA 12 build you just placed gets replaced. `--no-deps` on the second command avoids that, at the cost of installing LeRobot's other dependencies yourself.
+The second command installs the remaining dependencies normally. Keeping the explicit CUDA pins prevents a later resolution from selecting a different build. Replace `dataset` with the extras you need, and keep these pins when adding or upgrading packages. If an extra conflicts with them, resolve that conflict instead of bypassing it with `--no-deps`.
 
-For `pip install lerobot` from PyPI there is no reliable CUDA 12 recipe: the published package resolves its own `torch`, which brings the CUDA 13 runtime with it. Use the `uv` path below, or the source install above.
+For a published LeRobot release, choose CUDA package versions within that release's bounds; the source-checkout pins above are not a promise for every release.
 
 **Using `uv` to install from PyPI**: one-liner via `--torch-backend` (uv ≥ 0.7):
 
