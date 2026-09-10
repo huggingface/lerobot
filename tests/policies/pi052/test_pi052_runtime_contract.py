@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from lerobot.policies.pi052.modeling_pi052 import PI052Policy
+from lerobot.policies.pi052.modeling_pi052 import PI052Policy, _last_valid_prefix_hidden
 
 
 def _policy(**kwargs):
@@ -42,3 +42,9 @@ def test_scratchpad_response_cannot_be_applied_as_an_ordinary_subtask():
     policy.config.memory_scratchpad = True
     with pytest.raises(ValueError, match="scratchpad-aware controller"):
         policy.generate_text({"observation.state": torch.zeros(1, 14)})
+
+
+def test_generation_reads_last_valid_prompt_token_not_right_padding():
+    hidden = torch.arange(12.0).reshape(2, 6, 1)
+    mask = torch.tensor([[True, False, True, True, False, False], [False, True, True, True, True, False]])
+    assert _last_valid_prefix_hidden(hidden, mask).flatten().tolist() == [3.0, 10.0]

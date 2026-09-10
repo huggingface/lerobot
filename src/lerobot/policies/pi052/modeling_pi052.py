@@ -44,6 +44,13 @@ from .configuration_pi052 import PI052Config
 logger = logging.getLogger(__name__)
 
 
+def _last_valid_prefix_hidden(hidden: Tensor, mask: Tensor) -> Tensor:
+    """Select the prompt endpoint, including noncontiguous masked image/text padding."""
+    positions = torch.arange(mask.shape[1], device=mask.device).expand_as(mask)
+    indices = positions.masked_fill(~mask.bool(), -1).amax(dim=1).clamp_min(0)
+    return hidden.gather(1, indices[:, None, None].expand(-1, 1, hidden.shape[-1]))
+
+
 class PI05Pytorch(PI05PytorchBase):  # see openpi `PI0Pytorch`
     """Core PI05 PyTorch model."""
 
@@ -1609,7 +1616,10 @@ class PI052Policy(PI05Policy):
                 cache = new_cache
             if vlm_out is None:
                 break
-            last = vlm_out[:, -1:].to(lm_head.weight.dtype)
+            # Shared runtime tokenization right-pads prompts; generation must not
+            # start from a padded position. Cached steps already contain one token.
+            last = _last_valid_prefix_hidden(vlm_out, current_pad) if vlm_out.shape[1] > 1 else vlm_out
+            last = last.to(lm_head.weight.dtype)
             logits_step = lm_head(last)[:, -1]  # (B, V)
             if special_ids and len(generated) < min_new_tokens:
                 for sid in special_ids:
