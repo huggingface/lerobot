@@ -161,6 +161,8 @@
     title: Earth Rover Mini
   - local: omx
     title: OMX
+  - local: almond_axol
+    title: Almond Axol
   - local: openarm
     title: OpenArm
   - local: rebot_b601

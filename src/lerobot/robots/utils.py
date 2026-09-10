@@ -78,6 +78,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .bi_rebot_b601_follower import BiRebotB601Follower
 
         return BiRebotB601Follower(config)
+    elif config.type == "almond_axol":
+        from .almond_axol import AlmondAxol
+
+        return AlmondAxol(config)
     elif config.type == "mock_robot":
         from tests.mocks.mock_robot import MockRobot
 
