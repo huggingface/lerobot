@@ -30,10 +30,20 @@ placeholders wired in later rounds.
 
 from .factory import guard_against_env_interference, make_accelerator, set_fsdp_wrap_modules
 from .parallel_dims import ParallelDims
-from .utils import finalize_sharded_policy, is_main_process, strip_accelerate_cp_hooks
+from .utils import (
+    apply_torch_compile,
+    bind_process_to_gpu_numa,
+    disable_buffer_broadcast_if_static,
+    finalize_sharded_policy,
+    is_main_process,
+    strip_accelerate_cp_hooks,
+)
 
 __all__ = [
     "ParallelDims",
+    "apply_torch_compile",
+    "bind_process_to_gpu_numa",
+    "disable_buffer_broadcast_if_static",
     "finalize_sharded_policy",
     "guard_against_env_interference",
     "is_main_process",

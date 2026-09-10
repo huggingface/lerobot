@@ -47,6 +47,8 @@ class ACTPolicy(PreTrainedPolicy):
 
     config_class = ACTConfig
     name = "act"
+    # Submodules `--accelerator.compile` wraps; the loss glue in `forward` stays eager.
+    _compile_regions = ("model",)
     # FSDP2 wrap units: one unit per transformer layer of both stacks.
     _fsdp_wrap_modules = ["ACTEncoderLayer", "ACTDecoderLayer"]
 
@@ -149,7 +151,10 @@ class ACTPolicy(PreTrainedPolicy):
         num_valid = valid_mask.sum() * abs_err.shape[-1]
         l1_loss = (abs_err * valid_mask).sum() / num_valid.clamp_min(1)
 
-        loss_dict = {"l1_loss": l1_loss.item()}
+        # Sub-losses stay on the device as detached scalars: reading them back here would block
+        # the host between forward and backward. MetricsTracker.update_metrics converts them
+        # after the optimizer step, where the loss is read back anyway.
+        loss_dict = {"l1_loss": l1_loss.detach()}
         if self.config.use_vae and log_sigma_x2_hat is not None:
             # Calculate Dₖₗ(latent_pdf || standard_normal). Note: After computing the KL-divergence for
             # each dimension independently, we sum over the latent dimension to get the total
@@ -158,7 +163,7 @@ class ACTPolicy(PreTrainedPolicy):
             mean_kld = (
                 (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1).mean()
             )
-            loss_dict["kld_loss"] = mean_kld.item()
+            loss_dict["kld_loss"] = mean_kld.detach()
             loss = l1_loss + mean_kld * self.config.kl_weight
         else:
             loss = l1_loss

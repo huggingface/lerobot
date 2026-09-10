@@ -16,10 +16,14 @@
 """Rank utilities and post-`prepare()` sharding finalization."""
 
 import logging
+import os
 from typing import TYPE_CHECKING
 
+import torch
 import torch.distributed as dist
 from torch import nn
+
+from lerobot.configs.accelerator import CompileConfig
 
 if TYPE_CHECKING:
     from lerobot.distributed.parallel_dims import ParallelDims
@@ -92,3 +96,100 @@ def finalize_sharded_policy(policy: nn.Module, parallel_dims: "ParallelDims") ->
         for method_name in getattr(type(policy), "_fsdp_forward_methods", ()):
             if callable(getattr(policy, method_name, None)):
                 register_fsdp_forward_method(policy, method_name)
+
+
+def disable_buffer_broadcast_if_static(policy: nn.Module) -> bool:
+    """Turn off DDP's per-forward buffer broadcast when no buffer can change during training.
+
+    `DistributedDataParallel` with `broadcast_buffers=True` broadcasts every buffer from rank 0
+    at the start of each forward, through a coalesced broadcast that blocks the host until all
+    ranks have joined. That is only needed for buffers that training mutates, which in practice
+    means BatchNorm running statistics. A policy with no BatchNorm module (ACT uses
+    FrozenBatchNorm2d, whose buffers are constants) keeps identical buffers on every rank
+    without the broadcast, so the call is pure overhead: one rank barrier per step.
+
+    Args:
+        policy: The policy as returned by `accelerator.prepare()`.
+
+    Returns:
+        True when the broadcast was switched off.
+    """
+    from torch.nn.modules.batchnorm import _BatchNorm
+    from torch.nn.parallel import DistributedDataParallel
+
+    if not isinstance(policy, DistributedDataParallel) or not policy.broadcast_buffers:
+        return False
+    if any(isinstance(m, _BatchNorm) for m in policy.module.modules()):
+        return False
+    policy.broadcast_buffers = False
+    logging.info("DDP buffer broadcast disabled: the policy has no BatchNorm module, so no buffer changes.")
+    return True
+
+
+def apply_torch_compile(policy: nn.Module, compile_cfg: CompileConfig) -> nn.Module:
+    """Compile the policy per `CompileConfig`, before `accelerator.prepare()`.
+
+    Regional (default): the policy names its compute core in `_compile_regions` (ACT: `model`);
+    each named submodule is replaced by its `torch.compile` wrapper, and the loss glue around it
+    (which reads scalars back with `.item()`) stays eager. Non-regional: the whole policy.
+    """
+    regions = getattr(policy, "_compile_regions", ())
+    enabled = compile_cfg.enabled
+    if enabled is None:
+        enabled = bool(regions)
+    if not enabled:
+        return policy
+    import torch._inductor.config as inductor_config
+
+    inductor_config.fallback_random = compile_cfg.fallback_random
+    kwargs = {"backend": compile_cfg.backend, "mode": compile_cfg.mode}
+    if not compile_cfg.regional:
+        regions = ()
+    if regions:
+        for name in regions:
+            setattr(policy, name, torch.compile(getattr(policy, name), **kwargs))
+        logging.info("torch.compile applied to %s (%s)", ", ".join(regions), kwargs)
+        return policy
+    logging.info("torch.compile applied to the whole policy (%s)", kwargs)
+    return torch.compile(policy, **kwargs)
+
+
+def bind_process_to_gpu_numa(device: torch.device) -> bool:
+    """Pin this process (and the DataLoader workers it forks later) to the CPUs of the NUMA node
+    its GPU hangs off.
+
+    On a two-socket node the launcher scatters the ranks over all cores; a rank whose host thread
+    runs on the far socket pays cross-socket latency on every kernel launch and on the pinned
+    host-to-device copies, and rank skew is what every allreduce waits on. Reads the GPU's PCI
+    address from torch and the node's CPU list from sysfs; a no-op (False) when either is
+    missing, on a single NUMA node, or when the affinity is already narrower.
+
+    Args:
+        device: The CUDA device this process drives.
+
+    Returns:
+        True when the affinity was changed.
+    """
+    if device.type != "cuda" or not hasattr(os, "sched_setaffinity"):
+        return False
+    try:
+        props = torch.cuda.get_device_properties(device)
+        pci = f"{props.pci_domain_id:04x}:{props.pci_bus_id:02x}:{props.pci_device_id:02x}.0"
+        with open(f"/sys/bus/pci/devices/{pci}/numa_node") as f:
+            node = int(f.read().strip())
+        if node < 0:
+            return False
+        with open(f"/sys/devices/system/node/node{node}/cpulist") as f:
+            cpulist = f.read().strip()
+    except (AttributeError, OSError, ValueError):
+        return False
+    cpus: set[int] = set()
+    for part in cpulist.split(","):
+        lo, _, hi = part.partition("-")
+        cpus.update(range(int(lo), int(hi or lo) + 1))
+    current = os.sched_getaffinity(0)
+    if not cpus or current <= cpus:
+        return False
+    os.sched_setaffinity(0, cpus & current or cpus)
+    logging.info("Pinned to NUMA node %d (%d CPUs) for %s", node, len(cpus & current or cpus), device)
+    return True

@@ -64,6 +64,9 @@ from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
 from lerobot.datasets.factory import make_train_eval_datasets
 from lerobot.distributed import (
     ParallelDims,
+    apply_torch_compile,
+    bind_process_to_gpu_numa,
+    disable_buffer_broadcast_if_static,
     finalize_sharded_policy,
     is_main_process,
     make_accelerator,
@@ -431,6 +434,7 @@ def train(cfg: TrainPipelineConfig):
         set_seed(cfg.seed, accelerator=accelerator)
 
     device = accelerator.device
+    bind_process_to_gpu_numa(device)  # before the DataLoader workers fork, so they inherit it
     if cfg.cudnn_deterministic:
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
@@ -467,8 +471,7 @@ def train(cfg: TrainPipelineConfig):
                 "Use it directly for inference via compute_reward() (e.g. offline precompute)."
             )
     else:
-        if is_main_process():
-            logging.info("Creating policy")
+        logging.info("Creating policy")
         policy = make_policy(
             cfg=cfg.policy,
             ds_meta=dataset.meta,
@@ -558,6 +561,8 @@ def train(cfg: TrainPipelineConfig):
 
     # Created BEFORE prepare on the unsharded parameters — accelerate's FSDP2 path requires the
     # model and optimizer in one prepare() call and rebinds the param groups itself.
+    policy = apply_torch_compile(policy, cfg.accelerator.compile)
+
     if is_main_process():
         logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
@@ -583,6 +588,7 @@ def train(cfg: TrainPipelineConfig):
             policy, optimizer, dataloader, lr_scheduler
         )
     finalize_sharded_policy(policy, parallel_dims)
+    disable_buffer_broadcast_if_static(policy)
     if cfg.resume:
         resume_after_prepare(cfg, accelerator, policy, optimizer, lr_scheduler)
 
@@ -740,7 +746,7 @@ def train(cfg: TrainPipelineConfig):
         batch = _preprocess_dataset_batch(batch, dataset.meta.camera_keys, cfg.rename_map, preprocessor)
         train_tracker.preprocessing_s = time.perf_counter() - preprocessing_start
 
-        train_tracker, _ = update_policy(
+        train_tracker, output_dict = update_policy(
             train_tracker,
             policy,
             batch,
@@ -912,7 +918,7 @@ def train(cfg: TrainPipelineConfig):
 
     if is_main_process():
         progbar.close()
-        logging.info("End of training")
+    logging.info("End of training")
 
     # --- publish (collective-safe: all ranks; the model commit gathers sharded weights) ---------
     if getattr(active_cfg, "push_to_hub", False):
