@@ -15,6 +15,7 @@
 # limitations under the License.
 
 from .config import TeleoperatorConfig
+from .ds4_arm import DS4ArmConfig, DS4ArmTeleop
 from .teleoperator import Teleoperator
 from .utils import TeleopEvents, make_teleoperator_from_config
 
