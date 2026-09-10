@@ -133,7 +133,7 @@ lerobot-train \
 
 ### Train with language annotations
 
-Enable the recipe owned by `EO1Config` to train from LeRobot's optional
+`EO1Config` includes a recipe to train from LeRobot's optional
 language columns. The built-in joint recipe supervises a selected assistant
 response and its continuous action chunk in the same sequence:
 
@@ -141,7 +141,6 @@ response and its continuous action chunk in the same sequence:
 lerobot-train \
   --dataset.repo_id=your_org/your_language_annotated_dataset \
   --policy.type=eo1 \
-  --policy.use_language_recipe=true \
   --policy.text_loss_weight=0.01 \
   --policy.flow_loss_weight=1.0 \
   --policy.device=cuda \
@@ -152,8 +151,8 @@ lerobot-train \
 Targeted assistant turns receive next-token cross-entropy, while `low_level`
 recipe streams receive flow-action supervision. A row may receive either
 objective or both. User prompts, images, state tokens, action tokens, and
-padding are excluded from text loss. Without `use_language_recipe`, EO-1 keeps its
-original action-only training path.
+padding are excluded from text loss. Set `policy.recipe=null` to disable recipe rendering and use the original
+action-only training path.
 
 See [Language columns and recipes](./language_and_recipes) for the annotation
 schema and recipe structure. `recipe_path` may point to an explicit external

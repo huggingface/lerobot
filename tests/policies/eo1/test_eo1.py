@@ -31,7 +31,7 @@ from lerobot.policies.eo1.configuration_eo1 import EO1Config
 from lerobot.policies.eo1.modeling_eo1 import EO1Policy
 from lerobot.policies.eo1.processor_eo1 import make_eo1_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor import RenderMessagesStep
+from lerobot.processor import RenderRuntimeMessagesStep, RenderTrainingMessagesStep
 from lerobot.utils.constants import ACTION, OBS_STATE, QUERY_KIND, QUERY_TEXT
 
 HIDDEN_SIZE = 8
@@ -316,8 +316,8 @@ def test_eo1_default_processor_owns_runtime_prompt_rendering(monkeypatch):
         }
     )
 
-    assert isinstance(preprocessor.steps[0], RenderMessagesStep)
-    assert preprocessor.steps[0].render_training is False
+    assert isinstance(preprocessor.steps[0], RenderRuntimeMessagesStep)
+    assert isinstance(preprocessor.steps[1], RenderTrainingMessagesStep)
     assert processed["input_ids"].shape == (1, 2)
     assert "messages" not in processed
     assert QUERY_KIND not in processed
@@ -329,7 +329,6 @@ def test_eo1_recipe_processor_builds_sparse_joint_labels():
     pytest.importorskip("datasets", reason="language recipes require lerobot[dataset]")
     config = make_eo1_config()
     config.vlm_base = "Qwen/Qwen2.5-VL-3B-Instruct"
-    config.use_language_recipe = True
     preprocessor, _ = make_eo1_pre_post_processors(
         config,
         dataset_stats={
@@ -367,3 +366,24 @@ def test_eo1_recipe_processor_builds_sparse_joint_labels():
     action_token_id = processed["action_token_id"]
     assert (processed["input_ids"] == action_token_id).sum() == CHUNK_SIZE
     assert not (labels == action_token_id).any()
+
+
+@pytest.mark.parametrize("recipe_enabled", [False, True])
+def test_recipe_config_round_trip_and_optional_rendering(recipe_enabled):
+    import draccus
+
+    config = make_eo1_config()
+    if not recipe_enabled:
+        config.recipe = None
+    restored = draccus.decode(EO1Config, draccus.encode(config))
+    assert restored.recipe == config.recipe
+    runtime = RenderRuntimeMessagesStep(restored.recipe)
+    training = RenderTrainingMessagesStep(restored.recipe)
+    if recipe_enabled:
+        assert runtime.recipe is not None
+        assert training.recipe == runtime.recipe
+    else:
+        from lerobot.processor.converters import create_transition
+
+        transition = create_transition(action=torch.ones(1), complementary_data={"task": "tidy"})
+        assert training(transition) is transition

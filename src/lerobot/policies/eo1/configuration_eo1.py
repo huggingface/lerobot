@@ -17,11 +17,10 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.recipe import MessageTurn, TrainingRecipe, resolve_recipe_override
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
@@ -40,24 +39,24 @@ else:
     Qwen2_5_VLVisionConfig = None
 
 
-def _eo1_default_recipe() -> TrainingRecipe:
-    """EO-1's trained subtask wording as a recipe (the WALL-OSS/EO-1 family phrasing)."""
-    return TrainingRecipe(
-        messages=[
-            MessageTurn(
-                role="user",
-                content="${task}\nPredict the next action in language.",
-                stream="low_level",
-            ),
-            MessageTurn(
-                role="assistant",
-                content="${subtask}",
-                stream="low_level",
-                target=True,
-                if_present="subtask",
-            ),
+def _eo1_default_recipe() -> dict:
+    """Serialized recipe; keep policy config discovery independent of dataset extras."""
+    return {
+        "messages": [
+            {
+                "role": "user",
+                "content": "${task}\nPredict the next action in language.",
+                "stream": "low_level",
+            },
+            {
+                "role": "assistant",
+                "content": "${subtask}",
+                "stream": "low_level",
+                "target": True,
+                "if_present": "subtask",
+            },
         ]
-    )
+    }
 
 
 @PreTrainedConfig.register_subclass("eo1")
@@ -110,15 +109,13 @@ class EO1Config(PreTrainedConfig):
 
     # Training settings.
     gradient_checkpointing: bool = False  # Enable gradient checkpointing for memory optimization
-    # The built-in recipe lives in this policy config. Enable it for annotated
-    # training with `use_language_recipe`; `recipe_path` is only an explicit
-    # external override.
-    use_language_recipe: bool = False
+    # The built-in recipe handles annotated training and runtime prompts.
+    # recipe_path optionally overrides it; recipe=None disables recipe training.
     recipe_path: str | None = None
     # EO-1's language contract. Defaults to the subtask wording the released
     # checkpoints answer; a fine-tune with `recipe_path` replaces it, and the
     # checkpoint then prompts itself with the recipe it was trained on.
-    recipe: TrainingRecipe | dict | None = field(default_factory=lambda: _eo1_default_recipe())
+    recipe: dict | None = field(default_factory=_eo1_default_recipe)
     tokenizer_max_length: int = 1000
     text_temperature: float = 0.0
     text_top_p: float = 1.0
@@ -150,7 +147,10 @@ class EO1Config(PreTrainedConfig):
     def __post_init__(self):
         super().__post_init__()
 
-        self.recipe = resolve_recipe_override(self.recipe, self.recipe_path)
+        if self.recipe_path is not None:
+            from lerobot.datasets.recipe import resolve_recipe_override
+
+            self.recipe = asdict(resolve_recipe_override(self.recipe, self.recipe_path))
 
         if self.n_action_steps > self.chunk_size:
             raise ValueError(

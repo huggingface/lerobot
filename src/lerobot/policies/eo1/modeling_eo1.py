@@ -30,10 +30,10 @@ from torch import Tensor
 
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
+from lerobot.utils.language import require_single_text_output
 
 from ..common.flow_matching import euler_integrate, sample_noise, sample_time_beta
 from ..common.vla_utils import create_sinusoidal_pos_embedding, pad_vector
-from ..language import require_single_text_output
 from ..pretrained import PreTrainedPolicy
 from .configuration_eo1 import EO1Config
 from .processor_eo1 import EO1_SPECIAL_TOKENS

@@ -22,22 +22,22 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 
-from lerobot.configs.recipe import language_recipe_enabled
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import TransitionKey
-from lerobot.policies.language import normalize_semantic_messages
 from lerobot.processor import (
     ComplementaryDataProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
-    RenderMessagesStep,
+    RenderRuntimeMessagesStep,
+    RenderTrainingMessagesStep,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
+from lerobot.utils.language import normalize_semantic_messages
 
 from .configuration_eo1 import EO1Config
 
@@ -109,7 +109,7 @@ class EO1ConversationTemplateStep(ComplementaryDataProcessorStep):
         images = {
             key: observation[key].clamp(0, 1).mul(255.0).round().to(torch.uint8) for key in self._image_keys
         }
-        recipe_messages = complementary_data.get("messages")
+        recipe_messages = complementary_data.pop("messages_rendered", None)
         recipe_streams = complementary_data.get("message_streams")
         recipe_targets = complementary_data.get("target_message_indices")
         generation_request = recipe_messages is not None and recipe_streams is None
@@ -378,15 +378,9 @@ def make_eo1_pre_post_processors(
 
     steps = make_default_policy_processor_steps(config, dataset_stats)
 
-    render_training = language_recipe_enabled(
-        use_language_recipe=config.use_language_recipe,
-        recipe_path=config.recipe_path,
-    )
-    if render_training and config.recipe is None:
-        raise ValueError("EO-1 language training requires a recipe in policy config.")
-
     input_steps: list[ProcessorStep] = [
-        RenderMessagesStep(config.recipe, render_training=render_training),
+        RenderRuntimeMessagesStep(config.recipe),
+        RenderTrainingMessagesStep(config.recipe),
         steps.rename_observations,
         steps.add_batch_dim,
         steps.normalize,
