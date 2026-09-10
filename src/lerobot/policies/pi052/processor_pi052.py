@@ -24,7 +24,7 @@ from typing import Any
 
 import torch
 
-from lerobot.configs.recipe import TrainingRecipe
+from lerobot.datasets.recipe import TrainingRecipe
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     ActionTokenizerProcessorStep,
@@ -41,7 +41,7 @@ from lerobot.processor import (
 )
 
 # Import directly to keep optional language dependencies out of ``lerobot.processor``.
-from lerobot.processor.render_messages_processor import RenderMessagesStep
+from lerobot.processor.render_messages_processor import RenderRuntimeMessagesStep, RenderTrainingMessagesStep
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 from ..pi05.processor_pi05 import make_pi05_pre_post_processors
@@ -65,12 +65,12 @@ def make_pi052_pre_post_processors(
 
     Falls through to π0.5's stock pipeline when ``recipe_path`` is unset.
     """
-    if not config.recipe_path:
+    if config.recipe is None:
         if getattr(config, "enable_fast_action_loss", False):
             raise ValueError("PI052 FAST action loss requires recipe_path to build action supervision.")
         return make_pi05_pre_post_processors(config, dataset_stats=dataset_stats)
 
-    recipe = _load_recipe(config.recipe_path)
+    recipe = TrainingRecipe.from_dict(config.recipe)
 
     relative_step = RelativeActionsProcessorStep(
         enabled=config.use_relative_actions,
@@ -87,7 +87,8 @@ def make_pi052_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-        RenderMessagesStep(recipe=recipe),
+        RenderRuntimeMessagesStep(recipe=recipe),
+        RenderTrainingMessagesStep(recipe=recipe),
         PI052TextTokenizerStep(
             tokenizer_name="google/paligemma-3b-pt-224",
             max_length=config.tokenizer_max_length,
@@ -155,9 +156,7 @@ def _load_recipe(path_str: str) -> TrainingRecipe:
     """
     p = Path(path_str)
     if not p.is_absolute() and not p.exists():
-        from lerobot.configs import recipe as _recipe_module  # noqa: PLC0415
-
-        configs_dir = Path(_recipe_module.__file__).resolve().parent
+        configs_dir = Path(__file__).parents[2] / "configs"
         candidate = configs_dir / path_str
         if candidate.exists():
             p = candidate

@@ -33,7 +33,7 @@ from pathlib import Path
 
 import torch
 
-from lerobot.configs.recipe import TrainingRecipe
+from lerobot.datasets.recipe import TrainingRecipe
 from lerobot.policies.pi052.text_processor_pi052 import (
     PI052TextTokenizerStep,
     encode_prompt_with_targets,

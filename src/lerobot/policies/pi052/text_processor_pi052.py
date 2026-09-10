@@ -26,8 +26,8 @@ import torch
 from torch import Tensor
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor.pipeline import ProcessorStep, ProcessorStepRegistry
-from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 
 logger = logging.getLogger(__name__)
@@ -133,7 +133,7 @@ def _sample_indices(value: Any, batch_size: int) -> list[int | None]:
             return [int(value.item())] * batch_size
         values = value.reshape(-1).tolist()
         return [int(v) for v in values[:batch_size]]
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         if len(value) == 1:
             return _sample_indices(value[0], batch_size)
         return [int(v.item() if hasattr(v, "item") else v) for v in value[:batch_size]]
@@ -331,10 +331,19 @@ class PI052TextTokenizerStep(ProcessorStep):
     def __call__(self, transition: EnvTransition) -> EnvTransition | None:
         transition = transition.copy()
         complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}) or {}
-        messages = complementary.get("messages") or []
+        messages = complementary.get("messages_rendered") or complementary.get("messages") or []
 
         if not messages:
-            return transition
+            tasks = complementary.get("task")
+            if tasks is None:
+                return transition
+            tasks = [tasks] if isinstance(tasks, str) else list(tasks)
+            messages = [[{"role": "user", "content": task}] for task in tasks]
+            complementary = {
+                **complementary,
+                "message_streams": [["low_level"] for _ in tasks],
+                "target_message_indices": [[] for _ in tasks],
+            }
 
         tokenizer = self._ensure_tokenizer()
         state_all = (transition.get(TransitionKey.OBSERVATION) or {}).get(OBS_STATE)
@@ -421,6 +430,10 @@ class PI052TextTokenizerStep(ProcessorStep):
                     m["content"] = f"{base}, State: {state_str};"
                     break
         prompt, spans = _format_messages(messages, target_indices, getattr(tokenizer, "eos_token", None))
+        if "message_streams" not in complementary and not message_streams and not target_indices:
+            # Runtime queries contain semantic prompt turns without training labels.
+            # Match the prefix immediately preceding an assistant target in training.
+            prompt += "Assistant:"
 
         encoded = tokenizer(
             prompt,

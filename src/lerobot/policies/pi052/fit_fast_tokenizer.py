@@ -47,7 +47,7 @@ def _jsonable(value: Any) -> Any:
         return value.tolist()
     if isinstance(value, dict):
         return {key: _jsonable(item) for key, item in sorted(value.items())}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_jsonable(item) for item in value]
     return value
 

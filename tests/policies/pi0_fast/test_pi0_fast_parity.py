@@ -16,6 +16,7 @@ pytest.importorskip("transformers")
 pytest.importorskip("scipy")
 
 from lerobot.configs import NormalizationMode  # noqa: E402
+from lerobot.lerobot_types import TransitionKey  # noqa: E402
 from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig  # noqa: E402
 from lerobot.policies.pi0_fast.modeling_pi0_fast import (  # noqa: E402
     PI0FastPolicy,
@@ -27,7 +28,6 @@ from lerobot.policies.pi0_fast.processor_pi0_fast import (  # noqa: E402
     Pi0FastPrepareStateAndLanguageTokenizerProcessorStep,
 )
 from lerobot.processor.tokenizer_processor import ActionTokenizerProcessorStep  # noqa: E402
-from lerobot.types import TransitionKey  # noqa: E402
 from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS  # noqa: E402
 
 

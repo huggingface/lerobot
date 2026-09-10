@@ -106,7 +106,7 @@ the observation time minus one second. Do not blindly use the previous distinct
 subtask or a chunk index. One chunk is one second only when its executed length
 and control rate make it so. At a three-second planning cadence, the most recent
 applied update will often satisfy the lookup, but generation latency and faster
-updates make timestamped history necessary. The opt-in PI052 adapter below uses
+updates make timestamped history necessary. A scratchpad-aware controller must use
 that timestamped history rather than annotation indices or action-chunk counts.
 
 Low-level samples still condition actions on **only the subtask**. This does not
@@ -129,23 +129,17 @@ support completion; a periodic planning call is a reassessment, not an instructi
 to advance. Explicit completion prediction or a runtime transition gate would be
 an additional contract, not a property supplied by this recipe.
 
-**Adapter-based runtime:** set `--policy.memory_scratchpad=true` when training a
-new checkpoint with these recipes. The saved flag opts its PI052 adapter into one
-combined generation call. The adapter renders the input template from the recipe,
-using generated memory/subtask state active one second before the observation.
-It validates both output fields before updating either, stores a timestamped
-memory/subtask update, and conditions actions on only the subtask. Repeated
-subtasks are accepted normally and memory can update without a subtask change.
-A task change or scene reset that clears the subtask invalidates scratchpad
-history. Actions are refused until an initial valid response is available.
-Leave runtime memory and subtask generation enabled for these checkpoints.
+**Runtime limitation:** these combined-response recipes remain available for training,
+but the shared rollout runtime applies a generated string as a subtask. It does not
+yet implement the timestamped memory history, atomic field parsing, and reset contract
+required for combined scratchpads. Set `--policy.memory_scratchpad=true` on these
+checkpoints to prevent accidental use through ordinary autosteer; `generate_text`
+then raises an actionable error. Do not pass a combined memory/subtask response
+unchanged as an action instruction. The old adapter-specific CLI is no longer used.
 
-The flag defaults to `false`, preserving the older separate-call behavior of
-existing checkpoints. **This adapter integration is not the newer interactive
-rollout autosteer/RTC integration used in the separate bussing-evaluation checkout.**
-That engine still needs the same timestamped history, parsing, and reset contract
-before it can use scratchpad-trained checkpoints. Do not pass a combined response
-unchanged as its action instruction.
+For ordinary subtask prediction, use `recipes/subtask.yaml` and leave
+`memory_scratchpad=false`. The checkpoint embeds its recipe and supports the shared
+`generate_text` interface used by both synchronous and RTC inference.
 
 These recipes replace the earlier separate memory-update training mixture; they
 do not convert existing checkpoints. Preserve an old checkpoint's training recipe
@@ -309,38 +303,21 @@ multimodal prefix:
    processes the sampled token against cached image/language keys instead of
    rerunning the full prefix.
 
-The runtime also runs language and actions at different rates. Increase
-`--subtask_chunks_per_gen` when a subtask remains valid across several action
-chunks, lower `--high_level_hz`, or use `--direct_subtask` to bypass language
-generation entirely. These settings reduce compute but also slow replanning.
-
-`--fp8` enables the optional FlashRT inference MLP swap on supported CUDA GPUs.
-It calibrates on the first observation and falls back to BF16 when unavailable;
-because FP8 can change outputs slightly, validate task success before using it
-for production rollouts.
+The shared runtime runs language and actions at different rates. Increase
+`--autosteer_interval_s` when a subtask remains valid longer, or use `/subtask`
+to supply an instruction directly without language generation. A longer interval
+reduces generation cost but also slows replanning.
 
 ## Run a checkpoint
 
-RoboCasa:
-
-```bash
-MUJOCO_GL=egl lerobot-rollout \
-    --policy.path=lerobot/pi052_robocasa \
-    --sim --sim.task=CloseFridge --sim.split=pretrain \
-    --task="close the fridge" \
-    --disable_memory \
-    --sim.render_size=384 \
-    --sim.views=robot0_agentview_left,robot0_eye_in_hand,robot0_agentview_right \
-    --mode=action --ctrl_hz=20
-```
-
-Open `http://localhost:8010` for the live view. Without
-`--sim.direct_subtask`, Pi052 generates the low-level subtask; with it, each
-prompt becomes the action policy's subtask directly.
-
-The same runtime supports real robots. See [Interactive language
-control](./inference#interactive-language-control) for the real-arm command,
-safety behavior, and runtime controls.
+Use `lerobot-rollout` with the robot/camera configuration matching the checkpoint,
+`--interactive=true`, and `--autosteer_interval_s=3`. Choose
+`--inference.type=sync` or `--inference.type=rtc`. In the interactive terminal,
+`/autosteer <goal>` enables generated subtasks, `/subtask <instruction>` supplies
+one manually, and `/start` starts robot control. See [Interactive language
+control](./inference#interactive-language-control) for complete hardware setup,
+safety behavior, and recording controls. The former `--sim`, `--mode`, and
+`--high_level_hz` adapter CLI options are not part of this interface.
 
 ## Troubleshooting
 

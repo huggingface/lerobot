@@ -223,7 +223,7 @@ def apply_fp8_mlp(policy, batch, *, safety: float = 1.05) -> bool:
             device,
         )
         return False
-    batches = batch if isinstance(batch, (list, tuple)) else [batch]
+    batches = batch if isinstance(batch, list | tuple) else [batch]
     try:
         ffn_ops = _get_kernel(_SWIGLU_REPO)
         gelu_ops = _get_kernel(_GELU_REPO)

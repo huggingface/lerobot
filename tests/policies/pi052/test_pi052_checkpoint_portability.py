@@ -24,7 +24,7 @@ import pytest
 import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.configs.recipe import MessageTurn, TrainingRecipe
+from lerobot.datasets.recipe import MessageTurn, TrainingRecipe
 from lerobot.policies import make_pre_post_processors
 from lerobot.processor import ActionTokenizerProcessorStep, DataProcessorPipeline, NormalizerProcessorStep
 from lerobot.processor.converters import identity_transition

@@ -1500,6 +1500,21 @@ class PI052Policy(PI05Policy):
             reduction,
         )
 
+    def supports_text_generation(self) -> bool:
+        return self.config.text_loss_weight > 0
+
+    @torch.no_grad()
+    def generate_text(self, batch: dict[str, Tensor]) -> str:
+        """Generate from the checkpoint recipe rendered by the shared runtime pipeline."""
+        if self.config.memory_scratchpad:
+            raise ValueError(
+                "Combined memory/subtask checkpoints require a scratchpad-aware controller; "
+                "the shared autosteer runtime accepts only a subtask response."
+            )
+        if self._batch_size_from_observation(batch) != 1:
+            raise ValueError("PI052 text generation requires one observation.")
+        return self.select_message(batch)
+
     def select_message(
         self,
         batch: dict[str, Tensor],
@@ -1525,7 +1540,7 @@ class PI052Policy(PI05Policy):
         if tokenizer is None:
             from transformers import AutoTokenizer  # noqa: PLC0415
 
-            from .inference.pi052_adapter import _get_loc_tokenizer  # noqa: PLC0415
+            from .text_generation import _get_loc_tokenizer  # noqa: PLC0415
             from .text_processor_pi052 import register_paligemma_loc_tokens  # noqa: PLC0415
 
             tok_name = getattr(self.config, "tokenizer_name", None) or "google/paligemma-3b-pt-224"
@@ -1635,7 +1650,7 @@ class PI052Policy(PI05Policy):
         return decoded
 
     def _prepare_action_batch(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
-        from .inference.pi052_adapter import _build_text_batch, _get_loc_tokenizer  # noqa: PLC0415
+        from .text_generation import _build_text_batch, _get_loc_tokenizer  # noqa: PLC0415
         from .text_processor_pi052 import (  # noqa: PLC0415
             discretize_state_str,
             encode_prompt_with_targets,
@@ -1713,7 +1728,7 @@ class PI052Policy(PI05Policy):
         return out
 
     def _generate_low_level_subtask(self, obs_i: dict[str, Tensor], task: str, i: int) -> str:
-        from .inference.pi052_adapter import _generate_with_policy  # noqa: PLC0415
+        from .text_generation import _generate_with_policy  # noqa: PLC0415
         from .text_processor_pi052 import discretize_state_str  # noqa: PLC0415
 
         msg = ""

@@ -30,7 +30,6 @@ torchrun --nproc-per-node=8 $(which lerobot-train) \
 
 import dataclasses
 import logging
-import os
 import sys
 import time
 from collections.abc import Iterator

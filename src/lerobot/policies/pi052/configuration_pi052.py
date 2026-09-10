@@ -14,7 +14,8 @@
 
 """PI0.5 with hierarchical text generation and flow-matched actions."""
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from pathlib import Path
 
 from lerobot.configs import PreTrainedConfig
 from lerobot.optim.optimizers import AdamWConfig
@@ -30,6 +31,9 @@ class PI052Config(PI05Config):
     # Recipe / language stack ---------------------------------------------
     recipe_path: str | None = "recipes/subtask_mem.yaml"
     """Recipe path, or ``None`` for the plain PI0.5 prompt."""
+
+    recipe: dict | None = None
+    """Serialized training/runtime language contract, embedded in saved checkpoints."""
 
     memory_scratchpad: bool = False
     """Opt in to combined memory/subtask inference for newly scratchpad-trained checkpoints."""
@@ -149,7 +153,16 @@ class PI052Config(PI05Config):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.enable_fast_action_loss and not self.recipe_path:
+        if self.recipe_path is not None or self.recipe is not None:
+            from lerobot.datasets.recipe import resolve_recipe_override
+
+            path = self.recipe_path
+            if path is not None and not Path(path).exists():
+                packaged = Path(__file__).parents[2] / "configs" / path
+                if packaged.exists():
+                    path = str(packaged)
+            self.recipe = asdict(resolve_recipe_override(self.recipe, path))
+        if self.enable_fast_action_loss and self.recipe is None:
             raise ValueError("PI052 FAST action loss requires recipe_path to build action supervision.")
         if self.text_loss_weight > 0 and self.unfreeze_lm_head:
             self.train_expert_only = False

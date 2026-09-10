@@ -1,0 +1,120 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Text decoding helpers shared by PI052 training and runtime."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+logger = logging.getLogger(__name__)
+_LOC_TOKENIZER_CACHE: dict[str, Any] = {}
+
+
+def _get_loc_tokenizer(tok_name: str, auto_tokenizer_cls: Any, register_loc_fn: Any) -> Any:
+    tokenizer = _LOC_TOKENIZER_CACHE.get(tok_name)
+    if tokenizer is None:
+        tokenizer = register_loc_fn(auto_tokenizer_cls.from_pretrained(tok_name))
+        _LOC_TOKENIZER_CACHE[tok_name] = tokenizer
+    return tokenizer
+
+
+def _build_text_batch(
+    policy: Any,
+    prompt_messages: list[dict[str, Any]],
+    *,
+    add_generation_prompt: bool = True,
+) -> dict[str, Any]:
+    import torch  # noqa: PLC0415
+    from transformers import AutoTokenizer  # noqa: PLC0415
+
+    from lerobot.policies.pi052.text_processor_pi052 import (  # noqa: PLC0415
+        _flatten_say_tool_calls,
+        _format_messages,
+        _strip_blocks,
+        register_paligemma_loc_tokens,
+    )
+
+    tok_name = getattr(policy.config, "tokenizer_name", None) or "google/paligemma-3b-pt-224"
+    tokenizer = _get_loc_tokenizer(tok_name, AutoTokenizer, register_paligemma_loc_tokens)
+
+    messages = [_strip_blocks(_flatten_say_tool_calls(m)) for m in prompt_messages]
+    prompt, _spans = _format_messages(messages)
+    if add_generation_prompt:
+        # No trailing space: SentencePiece folds it into the first target token
+        # ("▁move"), so a space-suffixed prefill ends in a lone "▁" the model
+        # never saw at this position during training.
+        prompt = prompt + "Assistant:"
+
+    encoded = tokenizer(prompt, return_tensors="pt")
+    ids = encoded["input_ids"]
+    attn = encoded.get("attention_mask")
+    if attn is None and tokenizer.pad_token_id is not None:
+        attn = ids != tokenizer.pad_token_id
+    if attn is not None and hasattr(attn, "dtype") and attn.dtype != torch.bool:
+        attn = attn.bool()
+
+    device = getattr(getattr(policy, "config", None), "device", None)
+    if device is not None:
+        try:
+            ids = ids.to(device)
+            if attn is not None and hasattr(attn, "to"):
+                attn = attn.to(device)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("could not move pi052 lang tokens to %s: %s", device, exc)
+    return {"lang_tokens": ids, "lang_masks": attn, "tokenizer": tokenizer}
+
+
+def _generate_with_policy(
+    policy: Any,
+    messages: list[dict[str, Any]],
+    *,
+    observation: dict[str, Any] | None = None,
+    state: Any | None = None,
+    label: str = "select_message",
+    min_new_tokens: int = 0,
+    temperature: float = 0.0,
+    top_p: float = 1.0,
+    suppress_loc_tokens: bool = False,
+) -> str:
+    if not hasattr(policy, "select_message"):
+        if state is not None:
+            state.log(f"  [warn] policy has no select_message — skipping {label}")
+        return ""
+    text_batch = _build_text_batch(policy, messages)
+    try:
+        from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS  # noqa: PLC0415
+
+        batch: dict[str, Any] = {
+            OBS_LANGUAGE_TOKENS: text_batch["lang_tokens"],
+            OBS_LANGUAGE_ATTENTION_MASK: text_batch["lang_masks"],
+        }
+        if observation:
+            for k, v in observation.items():
+                if isinstance(k, str) and k.startswith("observation.") and k not in batch:
+                    batch[k] = v
+        return policy.select_message(
+            batch,
+            tokenizer=text_batch["tokenizer"],
+            min_new_tokens=min_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            suppress_loc_tokens=suppress_loc_tokens,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("%s failed: %s", label, exc, exc_info=logger.isEnabledFor(logging.DEBUG))
+        if state is not None:
+            state.log(f"  [warn] {label} failed: {type(exc).__name__}: {exc}")
+        return ""
