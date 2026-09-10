@@ -69,7 +69,7 @@ source .venv/bin/activate
 
 ### Install `ffmpeg` (for video decoding)
 
-LeRobot uses [TorchCodec](https://github.com/meta-pytorch/torchcodec) for video decoding by default, which requires `ffmpeg`.
+LeRobot uses [TorchCodec](https://github.com/meta-pytorch/torchcodec) for video decoding by default, which requires `ffmpeg`. TorchCodec loads the `ffmpeg` shared libraries, so having the `ffmpeg` command on the path does not mean those libraries are present. Where they are missing, TorchCodec installs normally and then fails to import, naming the library it looked for in a `cannot open shared object file` error. The name it reports belongs to the first `ffmpeg` version it tries, which is older than the one you probably want, so read it as a missing-library error rather than a request for that version.
 
 > [!NOTE]
 > **Platform support:** TorchCodec is **not available** on macOS Intel (x86_64), Linux armv7l, or Windows with PyTorch < 2.8. Ordinary dataset loading falls back to `pyav` on these platforms, so you do not need a separate `ffmpeg` installation for that fallback. Linux aarch64/arm64 wheels are available, but their CUDA requirements differ from x86_64; see [PyTorch CUDA variant](#pytorch-cuda-variant-linux-only).
@@ -220,14 +220,14 @@ On Linux, the install path determines which CUDA wheel you get. macOS and Window
 
 **Source install via `uv` (`uv sync` or `uv pip install -e .`)**
 
-`torch` and `torchvision` come from PyPI, whose Linux wheel bundles the **CUDA 13** runtime (driver floor **580.65**). Architecture coverage differs by host architecture, and these wheels ship no PTX, so a GPU missing from the build cannot run at all:
+`torch` and `torchvision` come from PyPI, whose Linux wheel bundles the **CUDA 13** runtime (driver floor **580.65**). Architecture coverage differs by host architecture, and these wheels ship no PTX, so a GPU with no compatible cubin cannot run at all:
 
 | host    | architectures in the default PyPI wheel                                             |
 | ------- | ----------------------------------------------------------------------------------- |
 | x86_64  | `sm_75`, `sm_80`, `sm_86`, `sm_89`, `sm_90`, `sm_100`, `sm_103`, `sm_120`, `sm_121` |
 | aarch64 | `sm_80`, `sm_90`, `sm_100`, `sm_103`, `sm_110`, `sm_120`, `sm_121`                  |
 
-On x86_64 that covers Turing through Blackwell and needs no action. On aarch64 there is no `sm_75`, `sm_86` or `sm_89`, but a cubin runs on an equal-or-higher minor within the same major, so an A10 (`sm_86`) or L4 (`sm_89`) runs on the `sm_80` cubin. Two cases are not covered. A T4 (`sm_75`) has no `sm_7x` cubin in any aarch64 wheel, on PyPI or on either CUDA 12 index. A Jetson Orin (`sm_87`) is a Tegra part, where that same-major rule does not apply, and no wheel here carries `sm_87`. Both need a torch built for the device.
+On x86_64 that covers Turing through Blackwell and needs no action. On aarch64 there is no `sm_75`, `sm_86`, `sm_87` or `sm_89`, but a cubin runs on an equal-or-higher minor within the same major, so the `sm_80` cubin covers an A10 (`sm_86`), an L4 (`sm_89`) and a Jetson Orin (`sm_87`). One case is not covered: a T4 (`sm_75`) has no `sm_7x` cubin in any aarch64 wheel, on PyPI or on either CUDA 12 index, so it needs a torch built for the device.
 
 On a driver older than 580, pin a CUDA 12 index in your own checkout. Both CUDA 12 variants have driver floor **525.60.13** and differ in which GPUs they carry:
 
