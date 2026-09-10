@@ -39,10 +39,18 @@ else:
     Qwen2_5_VLVisionConfig = None
 
 
+EO1_DEFAULT_SYSTEM_MESSAGE = "You are a helpful physical assistant."
+
+
 def _eo1_default_recipe() -> dict:
     """Serialized recipe; keep policy config discovery independent of dataset extras."""
     return {
         "messages": [
+            {
+                "role": "system",
+                "content": EO1_DEFAULT_SYSTEM_MESSAGE,
+                "stream": "low_level",
+            },
             {
                 "role": "user",
                 "content": "${task}\nPredict the next action in language.",

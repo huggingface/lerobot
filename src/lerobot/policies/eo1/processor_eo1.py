@@ -39,14 +39,12 @@ from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 from lerobot.utils.language import normalize_semantic_messages
 
-from .configuration_eo1 import EO1Config
+from .configuration_eo1 import EO1_DEFAULT_SYSTEM_MESSAGE, EO1Config
 
 if TYPE_CHECKING or _transformers_available:
     from transformers.models.qwen2_5_vl import Qwen2_5_VLProcessor
 else:
     Qwen2_5_VLProcessor = None
-
-SYSTEM_MESSAGE = "You are a helpful physical assistant."
 
 # EO-1 special tokens
 ACTION_START_TOKEN = "<|action_start|>"  # nosec B105
@@ -70,7 +68,9 @@ EO1_SPECIAL_TOKENS = [
 
 @dataclass
 @ProcessorStepRegistry.register(name="eo1_conversation_template_processor")
-class EO1ConversationTemplateStep(ComplementaryDataProcessorStep):
+class EO1PrepareModelMessagesStep(ComplementaryDataProcessorStep):
+    """Prepare EO1 multimodal messages, state/action tokens, and aligned text targets."""
+
     input_features: dict[str, PolicyFeature] | dict[str, dict[str, Any]]
     chunk_size: int
 
@@ -95,11 +95,11 @@ class EO1ConversationTemplateStep(ComplementaryDataProcessorStep):
     def complementary_data(self, complementary_data):
         tasks = complementary_data.get("task")
         if tasks is None:
-            raise ValueError("Task is required for EO1ConversationTemplateStep.")
+            raise ValueError("Task is required for EO1PrepareModelMessagesStep.")
 
         observation = self.transition.get(TransitionKey.OBSERVATION)
         if observation is None:
-            raise ValueError("Observation is required for EO1ConversationTemplateStep.")
+            raise ValueError("Observation is required for EO1PrepareModelMessagesStep.")
 
         if OBS_STATE in observation and observation[OBS_STATE].shape[0] != len(tasks):
             raise ValueError("Batch size mismatch between observation.state and task list.")
@@ -132,7 +132,12 @@ class EO1ConversationTemplateStep(ComplementaryDataProcessorStep):
                 if not isinstance(row_messages, list) or not isinstance(row_streams, list):
                     raise TypeError("EO-1 messages and streams must be batched lists.")
 
-                rendered = [{"role": "system", "content": [{"type": "text", "text": SYSTEM_MESSAGE}]}]
+                rendered = []
+                if not any(message.get("role") == "system" for message in row_messages):
+                    rendered.append(
+                        {"role": "system", "content": [{"type": "text", "text": EO1_DEFAULT_SYSTEM_MESSAGE}]}
+                    )
+                message_indices = []
                 image_blocks = [{"type": "image", "image": images[key][i]} for key in self._image_keys]
                 injected_images = False
                 inserted_observation_turn = not any(
@@ -147,13 +152,6 @@ class EO1ConversationTemplateStep(ComplementaryDataProcessorStep):
                                 "text": f"{STATE_START_TOKEN}{DEFAULT_STATE_TOKEN}{STATE_END_TOKEN}",
                             }
                         )
-                    rendered.append(
-                        {
-                            "role": "user",
-                            "content": observation_content,
-                        }
-                    )
-                    injected_images = True
                 for message in row_messages:
                     converted = dict(message)
                     tool_calls = converted.pop("tool_calls", None)
@@ -185,8 +183,20 @@ class EO1ConversationTemplateStep(ComplementaryDataProcessorStep):
                             )
                         blocks = [*image_blocks, *state_blocks, *blocks]
                         injected_images = True
+                    if (
+                        inserted_observation_turn
+                        and not injected_images
+                        and converted.get("role") != "system"
+                    ):
+                        rendered.append({"role": "user", "content": observation_content})
+                        injected_images = True
                     converted["content"] = blocks
+                    message_indices.append(len(rendered))
                     rendered.append(converted)
+
+                if inserted_observation_turn and not injected_images:
+                    rendered.append({"role": "user", "content": observation_content})
+                    injected_images = True
 
                 predicts_action = any(stream == "low_level" for stream in row_streams)
                 if predicts_action:
@@ -218,8 +228,7 @@ class EO1ConversationTemplateStep(ComplementaryDataProcessorStep):
                         ]
                     )
                 messages.append(rendered)
-                target_offset = 2 if inserted_observation_turn else 1
-                adjusted_targets.append([int(index) + target_offset for index in row_targets])
+                adjusted_targets.append([message_indices[int(index)] for index in row_targets])
                 continue
 
             content = [
@@ -233,7 +242,7 @@ class EO1ConversationTemplateStep(ComplementaryDataProcessorStep):
             ]
             messages.append(
                 [
-                    {"role": "system", "content": [{"type": "text", "text": SYSTEM_MESSAGE}]},
+                    {"role": "system", "content": [{"type": "text", "text": EO1_DEFAULT_SYSTEM_MESSAGE}]},
                     {"role": "user", "content": content},
                     {
                         "role": "assistant",
@@ -384,7 +393,7 @@ def make_eo1_pre_post_processors(
         steps.rename_observations,
         steps.add_batch_dim,
         steps.normalize,
-        EO1ConversationTemplateStep(input_features=config.input_features, chunk_size=config.chunk_size),
+        EO1PrepareModelMessagesStep(input_features=config.input_features, chunk_size=config.chunk_size),
         EO1QwenProcessorStep(
             processor_name=config.vlm_base,
             image_min_pixels=config.image_min_pixels,

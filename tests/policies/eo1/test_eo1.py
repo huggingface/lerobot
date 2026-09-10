@@ -387,3 +387,85 @@ def test_recipe_config_round_trip_and_optional_rendering(recipe_enabled):
 
         transition = create_transition(action=torch.ones(1), complementary_data={"task": "tidy"})
         assert training(transition) is transition
+
+
+@pytest.mark.parametrize("system_prompt", [None, "Use concise robot instructions."])
+@pytest.mark.parametrize("include_user", [False, True])
+def test_model_messages_preserve_system_prompt_and_target_alignment(system_prompt, include_user):
+    from lerobot.datasets.recipe import MessageTurn, TrainingRecipe, render_message_turns
+    from lerobot.lerobot_types import TransitionKey
+    from lerobot.policies.eo1.processor_eo1 import EO1PrepareModelMessagesStep
+    from lerobot.processor.converters import create_transition
+
+    turns = []
+    if system_prompt is not None:
+        turns.append(MessageTurn(role="system", content=system_prompt, stream="high_level"))
+    if include_user:
+        turns.append(MessageTurn(role="user", content="${task}", stream="high_level"))
+    turns.append(MessageTurn(role="assistant", content="${subtask}", stream="high_level", target=True))
+    recipe = TrainingRecipe(messages=turns)
+    rendered = render_message_turns(recipe.messages, {"task": "tidy", "subtask": "pick up the cup"})
+    data = {key: [value] for key, value in rendered.items()}
+    data["task"] = ["tidy"]
+    config = make_eo1_config()
+    transition = create_transition(
+        observation={
+            OBS_STATE: torch.zeros(1, STATE_DIM),
+            "observation.images.image": torch.zeros(1, 3, 8, 8),
+        },
+        complementary_data=data,
+    )
+    step = EO1PrepareModelMessagesStep(config.input_features, CHUNK_SIZE)
+    output = step(transition)[TransitionKey.COMPLEMENTARY_DATA]
+    messages = output["messages"][0]
+    assert [message["role"] for message in messages] == ["system", "user", "assistant"]
+    assert messages[0]["content"] == [
+        {"type": "text", "text": system_prompt or "You are a helpful physical assistant."}
+    ]
+    assert output["target_message_indices"] == [[2]]
+    assert messages[2]["content"] == [{"type": "text", "text": "pick up the cup"}]
+    assert any(block["type"] == "image" for block in messages[1]["content"])
+
+
+@pytest.mark.parametrize("query_kind", ["vqa", "next_subtask", None])
+def test_model_messages_keep_default_system_prompt_for_runtime_and_action_inputs(query_kind):
+    from lerobot.lerobot_types import TransitionKey
+    from lerobot.policies.eo1.processor_eo1 import EO1PrepareModelMessagesStep
+    from lerobot.processor.converters import create_transition
+
+    config = make_eo1_config()
+    assert config.recipe["messages"][0] == {
+        "role": "system",
+        "content": "You are a helpful physical assistant.",
+        "stream": "low_level",
+    }
+    data = {"task": ["tidy"]}
+    if query_kind:
+        data.update({QUERY_KIND: query_kind, QUERY_TEXT: "tidy"})
+    transition = create_transition(
+        observation={
+            OBS_STATE: torch.zeros(1, STATE_DIM),
+            "observation.images.image": torch.zeros(1, 3, 8, 8),
+        },
+        complementary_data=data,
+    )
+    transition = RenderRuntimeMessagesStep(config.recipe)(transition)
+    output = EO1PrepareModelMessagesStep(config.input_features, CHUNK_SIZE)(transition)
+    messages = output[TransitionKey.COMPLEMENTARY_DATA]["messages"][0]
+    system_messages = [message for message in messages if message["role"] == "system"]
+    assert system_messages == [
+        {"role": "system", "content": [{"type": "text", "text": "You are a helpful physical assistant."}]}
+    ]
+
+
+def test_saved_message_processor_registry_name_still_loads():
+    from lerobot.policies.eo1.processor_eo1 import EO1PrepareModelMessagesStep
+    from lerobot.processor import PolicyProcessorPipeline
+
+    config = make_eo1_config()
+    step = EO1PrepareModelMessagesStep(config.input_features, CHUNK_SIZE)
+    pipeline = PolicyProcessorPipeline(steps=[step])
+    saved_config = pipeline.get_config()
+    assert saved_config["steps"][0]["registry_name"] == "eo1_conversation_template_processor"
+    restored = PolicyProcessorPipeline.from_config(saved_config)
+    assert isinstance(restored.steps[0], EO1PrepareModelMessagesStep)
