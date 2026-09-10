@@ -163,6 +163,89 @@ MAX_EE_STEP_M = 0.1
 # Soft-orientation IK weight: small but nonzero so the wrist follows the hand while position
 # dominates (the 5-DOF SO-101 cannot realize an arbitrary orientation). 0.0 = position-only.
 IK_ORIENTATION_WEIGHT = 0.01
+# Placo-native dq regularization keeps the 5-DOF arm on the local joint branch near
+# singular/under-constrained poses. Unlike an output slew clamp, the solver itself chooses
+# the smallest local joint update and can converge smoothly over subsequent control frames.
+IK_REGULARIZATION_WEIGHT = 0.001
+IK_ENGAGE_MAX_ITERATIONS = 100
+IK_ENGAGE_CONVERGENCE_DEG = 1e-6
+
+
+def build_xr_kinematics(motor_names: list[str]) -> RobotKinematics:
+    """Build the shared SO-101 kinematics solver with local-solution regularization."""
+    kinematics = RobotKinematics(
+        urdf_path=_ensure_so101_urdf(),
+        target_frame_name="gripper_frame_link",
+        joint_names=motor_names,
+    )
+    kinematics.solver.add_regularization_task(IK_REGULARIZATION_WEIGHT)
+    return kinematics
+
+
+def initialize_ik_engage(
+    processor,
+    ee_action: RobotAction,
+    observation: RobotObservation,
+    motor_names: list[str],
+) -> RobotAction:
+    """Converge the hidden IK seed at the same pose before latching its joint baseline.
+
+    No intermediate solution is returned to the robot. This matters when measured calibrated
+    joints are outside nominal URDF limits: Placo may need several solves to settle on its
+    feasible same-pose projection, and latching the first solve would create a delayed jump.
+    """
+    previous: np.ndarray | None = None
+    output: RobotAction | None = None
+    arm_names = [name for name in motor_names if name != "gripper"]
+    for _ in range(IK_ENGAGE_MAX_ITERATIONS):
+        action_input = {
+            "ee_pose": np.asarray(ee_action["ee_pose"], dtype=np.float32).copy(),
+            "closedness": float(ee_action["closedness"]),
+        }
+        output = processor((action_input, observation))
+        current = np.array([float(output[f"{name}.pos"]) for name in arm_names])
+        if previous is not None and float(np.max(np.abs(current - previous))) <= IK_ENGAGE_CONVERGENCE_DEG:
+            break
+        previous = current
+    if output is None:
+        raise RuntimeError("IK engage initialization produced no action")
+    return output
+
+
+class IKJointRebase:
+    """Rebase solver-space arm targets onto the measured joints at clutch engage.
+
+    A calibrated physical joint can sit slightly outside the nominal URDF limits. In that
+    case Placo projects even ``IK(q, FK(q))`` back into its feasible joint space, so sending
+    the nominal same-pose solution causes a visible engage jump.  Latch that solver-space
+    projection on engage and command only subsequent IK deltas relative to it.
+
+    The gripper is intentionally excluded: its action is an absolute LeRobot 0..100 target.
+    """
+
+    def __init__(self, motor_names: list[str]):
+        self._arm_names = [name for name in motor_names if name != "gripper"]
+        self._offsets = dict.fromkeys(self._arm_names, 0.0)
+
+    def engage(self, ik_action: RobotAction, observation: RobotObservation) -> RobotAction:
+        """Latch measured-minus-IK offsets and return an exactly measured arm target."""
+        self._offsets = {
+            name: float(observation[f"{name}.pos"]) - float(ik_action[f"{name}.pos"])
+            for name in self._arm_names
+        }
+        action = self.apply(ik_action)
+        # Assign measurements directly, rather than relying on cancellation roundoff: the
+        # engage frame is a strict joint-space hold while the solver baseline is initialized.
+        for name in self._arm_names:
+            action[f"{name}.pos"] = float(observation[f"{name}.pos"])
+        return action
+
+    def apply(self, ik_action: RobotAction) -> RobotAction:
+        """Map an IK target into the measured/calibrated joint space; preserve gripper."""
+        action = dict(ik_action)
+        for name in self._arm_names:
+            action[f"{name}.pos"] = float(action[f"{name}.pos"]) + self._offsets[name]
+        return action
 
 
 def _ensure_so101_urdf() -> str:
@@ -301,11 +384,7 @@ def _wait_for_xr_controller(teleop_device: XRController) -> None:
 
 def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
     """Build the XR controller device bundle (clutch + soft-orientation IK pipeline)."""
-    kinematics_solver = RobotKinematics(
-        urdf_path=_ensure_so101_urdf(),
-        target_frame_name="gripper_frame_link",
-        joint_names=motor_names,
-    )
+    kinematics_solver = build_xr_kinematics(motor_names)
 
     teleop_config = cfg.teleop  # XRControllerConfig (selected via --teleop.type=xr_controller)
     teleop_device = XRController(teleop_config)
@@ -339,6 +418,7 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
     # The clutch is built in startup() (after the optional reset slew, seeded from the
     # post-slew MEASURED pose) and shared with compute() via nonlocal.
     clutch: Clutch | None = None
+    joint_rebase = IKJointRebase(motor_names)
     prev_enabled = False
 
     def startup() -> None:
@@ -405,7 +485,14 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
             "ee_pose": np.concatenate([ee_pos, ee_quat]).astype(np.float32),
             "closedness": trigger,
         }
-        return xr_to_robot_joints_processor((ee_action, robot_obs))
+        ik_action = (
+            initialize_ik_engage(xr_to_robot_joints_processor, ee_action, robot_obs, motor_names)
+            if is_engage_frame
+            else xr_to_robot_joints_processor((ee_action, robot_obs))
+        )
+        if is_engage_frame:
+            return joint_rebase.engage(ik_action, robot_obs)
+        return joint_rebase.apply(ik_action)
 
     return Device(compute=compute, startup=startup, cleanup=teleop_device.disconnect)
 
