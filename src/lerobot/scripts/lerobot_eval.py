@@ -491,6 +491,9 @@ def eval_policy(
             # Here we must render all frames and discard any we don't need.
             # Covers AsyncVectorEnv and _LazyAsyncVectorEnv (which wraps one).
             ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
+        elif hasattr(env, "envs"):
+            # Process-isolated or other proxy environments that expose env.envs[i].render().
+            ep_frames.append(np.stack([env.envs[i].render() for i in range(n_to_render_now)]))  # noqa: B023
 
     if max_episodes_rendered > 0:
         video_paths: list[str] = []
@@ -750,76 +753,102 @@ def eval_main(cfg: EvalPipelineConfig):
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
 
     logging.info(f"Making environment (batch_size={cfg.eval.batch_size}, async={cfg.eval.use_async_envs}).")
-    envs = make_env(
-        cfg.env,
-        n_envs=cfg.eval.batch_size,
-        use_async_envs=cfg.eval.use_async_envs,
-        trust_remote_code=cfg.trust_remote_code,
-    )
+    if cfg.eval.process_isolated:
+        from lerobot.envs.process_isolated import make_env_in_subprocess
 
-    logging.info("Making policy.")
-
-    policy = make_policy(
-        cfg=cfg.policy,
-        env_cfg=cfg.env,
-        rename_map=cfg.rename_map,
-    )
-
-    policy.eval()
-
-    # The inference device is automatically set to match the detected hardware, overriding any previous device settings from training to ensure compatibility.
-    preprocessor_overrides = {
-        "device_processor": {"device": str(policy.config.device)},
-        "rename_observations_processor": {"rename_map": cfg.rename_map},
-    }
-
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=cfg.policy,
-        pretrained_path=cfg.policy.pretrained_path,
-        preprocessor_overrides=preprocessor_overrides,
-    )
-
-    # Create environment-specific preprocessor and postprocessor (e.g., for LIBERO environments)
-    env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env, policy_cfg=cfg.policy)
-
-    recording_dir = Path(cfg.output_dir) / "recordings" if cfg.eval.recording else None
-    max_episodes_rendered = 0 if cfg.eval.recording else 10
-    videos_dir = None if cfg.eval.recording else Path(cfg.output_dir) / "videos"
-
-    with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
-        info = eval_policy_all(
-            envs=envs,
-            policy=policy,
-            env_preprocessor=env_preprocessor,
-            env_postprocessor=env_postprocessor,
-            preprocessor=preprocessor,
-            postprocessor=postprocessor,
-            n_episodes=cfg.eval.n_episodes,
-            max_episodes_rendered=max_episodes_rendered,
-            videos_dir=videos_dir,
-            return_episode_data=False,
-            start_seed=cfg.seed,
-            max_parallel_tasks=cfg.env.max_parallel_tasks,
-            recording_dir=recording_dir,
-            env_features=cfg.env.features if cfg.eval.recording else None,
-            recording_repo_id=cfg.eval.recording_repo_id,
-            recording_private=cfg.eval.recording_private,
+        logging.info(
+            "Process-isolated mode: environments will run in a subprocess with GPU disabled "
+            "(CUDA_VISIBLE_DEVICES='', MUJOCO_GL=osmesa)."
         )
-        logger.info("Overall Aggregated Metrics:")
-        logger.info(info["overall"])
+        envs = make_env_in_subprocess(
+            cfg.env,
+            n_envs=cfg.eval.batch_size,
+            use_async_envs=cfg.eval.use_async_envs,
+            trust_remote_code=cfg.trust_remote_code,
+        )
+    else:
+        envs = make_env(
+            cfg.env,
+            n_envs=cfg.eval.batch_size,
+            use_async_envs=cfg.eval.use_async_envs,
+            trust_remote_code=cfg.trust_remote_code,
+        )
 
-        # Print per-suite stats
-        for task_group, task_group_info in info.items():
-            logger.info(f"\nAggregated Metrics for {task_group}:")
-            logger.info(task_group_info)
-    # Close all vec envs
-    close_envs(envs)
+    try:
+        logging.info("Making policy.")
 
-    # Save info
-    with open(Path(cfg.output_dir) / "eval_info.json", "w") as f:
-        json.dump(info, f, indent=2)
+        policy = make_policy(
+            cfg=cfg.policy,
+            env_cfg=cfg.env,
+            rename_map=cfg.rename_map,
+        )
 
-    logging.info("End of eval")
+        policy.eval()
+
+        # The inference device is automatically set to match the detected hardware, overriding any previous device settings from training to ensure compatibility.
+        preprocessor_overrides = {
+            "device_processor": {"device": str(policy.config.device)},
+            "rename_observations_processor": {"rename_map": cfg.rename_map},
+        }
+
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=cfg.policy,
+            pretrained_path=cfg.policy.pretrained_path,
+            preprocessor_overrides=preprocessor_overrides,
+        )
+
+        # Create environment-specific preprocessor and postprocessor (e.g., for LIBERO environments)
+        env_preprocessor, env_postprocessor = make_env_pre_post_processors(
+            env_cfg=cfg.env, policy_cfg=cfg.policy
+        )
+
+        recording_dir = Path(cfg.output_dir) / "recordings" if cfg.eval.recording else None
+        max_episodes_rendered = 0 if cfg.eval.recording else 10
+        videos_dir = None if cfg.eval.recording else Path(cfg.output_dir) / "videos"
+
+        with (
+            torch.no_grad(),
+            torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext(),
+        ):
+            info = eval_policy_all(
+                envs=envs,
+                policy=policy,
+                env_preprocessor=env_preprocessor,
+                env_postprocessor=env_postprocessor,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                n_episodes=cfg.eval.n_episodes,
+                max_episodes_rendered=max_episodes_rendered,
+                videos_dir=videos_dir,
+                return_episode_data=False,
+                start_seed=cfg.seed,
+                max_parallel_tasks=cfg.env.max_parallel_tasks,
+                recording_dir=recording_dir,
+                env_features=cfg.env.features if cfg.eval.recording else None,
+                recording_repo_id=cfg.eval.recording_repo_id,
+                recording_private=cfg.eval.recording_private,
+            )
+            logger.info("Overall Aggregated Metrics:")
+            logger.info(info["overall"])
+
+            # Print per-suite stats
+            for task_group, task_group_info in info.items():
+                logger.info(f"\nAggregated Metrics for {task_group}:")
+                logger.info(task_group_info)
+
+        # Save info
+        with open(Path(cfg.output_dir) / "eval_info.json", "w") as f:
+            json.dump(info, f, indent=2)
+
+        logging.info("End of eval")
+    finally:
+        # Close the subprocess even when policy construction or rollout fails.
+        if cfg.eval.process_isolated:
+            from lerobot.envs.process_isolated import close_process_isolated_envs
+
+            close_process_isolated_envs(envs)
+        else:
+            close_envs(envs)
 
 
 # ---- typed payload returned by one task eval ----
