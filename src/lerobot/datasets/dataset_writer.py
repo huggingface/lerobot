@@ -489,7 +489,9 @@ class DatasetWriter:
             self._pq_writer = pq.ParquetWriter(
                 path, schema=table.schema, compression="snappy", use_dictionary=True
             )
-        self._pq_writer.write_table(table)
+        # row_group_size >= episode length keeps one row group per episode (episode<->row-group
+        # alignment) even for episodes exceeding PyArrow's default 1Mi-row split threshold.
+        self._pq_writer.write_table(table, row_group_size=table.num_rows or None)
 
         metadata = {
             "data/chunk_index": chunk_idx,
