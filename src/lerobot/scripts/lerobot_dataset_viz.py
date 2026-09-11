@@ -71,6 +71,21 @@ local$ lerobot-dataset-viz \
 This starts a Foxglove WebSocket server that serves the episode on demand from the on-disk dataset,
 so you can play/pause and scrub anywhere in the episode using Foxglove's playback controls.
 
+- Visualize data in the FiftyOne App (per-camera video tiles + synchronized State & Action tile).
+  Requires the extra: pip install 'lerobot[fiftyone]'
+```
+local$ lerobot-dataset-viz \
+    --repo-id lerobot/pusht \
+    --episode-index 0 \
+    --display-mode fiftyone
+
+# a browser tab opens at http://localhost:5151; on a headless machine add --remote and
+# forward the port: ssh -N -L 5151:127.0.0.1:5151 user@remote
+```
+FiftyOne imports the episode straight from the on-disk dataset root (no re-encoding). Add
+`--all-episodes` to browse every episode of the dataset. The FiftyOne dataset is kept after exit
+(reopen it with `fiftyone app launch <name>`); pass `--no-persistent` for a throwaway session.
+
 """
 
 import argparse
@@ -169,7 +184,7 @@ def visualize_dataset(
     output_dir: Path | None = None,
     display_compressed_images: bool = False,
     display_mode: str = "rerun",
-    host: str = "127.0.0.1",
+    host: str | None = None,
     autoplay: bool = True,
     **kwargs,
 ) -> Path | None:
@@ -180,7 +195,7 @@ def visualize_dataset(
         serve_foxglove_dataset_playback(
             dataset,
             episode_index,
-            host=host,
+            host=host or "127.0.0.1",
             port=web_port if web_port is not None else DEFAULT_FOXGLOVE_PORT,
             compress_images=display_compressed_images,
             autoplay=autoplay,
@@ -316,8 +331,8 @@ def main():
     parser.add_argument(
         "--episode-index",
         type=int,
-        required=True,
-        help="Episode to visualize.",
+        default=None,
+        help="Episode to visualize. Required unless `--display-mode fiftyone --all-episodes` is used.",
     )
     parser.add_argument(
         "--root",
@@ -360,7 +375,8 @@ def main():
         default=None,
         help=(
             "Web/WebSocket port. For rerun `--mode distant` it is the web viewer port (default 9090); "
-            "for `--display-mode foxglove` it is the server bind port (default 8765)."
+            "for `--display-mode foxglove` it is the server bind port (default 8765); "
+            "for `--display-mode fiftyone` it is the App port (default 5151, or FiftyOne's configured port)."
         ),
     )
     parser.add_argument(
@@ -401,20 +417,24 @@ def main():
         "--display-mode",
         type=str,
         default="rerun",
-        choices=["rerun", "foxglove"],
+        choices=["rerun", "foxglove", "fiftyone"],
         help=(
             "Visualization backend. 'rerun' uses the Rerun viewer (--mode/--save/--*-port apply). "
             "'foxglove' starts a Foxglove WebSocket server that serves the episode as a seekable, "
-            "scrubbable timeline; connect the Foxglove app to ws://HOST:PORT (--host/--web-port)."
+            "scrubbable timeline; connect the Foxglove app to ws://HOST:PORT (--host/--web-port). "
+            "'fiftyone' imports the episode from the on-disk dataset and opens it in the FiftyOne App "
+            "(default http://localhost:5151; --host/--web-port/--remote/--all-episodes apply; "
+            "requires `pip install 'lerobot[fiftyone]'`)."
         ),
     )
     parser.add_argument(
         "--host",
         type=str,
-        default="127.0.0.1",
+        default=None,
         help=(
-            "Host to bind the Foxglove WebSocket server to when `--display-mode foxglove` is set "
-            "(127.0.0.1 for local only, 0.0.0.0 for all interfaces)."
+            "Host/interface for the viewer server. For `--display-mode foxglove` it is the WebSocket "
+            "bind address (default 127.0.0.1; 0.0.0.0 for all interfaces). For `--display-mode fiftyone` "
+            "it is the App address (default: FiftyOne's configured address, localhost)."
         ),
     )
     parser.add_argument(
@@ -426,17 +446,80 @@ def main():
             "connects; wait for play to be pressed in the Foxglove app instead."
         ),
     )
+    parser.add_argument(
+        "--remote",
+        action="store_true",
+        help=(
+            "For `--display-mode fiftyone`: run a remote session (no browser is opened; SSH "
+            "port-forwarding instructions are printed instead). Use on a headless machine."
+        ),
+    )
+    parser.add_argument(
+        "--all-episodes",
+        action="store_true",
+        help=(
+            "For `--display-mode fiftyone`: load every episode of the dataset instead of only "
+            "`--episode-index`. The whole dataset is downloaded/read from `--root`."
+        ),
+    )
+    parser.add_argument(
+        "--no-persistent",
+        dest="persistent",
+        action="store_false",
+        help=(
+            "For `--display-mode fiftyone`: don't keep the FiftyOne dataset after exit. By default it is "
+            "kept (and replaced in place on re-run) so tags and saved views made in the App survive and "
+            "it can be reopened with `fiftyone app launch <name>`."
+        ),
+    )
+    parser.add_argument(
+        "--fo-dataset-name",
+        type=str,
+        default=None,
+        help=(
+            "For `--display-mode fiftyone`: name of the FiftyOne dataset to create (default: "
+            "`<repo_id>-episode-<i>`, or `<repo_id>` with `--all-episodes`). An existing dataset with "
+            "this name is replaced."
+        ),
+    )
 
     args = parser.parse_args()
 
-    if args.display_mode == "foxglove":
+    if args.display_mode == "fiftyone" and args.all_episodes:
+        if args.episode_index is not None:
+            logging.warning("`--episode-index` is ignored with `--all-episodes`.")
+    elif args.episode_index is None:
+        parser.error("--episode-index is required unless `--display-mode fiftyone --all-episodes` is used.")
+
+    if args.display_mode != "rerun":
         rerun_only = ("mode", "save", "output_dir", "grpc_port", "batch_size", "num_workers")
         ignored = [name for name in rerun_only if getattr(args, name) != parser.get_default(name)]
         if ignored:
             logging.warning(
                 "These flags only apply to `--display-mode rerun` and are ignored with "
-                "`--display-mode foxglove`: %s.",
+                "`--display-mode %s`: %s.",
+                args.display_mode,
                 ", ".join(f"--{name.replace('_', '-')}" for name in ignored),
+            )
+    if args.display_mode != "foxglove" and not args.autoplay:
+        logging.warning("`--no-autoplay` only applies to `--display-mode foxglove` and is ignored.")
+    if args.display_mode != "fiftyone":
+        # dest -> flag as typed (``persistent`` is set by ``--no-persistent``).
+        fiftyone_only = {
+            "remote": "--remote",
+            "all_episodes": "--all-episodes",
+            "persistent": "--no-persistent",
+            "fo_dataset_name": "--fo-dataset-name",
+        }
+        ignored = [
+            flag for dest, flag in fiftyone_only.items() if getattr(args, dest) != parser.get_default(dest)
+        ]
+        if ignored:
+            logging.warning(
+                "These flags only apply to `--display-mode fiftyone` and are ignored with "
+                "`--display-mode %s`: %s.",
+                args.display_mode,
+                ", ".join(ignored),
             )
 
     kwargs = vars(args)
@@ -445,6 +528,26 @@ def main():
     tolerance_s = kwargs.pop("tolerance_s")
 
     init_logging()
+
+    if args.display_mode == "fiftyone":
+        # FiftyOne reads the on-disk dataset itself, so skip LeRobotDataset (which would load every
+        # frame record of the selected episodes into memory) and hand it the resolved root instead.
+        from lerobot.utils.fiftyone_visualization import serve_fiftyone_dataset_playback
+
+        logging.info("Starting FiftyOne App")
+        serve_fiftyone_dataset_playback(
+            repo_id,
+            args.episode_index,
+            root=root,
+            host=args.host,
+            port=args.web_port,
+            remote=args.remote,
+            all_episodes=args.all_episodes,
+            persistent=args.persistent,
+            dataset_name=args.fo_dataset_name,
+        )
+        return
+
     logging.info("Loading dataset")
     dataset = LeRobotDataset(repo_id, episodes=[args.episode_index], root=root, tolerance_s=tolerance_s)
 

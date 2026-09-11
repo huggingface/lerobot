@@ -135,6 +135,9 @@ viz = [
     "rerun-sdk>=0.24.0,<0.34.0",
     "foxglove-sdk>=0.25.1,<0.26.0",
 ]
+# Optional FiftyOne App backend for `lerobot-dataset-viz --display-mode fiftyone`. Kept out of `viz`
+# because fiftyone ships its own database binary (~200 MB); install on demand with `lerobot[fiftyone]`.
+fiftyone = ["fiftyone>=1.23.0,<2.0.0"]
 # ── User-facing composite extras (map to CLI scripts) ─────
 # lerobot-record, lerobot-replay, lerobot-calibrate, lerobot-teleoperate, etc.
 core_scripts = ["lerobot[dataset]", "lerobot[hardware]", "lerobot[viz]"]
@@ -301,6 +304,7 @@ all = [
     "lerobot[training]",
     "lerobot[hardware]",
     "lerobot[viz]",
+    "lerobot[fiftyone]",
     # NOTE(resolver hint): scipy is pulled in transitively via lerobot[scipy-dep] through
     # multiple extras (aloha, metaworld, pi, wallx, phone). Listing it explicitly
     # helps pip's resolver converge by constraining scipy early, before it encounters
@@ -508,6 +512,9 @@ default.extend-ignore-identifiers-re = [
     "OT_VALUE",
     "VanderBilt",
     "seperated_timestep",
+    "^fot?$",       # FiftyOne import aliases: `import fiftyone as fo`, `import fiftyone.types as fot`
+    "fo_dataset",
+    "fake_fo",
 ]
 
 # Docstring coverage gate. `fail-under` is a RATCHET, not a target: it is set just below the currently
