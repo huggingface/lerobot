@@ -181,6 +181,8 @@
 - sections:
   - local: cameras
     title: Cameras
+  - local: zed
+    title: Stereolabs ZED
   - local: third_party_sensors
     title: Third-Party Cameras & Sensors
   title: "Sensors"

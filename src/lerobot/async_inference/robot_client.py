@@ -60,6 +60,7 @@ except ImportError as e:
 else:
     from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 
+from lerobot.cameras.zed import ZedCameraConfig, ZedOneCameraConfig  # noqa: F401
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.robots import (  # noqa: F401
     Robot,

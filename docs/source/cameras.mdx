@@ -7,6 +7,8 @@ LeRobot offers multiple options for video capture:
 | `OpenCVCamera`    | Phone, built-in laptop, USB webcams |
 | `ZMQCamera`       | Network-connected cameras           |
 | `RealSenseCamera` | Intel RealSense (with depth)        |
+| `ZedCamera`       | Stereolabs ZED stereo (with depth)  |
+| `ZedOneCamera`    | Stereolabs ZED X One (monocular)    |
 | `Reachy2Camera`   | Reachy 2 robot cameras              |
 
 > [!TIP]
@@ -16,10 +18,10 @@ LeRobot offers multiple options for video capture:
 
 Every camera requires a unique identifier to be instantiated, allowing you to distinguish between multiple connected devices.
 
-`OpenCVCamera` and `RealSenseCamera` support auto-discovery. Run the command below to list available devices and their identifiers. Note that these identifiers may change after rebooting your computer or re-plugging the camera, depending on your operating system.
+`OpenCVCamera`, `RealSenseCamera` and `ZedCamera` support auto-discovery. Run the command below to list available devices and their identifiers. Note that these identifiers may change after rebooting your computer or re-plugging the camera, depending on your operating system.
 
 ```bash
-lerobot-find-cameras opencv # or realsense for Intel Realsense cameras
+lerobot-find-cameras opencv # or realsense for Intel Realsense, zed for Stereolabs ZED cameras
 ```
 
 The output will look something like this if you have two cameras connected:
@@ -168,13 +170,53 @@ Manual color controls require a dedicated RGB module. Cameras without one, such 
 D405, do not support them and raise an error at connection time.
 
 </hfoption>
+<hfoption id="Stereolabs ZED Camera">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.cameras.zed import ZedCamera, ZedCameraConfig
+from lerobot.cameras import ColorMode, Cv2Rotation
+
+# Create a `ZedCameraConfig` with your camera's serial number and enable depth.
+# `resolution` drives the stream, so leave fps/width/height unset unless you need to pin them.
+config = ZedCameraConfig(
+    serial_number=12345678,  # replace with your camera's serial
+    resolution="AUTO",
+    depth_mode="NEURAL",
+    color_mode=ColorMode.RGB,
+    use_depth=True,
+    rotation=Cv2Rotation.NO_ROTATION
+)
+
+# Instantiate and connect a `ZedCamera` with warm-up read (default).
+camera = ZedCamera(config)
+camera.connect()
+
+# `read_latest()` and `read_latest_depth()` return the color and depth of the same grab.
+try:
+    color_frame = camera.read_latest()
+    depth_map = camera.read_latest_depth()
+    print("Color frame shape:", color_frame.shape)
+    print("Depth map shape:", depth_map.shape)
+finally:
+    camera.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
 </hfoptions>
+
+> [!TIP]
+> ZED cameras need the Stereolabs SDK and its Python API, which is not on PyPI. See the [Stereolabs ZED cameras](./zed) page.
 
 ### Working with depth
 
-The Intel RealSense and Reachy 2 cameras can capture both color and depth in lockstep. Calling `read()` returns the **color** frame as `(H, W, 3)` `uint8`. Calling `read_depth()` returns the **depth map** as `(H, W, 1)` `uint16`, where each pixel value is the distance from the sensor expressed in **millimetres**. A pixel value of `0` typically means "no measurement available" (out-of-range, occluded, or low-confidence).
+The Intel RealSense, Stereolabs ZED and Reachy 2 cameras can capture both color and depth in lockstep. Calling `read()` returns the **color** frame as `(H, W, 3)` `uint8`. Calling `read_depth()` returns the **depth map** as `(H, W, 1)` `uint16`, where each pixel value is the distance from the sensor expressed in **millimetres**. A pixel value of `0` typically means "no measurement available" (out-of-range, occluded, or low-confidence).
 
 During recording, the control loop peeks the freshest buffered frames non-blockingly via `read_latest()` (color) and `read_latest_depth()` (depth), adding the depth map as a sibling feature (e.g. `front_depth` next to `front`).
+
+> [!WARNING]
+> On `ZedCamera`, `read()` and `read_depth()` each wait for the _next_ frame, so calling them one after the other returns images from two different captures. Use `read_latest()` with `read_latest_depth()` when you need a color and depth pair from the same capture.
 
 For how depth streams are stored and encoded when recording a dataset, see the [Depth streams](./video_encoding_parameters#depth-streams) section of the video encoding guide.
 

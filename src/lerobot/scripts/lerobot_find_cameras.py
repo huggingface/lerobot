@@ -106,12 +106,14 @@ def find_and_print_cameras(camera_type_filter: str | None = None) -> list[dict[s
         all_cameras_info.extend(find_all_opencv_cameras())
     if camera_type_filter is None or camera_type_filter == "realsense":
         all_cameras_info.extend(find_all_realsense_cameras())
+    if camera_type_filter is None or camera_type_filter == "zed":
+        all_cameras_info.extend(find_all_zed_cameras())
 
     if not all_cameras_info:
         if camera_type_filter:
             logger.warning(f"No {camera_type_filter} cameras were detected.")
         else:
-            logger.warning("No cameras (OpenCV or RealSense) were detected.")
+            logger.warning("No cameras (OpenCV, RealSense or ZED) were detected.")
     else:
         print("\n--- Detected Cameras ---")
         for i, cam_info in enumerate(all_cameras_info):
@@ -151,6 +153,25 @@ def save_image(
         logger.error(f"Failed to save image for camera {camera_identifier} (type {camera_type}): {e}")
 
 
+def find_all_zed_cameras() -> list[dict[str, Any]]:
+    """Detect Stereolabs cameras via the ZED SDK (pyzed): stereo models and the monocular X One.
+
+    Returns [] if pyzed is absent.
+    """
+    try:
+        from lerobot.cameras.zed import ZedCamera, ZedOneCamera
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"ZED camera support unavailable ({e}); skipping ZED discovery.")
+        return []
+    cameras: list[dict[str, Any]] = []
+    for finder, label in ((ZedCamera.find_cameras, "stereo"), (ZedOneCamera.find_cameras, "monocular")):
+        try:
+            cameras.extend(finder())
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"ZED {label} discovery failed: {e}")
+    return cameras
+
+
 def create_camera_instance(cam_meta: dict[str, Any], *, warmup_s: int = 1) -> dict[str, Any] | None:
     """Create and connect to a camera instance based on metadata."""
     cam_type = cam_meta.get("type")
@@ -178,6 +199,25 @@ def create_camera_instance(cam_meta: dict[str, Any], *, warmup_s: int = 1) -> di
                 warmup_s=warmup_s,
             )
             instance = RealSenseCamera(rs_config)
+        elif cam_meta.get("type") == "zed_one":
+            from lerobot.cameras.zed import ZedOneCamera, ZedOneCameraConfig
+
+            instance = ZedOneCamera(
+                ZedOneCameraConfig(
+                    serial_number=cam_meta.get("serial_number", cam_id),
+                    color_mode=ColorMode.RGB,
+                    warmup_s=warmup_s,
+                )
+            )
+        elif cam_meta.get("type") == "zed":
+            from lerobot.cameras.zed import ZedCamera, ZedCameraConfig
+
+            zed_config = ZedCameraConfig(
+                serial_number=cam_meta.get("serial_number", cam_id),
+                color_mode=ColorMode.RGB,
+                warmup_s=warmup_s,
+            )
+            instance = ZedCamera(zed_config)
         else:
             logger.warning(f"Unknown camera type: {cam_type} for ID {cam_id}. Skipping.")
             return None
@@ -283,8 +323,8 @@ def main():
         type=str,
         nargs="?",
         default=None,
-        choices=["realsense", "opencv"],
-        help="Specify camera type to capture from (e.g., 'realsense', 'opencv'). Captures from all if omitted.",
+        choices=["realsense", "opencv", "zed"],
+        help="Specify camera type to capture from (e.g., 'realsense', 'opencv', 'zed'). Captures from all if omitted.",
     )
     parser.add_argument(
         "--output-dir",
