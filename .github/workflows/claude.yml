@@ -51,6 +51,9 @@ jobs:
         with:
           persist-credentials: false
 
+      # NOTE: This step processes untrusted user input (PR descriptions, comments, repository content)
+      # through an LLM API. While defensive system prompts are in place, prompt injection remains
+      # a residual risk. All LLM interactions should be logged and monitored for anomalous behavior.
       - name: Run Claude Code
         id: claude
         uses: anthropics/claude-code-action@5ccc3a35a6367cdb8e6fbd0728287467540ecfe2  # v1.0.219
