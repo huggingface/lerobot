@@ -25,7 +25,6 @@ python -m lerobot.async_inference.policy_server \
 """
 
 import logging
-import pickle  # nosec
 import threading
 import time
 from concurrent import futures
@@ -58,6 +57,11 @@ from .helpers import (
     get_logger,
     observations_similar,
     raw_observation_to_observation,
+)
+from .safe_serialization import (
+    deserialize_observation,
+    deserialize_policy_config,
+    serialize_actions,
 )
 
 
@@ -122,7 +126,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         client_id = context.peer()
 
-        policy_specs = pickle.loads(request.data)  # nosec
+        policy_specs = deserialize_policy_config(request.data)
 
         if not isinstance(policy_specs, RemotePolicyConfig):
             raise TypeError(f"Policy specs must be a RemotePolicyConfig. Got {type(policy_specs)}")
@@ -175,13 +179,21 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         client_id = context.peer()
         self.logger.debug(f"Receiving observations from {client_id}")
 
-        receive_time = time.time()  # comparing timestamps so need time.time()
-        start_deserialize = time.perf_counter()
+        # Time the blocking receive separately from deserialization. Conflating
+        # the two hid the real cost behind the decode metric and made issue #2458
+        # look like slow deserialization when it is actually transport/receive
+        # wait: receive covers gRPC stream wait + chunk assembly, deserialize
+        # covers only the safetensors+JSON decode.
+        start_receive = time.perf_counter()
         received_bytes = receive_bytes_in_chunks(
             request_iterator, None, self.shutdown_event, self.logger
         )  # blocking call while looping over request_iterator
-        timed_observation = pickle.loads(received_bytes)  # nosec
-        deserialize_time = time.perf_counter() - start_deserialize
+        receive_duration = time.perf_counter() - start_receive
+        receive_time = time.time()  # stream fully received; comparing timestamps so need time.time()
+
+        start_deserialize = time.perf_counter()
+        timed_observation = deserialize_observation(received_bytes)
+        deserialize_duration = time.perf_counter() - start_deserialize
 
         self.logger.debug(f"Received observation #{timed_observation.get_timestep()}")
 
@@ -201,7 +213,9 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.logger.debug(
             f"Server timestamp: {receive_time:.6f} | "
             f"Client timestamp: {obs_timestamp:.6f} | "
-            f"Deserialization time: {deserialize_time:.6f}s"
+            f"Received bytes: {len(received_bytes)} | "
+            f"Receive time: {receive_duration:.6f}s | "
+            f"Deserialization time: {deserialize_duration:.6f}s"
         )
 
         if not self._enqueue_observation(
@@ -233,7 +247,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             inference_time = time.perf_counter() - start_time
 
             start_time = time.perf_counter()
-            actions_bytes = pickle.dumps(action_chunk)  # nosec
+            actions_bytes = serialize_actions(action_chunk)
             serialize_time = time.perf_counter() - start_time
 
             # Create and return the action chunk
