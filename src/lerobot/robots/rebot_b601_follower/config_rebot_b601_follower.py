@@ -44,6 +44,27 @@ class RebotB601FollowerConfig:
 
     disable_torque_on_disconnect: bool = True
 
+    # When True, `disconnect()` interpolates the arm back to `safe_home_target` before
+    # torque is released, instead of dropping torque wherever the arm happens to be.
+    safe_home_on_disconnect: bool = False
+
+    # Arm joint targets (degrees) ending the safe-home trajectory, defaulting to the
+    # calibrated zero pose. Joints missing here keep their trajectory start value.
+    safe_home_target: dict[str, float] = field(
+        default_factory=lambda: dict.fromkeys(
+            ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_yaw", "wrist_roll"), 0.0
+        )
+    )
+
+    # Duration (seconds) and command rate (Hz) of the safe-home trajectory.
+    safe_home_duration_s: float = 3.0
+    safe_home_rate_hz: float = 50.0
+
+    # Optional gripper position (degrees) commanded before the arm starts moving, held
+    # for `safe_home_gripper_dwell_s` seconds. `None` leaves the gripper untouched.
+    safe_home_gripper_pos: float | None = None
+    safe_home_gripper_dwell_s: float = 0.5
+
     # `max_relative_target` limits the magnitude of the relative positional target
     # vector for safety purposes (in degrees). Set to a positive scalar to apply the
     # same value to all motors, or to a dict mapping motor names to per-motor values.
