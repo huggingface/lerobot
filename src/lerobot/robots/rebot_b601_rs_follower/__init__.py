@@ -14,8 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .robstride import RobstrideMotorsBus
-from .robstride_private import RobstridePrivateMotorsBus
-from .tables import *  # noqa: F403 — hardware constant tables
+from .config_rebot_b601_rs_follower import RebotB601RSFollowerConfig, RebotB601RSFollowerRobotConfig
+from .rebot_b601_rs_follower import RebotB601RSFollower
 
-__all__ = ["RobstrideMotorsBus", "RobstridePrivateMotorsBus"]
+__all__ = ["RebotB601RSFollower", "RebotB601RSFollowerConfig", "RebotB601RSFollowerRobotConfig"]
