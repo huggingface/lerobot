@@ -24,10 +24,23 @@ __all__ = ["ZMQCameraConfig", "ColorMode"]
 @CameraConfig.register_subclass("zmq")
 @dataclass
 class ZMQCameraConfig(CameraConfig):
+    """Config for a camera whose frames arrive over ZMQ from a remote publisher.
+
+    Attributes:
+        camera_name: Which stream to take out of the publisher's message. This is the name
+            on the wire, independent of the key the robot files the camera under, so a
+            publisher's naming need not match the policy's.
+        jpeg_is_rgb: Set when the publisher built its JPEGs by passing an RGB array to
+            `cv2.imencode`, which documents its input as BGR. The bytes then already carry
+            RGB and the usual post-decode swap would undo it. Nothing in the frame reveals
+            this -- both orders decode to a valid image -- so it has to be declared.
+    """
+
     server_address: str
     port: int = 5555
     camera_name: str = "zmq_camera"
     color_mode: ColorMode = ColorMode.RGB
+    jpeg_is_rgb: bool = False
     timeout_ms: int = 5000
     warmup_s: int = 1
 
