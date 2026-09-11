@@ -27,6 +27,7 @@ from lerobot.utils.decorators import check_if_not_connected
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
 from .configuration_gamepad import GamepadTeleopConfig
+from .gamepad_utils import InputController
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ class GamepadTeleop(Teleoperator):
         self.config = config
         self.robot_type = config.type
 
-        self.gamepad = None
+        self.gamepad: InputController | None = None
 
         self.hidapi_fallback = config.hidapi_fallback
         if sys.platform == "darwin" and not self.hidapi_fallback:
@@ -85,17 +86,15 @@ class GamepadTeleop(Teleoperator):
     def feedback_features(self) -> dict:
         return {}
 
-    def connect(self) -> None:
-        if self.hidapi_fallback:
-            from .gamepad_utils import GamepadControllerHID as Gamepad
-        else:
-            from .gamepad_utils import GamepadController as Gamepad
+    def connect(self, calibrate: bool = True) -> None:
+        from .gamepad_utils import GamepadController, GamepadControllerHID
 
-        self.gamepad = Gamepad()
+        self.gamepad = GamepadControllerHID() if self.hidapi_fallback else GamepadController()
         self.gamepad.start()
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
+        assert self.gamepad is not None
         # Update the controller to get fresh inputs
         self.gamepad.update()
 
@@ -120,7 +119,7 @@ class GamepadTeleop(Teleoperator):
 
         return action_dict
 
-    def get_teleop_events(self) -> dict[str, Any]:
+    def get_teleop_events(self) -> dict[TeleopEvents, Any]:
         """
         Get extra control events from the gamepad such as intervention status,
         episode termination, success indicators, etc.
@@ -178,6 +177,7 @@ class GamepadTeleop(Teleoperator):
         # No calibration needed for gamepad
         pass
 
+    @property
     def is_calibrated(self) -> bool:
         """Check if gamepad is calibrated."""
         # Gamepad doesn't require calibration

@@ -208,7 +208,7 @@ class UnitreeG1Teleoperator(Teleoperator):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        remote_features = dict.fromkeys(self.remote_controller.remote_action, float)
+        remote_features: dict[str, type] = dict.fromkeys(self.remote_controller.remote_action, float)
         if not self._arm_control_enabled:
             return remote_features
         joint_features = {f"{name}.q": float for name in self._g1_arm_joint_names}
@@ -269,7 +269,7 @@ class UnitreeG1Teleoperator(Teleoperator):
         pass
 
     def get_action(self) -> dict[str, float]:
-        joint_action = {}
+        joint_action: dict[str, float] = {}
         left_raw = None
         right_raw = None
         if self._arm_control_enabled:
@@ -278,6 +278,7 @@ class UnitreeG1Teleoperator(Teleoperator):
 
             left_angles = self.left_arm.get_angles()
             right_angles = self.right_arm.get_angles()
+            assert self.ik_helper is not None
             joint_action = self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
 
         # Wireless remote has priority when non-zero; otherwise, use exo joystick.
