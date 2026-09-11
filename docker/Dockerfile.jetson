@@ -1,0 +1,151 @@
+# Community-maintained, not part of the nightly CI/Docker Hub pipeline that builds
+# Dockerfile.user / Dockerfile.internal. Maintained by @ravediamond outside this repo;
+# this file is a manually-synced mirror, kept up to date on a best-effort basis.
+#
+# Source of truth: https://github.com/ravediamond/lerobot-jetson
+# Prebuilt image:  ghcr.io/ravediamond/lerobot-jetson
+# Background:      https://github.com/huggingface/lerobot/issues/819
+#
+# LeRobot on NVIDIA Jetson Orin, JetPack 6.2 (L4T R36.4.x), CUDA 12.6
+#
+# No prebuilt cp312 torch/torchcodec wheel exists anywhere for this platform yet
+# (checked both NVIDIA's redist and the jetson-ai-lab community index), so this
+# builds torch and torchcodec from source. First build takes a few hours;
+# Docker layer caching makes rebuilds fast unless you bump versions.
+FROM nvcr.io/nvidia/l4t-jetpack:r36.4.0
+
+ARG LEROBOT_REPO=huggingface/lerobot
+ARG LEROBOT_REF=main
+ARG PYTHON_VERSION=3.12
+ARG TORCH_VERSION=2.11.0
+ARG TORCHCODEC_VERSION=0.11.0
+ARG TORCH_CUDA_ARCH=8.7
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1
+
+# --- base toolchain + Python 3.12 (deadsnakes PPA ships python3.12-dev, apt jammy alone doesn't) ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        software-properties-common curl git ninja-build pkg-config \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        python${PYTHON_VERSION} python${PYTHON_VERSION}-venv python${PYTHON_VERSION}-dev libopenblas0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# base image has CUDA itself but not this apt repo, needed for libcusparselt0 (torch links against it)
+RUN curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/arm64/cuda-archive-keyring.gpg \
+        -o /usr/share/keyrings/cuda-archive-keyring.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/arm64/ /" \
+        > /etc/apt/sources.list.d/cuda-ubuntu2204-arm64.list \
+    && apt-get update && apt-get install -y --no-install-recommends libcusparselt0 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
+RUN uv venv --python python${PYTHON_VERSION} /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+# uv-created venvs don't ship pip by default
+RUN python3 -m ensurepip --upgrade \
+    && python3 -m pip install --upgrade pip setuptools wheel ninja cmake pyyaml numpy typing_extensions
+
+# --- build PyTorch from source ---
+# USE_FLASH_ATTENTION off: OOMs the board (backward-kernel compile, see build guide sec 2).
+# USE_MEM_EFF_ATTENTION=1 (UNTESTED, 2026-08-26): OOM was flash-specific, worth retrying
+# mem-eff alone. If it OOMs (exit 137), revert to 0.
+# USE_DISTRIBUTED=1 USE_GLOO=1 (UNTESTED, 2026-08-26): was 0 - torch.distributed ends up a
+# stub with no is_initialized(), which lerobot-train's is_main_process() calls unconditionally
+# (AttributeError, blocks lerobot-train entirely - see src patch below). Gloo gives a CPU
+# rendezvous backend, enough to satisfy that check on a single-GPU board. NCCL stays off,
+# no real multi-GPU use here.
+# USE_NVSHMEM off: multi-node feature CMake wrongly auto-enables, fails to link.
+RUN git clone --recursive --branch v${TORCH_VERSION} https://github.com/pytorch/pytorch.git /opt/pytorch-src
+WORKDIR /opt/pytorch-src
+RUN USE_CUDA=1 USE_CUDNN=1 \
+    TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH}" \
+    PYTORCH_BUILD_VERSION=${TORCH_VERSION} PYTORCH_BUILD_NUMBER=1 \
+    MAX_JOBS=3 USE_DISTRIBUTED=1 USE_GLOO=1 USE_FLASH_ATTENTION=0 USE_MEM_EFF_ATTENTION=1 USE_NVSHMEM=0 \
+    python3 setup.py bdist_wheel \
+    && python3 -m pip install dist/torch-${TORCH_VERSION}-cp312-cp312-linux_aarch64.whl
+
+# --- build ffmpeg with NVDEC (dav1d >=1.0.0 needed by ffmpeg 8.x, jammy's apt only has 0.9.2) ---
+RUN git clone --branch 1.5.1 --depth 1 https://code.videolan.org/videolan/dav1d.git /opt/dav1d-src \
+    && apt-get update && apt-get install -y --no-install-recommends meson ninja-build \
+    && cd /opt/dav1d-src && meson setup build --buildtype release && ninja -C build install \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pin ffnvcodec headers instead of tracking master: newer master renamed a struct field
+# (countingType -> countingTypeLSB) that breaks ffmpeg 8.x's nvenc.c.
+RUN git clone --branch n13.0.19.0 --depth 1 https://github.com/FFmpeg/nv-codec-headers.git /opt/nv-codec-headers-src \
+    && cd /opt/nv-codec-headers-src && make install
+
+RUN git clone --branch n8.1 --depth 1 https://github.com/FFmpeg/FFmpeg.git /opt/ffmpeg-src
+WORKDIR /opt/ffmpeg-src
+# nvccflags pinned to this board's single arch (TORCH_CUDA_ARCH): ffmpeg's own nvcc
+# feature-probe in configure compiles a test file with -ptx, which nvcc refuses once
+# given more than one -gencode target ("Option --ptx is not allowed when compiling
+# for multiple GPU architectures"). `nvcc --list-gpu-code` enumerates every arch the
+# toolkit supports (sm_50..sm_90), which triggered that failure.
+# --disable-nvenc: ffmpeg 8.x's nvenc.c uses a struct field (countingType) that the
+# video-codec-sdk headers pulled above (n13.0.19.0) already split into bitfields -
+# NVENC won't compile. NVDEC-only is what torchcodec/lerobot's decode path needs.
+RUN ARCH_NODOT=$(echo "${TORCH_CUDA_ARCH}" | tr -d '.') && \
+    NVCCFLAGS="-gencode arch=compute_${ARCH_NODOT},code=sm_${ARCH_NODOT}" && \
+    ./configure --enable-nonfree --enable-cuda-nvcc --enable-libnpp --enable-libdav1d \
+        --enable-nvdec --enable-cuvid --enable-nvenc --disable-nvenc \
+        --nvccflags="${NVCCFLAGS}" \
+        --extra-cflags=-I/usr/local/cuda/include \
+        --extra-ldflags=-L/usr/local/cuda/lib64 \
+        --disable-static --enable-shared \
+    && make -j3 && make install && ldconfig
+
+# --- build torchcodec from source, CUDA-enabled ---
+# pybind11 installed here (not with the earlier pip prereqs) so this fix doesn't
+# cache-bust the ~2-3h torch source build above.
+RUN python3 -m pip install pybind11
+RUN git clone --branch v${TORCHCODEC_VERSION} --depth 1 https://github.com/pytorch/torchcodec.git /opt/torchcodec-src
+WORKDIR /opt/torchcodec-src
+# pip's pybind11 ships its own CMakeConfig but doesn't put it on CMake's default
+# search path; torchcodec's CMakeLists.txt does a plain find_package(pybind11)
+# with no fallback, so it needs CMAKE_PREFIX_PATH pointed at it explicitly.
+RUN CMAKE_PREFIX_PATH=$(python3 -c "import pybind11; print(pybind11.get_cmake_dir())") \
+    ENABLE_CUDA=1 CUDAARCHS=87 I_CONFIRM_THIS_IS_NOT_A_LICENSE_VIOLATION=1 python3 setup.py bdist_wheel \
+    && python3 -m pip install dist/torchcodec-*.whl
+
+# --- build torchvision from source, matching this torch build ---
+# lerobot depends on torchvision, and pip has no way to know a generic PyPI wheel
+# won't work here: it imports fine but its compiled ops silently fail to register
+# against a from-source torch build ("RuntimeError: operator torchvision::nms does
+# not exist"), breaking almost every lerobot import (transforms, policies, train).
+# 0.26.0 pairs with torch 2.11 per the pytorch/vision compatibility matrix.
+RUN git clone --branch v0.26.0 --depth 1 https://github.com/pytorch/vision.git /opt/vision-src
+WORKDIR /opt/vision-src
+RUN FORCE_CUDA=1 TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH} python3 setup.py bdist_wheel \
+    && python3 -m pip install dist/torchvision-*.whl
+
+# --- install lerobot ---
+WORKDIR /opt/lerobot
+RUN git clone --branch=${LEROBOT_REF} --depth=1 https://github.com/${LEROBOT_REPO} . \
+    && python3 -m pip install -e ".[feetech, aloha, pusht, dynamixel, pi, smolvla, test]" --no-build-isolation
+
+# torch here is built with USE_DISTRIBUTED=0 (single-GPU board), so torch.distributed
+# is a stub with no is_initialized(). lerobot's is_main_process() calls it unconditionally -
+# AttributeError, breaks lerobot-train entirely. Patch until upstream guards on is_available().
+RUN sed -i 's/return not dist.is_initialized() or dist.get_rank() == 0/return not dist.is_available() or not dist.is_initialized() or dist.get_rank() == 0/' \
+    src/lerobot/distributed/utils.py
+
+# pip resolves lerobot's torchcodec>=0.11.0 constraint against our local build's version tag
+# (0.11.0a0 < 0.11.0 per PEP 440) and silently swaps in a generic PyPI wheel that crashes here
+# (libnvrtc.so.13 not found - built against CUDA 13's runtime, this board has 12.6). Reassert ours.
+RUN python3 -m pip install --force-reinstall --no-deps /opt/torchcodec-src/dist/torchcodec-*.whl \
+    && python3 -m pip install --force-reinstall --no-deps /opt/vision-src/dist/torchvision-*.whl
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        speech-dispatcher speech-dispatcher-espeak-ng ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# python3.12's ensurepip only ever creates pip3/pip3.12, never a bare `pip` -
+# every doc/tutorial that says `pip install X` fails with "command not found" otherwise.
+RUN ln -sf /opt/venv/bin/pip3 /opt/venv/bin/pip
+
+WORKDIR /opt/lerobot
+CMD ["/bin/bash"]
