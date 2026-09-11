@@ -272,6 +272,147 @@ def test_batched_encoding_staging_survives_save(tmp_path):
     assert staging_dir.is_dir() and any(staging_dir.iterdir())
 
 
+def _assert_video_metadata_consistent(dataset: LeRobotDataset) -> None:
+    """Every episode row carries its own index and a video segment exactly as
+    long as the episode. Catches orphan rows (video metadata attached to the
+    wrong file) and misaligned merges, which decoding a single frame may not.
+    """
+    from lerobot.datasets.io_utils import load_episodes
+
+    episodes = load_episodes(dataset.root)
+    assert len(episodes) == dataset.meta.total_episodes
+    for row in episodes:
+        assert row["episode_index"] is not None
+        expected = row["length"] / dataset.meta.fps
+        for key in dataset.meta.video_keys:
+            duration = row[f"videos/{key}/to_timestamp"] - row[f"videos/{key}/from_timestamp"]
+            assert abs(duration - expected) < 1e-3, (row["episode_index"], key, duration, expected)
+
+
+def test_batched_encoding_end_to_end(tmp_path):
+    """Recording with ``batch_encoding_size > 1`` produces a loadable dataset.
+
+    Regression test: the batch encoder indexed ``meta.episodes`` — a view of
+    the on-disk state that lags the session (episodes live in the metadata
+    buffer until flushed) — so any fresh recording with a batch size above 1
+    crashed on its first batch (#2404, #2509).
+    """
+    video_key = "observation.images.cam"
+    features = {
+        video_key: {
+            "dtype": "video",
+            "shape": (64, 96, 3),
+            "names": ["height", "width", "channels"],
+        },
+        "action": {"dtype": "float32", "shape": (2,), "names": None},
+    }
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=features,
+        root=tmp_path / "ds",
+        use_videos=True,
+        batch_encoding_size=2,
+    )
+    for _ in range(5):  # two full batches + one remainder encoded at finalize
+        for _ in range(3):
+            dataset.add_frame(_make_frame(features))
+        dataset.save_episode()
+    dataset.finalize()
+
+    reloaded = LeRobotDataset(DUMMY_REPO_ID, root=tmp_path / "ds")
+    assert reloaded.meta.total_episodes == 5
+    assert reloaded.num_frames == 15
+    assert reloaded[reloaded.num_frames - 1][video_key].shape[-2:] == (64, 96)
+    _assert_video_metadata_consistent(reloaded)
+
+
+def test_batched_encoding_on_resumed_dataset(tmp_path):
+    """Batch encoding works when appending to an existing dataset via resume().
+
+    Regression test: on a resumed dataset, ``meta.episodes`` only covered the
+    episodes recorded in previous sessions, so the first batch of a resumed
+    session crashed with an IndexError. The video-metadata merge also aligned
+    on the dataframe's positional index, corrupting any episodes file that
+    does not start at episode 0.
+    """
+    video_key = "observation.images.cam"
+    features = {
+        video_key: {
+            "dtype": "video",
+            "shape": (64, 96, 3),
+            "names": ["height", "width", "channels"],
+        },
+        "action": {"dtype": "float32", "shape": (2,), "names": None},
+    }
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=features,
+        root=tmp_path / "ds",
+        use_videos=True,
+    )
+    for _ in range(3):
+        for _ in range(3):
+            dataset.add_frame(_make_frame(features))
+        dataset.save_episode()
+    dataset.finalize()
+
+    dataset = LeRobotDataset.resume(
+        repo_id=DUMMY_REPO_ID,
+        root=tmp_path / "ds",
+        batch_encoding_size=2,
+    )
+    for _ in range(4):
+        for _ in range(3):
+            dataset.add_frame(_make_frame(features))
+        dataset.save_episode()
+    dataset.finalize()
+
+    reloaded = LeRobotDataset(DUMMY_REPO_ID, root=tmp_path / "ds")
+    assert reloaded.meta.total_episodes == 7
+    assert reloaded.num_frames == 21
+    assert reloaded[0][video_key].shape[-2:] == (64, 96)
+    assert reloaded[reloaded.num_frames - 1][video_key].shape[-2:] == (64, 96)
+    _assert_video_metadata_consistent(reloaded)
+
+
+def test_batched_encoding_across_two_resumed_sessions(tmp_path):
+    """Metadata files roll over per batch while data files roll over per
+    session, so their indices diverge after the first batch of a resumed
+    session. The episodes parquet must be addressed by the metadata indices.
+    """
+    video_key = "observation.images.cam"
+    features = {
+        video_key: {
+            "dtype": "video",
+            "shape": (64, 96, 3),
+            "names": ["height", "width", "channels"],
+        },
+        "action": {"dtype": "float32", "shape": (2,), "names": None},
+    }
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=features, root=tmp_path / "ds", use_videos=True
+    )
+    for _ in range(2):
+        for _ in range(3):
+            dataset.add_frame(_make_frame(features))
+        dataset.save_episode()
+    dataset.finalize()
+
+    for _session in range(2):
+        dataset = LeRobotDataset.resume(repo_id=DUMMY_REPO_ID, root=tmp_path / "ds", batch_encoding_size=2)
+        for _ in range(5):  # two full batches + one remainder per session
+            for _ in range(3):
+                dataset.add_frame(_make_frame(features))
+            dataset.save_episode()
+        dataset.finalize()
+
+    reloaded = LeRobotDataset(DUMMY_REPO_ID, root=tmp_path / "ds")
+    assert reloaded.meta.total_episodes == 12
+    _assert_video_metadata_consistent(reloaded)
+
+
 def test_finalize_is_idempotent(tmp_path):
     """Calling finalize() twice does not raise."""
     dataset = LeRobotDataset.create(
