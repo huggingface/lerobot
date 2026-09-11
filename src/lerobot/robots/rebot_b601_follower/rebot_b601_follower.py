@@ -23,8 +23,9 @@ from typing import TYPE_CHECKING
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors import MotorCalibration
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_not_connected
 from lerobot.utils.import_utils import _motorbridge_available, require_package
+from lerobot.utils.lifecycle import Cleanup, idempotent_connect
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -99,25 +100,33 @@ class RebotB601Follower(Robot):
 
     @property
     def is_connected(self) -> bool:
-        return self.bus is not None and all(cam.is_connected for cam in self.cameras.values())
+        return (
+            self.bus is not None
+            and set(self.motors) == set(self.motor_names)
+            and all(cam.is_connected for cam in self.cameras.values())
+        )
 
-    @check_if_already_connected
+    @idempotent_connect
     def connect(self, calibrate: bool = True) -> None:
         logger.info(f"Connecting {self} on {self.config.port} (adapter={self.config.can_adapter})...")
-        if self.config.can_adapter == "damiao":
-            self.bus = MotorBridgeController.from_dm_serial(
-                serial_port=self.config.port,
-                baud=self.config.dm_serial_baud,
-            )
-        elif self.config.can_adapter == "socketcan":
-            self.bus = MotorBridgeController(channel=self.config.port)
-        else:
-            raise ValueError(
-                f"Unsupported can_adapter '{self.config.can_adapter}'. Use 'damiao' or 'socketcan'."
-            )
+        if self.bus is None:
+            if self.config.can_adapter == "damiao":
+                self.bus = MotorBridgeController.from_dm_serial(
+                    serial_port=self.config.port,
+                    baud=self.config.dm_serial_baud,
+                )
+            elif self.config.can_adapter == "socketcan":
+                self.bus = MotorBridgeController(channel=self.config.port)
+            else:
+                raise ValueError(
+                    f"Unsupported can_adapter '{self.config.can_adapter}'. Use 'damiao' or 'socketcan'."
+                )
 
         for motor_name, (send_id, recv_id) in self.config.motor_can_ids.items():
-            self.motors[motor_name] = self.bus.add_damiao_motor(send_id, recv_id, MOTOR_MODELS[motor_name])
+            if motor_name not in self.motors:
+                self.motors[motor_name] = self.bus.add_damiao_motor(
+                    send_id, recv_id, MOTOR_MODELS[motor_name]
+                )
 
         if not self.is_calibrated and calibrate:
             logger.info(
@@ -126,10 +135,10 @@ class RebotB601Follower(Robot):
             self.calibrate()
 
         for cam in self.cameras.values():
-            cam.connect()
+            if not cam.is_connected:
+                cam.connect()
 
         self.configure()
-        logger.info(f"{self} connected.")
 
     @property
     def is_calibrated(self) -> bool:
@@ -309,19 +318,23 @@ class RebotB601Follower(Robot):
 
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
-    @check_if_not_connected
     def disconnect(self) -> None:
-        for motor in self.motors.values():
-            if self.config.disable_torque_on_disconnect:
-                motor.disable()
-            motor.clear_error()
-            motor.close()
+        with Cleanup(self) as cleanup:
+            for motor_name, motor in self.motors.items():
+                if self.config.disable_torque_on_disconnect:
+                    with cleanup.step(f"the torque of motor '{motor_name}'"):
+                        motor.disable()
+                with cleanup.step(f"the error state of motor '{motor_name}'"):
+                    motor.clear_error()
+                with cleanup.step(f"motor '{motor_name}'"):
+                    motor.close()
 
-        self.bus.close()
-        self.bus = None
-        self.motors = {}
+            if self.bus is not None:
+                with cleanup.step("the motor bus"):
+                    self.bus.close()
+                    self.bus = None
+                    self.motors = {}
 
-        for cam in self.cameras.values():
-            cam.disconnect()
-
-        logger.info(f"{self} disconnected.")
+            for name, cam in self.cameras.items():
+                with cleanup.step(f"camera '{name}'"):
+                    cam.disconnect()

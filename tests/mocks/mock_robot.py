@@ -22,7 +22,7 @@ from lerobot.cameras import CameraConfig, make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors.motors_bus import Motor, MotorNormMode
 from lerobot.robots import Robot, RobotConfig
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_not_connected
 from tests.mocks.mock_motors_bus import MockMotorsBus
 
 
@@ -98,8 +98,9 @@ class MockRobot(Robot):
     def is_connected(self) -> bool:
         return self._is_connected
 
-    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        if self.is_connected:
+            return
         self._is_connected = True
         if calibrate:
             self.calibrate()
@@ -128,6 +129,5 @@ class MockRobot(Robot):
     def send_action(self, action: RobotAction) -> RobotAction:
         return action
 
-    @check_if_not_connected
     def disconnect(self) -> None:
         self._is_connected = False

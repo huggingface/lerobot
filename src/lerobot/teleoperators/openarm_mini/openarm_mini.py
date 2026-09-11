@@ -24,7 +24,8 @@ from lerobot.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
 )
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_not_connected
+from lerobot.utils.lifecycle import Cleanup, idempotent_connect
 
 from ..teleoperator import Teleoperator
 from .config_openarm_mini import OpenArmMiniConfig
@@ -90,16 +91,15 @@ class OpenArmMini(Teleoperator):
     def is_connected(self) -> bool:
         return self.bus.is_connected
 
-    @check_if_already_connected
+    @idempotent_connect
     def connect(self, calibrate: bool = True) -> None:
         logger.info(f"Connecting arm on {self.config.port}...")
-        self.bus.connect()
-
+        if not self.bus.is_connected:
+            self.bus.connect()
         if calibrate:
             self.calibrate()
 
         self.configure()
-        logger.info(f"{self} connected.")
 
     @property
     def is_calibrated(self) -> bool:
@@ -263,7 +263,6 @@ class OpenArmMini(Teleoperator):
     def send_feedback(self, feedback: dict[str, float]) -> None:
         self.write_goal_positions(feedback)
 
-    @check_if_not_connected
     def disconnect(self) -> None:
-        self.bus.disconnect()
-        logger.info(f"{self} disconnected.")
+        with Cleanup(self) as cleanup, cleanup.step("the motor bus"):
+            self.bus.disconnect()

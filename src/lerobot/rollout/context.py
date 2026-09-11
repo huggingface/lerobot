@@ -51,6 +51,7 @@ from lerobot.robots import make_robot_from_config
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
 from lerobot.utils.import_utils import _peft_available, require_package
+from lerobot.utils.lifecycle import Cleanup
 
 from .configs import RolloutConfig
 from .inference import (
@@ -369,25 +370,10 @@ def build_rollout_context(
         robot_action_processor = robot_action_processor or _r
         robot_observation_processor = robot_observation_processor or _o
 
-    # --- 3. Hardware (heaviest side-effect, deferred) -----------------
-    logger.info("Connecting robot (%s)...", cfg.robot.type if cfg.robot else "?")
+    # --- 3. Hardware objects (connection is deferred until validation) -
     robot = make_robot_from_config(cfg.robot)
-    robot.connect()
-    logger.info("Robot connected: %s", robot.name)
-
-    # Store the initial joint positions so we can return to a safe pose on shutdown.
-    initial_obs = robot.get_observation()
-    initial_position = {k: v for k, v in initial_obs.items() if k.endswith(".pos")}
-    logger.info("Captured initial robot position (%d keys)", len(initial_position))
-
     robot_wrapper = ThreadSafeRobot(robot)
-
-    teleop = None
-    if cfg.teleop is not None:
-        logger.info("Connecting teleoperator (%s)...", cfg.teleop.type if cfg.teleop else "?")
-        teleop = make_teleoperator_from_config(cfg.teleop)
-        teleop.connect()
-        logger.info("Teleoperator connected")
+    teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
 
     # TODO(Steven): once Teleoperator motor-control methods are standardised
     # (``enable_torque`` / ``disable_torque`` / ``write_goal_positions``), gate
@@ -584,28 +570,62 @@ def build_rollout_context(
         shutdown_event=shutdown_event,
     )
 
-    # --- 8. Assemble ---------------------------------------------------
+    # --- 8. Connect and assemble --------------------------------------
+    # No hardware is opened until all policy, feature and dataset validation has
+    # succeeded. If anything after the robot connects fails, both devices are
+    # disconnected again before the error propagates.
+    try:
+        logger.info("Connecting robot (%s)...", cfg.robot.type if cfg.robot else "?")
+        robot.connect()
+        logger.info("Robot connected: %s", robot.name)
+
+        # Store the initial joint positions so we can return to a safe pose on shutdown.
+        initial_obs = robot.get_observation()
+        initial_position = {k: v for k, v in initial_obs.items() if k.endswith(".pos")}
+        logger.info("Captured initial robot position (%d keys)", len(initial_position))
+
+        if teleop is not None:
+            logger.info("Connecting teleoperator (%s)...", cfg.teleop.type if cfg.teleop else "?")
+            teleop.connect()
+            logger.info("Teleoperator connected")
+
+        context = RolloutContext(
+            runtime=RuntimeContext(cfg=cfg, shutdown_event=shutdown_event),
+            hardware=HardwareContext(
+                robot_wrapper=robot_wrapper, teleop=teleop, initial_position=initial_position
+            ),
+            policy=PolicyContext(
+                policy=policy,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                inference=inference_strategy,
+            ),
+            processors=ProcessorContext(
+                teleop_action_processor=teleop_action_processor,
+                robot_action_processor=robot_action_processor,
+                robot_observation_processor=robot_observation_processor,
+            ),
+            data=DatasetContext(
+                dataset=dataset,
+                dataset_features=dataset_features,
+                hw_features=hw_features,
+                ordered_action_keys=ordered_action_keys,
+            ),
+        )
+    except BaseException as setup_error:
+        try:
+            with Cleanup("the rollout hardware") as cleanup:
+                for device in (teleop, robot):
+                    if device is not None:
+                        with cleanup.step(str(device)):
+                            device.disconnect()
+        except BaseException as cleanup_error:
+            cleanup_error.add_note("while cleaning up failed rollout hardware setup")
+            raise BaseExceptionGroup(
+                "Rollout hardware setup failed, followed by a cleanup failure",
+                [setup_error, cleanup_error],
+            ) from None
+        raise
+
     logger.info("Rollout context assembled successfully")
-    return RolloutContext(
-        runtime=RuntimeContext(cfg=cfg, shutdown_event=shutdown_event),
-        hardware=HardwareContext(
-            robot_wrapper=robot_wrapper, teleop=teleop, initial_position=initial_position
-        ),
-        policy=PolicyContext(
-            policy=policy,
-            preprocessor=preprocessor,
-            postprocessor=postprocessor,
-            inference=inference_strategy,
-        ),
-        processors=ProcessorContext(
-            teleop_action_processor=teleop_action_processor,
-            robot_action_processor=robot_action_processor,
-            robot_observation_processor=robot_observation_processor,
-        ),
-        data=DatasetContext(
-            dataset=dataset,
-            dataset_features=dataset_features,
-            hw_features=hw_features,
-            ordered_action_keys=ordered_action_keys,
-        ),
-    )
+    return context

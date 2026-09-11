@@ -23,7 +23,8 @@ from lerobot.cameras import make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_not_connected
+from lerobot.utils.lifecycle import Cleanup, idempotent_connect
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -125,7 +126,7 @@ class OpenArmFollower(Robot):
         """Check if robot is connected."""
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
-    @check_if_already_connected
+    @idempotent_connect
     def connect(self, calibrate: bool = True) -> None:
         """
         Connect to the robot and optionally calibrate.
@@ -133,12 +134,9 @@ class OpenArmFollower(Robot):
         We assume that at connection time, the arms are in a safe rest position,
         and torque can be safely disabled to run calibration if needed.
         """
-
-        # Connect to CAN bus
         logger.info(f"Connecting arm on {self.config.port}...")
-        self.bus.connect()
-
-        # Run calibration if needed
+        if not self.bus.is_connected:
+            self.bus.connect()
         if not self.is_calibrated and calibrate:
             logger.info(
                 "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
@@ -146,13 +144,11 @@ class OpenArmFollower(Robot):
             self.calibrate()
 
         for cam in self.cameras.values():
-            cam.connect()
+            if not cam.is_connected:
+                cam.connect()
 
         self.configure()
-
         self.bus.enable_torque()
-
-        logger.info(f"{self} connected.")
 
     @property
     def is_calibrated(self) -> bool:
@@ -340,15 +336,11 @@ class OpenArmFollower(Robot):
 
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
-    @check_if_not_connected
-    def disconnect(self):
+    def disconnect(self) -> None:
         """Disconnect from robot."""
-
-        # Disconnect CAN bus
-        self.bus.disconnect(self.config.disable_torque_on_disconnect)
-
-        # Disconnect cameras
-        for cam in self.cameras.values():
-            cam.disconnect()
-
-        logger.info(f"{self} disconnected.")
+        with Cleanup(self) as cleanup:
+            with cleanup.step("the motor bus"):
+                self.bus.disconnect(self.config.disable_torque_on_disconnect)
+            for name, cam in self.cameras.items():
+                with cleanup.step(f"camera '{name}'"):
+                    cam.disconnect()

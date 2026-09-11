@@ -16,7 +16,7 @@
 
 from typing import Any
 
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.lifecycle import Cleanup, idempotent_connect
 
 
 class BimanualMixin:
@@ -44,20 +44,58 @@ class BimanualMixin:
     def is_calibrated(self) -> bool:
         return self.left_arm.is_calibrated and self.right_arm.is_calibrated
 
-    @check_if_already_connected
+    @idempotent_connect
     def connect(self, calibrate: bool = True) -> None:
-        self.left_arm.connect(calibrate)
-        self.right_arm.connect(calibrate)
+        """Connect both arms.
+
+        An arm connected before the call is left untouched and the other one is brought
+        up. If an arm fails to connect, both arms are disconnected again.
+        """
+        for arm in (self.left_arm, self.right_arm):
+            if not arm.is_connected:
+                arm.connect(calibrate)
 
     def calibrate(self) -> None:
-        self.left_arm.calibrate()
-        self.right_arm.calibrate()
+        """Explicitly calibrate both arms, including arms already calibrated."""
+        errors: list[Exception] = []
+        try:
+            self.left_arm.calibrate()
+        except Exception as exc:
+            exc.add_note(f"while calibrating the left arm of {type(self).__name__}")
+            errors.append(exc)
+        try:
+            self.right_arm.calibrate()
+        except Exception as exc:
+            exc.add_note(f"while calibrating the right arm of {type(self).__name__}")
+            errors.append(exc)
+
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise ExceptionGroup(f"Failed to calibrate {type(self).__name__}", errors)
 
     def configure(self) -> None:
-        self.left_arm.configure()
-        self.right_arm.configure()
+        """Apply configuration to both arms, attempting both after a failure."""
+        errors: list[Exception] = []
+        try:
+            self.left_arm.configure()
+        except Exception as exc:
+            exc.add_note(f"while configuring the left arm of {type(self).__name__}")
+            errors.append(exc)
+        try:
+            self.right_arm.configure()
+        except Exception as exc:
+            exc.add_note(f"while configuring the right arm of {type(self).__name__}")
+            errors.append(exc)
 
-    @check_if_not_connected
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise ExceptionGroup(f"Failed to configure {type(self).__name__}", errors)
+
     def disconnect(self) -> None:
-        self.left_arm.disconnect()
-        self.right_arm.disconnect()
+        """Disconnect both arms, attempting the second even after a failure."""
+        with Cleanup(self) as cleanup:
+            for side, arm in (("left", self.left_arm), ("right", self.right_arm)):
+                with cleanup.step(f"the {side} arm"):
+                    arm.disconnect()

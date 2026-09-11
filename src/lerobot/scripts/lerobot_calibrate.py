@@ -93,9 +93,8 @@ def calibrate(cfg: CalibrateConfig):
     elif isinstance(cfg.device, TeleoperatorConfig):
         device = make_teleoperator_from_config(cfg.device)
 
-    device.connect(calibrate=False)
-
     try:
+        device.connect(calibrate=False)
         device.calibrate()
     finally:
         device.disconnect()
