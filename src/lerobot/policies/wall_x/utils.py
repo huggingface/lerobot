@@ -24,7 +24,6 @@ for the Wall-X cross-embodiment robotic control model.
 import random
 import re
 from collections import OrderedDict
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -53,74 +52,6 @@ from .constant import (
     MIN_PIXELS,
     RESOLUTION,
 )
-
-
-@dataclass
-class X2RDataProcessingConfig:
-    """Configuration class for X2R data processing pipeline.
-
-    This class contains all the necessary parameters for processing robotic data
-    including camera mappings, tactile sensor configurations, action predictions,
-    and various processing options.
-    """
-
-    # Action prediction configuration
-    predict_action_keys: list[str] = field(default_factory=list)
-    obs_action_keys: list[str] = field(default_factory=list)
-
-    # Image resolution settings for different views
-    resolution: dict[str, int] = field(
-        default_factory=lambda: {
-            "face_view": -1,
-            "left_wrist_view": 128,
-            "right_wrist_view": 128,
-        }
-    )
-
-    # Dataset splitting
-    train_test_split: float = 0.9
-    split_seed: int = 42
-
-    # Instruction handling
-    priority_order: dict[str, float] | None = None
-
-    # Vision model parameters
-    model_type: str = "qwen2_5"
-    max_pixels: int = 16384 * 28 * 28
-    min_pixels: int = 4 * 28 * 28
-    image_factor: int = 28
-
-    generate_subtask_ratio: float = 0.0
-
-    def __post_init__(self):
-        """Post-initialization validation and setup."""
-        # Validate train/test split
-        if not 0 < self.train_test_split < 1:
-            raise ValueError(f"train_test_split must be between 0 and 1, got {self.train_test_split}")
-
-    def as_dict(self) -> dict:
-        """Convert configuration to dictionary format.
-
-        Returns:
-            Dict: Configuration as dictionary
-        """
-        return self.__dict__
-
-    def update(self, **kwargs) -> "X2RDataProcessingConfig":
-        """Update configuration parameters.
-
-        Args:
-            **kwargs: Key-value pairs to update
-
-        Returns:
-            X2RDataProcessingConfig: Updated configuration instance
-        """
-        for key, value in kwargs.items():
-            if hasattr(self, key):
-                setattr(self, key, value)
-            else:
-                raise ValueError(f"Unknown configuration parameter: {key}")
-        return self
 
 
 def preprocesser_call(
