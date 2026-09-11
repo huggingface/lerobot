@@ -189,6 +189,36 @@ def test_record_reports_a_cadence_summary_per_episode_and_for_the_run(tmp_path, 
     assert _step_calls(run, "record") == _step_calls(run, "observe") == _ticks(run)
 
 
+def test_record_forwards_compressed_images_setting_to_reset_phase(tmp_path):
+    robot_cfg = MockRobotConfig()
+    teleop_cfg = MockTeleopConfig()
+    dataset_cfg = DatasetRecordConfig(
+        repo_id=DUMMY_REPO_ID,
+        single_task="Dummy task",
+        root=tmp_path / "compressed_images",
+        num_episodes=2,
+        episode_time_s=0.1,
+        reset_time_s=0.1,
+        push_to_hub=False,
+    )
+    cfg = RecordConfig(
+        robot=robot_cfg,
+        dataset=dataset_cfg,
+        teleop=teleop_cfg,
+        display_compressed_images=True,
+        play_sounds=False,
+    )
+
+    with patch("lerobot.scripts.lerobot_record.record_loop", wraps=record_loop) as mock_record_loop:
+        record(cfg)
+
+    # Recording episode 0, resetting, then recording episode 1 should all use the same
+    # image representation so visualization backends do not receive mixed message types.
+    assert [
+        call.kwargs.get("display_compressed_images", False) for call in mock_record_loop.call_args_list
+    ] == [True, True, True]
+
+
 def test_record_loop_without_a_teleoperator_paces_and_terminates():
     # Regression: the no-teleop branch used to `continue` past both the pacing sleep and
     # the `timestamp` update, so a reset phase with no teleop device spun as fast as the
