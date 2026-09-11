@@ -46,7 +46,7 @@ RawObservation = dict[str, Any]
 # observation as those recorded in LeRobot dataset (keys are different)
 LeRobotObservation = dict[str, torch.Tensor]
 
-# observation, ready for policy inference (image keys resized)
+# observation, ready for policy inference (images as (B, C, H, W) float32 in [0, 1])
 Observation = dict[str, torch.Tensor]
 
 
@@ -71,28 +71,14 @@ def is_image_key(k: str) -> bool:
     return k.startswith(OBS_IMAGES)
 
 
-def resize_robot_observation_image(image: torch.tensor, resize_dims: tuple[int, int, int]) -> torch.tensor:
-    assert image.ndim == 3, f"Image must be (C, H, W)! Received {image.shape}"
-    # (H, W, C) -> (C, H, W) for resizing from robot obsevation resolution to policy image resolution
-    image = image.permute(2, 0, 1)
-    dims = (resize_dims[1], resize_dims[2])
-    # Add batch dimension for interpolate: (C, H, W) -> (1, C, H, W)
-    image_batched = image.unsqueeze(0)
-    # Interpolate and remove batch dimension: (1, C, H, W) -> (C, H, W)
-    resized = torch.nn.functional.interpolate(image_batched, size=dims, mode="bilinear", align_corners=False)
-
-    return resized.squeeze(0)
-
-
 # TODO(Steven): Consider implementing a pipeline step for this
 def raw_observation_to_observation(
     raw_observation: RawObservation,
     lerobot_features: dict[str, dict],
-    policy_image_features: dict[str, PolicyFeature],
 ) -> Observation:
     observation = {}
 
-    observation = prepare_raw_observation(raw_observation, lerobot_features, policy_image_features)
+    observation = prepare_raw_observation(raw_observation, lerobot_features)
     for k, v in observation.items():
         if isinstance(v, torch.Tensor):  # VLAs present natural-language instructions in observations
             if "image" in k:
@@ -128,9 +114,26 @@ def extract_state_from_raw_observation(
 def extract_images_from_raw_observation(
     lerobot_obs: RawObservation,
     camera_key: str,
-) -> dict[str, torch.Tensor]:
-    """Extract the images from a raw observation."""
-    return torch.tensor(lerobot_obs[camera_key])
+) -> torch.Tensor:
+    """Extract one camera image from a raw observation, as a (C, H, W) tensor.
+
+    Only the (H, W, C) -> (C, H, W) transposition is applied: the camera's native resolution is
+    preserved, so the policy's own aspect-ratio-preserving resize (e.g. `resize_with_pad`) sees
+    exactly the same input it would see during sync inference. Resizing here to
+    `policy.config.image_features` -- the resolution the training *dataset* was recorded at, which
+    has nothing to do with the camera resolution used at inference time -- used to distort the
+    aspect ratio and short-circuit that internal resize. See #2980.
+    """
+    image = torch.tensor(lerobot_obs[camera_key])
+    # Checking ndim alone isn't enough: an already channel-first (C, H, W) frame also has
+    # ndim == 3 and would silently permute into a nonsense shape below. Channel-last with 1
+    # (depth) or 3 (RGB) channels is the only layout cameras produce (see `hw_to_dataset_features`).
+    if image.ndim != 3 or image.shape[-1] not in (1, 3):
+        raise ValueError(
+            f"Camera image must be (H, W, C) with 1 or 3 channels! Received {tuple(image.shape)} for {camera_key}"
+        )
+
+    return image.permute(2, 0, 1)
 
 
 def make_lerobot_observation(
@@ -144,10 +147,8 @@ def make_lerobot_observation(
 def prepare_raw_observation(
     robot_obs: RawObservation,
     lerobot_features: dict[str, dict],
-    policy_image_features: dict[str, PolicyFeature],
 ) -> Observation:
-    """Matches keys from the raw robot_obs dict to the keys expected by a given policy (passed as
-    policy_image_features)."""
+    """Matches keys from the raw robot_obs dict to the keys expected by the policy."""
     # 1. {motor.pos1:value1, motor.pos2:value2, ..., laptop:np.ndarray} ->
     # -> {observation.state:[value1,value2,...], observation.images.laptop:np.ndarray}
     lerobot_obs = make_lerobot_observation(robot_obs, lerobot_features)
@@ -156,15 +157,9 @@ def prepare_raw_observation(
     image_keys = list(filter(is_image_key, lerobot_obs))
     # state's shape is expected as (B, state_dim)
     state_dict = {OBS_STATE: extract_state_from_raw_observation(lerobot_obs)}
+    # image's shape is (C, H, W), at the camera's native resolution
     image_dict = {
         image_k: extract_images_from_raw_observation(lerobot_obs, image_k) for image_k in image_keys
-    }
-
-    # Turns the image features to (C, H, W) with H, W matching the policy image features.
-    # This reduces the resolution of the images
-    image_dict = {
-        key: resize_robot_observation_image(torch.tensor(lerobot_obs[key]), policy_image_features[key].shape)
-        for key in image_keys
     }
 
     if "task" in robot_obs:
