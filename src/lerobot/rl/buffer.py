@@ -568,9 +568,20 @@ class ReplayBuffer:
 
             frame_dict = {}
 
-            # Fill the data for state keys
+            # Fill the data for state keys. Image tensors are normalized to
+            # uint8 before writing: the dataset image writer rejects float
+            # images outside [0, 1], but the buffer holds [0, 255] floats for
+            # demo frames (loaded via make_dataset with return_uint8=True).
+            # Converting to uint8 is lossless (both sources are 8-bit) and
+            # the dump reloads as [0, 1] floats, matching the policy's
+            # ImageNet normalization stats.
             for key in self.states:
-                frame_dict[key] = self.states[key][actual_idx].cpu()
+                val = self.states[key][actual_idx].cpu()
+                if val.ndim >= 3 and val.is_floating_point():
+                    if float(val.max()) > 1.0:
+                        val = val / 255.0
+                    val = (val * 255.0).round().clamp(0, 255).to(torch.uint8)
+                frame_dict[key] = val
 
             # Fill action, reward, done
             frame_dict[ACTION] = self.actions[actual_idx].cpu()
