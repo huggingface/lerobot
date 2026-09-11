@@ -14,13 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for ``lerobot.datasets.video_utils.VideoDecoderCache``.
+"""Unit tests for ``lerobot.datasets.video_utils.TorchcodecCache``.
 
 These cover the LRU bounding + file-handle release behaviour added to prevent
 unbounded growth when iterating over datasets with many distinct video files
 (observed: ~35 GB anon-rss per DataLoader worker on an 8 k-file dataset).
 """
 
+import io
 import shutil
 from pathlib import Path
 
@@ -28,14 +29,15 @@ import pytest
 
 pytest.importorskip("torchcodec", reason="torchcodec is required (install lerobot[dataset])")
 
-from lerobot.datasets.video_utils import VideoDecoderCache  # noqa: E402
+import lerobot.datasets.video_utils as video_utils  # noqa: E402
+from lerobot.datasets.video_utils import TorchcodecCache  # noqa: E402
 
 TEST_ARTIFACTS_DIR = Path(__file__).resolve().parent.parent / "artifacts" / "encoded_videos"
 SRC_CLIP = TEST_ARTIFACTS_DIR / "clip_4frames.mp4"
 
 
 def _make_distinct_clips(tmp_path: Path, n: int) -> list[Path]:
-    """Copy the small reference mp4 to ``n`` distinct paths.
+    """Copy the small reference mp4 to ``n`` distinct local paths.
 
     The cache keys on absolute path, so distinct paths force distinct cache entries
     even though the file contents are identical.
@@ -49,17 +51,51 @@ def _make_distinct_clips(tmp_path: Path, n: int) -> list[Path]:
     return paths
 
 
-class TestVideoDecoderCacheBounded:
+class _SpyHandle(io.BytesIO):
+    """A closeable, size-reporting stand-in for a remote fsspec handle.
+
+    Unlike fsspec's ``memory://`` handle (whose ``close()`` is a no-op), this
+    mirrors real remote handles: ``.size`` reports the buffered byte count and
+    ``.close()`` flips ``.closed``.
+    """
+
+    def __init__(self, data: bytes):
+        super().__init__(data)
+        self.size = len(data)
+
+
+@pytest.fixture
+def remote_urls(monkeypatch):
+    """Force ``get_decoder``'s remote branch with in-memory spy handles.
+
+    Returns a factory ``make(n) -> [url, ...]``; each opened URL yields a fresh
+    :class:`_SpyHandle` over the reference clip's bytes.
+    """
+    assert SRC_CLIP.exists(), f"missing test artifact {SRC_CLIP}"
+    data = SRC_CLIP.read_bytes()
+
+    class _SpyOpen:
+        def __enter__(self):
+            return _SpyHandle(data)
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(video_utils.fsspec, "open", lambda *a, **k: _SpyOpen())
+    return lambda n: [f"s3://bucket/clip_{i:04d}.mp4" for i in range(n)]
+
+
+class TestTorchcodecCacheBounded:
     def test_default_cache_is_bounded(self):
         """The default cache must have a finite ``max_size`` to bound RSS growth."""
-        cache = VideoDecoderCache()
+        cache = TorchcodecCache()
         assert cache.max_size is not None, "default cache must be bounded"
         assert cache.max_size > 0
 
     def test_size_capped_at_max_size(self, tmp_path):
         """``get_decoder`` for >``max_size`` distinct paths must NOT grow without bound."""
         paths = _make_distinct_clips(tmp_path, n=5)
-        cache = VideoDecoderCache(max_size=2)
+        cache = TorchcodecCache(max_size=2)
         for p in paths:
             cache.get_decoder(p)
         assert cache.size() == 2
@@ -67,7 +103,7 @@ class TestVideoDecoderCacheBounded:
     def test_evicts_least_recently_used(self, tmp_path):
         """Re-accessing an entry must promote it; the LRU entry is the one evicted."""
         paths = _make_distinct_clips(tmp_path, n=3)
-        cache = VideoDecoderCache(max_size=2)
+        cache = TorchcodecCache(max_size=2)
 
         cache.get_decoder(paths[0])
         cache.get_decoder(paths[1])
@@ -78,29 +114,29 @@ class TestVideoDecoderCacheBounded:
         assert str(paths[1]) not in cache  # LRU evicted
         assert str(paths[2]) in cache  # newest stays
 
-    def test_eviction_closes_file_handle(self, tmp_path):
-        """Evicting an entry must close its fsspec file handle (otherwise we leak FDs)."""
-        paths = _make_distinct_clips(tmp_path, n=2)
-        cache = VideoDecoderCache(max_size=1)
+    def test_eviction_closes_file_handle(self, remote_urls):
+        """Evicting a remote entry must close its fsspec file handle (otherwise we leak FDs)."""
+        urls = remote_urls(2)
+        cache = TorchcodecCache(max_size=1)
 
-        cache.get_decoder(paths[0])
+        cache.get_decoder(urls[0])
         # Reach into the cache to capture the handle before it is evicted. This is
         # the only assertion in the suite that touches a private attribute, and it
         # is the most direct way to prove the file descriptor is actually released.
-        evicted_handle = cache._cache[str(paths[0])][1]
+        evicted_handle = cache._cache[urls[0]][1]
         assert evicted_handle.closed is False
 
-        cache.get_decoder(paths[1])  # forces eviction of paths[0]
+        cache.get_decoder(urls[1])  # forces eviction of urls[0]
 
         assert evicted_handle.closed is True
 
-    def test_clear_closes_all_file_handles(self, tmp_path):
-        """``clear()`` must close every cached file handle."""
-        paths = _make_distinct_clips(tmp_path, n=3)
-        cache = VideoDecoderCache(max_size=10)
+    def test_clear_closes_all_file_handles(self, remote_urls):
+        """``clear()`` must close every cached remote file handle."""
+        urls = remote_urls(3)
+        cache = TorchcodecCache(max_size=10)
 
-        for p in paths:
-            cache.get_decoder(p)
+        for u in urls:
+            cache.get_decoder(u)
         handles = [entry[1] for entry in cache._cache.values()]
         assert all(not h.closed for h in handles)
 
@@ -109,10 +145,20 @@ class TestVideoDecoderCacheBounded:
         assert cache.size() == 0
         assert all(h.closed for h in handles)
 
+    def test_local_files_use_path_no_handle(self, tmp_path):
+        """Local files are decoded by path: no fsspec handle to hold or close."""
+        paths = _make_distinct_clips(tmp_path, n=2)
+        cache = TorchcodecCache(max_size=10)
+
+        for p in paths:
+            cache.get_decoder(p)
+
+        assert all(cache._cache[str(p)][1] is None for p in paths)
+
     def test_hit_does_not_reopen_or_evict(self, tmp_path):
         """A cache hit must return the same decoder instance without touching the cap."""
         paths = _make_distinct_clips(tmp_path, n=1)
-        cache = VideoDecoderCache(max_size=2)
+        cache = TorchcodecCache(max_size=2)
 
         first = cache.get_decoder(paths[0])
         second = cache.get_decoder(paths[0])
@@ -123,7 +169,7 @@ class TestVideoDecoderCacheBounded:
     def test_unbounded_when_max_size_none(self, tmp_path):
         """``max_size=None`` preserves the legacy unbounded behaviour."""
         paths = _make_distinct_clips(tmp_path, n=4)
-        cache = VideoDecoderCache(max_size=None)
+        cache = TorchcodecCache(max_size=None)
         for p in paths:
             cache.get_decoder(p)
         assert cache.size() == 4
@@ -131,10 +177,51 @@ class TestVideoDecoderCacheBounded:
     def test_env_var_overrides_default(self, tmp_path, monkeypatch):
         """``LEROBOT_VIDEO_DECODER_CACHE_SIZE`` env var sets the default ``max_size``."""
         monkeypatch.setenv("LEROBOT_VIDEO_DECODER_CACHE_SIZE", "3")
-        cache = VideoDecoderCache()
+        cache = TorchcodecCache()
         assert cache.max_size == 3
 
         paths = _make_distinct_clips(tmp_path, n=5)
         for p in paths:
             cache.get_decoder(p)
         assert cache.size() == 3
+
+
+class TestTorchcodecCacheByteBudget:
+    def test_disabled_by_default(self):
+        """Byte budget is opt-in: off unless configured."""
+        assert TorchcodecCache().byte_budget is None
+
+    def test_evicts_over_budget_but_keeps_one(self, remote_urls):
+        """A budget below one file's size still keeps exactly one (the just-added) entry.
+
+        Uses remote clips: only in-memory-buffered decoders weigh against the budget.
+        """
+        urls = remote_urls(4)
+        clip_size = SRC_CLIP.stat().st_size
+
+        # Budget fits ~1 file: adding each new file evicts the previous one.
+        cache = TorchcodecCache(max_size=None, byte_budget=clip_size)
+        for u in urls:
+            cache.get_decoder(u)
+        assert cache.size() == 1
+        assert urls[-1] in cache  # newest survives
+
+        # Even a byte budget smaller than any single file never drops below one entry.
+        tiny = TorchcodecCache(max_size=None, byte_budget=1)
+        for u in urls:
+            tiny.get_decoder(u)
+        assert tiny.size() == 1
+
+    def test_local_files_are_weightless(self, tmp_path):
+        """Local files are read from disk, so the byte budget never evicts them."""
+        paths = _make_distinct_clips(tmp_path, n=4)
+        cache = TorchcodecCache(max_size=None, byte_budget=1)  # tiniest possible budget
+        for p in paths:
+            cache.get_decoder(p)
+        assert cache.size() == 4
+
+    def test_env_var_overrides_default(self, monkeypatch):
+        monkeypatch.setenv("LEROBOT_VIDEO_DECODER_CACHE_BYTES", "12345")
+        assert TorchcodecCache().byte_budget == 12345
+        monkeypatch.setenv("LEROBOT_VIDEO_DECODER_CACHE_BYTES", "none")
+        assert TorchcodecCache().byte_budget is None
