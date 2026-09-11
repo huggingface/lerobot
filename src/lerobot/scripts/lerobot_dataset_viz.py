@@ -174,7 +174,7 @@ def build_blueprint_from_dataset(dataset: LeRobotDataset):
 
 def visualize_dataset(
     dataset: LeRobotDataset,
-    episode_index: int | None,
+    episode_index: int,
     batch_size: int = 32,
     num_workers: int = 0,
     mode: str = "local",
@@ -186,34 +186,8 @@ def visualize_dataset(
     display_mode: str = "rerun",
     host: str | None = None,
     autoplay: bool = True,
-    remote: bool = False,
-    all_episodes: bool = False,
-    persistent: bool = True,
-    fo_dataset_name: str | None = None,
     **kwargs,
 ) -> Path | None:
-    if display_mode == "fiftyone":
-        from lerobot.utils.fiftyone_visualization import serve_fiftyone_dataset_playback
-
-        logging.info("Starting FiftyOne App")
-        serve_fiftyone_dataset_playback(
-            dataset,
-            episode_index,
-            host=host,
-            port=web_port,
-            remote=remote,
-            all_episodes=all_episodes,
-            persistent=persistent,
-            dataset_name=fo_dataset_name,
-        )
-        return None
-
-    if episode_index is None:
-        raise ValueError(
-            f"episode_index is required for display_mode='{display_mode}' (only 'fiftyone' with "
-            "all_episodes=True can omit it)."
-        )
-
     if display_mode == "foxglove":
         from lerobot.utils.foxglove_visualization import serve_foxglove_dataset_playback
 
@@ -554,10 +528,28 @@ def main():
     tolerance_s = kwargs.pop("tolerance_s")
 
     init_logging()
+
+    if args.display_mode == "fiftyone":
+        # FiftyOne reads the on-disk dataset itself, so skip LeRobotDataset (which would load every
+        # frame record of the selected episodes into memory) and hand it the resolved root instead.
+        from lerobot.utils.fiftyone_visualization import serve_fiftyone_dataset_playback
+
+        logging.info("Starting FiftyOne App")
+        serve_fiftyone_dataset_playback(
+            repo_id,
+            args.episode_index,
+            root=root,
+            host=args.host,
+            port=args.web_port,
+            remote=args.remote,
+            all_episodes=args.all_episodes,
+            persistent=args.persistent,
+            dataset_name=args.fo_dataset_name,
+        )
+        return
+
     logging.info("Loading dataset")
-    # With --all-episodes the whole dataset must be on disk for the FiftyOne importer to read.
-    episodes = None if (args.display_mode == "fiftyone" and args.all_episodes) else [args.episode_index]
-    dataset = LeRobotDataset(repo_id, episodes=episodes, root=root, tolerance_s=tolerance_s)
+    dataset = LeRobotDataset(repo_id, episodes=[args.episode_index], root=root, tolerance_s=tolerance_s)
 
     visualize_dataset(dataset, **kwargs)
 
