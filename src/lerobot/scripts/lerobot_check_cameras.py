@@ -627,6 +627,7 @@ def check_reference(robot: Robot, cfg: CheckCamerasConfig) -> bool:
     print(f"\nreference from {reference['created']} at {ref_dir}")
     if cfg.live:
         print("Nudge each camera until every reading says 'in tolerance'. Press q or Esc to stop.")
+    tiled: set[str] = set()
     while True:
         frames, _ = _grab(robot, camera_keys)
         shifts = {
@@ -644,11 +645,16 @@ def check_reference(robot: Robot, cfg: CheckCamerasConfig) -> bool:
             f"{key}: {describe_correction(s, cfg.tolerance)} {_support(s)}" for key, s in shifts.items()
         )
         print(f"\r  {summary[:200]:<200}", end="", flush=True)
+        x = 0
         for key in camera_keys:
-            cv2.imshow(
-                f"{key}: reference (magenta) vs live (green)",
-                _overlay(frames[key], ref_frames[key], shifts[key]),
-            )
+            title = f"{key}: reference (magenta) vs live (green)"
+            cv2.imshow(title, _overlay(frames[key], ref_frames[key], shifts[key]))
+            if title not in tiled:
+                # Every new window opens at the same screen position, so without this the last
+                # camera's window sits exactly on top of the others and they look missing.
+                cv2.moveWindow(title, x, 0)
+                tiled.add(title)
+            x += frames[key].shape[1] + 20
         if cv2.waitKey(30) & 0xFF in (ord("q"), 27):
             print()
             cv2.destroyAllWindows()

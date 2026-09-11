@@ -359,6 +359,7 @@ def test_live_keeps_the_support_on_the_status_line(saved, monkeypatch, capsys):
     cfg.live = True
     monkeypatch.setattr(check_cameras, "_gui_available", lambda: True)
     monkeypatch.setattr(cv2, "imshow", lambda *_: None)
+    monkeypatch.setattr(cv2, "moveWindow", lambda *_: None)
     monkeypatch.setattr(cv2, "waitKey", lambda *_: ord("q"))
     monkeypatch.setattr(cv2, "destroyAllWindows", lambda: None)
 
