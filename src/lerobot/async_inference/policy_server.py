@@ -40,6 +40,7 @@ import torch
 
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import get_policy_class, make_pre_post_processors
+from lerobot.policies.factory import build_rename_override
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.transport import (
     services_pb2,  # type: ignore
@@ -159,7 +160,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             pretrained_path=policy_specs.pretrained_name_or_path,
             preprocessor_overrides={
                 "device_processor": device_override,
-                "rename_observations_processor": {"rename_map": policy_specs.rename_map},
+                **build_rename_override(policy_specs.rename_map),
             },
             postprocessor_overrides={"device_processor": device_override},
         )

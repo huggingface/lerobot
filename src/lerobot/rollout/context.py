@@ -37,6 +37,7 @@ from lerobot.datasets import (
     create_initial_features,
 )
 from lerobot.policies import get_policy_class, make_pre_post_processors
+from lerobot.policies.factory import build_rename_override
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import (
     PolicyProcessorPipeline,
@@ -543,7 +544,7 @@ def build_rollout_context(
         dataset_stats=dataset_stats,
         preprocessor_overrides={
             "device_processor": {"device": cfg.device},
-            "rename_observations_processor": {"rename_map": cfg.rename_map},
+            **build_rename_override(cfg.rename_map),
         },
     )
 

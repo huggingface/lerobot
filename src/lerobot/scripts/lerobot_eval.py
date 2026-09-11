@@ -85,6 +85,7 @@ from lerobot.envs import (
 from lerobot.envs.utils import NEW_ROLLOUT_OPTION
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
+from lerobot.policies.factory import build_rename_override
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
 from lerobot.utils.device_utils import get_safe_torch_device
@@ -768,9 +769,9 @@ def eval_main(cfg: EvalPipelineConfig):
     policy.eval()
 
     # The inference device is automatically set to match the detected hardware, overriding any previous device settings from training to ensure compatibility.
-    preprocessor_overrides = {
+    preprocessor_overrides: dict[str, Any] = {
         "device_processor": {"device": str(policy.config.device)},
-        "rename_observations_processor": {"rename_map": cfg.rename_map},
+        **build_rename_override(cfg.rename_map),
     }
 
     preprocessor, postprocessor = make_pre_post_processors(
