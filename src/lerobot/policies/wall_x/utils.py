@@ -24,91 +24,34 @@ for the Wall-X cross-embodiment robotic control model.
 import random
 import re
 from collections import OrderedDict
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import torch
 
-from lerobot.utils.import_utils import _transformers_available
+from lerobot.utils.import_utils import _transformers_available, _wallx_deps_available
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import BatchFeature
 else:
     BatchFeature = None
 
+if TYPE_CHECKING or _wallx_deps_available:
+    from qwen_vl_utils.vision_process import smart_resize
+else:
+    smart_resize = None
+
+from torchvision.transforms import InterpolationMode
+from torchvision.transforms.v2 import functional as tv_functional
+
 from lerobot.utils.constants import OBS_IMAGES
 
 from .constant import (
     CAMERA_NAME_MAPPING,
+    IMAGE_FACTOR,
+    MAX_PIXELS,
+    MIN_PIXELS,
+    RESOLUTION,
 )
-
-
-@dataclass
-class X2RDataProcessingConfig:
-    """Configuration class for X2R data processing pipeline.
-
-    This class contains all the necessary parameters for processing robotic data
-    including camera mappings, tactile sensor configurations, action predictions,
-    and various processing options.
-    """
-
-    # Action prediction configuration
-    predict_action_keys: list[str] = field(default_factory=list)
-    obs_action_keys: list[str] = field(default_factory=list)
-
-    # Image resolution settings for different views
-    resolution: dict[str, int] = field(
-        default_factory=lambda: {
-            "face_view": -1,
-            "left_wrist_view": 128,
-            "right_wrist_view": 128,
-        }
-    )
-
-    # Dataset splitting
-    train_test_split: float = 0.9
-    split_seed: int = 42
-
-    # Instruction handling
-    priority_order: dict[str, float] | None = None
-
-    # Vision model parameters
-    model_type: str = "qwen2_5"
-    max_pixels: int = 16384 * 28 * 28
-    min_pixels: int = 4 * 28 * 28
-    image_factor: int = 28
-
-    generate_subtask_ratio: float = 0.0
-
-    def __post_init__(self):
-        """Post-initialization validation and setup."""
-        # Validate train/test split
-        if not 0 < self.train_test_split < 1:
-            raise ValueError(f"train_test_split must be between 0 and 1, got {self.train_test_split}")
-
-    def as_dict(self) -> dict:
-        """Convert configuration to dictionary format.
-
-        Returns:
-            Dict: Configuration as dictionary
-        """
-        return self.__dict__
-
-    def update(self, **kwargs) -> "X2RDataProcessingConfig":
-        """Update configuration parameters.
-
-        Args:
-            **kwargs: Key-value pairs to update
-
-        Returns:
-            X2RDataProcessingConfig: Updated configuration instance
-        """
-        for key, value in kwargs.items():
-            if hasattr(self, key):
-                setattr(self, key, value)
-            else:
-                raise ValueError(f"Unknown configuration parameter: {key}")
-        return self
 
 
 def preprocesser_call(
@@ -121,6 +64,7 @@ def preprocesser_call(
     truncation: bool | None = None,
     max_length: int | None = None,
     return_tensors: str = "pt",
+    target_spans: list[list[tuple[int, int]]] | None = None,
 ) -> BatchFeature:
     """Unified preprocessing function for Wall-X model handling text, image and video inputs.
 
@@ -140,6 +84,9 @@ def preprocesser_call(
         truncation: Whether to truncate sequences longer than max_length
         max_length: Maximum length for truncation/padding
         return_tensors: Format for returned tensors ('pt', 'np', etc.)
+        target_spans: Character spans for text-supervised tokens in each prompt.
+            ``None`` preserves the original action-only assistant-label path;
+            an empty list for a sample explicitly disables text supervision.
 
     Returns:
         BatchFeature containing processed inputs with keys:
@@ -179,7 +126,39 @@ def preprocesser_call(
     if not isinstance(text, list):
         text = [text]
 
-    # Process image placeholder tokens in text
+    if target_spans is not None:
+        if len(target_spans) != len(text):
+            raise ValueError("WALL-X needs one target-span list for each prompt.")
+        target_spans = [list(spans) for spans in target_spans]
+
+    def replace_placeholder_tokens(
+        prompt: str,
+        placeholder: str,
+        token_count: int,
+        spans: list[tuple[int, int]] | None,
+    ) -> tuple[str, list[tuple[int, int]] | None]:
+        position = prompt.find(placeholder)
+        if position < 0:
+            return prompt, spans
+        replacement = "<|placeholder|>" * token_count
+        placeholder_end = position + len(placeholder)
+        if spans is not None:
+            for start, end in spans:
+                if start < placeholder_end and end > position:
+                    raise ValueError(
+                        "WALL-X text-supervision spans cannot contain image or video placeholders."
+                    )
+            delta = len(replacement) - len(placeholder)
+            spans = [
+                (
+                    start + (delta if start >= placeholder_end else 0),
+                    end + (delta if end >= placeholder_end else 0),
+                )
+                for start, end in spans
+            ]
+        return prompt.replace(placeholder, replacement, 1), spans
+
+    # Process image placeholder tokens in text.
     if image_grid_thw is not None:
         merge_length = processor.image_processor.merge_size**2
         index = 0
@@ -194,8 +173,16 @@ def preprocesser_call(
                     )
                     break
                 # Replace image placeholder with actual token count
-                token_count = image_grid_thw[index].prod() // merge_length
-                text[i] = text[i].replace("<|image_pad|>", "<|placeholder|>" * token_count, 1)
+                token_count = (image_grid_thw[index].prod() // merge_length).item()
+                updated_text, updated_spans = replace_placeholder_tokens(
+                    text[i],
+                    "<|image_pad|>",
+                    token_count,
+                    target_spans[i] if target_spans is not None else None,
+                )
+                text[i] = updated_text
+                if target_spans is not None:
+                    target_spans[i] = updated_spans
                 index += 1
             text[i] = text[i].replace("<|placeholder|>", "<|image_pad|>")
 
@@ -206,8 +193,16 @@ def preprocesser_call(
         for i in range(len(text)):
             while "<|video_pad|>" in text[i]:
                 # Replace video placeholder with actual token count
-                token_count = video_grid_thw[index].prod() // merge_length
-                text[i] = text[i].replace("<|video_pad|>", "<|placeholder|>" * token_count, 1)
+                token_count = (video_grid_thw[index].prod() // merge_length).item()
+                updated_text, updated_spans = replace_placeholder_tokens(
+                    text[i],
+                    "<|video_pad|>",
+                    token_count,
+                    target_spans[i] if target_spans is not None else None,
+                )
+                text[i] = updated_text
+                if target_spans is not None:
+                    target_spans[i] = updated_spans
                 index += 1
             text[i] = text[i].replace("<|placeholder|>", "<|video_pad|>")
 
@@ -218,6 +213,7 @@ def preprocesser_call(
         padding=padding,
         truncation=truncation,
         max_length=max_length,
+        return_offsets_mapping=target_spans is not None,
     )
 
     # Get pad token ID for label generation
@@ -225,50 +221,54 @@ def preprocesser_call(
     if pad_token_id is None:
         pad_token_id = processor.tokenizer.eos_token_id
 
-    # Generate labels for multi-turn dialogue, keeping only assistant response loss
     labels = torch.full_like(text_inputs.input_ids, -100)
-    assistant_marker = "<|im_start|>assistant\n"
-    im_end_token_id = processor.tokenizer.convert_tokens_to_ids("<|im_end|>")
-    assistant_tokens = processor.tokenizer("<|im_start|>assistant\n", add_special_tokens=False).input_ids
+    if target_spans is not None:
+        offsets = text_inputs.pop("offset_mapping")
+        for row, spans in enumerate(target_spans):
+            for start, end in spans:
+                overlap = (
+                    (offsets[row, :, 1] > start)
+                    & (offsets[row, :, 0] < end)
+                    & text_inputs.attention_mask[row].bool()
+                )
+                labels[row, overlap] = text_inputs.input_ids[row, overlap]
+    else:
+        # Preserve the original action-only labeling path.
+        assistant_marker = "<|im_start|>assistant\n"
+        im_end_token_id = processor.tokenizer.convert_tokens_to_ids("<|im_end|>")
+        assistant_tokens = processor.tokenizer("<|im_start|>assistant\n", add_special_tokens=False).input_ids
 
-    for i in range(len(text)):
-        assistant_regions = []
-        parts = text[i].split(assistant_marker)
-
-        # Process each part to determine which tokens belong to assistant responses
-        # Count left padding tokens
-        num_left_pads = 0
-        for token_id in text_inputs.input_ids[i]:
-            if token_id == pad_token_id:
-                num_left_pads += 1
-            else:
-                break
-        current_pos = num_left_pads
-
-        for j, part in enumerate(parts):
-            part_tokens = processor.tokenizer(part, add_special_tokens=False).input_ids
-            if j == 0:
-                # First part is system prompt or user question, all labels are -100
-                current_pos += len(part_tokens)
-                continue
-
-            # From second part onwards, each part starts with assistant response
-            for k in range(current_pos + 1, len(text_inputs.input_ids[i])):
-                if text_inputs.input_ids[i][k] == im_end_token_id:
-                    assistant_regions.append((current_pos + len(assistant_tokens), k + 2))
+        for i in range(len(text)):
+            assistant_regions = []
+            parts = text[i].split(assistant_marker)
+            num_left_pads = 0
+            for token_id in text_inputs.input_ids[i]:
+                if token_id == pad_token_id:
+                    num_left_pads += 1
+                else:
                     break
-            current_pos += len(part_tokens) + 3
+            current_pos = num_left_pads
 
-        # Set labels for assistant response regions
-        for start, end in assistant_regions:
-            labels[i][start:end] = text_inputs.input_ids[i][start:end]
+            for j, part in enumerate(parts):
+                part_tokens = processor.tokenizer(part, add_special_tokens=False).input_ids
+                if j == 0:
+                    current_pos += len(part_tokens)
+                    continue
+                for k in range(current_pos + 1, len(text_inputs.input_ids[i])):
+                    if text_inputs.input_ids[i][k] == im_end_token_id:
+                        assistant_regions.append((current_pos + len(assistant_tokens), k + 2))
+                        break
+                current_pos += len(part_tokens) + 3
+
+            for start, end in assistant_regions:
+                labels[i][start:end] = text_inputs.input_ids[i][start:end]
 
     # Mask special action tokens in labels
     action_token_id = processor.tokenizer.encode("<|action|>")[0]
     propri_token_id = processor.tokenizer.encode("<|propri|>")[0]
     labels[labels == action_token_id] = -100
     labels[labels == propri_token_id] = -100
-    labels[labels == processor.tokenizer.pad_token_id] = -100
+    labels[labels == pad_token_id] = -100
 
     # Set labels to None if all are invalid to skip cross entropy loss
     if (labels != -100).any().item():
@@ -277,6 +277,74 @@ def preprocesser_call(
         text_inputs["labels"] = None
 
     return BatchFeature(data={**text_inputs, **image_inputs, **videos_inputs})
+
+
+def _wall_x_resize_dimensions(height: int, width: int) -> tuple[int, int, int, int]:
+    """Return the intermediate and final Wall-X resize dimensions as ``(H, W, H, W)``."""
+    if RESOLUTION == -1:
+        intermediate_height, intermediate_width = height, width
+    elif width > height:
+        intermediate_width = RESOLUTION
+        intermediate_height = int(RESOLUTION * height / width)
+    else:
+        intermediate_height = RESOLUTION
+        intermediate_width = int(RESOLUTION * width / height)
+
+    resized_height, resized_width = smart_resize(
+        intermediate_height,
+        intermediate_width,
+        factor=IMAGE_FACTOR,
+        min_pixels=MIN_PIXELS,
+        max_pixels=MAX_PIXELS,
+    )
+    return intermediate_height, intermediate_width, resized_height, resized_width
+
+
+def _resize_wall_x_image_batch(images: torch.Tensor) -> tuple[torch.Tensor, tuple[int, int, int, int]]:
+    """Quantize and resize a BCHW camera batch without leaving its current device."""
+    if images.ndim != 4:
+        raise ValueError(f"Wall-X images must be BCHW tensors, got shape {tuple(images.shape)}")
+
+    original_height, original_width = images.shape[-2:]
+    intermediate_height, intermediate_width, resized_height, resized_width = _wall_x_resize_dimensions(
+        original_height, original_width
+    )
+
+    if images.is_floating_point():
+        images = (images * 255).to(torch.uint8)
+    elif images.dtype != torch.uint8:
+        raise TypeError(f"Wall-X images must be floating point or uint8, got {images.dtype}")
+
+    if images.shape[-2:] != (intermediate_height, intermediate_width):
+        images = tv_functional.resize(
+            images,
+            [intermediate_height, intermediate_width],
+            interpolation=InterpolationMode.BICUBIC,
+            antialias=True,
+        )
+    if images.shape[-2:] != (resized_height, resized_width):
+        images = tv_functional.resize(
+            images,
+            [resized_height, resized_width],
+            interpolation=InterpolationMode.BICUBIC,
+            antialias=True,
+        )
+
+    return images, (original_height, original_width, resized_height, resized_width)
+
+
+def prepare_wall_x_image_inputs(
+    batch: dict[str, Any], image_keys: list[str]
+) -> tuple[list[list[torch.Tensor]], dict[str, tuple[int, int, int, int]]]:
+    """Resize each camera batch and restore sample-major/camera-minor ordering."""
+    resized_by_key: dict[str, torch.Tensor] = {}
+    dimensions_by_key: dict[str, tuple[int, int, int, int]] = {}
+    for key in image_keys:
+        resized_by_key[key], dimensions_by_key[key] = _resize_wall_x_image_batch(batch[key])
+
+    batch_size = batch[image_keys[0]].shape[0]
+    image_inputs = [[resized_by_key[key][index] for key in image_keys] for index in range(batch_size)]
+    return image_inputs, dimensions_by_key
 
 
 def process_grounding_points(

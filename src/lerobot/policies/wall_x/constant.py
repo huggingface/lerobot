@@ -39,3 +39,6 @@ GENERATE_SUBTASK_RATIO = 0.0
 MODEL_TYPE = "qwen2_5"
 
 TOKENIZER_MAX_LENGTH = 768
+
+WALL_X_GENERATION_PROMPT_IDS = "wall_x.generation_prompt_ids"
+WALL_X_PROMPT_SEGMENTS = "wall_x.prompt_segments"
