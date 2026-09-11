@@ -101,6 +101,7 @@ class RobotKinematics:
         desired_ee_pose: np.ndarray,
         position_weight: float = 1.0,
         orientation_weight: float = 0.01,
+        max_iters: int = 8,
     ) -> np.ndarray:
         """
         Compute inverse kinematics using placo solver.
@@ -110,6 +111,7 @@ class RobotKinematics:
             desired_ee_pose: Target end-effector pose as a 4x4 transformation matrix
             position_weight: Weight for position constraint in IK
             orientation_weight: Weight for orientation constraint in IK, set to 0.0 to only constrain position
+            max_iters: Number of placo Newton steps to run.
 
         Returns:
             Joint positions in degrees that achieve the desired end-effector pose
@@ -128,9 +130,10 @@ class RobotKinematics:
         # Configure the task based on position_only flag
         self.tip_frame.configure(self.target_frame_name, "soft", position_weight, orientation_weight)
 
-        # Solve IK
-        self.solver.solve(True)
-        self.robot.update_kinematics()
+        # Solve IK.
+        for _ in range(max_iters):
+            self.solver.solve(True)
+            self.robot.update_kinematics()
 
         # Extract joint positions
         joint_pos_rad = []

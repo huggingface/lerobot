@@ -41,8 +41,6 @@ from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lance_backend import LanceDatasetReader, lance_mp_context
 from lerobot.datasets.language import (
     LANGUAGE_COLUMNS,
-    LANGUAGE_EVENTS,
-    LANGUAGE_PERSISTENT,
     language_events_arrow_type,
     language_feature_info,
     language_persistent_arrow_type,
@@ -50,6 +48,7 @@ from lerobot.datasets.language import (
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.storage import localize_remote_root
 from lerobot.policies.factory import make_policy_config
+from lerobot.utils.constants import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT
 from tests.fixtures.constants import (
     DUMMY_CAMERA_FEATURES_WITH_DEPTH,
     DUMMY_REPO_ID,

@@ -59,9 +59,9 @@ class DatasetConfig:
     def __post_init__(self) -> None:
         if self.repo_type not in ("dataset", "bucket"):
             raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {self.repo_type!r}")
-        if self.repo_type == "bucket" and self.eval_split != 0.0:
+        if self.eval_split != 0.0 and self.streaming:
             raise ValueError(
-                "eval_split requires map-style datasets and is not supported with repo_type='bucket'."
+                "eval_split requires map-style datasets and is not supported with dataset.streaming=true."
             )
         if self.depth_output_unit not in (DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT):
             raise ValueError(
@@ -96,7 +96,11 @@ class WandBConfig:
     entity: str | None = None
     notes: str | None = None
     run_id: str | None = None
+    resume: str | None = None  # Allowed values: 'allow', 'must', 'never', or 'auto'.
     mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
+    console: str = "wrap"
+    console_multipart: bool = False
+    console_chunk_max_seconds: int = 0
     add_tags: bool = True  # If True, save configuration as tags in the WandB run.
 
 

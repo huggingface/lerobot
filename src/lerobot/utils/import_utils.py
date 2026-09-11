@@ -183,6 +183,7 @@ def make_device_from_device_class(config: ChoiceRegistry) -> Any:
     parts = module_path.split(".")
     parent_module = ".".join(parts[:-1]) if len(parts) > 1 else module_path
     candidates = [
+        module_path,  # the config's own module (single-file plugins)
         parent_module,  # typical: lerobot_teleop_mydevice
         parent_module + "." + device_class_name.lower(),  # typical: lerobot_teleop_mydevice.mydevice
     ]
@@ -227,7 +228,8 @@ def register_third_party_plugins() -> None:
 
     This function uses `importlib.metadata` to find packages installed in the environment
     (including editable installs) starting with 'lerobot_robot_', 'lerobot_camera_',
-    'lerobot_teleoperator_', 'lerobot_policy_', or 'lerobot_env_' and imports them.
+    'lerobot_teleoperator_', 'lerobot_policy_', 'lerobot_env_' or 'lerobot_strategy_' and
+    imports them.
     """
     prefixes = (
         "lerobot_robot_",
@@ -235,6 +237,7 @@ def register_third_party_plugins() -> None:
         "lerobot_teleoperator_",
         "lerobot_policy_",
         "lerobot_env_",
+        "lerobot_strategy_",
     )
     imported: list[str] = []
     failed: list[str] = []
