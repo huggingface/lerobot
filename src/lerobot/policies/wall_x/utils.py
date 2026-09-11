@@ -29,21 +29,30 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 
-from lerobot.utils.import_utils import _transformers_available
+from lerobot.utils.import_utils import _transformers_available, _wallx_deps_available
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import BatchFeature
 else:
     BatchFeature = None
 
+if TYPE_CHECKING or _wallx_deps_available:
+    from qwen_vl_utils.vision_process import smart_resize
+else:
+    smart_resize = None
+
+from torchvision.transforms import InterpolationMode
+from torchvision.transforms.v2 import functional as tv_functional
+
 from lerobot.utils.constants import OBS_IMAGES
 
 from .constant import (
     CAMERA_NAME_MAPPING,
+    IMAGE_FACTOR,
+    MAX_PIXELS,
+    MIN_PIXELS,
+    RESOLUTION,
 )
-
-TEXT_TARGET_START = "<|wall_text_target_start|>"
-TEXT_TARGET_END = "<|wall_text_target_end|>"
 
 
 @dataclass
@@ -124,7 +133,7 @@ def preprocesser_call(
     truncation: bool | None = None,
     max_length: int | None = None,
     return_tensors: str = "pt",
-    targeted_text_only: bool = False,
+    target_spans: list[list[tuple[int, int]]] | None = None,
 ) -> BatchFeature:
     """Unified preprocessing function for Wall-X model handling text, image and video inputs.
 
@@ -144,8 +153,9 @@ def preprocesser_call(
         truncation: Whether to truncate sequences longer than max_length
         max_length: Maximum length for truncation/padding
         return_tensors: Format for returned tensors ('pt', 'np', etc.)
-        targeted_text_only: Disable the legacy assistant-label fallback when no
-            explicit recipe target markers are present.
+        target_spans: Character spans for text-supervised tokens in each prompt.
+            ``None`` preserves the original action-only assistant-label path;
+            an empty list for a sample explicitly disables text supervision.
 
     Returns:
         BatchFeature containing processed inputs with keys:
@@ -185,7 +195,39 @@ def preprocesser_call(
     if not isinstance(text, list):
         text = [text]
 
-    # Process image placeholder tokens in text
+    if target_spans is not None:
+        if len(target_spans) != len(text):
+            raise ValueError("WALL-X needs one target-span list for each prompt.")
+        target_spans = [list(spans) for spans in target_spans]
+
+    def replace_placeholder_tokens(
+        prompt: str,
+        placeholder: str,
+        token_count: int,
+        spans: list[tuple[int, int]] | None,
+    ) -> tuple[str, list[tuple[int, int]] | None]:
+        position = prompt.find(placeholder)
+        if position < 0:
+            return prompt, spans
+        replacement = "<|placeholder|>" * token_count
+        placeholder_end = position + len(placeholder)
+        if spans is not None:
+            for start, end in spans:
+                if start < placeholder_end and end > position:
+                    raise ValueError(
+                        "WALL-X text-supervision spans cannot contain image or video placeholders."
+                    )
+            delta = len(replacement) - len(placeholder)
+            spans = [
+                (
+                    start + (delta if start >= placeholder_end else 0),
+                    end + (delta if end >= placeholder_end else 0),
+                )
+                for start, end in spans
+            ]
+        return prompt.replace(placeholder, replacement, 1), spans
+
+    # Process image placeholder tokens in text.
     if image_grid_thw is not None:
         merge_length = processor.image_processor.merge_size**2
         index = 0
@@ -200,8 +242,16 @@ def preprocesser_call(
                     )
                     break
                 # Replace image placeholder with actual token count
-                token_count = image_grid_thw[index].prod() // merge_length
-                text[i] = text[i].replace("<|image_pad|>", "<|placeholder|>" * token_count, 1)
+                token_count = (image_grid_thw[index].prod() // merge_length).item()
+                updated_text, updated_spans = replace_placeholder_tokens(
+                    text[i],
+                    "<|image_pad|>",
+                    token_count,
+                    target_spans[i] if target_spans is not None else None,
+                )
+                text[i] = updated_text
+                if target_spans is not None:
+                    target_spans[i] = updated_spans
                 index += 1
             text[i] = text[i].replace("<|placeholder|>", "<|image_pad|>")
 
@@ -212,19 +262,18 @@ def preprocesser_call(
         for i in range(len(text)):
             while "<|video_pad|>" in text[i]:
                 # Replace video placeholder with actual token count
-                token_count = video_grid_thw[index].prod() // merge_length
-                text[i] = text[i].replace("<|video_pad|>", "<|placeholder|>" * token_count, 1)
+                token_count = (video_grid_thw[index].prod() // merge_length).item()
+                updated_text, updated_spans = replace_placeholder_tokens(
+                    text[i],
+                    "<|video_pad|>",
+                    token_count,
+                    target_spans[i] if target_spans is not None else None,
+                )
+                text[i] = updated_text
+                if target_spans is not None:
+                    target_spans[i] = updated_spans
                 index += 1
             text[i] = text[i].replace("<|placeholder|>", "<|video_pad|>")
-
-    target_spans: list[list[tuple[int, int]]] = []
-    clean_text = []
-    for value in text:
-        cleaned, spans = _extract_text_target_spans(value)
-        clean_text.append(cleaned)
-        target_spans.append(spans)
-    text = clean_text
-    has_text_targets = any(target_spans)
 
     # Tokenize complete input text
     text_inputs = processor.tokenizer(
@@ -233,7 +282,7 @@ def preprocesser_call(
         padding=padding,
         truncation=truncation,
         max_length=max_length,
-        return_offsets_mapping=has_text_targets,
+        return_offsets_mapping=target_spans is not None,
     )
 
     # Get pad token ID for label generation
@@ -242,7 +291,7 @@ def preprocesser_call(
         pad_token_id = processor.tokenizer.eos_token_id
 
     labels = torch.full_like(text_inputs.input_ids, -100)
-    if has_text_targets:
+    if target_spans is not None:
         offsets = text_inputs.pop("offset_mapping")
         for row, spans in enumerate(target_spans):
             for start, end in spans:
@@ -252,7 +301,7 @@ def preprocesser_call(
                     & text_inputs.attention_mask[row].bool()
                 )
                 labels[row, overlap] = text_inputs.input_ids[row, overlap]
-    elif not targeted_text_only:
+    else:
         # Preserve the original action-only labeling path.
         assistant_marker = "<|im_start|>assistant\n"
         im_end_token_id = processor.tokenizer.convert_tokens_to_ids("<|im_end|>")
@@ -299,33 +348,72 @@ def preprocesser_call(
     return BatchFeature(data={**text_inputs, **image_inputs, **videos_inputs})
 
 
-def _extract_text_target_spans(text: str) -> tuple[str, list[tuple[int, int]]]:
-    clean_parts: list[str] = []
-    spans: list[tuple[int, int]] = []
-    cursor = 0
-    clean_length = 0
-    while True:
-        start = text.find(TEXT_TARGET_START, cursor)
-        if start < 0:
-            clean_parts.append(text[cursor:])
-            break
-        prefix = text[cursor:start]
-        clean_parts.append(prefix)
-        clean_length += len(prefix)
-        payload_start = start + len(TEXT_TARGET_START)
-        end = text.find(TEXT_TARGET_END, payload_start)
-        if end < 0:
-            raise ValueError("WALL-OSS text-target start marker has no matching end marker.")
-        payload = text[payload_start:end]
-        span_start = clean_length
-        clean_parts.append(payload)
-        clean_length += len(payload)
-        spans.append((span_start, clean_length))
-        cursor = end + len(TEXT_TARGET_END)
-    cleaned = "".join(clean_parts)
-    if TEXT_TARGET_END in cleaned:
-        raise ValueError("WALL-OSS text-target end marker has no matching start marker.")
-    return cleaned, spans
+def _wall_x_resize_dimensions(height: int, width: int) -> tuple[int, int, int, int]:
+    """Return the intermediate and final Wall-X resize dimensions as ``(H, W, H, W)``."""
+    if RESOLUTION == -1:
+        intermediate_height, intermediate_width = height, width
+    elif width > height:
+        intermediate_width = RESOLUTION
+        intermediate_height = int(RESOLUTION * height / width)
+    else:
+        intermediate_height = RESOLUTION
+        intermediate_width = int(RESOLUTION * width / height)
+
+    resized_height, resized_width = smart_resize(
+        intermediate_height,
+        intermediate_width,
+        factor=IMAGE_FACTOR,
+        min_pixels=MIN_PIXELS,
+        max_pixels=MAX_PIXELS,
+    )
+    return intermediate_height, intermediate_width, resized_height, resized_width
+
+
+def _resize_wall_x_image_batch(images: torch.Tensor) -> tuple[torch.Tensor, tuple[int, int, int, int]]:
+    """Quantize and resize a BCHW camera batch without leaving its current device."""
+    if images.ndim != 4:
+        raise ValueError(f"Wall-X images must be BCHW tensors, got shape {tuple(images.shape)}")
+
+    original_height, original_width = images.shape[-2:]
+    intermediate_height, intermediate_width, resized_height, resized_width = _wall_x_resize_dimensions(
+        original_height, original_width
+    )
+
+    if images.is_floating_point():
+        images = (images * 255).to(torch.uint8)
+    elif images.dtype != torch.uint8:
+        raise TypeError(f"Wall-X images must be floating point or uint8, got {images.dtype}")
+
+    if images.shape[-2:] != (intermediate_height, intermediate_width):
+        images = tv_functional.resize(
+            images,
+            [intermediate_height, intermediate_width],
+            interpolation=InterpolationMode.BICUBIC,
+            antialias=True,
+        )
+    if images.shape[-2:] != (resized_height, resized_width):
+        images = tv_functional.resize(
+            images,
+            [resized_height, resized_width],
+            interpolation=InterpolationMode.BICUBIC,
+            antialias=True,
+        )
+
+    return images, (original_height, original_width, resized_height, resized_width)
+
+
+def prepare_wall_x_image_inputs(
+    batch: dict[str, Any], image_keys: list[str]
+) -> tuple[list[list[torch.Tensor]], dict[str, tuple[int, int, int, int]]]:
+    """Resize each camera batch and restore sample-major/camera-minor ordering."""
+    resized_by_key: dict[str, torch.Tensor] = {}
+    dimensions_by_key: dict[str, tuple[int, int, int, int]] = {}
+    for key in image_keys:
+        resized_by_key[key], dimensions_by_key[key] = _resize_wall_x_image_batch(batch[key])
+
+    batch_size = batch[image_keys[0]].shape[0]
+    image_inputs = [[resized_by_key[key][index] for key in image_keys] for index in range(batch_size)]
+    return image_inputs, dimensions_by_key
 
 
 def process_grounding_points(

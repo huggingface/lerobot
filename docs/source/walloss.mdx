@@ -100,15 +100,14 @@ lerobot-train \
 
 ### Train with language annotations
 
-WALL-X includes a built-in recipe for language training. Set `recipe_path`
-to override it when training from LeRobot's optional language columns:
+WALL-X uses its built-in recipe to train from LeRobot's optional language
+columns. Set `recipe_path` only to replace that recipe:
 
 ```bash
 lerobot-train \
   --dataset.repo_id=your_org/your_language_annotated_dataset \
   --policy.type=wall_x \
   --policy.pretrained_name_or_path=x-square-robot/wall-oss-flow \
-  --policy.recipe_path=subtask_joint.yaml \
   --policy.text_loss_weight=0.01 \
   --policy.flow_loss_weight=1.0 \
   --policy.device=cuda \
@@ -119,8 +118,8 @@ lerobot-train \
 Targeted assistant turns receive next-token cross-entropy, while `low_level`
 recipe streams receive continuous flow-action supervision. A row may receive
 either objective or both. User prompts, images, proprioception, action-query
-tokens, and padding are excluded from text loss. With `policy.recipe=null`,
-WALL-OSS keeps its original action-only training path.
+tokens, and padding are excluded from text loss. Set `policy.recipe=null` to
+use WALL-OSS's original action-only training path.
 
 See [Language columns and recipes](./language_and_recipes) for the annotation
 schema and available recipes.
@@ -141,9 +140,9 @@ schema and available recipes.
 | `--policy.device`              | Device to train on (`cuda` for GPU, `cpu` for CPU)                                                                                                            |
 | `--batch_size`                 | Number of samples per training batch                                                                                                                          |
 
-Language training additionally uses `policy.recipe_path`,
-`policy.text_loss_weight` (default `0.01`), `policy.flow_loss_weight` (default
-`1.0`), and `policy.tokenizer_max_length` (default `768`).
+Language training uses `policy.text_loss_weight` (default `0.01`),
+`policy.flow_loss_weight` (default `1.0`), and `policy.tokenizer_max_length`
+(default `768`). `policy.recipe_path` optionally replaces the built-in recipe.
 
 ## License
 

@@ -49,10 +49,8 @@ from safetensors.torch import load_file
 from torch import Tensor
 from torch.distributions import Beta
 from torch.nn import CrossEntropyLoss
-from torchvision.transforms import InterpolationMode
-from torchvision.transforms.v2 import functional as tv_functional
 
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import ACTION, MESSAGES_RENDERED
 from lerobot.utils.import_utils import (
     _wallx_deps_available,
     require_package,
@@ -62,17 +60,10 @@ from lerobot.utils.language import require_single_text_output
 from ..pretrained import PreTrainedPolicy
 from ..utils import populate_queues
 from .configuration_wall_x import WallXConfig
-from .constant import (
-    IMAGE_FACTOR,
-    MAX_PIXELS,
-    MIN_PIXELS,
-    RESOLUTION,
-)
-from .processor_wall_x import WALL_X_GENERATION_PROMPT_IDS
+from .constant import WALL_X_GENERATION_PROMPT_IDS
 
 if TYPE_CHECKING or _wallx_deps_available:
     from peft import LoraConfig, get_peft_model
-    from qwen_vl_utils.vision_process import smart_resize
     from torchdiffeq import odeint
     from transformers import AutoProcessor, BatchFeature
     from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
@@ -90,7 +81,6 @@ if TYPE_CHECKING or _wallx_deps_available:
 else:
     LoraConfig = None
     get_peft_model = None
-    smart_resize = None
     odeint = None
     AutoProcessor = None
     BatchFeature = None
@@ -105,75 +95,6 @@ else:
 
 
 logger = logging.getLogger(__name__)
-
-
-def _wall_x_resize_dimensions(height: int, width: int) -> tuple[int, int, int, int]:
-    """Return the intermediate and final Wall-X resize dimensions as ``(H, W, H, W)``."""
-    if RESOLUTION == -1:
-        intermediate_height, intermediate_width = height, width
-    elif width > height:
-        intermediate_width = RESOLUTION
-        intermediate_height = int(RESOLUTION * height / width)
-    else:
-        intermediate_height = RESOLUTION
-        intermediate_width = int(RESOLUTION * width / height)
-
-    resized_height, resized_width = smart_resize(
-        intermediate_height,
-        intermediate_width,
-        factor=IMAGE_FACTOR,
-        min_pixels=MIN_PIXELS,
-        max_pixels=MAX_PIXELS,
-    )
-    return intermediate_height, intermediate_width, resized_height, resized_width
-
-
-def _resize_wall_x_image_batch(images: Tensor) -> tuple[Tensor, tuple[int, int, int, int]]:
-    """Quantize and resize a BCHW camera batch without leaving its current device."""
-    if images.ndim != 4:
-        raise ValueError(f"Wall-X images must be BCHW tensors, got shape {tuple(images.shape)}")
-
-    original_height, original_width = images.shape[-2:]
-    intermediate_height, intermediate_width, resized_height, resized_width = _wall_x_resize_dimensions(
-        original_height, original_width
-    )
-
-    if images.is_floating_point():
-        # Match the previous PIL path, which quantized via `(image * 255).to(torch.uint8)`.
-        images = (images * 255).to(torch.uint8)
-    elif images.dtype != torch.uint8:
-        raise TypeError(f"Wall-X images must be floating point or uint8, got {images.dtype}")
-
-    if images.shape[-2:] != (intermediate_height, intermediate_width):
-        images = tv_functional.resize(
-            images,
-            [intermediate_height, intermediate_width],
-            interpolation=InterpolationMode.BICUBIC,
-            antialias=True,
-        )
-    if images.shape[-2:] != (resized_height, resized_width):
-        images = tv_functional.resize(
-            images,
-            [resized_height, resized_width],
-            interpolation=InterpolationMode.BICUBIC,
-            antialias=True,
-        )
-
-    return images, (original_height, original_width, resized_height, resized_width)
-
-
-def _prepare_wall_x_image_inputs(
-    batch: dict[str, Any], img_keys: list[str]
-) -> tuple[list[list[Tensor]], dict[str, tuple[int, int, int, int]]]:
-    """Resize each camera as a batch, then restore sample-major/camera-minor ordering."""
-    resized_by_key: dict[str, Tensor] = {}
-    dimensions_by_key: dict[str, tuple[int, int, int, int]] = {}
-    for key in img_keys:
-        resized_by_key[key], dimensions_by_key[key] = _resize_wall_x_image_batch(batch[key])
-
-    batch_size = batch[img_keys[0]].shape[0]
-    image_inputs = [[resized_by_key[key][i] for key in img_keys] for i in range(batch_size)]
-    return image_inputs, dimensions_by_key
 
 
 class SinusoidalPosEmb(nn.Module):
@@ -1932,7 +1853,7 @@ class WallXPolicy(PreTrainedPolicy):
         Returns:
             tuple: (loss, loss_dict)
         """
-        recipe_supervision = "messages_rendered" in batch
+        recipe_supervision = MESSAGES_RENDERED in batch
         batch = self._pretokenized_inputs(batch, compute_position_ids=True)
 
         # Call the underlying model's forward with mode="train"

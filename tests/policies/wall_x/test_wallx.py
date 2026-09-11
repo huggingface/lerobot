@@ -34,11 +34,11 @@ from lerobot.policies.wall_x import (
 )
 from lerobot.policies.wall_x.modeling_wall_x import Qwen2_5_VLMoEForAction, WallXPolicy  # noqa: E402
 from lerobot.policies.wall_x.processor_wall_x import (  # noqa: E402
+    WallXPromptProcessorStep,
     WallXTokenizerStep,
     make_wall_x_pre_post_processors,
 )
 from lerobot.policies.wall_x.qwen_model import Qwen2_5_VLMoEModel, Qwen2_5_VLTextConfig  # noqa: E402
-from lerobot.policies.wall_x.utils import _extract_text_target_spans  # noqa: E402
 from lerobot.processor import (  # noqa: E402
     RenderRuntimeMessagesStep,
     RenderTrainingMessagesStep,
@@ -122,8 +122,8 @@ def _model_inputs() -> dict[str, torch.Tensor]:
 
 
 def test_recipe_prompt_targets_only_selected_assistant_and_keeps_action_supervision():
-    step = _tokenizer_step()
-    prompt, predicts_action = step._recipe_text(
+    step = WallXPromptProcessorStep(image_keys=["observation.images.face_view"], chunk_size=3)
+    segments, predicts_action = step._recipe_segments(
         [
             {"role": "user", "content": "What should the robot do?"},
             {"role": "assistant", "content": "Reach for the cup."},
@@ -134,12 +134,18 @@ def test_recipe_prompt_targets_only_selected_assistant_and_keeps_action_supervis
         ["front view"],
     )
 
-    clean_prompt, spans = _extract_text_target_spans(prompt)
+    prompt = "".join(segment["text"] for segment in segments)
+    spans = []
+    offset = 0
+    for segment in segments:
+        if segment["target"]:
+            spans.append((offset, offset + len(segment["text"])))
+        offset += len(segment["text"])
     assert predicts_action
     assert len(spans) == 1
-    assert clean_prompt[slice(*spans[0])] == "Reach for the cup.<|im_end|>"
-    assert clean_prompt.count("<|action|>") == 3
-    assert "Proprioception: <|propri|>" in clean_prompt
+    assert prompt[slice(*spans[0])] == "Reach for the cup.<|im_end|>"
+    assert prompt.count("<|action|>") == 3
+    assert "Proprioception: <|propri|>" in prompt
 
 
 def test_policy_combines_text_and_flow_losses_with_configured_weights(monkeypatch):
@@ -201,7 +207,12 @@ def test_policy_answers_a_rendered_vqa_question():
     messages = transition_to_batch(rendered)["messages_rendered"]
     assert messages == [{"role": "user", "content": question}]
     assert (
-        _tokenizer_step()._generation_text(messages, ["front view"])
+        "".join(
+            segment["text"]
+            for segment in WallXPromptProcessorStep(
+                image_keys=["observation.images.face_view"], chunk_size=3
+            )._generation_segments(messages, ["front view"])
+        )
         == "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
         "<|im_start|>user\nObservation: front view: "
         "<|vision_start|><|image_pad|><|vision_end|>\n"
@@ -266,6 +277,7 @@ def test_wall_x_runtime_query_is_rendered_by_the_default_input_pipeline():
 
     assert isinstance(preprocessor.steps[0], RenderRuntimeMessagesStep)
     assert isinstance(preprocessor.steps[1], RenderTrainingMessagesStep)
+    assert any(isinstance(step, WallXPromptProcessorStep) for step in preprocessor.steps)
     assert batch["messages_rendered"] == [
         {"role": "user", "content": "clear the table\nPredict the next action in language.\n"}
     ]
