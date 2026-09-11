@@ -217,7 +217,7 @@ def test_exit_message_persistent_is_runnable_and_boxed(fake_fo, fake_meta, capsy
     out = capsys.readouterr().out
     assert "Dataset saved: user-my-dataset-episode-0" in out
     assert "fiftyone app launch user-my-dataset-episode-0" in out
-    assert 'fo.load_dataset("user-my-dataset-episode-0")' in out
+    assert "fo.load_dataset('user-my-dataset-episode-0')" in out
     assert "https://docs.voxel51.com/user_guide/index.html" in out
     # Every line of the box is the same width, including the title edge.
     box = [line for line in out.splitlines() if line and line[0] in "┌│└"]
@@ -225,8 +225,10 @@ def test_exit_message_persistent_is_runnable_and_boxed(fake_fo, fake_meta, capsy
     assert len({len(line) for line in box}) == 1
 
 
-def test_exit_message_shell_quotes_dataset_name():
-    assert "fiftyone app launch 'my dataset'" in fv._exit_message("my dataset", persistent=True)
+def test_exit_message_quotes_dataset_name_for_shell_and_python():
+    msg = fv._exit_message('my "dataset"', persistent=True)
+    assert "fiftyone app launch 'my \"dataset\"'" in msg
+    assert "fo.load_dataset('my \"dataset\"')" in msg  # repr: valid Python whatever the name contains
 
 
 def test_exit_message_non_persistent(fake_fo, fake_meta, capsys):

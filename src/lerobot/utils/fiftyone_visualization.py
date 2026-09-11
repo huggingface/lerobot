@@ -251,7 +251,7 @@ def _exit_message(name: str, persistent: bool) -> str:
             "",
             "Reopen from Python:",
             "  import fiftyone as fo",
-            f'  dataset = fo.load_dataset("{name}")',
+            f"  dataset = fo.load_dataset({name!r})",
             "  session = fo.launch_app(dataset)",
             "  session.wait()",
             "",
