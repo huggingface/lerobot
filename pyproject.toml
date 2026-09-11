@@ -89,7 +89,7 @@ dependencies = [
 
     # Build tools (required by opencv-python-headless on some platforms)
     "cmake>=3.29.0.1,<4.2.0",
-    "setuptools>=71.0.0,<82.0.0",  # torch 2.11 requires setuptools<82; a higher cap makes the resolver downgrade torch
+    "setuptools>=71.0.0,<82.0.0",  # Keep compatibility with torch 2.11 in the CUDA 12.8 source environment.
 ]
 
 # Optional dependencies
@@ -115,9 +115,9 @@ dataset = [
     #   - win32 x86_64                     : wheels since 0.7.0  (needs torch>=2.8).
     #   - linux aarch64/arm64              : wheels since 0.11.0 (needs torch>=2.11).
     #   - macOS x86_64 (Intel) and linux armv7l: no wheels in any released version -> fall through to the PyAV decoder.
-    # Each platform gets its own line so the resolver picks the minimum version that has a wheel for it.
+    # Platform-specific lower bounds reflect wheel availability, not the resolver's selected version.
 
-    # TorchCodec 0.13 supports torch >=2.11; retain older wheels on macOS and Windows.
+    # TorchCodec 0.13 supports torch >=2.11; only Linux upper bounds are widened here.
     "torchcodec>=0.3.0,<0.14.0; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')",
     "torchcodec>=0.3.0,<0.12.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "torchcodec>=0.7.0,<0.12.0; sys_platform == 'win32'",

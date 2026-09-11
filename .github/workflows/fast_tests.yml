@@ -126,3 +126,91 @@ jobs:
 
       - name: "Tier 4 — Test: viz"
         run: uv run pytest tests -vv --maxfail=10
+
+  pytorch-compatibility:
+    name: PyTorch ${{ matrix.torch }} compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - torch: "2.11.0"
+            torchvision: "0.26.0"
+          - torch: "2.14.0"
+            torchvision: "0.29.0"
+    env:
+      TORCH_VERSION: ${{ matrix.torch }}
+      TORCHVISION_VERSION: ${{ matrix.torchvision }}
+      TORCHCODEC_VERSION: "0.13.0"
+      LEROBOT_TEST_DEVICE: cpu
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          lfs: true
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Setup uv and Python
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+        with:
+          enable-cache: true
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install compatibility environment
+        run: |
+          uv venv --python "$PYTHON_VERSION" .venv-compat
+          uv pip install --python .venv-compat/bin/python --no-sources --torch-backend cpu \
+            -e ".[dataset,test,transformers-dep,diffusers-dep]" \
+            "torch==$TORCH_VERSION" "torchvision==$TORCHVISION_VERSION" "torchcodec==$TORCHCODEC_VERSION"
+          uv pip check --python .venv-compat/bin/python
+
+      - name: Resolve documented CUDA 12.6 environment
+        if: matrix.torch == '2.14.0'
+        run: |
+          uv venv --python "$PYTHON_VERSION" .venv-cu126
+          uv pip install --dry-run --python .venv-cu126/bin/python --no-sources --torch-backend cu126 \
+            -e ".[dataset]" \
+            "torch==$TORCH_VERSION" "torchvision==$TORCHVISION_VERSION" "torchcodec==$TORCHCODEC_VERSION"
+
+      - name: Test compatibility without syncing the project lock
+        run: |
+          .venv-compat/bin/python - <<'PY'
+          import importlib
+          import os
+          from importlib.metadata import version
+
+          import pytest
+          import torch
+          from packaging.version import Version
+
+          for name in ("torchvision", "torchcodec", "datasets", "transformers", "diffusers"):
+              importlib.import_module(name)
+
+          def check_versions():
+              for name in ("torch", "torchvision", "torchcodec"):
+                  installed = version(name)
+                  expected = os.environ[f"{name.upper()}_VERSION"]
+                  print(f"{name}=={installed}", flush=True)
+                  assert Version(installed).public == expected
+              assert torch.version.cuda is None
+
+          check_versions()
+          result = pytest.main([
+              "-vv", "-ra", "--maxfail=10",
+              "tests/optim/test_optimizers.py",
+              "tests/optim/test_schedulers.py",
+              "tests/utils/test_random_utils.py",
+              "tests/configs/test_default.py",
+              "tests/policies/common/test_flow_matching.py",
+              "tests/policies/common/test_vla_utils.py",
+              "tests/datasets/test_video_decoder_cache.py",
+              "tests/datasets/test_video_decoding.py",
+              "tests/datasets/test_lerobot_dataset.py::test_create_record_finalize_read_roundtrip",
+          ])
+          check_versions()
+          raise SystemExit(result)
+          PY

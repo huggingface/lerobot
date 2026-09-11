@@ -120,6 +120,8 @@ brew install ffmpeg
 
 The base `lerobot` install is intentionally **lightweight** — it includes only core ML dependencies (PyTorch, torchvision, numpy, opencv, einops, draccus, huggingface-hub, gymnasium, safetensors). Heavier dependencies are gated behind optional extras so you only install what you need.
 
+Fresh `pip` installs do not use the checkout's lock or `uv` source settings. On Linux, they may select PyTorch 2.14 and newer CUDA packages within the allowed bounds. To reproduce the committed source environment, use `uv sync --locked` with the extras you need.
+
 ### From Source
 
 First, clone the repository and navigate into the directory:
@@ -261,19 +263,22 @@ Supported values include `auto`, `cpu`, `cu126`, `cu128`, `cu129`, `cu130`, plus
 
 ### PyTorch 2.14 in a separate Linux environment
 
-The locked source environment still uses PyTorch 2.11 and torchvision 0.26 from the CUDA 12.8 index. Linux dependency bounds also allow PyTorch 2.14, torchvision 0.29, and TorchCodec 0.13. macOS and Windows bounds are unchanged.
+Linux dependency bounds allow PyTorch 2.14, torchvision 0.29, and TorchCodec 0.13. The locked source environment still uses PyTorch 2.11 and torchvision 0.26. Ordinary `uv` source installs also use the CUDA 12.8 index, which currently has no PyTorch 2.14 wheels, even without the lock. Fresh source installs can select TorchCodec 0.13 alongside PyTorch 2.11. macOS and Windows bounds are unchanged.
 
-For a separate Python 3.12 environment using CUDA 12.6, run these commands from your source checkout after installing the shared FFmpeg libraries described above:
+For a separate Python 3.12 environment using CUDA 12.6, run these commands from your source checkout after [installing system-wide FFmpeg using the uv instructions](#install-ffmpeg-for-video-decoding):
 
 ```bash
 uv venv --python 3.12 .venv-cu126
 uv pip install --python .venv-cu126/bin/python --no-sources --torch-backend cu126 \
     -e ".[dataset]" "torch==2.14.0" "torchvision==0.29.0" "torchcodec==0.13.0"
+source .venv-cu126/bin/activate
+python -c "import torch; print(torch.__version__, torch.version.cuda)"
+uv pip check --python .venv-cu126/bin/python
 ```
 
-This recipe was tested on Linux x86_64 with `uv` 0.11.30. Add the extra for your policy when needed. Torch-TensorRT 2.14 can be installed separately with its matching CUDA packages; this does not add a LeRobot export command.
+The version check should print `2.14.0+cu126 12.6`. The installation and video decoding were tested on Linux x86_64 with `uv` 0.11.30.
 
-`--no-sources` bypasses the checkout's CUDA 12.8 source selection for this install only. `uv sync --locked` still restores the locked versions in the environment it manages, so keep the export environment separate. Fresh `pip` installs do not use the project's lock or `uv` source settings and may select newer versions within the widened bounds.
+`--no-sources` bypasses the checkout's CUDA 12.8 source selection for this install only. Use `python` from the activated environment to run your code. Ordinary `uv run` can sync the project environment, and `uv sync --locked` restores the locked versions in the environment it manages. Keep this environment separate from the locked source environment.
 
 ### Troubleshooting
 
