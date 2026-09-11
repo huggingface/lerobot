@@ -16,6 +16,8 @@
 
 from typing import Any
 
+from lerobot.utils.lifecycle import Cleanup, idempotent_connect
+
 
 class BimanualMixin:
     """Lifecycle delegation for bimanual robots and teleoperators.
@@ -42,44 +44,16 @@ class BimanualMixin:
     def is_calibrated(self) -> bool:
         return self.left_arm.is_calibrated and self.right_arm.is_calibrated
 
+    @idempotent_connect
     def connect(self, calibrate: bool = True) -> None:
-        """Connect both arms, repairing a partial connection when possible.
+        """Connect both arms.
 
-        Calling this method when both arms are already connected is a no-op. If
-        an arm fails to connect, arms whose connection started during this call
-        are disconnected again. An arm that was connected before the call is
-        left untouched.
+        An arm connected before the call is left untouched and the other one is brought
+        up. If an arm fails to connect, both arms are disconnected again.
         """
-        if self.is_connected:
-            return
-
-        started: list[tuple[str, Any]] = []
-        try:
-            for side, arm in (("left", self.left_arm), ("right", self.right_arm)):
-                if arm.is_connected:
-                    continue
-
-                started.append((side, arm))
-                try:
-                    arm.connect(calibrate)
-                except Exception as exc:
-                    exc.add_note(f"while connecting the {side} arm of {type(self).__name__}")
-                    raise
-        except Exception as connect_error:
-            rollback_errors: list[Exception] = []
-            for side, arm in reversed(started):
-                try:
-                    arm.disconnect()
-                except Exception as exc:
-                    exc.add_note(f"while rolling back the {side} arm connection of {type(self).__name__}")
-                    rollback_errors.append(exc)
-
-            if rollback_errors:
-                raise ExceptionGroup(
-                    f"Failed to connect {type(self).__name__} and to fully roll back",
-                    [connect_error, *rollback_errors],
-                ) from None
-            raise
+        for arm in (self.left_arm, self.right_arm):
+            if not arm.is_connected:
+                arm.connect(calibrate)
 
     def calibrate(self) -> None:
         """Explicitly calibrate both arms, including arms already calibrated."""
@@ -121,15 +95,7 @@ class BimanualMixin:
 
     def disconnect(self) -> None:
         """Disconnect both arms, attempting the second even after a failure."""
-        errors: list[Exception] = []
-        for side, arm in (("left", self.left_arm), ("right", self.right_arm)):
-            try:
-                arm.disconnect()
-            except Exception as exc:
-                exc.add_note(f"while disconnecting the {side} arm of {type(self).__name__}")
-                errors.append(exc)
-
-        if len(errors) == 1:
-            raise errors[0]
-        if errors:
-            raise ExceptionGroup(f"Failed to disconnect {type(self).__name__}", errors)
+        with Cleanup(self) as cleanup:
+            for side, arm in (("left", self.left_arm), ("right", self.right_arm)):
+                with cleanup.step(f"the {side} arm"):
+                    arm.disconnect()

@@ -19,11 +19,19 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from lerobot.robots.hope_jr.hope_jr_arm import HopeJrArm
+from lerobot.robots.hope_jr.hope_jr_hand import HopeJrHand
+from lerobot.robots.koch_follower.koch_follower import KochFollower
+from lerobot.robots.lekiwi.lekiwi import LeKiwi
+from lerobot.robots.omx_follower.omx_follower import OmxFollower
 from lerobot.robots.openarm_follower.openarm_follower import OpenArmFollower
 from lerobot.robots.so_follower.so_follower import SOFollower
+from lerobot.teleoperators.koch_leader.koch_leader import KochLeader
+from lerobot.teleoperators.omx_leader.omx_leader import OmxLeader
 from lerobot.teleoperators.openarm_leader.openarm_leader import OpenArmLeader
 from lerobot.teleoperators.openarm_mini.openarm_mini import OpenArmMini
 from lerobot.teleoperators.so_leader.so_leader import SOLeader
+from lerobot.utils.errors import DeviceNotConnectedError
 
 
 class FakeBus:
@@ -36,11 +44,13 @@ class FakeBus:
         self.enable_torque_calls = 0
         self.set_zero_position_calls = 0
 
-    def connect(self) -> None:
+    def connect(self, *args, **kwargs) -> None:
         self.connect_calls += 1
         self.is_connected = True
 
     def disconnect(self, *args, **kwargs) -> None:
+        if not self.is_connected:
+            raise DeviceNotConnectedError("bus is not connected")
         self.disconnect_calls += 1
         if self.disconnect_error is not None:
             raise self.disconnect_error
@@ -64,6 +74,8 @@ class FakeCamera:
         self.is_connected = True
 
     def disconnect(self) -> None:
+        if not self.is_connected:
+            raise DeviceNotConnectedError("camera is not connected")
         self.disconnect_calls += 1
         self.is_connected = False
 
@@ -75,10 +87,23 @@ def make_follower(cls, *, bus_connected: bool = False, camera_connected: bool = 
     robot.bus = FakeBus(connected=bus_connected)
     robot.cameras = {"camera": FakeCamera(connected=camera_connected)}
     robot.configure = MagicMock()
+    if isinstance(robot, LeKiwi):
+        robot.stop_base = MagicMock()
     return robot
 
 
-@pytest.mark.parametrize("cls", [SOFollower, OpenArmFollower])
+FOLLOWER_CLASSES = [
+    SOFollower,
+    OpenArmFollower,
+    OmxFollower,
+    KochFollower,
+    HopeJrArm,
+    HopeJrHand,
+    LeKiwi,
+]
+
+
+@pytest.mark.parametrize("cls", FOLLOWER_CLASSES)
 def test_composite_follower_connect_and_disconnect_are_idempotent(cls):
     robot = make_follower(cls)
 
@@ -96,7 +121,7 @@ def test_composite_follower_connect_and_disconnect_are_idempotent(cls):
     assert robot.cameras["camera"].disconnect_calls == 1
 
 
-@pytest.mark.parametrize("cls", [SOFollower, OpenArmFollower])
+@pytest.mark.parametrize("cls", FOLLOWER_CLASSES)
 def test_composite_follower_repairs_a_partial_connection(cls):
     robot = make_follower(cls, bus_connected=True)
 
@@ -107,7 +132,7 @@ def test_composite_follower_repairs_a_partial_connection(cls):
     assert robot.is_connected
 
 
-@pytest.mark.parametrize("cls", [SOFollower, OpenArmFollower])
+@pytest.mark.parametrize("cls", FOLLOWER_CLASSES)
 def test_composite_follower_rolls_back_resources_started_by_connect(cls):
     robot = make_follower(cls)
     configure_error = RuntimeError("configuration failed")
@@ -121,7 +146,7 @@ def test_composite_follower_rolls_back_resources_started_by_connect(cls):
     assert not robot.cameras["camera"].is_connected
 
 
-@pytest.mark.parametrize("cls", [SOFollower, OpenArmFollower])
+@pytest.mark.parametrize("cls", FOLLOWER_CLASSES)
 def test_composite_follower_disconnect_attempts_cameras_after_bus_failure(cls):
     robot = make_follower(cls, bus_connected=True, camera_connected=True)
     disconnect_error = OSError("bus failed")
@@ -134,6 +159,18 @@ def test_composite_follower_disconnect_attempts_cameras_after_bus_failure(cls):
     assert robot.cameras["camera"].disconnect_calls == 1
 
 
+@pytest.mark.parametrize("cls", FOLLOWER_CLASSES)
+def test_composite_follower_disconnect_attempts_resources_in_unknown_partial_state(cls):
+    robot = make_follower(cls)
+    robot.bus.disconnect = MagicMock(side_effect=DeviceNotConnectedError("not connected"))
+    robot.cameras["camera"].disconnect = MagicMock(side_effect=DeviceNotConnectedError("not connected"))
+
+    robot.disconnect()
+
+    robot.bus.disconnect.assert_called_once()
+    robot.cameras["camera"].disconnect.assert_called_once_with()
+
+
 def make_teleoperator(cls):
     teleop = object.__new__(cls)
     teleop.id = "test"
@@ -143,7 +180,10 @@ def make_teleoperator(cls):
     return teleop
 
 
-@pytest.mark.parametrize("cls", [SOLeader, OpenArmLeader, OpenArmMini])
+TELEOPERATOR_CLASSES = [SOLeader, OpenArmLeader, OpenArmMini, OmxLeader, KochLeader]
+
+
+@pytest.mark.parametrize("cls", TELEOPERATOR_CLASSES)
 def test_bimanual_arm_teleoperator_connect_and_disconnect_are_idempotent(cls):
     teleop = make_teleoperator(cls)
 
@@ -159,7 +199,7 @@ def test_bimanual_arm_teleoperator_connect_and_disconnect_are_idempotent(cls):
     assert teleop.bus.disconnect_calls == 1
 
 
-@pytest.mark.parametrize("cls", [SOLeader, OpenArmLeader, OpenArmMini])
+@pytest.mark.parametrize("cls", TELEOPERATOR_CLASSES)
 def test_bimanual_arm_teleoperator_rolls_back_a_failed_connect(cls):
     teleop = make_teleoperator(cls)
     configure_error = RuntimeError("configuration failed")
@@ -170,3 +210,13 @@ def test_bimanual_arm_teleoperator_rolls_back_a_failed_connect(cls):
 
     assert exc_info.value is configure_error
     assert not teleop.bus.is_connected
+
+
+@pytest.mark.parametrize("cls", TELEOPERATOR_CLASSES)
+def test_bimanual_arm_teleoperator_disconnect_attempts_an_unknown_partial_state(cls):
+    teleop = make_teleoperator(cls)
+    teleop.bus.disconnect = MagicMock(side_effect=DeviceNotConnectedError("not connected"))
+
+    teleop.disconnect()
+
+    teleop.bus.disconnect.assert_called_once()

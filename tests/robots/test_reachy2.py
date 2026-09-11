@@ -171,18 +171,22 @@ def test_connect_disconnect(reachy2):
 
     reachy2.connect()
     assert reachy2.is_connected
+    sdk = reachy2.reachy
 
-    reachy2.reachy.turn_on.assert_called_once()
-    reachy2.reachy.reset_default_limits.assert_called_once()
+    reachy2.connect()
 
+    sdk.turn_on.assert_called_once()
+    sdk.reset_default_limits.assert_called_once()
+
+    reachy2.disconnect()
     reachy2.disconnect()
     assert not reachy2.is_connected
 
     if reachy2.config.disable_torque_on_disconnect:
-        reachy2.reachy.turn_off_smoothly.assert_called_once()
+        sdk.turn_off_smoothly.assert_called_once()
     else:
-        reachy2.reachy.turn_off_smoothly.assert_not_called()
-    reachy2.reachy.disconnect.assert_called_once()
+        sdk.turn_off_smoothly.assert_not_called()
+    sdk.disconnect.assert_called_once()
 
 
 def test_get_joints_dict(reachy2):

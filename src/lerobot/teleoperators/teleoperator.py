@@ -14,6 +14,7 @@
 
 import abc
 import builtins
+import contextlib
 from pathlib import Path
 from typing import Any
 
@@ -61,7 +62,7 @@ class Teleoperator(abc.ABC):
     def __enter__(self):
         """
         Context manager entry.
-        Automatically connects to the camera.
+        Automatically connects to the teleoperator. :pymeth:`connect` releases what it acquired if it fails.
         """
         self.connect()
         return self
@@ -71,18 +72,24 @@ class Teleoperator(abc.ABC):
         Context manager exit.
         Automatically disconnects, ensuring resources are released even on error.
         """
-        self.disconnect()
+        try:
+            self.disconnect()
+        except BaseException as disconnect_error:
+            disconnect_error.add_note(f"while exiting the context for {self}")
+            if exc_value is None:
+                raise
+            raise BaseExceptionGroup(
+                f"An error occurred while using {self}, followed by a cleanup failure",
+                [exc_value, disconnect_error],
+            ) from None
 
     def __del__(self) -> None:
         """
         Destructor safety net.
         Attempts to disconnect if the object is garbage collected without cleanup.
         """
-        try:
-            if self.is_connected:
-                self.disconnect()
-        except Exception:  # nosec B110
-            pass
+        with contextlib.suppress(Exception):
+            self.disconnect()
 
     @property
     @abc.abstractmethod
@@ -124,10 +131,11 @@ class Teleoperator(abc.ABC):
         """
         Establish communication with the teleoperator and make it ready for use.
 
-        This method is idempotent: calling it when the teleoperator is already fully
-        connected is a no-op. Implementations that own multiple resources should
-        resume a partial connection when possible and clean up resources acquired
-        by the call if connection fails.
+        This method is idempotent and all-or-nothing: calling it when the teleoperator is
+        already connected is a no-op, and a failed call releases everything it acquired.
+        Decorate the implementation with :func:`lerobot.utils.lifecycle.idempotent_connect`
+        to get both guarantees; the body then only opens the resources the teleoperator
+        owns, skipping those already connected so a retry can resume a partial connection.
 
         Args:
             calibrate (bool): If True, automatically calibrate the teleoperator after connecting if it's not
@@ -214,8 +222,9 @@ class Teleoperator(abc.ABC):
     def disconnect(self) -> None:
         """Disconnect from the teleoperator and perform any necessary cleanup.
 
-        This method is idempotent and may be called after a partial or failed
-        connection. Implementations that own multiple resources should attempt to
-        release all of them before reporting cleanup failures.
+        This method is idempotent and may be called on a teleoperator that was never
+        connected or is only partially connected. Implementations that own multiple
+        resources should release all of them before reporting failures; wrapping each
+        release in a :class:`lerobot.utils.lifecycle.Cleanup` step does exactly that.
         """
         pass
