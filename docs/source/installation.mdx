@@ -120,7 +120,7 @@ brew install ffmpeg
 
 The base `lerobot` install is intentionally **lightweight** — it includes only core ML dependencies (PyTorch, torchvision, numpy, opencv, einops, draccus, huggingface-hub, gymnasium, safetensors). Heavier dependencies are gated behind optional extras so you only install what you need.
 
-Fresh `pip` installs do not use the checkout's lock or `uv` source settings. On Linux, they may select PyTorch 2.14 and newer CUDA packages within the allowed bounds. To reproduce the committed source environment, use `uv sync --locked` with the extras you need.
+Fresh `pip` installs do not use the repository's lock or `uv` source settings. On Linux, they may select PyTorch 2.14 and newer CUDA packages within the allowed bounds. To reproduce the locked source environment, run `uv sync --locked` from a source checkout with the extras you need.
 
 ### From Source
 
@@ -272,13 +272,13 @@ uv venv --python 3.12 .venv-cu126
 uv pip install --python .venv-cu126/bin/python --no-sources --torch-backend cu126 \
     -e ".[dataset]" "torch==2.14.0" "torchvision==0.29.0" "torchcodec==0.13.0"
 source .venv-cu126/bin/activate
-python -c "import torch; print(torch.__version__, torch.version.cuda)"
+python -c "import torch; import torchcodec; print(torch.__version__, torch.version.cuda)"
 uv pip check --python .venv-cu126/bin/python
 ```
 
 The version check should print `2.14.0+cu126 12.6`. The installation and video decoding were tested on Linux x86_64 with `uv` 0.11.30.
 
-`--no-sources` bypasses the checkout's CUDA 12.8 source selection for this install only. Use `python` from the activated environment to run your code. Ordinary `uv run` can sync the project environment, and `uv sync --locked` restores the locked versions in the environment it manages. Keep this environment separate from the locked source environment.
+`--no-sources` bypasses the checkout's CUDA 12.8 source selection for this install only. Use `python` from the activated `.venv-cu126` environment to run your code. Ordinary `uv run` can sync the project environment, which is `.venv` by default. `uv sync --locked` restores the locked versions in the environment it manages; configuration or `--active` can change that target. Keep `.venv-cu126` separate from the locked source environment.
 
 ### Troubleshooting
 
