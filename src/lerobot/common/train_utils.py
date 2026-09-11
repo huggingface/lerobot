@@ -24,6 +24,7 @@ its writes live in the same method.
 """
 
 import logging
+import os
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -123,10 +124,15 @@ def update_last_checkpoint(checkpoint_dir: Path) -> None:
         checkpoint_dir (Path): The checkpoint step directory the `last` link should target.
     """
     last_checkpoint_dir = checkpoint_dir.parent / LAST_CHECKPOINT_LINK
-    if last_checkpoint_dir.is_symlink():
-        last_checkpoint_dir.unlink()
     relative_target = checkpoint_dir.relative_to(checkpoint_dir.parent)
-    last_checkpoint_dir.symlink_to(relative_target)
+    # Atomic swap: a kill between unlink() and symlink_to() would leave the
+    # "last" link missing, which crashes the next resume. A temp symlink
+    # moved into place with os.replace() is atomic on POSIX.
+    tmp_link = checkpoint_dir.parent / (LAST_CHECKPOINT_LINK + ".tmp")
+    if tmp_link.is_symlink() or tmp_link.exists():
+        tmp_link.unlink()
+    tmp_link.symlink_to(relative_target)
+    os.replace(tmp_link, last_checkpoint_dir)
 
 
 # ---------------------------------------------------------------------------------------------

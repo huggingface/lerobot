@@ -546,6 +546,56 @@ def start_learner(
     logging.info("[LEARNER] gRPC server stopped")
 
 
+def _recover_dataset_dir(final_dir: str) -> None:
+    """Restore ``final_dir`` from its ``.old`` sibling.
+
+    A process killed in the small gap between the two renames inside
+    ``_atomic_dataset_dump`` leaves the old dataset parked in ``.old`` with
+    ``final_dir`` missing. Without this, the next resume crashes on a
+    nonexistent dataset directory.
+    """
+    old_dir = final_dir + ".old"
+    if not os.path.exists(final_dir) and os.path.exists(old_dir):
+        os.rename(old_dir, final_dir)
+
+
+def _atomic_dataset_dump(buffer: ReplayBuffer, repo_id: str, fps: int, final_dir: str) -> None:
+    """Dump a replay buffer to a LeRobotDataset, swapping it into place atomically.
+
+    Writing straight to ``final_dir`` after rmtree'ing it means a process killed
+    mid-dump (Ctrl-C) leaves a half-written dataset behind, which crashes the next
+    resume with "Parquet magic bytes not found". Dumping to a ``.partial`` sibling
+    and renaming into place keeps ``final_dir`` either fully old or fully new.
+    """
+    partial_dir = final_dir + ".partial"
+    old_dir = final_dir + ".old"
+    # Self-heal a dump killed between the two renames: final_dir is gone but
+    # the previous dataset is parked in old_dir — restore it instead of
+    # deleting it as stale.
+    _recover_dataset_dir(final_dir)
+    if os.path.exists(partial_dir):
+        shutil.rmtree(partial_dir)
+    if os.path.exists(old_dir):
+        shutil.rmtree(old_dir)
+    buffer.to_lerobot_dataset(repo_id=repo_id, fps=fps, root=partial_dir)
+    if os.path.exists(final_dir):
+        os.rename(final_dir, old_dir)
+    try:
+        os.rename(partial_dir, final_dir)
+    except BaseException:
+        # Swap failed (kill in the rename gap, disk error): restore the old
+        # dataset if there is one (on a first-ever dump there is none).
+        if os.path.exists(final_dir):
+            shutil.rmtree(final_dir)
+        if os.path.exists(partial_dir):
+            shutil.rmtree(partial_dir)
+        if os.path.exists(old_dir):
+            os.rename(old_dir, final_dir)
+        raise
+    if os.path.exists(old_dir):
+        shutil.rmtree(old_dir)
+
+
 def save_training_checkpoint(
     cfg: TrainRLServerPipelineConfig,
     optimization_step: int,
@@ -623,26 +673,27 @@ def save_training_checkpoint(
 
     # TODO : temporary save replay buffer here, remove later when on the robot
     # We want to control this with the keyboard inputs
-    dataset_dir = os.path.join(cfg.output_dir, "dataset")
-    if os.path.exists(dataset_dir) and os.path.isdir(dataset_dir):
-        shutil.rmtree(dataset_dir)
-
     # Save dataset
     # NOTE: Handle the case where the dataset repo id is not specified in the config
     # eg. RL training without demonstrations data
-    repo_id_buffer_save = cfg.env.task if dataset_repo_id is None else dataset_repo_id
-    replay_buffer.to_lerobot_dataset(repo_id=repo_id_buffer_save, fps=fps, root=dataset_dir)
+    # Dumping the replay buffers back out as datasets is a convenience, not part of
+    # the policy checkpoint, so a failure here must not take down a training run that
+    # has already written its weights. Dumps go to a .partial directory and are renamed
+    # into place, so a process killed mid-dump leaves the previous complete dataset
+    # rather than a half-written one that breaks the next resume.
+    try:
+        repo_id_buffer_save = cfg.env.task if dataset_repo_id is None else dataset_repo_id
+        _atomic_dataset_dump(replay_buffer, repo_id_buffer_save, fps, os.path.join(cfg.output_dir, "dataset"))
 
-    if offline_replay_buffer is not None:
-        dataset_offline_dir = os.path.join(cfg.output_dir, "dataset_offline")
-        if os.path.exists(dataset_offline_dir) and os.path.isdir(dataset_offline_dir):
-            shutil.rmtree(dataset_offline_dir)
-
-        offline_replay_buffer.to_lerobot_dataset(
-            cfg.dataset.repo_id,
-            fps=fps,
-            root=dataset_offline_dir,
-        )
+        if offline_replay_buffer is not None:
+            _atomic_dataset_dump(
+                offline_replay_buffer,
+                cfg.dataset.repo_id,
+                fps,
+                os.path.join(cfg.output_dir, "dataset_offline"),
+            )
+    except Exception as e:
+        logging.warning(f"Replay-buffer dataset dump failed (policy checkpoint is unaffected): {e}")
 
     logging.info("Resume training")
 
@@ -815,6 +866,7 @@ def initialize_replay_buffer(
 
     logging.info("Resume training load the online dataset")
     dataset_path = os.path.join(cfg.output_dir, "dataset")
+    _recover_dataset_dir(dataset_path)
 
     # NOTE: In RL is possible to not have a dataset.
     repo_id = None
@@ -855,6 +907,7 @@ def initialize_offline_replay_buffer(
     else:
         logging.info("load offline dataset")
         dataset_offline_path = os.path.join(cfg.output_dir, "dataset_offline")
+        _recover_dataset_dir(dataset_offline_path)
         offline_dataset = LeRobotDataset(
             repo_id=cfg.dataset.repo_id,
             root=dataset_offline_path,
