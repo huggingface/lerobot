@@ -23,6 +23,8 @@ import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from unittest.mock import MagicMock
+
 import datasets  # noqa: E402
 import numpy as np
 import pandas as pd
@@ -979,3 +981,44 @@ def test_aggregate_updates_per_episode_stats(tmp_path):
             else:
                 expected = base
             assert np.allclose(got, expected), f"ep{ep} {col}: {got} != {expected}"
+
+
+def test_aggregate_videos_fails_upfront_on_incompatible_videos(tmp_path):
+    """Upfront compatibility check fails before any copying or concatenation starts."""
+    from lerobot.datasets.aggregate import aggregate_videos
+
+    src_meta = MagicMock()
+    src_meta.root = tmp_path / "src"
+    src_meta.episodes = {
+        "videos/observation.images.cam/chunk_index": [0, 0],
+        "videos/observation.images.cam/file_index": [0, 1],
+    }
+
+    dst_meta = MagicMock()
+    dst_meta.root = tmp_path / "dst"
+
+    videos_idx = {
+        "observation.images.cam": {
+            "chunk": 0,
+            "file": 0,
+            "latest_duration": 0,
+            "episode_duration": 0,
+            "dst_file_durations": {},
+        }
+    }
+
+    with patch("lerobot.datasets.aggregate.check_video_files_compatibility") as mock_check:
+        mock_check.side_effect = ValueError("Input video is not compatible.")
+        with pytest.raises(ValueError, match="not compatible"):
+            aggregate_videos(
+                src_meta=src_meta,
+                dst_meta=dst_meta,
+                videos_idx=videos_idx,
+                video_files_size_in_mb=100.0,
+                chunk_size=10,
+                concatenate_videos=True,
+            )
+
+        # Assert check was called upfront before any shutil.copy or destination file creation
+        assert mock_check.called
+        assert not (dst_meta.root / "videos").exists()
