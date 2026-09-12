@@ -12,9 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .rlt import (
+    ChunkTransitionAssembler,
+    RLTActorCriticConfig,
+    RLTAgent,
+    RLTOnlineConfig,
+    RLTReplayBuffer,
+)
 from .sac import SACAlgorithm, SACAlgorithmConfig
 
 __all__ = [
+    "ChunkTransitionAssembler",
+    "RLTActorCriticConfig",
+    "RLTAgent",
+    "RLTOnlineConfig",
+    "RLTReplayBuffer",
     "SACAlgorithm",
     "SACAlgorithmConfig",
 ]
