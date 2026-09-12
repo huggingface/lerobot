@@ -104,25 +104,25 @@ jobs:
           uv run hf auth whoami
 
       - name: "Tier 1 — Test: base"
-        run: uv run pytest tests -vv --maxfail=10
+        run: uv run pytest tests -vv --maxfail=10 -m "not all_extras"
 
       # ── Tier 2: Dataset ──────────────────────────────────
       - name: "Tier 2 — Install: dataset"
         run: uv sync --locked --extra test --extra dataset
 
       - name: "Tier 2 — Test: dataset"
-        run: uv run pytest tests -vv --maxfail=10
+        run: uv run pytest tests -vv --maxfail=10 -m "not all_extras"
 
       # ── Tier 3: Hardware ─────────────────────────────────
       - name: "Tier 3 — Install: hardware"
         run: uv sync --locked --extra test --extra hardware
 
       - name: "Tier 3 — Test: hardware"
-        run: uv run pytest tests -vv --maxfail=10
+        run: uv run pytest tests -vv --maxfail=10 -m "not all_extras"
 
       # ── Tier 4: Viz ──────────────────────────────────────
       - name: "Tier 4 — Install: viz"
         run: uv sync --locked --extra test --extra viz
 
       - name: "Tier 4 — Test: viz"
-        run: uv run pytest tests -vv --maxfail=10
+        run: uv run pytest tests -vv --maxfail=10 -m "not all_extras"

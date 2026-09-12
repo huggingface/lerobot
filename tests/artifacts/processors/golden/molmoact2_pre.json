@@ -1,0 +1,100 @@
+{
+  "name": "policy_preprocessor",
+  "steps": [
+    {
+      "config": {
+        "rename_map": {}
+      },
+      "registry_name": "rename_observations_processor"
+    },
+    {
+      "config": {},
+      "registry_name": "to_batch_processor"
+    },
+    {
+      "config": {
+        "joint_offsets": null,
+        "joint_signs": null
+      },
+      "registry_name": "molmoact2_state_frame_transform"
+    },
+    {
+      "config": {
+        "eps": 1e-08,
+        "features": {
+          "action": {
+            "shape": [
+              6
+            ],
+            "type": "ACTION"
+          },
+          "observation.image.cam": {
+            "shape": [
+              3,
+              96,
+              96
+            ],
+            "type": "VISUAL"
+          },
+          "observation.images.cam": {
+            "shape": [
+              3,
+              96,
+              96
+            ],
+            "type": "VISUAL"
+          },
+          "observation.state": {
+            "shape": [
+              6
+            ],
+            "type": "STATE"
+          }
+        },
+        "norm_map": {
+          "ACTION": "QUANTILES",
+          "STATE": "QUANTILES",
+          "VISUAL": "IDENTITY"
+        }
+      },
+      "registry_name": "molmoact2_masked_normalizer",
+      "state_file": "policy_preprocessor_step_3_molmoact2_masked_normalizer.safetensors"
+    },
+    {
+      "config": {},
+      "registry_name": "molmoact2_clamp_normalized"
+    },
+    {
+      "config": {
+        "action_mode": "both",
+        "add_control_tokens": true,
+        "add_setup_tokens": true,
+        "allow_image_key_fallback": true,
+        "checkpoint_force_download": false,
+        "checkpoint_path": "allenai/MolmoAct2",
+        "checkpoint_revision": null,
+        "chunk_size": 30,
+        "control_mode": "",
+        "discrete_action_tokenizer": "allenai/MolmoAct2-FAST-Tokenizer",
+        "env_action_dim": 6,
+        "image_keys": [
+          "observation.image.cam",
+          "observation.images.cam"
+        ],
+        "max_action_dim": 32,
+        "max_sequence_length": null,
+        "normalize_language": true,
+        "num_state_tokens": 256,
+        "setup_type": ""
+      },
+      "registry_name": "molmoact2_pack_inputs"
+    },
+    {
+      "config": {
+        "device": "cpu",
+        "float_dtype": null
+      },
+      "registry_name": "device_processor"
+    }
+  ]
+}
