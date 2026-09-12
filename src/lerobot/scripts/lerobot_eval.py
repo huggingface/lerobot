@@ -411,6 +411,14 @@ def rollout(
     return ret
 
 
+def _get_episode_end_indices_and_mask(done: Tensor) -> tuple[Tensor, Tensor]:
+    """Return each episode's first done index and a mask including that step."""
+    done_indices = torch.argmax(done.to(int), dim=1)
+    steps = torch.arange(done.shape[1], device=done.device)
+    mask = steps[None, :] <= done_indices[:, None]
+    return done_indices, mask
+
+
 def eval_policy(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
@@ -550,17 +558,15 @@ def eval_policy(
 
         # Figure out where in each rollout sequence the first done condition was encountered (results after
         # this won't be included).
-        n_steps = rollout_data["done"].shape[1]
         # Note: this relies on a property of argmax: that it returns the first occurrence as a tiebreaker.
-        done_indices = torch.argmax(rollout_data["done"].to(int), dim=1)
+        done_indices, mask = _get_episode_end_indices_and_mask(rollout_data["done"])
 
-        # Make a mask with shape (batch, n_steps) to mask out rollout data after the first done
-        # (batch-element-wise). Note the `done_indices + 1` to make sure to keep the data from the done step.
-        mask = (torch.arange(n_steps) <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)).int()
+        # Mask out rollout data after the first done, keeping the done step itself.
         # Extend metrics.
         batch_sum_rewards = einops.reduce((rollout_data["reward"] * mask), "b n -> b", "sum")
         sum_rewards.extend(batch_sum_rewards.tolist())
-        batch_max_rewards = einops.reduce((rollout_data["reward"] * mask), "b n -> b", "max")
+        valid_rewards = rollout_data["reward"].masked_fill(~mask, -torch.inf)
+        batch_max_rewards = einops.reduce(valid_rewards, "b n -> b", "max")
         max_rewards.extend(batch_max_rewards.tolist())
         batch_successes = einops.reduce((rollout_data["success"] * mask), "b n -> b", "any")
         all_successes.extend(batch_successes.tolist())
