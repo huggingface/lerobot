@@ -806,8 +806,18 @@ def save_annotations_to_dataset(
                 if col not in file_df.columns:
                     file_df[col] = None
             if ep_idx in annotations:
+                if "episode_index" not in file_df.columns:
+                    raise KeyError(f"Episode shard {path} is missing the episode_index column")
+
+                local_indices = file_df.index[file_df["episode_index"] == ep_idx].tolist()
+                if len(local_indices) != 1:
+                    raise ValueError(
+                        f"Expected exactly one row for episode {ep_idx} in {path}, found {len(local_indices)}"
+                    )
+                local_idx = local_indices[0]
+
                 for col in cols:
-                    file_df.at[ep_idx, col] = episodes_df.loc[ep_idx, col]
+                    file_df.at[local_idx, col] = episodes_df.loc[ep_idx, col]
                 if prefix == "sparse":  # Legacy columns
                     for i, legacy in enumerate(
                         [
@@ -818,7 +828,7 @@ def save_annotations_to_dataset(
                             "subtask_end_frames",
                         ]
                     ):
-                        file_df.at[ep_idx, legacy] = episodes_df.loc[ep_idx, cols[i]]
+                        file_df.at[local_idx, legacy] = episodes_df.loc[ep_idx, cols[i]]
             file_df.to_parquet(path, engine="pyarrow", compression="snappy")
 
 
