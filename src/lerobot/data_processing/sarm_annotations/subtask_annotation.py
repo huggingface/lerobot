@@ -78,6 +78,8 @@ from transformers import AutoProcessor, Qwen3VLMoeForConditionalGeneration
 
 from lerobot.datasets import LeRobotDataset, resolve_episode_indices
 
+DEFAULT_MAX_NEW_TOKENS = 4096
+
 
 # Pydantic Models for SARM Subtask Annotation
 class Timestamp(BaseModel):
@@ -259,6 +261,7 @@ class VideoAnnotator:
         torch_dtype: torch.dtype = torch.bfloat16,
         model: Qwen3VLMoeForConditionalGeneration | None = None,  # noqa: F821
         processor: AutoProcessor | None = None,  # noqa: F821
+        max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
     ):
         """
         Initialize the video annotator with local model.
@@ -270,10 +273,15 @@ class VideoAnnotator:
             torch_dtype: Data type for model (bfloat16, float16, float32)
             model: Pre-loaded model instance (optional, to share between annotators)
             processor: Pre-loaded processor instance (optional, to share between annotators)
+            max_new_tokens: Maximum number of tokens to generate for the JSON annotation.
         """
+        if max_new_tokens <= 0:
+            raise ValueError(f"max_new_tokens must be positive, got {max_new_tokens}")
+
         self.subtask_list = subtask_list
         self.prompt = create_sarm_prompt(subtask_list)
         self.device = device
+        self.max_new_tokens = max_new_tokens
 
         # Use provided model/processor or load new ones
         if model is not None and processor is not None:
@@ -429,7 +437,7 @@ class VideoAnnotator:
 
                     with torch.no_grad():
                         generated_ids = self.model.generate(
-                            **inputs, max_new_tokens=1024, do_sample=True, temperature=0.7
+                            **inputs, max_new_tokens=self.max_new_tokens, do_sample=True, temperature=0.7
                         )
 
                     response = self.processor.batch_decode(
@@ -910,12 +918,15 @@ def worker_process_episodes(
     dense_subtask_list: list[str] | None,
     model_name: str,
     torch_dtype: torch.dtype,
+    max_new_tokens: int,
 ) -> tuple[dict, dict | None]:
     """Worker for parallel processing across GPUs."""
     device = f"cuda:{gpu_id}"
     dataset = LeRobotDataset(repo_id, download_videos=False)
 
-    sparse_annotator = VideoAnnotator(sparse_subtask_list, model_name, device, torch_dtype)
+    sparse_annotator = VideoAnnotator(
+        sparse_subtask_list, model_name, device, torch_dtype, max_new_tokens=max_new_tokens
+    )
     dense_annotator = (
         VideoAnnotator(
             dense_subtask_list,
@@ -924,6 +935,7 @@ def worker_process_episodes(
             torch_dtype,
             sparse_annotator.model,
             sparse_annotator.processor,
+            max_new_tokens,
         )
         if dense_subtask_list
         else None
@@ -968,6 +980,12 @@ def main():
     parser.add_argument("--output-repo-id", type=str, default=None, help="Output repo ID for push")
     parser.add_argument("--device", type=str, default="cuda", help="Device (cuda/cpu)")
     parser.add_argument("--dtype", type=str, default="bfloat16", choices=["bfloat16", "float16", "float32"])
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=DEFAULT_MAX_NEW_TOKENS,
+        help=f"Maximum generated tokens for each annotation (default: {DEFAULT_MAX_NEW_TOKENS})",
+    )
     parser.add_argument("--num-workers", type=int, default=1, help="Parallel workers for multi-GPU")
     parser.add_argument("--gpu-ids", type=int, nargs="+", default=None, help="GPU IDs to use")
     # Visualization options
@@ -1103,6 +1121,7 @@ def main():
                         dense_subtask_list,
                         args.model,
                         torch_dtype,
+                        args.max_new_tokens,
                     )
                     for w in range(args.num_workers)
                     if episodes_per_worker[w]
@@ -1122,7 +1141,13 @@ def main():
         else:
             # Sequential processing
             sparse_annotator = (
-                VideoAnnotator(sparse_subtask_list, args.model, args.device, torch_dtype)
+                VideoAnnotator(
+                    sparse_subtask_list,
+                    args.model,
+                    args.device,
+                    torch_dtype,
+                    max_new_tokens=args.max_new_tokens,
+                )
                 if not auto_sparse and sparse_subtask_list
                 else None
             )
@@ -1134,6 +1159,7 @@ def main():
                     torch_dtype,
                     sparse_annotator.model if sparse_annotator else None,
                     sparse_annotator.processor if sparse_annotator else None,
+                    args.max_new_tokens,
                 )
                 if dense_mode
                 else None

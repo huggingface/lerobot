@@ -17,11 +17,15 @@
 import pytest
 
 pytest.importorskip("transformers")
+pytest.importorskip("datasets")
+pytest.importorskip("pyarrow")
 
 from lerobot.data_processing.sarm_annotations.subtask_annotation import (
+    DEFAULT_MAX_NEW_TOKENS,
     Subtask,
     SubtaskAnnotation,
     Timestamp,
+    VideoAnnotator,
     compute_temporal_proportions,
 )
 
@@ -39,6 +43,17 @@ def make_annotation(subtasks: list[tuple[str, int, int]]) -> SubtaskAnnotation:
             for name, start, end in subtasks
         ]
     )
+
+
+def test_video_annotator_token_budget_defaults_and_validation():
+    annotator = VideoAnnotator(["fold"], model=object(), processor=object())
+    assert annotator.max_new_tokens == DEFAULT_MAX_NEW_TOKENS == 4096
+
+    custom = VideoAnnotator(["fold"], model=object(), processor=object(), max_new_tokens=2048)
+    assert custom.max_new_tokens == 2048
+
+    with pytest.raises(ValueError, match="max_new_tokens must be positive"):
+        VideoAnnotator(["fold"], model=object(), processor=object(), max_new_tokens=0)
 
 
 class TestComputeTemporalProportions:
