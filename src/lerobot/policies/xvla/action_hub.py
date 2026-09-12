@@ -528,46 +528,28 @@ class BimanualSO101ActionSpace(BaseActionSpace):
     # ---------- preprocess / postprocess ----------
 
     def preprocess(self, proprio, action, mode="train"):
-        """
-        - If proprio/action are 12-dim, pad them to 20 for the model.
-        - Zero-out gripper channels in proprio/action to focus learning on joints.
-        """
-        proprio_m = self._pad_to_model_dim(proprio.clone())
-        action_m = self._pad_to_model_dim(action.clone()) if action is not None else None
-
-        proprio_m[..., self.gripper_idx] = 0.0
-        if action_m is not None:
-            action_m[..., self.gripper_idx] = 0.0
-
+        """Pad 12-dim proprio/action to the 20-dim model space."""
+        proprio_m = self._pad_to_model_dim(proprio)
+        action_m = self._pad_to_model_dim(action) if action is not None else None
         return proprio_m, action_m
 
     def postprocess(self, action: torch.Tensor) -> torch.Tensor:
+        """Trim the 20-dim model output back to the real 12-dim control vector:
+        ["left_shoulder_pan.pos",
+         "left_shoulder_lift.pos",
+         "left_elbow_flex.pos",
+         "left_wrist_flex.pos",
+         "left_wrist_roll.pos",
+         "left_gripper.pos",
+         "right_shoulder_pan.pos",
+         "right_shoulder_lift.pos",
+         "right_elbow_flex.pos",
+         "right_wrist_flex.pos",
+         "right_wrist_roll.pos",
+         "right_gripper.pos"]
         """
-        - Model outputs [*, 20]
-        - Apply sigmoid to gripper logits
-        - Return only the first 12 dims for the real robot:
-          ["left_shoulder_pan.pos",
-           "left_shoulder_lift.pos",
-           "left_elbow_flex.pos",
-           "left_wrist_flex.pos",
-           "left_wrist_roll.pos",
-           "left_gripper.pos",
-           "right_shoulder_pan.pos",
-           "right_shoulder_lift.pos",
-           "right_elbow_flex.pos",
-           "right_wrist_flex.pos",
-           "right_wrist_roll.pos",
-           "right_gripper.pos"]
-        """
-        # Ensure we at least have the real dims + grippers
         if action.size(-1) < self.REAL_DIM:
             raise ValueError(f"Expected at least {self.REAL_DIM} dims in action, got {action.size(-1)}")
-
-        # Apply sigmoid on gripper channels in model space (indices 5 and 11)
-        if action.size(-1) > max(self.gripper_idx):
-            action[..., self.gripper_idx] = torch.sigmoid(action[..., self.gripper_idx])
-
-        # Return only the real 12-dim control vector for the env
         return self._trim_to_real_dim(action)
 
 
