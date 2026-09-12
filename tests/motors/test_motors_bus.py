@@ -23,6 +23,7 @@ pytest.importorskip("serial", reason="pyserial is required (install lerobot[hard
 
 from lerobot.motors.motors_bus import (
     Motor,
+    MotorCalibration,
     MotorNormMode,
     assert_same_address,
     get_address,
@@ -178,6 +179,107 @@ def test_write(data_name, id_, value, dummy_motors):
     mock__encode_sign.assert_called_once_with(data_name, {id_: value})
     if data_name in bus.normalized_data:
         mock__unnormalize.assert_called_once_with({id_: value})
+
+
+def _calibration_for(motor: str, id_: int, range_min: int, range_max: int) -> dict:
+    """Build a minimal :class:`MotorCalibration` dict keyed by motor name."""
+    return {
+        motor: MotorCalibration(
+            id=id_,
+            drive_mode=0,
+            homing_offset=0,
+            range_min=range_min,
+            range_max=range_max,
+        )
+    }
+
+
+def test_write_goal_position_out_of_calibrated_range_raises(dummy_motors):
+    """Regression for #3585: a Goal_Position write outside the calibrated
+    range must raise ``ValueError`` before the bus is touched.
+
+    The reported failure mode is a Feetech STS3215 motor that silently
+    clamps an out-of-range Goal_Position, drives toward the clamped edge,
+    and re-enables torque even after the host disabled it. Surface the
+    out-of-range value as a typed error instead of forwarding it.
+    """
+    bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
+    bus.connect(handshake=False)
+    bus.calibration = _calibration_for("dummy_1", id_=1, range_min=2045, range_max=3919)
+
+    with (
+        patch.object(MockMotorsBus, "_write", return_value=(0, 0)) as mock__write,
+        patch.object(MockMotorsBus, "_encode_sign", return_value={1: 228}) as mock__encode_sign,
+        pytest.raises(ValueError, match=r"outside the calibrated range \[2045, 3919\]"),
+    ):
+        bus.write("Goal_Position", "dummy_1", 228, normalize=False)
+
+    mock__write.assert_not_called()
+    mock__encode_sign.assert_not_called()
+
+
+def test_write_goal_position_in_calibrated_range_succeeds(dummy_motors):
+    """A Goal_Position write inside the calibrated range must reach the bus."""
+    bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
+    bus.connect(handshake=False)
+    bus.calibration = _calibration_for("dummy_1", id_=1, range_min=2045, range_max=3919)
+
+    with (
+        patch.object(MockMotorsBus, "_write", return_value=(0, 0)) as mock__write,
+        patch.object(MockMotorsBus, "_encode_sign", return_value={1: 3000}),
+    ):
+        bus.write("Goal_Position", "dummy_1", 3000, normalize=False)
+
+    mock__write.assert_called_once()
+
+
+def test_write_non_goal_position_skips_bounds_check(dummy_motors):
+    """Only Goal_Position participates in the bounds check. Other registers
+    (Goal_Velocity, Lock, etc.) must still write through unchanged even when
+    their value lies outside the calibrated position range."""
+    bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
+    bus.connect(handshake=False)
+    bus.calibration = _calibration_for("dummy_1", id_=1, range_min=2045, range_max=3919)
+
+    with (
+        patch.object(MockMotorsBus, "_write", return_value=(0, 0)) as mock__write,
+        patch.object(MockMotorsBus, "_encode_sign", return_value={1: 10000}),
+    ):
+        bus.write("Goal_Velocity", "dummy_1", 10000, normalize=False)
+
+    mock__write.assert_called_once()
+
+
+def test_sync_write_goal_position_out_of_range_raises(dummy_motors):
+    """The same bounds check applies to :py:meth:`sync_write` per motor."""
+    bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
+    bus.connect(handshake=False)
+    bus.calibration = _calibration_for("dummy_1", id_=1, range_min=2045, range_max=3919)
+
+    with (
+        patch.object(MockMotorsBus, "_sync_write", return_value=0) as mock__sync_write,
+        patch.object(MockMotorsBus, "_encode_sign", return_value={1: 228}),
+        pytest.raises(ValueError, match=r"outside the calibrated range \[2045, 3919\]"),
+    ):
+        bus.sync_write("Goal_Position", {"dummy_1": 228}, normalize=False)
+
+    mock__sync_write.assert_not_called()
+
+
+def test_write_goal_position_uncalibrated_motor_skips_check(dummy_motors):
+    """A motor with no calibration entry should not be rejected: callers may
+    intentionally bypass calibration for setup or diagnostics."""
+    bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
+    bus.connect(handshake=False)
+    # bus.calibration is empty by default
+
+    with (
+        patch.object(MockMotorsBus, "_write", return_value=(0, 0)) as mock__write,
+        patch.object(MockMotorsBus, "_encode_sign", return_value={1: 228}),
+    ):
+        bus.write("Goal_Position", "dummy_1", 228, normalize=False)
+
+    mock__write.assert_called_once()
 
 
 @pytest.mark.parametrize(
