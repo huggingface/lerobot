@@ -27,6 +27,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.configs import VideoEncoderConfig
 from lerobot.datasets.dataset_writer import _encode_video_worker
+from lerobot.datasets.feature_utils import get_hf_features_from_features
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_IMAGE_PATH
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_REPO_ID
@@ -187,6 +188,36 @@ def test_save_multiple_episodes(tmp_path):
 
     assert dataset.meta.total_episodes == 3
     assert dataset.meta.total_frames == total_frames
+
+
+def test_save_episode_with_zero_width_feature(tmp_path):
+    """A one-dimensional empty numeric feature round-trips and has no statistics."""
+    features = {
+        **SIMPLE_FEATURES,
+        "target": {"dtype": "float32", "shape": (0,), "names": None},
+    }
+    root = tmp_path / "ds"
+    dataset = LeRobotDataset.create(repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=features, root=root)
+    for _ in range(4):
+        dataset.add_frame(_make_frame(features))
+    dataset.save_episode()
+    dataset.finalize()
+
+    assert dataset.meta.total_episodes == 1
+    assert dataset.meta.total_frames == 4
+
+    reloaded = LeRobotDataset(repo_id=DUMMY_REPO_ID, root=root)
+    target = np.asarray(reloaded[0]["target"])
+    assert target.shape == (0,)
+    assert "target" not in (reloaded.meta.stats or {})
+
+
+@pytest.mark.parametrize("shape", [(0, 2), (2, 0), (1, 0, 2)])
+def test_multidimensional_zero_width_feature_rejected(shape):
+    features = {"target": {"dtype": "float32", "shape": shape, "names": None}}
+
+    with pytest.raises(ValueError, match="Multidimensional features with a zero-width dimension"):
+        get_hf_features_from_features(features)
 
 
 # ── clear / lifecycle ────────────────────────────────────────────────

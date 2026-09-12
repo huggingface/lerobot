@@ -687,6 +687,26 @@ def test_compute_episode_stats_string_features_skipped():
     assert "q01" in stats["action"]
 
 
+@pytest.mark.parametrize("shape", [(0,), (0, 2), (2, 0), (1, 0, 2)])
+def test_compute_episode_stats_zero_width_feature_skipped(shape):
+    """Features with any zero-width dimension carry no values and are skipped."""
+    episode_data = {
+        "action": np.random.normal(0, 1, (100, 5)).astype(np.float32),
+        "target": np.zeros((100, *shape), dtype=np.float32),
+    }
+    features = {
+        "action": {"dtype": "float32", "shape": (5,)},
+        "target": {"dtype": "float32", "shape": shape},
+    }
+
+    stats = compute_episode_stats(episode_data, features)
+
+    # Zero-width features are skipped, just like strings; non-empty features are unaffected.
+    assert "target" not in stats
+    assert "action" in stats
+    assert "q01" in stats["action"]
+
+
 def test_aggregate_feature_stats_with_quantiles():
     """Test aggregating feature stats that include quantiles uses conservative bounds."""
     stats_ft_list = [
