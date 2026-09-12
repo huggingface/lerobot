@@ -275,6 +275,18 @@ class TrainPipelineConfig(HubMixin):
                 f"{self.dataloader_multiprocessing_context!r}."
             )
 
+        # Second platform capability check, alongside the multiprocessing one above.
+        # Without it, a run that can never work on this machine still downloads the
+        # dataset, builds the policy and trains `env_eval_freq` steps before the first
+        # rollout raises: `make_env` is only reached from the eval branch inside the
+        # training loop (#4388).
+        #
+        # Gated on `env_eval_freq` because with in-training eval disabled nothing
+        # constructs a simulator. The env config is then only used to build processors
+        # for those rollouts, so failing would block a run that succeeds today.
+        if self.env is not None and self.env_eval_freq > 0:
+            self.env.validate_platform()
+
         self._resolve_pretrained_from_cli()
 
         if self.policy is None and self.reward_model is None:
