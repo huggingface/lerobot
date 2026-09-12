@@ -14,7 +14,7 @@
 
 [build-system]
 requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
+build-backend = "setuptools*"
 
 [project.urls]
 homepage = "https://huggingface.co/lerobot"
@@ -87,7 +87,7 @@ dependencies = [
 
     # Build tools (required by opencv-python-headless on some platforms)
     "cmake>=3.29.0.1,<4.2.0",
-    "setuptools>=71.0.0,<82.0.0",  # torch 2.11 requires setuptools<82; a higher cap makes the resolver downgrade torch
+    "setuptools>=71.0.0,<84.0.0",  # torch 2.11 requires setuptools<82; a higher cap makes the resolver downgrade torch
 ]
 
 # Optional dependencies
