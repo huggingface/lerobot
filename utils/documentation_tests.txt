@@ -10,3 +10,4 @@
 # `utils/check_doctest_list.py` does not care which way round it is.
 #
 # Keep alphabetically sorted: `make check-doctest-list` enforces it, `make fix-docstrings` sorts it.
+src/lerobot/eval/multi_seed.py

@@ -59,6 +59,7 @@ PATH_TO_LEROBOT = PATH_TO_REPO / "src" / "lerobot"
 
 # Modules whose public objects are checked. Add a module here once its docstrings follow the standard.
 MODULES_TO_CHECK = [
+    "lerobot.eval",
     "lerobot.robots",
 ]
 
