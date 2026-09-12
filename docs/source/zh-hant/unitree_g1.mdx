@@ -1,0 +1,303 @@
+# Unitree G1
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/unitree_thumbnail.jpg"
+  alt="Unitree G1 locomanipulation demo"
+  style={{ width: "100%" }}
+/>
+
+LeRobot 現已支援 Unitree G1 人形機器人！您可以進行遙操作（teleoperate）、訓練移動操作策略（train locomanipulation policies）、在模擬中測試（test in sim）等。29 與 23 自由度的變體皆受支援。
+
+---
+
+## 第 1 部分：開始使用（getting started）
+
+### 安裝 Unitree SDK（install the Unitree SDK）
+
+請依照 [unitree_sdk2_python 安裝指南](https://github.com/unitreerobotics/unitree_sdk2_python#installation)操作。已在 `unitree_sdk2py==1.0.1` 與 `cyclonedds==0.10.2` 上測試過：
+
+```bash
+conda create -y -n lerobot python=3.12
+conda activate lerobot
+git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
+cd unitree_sdk2_python
+pip install -e .
+cd ..
+```
+
+### 安裝 LeRobot（install LeRobot）
+
+```bash
+conda install ffmpeg -c conda-forge
+conda install -c conda-forge "pinocchio>=3.0.0,<4.0.0"
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+pip install -e '.[unitree_g1]'
+```
+
+<Tip>
+  目前，pinocchio 必須從 conda-forge 安裝（而非 pip），才能包含手臂 IK 所需的
+  CasADi 綁定（bindings）。
+</Tip>
+
+### 測試安裝（test the installation, simulation）
+
+模擬環境（simulation environment）有其自己的依賴套件（dependencies）。請查看模擬環境依賴套件（simulation environment dependencies）：[Unitree G1 Mujoco EnvHub](https://huggingface.co/lerobot/unitree-g1-mujoco/tree/main)。
+
+```bash
+pip install mujoco loguru msgpack msgpack-numpy
+```
+
+```bash
+lerobot-teleoperate \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=true \
+  --teleop.type=unitree_g1 \
+  --teleop.id=wbc_unitree \
+  --robot.cameras='{"global_view": {"type": "zmq", "server_address": "localhost", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30, "warmup_s": 5}}' \
+  --display_data=true \
+  --robot.controller=GrootLocomotionController
+```
+
+這會為 G1 啟動一個 [MuJoCo 模擬實例（sim instance）](https://huggingface.co/lerobot/unitree-g1-mujoco/tree/main)。您可以在啟動前將遊戲手把連接到您的機器，以便在模擬（simulation）中控制機器人的移動。我們透過 `--robot.controller` 同時支援 [HolosomaLocomotionController](https://github.com/amazon-far/holosoma) 與 [GrootLocomotionController](https://github.com/NVlabs/GR00T-WholeBodyControl)。
+
+- 按下 `9` 以釋放機器人（release the robot）
+- 按下 `7` / `8` 以增加 / 降低腰部高度（increase / decrease waist height）
+
+### 連接到實體機器人（connect to the physical robot）
+
+G1 的乙太網路（Ethernet）IP 固定為 `192.168.123.164`。您的機器必須在相同子網路（subnet）上具有靜態（static）IP：`192.168.123.x`，其中 `x ≠ 164`。
+
+```bash
+# 將 'enp131s0' 替換為您的乙太網路介面名稱（以 `ip a` 查看）
+sudo ip addr flush dev enp131s0
+sudo ip addr add 192.168.123.200/24 dev enp131s0
+sudo ip link set enp131s0 up
+```
+
+### SSH 連入機器人（SSH into the robot）
+
+```bash
+ssh unitree@192.168.123.164
+# 密碼：123
+```
+
+### 透過乙太網路分享網際網路（share internet via Ethernet）
+
+G1 需要網際網路存取（internet access）才能複製（clone）repo 與安裝套件（install packages）。透過乙太網路（Ethernet）分享您筆電的連線：
+
+**在您的筆電上：**
+
+```bash
+sudo sysctl -w net.ipv4.ip_forward=1
+
+# 將 wlp132s0f0 替換為您的 WiFi 介面名稱
+sudo iptables -t nat -A POSTROUTING -o wlp132s0f0 -s 192.168.123.0/24 -j MASQUERADE
+sudo iptables -A FORWARD -i wlp132s0f0 -o enp131s0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+sudo iptables -A FORWARD -i enp131s0 -o wlp132s0f0 -j ACCEPT
+```
+
+**在 G1 上：**
+
+```bash
+sudo ip route del default 2>/dev/null || true
+sudo ip route add default via 192.168.123.200 dev eth0
+echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+
+# 驗證
+ping -c 3 8.8.8.8
+```
+
+### 在 G1 上安裝 Unitree SDK（install the Unitree SDK on the G1）
+
+請依照 [unitree_sdk2_python 安裝指南](https://github.com/unitreerobotics/unitree_sdk2_python#installation)操作：
+
+```bash
+conda create -y -n lerobot python=3.12
+conda activate lerobot
+git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
+cd unitree_sdk2_python
+python -m pip install -e .
+cd ..
+```
+
+### 在 G1 上安裝 LeRobot（install LeRobot on the G1）
+
+```bash
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+conda install -c conda-forge "pinocchio>=3.0.0,<4.0.0"
+python -m pip install -e '.[unitree_g1]'
+```
+
+<Tip>
+  目前，pinocchio 必須從 conda-forge 安裝（而非 pip），才能包含手臂 IK 所需的
+  CasADi 綁定（bindings）。
+</Tip>
+
+### 可選：在機器人上啟用 WiFi（Enable WiFi on the Robot）
+
+若要進行無線 SSH 存取，您可以在 G1 上啟用 WiFi（預設為封鎖）：
+
+```bash
+sudo rfkill unblock all
+sudo ip link set wlan0 up
+sudo nmcli radio wifi on
+sudo nmcli device set wlan0 managed yes
+sudo systemctl restart NetworkManager
+```
+
+**連接到 WiFi 網路：**
+
+```bash
+nmcli device wifi list
+
+sudo nmcli connection add type wifi ifname wlan0 con-name "YourNetwork" ssid "YourNetwork"
+sudo nmcli connection modify "YourNetwork" wifi-sec.key-mgmt wpa-psk
+sudo nmcli connection modify "YourNetwork" wifi-sec.psk "YourPassword"
+sudo nmcli connection modify "YourNetwork" connection.autoconnect yes
+sudo nmcli connection up "YourNetwork"
+
+ip a show wlan0
+```
+
+之後您就可以透過 WiFi 而非乙太網路進行 SSH：
+
+```bash
+ssh unitree@<ROBOT_WIFI_IP>
+# 密碼：123
+```
+
+---
+
+## 第 2 部分：遙操作與移動（teleoperation & locomotion）
+
+### 執行機器人伺服器（run the robot server）
+
+在機器人上（於 `~/lerobot`）：
+
+```bash
+cd ~/lerobot
+python src/lerobot/robots/unitree_g1/run_g1_server.py --camera
+```
+
+### 執行移動策略（running the locomotion policy）
+
+您可以從筆電透過乙太網路（Ethernet）、透過 WiFi（實驗性 experimental）或直接在機器人本身上執行遙操作用戶端（teleoperation client）。請留意您的網路可能引入的延遲（latency）。
+
+**從您的筆電：**
+
+```bash
+lerobot-teleoperate \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=false \
+  --robot.robot_ip=<ROBOT_IP> \
+  --teleop.type=unitree_g1 \
+  --teleop.id=wbc_unitree \
+  --robot.cameras='{"global_view": {"type": "zmq", "server_address": "<ROBOT_IP>", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30}}' \
+  --display_data=true \
+  --robot.controller=HolosomaLocomotionController
+```
+
+我們透過 `--robot.controller` 同時支援 [GrootLocomotionController](https://github.com/NVlabs/GR00T-WholeBodyControl) 與 [HolosomaLocomotionController](https://github.com/amazon-far/holosoma)。
+
+---
+
+## 第 3 部分：使用 Homunculus 外骨骼進行移動操作（loco-manipulation with the Homunculus exoskeleton）
+
+我們透過 Homunculus 外骨骼（Exoskeleton）提供移動操作（loco-manipulation）解決方案，這是一個用於全身控制（whole-body control）的開源 7 自由度外骨骼（7 DoF exoskeleton）。請至[這裡](https://github.com/nepyope/hmc_exo)查看。
+
+### 校正（calibration）
+
+```bash
+lerobot-calibrate \
+  --teleop.type=unitree_g1 \
+  --teleop.left_arm_config.port=/dev/ttyACM1 \
+  --teleop.right_arm_config.port=/dev/ttyACM0 \
+  --teleop.id=exo
+```
+
+校正（calibration）期間，讓每個關節走完其完整範圍（move each joint through its entire range）。擬合（fitting）完成後，將關節移動到中立位置（move the joint in a neutral position）並按下 `n` 以繼續。
+
+### 錄製資料集（record a dataset）
+
+```bash
+lerobot-record \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=true \
+  --robot.cameras='{"global_view": {"type": "zmq", "server_address": "localhost", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30}}' \
+  --teleop.type=unitree_g1 \
+  --teleop.left_arm_config.port=/dev/ttyACM1 \
+  --teleop.right_arm_config.port=/dev/ttyACM0 \
+  --teleop.id=exo \
+  --dataset.repo_id=your-username/dataset-name \
+  --dataset.single_task="Test" \
+  --dataset.num_episodes=2 \
+  --dataset.episode_time_s=5 \
+  --dataset.reset_time_s=5 \
+  --dataset.push_to_hub=true \
+  --dataset.streaming_encoding=true \
+  --dataset.encoder_threads=2
+```
+
+> **注意：** 若您只使用搖桿（joystick），請省略 `--teleop.left_arm_config.port` 與 `--teleop.right_arm_config.port`。
+
+範例資料集（example dataset）：[nepyope/unitree_box_move_blue_full](https://huggingface.co/datasets/nepyope/unitree_box_move_blue_full)
+
+---
+
+## 第 4 部分：訓練與推論（training & inference）
+
+### 訓練（training）
+
+```bash
+python src/lerobot/scripts/lerobot_train.py \
+  --dataset.repo_id=your-username/dataset-name  \
+  --policy.type=pi05 \
+  --output_dir=./outputs/pi05_training \
+  --job_name=pi05_training \
+  --policy.repo_id=your-username/your-repo-id \
+  --policy.pretrained_path=lerobot/pi05_base \
+  --policy.compile_model=true \
+  --policy.gradient_checkpointing=true \
+  --wandb.enable=true \
+  --policy.dtype=bfloat16 \
+  --policy.freeze_vision_encoder=false \
+  --policy.train_expert_only=false \
+  --steps=3000 \
+  --policy.device=cuda \
+  --batch_size=32
+```
+
+### 使用 RTC 進行推論（inference with RTC）
+
+訓練（training）完成後，我們建議使用推論時的 RTC （inference-time RTC）來部署策略（deploying policies）：
+
+```bash
+lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=your-username/your-repo-id \
+  --policy.device=cuda \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=false \
+  --robot.controller=HolosomaLocomotionController \
+  --robot.cameras='{"global_view": {"type": "zmq", "server_address": "<ROBOT_IP>", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30}}' \
+  --task="task_description" \
+  --duration=1000 \
+  --fps=30 \
+  --inference.type=rtc
+```
+
+---
+
+## 其他資源（additional resources）
+
+- [Unitree SDK 文件](https://github.com/unitreerobotics/unitree_sdk2_python)
+- [GR00T-WholeBodyControl](https://github.com/NVlabs/GR00T-WholeBodyControl)
+- [Holosoma](https://github.com/amazon-far/holosoma)
+- [LeRobot 文件](https://github.com/huggingface/lerobot)
+- [Unitree IL LeRobot](https://github.com/unitreerobotics/unitree_IL_lerobot)
+
+---
+
+_最後更新：2026 年 3 月_

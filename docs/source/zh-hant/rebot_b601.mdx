@@ -1,0 +1,188 @@
+# reBot B601-DM
+
+[reBot B601-DM](https://wiki.seeedstudio.com/rebot_arm_b601_dm_lerobot/) 是 Seeed Studio 推出的開源、低成本機器手臂，用於具身 AI（embodied-AI）與模仿學習（imitation learning）。它包含一支 **從臂（follower）**（`B601-DM`，一支 6 自由度手臂加上由 Damiao CAN 馬達驅動的夾爪 gripper）以及一支用於遙操作（teleoperation）它的 **主臂（leader）**（`StarArm102` / `reBot Arm 102`，由 FashionStar UART 智慧伺服驅動）。
+
+本頁涵蓋單臂與雙手（雙臂）設定的**校正（calibration）**與**遙操作（teleoperation）**。
+
+<div style="display: flex; align-items: center; gap: 10px;">
+  <img
+    src="https://files.seeedstudio.com/wiki/robotics/projects/lerobot/b601dm_zeroposition.jpg"
+    alt="reBot B601-DM follower arm at its zero position"
+    width="48%"
+  />
+  <img
+    src="https://files.seeedstudio.com/wiki/robotics/projects/lerobot/102_zeroposition.jpg"
+    alt="reBot Arm 102 leader arm at its zero position"
+    width="48%"
+  />
+</div>
+
+_左：處於零位（zero position）的 B601-DM 從臂（follower）。右：處於零位的 reBot Arm 102 主臂（leader）。圖片由 [Seeed Studio](https://wiki.seeedstudio.com/rebot_arm_b601_dm_lerobot/) 提供。_
+
+## 安裝 LeRobot（install LeRobot） 🤗
+
+請依照我們的[安裝指南（Installation Guide）](./installation)操作，然後安裝 reBot 支援：
+
+```bash
+pip install -e ".[rebot]"
+```
+
+這會引入 `motorbridge`（B601-DM 從臂 follower 的 CAN 馬達控制）與 `motorbridge-smart-servo`（reBot Arm 102 主臂 leader 的 FashionStar UART 伺服）。
+
+## 已註冊的裝置類型（registered device types）
+
+| 類型（type）             | 種類（kind）                                                        |
+| ------------------------ | ------------------------------------------------------------------- |
+| `rebot_b601_follower`    | 單臂（single-arm）B601-DM 從臂（follower）機器人                    |
+| `bi_rebot_b601_follower` | 雙手（雙臂 dual-arm）從臂（follower）機器人                         |
+| `rebot_102_leader`       | 單臂（single-arm）reBot Arm 102 主臂遙操作器（leader teleoperator） |
+| `bi_rebot_102_leader`    | 雙手（雙臂 dual-arm）主臂遙操作器（leader teleoperator）            |
+
+雙手類型（bimanual types）會組合兩個單臂實例（single-arm instances），並以 `left_` / `right_` 前綴（prefixes）為每支手臂的
+觀測/動作鍵（observation/action keys）加上命名空間（namespace）。每支手臂的設定會透過巢狀（nested）的
+`left_arm_config.*` / `right_arm_config.*` 引數（arguments）傳入。
+
+## 找到 USB 連接埠（find the USB ports）
+
+針對每個裝置，使用下列命令找出與其馬達匯流排（motor bus ）相關聯的 USB 連接埠（port）：
+
+```bash
+lerobot-find-port
+```
+
+<Tip warning={true}>
+  在 Linux 上，請移除 `brltty`（`sudo apt remove
+  brltty`），使其不會佔用主臂（leader） 的 USB 序列埠（serial
+  port）。您可能也需要授予序列裝置（serial devices）的存取權： `sudo chmod 666
+  /dev/ttyACM* /dev/ttyUSB*`。
+</Tip>
+
+## 校正（calibration）
+
+兩支手臂都不會儲存持久性的硬體校正（persistent hardware calibration）：每次連接時，馬達都會針對手臂實際保持的姿勢重新歸零（re-zeroed）。校正只是單純記錄該零位姿勢（zero pose）。當出現提示時，請**手動將手臂移動到其零位**（ manually move the arm to its zero position，上方所示的預設坐下姿勢，夾爪 gripper 完全閉合），然後按下 <kbd>ENTER</kbd>。
+
+### 從臂（follower，B601-DM）
+
+<hfoptions id="calibrate-follower">
+<hfoption id="Single arm">
+
+```bash
+lerobot-calibrate \
+    --robot.type=rebot_b601_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=follower \
+    --robot.can_adapter=damiao
+```
+
+</hfoption>
+<hfoption id="Dual arm">
+
+連接雙手從臂（bimanual follower）；校正（calibration）會先對左臂執行，然後是右臂。
+
+```bash
+lerobot-calibrate \
+    --robot.type=bi_rebot_b601_follower \
+    --robot.id=bi_follower \
+    --robot.left_arm_config.port=/dev/ttyACM0 \
+    --robot.left_arm_config.can_adapter=damiao \
+    --robot.right_arm_config.port=/dev/ttyACM1 \
+    --robot.right_arm_config.can_adapter=damiao
+```
+
+每支手臂的校正檔案（per-arm calibration files）會以 id 加上 `_left` / `_right` 後綴（suffixes）儲存。
+
+</hfoption>
+</hfoptions>
+
+### 主臂（leader，reBot Arm 102）
+
+<hfoptions id="calibrate-leader">
+<hfoption id="Single arm">
+
+```bash
+lerobot-calibrate \
+    --teleop.type=rebot_102_leader \
+    --teleop.port=/dev/ttyUSB0 \
+    --teleop.id=leader
+```
+
+</hfoption>
+<hfoption id="Dual arm">
+
+```bash
+lerobot-calibrate \
+    --teleop.type=bi_rebot_102_leader \
+    --teleop.id=bi_leader \
+    --teleop.left_arm_config.port=/dev/ttyUSB0 \
+    --teleop.right_arm_config.port=/dev/ttyUSB1
+```
+
+</hfoption>
+</hfoptions>
+
+## 遙操作（teleoperation）
+
+兩支手臂都校正（calibration）完成後，即可用主臂驅動從臂（drive the follower with the leader）。從臂（follower）透過 Damiao 序列橋接器（`can_adapter=damiao`，預設值）或 SocketCAN 轉接器（`can_adapter=socketcan`）與其 CAN 匯流排（bus）通訊。關於 SocketCAN 轉接器設定的更多細節，請參閱 [OpenArm 頁面](./openarm)。
+
+<hfoptions id="teleoperate">
+<hfoption id="Single arm">
+
+```bash
+lerobot-teleoperate \
+    --robot.type=rebot_b601_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=follower \
+    --robot.can_adapter=damiao \
+    --teleop.type=rebot_102_leader \
+    --teleop.port=/dev/ttyUSB0 \
+    --teleop.id=leader
+```
+
+</hfoption>
+<hfoption id="Dual arm">
+
+雙手主臂與從臂（bimanual leader and follower）沿用單臂類別；每支手臂都透過巢狀的（nested）
+`left_arm_config.*` / `right_arm_config.*` 引數（arguments）設定，
+因此雙手 reBot Arm 102 主臂（leader）會驅動雙手 B601-DM 從臂（follower）。
+
+```bash
+lerobot-teleoperate \
+    --robot.type=bi_rebot_b601_follower \
+    --robot.id=bi_follower \
+    --robot.left_arm_config.port=/dev/ttyACM0 \
+    --robot.left_arm_config.can_adapter=damiao \
+    --robot.right_arm_config.port=/dev/ttyACM1 \
+    --robot.right_arm_config.can_adapter=damiao \
+    --teleop.type=bi_rebot_102_leader \
+    --teleop.id=bi_leader \
+    --teleop.left_arm_config.port=/dev/ttyUSB0 \
+    --teleop.right_arm_config.port=/dev/ttyUSB1
+```
+
+</hfoption>
+</hfoptions>
+
+<Tip>
+  主臂（leader）與從臂（follower）共用相同的關節名稱（joint
+  names，`shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_yaw,
+  wrist_roll, gripper`），因此主臂 的動作（leader
+  action）會直接對應到從臂（follower）上。
+</Tip>
+
+若某個關節（joint）的運動方向相反（reversed），請在主臂（leader）的 `joint_directions` 中翻轉其正負號（夾爪 gripper 還帶有一個縮放 scale 係數，用以將其範圍加寬至從臂 follower）：
+
+```bash
+lerobot-teleoperate \
+    --robot.type=rebot_b601_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.can_adapter=damiao \
+    --teleop.type=rebot_102_leader \
+    --teleop.port=/dev/ttyUSB0 \
+    --teleop.joint_directions='{"shoulder_pan":-1,"shoulder_lift":-1,"elbow_flex":1,"wrist_flex":1,"wrist_yaw":1,"wrist_roll":-1,"gripper":-6}'
+```
+
+## 錄製資料集（recording datasets）
+
+將 `lerobot-teleoperate` 換成 `lerobot-record`（使用相同的 `--robot.*` / `--teleop.*` 引數 arguments，再加上 `--dataset.*`），即可錄製用於訓練的示範（record demonstrations for training）。完整工作流程請參閱[機器人的模仿學習（Imitation Learning for Robots）](./il_robots)。
+
+關於硬體組裝與接線，請參閱 [Seeed Studio reBot wiki](https://wiki.seeedstudio.com/rebot_arm_b601_dm_lerobot/)。

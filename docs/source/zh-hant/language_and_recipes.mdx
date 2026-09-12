@@ -1,0 +1,147 @@
+# 語言欄位與配方（language columns and recipes）
+
+大多數 LeRobot 資料集（dataset）每個回合（episode）只帶有單一的 `task` 字串（string），這對於
+簡短、單一指令的技能（single-instruction skills）來說沒問題，但對於該領域正在
+邁向的多模態機器人策略（multi-modal robot policies，高階規劃 high-level planning、記憶 memory、插話 interjections、VQA、
+工具使用）而言則不足。為了在不分叉（fork）資料集格式（dataset format）的情況下支援
+這些策略（policy），LeRobot 以兩個選用的語言欄位擴充了
+`LeRobotDataset`，並加上一個小型的 recipe 層（layer），可即時
+將那些資料列轉換為聊天式的訓練樣本（chat-style training samples）。
+
+此設計乾淨地分成三層（layers）：
+
+1. **資料集中的資料（data in the dataset）** — 語言標註（language annotations）與影格（frame）一同儲存於
+   `data/chunk-*/file-*.parquet`，作為兩個選用欄位（columns, `language_persistent`
+   與 `language_events`）。沒有這些欄位的資料集（dataset）會維持既有的
+   行為。
+2. **配方（recipe）** — 一個 YAML 檔案，宣告要綁定哪些標註列（annotation rows），以及
+   如何將它們排布為聊天回合（chat turns，`role`、`content`、可選用影像、
+   可選用工具呼叫）。配方（recipe） 純粹是設定（pure config）；要新增一個
+   不需要 Python。
+3. **訓練格式（training format）** — 在取樣時，`RenderMessagesStep` 會依據每個影格的標註（per-frame annotations）
+   解析配方（recipe），並發出 HF 風格的 `messages` 以及
+   LeRobot 特有的旁附資料（`message_streams`、`target_message_indices`），
+   供策略處理器（policy processors）消費。
+
+本頁依序說明每一層（layer）。
+
+## 第 1 層 — 資料集中的語言欄位（language columns in the dataset）
+
+這兩個選用欄位與影格（frame）資料一同位於
+`data/chunk-*/file-*.parquet`：
+
+- `language_persistent`：一份資料列清單（list of row），至廣播（broadcast）到回合（episode）中的每個影格（every frame），用於表示仍保持作用中（active）的狀態（state），例如 `subtask`、`plan` 與 `memory`。
+- `language_events`：一份資料列清單（list of rows），只出現在事件（event）被發出（emitted）的確切影格（exact frame）上，例如 `interjection`、`vqa` 與語音工具呼叫（speech tool calls）。
+
+兩個欄位（columns）共用相同的資料列形狀（row shape）（事件列省略 `timestamp`，因為
+資料列所在的影格 frame 已經提供了它）：
+
+```text
+role: string
+content: string | null
+style: string | null
+timestamp: float32        # 僅限 persistent 資料列
+camera: string | null     # observation.images.* 特徵鍵，僅限視角相依的資料列
+tool_calls: list[Json] | null
+```
+
+`camera` 欄位（field）會標記（tags）其 `content` 立基於特定攝影機視角（camera view）的資料列（rows）。
+視角相依樣式（view-dependent styles，`vqa` 與 `trace`）的資料列「必須」將 `camera` 設定為
+對應的 `observation.images.*` 特徵鍵（feature key）。其他所有樣式（style）的資料列（rows），
+包括以關節/笛卡兒術語（joint / Cartesian terms）描述機器人座標系原始動作（robot-frame primitives）的 `motion`，
+「必須」將 `camera` 保持為 `null`。管線寫入器（pipeline writers）與驗證器（validator）
+會透過 `validate_camera_field(style, camera)` 強制執行此規則。
+
+`meta/tasks.parquet` 仍是任務（task）的標準來源（canonical source）。特殊的 `${task}` 配方（recipe）綁定一律讀取該任務字串（task string），而不依賴語言標註（language annotations）。
+
+### 架構（architecture）
+
+語言堆疊（language stack）本身有三個內部模組（modules）支撐第 1 層（layer）：
+
+1. `lerobot.datasets.language` 定義 schema、樣式登錄表（style registry）與 `column_for_style`。
+2. `lerobot.datasets.language_render` 解析資料列（rows）並選染訊息（renders messages）。
+3. `RenderMessagesStep` 將資料集樣本（dataset samples）轉換為 `messages`、`message_streams` 與 `target_message_indices`。
+
+`LeRobotDataset` 維持與 recipe 無關（recipe-agnostic）。當 `language_persistent` 與 `language_events` 存在時它會直接傳遞，而未標註的資料集（unannotated datasets）則維持既有的行為。
+
+## 第 2 層 — 配方剖析（recipe anatomy）
+
+配方（recipe）是由 `TrainingRecipe` 與 `MessageTurn` 支撐的 YAML 檔案。它們
+宣告要提取哪些標註列（annotation rows，透過 `bindings`），以及如何將它們組成
+聊天回合（chat turns, `messages`）。
+
+```yaml
+messages:
+  - { role: user, content: "${task}", stream: high_level }
+  - { role: assistant, content: "${subtask}", stream: low_level, target: true }
+```
+
+配方（recipe）也可以分支成子配方（sub-recipes）的加權（weighted）**混合（blend）**。在取樣時（sample time），
+會依樣本索引（sample index）以確定性方式（deterministically）恰好選出一個分支（branch），
+使不同影格訓練不同的目標（frames train different objectives，例如記憶更新 memory updates、
+低階執行 low-level execution、VQA），而無需任何 Python 連接（wiring）。
+
+### 時序語意（temporal semantics）
+
+持續樣式（persistent styles）在發出（emission）後直到被取代前皆為作用中（active）：
+
+- `active_at(t, style=subtask)`
+- `nth_prev(style=memory, offset=1)`
+- `nth_next(style=subtask, offset=1)`
+
+事件樣式（event styles）僅存在於其確切的時間戳（timestamp）上：
+
+- `emitted_at(t, style=interjection)`
+- `emitted_at(t, style=vqa, role=user, camera=observation.images.top)`
+- `emitted_at(t, role=assistant, tool_name=say)`
+
+確切的事件（event）比對沒有容錯窗（tolerance window），因此寫入器必須以 parquet 資料中的影格時間戳（frame timestamps）為事件列（event rows）戳記（stamp）。
+
+### 視角相依的解析（view-dependent resolution）
+
+對於視角相依的樣式（view-dependent styles, `vqa` 與 `trace`），解析器（resolver）會取得一個
+與 `role=` 及 `tool_name=` 並行（parallel）的 `camera=` 過濾器（filter）。具有多個
+攝影機的資料集（dataset）通常會在相同時間戳（timestamp）為每個攝影機發出（emit）一組
+（`vqa`、`user`）+（`vqa`、`assistant`）對（pair）；若沒有 `camera=`，這些解析器會看到兩個
+相符項並拋出模糊性錯誤（ambiguity error）。配方（recipe）透過各自的綁定
+加上相符的影像區塊（image block）來消費（consume）每個攝影機，例如
+
+```yaml
+ask_vqa_top:
+  bindings:
+    vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.top)"
+    vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.top)"
+  messages:
+    - role: user
+      stream: high_level
+      if_present: vqa_query
+      content:
+        - { type: image, feature: observation.images.top }
+        - { type: text, text: "${vqa_query}" }
+    - {
+        role: assistant,
+        content: "${vqa}",
+        stream: high_level,
+        target: true,
+        if_present: vqa,
+      }
+```
+
+為資料集（dataset）錄製的每個攝影機各新增一個這樣的子配方（sub-recipe）。
+
+## 第 3 層 — 訓練格式（training format）
+
+渲染後的樣本（rendered samples）使用 HF 風格的聊天訊息（HF-style chat messages）加上 LeRobot 旁附資料（sidecars）：
+
+```python
+sample["messages"]
+sample["message_streams"]
+sample["target_message_indices"]
+```
+
+渲染器（renderer）不會套用 tokenizer 的聊天模板（chat template）。策略處理器（policy processors）會決定如何為其骨幹（backbone）序列化（serialize）這些訊息，這讓同一個資料集（dataset）可跨 SmolVLA、Pi0.5，以及任何未來預期使用 OpenAI 風格聊天訊息（OpenAI-style chat）的 VLM 使用。
+
+## 優雅地處理缺席（graceful absence）
+
+若兩個語言欄位（language columns）皆缺失、為 `None` 或為空，`RenderMessagesStep` 會是無操作（no-op）。
+若在某個沒有所需事件列的影格（frame without the required event row）上選中了事件範圍的分支（event-scoped branch），渲染（rendering）會回傳 `None`，讓載入器（loader）可以重試另一個樣本（sample）。
