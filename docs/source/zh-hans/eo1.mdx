@@ -1,0 +1,168 @@
+# EO-1
+
+EO-1 是一个**用于机器人控制的视觉-语言-动作策略**。LeRobot 实现将 EO-1 与标准的 LeRobot 训练、评估和处理器接口集成。
+
+## 模型概述
+
+EO-1 使用 Qwen2.5-VL 骨干网络进行视觉-语言理解，并添加了一个连续流匹配动作头用于机器人控制。该策略将每个机器人控制样本格式化为多模态对话：相机图像传递给 Qwen2.5-VL，机器人状态用 EO-1 状态令牌表示，未来的动作块用 EO-1 动作令牌表示。
+
+<img
+  src="https://huggingface.co/datasets/HaomingSong/lerobot-documentation-images/resolve/main/lerobot/eo_pipeline.png"
+  alt="EO-1 概述"
+  width="85%"
+/>
+
+在训练期间，EO-1 学习在动作令牌位置对连续动作块进行去噪。在推理期间，它采样一个动作块，返回连续动作，并在重新采样之前从块中执行 `n_action_steps` 步。
+
+### LeRobot 集成涵盖的内容
+
+- 通过 LeRobot 使用标准 `policy.type=eo1` 配置
+- 通过策略处理器进行 Qwen2.5-VL 图像和文本预处理
+- 连续流匹配动作预测
+- 通过 LeRobot 策略 API 保存/加载检查点
+- 使用 `lerobot-train` 训练和 `lerobot-eval` 评估
+
+更广泛的 EO-1 项目还包括交错的视觉-文本-动作预训练和多模态推理工作流。本页专注于 LeRobot 机器人控制策略路径。
+
+## 安装要求
+
+1. 按照[安装指南](./installation)安装 LeRobot。
+2. 运行以下命令安装 EO-1 依赖项：
+
+   ```bash
+   pip install -e ".[eo1]"
+   ```
+
+3. 如果你想在 LIBERO 上训练或评估，还需安装 LIBERO 依赖项：
+
+   ```bash
+   pip install -e ".[eo1,libero]"
+   ```
+
+EO-1 可以通过 `policy.attn_implementation=sdpa` 使用标准的 PyTorch scaled-dot-product attention 后端。如果你的环境安装了兼容的 `flash_attn`，可以请求 `policy.attn_implementation=flash_attention_2`。
+
+## 数据要求
+
+EO-1 需要一个包含以下内容的 LeRobot 数据集：
+
+- 至少一个视觉观测，例如 `observation.images.image`
+- `observation.state`
+- `action`
+- 通过数据集 `task` 字段提供的语言任务指令
+
+如果你的数据集使用不同的观测名称，使用 `rename_map` 将它们与训练或评估设置期望的名称对齐。
+
+## 使用方法
+
+要在 LeRobot 配置中使用 EO-1，指定策略类型为：
+
+```python
+policy.type=eo1
+```
+
+默认情况下，新的 EO-1 策略从以下位置初始化其骨干网络：
+
+```python
+policy.vlm_base=Qwen/Qwen2.5-VL-3B-Instruct
+```
+
+一旦有 LeRobot 格式的 EO-1 检查点可用，使用以下方式加载：
+
+```python
+policy.path=your-org/your-eo1-checkpoint
+```
+
+## 训练
+
+### 训练命令示例
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your_org/your_dataset \
+  --policy.type=eo1 \
+  --policy.vlm_base=Qwen/Qwen2.5-VL-3B-Instruct \
+  --policy.dtype=bfloat16 \
+  --policy.attn_implementation=sdpa \
+  --policy.gradient_checkpointing=false \
+  --output_dir=./outputs/eo1_training \
+  --job_name=eo1_training \
+  --steps=300000 \
+  --batch_size=16 \
+  --policy.device=cuda
+```
+
+### 关键训练参数
+
+| 参数                                   | 默认值                          | 描述                                                |
+| -------------------------------------- | ------------------------------- | --------------------------------------------------- |
+| `policy.vlm_base`                      | `Qwen/Qwen2.5-VL-3B-Instruct`  | 用于初始化新策略的 Qwen2.5-VL 检查点                |
+| `policy.dtype`                         | `auto`                          | 骨干网络数据类型请求：`auto`、`bfloat16` 或 `float32` |
+| `policy.attn_implementation`           | `None`                          | 可选的 Qwen 注意力后端，如 `sdpa`                    |
+| `policy.gradient_checkpointing`        | `false`                         | 减少训练期间的内存使用                               |
+| `policy.chunk_size`                    | `8`                             | 每个块预测的未来动作数量                             |
+| `policy.n_action_steps`                | `8`                             | 从采样块中消耗的动作数量                             |
+| `policy.num_denoise_steps`             | `10`                            | 采样期间使用的流匹配去噪步骤数                       |
+| `policy.max_state_dim`                 | `32`                            | 状态填充维度                                         |
+| `policy.max_action_dim`                | `32`                            | 动作填充维度                                         |
+| `policy.force_fp32_autocast`           | `true`                          | 即使骨干网络使用混合精度也保持流头为 fp32            |
+| `policy.supervise_padding_action_dims` | `true`                          | 控制是否监督填充的动作维度                           |
+| `policy.supervise_padding_actions`     | `true`                          | 控制是否监督填充的未来动作行                         |
+
+## 评估
+
+一旦你有 LeRobot 格式的检查点，可以通过 `lerobot-eval` 评估 EO-1：
+
+```bash
+lerobot-eval \
+  --policy.path=your-org/your-eo1-checkpoint \
+  --env.type=libero \
+  --env.task=libero_object \
+  --eval.batch_size=1 \
+  --eval.n_episodes=20
+```
+
+对于相机名称与检查点配置不同的数据集或环境，传递 `rename_map`：
+
+```bash
+lerobot-eval \
+  --policy.path=your-org/your-eo1-checkpoint \
+  --env.type=libero \
+  --env.task=libero_object \
+  --rename_map='{"observation.images.image2":"observation.images.wrist_image"}'
+```
+
+## 配置说明
+
+### 图像处理
+
+EO-1 使用 Qwen2.5-VL 处理器。`policy.image_min_pixels` 和 `policy.image_max_pixels` 设置控制视觉令牌传入骨干网络之前的图像调整大小边界。
+
+### 状态和动作维度
+
+策略在 EO-1 流头之前将状态和动作向量填充到 `policy.max_state_dim` 和 `policy.max_action_dim`。预测在由策略返回之前被裁剪回原始动作维度。
+
+### 注意力后端
+
+使用 `policy.attn_implementation=sdpa` 以获得可移植的设置。仅在安装了 `flash_attn` 且与环境兼容时使用 `flash_attention_2`。
+
+## 参考资料
+
+- [EO-1 项目](https://github.com/EO-Robotics/EO1)
+- [EO-1 论文](https://arxiv.org/abs/2508.21112)
+- [Qwen2.5-VL-3B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct)
+
+## 引用
+
+```bibtex
+@article{eo1,
+  title={EO-1: Interleaved Vision-Text-Action Pretraining for General Robot Control},
+  author={Delin Qu and Haoming Song and Qizhi Chen and Zhaoqing Chen and Xianqiang Gao and Xinyi Ye and Qi Lv and Modi Shi and Guanghui Ren and Cheng Ruan and Maoqing Yao and Haoran Yang and Jiacheng Bao and Bin Zhao and Dong Wang},
+  journal={arXiv preprint},
+  year={2025},
+  url={https://arxiv.org/abs/2508.21112}
+}
+```
+
+## 许可证
+
+本 LeRobot 集成遵循 LeRobot 使用的 **Apache 2.0 许可证**。请查看上游 EO-1 模型和数据集页面了解已发布 EO-1 检查点和数据的许可证。

@@ -1,0 +1,29 @@
+# LeLab - LeRobot 使用指南
+
+LeLab 是一个基于 LeRobot 库构建的图形用户界面，旨在让无需记忆命令行操作的人也能轻松使用机器人。通过这一个应用，您就可以配置机器人、远程操作、收集数据集、在本地或通过 HF Jobs 在云端 GPU 上训练策略，并将训练好的模型部署回机器人上。它是从开箱 SO-101 到运行策略的最简单方式，也是学习 LeRobot 工作流程的绝佳伴侣。源代码和问题反馈请访问 GitHub：[huggingface/leLab](https://github.com/huggingface/leLab)。
+
+> [!提示]
+> 目前 LeLab 仅兼容 SO-ARM101
+
+<Youtube id="VqyKUuW9V1g" />
+
+### 安装
+
+需要 [`uv`](https://docs.astral.sh/uv/getting-started/installation/)。一条命令完成安装和启动：
+
+```
+uv tool install git+https://github.com/huggingface/leLab.git && lelab
+```
+
+安装完成后，随时在终端运行 `lelab` 即可启动应用。
+
+### 功能
+
+- **添加机器人** — 选择机械臂类型（主臂/从臂），从中立位置校准每个关节，并连接摄像头。
+- **远程操作** — 使用主臂控制从臂，并查看机械臂的实时 3D 可视化效果。
+- **数据集录制** — 定义任务描述、回合数和重置持续时间。按空格键切换到下一回合。建议录制 30 个以上的回合。
+- **本地训练** — 直接在您自己的机器上训练策略，可选择数据集、策略类型、批次大小和步数。
+- **通过 HF Jobs 云端训练** — 通过 [HF Jobs](https://huggingface.co/docs/huggingface_hub/en/guides/jobs) 在强大的 GPU 上训练，价格透明。请先运行 `hf auth login`。硬件/批次大小提示请参阅[计算硬件指南](hardware_guide)。
+- **训练可视化** — 在应用中实时查看训练进度，检查点自动保存。
+- **运行训练好的策略** — 从您的任务列表中选择任意模型，一键在机器人上运行推理。
+- **使用社区数据集** — 提供任意 Hugging Face 数据集 ID，即可在您未亲自录制的数据集上进行训练。

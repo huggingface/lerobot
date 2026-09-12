@@ -1,0 +1,135 @@
+# π₀ (Pi0)
+
+π₀ 是一个**用于通用机器人控制的视觉-语言-动作模型（Vision-Language-Action model）**，来自 Physical Intelligence。LeRobot 的实现改编自他们的开源 [OpenPI](https://github.com/Physical-Intelligence/openpi) 仓库。
+
+## 模型概述
+
+π₀ 代表了机器人领域的突破，是 [Physical Intelligence](https://www.physicalintelligence.company/blog/pi0) 开发的第一个通用机器人基础模型。与为重复动作编程的传统专用机器人程序不同，π₀ 被设计为通用策略（generalist policy），能够理解视觉输入、解释自然语言指令，并在多种不同任务中控制各种不同的机器人。
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-pi0%20(1).png"
+  alt="Pi0 概述"
+  width="85%"
+/>
+
+### 物理智能的愿景
+
+正如 Physical Intelligence 所描述的，虽然 AI 在数字领域取得了卓越成就——从下棋到药物发现，但人类智能在物理世界中仍然远远超过 AI。借用 Moravec 悖论（Moravec's paradox）来说，赢得一盘棋对 AI 来说是一个"简单"问题，但折叠衬衫或收拾桌子则需要解决工程学中一些最困难的问题。π₀ 代表了迈向人工物理智能（artificial physical intelligence）的第一步，使用户能够像使用大语言模型一样，直接要求机器人执行他们想要的任何任务。
+
+### 架构与方法
+
+π₀ 融合了多项关键创新：
+
+- **流匹配（Flow Matching）**：使用一种新颖的方法，通过流匹配（扩散模型的变体）为预训练的视觉语言模型（VLM）增加连续动作输出
+- **跨具身训练（Cross-Embodiment Training）**：在来自 8 个不同机器人平台的数据上进行训练，包括 UR5e、双臂 UR5e、Franka、双臂 Trossen、双臂 ARX、移动 Trossen 和移动 Fibocom
+- **互联网规模预训练（Internet-Scale Pre-training）**：从预训练的 30 亿参数视觉语言模型继承语义知识
+- **高频控制（High-Frequency Control）**：以最高 50 Hz 的频率输出电机指令，实现实时灵巧操作
+
+## 安装要求
+
+1. 按照我们的[安装指南](./installation)安装 LeRobot。
+2. 运行以下命令安装 Pi0 依赖：
+
+   ```bash
+   pip install -e ".[pi]"
+   ```
+
+## 训练数据与能力
+
+π₀ 在迄今最大的机器人交互数据集上进行训练，结合了三个关键数据源：
+
+1. **互联网规模预训练**：来自网络的视觉语言数据，用于语义理解
+2. **Open X-Embodiment 数据集**：开源机器人操作数据集
+3. **Physical Intelligence 数据集**：涵盖 8 个不同机器人的大量多样化灵巧任务数据集
+
+## 使用方法
+
+在 LeRobot 中使用 π₀，请将策略类型（policy type）指定为：
+
+```python
+policy.type=pi0
+```
+
+## 训练
+
+要训练 π₀，可以使用标准 LeRobot 训练脚本并配合相应配置：
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi0 \
+    --output_dir=./outputs/pi0_training \
+    --job_name=pi0_training \
+    --policy.pretrained_path=lerobot/pi0_base \
+    --policy.repo_id=your_repo_id \
+    --policy.compile_model=true \
+    --policy.gradient_checkpointing=true \
+    --policy.dtype=bfloat16 \
+    --policy.freeze_vision_encoder=false \
+    --policy.train_expert_only=false \
+    --steps=3000 \
+    --policy.device=cuda \
+    --batch_size=32
+```
+
+### 关键训练参数
+
+- **`--policy.compile_model=true`**：启用模型编译以加速训练
+- **`--policy.gradient_checkpointing=true`**：显著降低训练期间的内存使用量
+- **`--policy.dtype=bfloat16`**：使用混合精度训练以提高效率
+- **`--batch_size=32`**：训练批次大小，根据你的 GPU 显存进行调整
+- **`--policy.pretrained_path=lerobot/pi0_base`**：你想要微调的基础 π₀ 模型，可选项有：
+  - [lerobot/pi0_base](https://huggingface.co/lerobot/pi0_base)
+  - [lerobot/pi0_libero](https://huggingface.co/lerobot/pi0_libero)（专门在 Libero 数据集上训练）
+
+### 训练参数说明
+
+| 参数                    | 默认值    | 说明                                |
+| ----------------------- | -------- | ----------------------------------- |
+| `freeze_vision_encoder` | `false`  | 不冻结视觉编码器                    |
+| `train_expert_only`     | `false`  | 不冻结 VLM，训练所有参数             |
+
+**💡 提示**：设置 `train_expert_only=true` 会冻结 VLM，仅训练动作专家网络（action expert）和投影层（projections），从而在较低的显存使用下进行微调。
+
+## 相对动作（Relative Actions）
+
+默认情况下，π₀ 预测绝对动作（absolute actions）。你可以启用**相对动作（relative actions）**，使模型预测相对于当前机器人状态的偏移量。这可以提高某些配置下的训练稳定性。
+
+要使用相对动作，首先通过 CLI 在相对空间中重新计算数据集统计信息：
+
+```bash
+lerobot-edit-dataset \
+    --repo_id your_dataset \
+    --operation.type recompute_stats \
+    --operation.relative_action true \
+    --operation.chunk_size 50 \
+    --operation.relative_exclude_joints "['gripper']" \
+    --push_to_hub true
+```
+
+或者用等效的 Python 代码：
+
+```python
+from lerobot.datasets import LeRobotDataset, recompute_stats
+
+dataset = LeRobotDataset("your_dataset")
+recompute_stats(dataset, relative_action=True, chunk_size=50, relative_exclude_joints=["gripper"])
+dataset.push_to_hub()
+```
+
+`chunk_size` 应与你策略的 `chunk_size` 一致（π₀ 默认为 50）。`relative_exclude_joints` 列出应保持绝对空间的关节名称（例如夹爪指令）。使用 `--push_to_hub true` 将更新后的统计信息上传到 Hub。
+
+然后在训练时启用相对动作：
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi0 \
+    --policy.use_relative_actions=true \
+    --policy.relative_exclude_joints='["gripper"]' \
+    ...
+```
+
+## 许可证
+
+本模型遵循 **Apache 2.0 许可证**，与原始 [OpenPI 仓库](https://github.com/Physical-Intelligence/openpi)保持一致。

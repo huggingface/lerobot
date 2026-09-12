@@ -1,0 +1,91 @@
+# ACT（Action Chunking with Transformers）
+
+ACT 是一种**轻量级且高效的模仿学习策略**，特别适合细粒度操作任务。由于 ACT 训练时间短、计算需求低且性能出色，它是**你开始使用 LeRobot 时我们推荐的第一个模型**。
+
+<div class="video-container">
+  <iframe
+    width="100%"
+    height="415"
+    src="https://www.youtube.com/embed/ft73x0LfGpM"
+    title="LeRobot ACT Tutorial"
+    frameborder="0"
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+    allowfullscreen
+  ></iframe>
+</div>
+
+_观看 LeRobot 团队的这个教程了解 ACT 的工作原理：[LeRobot ACT 教程](https://www.youtube.com/watch?v=ft73x0LfGpM)_
+
+## 模型概述
+
+Action Chunking with Transformers (ACT) 由 Zhao 等人在论文 [Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware](https://arxiv.org/abs/2304.13705) 中提出。该策略旨在使用经济实惠的硬件和最少的演示数据实现精确、接触丰富的操作任务。
+
+### 为什么 ACT 适合初学者
+
+ACT 作为起点非常出色，原因如下：
+
+- **训练快速**：在单个 GPU 上几小时内即可完成训练
+- **轻量级**：仅约 80M 参数，高效且易于使用
+- **数据高效**：通常仅需 50 次演示即可实现高成功率
+
+### 架构
+
+ACT 使用基于 transformer 的架构，包含三个主要组件：
+
+1. **视觉骨干网络**：ResNet-18 处理来自多个摄像头视角的图像
+2. **Transformer 编码器**：综合摄像头特征、关节位置和学习到的潜在变量的信息
+3. **Transformer 解码器**：使用交叉注意力生成连贯的动作序列
+
+策略的输入包括：
+
+- 多个 RGB 图像（例如来自腕部摄像头、前方/顶部摄像头）
+- 当前机器人关节位置
+- 潜在风格变量 `z`（训练期间学习，推理时设为零）
+
+输出为 `k` 个未来动作序列块。
+
+## 安装要求
+
+1. 按照我们的 [安装指南](./installation) 安装 LeRobot。
+2. ACT 包含在 LeRobot 基础安装中，无需额外依赖！
+
+## 训练 ACT
+
+ACT 与标准 LeRobot 训练流程无缝配合。以下是训练 ACT 的完整示例：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=${HF_USER}/your_dataset \
+  --policy.type=act \
+  --output_dir=outputs/train/act_your_dataset \
+  --job_name=act_your_dataset \
+  --policy.device=cuda \
+  --wandb.enable=true \
+  --policy.repo_id=${HF_USER}/act_policy
+```
+
+### 训练技巧
+
+1. **从默认值开始**：ACT 的默认超参数适用于大多数任务
+2. **训练时长**：在单个 GPU 上进行 100k 训练步骤预计需要几小时
+3. **批量大小**：从批量大小 8 开始，根据你的 GPU 内存进行调整
+
+### 使用 Google Colab 训练
+
+如果你的本地计算机没有强大的 GPU，你可以按照 [ACT 训练笔记本](./notebooks#training-act) 使用 Google Colab 训练模型。
+
+## 评估 ACT
+
+训练完成后，你可以使用 `lerobot-record` 命令和训练好的策略来评估 ACT 策略。这将运行推理并记录评估 episode：
+
+```bash
+lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=${HF_USER}/act_policy \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM0 \
+  --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+  --display_data=true \
+  --task="Your task description" \ # ACT 可以跳过
+  --duration=60
+```
