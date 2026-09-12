@@ -42,10 +42,10 @@ uv pip install -e ".[feetech,kinematics,dataset]" "huggingface_hub>=1.5"
 # Isaac Teleop from public PyPI. `cloudxr` brings the CloudXR runtime bindings;
 # `retargeters-lite` is the scipy-based retargeter path that resolves on both
 # x86_64 and ARM (the full `retargeters` extra does not resolve on aarch64).
-uv pip install "isaacteleop[cloudxr,retargeters-lite]~=1.3.131" "scipy>=1.14"
+uv pip install "isaacteleop[cloudxr,retargeters-lite]~=1.4.0" "scipy>=1.14"
 
 # Optional, x86_64 only: the full retargeter stack.
-uv pip install "isaacteleop[retargeters]~=1.3.131"
+uv pip install "isaacteleop[retargeters]~=1.4.0"
 ```
 
 One-time CloudXR EULA (the auto-launch prompts on stdin and would hang on a headless machine):
@@ -120,9 +120,10 @@ Run either script with `--help` for all flags.
 ## Layout
 
 ```
-isaac_teleop/            device library: session lifecycle (base.py), XRController,
-                         SO101LeaderArm, Clutch, configs, and the XR→IK processor step
-common.py                shared loop infra: device bundles, clutch/IK pipeline wiring,
+isaac_teleop/            device library: session lifecycle (base.py), XRController (with its
+                         in-pipeline clutch retargeter), SO101LeaderArm, configs, and the
+                         XR→IK processor step
+common.py                shared loop infra: device bundles, IK pipeline wiring,
                          reset/align slews, URDF fetch, keyboard listener
 teleoperate.py           teleoperation CLI (device selected via --teleop.type)
 record.py                dataset-recording CLI (same device selection + --dataset.*)

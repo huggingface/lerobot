@@ -72,8 +72,8 @@ _DEFAULT_BASE_T_ANCHOR: list[list[float]] = [
 class XRControllerConfig(IsaacTeleopConfig):
     """Config for Isaac Teleop XR (VR) controller teleoperation.
 
-    Exposes the raw base-frame grip pose, squeeze, and trigger via ``ControllersSource``.
-    No retargeters: the clutch and gripper mapping live in the owning loop.
+    Carries the clutch retargeter in-pipeline and emits an absolute base-frame EE pose; the
+    gripper mapping stays in the owning loop.
     """
 
     hand_side: str = "right"
@@ -81,8 +81,18 @@ class XRControllerConfig(IsaacTeleopConfig):
     ``__post_init__``) because draccus cannot decode ``Literal``-typed fields from the CLI."""
 
     clutch_threshold: float = 0.5
-    """Squeeze value above which the owning loop's clutch engages (held-to-enable). The
-    device reports only the raw squeeze; the threshold is applied by the loop."""
+    """Squeeze value above which the clutch engages (held-to-enable). Passed to the in-pipeline
+    clutch retargeter, which is the only place the comparison happens; the loop reads engagement
+    back off the device rather than re-deriving it."""
+
+    clutch_position_scale: float = 0.5
+    """Controller-to-EE translation gain the in-pipeline clutch retargeter applies to the
+    engage-relative delta -- dimensionless, and unrelated to ``clutch_threshold`` above despite the shared
+    default value. ``1.0`` is 1:1 motion. A comfortable operator arm sweep is ~0.7 m, roughly
+    2x the SO-101's ~0.35 m reach, so 1:1 motion drives the commanded EE target outside the
+    reachable envelope within a single engaged segment; the ``0.5`` default maps a full sweep
+    inside reach (0.4 m of controller motion -> 0.2 m of EE motion). Translation only --
+    orientation stays 1:1. See https://github.com/NVIDIA/IsaacTeleop/issues/733."""
 
     base_T_anchor: list[list[float]] = field(  # noqa: N815  (frameA_T_frameB transform-matrix convention)
         # Fresh copy per instance: returning the module-level list itself would alias one
