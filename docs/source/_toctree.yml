@@ -99,6 +99,8 @@
     title: Use Async Inference
   - local: rtc
     title: Real-Time Chunking (RTC)
+  - local: fault_injection
+    title: Fault Injection (evaluation)
   title: "Inference"
 - sections:
   - local: envhub

@@ -83,6 +83,12 @@ from lerobot.envs import (
     preprocess_observation,
 )
 from lerobot.envs.utils import NEW_ROLLOUT_OPTION
+from lerobot.faults import (
+    ActionHoldFault,
+    FaultInjectionConfig,
+    make_fault_injector,
+    resolve_fault_log_path,
+)
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline
@@ -179,6 +185,8 @@ def rollout(
     recording_repo_id: str | None = None,
     recording_private: bool = False,
     predicted_latents_callback: Callable[[PreTrainedPolicy], None] | None = None,
+    fault_injector: ActionHoldFault | None = None,
+    episode_ids: list[int] | None = None,
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
 
@@ -221,6 +229,8 @@ def rollout(
     # NEW_ROLLOUT_OPTION tells FreezeAfterEpisodeEnd this is a genuine new episode, as
     # opposed to Gymnasium's argument-less autoreset of a sub-env that already finished.
     observation, info = env.reset(seed=seeds, options={NEW_ROLLOUT_OPTION: True})
+    if fault_injector is not None:
+        fault_injector.reset(episode_ids=episode_ids)
     if render_callback is not None:
         render_callback(env)
 
@@ -303,8 +313,15 @@ def rollout(
             action_numpy: np.ndarray = action.to("cpu").numpy()
             assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"
 
+            # Optional fault injection on the final postprocessed action, immediately
+            # before env.step. Disabled / None injector leaves actions unchanged.
+            if fault_injector is not None:
+                action_numpy = fault_injector.apply(action_numpy, episode_ids=episode_ids)
+
             # Apply the next action.
             observation, reward, terminated, truncated, info = env.step(action_numpy)
+            if fault_injector is not None:
+                fault_injector.notify_dones(np.asarray(terminated) | np.asarray(truncated))
             if render_callback is not None:
                 render_callback(env)
 
@@ -428,6 +445,7 @@ def eval_policy(
     recording_repo_id: str | None = None,
     recording_private: bool = False,
     save_predicted_video: bool = False,
+    fault_cfg: FaultInjectionConfig | None = None,
 ) -> dict:
     """
     Args:
@@ -467,6 +485,56 @@ def eval_policy(
     was_training = policy.training
     policy.eval()
 
+    fault_injector = make_fault_injector(fault_cfg, num_envs=env.num_envs)
+    try:
+        return _eval_policy_body(
+            env=env,
+            policy=policy,
+            env_preprocessor=env_preprocessor,
+            env_postprocessor=env_postprocessor,
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            n_episodes=n_episodes,
+            max_episodes_rendered=max_episodes_rendered,
+            videos_dir=videos_dir,
+            return_episode_data=return_episode_data,
+            start_seed=start_seed,
+            recording_dir=recording_dir,
+            env_features=env_features,
+            recording_repo_id=recording_repo_id,
+            recording_private=recording_private,
+            save_predicted_video=save_predicted_video,
+            fault_injector=fault_injector,
+            start=start,
+            was_training=was_training,
+        )
+    finally:
+        if fault_injector is not None:
+            fault_injector.close()
+
+
+def _eval_policy_body(
+    *,
+    env: gym.vector.VectorEnv,
+    policy: nn.Module,
+    env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    n_episodes: int,
+    max_episodes_rendered: int,
+    videos_dir: Path | None,
+    return_episode_data: bool,
+    start_seed: int | None,
+    recording_dir: Path | None,
+    env_features: dict | None,
+    recording_repo_id: str | None,
+    recording_private: bool,
+    save_predicted_video: bool,
+    fault_injector: ActionHoldFault | None,
+    start: float,
+    was_training: bool,
+) -> dict:
     # Determine how many batched rollouts we need to get n_episodes. Note that if n_episodes is not evenly
     # divisible by env.num_envs we end up discarding some data in the last batch.
     n_batches = n_episodes // env.num_envs + int((n_episodes % env.num_envs) != 0)
@@ -531,6 +599,7 @@ def eval_policy(
             seeds = range(
                 start_seed + (batch_ix * env.num_envs), start_seed + ((batch_ix + 1) * env.num_envs)
             )
+        episode_ids = list(range(batch_ix * env.num_envs, (batch_ix + 1) * env.num_envs))
         rollout_data = rollout(
             env=env,
             policy=policy,
@@ -546,6 +615,8 @@ def eval_policy(
             recording_repo_id=recording_repo_id,
             recording_private=recording_private,
             predicted_latents_callback=collect_predicted_latents if save_predicted_video else None,
+            fault_injector=fault_injector,
+            episode_ids=episode_ids,
         )
 
         # Figure out where in each rollout sequence the first done condition was encountered (results after
@@ -786,6 +857,18 @@ def eval_main(cfg: EvalPipelineConfig):
     max_episodes_rendered = 0 if cfg.eval.recording else 10
     videos_dir = None if cfg.eval.recording else Path(cfg.output_dir) / "videos"
 
+    fault_cfg = cfg.fault
+    if fault_cfg.enabled:
+        if cfg.env.max_parallel_tasks > 1:
+            raise ValueError(
+                "Fault injection currently requires --env.max_parallel_tasks=1 so "
+                "fault event logs stay consistent across tasks."
+            )
+        # Resolve relative paths under output_dir; truncate once per eval run.
+        fault_cfg.log_path = resolve_fault_log_path(fault_cfg.log_path, cfg.output_dir)
+        fault_cfg.log_path.parent.mkdir(parents=True, exist_ok=True)
+        fault_cfg.log_path.write_text("", encoding="utf-8")
+
     with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
         info = eval_policy_all(
             envs=envs,
@@ -804,6 +887,7 @@ def eval_main(cfg: EvalPipelineConfig):
             env_features=cfg.env.features if cfg.eval.recording else None,
             recording_repo_id=cfg.eval.recording_repo_id,
             recording_private=cfg.eval.recording_private,
+            fault_cfg=fault_cfg,
         )
         logger.info("Overall Aggregated Metrics:")
         logger.info(info["overall"])
@@ -851,6 +935,7 @@ def eval_one(
     env_features: dict | None = None,
     recording_repo_id: str | None = None,
     recording_private: bool = False,
+    fault_cfg: FaultInjectionConfig | None = None,
 ) -> TaskMetrics:
     """Evaluates one task_id of one suite using the provided vec env."""
 
@@ -872,6 +957,7 @@ def eval_one(
         env_features=env_features,
         recording_repo_id=recording_repo_id,
         recording_private=recording_private,
+        fault_cfg=fault_cfg,
     )
 
     per_episode = task_result["per_episode"]
@@ -903,6 +989,7 @@ def run_one(
     env_features: dict | None = None,
     recording_repo_id: str | None = None,
     recording_private: bool = False,
+    fault_cfg: FaultInjectionConfig | None = None,
 ):
     """
     Run eval_one for a single (task_group, task_id, env).
@@ -937,6 +1024,7 @@ def run_one(
         env_features=env_features,
         recording_repo_id=task_repo_id,
         recording_private=recording_private,
+        fault_cfg=fault_cfg,
     )
 
     if max_episodes_rendered > 0:
@@ -963,6 +1051,7 @@ def eval_policy_all(
     return_episode_data: bool = False,
     start_seed: int | None = None,
     max_parallel_tasks: int = 1,
+    fault_cfg: FaultInjectionConfig | None = None,
 ) -> dict:
     """
     Evaluate a nested `envs` dict: {task_group: {task_id: vec_env}}.
@@ -972,6 +1061,12 @@ def eval_policy_all(
     plus per-task infos.
     """
     start_t = time.time()
+
+    if fault_cfg is not None and fault_cfg.enabled and max_parallel_tasks > 1:
+        raise ValueError(
+            "Fault injection currently requires max_parallel_tasks=1 so "
+            "fault event logs stay consistent across tasks."
+        )
 
     # Flatten envs into list of (task_group, task_id, env)
     tasks = [(tg, tid, vec) for tg, group in envs.items() for tid, vec in group.items()]
@@ -1022,6 +1117,7 @@ def eval_policy_all(
         env_features=env_features,
         recording_repo_id=recording_repo_id,
         recording_private=recording_private,
+        fault_cfg=fault_cfg,
     )
 
     # Set the shared policy's mode before launching any workers. Restoring it

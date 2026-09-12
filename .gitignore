@@ -166,6 +166,9 @@ wandb/
 data/
 outputs/
 
+# Local fine-tune / inventory artifacts (not part of the feature branch)
+ft_inventory/
+
 # Translations
 *.mo
 *.pot
