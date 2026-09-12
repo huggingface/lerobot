@@ -22,6 +22,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from lerobot.common.train_utils import generate_model_card
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.rewards.pretrained import PreTrainedRewardModel
@@ -326,7 +327,7 @@ def test_train_pipeline_config_from_pretrained_strips_legacy_rabc_when_disabled(
 
 
 # ---------------------------------------------------------------------------
-# PreTrainedRewardModel hub upload: push_model_to_hub + generate_model_card.
+# PreTrainedRewardModel hub upload: publish_trained_model + generate_model_card.
 # We test the generation side (offline) fully, and the upload side with HfApi
 # mocked so nothing actually hits the network.
 # ---------------------------------------------------------------------------
@@ -334,6 +335,13 @@ def test_train_pipeline_config_from_pretrained_strips_legacy_rabc_when_disabled(
 
 def _make_dummy_reward_model(**config_kwargs):
     return _DummyHubReward(_DummyHubRewardConfig(**config_kwargs)), _DummyHubRewardConfig
+
+
+def _make_train_cfg(dataset_repo_id: str):
+    from lerobot.configs.default import DatasetConfig
+    from lerobot.configs.train import TrainPipelineConfig
+
+    return TrainPipelineConfig(dataset=DatasetConfig(repo_id=dataset_repo_id))
 
 
 @pytest.fixture
@@ -353,12 +361,7 @@ def test_reward_model_generate_model_card_renders_expected_fields(_offline_model
         tags=["robot", "sim"],
     )
 
-    card = model.generate_model_card(
-        dataset_repo_id="user/my_dataset",
-        model_type=model.config.type,
-        license=model.config.license,
-        tags=model.config.tags,
-    )
+    card = generate_model_card(model.config, cfg=_make_train_cfg("user/my_dataset"))
 
     # Metadata (YAML header) — ModelCardData fields.
     assert card.data.license == "mit"
@@ -380,21 +383,16 @@ def test_reward_model_generate_model_card_uses_default_license(_offline_model_ca
     """When config.license is None the card falls back to apache-2.0."""
     model, _ = _make_dummy_reward_model()
 
-    card = model.generate_model_card(
-        dataset_repo_id="user/my_dataset",
-        model_type=model.config.type,
-        license=model.config.license,
-        tags=None,
-    )
+    card = generate_model_card(model.config, cfg=_make_train_cfg("user/my_dataset"))
 
     assert card.data.license == "apache-2.0"
 
 
-def test_reward_model_push_model_to_hub_uploads_expected_files(monkeypatch, _offline_model_card):
-    """``push_model_to_hub`` must:
+def test_publish_trained_model_uploads_expected_reward_files(monkeypatch, _offline_model_card):
+    """Publishing a reward model through ``publish_trained_model`` must:
     1. create the repo,
-    2. assemble a temp folder with weights + config.json + train_config.json + README.md,
-    3. call ``api.upload_folder`` on that folder.
+    2. push the model through ``HubMixin.push_to_hub`` (weights + config.json),
+    3. upload a bundle sidecar with train_config.json + the reward-specific README.md.
     All network calls are mocked.
     """
     from huggingface_hub.constants import CONFIG_NAME
@@ -430,18 +428,80 @@ def test_reward_model_push_model_to_hub_uploads_expected_files(monkeypatch, _off
             uploaded["files"] = sorted(p.name for p in Path(folder_path).iterdir())
             return fake_commit_info
 
-    from lerobot.rewards import pretrained as reward_pretrained
+    import lerobot.common.train_utils as train_utils
+    import lerobot.utils.hub as hub_module
+    from lerobot.common.train_utils import publish_trained_model
 
-    monkeypatch.setattr(reward_pretrained, "HfApi", lambda *a, **kw: _FakeHfApi())
+    all_files: set[str] = set()
 
-    model.push_model_to_hub(train_cfg)
+    class _RecordingFakeHfApi(_FakeHfApi):
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def upload_folder(self, *, repo_id, repo_type, folder_path, commit_message, **_kwargs):
+            result = super().upload_folder(
+                repo_id=repo_id,
+                repo_type=repo_type,
+                folder_path=folder_path,
+                commit_message=commit_message,
+            )
+            all_files.update(uploaded["files"])
+            return result
+
+    monkeypatch.setattr(train_utils, "HfApi", _RecordingFakeHfApi)
+    monkeypatch.setattr(hub_module, "HfApi", _RecordingFakeHfApi)
+
+    publish_trained_model(train_cfg, model, None, None, dataset_meta=None)
 
     assert uploaded["create_repo_id"] == "user/my_reward"
     assert uploaded["upload_repo_id"] == "user/my_reward"
     assert uploaded["upload_repo_type"] == "model"
-    assert uploaded["commit_message"] == "Upload reward model weights, train config and readme"
-    # Minimum required files that must be uploaded with a reward model.
-    assert CONFIG_NAME in uploaded["files"]  # config.json
-    assert TRAIN_CONFIG_NAME in uploaded["files"]  # train_config.json
-    assert "README.md" in uploaded["files"]
-    assert any(name.endswith(".safetensors") for name in uploaded["files"])
+    # Minimum required files across the publish commits.
+    assert CONFIG_NAME in all_files  # config.json (model commit)
+    assert TRAIN_CONFIG_NAME in all_files  # train_config.json (bundle commit)
+    assert "README.md" in all_files  # reward-specific card (bundle commit)
+    assert any(name.endswith(".safetensors") for name in all_files)  # weights (model commit)
+
+
+def test_save_pretrained_writes_nothing_off_main_rank(tmp_path, monkeypatch):
+    """save_checkpoint calls save_pretrained on every rank; the
+    reward serializer must gate its writes so DDP replicas do not race on the same files."""
+    import lerobot.distributed.utils as dist_utils
+
+    model, _ = _make_dummy_reward_model()
+    monkeypatch.setattr(dist_utils, "is_main_process", lambda: False)
+    model.save_pretrained(tmp_path)
+    assert not any(tmp_path.iterdir())
+
+
+def test_reward_model_push_model_to_hub_shim_warns_and_publishes(monkeypatch, _offline_model_card):
+    """The deprecated ``push_model_to_hub`` stays callable, delegating to the publisher."""
+    from huggingface_hub.constants import CONFIG_NAME
+
+    import lerobot.common.train_utils as train_utils
+    import lerobot.utils.hub as hub_module
+    from lerobot.configs.train import TRAIN_CONFIG_NAME
+
+    all_files: set[str] = set()
+
+    class _FakeHfApi:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def create_repo(self, repo_id, private=None, exist_ok=False, **kwargs):
+            return SimpleNamespace(repo_id=repo_id)
+
+        def upload_folder(self, *, repo_id, folder_path, **_kwargs):
+            all_files.update(p.name for p in Path(folder_path).iterdir())
+            return SimpleNamespace(repo_url=SimpleNamespace(url=f"https://huggingface.co/{repo_id}"))
+
+    monkeypatch.setattr(train_utils, "HfApi", _FakeHfApi)
+    monkeypatch.setattr(hub_module, "HfApi", _FakeHfApi)
+
+    model, _ = _make_dummy_reward_model(repo_id="user/my_reward")
+    with pytest.warns(FutureWarning, match="push_model_to_hub is deprecated"):
+        model.push_model_to_hub(_make_train_cfg("user/my_dataset"))
+
+    assert CONFIG_NAME in all_files
+    assert TRAIN_CONFIG_NAME in all_files
+    assert "README.md" in all_files

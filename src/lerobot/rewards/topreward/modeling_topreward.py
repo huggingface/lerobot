@@ -58,12 +58,11 @@ import builtins
 import logging
 import os
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import numpy as np
 import torch
-from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
 from torch import Tensor
@@ -74,9 +73,6 @@ from lerobot.rewards.pretrained import PreTrainedRewardModel
 from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
 from lerobot.rewards.topreward.processor_topreward import TOPREWARD_FEATURE_PREFIX, TOPREWARD_INPUT_KEYS
 from lerobot.utils.import_utils import _transformers_available, require_package
-
-if TYPE_CHECKING:
-    from lerobot.configs.train import TrainPipelineConfig
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import Qwen3VLForConditionalGeneration
@@ -205,34 +201,3 @@ class TOPRewardModel(PreTrainedRewardModel):
         instance.to(config.device)
         instance.eval()
         return instance
-
-    def push_model_to_hub(self, cfg: TrainPipelineConfig):
-        """Push the TOPReward ``config.json`` + model card to the Hub."""
-        api = HfApi()
-        repo_id = api.create_repo(
-            repo_id=self.config.repo_id, private=self.config.private, exist_ok=True
-        ).repo_id
-
-        with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-            saved_path = Path(tmp) / repo_id
-            saved_path.mkdir(parents=True, exist_ok=True)
-
-            self.config._save_pretrained(saved_path)
-
-            card = self.generate_model_card(
-                cfg.dataset.repo_id, self.config.type, self.config.license, self.config.tags
-            )
-            card.save(str(saved_path / "README.md"))
-
-            cfg.save_pretrained(saved_path)
-
-            commit_info = api.upload_folder(
-                repo_id=repo_id,
-                repo_type="model",
-                folder_path=saved_path,
-                commit_message="Upload TOPReward config and readme",
-                allow_patterns=["*.json", "*.yaml", "*.md"],
-                ignore_patterns=["*.tmp", "*.log", "*.safetensors"],
-            )
-
-            logger.info(f"Model pushed to {commit_info.repo_url.url}")

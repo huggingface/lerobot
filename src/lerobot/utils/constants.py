@@ -42,6 +42,19 @@ DONE = "next.done"
 SUCCESS = "next.success"
 INFO = "info"
 
+# Complementary-data keys describing a text-generation request, set by the rollout
+# inference engines before the preprocessor runs so a processor step can format the
+# prompt: QUERY_KIND is what is being asked for ("vqa", "next_subtask", ...) and
+# QUERY_TEXT the request itself.  Absent on ordinary action inference.
+QUERY_KIND = "query_kind"
+QUERY_TEXT = "query_text"
+
+# Raw semantic-language dataset columns. These live here so lightweight policy
+# processors do not need to import the optional datasets/pyarrow stack.
+LANGUAGE_PERSISTENT = "language_persistent"
+LANGUAGE_EVENTS = "language_events"
+MESSAGES_RENDERED = "messages_rendered"
+
 ROBOTS = "robots"
 TELEOPERATORS = "teleoperators"
 

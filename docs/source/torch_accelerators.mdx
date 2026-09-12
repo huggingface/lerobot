@@ -40,3 +40,15 @@ lerobot-eval \
 ```
 
 However, in most cases, presence of an accelerator is detected automatically and `policy.device` parameter can be omitted from CLI commands.
+
+## Mixed precision
+
+Training precision is owned by `--accelerator.mixed_precision`, which accepts `no` (default) and `bf16`:
+
+```bash
+lerobot-train \
+    --policy.type=act \
+    --accelerator.mixed_precision=bf16 ...
+```
+
+`bf16` requires an accelerator that supports it.

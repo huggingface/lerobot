@@ -68,6 +68,8 @@ def euler_integrate(
     inference_delay: int | None = None,
     prev_chunk_left_over: Tensor | None = None,
     execution_horizon: int | None = None,
+    hard_prefix: Tensor | None = None,
+    hard_prefix_mask: Tensor | None = None,
 ) -> Tensor:
     """Forward-Euler integration of a velocity field from t=1 (noise) to t=0 (actions).
 
@@ -89,6 +91,8 @@ def euler_integrate(
         inference_delay: RTC guidance parameter, forwarded verbatim.
         prev_chunk_left_over: RTC guidance parameter, forwarded verbatim.
         execution_horizon: RTC guidance parameter, forwarded verbatim.
+        hard_prefix: Optional clean action prefix to clamp throughout denoising.
+        hard_prefix_mask: Boolean mask selecting the values clamped from ``hard_prefix``.
     """
     bsize = noise.shape[0]
     device = noise.device
@@ -98,6 +102,13 @@ def euler_integrate(
     for step in range(num_steps):
         time = 1.0 + step * dt
         time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
+
+        if hard_prefix is not None:
+            if hard_prefix_mask is None:
+                raise ValueError("hard_prefix_mask is required when hard_prefix is provided")
+            x_t = torch.where(hard_prefix_mask, hard_prefix, x_t)
+            time_tensor = time_tensor[:, None].expand(bsize, x_t.shape[1]).clone()
+            time_tensor[hard_prefix_mask[..., 0]] = 0.0
 
         def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
             return denoise_fn(input_x_t, current_timestep)
@@ -115,6 +126,9 @@ def euler_integrate(
             v_t = denoise_step_partial_call(x_t)
 
         x_t = x_t + dt * v_t
+
+        if hard_prefix is not None:
+            x_t = torch.where(hard_prefix_mask, hard_prefix, x_t)
 
         if rtc_processor is not None and rtc_processor.is_debug_enabled():
             rtc_processor.track(time=time, x_t=x_t, v_t=v_t)

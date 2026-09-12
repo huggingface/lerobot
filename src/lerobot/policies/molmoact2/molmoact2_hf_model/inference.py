@@ -301,12 +301,15 @@ class DepthDecodeCudaGraphManager:
         *,
         past_key_values: Cache,
         attention_bias: torch.Tensor,
+        position_ids: torch.Tensor,
     ) -> bool:
         if not self.enabled or self.model.training or self.backbone.transformer.training:
             return False
         if next_input_ids.device.type != "cuda":
             return False
         if next_input_ids.ndim != 2 or next_input_ids.shape[0] != 1 or next_input_ids.shape[1] != 1:
+            return False
+        if position_ids.shape != next_input_ids.shape or position_ids.device != next_input_ids.device:
             return False
         if not isinstance(past_key_values, _DepthDecodeStaticCache):
             return False
@@ -328,10 +331,17 @@ class DepthDecodeCudaGraphManager:
             attention_bias.shape[-1],
         )
 
-    def _select_depth_decode_rope(self, cos: torch.Tensor, sin: torch.Tensor, *, past_length: int) -> None:
+    def _select_depth_decode_rope(
+        self,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+        *,
+        position_ids: torch.Tensor,
+    ) -> None:
         emb = self.backbone.transformer.rotary_emb
-        cos.copy_(emb._pos_cos_cache[0, :, past_length : past_length + 1, :])
-        sin.copy_(emb._pos_sin_cache[0, :, past_length : past_length + 1, :])
+        logical_positions = position_ids.reshape(-1)
+        cos.copy_(emb._pos_cos_cache[0, :, logical_positions, :])
+        sin.copy_(emb._pos_sin_cache[0, :, logical_positions, :])
 
     def _depth_decode_pre_layer(
         self,
@@ -425,6 +435,7 @@ class DepthDecodeCudaGraphManager:
         *,
         past_length: int,
         attention_bias: torch.Tensor,
+        position_ids: torch.Tensor,
     ) -> _DepthDecodeCudaGraph:
         text_config = self.backbone.transformer.config
         device = next_input_ids.device
@@ -443,7 +454,7 @@ class DepthDecodeCudaGraphManager:
         context_shape = (1, 1, static.num_attention_heads, head_dim)
 
         token_ids.copy_(next_input_ids)
-        self._select_depth_decode_rope(cos, sin, past_length=past_length)
+        self._select_depth_decode_rope(cos, sin, position_ids=position_ids)
 
         pre_graph, pre_output = _capture_cuda_graph(
             lambda: self._depth_decode_pre0(token_ids, cos, sin),
@@ -498,6 +509,7 @@ class DepthDecodeCudaGraphManager:
         *,
         past_length: int,
         attention_bias: torch.Tensor,
+        position_ids: torch.Tensor,
     ) -> _DepthDecodeCudaGraph:
         key = self._depth_decode_key(next_input_ids, attention_bias)
         decode_graph = self.graph
@@ -506,11 +518,16 @@ class DepthDecodeCudaGraphManager:
                 next_input_ids,
                 past_length=past_length,
                 attention_bias=attention_bias,
+                position_ids=position_ids,
             )
             self.graph = decode_graph
         else:
             decode_graph.token_ids.copy_(next_input_ids)
-            self._select_depth_decode_rope(decode_graph.cos, decode_graph.sin, past_length=past_length)
+            self._select_depth_decode_rope(
+                decode_graph.cos,
+                decode_graph.sin,
+                position_ids=position_ids,
+            )
         return decode_graph
 
     def _run_depth_decode_attention_core(
@@ -551,12 +568,14 @@ class DepthDecodeCudaGraphManager:
         past_key_values: Cache,
         attention_bias: torch.Tensor,
         past_length: int,
+        position_ids: torch.Tensor,
     ) -> tuple[torch.Tensor, Cache]:
         end = past_length + 1
         decode_graph = self._get_depth_decode_graph(
             next_input_ids,
             past_length=past_length,
             attention_bias=attention_bias,
+            position_ids=position_ids,
         )
         cache_position = decode_graph.positions[past_length:end]
         attention_bias_q = attention_bias[:, :, past_length:end, :end]

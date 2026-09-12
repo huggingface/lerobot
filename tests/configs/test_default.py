@@ -45,8 +45,11 @@ def test_dataset_config_ignores_negative_excluded_episodes(caplog):
     assert "Ignoring negative exclude_episodes entries: [-2, -1]" in caplog.text
 
 
-def test_dataset_config_bucket_streaming_ok():
+def test_dataset_config_bucket_ok():
+    # Both allowed at config level. The dataset factory raises for storage
+    # formats that only support streaming access on buckets.
     DatasetConfig(repo_id="user/repo", repo_type="bucket", streaming=True)
+    DatasetConfig(repo_id="user/repo", repo_type="bucket")
 
 
 def test_dataset_config_invalid_repo_type():
@@ -54,11 +57,8 @@ def test_dataset_config_invalid_repo_type():
         DatasetConfig(repo_id="user/repo", repo_type="model")
 
 
-def test_dataset_config_bucket_requires_streaming():
-    with pytest.raises(ValueError, match="streaming-only"):
-        DatasetConfig(repo_id="user/repo", repo_type="bucket")
-
-
-def test_dataset_config_bucket_rejects_eval_split():
-    with pytest.raises(ValueError, match="eval_split"):
-        DatasetConfig(repo_id="user/repo", repo_type="bucket", streaming=True, eval_split=0.1)
+def test_dataset_config_eval_split():
+    # map-style access on a bucket is fine; streaming access is not, anywhere
+    DatasetConfig(repo_id="user/repo", repo_type="bucket", eval_split=0.1)
+    with pytest.raises(ValueError, match="streaming"):
+        DatasetConfig(repo_id="user/repo", streaming=True, eval_split=0.1)
