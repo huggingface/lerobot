@@ -24,6 +24,7 @@ reference is a behavior change for released checkpoints.
 import torch
 
 from lerobot.policies.common.flow_matching import (
+    _beta_distribution,
     euler_integrate,
     sample_beta,
     sample_noise,
@@ -61,6 +62,57 @@ def test_sample_noise_seeded():
     n2 = sample_noise((2, 8, 4), "cpu")
     assert torch.equal(n1, n2)
     assert n1.dtype == torch.float32 and n1.shape == (2, 8, 4)
+
+
+def test_sample_noise_normal_is_default():
+    torch.manual_seed(2)
+    default = sample_noise((2, 8, 4), "cpu")
+    torch.manual_seed(2)
+    normal = sample_noise((2, 8, 4), "cpu", distribution="normal")
+    assert torch.equal(default, normal)
+
+
+def test_sample_noise_uniform_evo1():
+    torch.manual_seed(2)
+    n = sample_noise((4096,), "cpu", distribution="uniform")
+    assert n.dtype == torch.float32
+    assert n.min() >= -1.0 and n.max() < 1.0
+    # evo1's rand_like * 2 - 1 has mean ~0 over [-1, 1).
+    assert abs(n.mean().item()) < 0.05
+    # Exact match to the historical evo1 expression on the same RNG stream.
+    torch.manual_seed(2)
+    expected = torch.rand((4096,), dtype=torch.float32) * 2 - 1
+    torch.testing.assert_close(n, expected, rtol=0, atol=0)
+
+
+def test_sample_noise_invalid_distribution():
+    import pytest
+
+    with pytest.raises(ValueError, match="Unknown noise distribution"):
+        sample_noise((2, 2), "cpu", distribution="bogus")
+
+
+def test_sample_time_beta_forward_complement_convention():
+    # groot/wall_x forward convention: t = (1 - beta) * 0.999.
+    torch.manual_seed(9)
+    time = sample_time_beta(4096, "cpu", alpha=1.5, beta=1.0, scale=0.999, complement=True)
+    torch.manual_seed(9)
+    expected = (1.0 - sample_beta(1.5, 1.0, 4096, "cpu")) * 0.999
+    torch.testing.assert_close(time, expected, rtol=0, atol=0)
+
+
+def test_sample_time_beta_evo1_clamp():
+    # evo1: Beta(2, 2) clamped to [0.02, 0.98].
+    torch.manual_seed(10)
+    time = sample_time_beta(4096, "cpu", alpha=2.0, beta=2.0, clamp_min=0.02, clamp_max=0.98)
+    assert time.min() >= 0.02 and time.max() <= 0.98
+
+
+def test_sample_beta_distribution_is_cached():
+    a = _beta_distribution(1.5, 1.0)
+    b = _beta_distribution(1.5, 1.0)
+    assert a is b
+    assert _beta_distribution(2.0, 2.0) is not a
 
 
 def test_euler_integrate_constant_velocity_is_exact():

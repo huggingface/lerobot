@@ -23,6 +23,7 @@ stateless; adopting them does not affect checkpoints.
 """
 
 from collections.abc import Callable
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 import torch
@@ -32,29 +33,67 @@ if TYPE_CHECKING:
     from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 
 
-def sample_beta(alpha: float, beta: float, bsize: int, device) -> Tensor:  # see openpi (exact copy)
-    # Beta sampling uses _sample_dirichlet which isn't implemented for MPS, so sample on CPU
+@lru_cache(maxsize=None)
+def _beta_distribution(alpha: float, beta: float) -> "torch.distributions.Beta":
+    # Beta sampling uses _sample_dirichlet which isn't implemented for MPS, so build on CPU.
+    # Cached (groot convention) so the distribution object is constructed once per (alpha, beta).
     alpha_t = torch.tensor(alpha, dtype=torch.float32)
     beta_t = torch.tensor(beta, dtype=torch.float32)
-    dist = torch.distributions.Beta(alpha_t, beta_t)
-    return dist.sample((bsize,)).to(device)
+    return torch.distributions.Beta(alpha_t, beta_t)
 
 
-def sample_noise(shape, device) -> Tensor:
-    """Standard-normal float32 noise, the flow-matching x_1 sample."""
-    return torch.normal(
-        mean=0.0,
-        std=1.0,
-        size=shape,
-        dtype=torch.float32,
-        device=device,
-    )
+def sample_beta(alpha: float, beta: float, bsize: int, device) -> Tensor:  # see openpi (exact copy)
+    return _beta_distribution(alpha, beta).sample((bsize,)).to(device)
 
 
-def sample_time_beta(bsize: int, device, *, alpha: float, beta: float, scale: float, offset: float) -> Tensor:
-    """Beta-distributed flow-matching timesteps: ``Beta(alpha, beta) * scale + offset`` (openpi convention)."""
+def sample_noise(shape, device, *, distribution: str = "normal") -> Tensor:
+    """Float32 flow-matching noise sample.
+
+    ``distribution="normal"`` (default, openpi: pi0/pi05/eo1/smolvla/groot/wall_x) draws
+    standard-normal noise. ``distribution="uniform"`` (evo1) draws uniformly from
+    ``[-1, 1)`` via ``rand * 2 - 1``.
+    """
+    if distribution == "normal":
+        return torch.normal(
+            mean=0.0,
+            std=1.0,
+            size=shape,
+            dtype=torch.float32,
+            device=device,
+        )
+    if distribution == "uniform":
+        return torch.rand(shape, dtype=torch.float32, device=device) * 2 - 1
+    raise ValueError(f"Unknown noise distribution: {distribution!r} (expected 'normal' or 'uniform')")
+
+
+def sample_time_beta(
+    bsize: int,
+    device,
+    *,
+    alpha: float,
+    beta: float,
+    scale: float = 1.0,
+    offset: float = 0.0,
+    complement: bool = False,
+    clamp_min: float | None = None,
+    clamp_max: float | None = None,
+) -> Tensor:
+    """Beta-distributed flow-matching timesteps.
+
+    Computes ``t = f(Beta(alpha, beta)) * scale + offset`` where ``f`` is the identity by
+    default or ``1 - x`` when ``complement=True``, then optionally clamps to
+    ``[clamp_min, clamp_max]``. This covers the known per-policy conventions:
+
+    * openpi backward (pi0/pi05/eo1/smolvla): ``scale=0.999, offset=0.001``.
+    * forward (groot/wall_x): ``complement=True, scale=0.999`` giving ``(1 - beta) * 0.999``.
+    * evo1: ``alpha=beta=2, clamp_min=0.02, clamp_max=0.98``.
+    """
     time_beta = sample_beta(alpha, beta, bsize, device)
+    if complement:
+        time_beta = 1.0 - time_beta
     time = time_beta * scale + offset
+    if clamp_min is not None or clamp_max is not None:
+        time = time.clamp(min=clamp_min, max=clamp_max)
     return time.to(dtype=torch.float32, device=device)
 
 
