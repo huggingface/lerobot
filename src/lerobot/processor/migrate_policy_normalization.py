@@ -50,6 +50,7 @@ with the new PolicyProcessorPipeline architecture.
 import argparse
 import json
 import os
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -62,7 +63,9 @@ from lerobot.policies import get_policy_class, make_policy_config, make_pre_post
 from lerobot.utils.constants import ACTION
 
 
-def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str, dict[str, torch.Tensor]]:
+def extract_normalization_stats(
+    state_dict: dict[str, torch.Tensor], feature_names: Iterable[str] | None = None
+) -> dict[str, dict[str, torch.Tensor]]:
     """
     Scans a model's state_dict to find and extract normalization statistics.
 
@@ -72,6 +75,14 @@ def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str
 
     Args:
         state_dict: The state dictionary of a pretrained policy model.
+        feature_names: The feature names the policy declares, used to recover names that a
+            buffer key cannot express. A buffer stores a feature name with its dots flattened
+            to underscores, and that is not reversible from the string alone:
+            `observation.environment_state` and `observation.environment.state` both flatten to
+            `observation_environment_state`. When a name is not declared (or none are supplied,
+            as for a checkpoint whose config has no supported feature declarations), every
+            underscore is
+            read back as a dot.
 
     Returns:
         A nested dictionary where outer keys are feature names (e.g.,
@@ -79,6 +90,9 @@ def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str
         mapping to their corresponding tensor values.
     """
     stats = {}
+
+    declared_names = set(feature_names or ())
+    declared_by_flattened = {name.replace(".", "_"): name for name in declared_names}
 
     # Define patterns to match and their prefixes to remove
     normalization_patterns = [
@@ -108,8 +122,12 @@ def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str
                 if len(parts) >= 2:
                     # Last part is the stat type (mean, std, min, max, etc.)
                     stat_type = parts[-1]
-                    # Everything else is the feature name
-                    feature_name = ".".join(parts[:-1]).replace("_", ".")
+                    # Everything else is the feature name, as the buffer stored it
+                    stored_name = ".".join(parts[:-1])
+                    if stored_name in declared_names:
+                        feature_name = stored_name
+                    else:
+                        feature_name = declared_by_flattened.get(stored_name, stored_name.replace("_", "."))
 
                     # Add to stats
                     if feature_name not in stats:
@@ -120,6 +138,12 @@ def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str
                 break
 
     return stats
+
+
+def get_declared_feature_names(config: dict[str, Any]) -> list[str]:
+    """Collect feature names from current and legacy policy config fields."""
+    fields = ("input_features", "output_features", "input_shapes", "output_shapes", "features")
+    return [name for field in fields for name in (config.get(field) or {})]
 
 
 def detect_features_and_norm_modes(
@@ -525,7 +549,10 @@ def main():
 
     # Extract normalization statistics
     print("Extracting normalization statistics...")
-    stats = extract_normalization_stats(state_dict)
+    # Current and legacy config fields name features unambiguously; configs without any of them
+    # leave the buffer key as the only source, with the ambiguity that implies.
+    declared_feature_names = get_declared_feature_names(config)
+    stats = extract_normalization_stats(state_dict, feature_names=declared_feature_names)
 
     print(f"Found normalization statistics for: {list(stats.keys())}")
 
