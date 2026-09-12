@@ -776,8 +776,8 @@ class RoboTwinEnvConfig(EnvConfig):
     # must equal what SAPIEN actually renders.
     observation_height: int = 240
     observation_width: int = 320
-    # "joint": 14-d joint-space control. "ee": 16-d end-effector-pose deltas executed via CuRobo IK
-    # (for world-model policies like LingBot-VA that predict per-arm xyz+quaternion+gripper poses).
+    # "joint": 14-d absolute joint/gripper targets. "ee": 16-d end-effector-pose deltas executed
+    # via CuRobo IK (for world-model policies like LingBot-VA that predict per-arm poses).
     action_mode: str = "joint"
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
