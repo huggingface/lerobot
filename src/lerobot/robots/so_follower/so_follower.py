@@ -34,6 +34,10 @@ from .config_so_follower import SOFollowerRobotConfig
 logger = logging.getLogger(__name__)
 
 
+class MotorStallError(RuntimeError):
+    """Raised after SO follower stall protection disables motor torque."""
+
+
 class SOFollower(Robot):
     """
     Generic SO follower base implementing common functionality for SO-100/101/10X.
@@ -61,6 +65,15 @@ class SOFollower(Robot):
             calibration=self.calibration,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
+        self._last_goal_pos: dict[str, float] | None = None
+        self._stall_started_at: dict[str, float] = {}
+        self._stall_protection_tripped = False
+
+        unknown_stall_motors = set(config.stall_current_thresholds or {}) - set(self.bus.motors)
+        if unknown_stall_motors:
+            raise ValueError(
+                f"stall_current_thresholds contains unknown motors: {', '.join(sorted(unknown_stall_motors))}"
+            )
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -95,6 +108,9 @@ class SOFollower(Robot):
         and torque can be safely disabled to run calibration.
         """
 
+        self._last_goal_pos = None
+        self._stall_started_at.clear()
+        self._stall_protection_tripped = False
         self.bus.connect()
         if not self.is_calibrated and calibrate:
             logger.info(
@@ -216,18 +232,74 @@ class SOFollower(Robot):
             RobotAction: the action sent to the motors, potentially clipped.
         """
 
+        if self._stall_protection_tripped:
+            raise MotorStallError("SO follower stall protection is latched; reconnect the robot to reset it")
+
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
+
+        present_pos = None
+        if self.config.max_relative_target is not None or self.config.stall_current_thresholds:
+            present_pos = self.bus.sync_read("Present_Position", num_retry=self.config.num_read_retries)
+
+        if self.config.stall_current_thresholds and self._last_goal_pos is not None:
+            assert present_pos is not None
+            self._check_for_stall(present_pos)
 
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
         if self.config.max_relative_target is not None:
-            present_pos = self.bus.sync_read("Present_Position", num_retry=self.config.num_read_retries)
+            assert present_pos is not None
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
         # Send goal position to the arm
         self.bus.sync_write("Goal_Position", goal_pos)
+        self._last_goal_pos = goal_pos.copy()
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
+
+    def _check_for_stall(self, present_pos: dict[str, float]) -> None:
+        """Disable torque when high current and position error persist together."""
+        assert self.config.stall_current_thresholds is not None
+        assert self._last_goal_pos is not None
+
+        present_current = self.bus.sync_read("Present_Current", num_retry=self.config.num_read_retries)
+        now = time.perf_counter()
+        stalled: dict[str, tuple[float, float]] = {}
+
+        for motor, current_threshold in self.config.stall_current_thresholds.items():
+            if motor not in self._last_goal_pos:
+                self._stall_started_at.pop(motor, None)
+                continue
+
+            current = abs(float(present_current[motor]))
+            position_error = abs(float(self._last_goal_pos[motor]) - float(present_pos[motor]))
+            is_stalling = (
+                current >= current_threshold and position_error >= self.config.stall_position_tolerance
+            )
+            if not is_stalling:
+                self._stall_started_at.pop(motor, None)
+                continue
+
+            started_at = self._stall_started_at.setdefault(motor, now)
+            if now - started_at >= self.config.stall_timeout_s:
+                stalled[motor] = (current, position_error)
+
+        if not stalled:
+            return
+
+        details = ", ".join(
+            f"{motor} (current={current:g}, position_error={position_error:g})"
+            for motor, (current, position_error) in stalled.items()
+        )
+        self._stall_protection_tripped = True
+        logger.error("SO follower stall protection tripped: %s", details)
+        try:
+            self.bus.disable_torque(num_retry=self.config.num_read_retries)
+        except Exception as exc:
+            raise MotorStallError(
+                f"SO follower stall protection tripped but torque disable failed: {details}"
+            ) from exc
+        raise MotorStallError(f"SO follower stall protection disabled torque: {details}")
 
     @check_if_not_connected
     def disconnect(self):
