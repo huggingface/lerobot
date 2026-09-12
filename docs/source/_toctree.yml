@@ -167,6 +167,8 @@
     title: reBot B601-DM
   - local: third_party_robots
     title: Third-Party Robots & Teleoperators
+  - local: third_party_ros2
+    title: LeRobot and ROS 2
   title: "Robots"
 - sections:
   - local: phone_teleop
