@@ -64,7 +64,10 @@
       "state_file": "policy_preprocessor_step_3_normalizer_processor.safetensors"
     },
     {
-      "config": {},
+      "config": {
+        "max_state_dim": 32,
+        "task_key": "task"
+      },
       "registry_name": "pi0_fast_prepare_state_tokenizer_processor_step"
     },
     {

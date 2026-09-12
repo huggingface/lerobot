@@ -312,20 +312,39 @@ class TimeLimitProcessorStep(TruncatedProcessorStep):
         return features
 
 
-@ProcessorStepRegistry.register("gym_hil_adapter_processor")
-class GymHILAdapterProcessorStep(ProcessorStep):
+@ProcessorStepRegistry.register("gym_hil_info_adapter")
+class GymHILInfoAdapterStep(InfoProcessorStep):
     """
-    Adapts the output of the `gym-hil` environment to the format expected by `lerobot` processors.
+    Adapts the `info` dictionary of the `gym-hil` environment to the format expected by
+    `lerobot` processors.
 
-    This step normalizes the `transition` object by:
-    1. Copying `teleop_action` from `info` to `complementary_data`.
-    2. Copying `is_intervention` from `info` (using the string key) to `info` (using the enum key).
-    3. Copying `discrete_penalty` from `info` to `complementary_data`.
+    Mirrors `is_intervention` from the string key to the `TeleopEvents.IS_INTERVENTION`
+    enum key when present.
     """
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        info = transition.get(TransitionKey.INFO, {})
-        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+    def info(self, info: dict) -> dict:
+        if "is_intervention" in info:
+            info[TeleopEvents.IS_INTERVENTION] = info["is_intervention"]
+        return info
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
+@ProcessorStepRegistry.register("gym_hil_teleop_data_adapter")
+class GymHILTeleopDataAdapterStep(ComplementaryDataProcessorStep):
+    """
+    Copies teleoperation data emitted by the `gym-hil` environment from `info` into the
+    transition's complementary data.
+
+    Copies `teleop_action` and `discrete_penalty` from `info` to `complementary_data`
+    when present.
+    """
+
+    def complementary_data(self, complementary_data: dict) -> dict:
+        info = self.transition.get(TransitionKey.INFO) or {}
 
         if TELEOP_ACTION_KEY in info:
             complementary_data[TELEOP_ACTION_KEY] = info[TELEOP_ACTION_KEY]
@@ -333,13 +352,7 @@ class GymHILAdapterProcessorStep(ProcessorStep):
         if DISCRETE_PENALTY_KEY in info:
             complementary_data[DISCRETE_PENALTY_KEY] = info[DISCRETE_PENALTY_KEY]
 
-        if "is_intervention" in info:
-            info[TeleopEvents.IS_INTERVENTION] = info["is_intervention"]
-
-        transition[TransitionKey.INFO] = info
-        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
-
-        return transition
+        return complementary_data
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -349,7 +362,7 @@ class GymHILAdapterProcessorStep(ProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register("gripper_penalty_processor")
-class GripperPenaltyProcessorStep(ProcessorStep):
+class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
     """
     Applies a small per-transition cost on the discrete gripper action.
 
@@ -370,31 +383,30 @@ class GripperPenaltyProcessorStep(ProcessorStep):
     open_threshold: float = 0.1
     closed_threshold: float = 0.9
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
+    def complementary_data(self, complementary_data: dict) -> dict:
         """
         Calculates the gripper penalty and adds it to the complementary data.
 
         Args:
-            transition: The incoming environment transition.
+            complementary_data: The incoming complementary data dictionary.
 
         Returns:
-            The modified transition with the penalty added to complementary data.
+            The complementary data with the penalty added under the
+            `discrete_penalty` key.
         """
-        new_transition = transition.copy()
-        action = new_transition.get(TransitionKey.ACTION)
-        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+        action = self.transition.get(TransitionKey.ACTION)
 
         raw_joint_positions = complementary_data.get("raw_joint_positions")
         if raw_joint_positions is None:
-            return new_transition
+            return complementary_data
 
         current_gripper_pos = raw_joint_positions.get(f"{GRIPPER_KEY}.pos", None)
         if current_gripper_pos is None:
-            return new_transition
+            return complementary_data
 
         # During reset, the transition may not carry any action yet.
         if action is None:
-            return new_transition
+            return complementary_data
 
         # Gripper action is expected as the last action dimension.
         gripper_action = action[-1].item()
@@ -414,12 +426,8 @@ class GripperPenaltyProcessorStep(ProcessorStep):
 
         gripper_penalty = self.penalty * int(gripper_penalty_bool)
 
-        # Update complementary data with penalty info
-        new_complementary_data = dict(complementary_data)
-        new_complementary_data[DISCRETE_PENALTY_KEY] = gripper_penalty
-        new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary_data
-
-        return new_transition
+        complementary_data[DISCRETE_PENALTY_KEY] = gripper_penalty
+        return complementary_data
 
     def get_config(self) -> dict[str, Any]:
         """
@@ -435,10 +443,6 @@ class GripperPenaltyProcessorStep(ProcessorStep):
             "open_threshold": self.open_threshold,
             "closed_threshold": self.closed_threshold,
         }
-
-    def reset(self) -> None:
-        """Resets the processor's internal state."""
-        pass
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]

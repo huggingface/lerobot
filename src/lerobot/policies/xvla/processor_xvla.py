@@ -21,10 +21,12 @@ import numpy as np
 import torch
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.lerobot_types import EnvTransition, TransitionKey
+from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import (
+    ComplementaryDataProcessorStep,
     ObservationProcessorStep,
     PolicyAction,
+    PolicyActionProcessorStep,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
@@ -201,7 +203,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register(name="xvla_image_scale")
-class XVLAImageScaleProcessorStep(ProcessorStep):
+class XVLAImageScaleProcessorStep(ObservationProcessorStep):
     """Scale image observations by 255 to convert from [0, 1] to [0, 255] range.
 
     This processor step multiplies all image observations by 255, which is required
@@ -214,29 +216,22 @@ class XVLAImageScaleProcessorStep(ProcessorStep):
 
     image_keys: list[str] | None = None
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
+    skip_if_missing = True
+
+    def observation(self, observation):
         """Scale image observations by 255."""
-        new_transition = transition.copy()
-        obs = new_transition.get(TransitionKey.OBSERVATION, {})
-        if obs is None:
-            return new_transition
-
-        # Make a copy of observations to avoid modifying the original
-        obs = obs.copy()
-
         # Determine which keys to scale
         keys_to_scale = self.image_keys
         if keys_to_scale is None:
             # Auto-detect image keys
-            keys_to_scale = [k for k in obs if k.startswith(OBS_IMAGES)]
+            keys_to_scale = [k for k in observation if k.startswith(OBS_IMAGES)]
 
         # Scale each image
         for key in keys_to_scale:
-            if key in obs and isinstance(obs[key], torch.Tensor):
-                obs[key] = obs[key] * 255
+            if key in observation and isinstance(observation[key], torch.Tensor):
+                observation[key] = observation[key] * 255
 
-        new_transition[TransitionKey.OBSERVATION] = obs
-        return new_transition
+        return observation
 
     def transform_features(self, features):
         """Image scaling doesn't change feature structure."""
@@ -251,7 +246,7 @@ class XVLAImageScaleProcessorStep(ProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register(name="xvla_image_to_float")
-class XVLAImageToFloatProcessorStep(ProcessorStep):
+class XVLAImageToFloatProcessorStep(ObservationProcessorStep):
     """Convert image observations from [0, 255] to [0, 1] range.
 
     This processor step divides image observations by 255 to convert from uint8-like
@@ -270,32 +265,26 @@ class XVLAImageToFloatProcessorStep(ProcessorStep):
     image_keys: list[str] | None = None
     validate_range: bool = True
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
+    skip_if_missing = True
+
+    def observation(self, observation):
         """Convert image observations from [0, 255] to [0, 1]."""
-        new_transition = transition.copy()
-        obs = new_transition.get(TransitionKey.OBSERVATION, {})
-        if obs is None:
-            return new_transition
-
-        # Make a copy of observations to avoid modifying the original
-        obs = obs.copy()
-
         # Determine which keys to convert
         keys_to_convert = self.image_keys
         if keys_to_convert is None:
             # Auto-detect image keys
-            keys_to_convert = [k for k in obs if k.startswith(OBS_IMAGES)]
+            keys_to_convert = [k for k in observation if k.startswith(OBS_IMAGES)]
 
         # Convert each image
         for key in keys_to_convert:
-            if key in obs and isinstance(obs[key], torch.Tensor):
-                tensor = obs[key]
+            if key in observation and isinstance(observation[key], torch.Tensor):
+                tensor = observation[key]
 
                 min_val = tensor.min().item()
                 max_val = tensor.max().item()
 
                 if max_val <= 1.0:
-                    obs[key] = tensor.float()  # ensure float dtype, but no division
+                    observation[key] = tensor.float()  # ensure float dtype, but no division
                     continue
                 # Validate that values are in [0, 255] range if requested
                 if self.validate_range and (min_val < 0.0 or max_val > 255.0):
@@ -306,10 +295,9 @@ class XVLAImageToFloatProcessorStep(ProcessorStep):
                     )
 
                 # Convert to float and divide by 255
-                obs[key] = tensor.float() / 255.0
+                observation[key] = tensor.float() / 255.0
 
-        new_transition[TransitionKey.OBSERVATION] = obs
-        return new_transition
+        return observation
 
     def transform_features(self, features):
         """Image conversion doesn't change feature structure."""
@@ -325,7 +313,7 @@ class XVLAImageToFloatProcessorStep(ProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register(name="xvla_imagenet_normalize")
-class XVLAImageNetNormalizeProcessorStep(ProcessorStep):
+class XVLAImageNetNormalizeProcessorStep(ObservationProcessorStep):
     """Normalize image observations using ImageNet statistics.
 
     This processor step applies ImageNet normalization (mean and std) to image observations.
@@ -343,26 +331,20 @@ class XVLAImageNetNormalizeProcessorStep(ProcessorStep):
 
     image_keys: list[str] | None = None
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
+    skip_if_missing = True
+
+    def observation(self, observation):
         """Normalize image observations using ImageNet statistics."""
-        new_transition = transition.copy()
-        obs = new_transition.get(TransitionKey.OBSERVATION, {})
-        if obs is None:
-            return new_transition
-
-        # Make a copy of observations to avoid modifying the original
-        obs = obs.copy()
-
         # Determine which keys to normalize
         keys_to_normalize = self.image_keys
         if keys_to_normalize is None:
             # Auto-detect image keys
-            keys_to_normalize = [k for k in obs if k.startswith(OBS_IMAGES)]
+            keys_to_normalize = [k for k in observation if k.startswith(OBS_IMAGES)]
 
         # Normalize each image
         for key in keys_to_normalize:
-            if key in obs and isinstance(obs[key], torch.Tensor):
-                tensor = obs[key]
+            if key in observation and isinstance(observation[key], torch.Tensor):
+                tensor = observation[key]
 
                 # Validate that values are in [0, 1] range
                 min_val = tensor.min().item()
@@ -384,10 +366,9 @@ class XVLAImageNetNormalizeProcessorStep(ProcessorStep):
                     std = std.unsqueeze(0)
 
                 # Normalize: (image - mean) / std
-                obs[key] = (tensor - mean) / std
+                observation[key] = (tensor - mean) / std
 
-        new_transition[TransitionKey.OBSERVATION] = obs
-        return new_transition
+        return observation
 
     def transform_features(self, features):
         """ImageNet normalization doesn't change feature structure."""
@@ -402,38 +383,32 @@ class XVLAImageNetNormalizeProcessorStep(ProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register(name="xvla_add_domain_id")
-class XVLAAddDomainIdProcessorStep(ProcessorStep):
+class XVLAAddDomainIdProcessorStep(ComplementaryDataProcessorStep):
     """Add domain_id to complementary data.
 
     This processor step adds a domain_id tensor to the complementary data,
     which is used by XVLA to identify different robot embodiments or task domains.
 
     Args:
-        domain_id: The domain ID to add (default: 3)
+        domain_id: The domain ID to add (default: 0)
     """
 
     domain_id: int = 0
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
+    def complementary_data(self, complementary_data):
         """Add domain_id to complementary data."""
-        new_transition = transition.copy()
-        comp = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
-        comp = {} if comp is None else comp.copy()
-
         # Infer batch size from observation tensors
-        obs = new_transition.get(TransitionKey.OBSERVATION, {})
+        obs = self.transition.get(TransitionKey.OBSERVATION) or {}
         batch_size = 1
-        if obs:
-            for v in obs.values():
-                if isinstance(v, torch.Tensor):
-                    batch_size = v.shape[0]
-                    break
+        for v in obs.values():
+            if isinstance(v, torch.Tensor):
+                batch_size = v.shape[0]
+                break
 
         # Add domain_id tensor
-        comp["domain_id"] = torch.tensor([int(self.domain_id)] * batch_size, dtype=torch.long)
+        complementary_data["domain_id"] = torch.tensor([int(self.domain_id)] * batch_size, dtype=torch.long)
 
-        new_transition[TransitionKey.COMPLEMENTARY_DATA] = comp
-        return new_transition
+        return complementary_data
 
     def transform_features(self, features):
         """Domain ID addition doesn't change feature structure."""
@@ -448,7 +423,7 @@ class XVLAAddDomainIdProcessorStep(ProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register(name="xvla_rotation_6d_to_axis_angle")
-class XVLARotation6DToAxisAngleProcessorStep(ProcessorStep):
+class XVLARotation6DToAxisAngleProcessorStep(PolicyActionProcessorStep):
     """Convert 6D rotation representation to axis-angle and reorganize action dimensions.
 
     This processor step takes actions with 6D rotation representation and converts them to
@@ -465,14 +440,10 @@ class XVLARotation6DToAxisAngleProcessorStep(ProcessorStep):
 
     expected_action_dim: int = 10
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
+    skip_if_missing = True
+
+    def action(self, action: PolicyAction) -> PolicyAction:
         """Convert 6D rotation to axis-angle in action."""
-        new_transition = transition.copy()
-        action = new_transition.get(TransitionKey.ACTION)
-
-        if action is None or not isinstance(action, torch.Tensor):
-            return new_transition
-
         # Convert to numpy for processing
         device = action.device
         dtype = action.dtype
@@ -494,10 +465,7 @@ class XVLARotation6DToAxisAngleProcessorStep(ProcessorStep):
         action_np[:, -1] = np.where(action_np[:, -1] > 0.5, 1.0, -1.0)
 
         # Convert back to tensor
-        action = torch.from_numpy(action_np).to(device=device, dtype=dtype)
-
-        new_transition[TransitionKey.ACTION] = action
-        return new_transition
+        return torch.from_numpy(action_np).to(device=device, dtype=dtype)
 
     def transform_features(self, features):
         """Rotation conversion changes action dimension from 10 to 7."""

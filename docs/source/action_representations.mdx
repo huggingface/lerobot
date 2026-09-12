@@ -33,7 +33,7 @@ LeRobot provides processor steps for converting between joint and EE spaces usin
 ```python
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.robots.so_follower.robot_kinematic_processor import (
-    ForwardKinematicsJointsToEE,
+    ForwardKinematicsJointsToEEObservation,
     InverseKinematicsEEToJoints,
 )
 
@@ -44,7 +44,7 @@ kinematics = RobotKinematics(
 )
 
 # Joints → EE (for observations: "where is my gripper?")
-fk_step = ForwardKinematicsJointsToEE(kinematics=kinematics, motor_names=[...])
+fk_step = ForwardKinematicsJointsToEEObservation(kinematics=kinematics, motor_names=[...])
 
 # EE → Joints (for actions: "move my gripper here")
 ik_step = InverseKinematicsEEToJoints(kinematics=kinematics, motor_names=[...])
@@ -197,7 +197,7 @@ Here is how the different processors compose. Each arrow is a processor step, an
 ```
                     ┌─────────────────────────────────────────┐
    Action Space     │   Joint Space  ←──IK──→  EE Space      │
-                    │   ForwardKinematicsJointsToEE           │
+                    │   ForwardKinematicsJointsToEEAction     │
                     │   InverseKinematicsEEToJoints           │
                     └─────────────────────────────────────────┘
 

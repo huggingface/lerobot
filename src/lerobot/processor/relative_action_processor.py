@@ -20,11 +20,11 @@ import torch
 from torch import Tensor
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.lerobot_types import EnvTransition, TransitionKey
+from lerobot.lerobot_types import EnvTransition, PolicyAction, TransitionKey
 from lerobot.utils.constants import OBS_STATE
 
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
-from .pipeline import ProcessorStep, ProcessorStepRegistry
+from .pipeline import PolicyActionProcessorStep, ProcessorStep, ProcessorStepRegistry
 
 # Re-export for backward compatibility
 __all__ = [
@@ -161,7 +161,7 @@ class RelativeActionsProcessorStep(ProcessorStep):
 
 @ProcessorStepRegistry.register("absolute_actions_processor")
 @dataclass
-class AbsoluteActionsProcessorStep(ProcessorStep):
+class AbsoluteActionsProcessorStep(PolicyActionProcessorStep):
     """Converts relative actions back to absolute actions (action += state) for all dimensions.
 
     Mirrors OpenPI's AbsoluteActions transform. Applied during postprocessing so
@@ -176,9 +176,11 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
     enabled: bool = False
     relative_step: RelativeActionsProcessorStep | None = field(default=None, repr=False)
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
+    skip_if_missing = True
+
+    def action(self, action: PolicyAction) -> PolicyAction:
         if not self.enabled:
-            return transition
+            return action
 
         if self.relative_step is None:
             raise RuntimeError(
@@ -193,14 +195,8 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
                 "but no state has been cached. Ensure the preprocessor runs before the postprocessor."
             )
 
-        new_transition = transition.copy()
-        action = new_transition.get(TransitionKey.ACTION)
-        if action is None:
-            return new_transition
-
         mask = self.relative_step._build_mask(action.shape[-1])
-        new_transition[TransitionKey.ACTION] = to_absolute_actions(action, cached_state, mask)
-        return new_transition
+        return to_absolute_actions(action, cached_state, mask)
 
     def get_config(self) -> dict[str, Any]:
         return {"enabled": self.enabled}
