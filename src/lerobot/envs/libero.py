@@ -63,6 +63,23 @@ def _select_task_ids(total_tasks: int, task_ids: Iterable[int] | None) -> list[i
 # can pass weights_only=False for PyTorch 2.6+ numpy pickles).
 _LIBERO_PERTURBATION_SUFFIX_RE = re.compile(r"_(?:language|view|light)_[^.]*|_(?:table|tb)_\d+")
 
+# Same perturbation tokens as above, matched against the space-separated task
+# description instead of the underscore-separated filename. Keep both in sync.
+_LIBERO_PERTURBATION_INSTRUCTION_RE = re.compile(r"\s(?:language|view|light)\s.*$|\s(?:table|tb)\s\d+$")
+
+
+def strip_perturbation_from_instruction(task_name: str, instruction: str) -> str:
+    """Remove the LIBERO-plus perturbation suffix from a task description.
+
+    LIBERO-plus derives the description of a `_language_` variant from the BDDL
+    file, which is already a clean rephrasing. Every other variant falls back to
+    splitting the task name on underscores, so the perturbation id ends up inside
+    the natural-language instruction handed to the policy.
+    """
+    if "_language_" in task_name:
+        return instruction
+    return _LIBERO_PERTURBATION_INSTRUCTION_RE.sub("", instruction)
+
 
 def get_task_init_states(task_suite: Any, i: int, is_libero_plus: bool = False) -> np.ndarray:
     task = task_suite.tasks[i]
@@ -177,7 +194,11 @@ class LiberoEnv(gym.Env):
         # Extract task metadata without allocating GPU resources (safe before fork).
         task = task_suite.get_task(task_id)
         self.task = task.name
-        self.task_description = task.language
+        self.task_description = (
+            strip_perturbation_from_instruction(task.name, task.language)
+            if self.is_libero_plus
+            else task.language
+        )
         self._task_bddl_file = os.path.join(
             get_libero_path("bddl_files"), task.problem_folder, task.bddl_file
         )
