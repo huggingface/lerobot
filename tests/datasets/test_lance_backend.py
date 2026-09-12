@@ -238,6 +238,16 @@ def test_reader_reopens_after_failed_open(video_dataset_roots, monkeypatch):
     lance_ds[0]
 
 
+def test_video_decoder_cache_size_reaches_reader(video_dataset_roots):
+    src_root, lance_root = video_dataset_roots
+    assert LeRobotDataset(DUMMY_REPO_ID, root=lance_root).reader._decoder_cache.capacity == 256
+    small = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, video_decoder_cache_size=4)
+    assert small.reader._decoder_cache.capacity == 4
+    assert small[0][small.meta.camera_keys[0]].ndim == 3
+    with pytest.raises(ValueError, match="non-default storage formats"):
+        LeRobotDataset(DUMMY_REPO_ID, root=src_root, video_decoder_cache_size=4)
+
+
 def test_sparse_source_fetches_handle_once():
     class Handle:
         opened = 0

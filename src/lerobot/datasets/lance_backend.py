@@ -96,8 +96,10 @@ class LanceDatasetReader(BaseDatasetReader):
         depth_output_unit: Unit depth features dequantize to (``'mm'`` or ``'m'``).
             Depth decodes through pyav (16-bit planes torchcodec cannot emit).
         storage_options: Extra options forwarded to ``lancedb.connect``.
-        video_decoder_cache_size: Max decoders per worker (default 16, also
-            bounded by a 2 GiB per-worker byte budget).
+        video_decoder_cache_size: Max open video decoders per worker (default 256, also
+            bounded by a 2 GiB per-worker byte budget). Each cached decoder costs a few MB, so
+            on datasets with more video files than this, RAM grows with the cache times the
+            number of workers.
     """
 
     def __init__(
@@ -249,7 +251,7 @@ class LanceDatasetReader(BaseDatasetReader):
         self._prefetch_pool: ThreadPoolExecutor | None = None
         self._decode_pool: ThreadPoolExecutor | None = None
         if video_decoder_cache_size is None:
-            video_decoder_cache_size = 16
+            video_decoder_cache_size = 256
         self._decoder_cache = _VideoDecoderLRU(video_decoder_cache_size, byte_budget=2 << 30)  # 2GB cap
 
     def _episode_numpy(self, name: str, dtype: type[np.generic]) -> np.ndarray:
