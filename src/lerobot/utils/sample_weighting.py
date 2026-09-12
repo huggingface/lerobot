@@ -35,6 +35,7 @@ Example usage:
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -83,8 +84,11 @@ class SampleWeightingConfig:
     contains additional type-specific parameters.
 
     Attributes:
-        type: Weighting strategy type ("rabc", "uniform", etc.)
+        type: Weighting strategy type ("rabc", "static", "uniform", etc.)
         progress_path: Path to precomputed progress values (for RABC)
+        weights_path: Path to precomputed per-frame weights (for the static
+            weighter): a parquet with an "index" column (global frame index,
+            matching the batch's "index" key) and a "weight" column.
         head_mode: Which model head to use for progress ("sparse" or "dense")
         kappa: Hard threshold for high-quality samples (RABC-specific)
         epsilon: Small constant for numerical stability
@@ -93,6 +97,7 @@ class SampleWeightingConfig:
 
     type: str = "rabc"
     progress_path: str | None = None
+    weights_path: str | None = None
     head_mode: str = "sparse"
     kappa: float = 0.01
     epsilon: float = 1e-6
@@ -125,11 +130,26 @@ def make_sample_weighter(
     if config.type == "rabc":
         return _make_rabc_weighter(config, policy, device, dataset_root, dataset_repo_id)
 
+    if config.type == "static":
+        if not config.weights_path:
+            raise ValueError(
+                "Static sample weighting requires 'weights_path' to be set: a "
+                "parquet with 'index' (global frame index) and 'weight' columns."
+            )
+        return StaticWeights(
+            weights_path=config.weights_path,
+            device=device,
+            epsilon=config.epsilon,
+            **config.extra_params,
+        )
+
     if config.type == "uniform":
         # No-op weighter that returns uniform weights
         return UniformWeighter(device=device)
 
-    raise ValueError(f"Unknown sample weighting type: '{config.type}'. Supported types: 'rabc', 'uniform'")
+    raise ValueError(
+        f"Unknown sample weighting type: '{config.type}'. Supported types: 'rabc', 'static', 'uniform'"
+    )
 
 
 def _make_rabc_weighter(
@@ -237,3 +257,114 @@ class UniformWeighter(SampleWeighter):
     def get_stats(self) -> dict:
         """Return empty stats for uniform weighting."""
         return {"type": "uniform"}
+
+
+class StaticWeights(SampleWeighter):
+    """
+    Sample weighter that reads precomputed per-frame weights from a file.
+
+    The generic half of the abstraction's stated motivation (importance
+    sampling, curriculum learning, quality-based filtering): any pipeline that
+    can score frames offline — data-quality classifiers, DAgger human/policy
+    provenance, curriculum schedules — writes one parquet and trains with it,
+    no new weighter class needed.
+
+    The file is a parquet with two required columns:
+        - "index": global frame index (the same value the training batch
+          carries under its "index" key)
+        - "weight": non-negative float weight for that frame
+
+    Frames absent from the file receive ``fallback_weight`` (default 1.0), so
+    a partial file up- or down-weights only the frames it names. Batch weights
+    are normalized to sum to the batch size, matching the training loop's
+    expectation (weighted loss keeps gradient scale when some weights are 0).
+    """
+
+    def __init__(
+        self,
+        weights_path: str,
+        device: torch.device,
+        epsilon: float = 1e-6,
+        fallback_weight: float = 1.0,
+    ):
+        import pandas as pd
+
+        self.device = device
+        self.epsilon = epsilon
+        self.fallback_weight = float(fallback_weight)
+
+        logging.info(f"Loading static sample weights from {weights_path}")
+        df = pd.read_parquet(weights_path)
+        for column in ("index", "weight"):
+            if column not in df.columns:
+                raise ValueError(
+                    f"Column '{column}' not found in {weights_path}. Available columns: {list(df.columns)}"
+                )
+
+        self.weight_lookup: dict[int, float] = {}
+        for _, row in df.iterrows():
+            weight = float(row["weight"])
+            if weight < 0:
+                raise ValueError(
+                    f"Negative weight {weight} for frame index {int(row['index'])} "
+                    f"in {weights_path}; weights must be >= 0."
+                )
+            self.weight_lookup[int(row["index"])] = weight
+
+        logging.info(f"Loaded {len(self.weight_lookup)} static frame weights")
+
+    def compute_batch_weights(self, batch: dict) -> tuple[torch.Tensor, dict]:
+        """Look up each sample's weight by its global frame index."""
+        indices = batch.get("index")
+        if indices is None:
+            logging.warning("StaticWeights: batch missing 'index' key, using uniform weights")
+            batch_size = self._determine_batch_size(batch)
+            stats = {"mean_weight": 1.0, "num_zero_weight": 0, "num_missing": batch_size}
+            return torch.ones(batch_size, device=self.device), stats
+
+        if isinstance(indices, torch.Tensor):
+            indices = indices.cpu().tolist()
+
+        weights = []
+        num_missing = 0
+        for idx in indices:
+            weight = self.weight_lookup.get(int(idx))
+            if weight is None:
+                num_missing += 1
+                weight = self.fallback_weight
+            weights.append(weight)
+
+        weights_tensor = torch.tensor(weights, device=self.device, dtype=torch.float32)
+        stats = {
+            "mean_weight": float(weights_tensor.mean()),
+            "num_zero_weight": int((weights_tensor == 0).sum()),
+            "num_missing": num_missing,
+        }
+
+        # Normalize to sum to batch_size (see the training loop's weighted
+        # loss: zero-weight samples shift their share to the rest).
+        batch_size = len(weights)
+        weights_tensor = weights_tensor * batch_size / (weights_tensor.sum() + self.epsilon)
+        return weights_tensor, stats
+
+    def _determine_batch_size(self, batch: dict) -> int:
+        for key in ["action", "index", "observation.state"]:
+            if key in batch and isinstance(batch[key], torch.Tensor):
+                return batch[key].shape[0]
+        for value in batch.values():
+            if isinstance(value, torch.Tensor) and value.ndim >= 1:
+                return value.shape[0]
+        return 1
+
+    def get_stats(self) -> dict:
+        """Global statistics about the loaded weight table."""
+        if not self.weight_lookup:
+            return {"type": "static", "num_frames": 0}
+        values = list(self.weight_lookup.values())
+        return {
+            "type": "static",
+            "num_frames": len(values),
+            "mean_weight": float(sum(values) / len(values)),
+            "num_zero_weight": sum(1 for v in values if v == 0),
+            "fallback_weight": self.fallback_weight,
+        }

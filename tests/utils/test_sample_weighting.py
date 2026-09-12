@@ -399,3 +399,121 @@ def test_rabc_weights_normalization(sample_progress_parquet):
     # Weights should be normalized to sum approximately to batch_size
     batch_size = 4
     assert abs(weights.sum().item() - batch_size) < 0.1
+
+
+# =============================================================================
+# StaticWeights Tests
+# =============================================================================
+
+
+@pytest.fixture
+def sample_weights_parquet(tmp_path):
+    """Create a sample static-weights parquet file for testing."""
+    import pandas as pd
+
+    # Frames 0..9: even frames weighted 1.0, odd frames 0.0, frame 4 boosted.
+    data = {
+        "index": list(range(10)),
+        "weight": [1.0, 0.0, 1.0, 0.0, 3.0, 0.0, 1.0, 0.0, 1.0, 0.0],
+    }
+    parquet_path = tmp_path / "sample_weights.parquet"
+    pd.DataFrame(data).to_parquet(parquet_path)
+    return parquet_path
+
+
+def test_static_weights_is_sample_weighter(sample_weights_parquet):
+    from lerobot.utils.sample_weighting import StaticWeights
+
+    weighter = StaticWeights(weights_path=str(sample_weights_parquet), device=torch.device("cpu"))
+    assert isinstance(weighter, SampleWeighter)
+
+
+def test_factory_creates_static_weighter(sample_weights_parquet):
+    from lerobot.utils.sample_weighting import StaticWeights
+
+    config = SampleWeightingConfig(type="static", weights_path=str(sample_weights_parquet))
+    weighter = make_sample_weighter(config, Mock(), torch.device("cpu"))
+    assert isinstance(weighter, StaticWeights)
+
+
+def test_factory_static_requires_weights_path():
+    config = SampleWeightingConfig(type="static")
+    with pytest.raises(ValueError, match="weights_path"):
+        make_sample_weighter(config, Mock(), torch.device("cpu"))
+
+
+def test_static_weights_requires_columns(tmp_path):
+    import pandas as pd
+
+    from lerobot.utils.sample_weighting import StaticWeights
+
+    path = tmp_path / "bad.parquet"
+    pd.DataFrame({"index": [0], "value": [1.0]}).to_parquet(path)
+    with pytest.raises(ValueError, match="Column 'weight' not found"):
+        StaticWeights(weights_path=str(path), device=torch.device("cpu"))
+
+
+def test_static_weights_rejects_negative_weights(tmp_path):
+    import pandas as pd
+
+    from lerobot.utils.sample_weighting import StaticWeights
+
+    path = tmp_path / "neg.parquet"
+    pd.DataFrame({"index": [0], "weight": [-0.5]}).to_parquet(path)
+    with pytest.raises(ValueError, match="Negative weight"):
+        StaticWeights(weights_path=str(path), device=torch.device("cpu"))
+
+
+def test_static_weights_lookup_normalization_and_stats(sample_weights_parquet):
+    from lerobot.utils.sample_weighting import StaticWeights
+
+    weighter = StaticWeights(weights_path=str(sample_weights_parquet), device=torch.device("cpu"))
+    # Frames 2 (w=1), 3 (w=0), 4 (w=3): zero-weight samples shift their share
+    # to the rest; weights normalize to sum to batch_size.
+    batch = {"index": torch.tensor([2, 3, 4])}
+    weights, stats = weighter.compute_batch_weights(batch)
+
+    assert weights.shape == (3,)
+    torch.testing.assert_close(weights.sum(), torch.tensor(3.0), atol=1e-4, rtol=0)
+    assert weights[1] == 0.0
+    # Frame 4 carries 3x frame 2's weight, before and after normalization.
+    torch.testing.assert_close(weights[2] / weights[0], torch.tensor(3.0))
+    assert stats["num_zero_weight"] == 1
+    assert stats["num_missing"] == 0
+
+
+def test_static_weights_missing_indices_use_fallback(sample_weights_parquet):
+    from lerobot.utils.sample_weighting import StaticWeights
+
+    weighter = StaticWeights(
+        weights_path=str(sample_weights_parquet),
+        device=torch.device("cpu"),
+        fallback_weight=1.0,
+    )
+    # Frame 999 is absent from the file → fallback weight, counted in stats.
+    batch = {"index": torch.tensor([0, 999])}
+    weights, stats = weighter.compute_batch_weights(batch)
+    assert stats["num_missing"] == 1
+    # Both effective raw weights are 1.0 → equal after normalization.
+    torch.testing.assert_close(weights[0], weights[1])
+
+
+def test_static_weights_batch_without_index_degrades_to_uniform(sample_weights_parquet):
+    from lerobot.utils.sample_weighting import StaticWeights
+
+    weighter = StaticWeights(weights_path=str(sample_weights_parquet), device=torch.device("cpu"))
+    batch = {"action": torch.zeros(4, 2)}
+    weights, stats = weighter.compute_batch_weights(batch)
+    assert weights.shape == (4,)
+    assert torch.all(weights == 1.0)
+    assert stats["num_missing"] == 4
+
+
+def test_static_weights_get_stats(sample_weights_parquet):
+    from lerobot.utils.sample_weighting import StaticWeights
+
+    weighter = StaticWeights(weights_path=str(sample_weights_parquet), device=torch.device("cpu"))
+    stats = weighter.get_stats()
+    assert stats["type"] == "static"
+    assert stats["num_frames"] == 10
+    assert stats["num_zero_weight"] == 5
