@@ -215,7 +215,9 @@ intelrealsense = [
 ]
 
 # NVIDIA Isaac Teleop (XR teleoperation).
-# TODO: lock to 1.5.x final release tag
+# TODO: lock to a final release tag. The bound below still admits only 1.5.x, which has no
+# viz.robot.PREVIEW_ARMS -- the robot twin therefore degrades to "unavailable" with a
+# warning rather than failing. Raise it to the first release carrying per-arm previews.
 isaac-teleop = [
     "isaacteleop[cloudxr,retargeters-lite]>=1.5rc1,<1.6 ; sys_platform == 'linux'",
     "lerobot[kinematics]",

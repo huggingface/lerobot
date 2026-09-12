@@ -171,10 +171,11 @@ class RobotProfile:
     raise_on_ee_jump: bool = True
     """``False`` rate-limits an over-limit frame and warns instead of raising out of the loop."""
 
-    robot_twin: bool = False
-    """Whether this arm gets Isaac Teleop's SO-101 preview in the headset. The preview arm
-    and the leader ghost are SO-101 geometry with an SO-101 home pose, so an arm that is not
-    one would be shown a model of a different robot."""
+    preview_arm: str | None = None
+    """Which of Isaac Teleop's ``viz.robot.PREVIEW_ARMS`` this arm is previewed as in the
+    headset, or ``None`` for no twin. The preview holds this arm's own ``reset_pose`` and
+    puts its own gripper on the operator's hand, so the key must name THIS robot -- a near
+    fit shows the operator a different machine."""
 
     home_orientation_from_measured: bool = False
     """Re-seed the clutch home from the measured EE while disengaged, so a sagging arm does not
@@ -218,13 +219,9 @@ ROBOT_PROFILES: dict[str, RobotProfile] = {
         # 0.545 m). The z floor is the tabletop: base_link's collision geometry bottoms out at
         # z=-0.0024, so 0.0 is the table plus ~2 mm.
         ee_bounds={"min": [-0.35, -0.45, 0.0], "max": [0.50, 0.45, 0.55]},
-        # shoulder_lift/elbow_flex/wrist_flex match Q_HOME_DEG (isaacteleop's
-        # viz.robot.preview_arm -- the pose the robot twin/ghost sits at before the first
-        # engage), so the real arm and what the operator sees the ghost holding agree.
-        # wrist_roll does NOT: confirmed wrong on hardware -- Q_HOME_DEG's -90 is the ghost's
-        # own MuJoCo model qpos, with no guaranteed relationship to the real arm's calibrated
-        # zero/sign (set by lerobot-calibrate's physical half-turn homing), and evidently
-        # doesn't match here. Reverted to the pre-Q_HOME default pending the right value.
+        # This IS isaacteleop's Q_HOME_DEG for the so101 preview arm, joint for joint: the
+        # twin holds the pose the hardware parks at, so the operator sees the arm hold what
+        # it will hold. Move one and move the other.
         reset_pose={
             "shoulder_pan": 0.0,
             "shoulder_lift": -45.0,
@@ -235,7 +232,7 @@ ROBOT_PROFILES: dict[str, RobotProfile] = {
         },
         gripper_open=100.0,
         gripper_close=0.0,
-        robot_twin=True,
+        preview_arm="so101",
     ),
     robot_profile_key("rebot_b601_follower", motor_family="rs"): RobotProfile(
         urdf=_ensure_rebot_b601_rs_urdf,
@@ -258,6 +255,8 @@ ROBOT_PROFILES: dict[str, RobotProfile] = {
         # The sit-down pose calibration zeroes the arm at, lifted 10/15 deg off the shoulder and
         # elbow endpoints (both travel one way only, from 0) so the IK is not seeded sitting on
         # two joint limits. FK puts the EE at [0.297, 0.0, 0.304] m, 8.6 cm above sit-down.
+        # Also isaacteleop's Q_HOME_REBOT_DEG (jointN maps to these names positionally, as
+        # urdf_joint_names above does) -- the twin holds what the hardware parks at.
         reset_pose={
             "shoulder_pan": 0.0,
             "shoulder_lift": -5.0,
@@ -287,6 +286,10 @@ ROBOT_PROFILES: dict[str, RobotProfile] = {
         # Safe here for that same reason, and needed: the arm sags tens of degrees of EE pitch
         # while disengaged, which the IK used to reconcile in one frame on engage.
         home_orientation_from_measured=True,
+        # RS only: the B601 also ships as a Damiao build with the same joint topology and
+        # different geometry, and Isaac Teleop's model is the RobStride one. That build has
+        # no profile here, so it correctly gets no twin rather than a near fit.
+        preview_arm="rebot_devarm_rs",
     ),
 }
 ROBOT_PROFILES["so100_follower"] = ROBOT_PROFILES["so101_follower"]

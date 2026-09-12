@@ -23,7 +23,7 @@ ghost, the harness colours, the phase machine and the engage gate all live in th
 
 **One deliberate difference, and it is the only one:** ``owns_clutch_home=False``, set
 where the preview is constructed. In ``robot_viz`` the preview arm is the only arm there
-is, so it supplies the clutch's home every disengaged frame. Here a real SO-101 is on the
+is, so it supplies the clutch's home every disengaged frame. Here a real follower is on the
 other end, its home comes from measured forward kinematics, and a preview pushing its own
 would command the hardware to wherever the operator waved.
 
@@ -58,7 +58,7 @@ class TwinBundle:
     """``SceneTwin`` -- also the session's ``joint_publisher``."""
 
     arm: Any
-    """``PreviewArm``, the SO-101 dragged by the controller while disengaged."""
+    """``PreviewArm``, the follower dragged by the controller while disengaged."""
 
     monitor: Any
     """``InterventionMonitor``, which recolours the ghost by rate-limiter band."""
@@ -67,8 +67,10 @@ class TwinBundle:
     """``EngageGate``, whose verdict reaches the clutch's ``ENGAGE_PERMITTED_INPUT``."""
 
 
-def build_twin(config) -> TwinBundle | None:
-    """Build the twin for ``config``, or return ``None`` with a warning saying why not.
+def build_twin(config, preview_arm: str) -> TwinBundle | None:
+    """Build ``preview_arm``'s twin for ``config``, or return ``None`` with a warning saying
+    why not. ``preview_arm`` keys ``isaacteleop.viz.robot.PREVIEW_ARMS``, and comes from the
+    follower's own :class:`RobotProfile`.
 
     Degrading rather than raising is deliberate: the scene backend needs a Linux
     ``isaacteleop`` built with ``-DBUILD_VIZ=ON``, and an operator whose wheel lacks it
@@ -85,19 +87,28 @@ def build_twin(config) -> TwinBundle | None:
     try:
         import numpy as np
         from isaacteleop.viz.robot import (
+            PREVIEW_ARMS,
             EngageGate,
             EngageGateConfig,
             InterventionMonitor,
             PreviewArm,
             SceneTwin,
-            assets,
         )
+
+        try:
+            profile = PREVIEW_ARMS[preview_arm]
+        except KeyError:
+            raise RuntimeError(
+                f"robot twin: no preview arm named {preview_arm!r}. This isaacteleop "
+                f"offers {sorted(PREVIEW_ARMS)}; a RobotProfile names one that is not "
+                "there, which is a version skew, not an environment."
+            ) from None
 
         # Before the renderer, which uploads geometry once: PreviewArm repoints geom
         # materials and poses its joints at construction. Not placed yet -- that waits for
         # the first head pose, inside ClutchPreview.before_step.
-        twin = SceneTwin(assets.ensure_so101_scene(), gl_device_index=config.twin_gl_device)
-        arm = PreviewArm(twin)
+        twin = SceneTwin(profile.scene(), gl_device_index=config.twin_gl_device)
+        arm = PreviewArm(twin, profile)
         monitor = InterventionMonitor(twin)
         # engage_gate=False widens the band rather than removing the node: ClutchPreview
         # binds to a gate unconditionally, and a band of 180 deg admits every wrist while
@@ -117,9 +128,10 @@ def build_twin(config) -> TwinBundle | None:
         )
     except ImportError as error:
         logger.warning(
-            "Robot twin unavailable, running without it: %s. It ships with Isaac Teleop's "
-            "Televiz on Linux; a Windows build and a wheel built without -DBUILD_VIZ=ON "
-            "both lack it. Pass --teleop.robot_twin=false to silence this.",
+            "Robot twin unavailable, running without it: %s. Either the wheel has no "
+            "Televiz (it ships on Linux; a Windows build and a -DBUILD_VIZ=OFF build both "
+            "lack it), or it predates PREVIEW_ARMS and so cannot preview a named arm. Pass "
+            "--teleop.robot_twin=false to silence this.",
             error,
         )
         return None
@@ -133,5 +145,9 @@ def build_twin(config) -> TwinBundle | None:
         )
         return None
 
-    logger.info("Robot twin built (scene backend: MuJoCo %s)", twin.backend_version)
+    logger.info(
+        "Robot twin built for %s (scene backend: MuJoCo %s)",
+        profile.label,
+        twin.backend_version,
+    )
     return TwinBundle(twin=twin, arm=arm, monitor=monitor, gate=gate)

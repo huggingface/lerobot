@@ -261,10 +261,14 @@ class XRController(IsaacTeleopTeleoperator):
         # then share, so it has to exist by the time connect() assembles the TeleopSessionConfig
         # (via the joint_publisher passed below).
         twin = None
-        if config.robot_twin and profile.robot_twin:
-            twin = build_twin(config)
+        if config.robot_twin and profile.preview_arm is not None:
+            twin = build_twin(config, profile.preview_arm)
         elif config.robot_twin:
-            logger.info("robot_type=%s: not an SO-101; running without the robot twin preview.", profile_key)
+            logger.info(
+                "robot_type=%s: Isaac Teleop has no preview arm for this follower; running "
+                "without the robot twin preview.",
+                profile_key,
+            )
         self._twin = twin
 
         super().__init__(config, joint_publisher=None if twin is None else twin.twin)

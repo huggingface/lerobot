@@ -113,12 +113,13 @@ class XRControllerConfig(IsaacTeleopConfig):
     """How long alignment must hold before the gate goes green."""
 
     robot_twin: bool = True
-    """Run Isaac Teleop's ``ClutchPreview`` in the headset: an SO-101 the operator drags by
-    hand while disengaged, swapped for a leader gripper locked to the hand once the clutch
+    """Run Isaac Teleop's ``ClutchPreview`` in the headset: the follower the operator drags
+    by hand while disengaged, swapped for a gripper locked to the hand once the clutch
     engages, with the safety harness recolouring it and the engage gate holding the latch.
     The same object ``examples/robot_viz`` runs. Needs a Linux ``isaacteleop`` built with
     ``-DBUILD_VIZ=ON``; warns and runs without it otherwise. Only arms whose ``RobotProfile``
-    sets ``robot_twin=True`` (SO-101/SO-100 today) get one regardless of this flag."""
+    names a ``preview_arm`` get one regardless of this flag -- SO-101/SO-100 and the reBot
+    B601-RS today."""
 
     twin_gl_device: int = -1
     """Which GPU to build the twin's OpenGL context on. ``-1`` takes the first that yields
