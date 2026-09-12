@@ -52,6 +52,10 @@ class BiRebotB601Follower(BimanualMixin, Robot):
             raise ValueError(
                 f"Top-level camera names collide with per-arm camera names: {sorted(_collisions)}"
             )
+        # Depth streams ("cam" -> "cam_depth") of top-level cameras must stay unprefixed too.
+        self._top_level_cam_keys |= {
+            f"{cam}_depth" for cam, cam_cfg in config.cameras.items() if getattr(cam_cfg, "use_depth", False)
+        }
         left_arm_cameras = {**config.left_arm_config.cameras, **config.cameras}
 
         left_arm_config = RebotB601FollowerRobotConfig(
