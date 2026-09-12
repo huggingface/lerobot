@@ -27,6 +27,8 @@ from lerobot.policies.pi0 import (  # noqa: E402
     PI0Policy,
     make_pi0_pre_post_processors,  # noqa: E402
 )
+from lerobot.policies.pi0_fast import PI0FastConfig, PI0FastPolicy  # noqa: E402
+from lerobot.policies.pi05 import PI05Config, PI05Policy  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 from tests.utils import require_cuda, require_hf_token  # noqa: E402
 
@@ -127,11 +129,19 @@ def test_config_creation():
         raise
 
 
-def test_from_pretrained_strict_raises_on_bad_checkpoint(tmp_path):
+@pytest.mark.parametrize(
+    ("policy_cls", "config_cls"),
+    [
+        (PI0Policy, PI0Config),
+        (PI05Policy, PI05Config),
+        (PI0FastPolicy, PI0FastConfig),
+    ],
+)
+def test_from_pretrained_strict_raises_on_bad_checkpoint(tmp_path, policy_cls, config_cls):
     """A checkpoint that fails to load must raise, not return an untrained model (#4577)."""
     from safetensors.torch import save_file
 
-    class TinyPI0Policy(PI0Policy):
+    class TinyPolicy(policy_cls):
         def __init__(self, config, **kwargs):
             torch.nn.Module.__init__(self)
             self.config = config
@@ -140,4 +150,4 @@ def test_from_pretrained_strict_raises_on_bad_checkpoint(tmp_path):
     save_file({"model.bogus": torch.zeros(1)}, tmp_path / "model.safetensors")
 
     with pytest.raises(RuntimeError, match="Unexpected key"):
-        TinyPI0Policy.from_pretrained(tmp_path, config=PI0Config(), strict=True)
+        TinyPolicy.from_pretrained(tmp_path, config=config_cls(), strict=True)
