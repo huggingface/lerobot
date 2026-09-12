@@ -362,21 +362,11 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         """4. Apply postprocessor"""
         # Apply postprocessor (handles unnormalization and device movement)
-        # Postprocessor expects (B, action_dim) per action, but we have (B, chunk_size, action_dim)
-        # So we process each action in the chunk individually
         start_postprocess = time.perf_counter()
-        _, chunk_size, _ = action_tensor.shape
 
-        # Process each action in the chunk
-        processed_actions = []
-        for i in range(chunk_size):
-            # Extract action at timestep i: (B, action_dim)
-            single_action = action_tensor[:, i, :]
-            processed_action = self.postprocessor(single_action)
-            processed_actions.append(processed_action)
-
-        # Stack back to (B, chunk_size, action_dim), then remove batch dim
-        action_tensor = torch.stack(processed_actions, dim=1).squeeze(0)
+        # Chunk-dependent postprocessors (for example, GR00T relative-action decoding)
+        # require the time dimension and may change the output horizon.
+        action_tensor = self.postprocessor(action_tensor).squeeze(0)
         self.logger.debug(f"Postprocessed action shape: {action_tensor.shape}")
 
         action_tensor = action_tensor.detach().cpu()
