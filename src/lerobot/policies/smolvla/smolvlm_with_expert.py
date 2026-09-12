@@ -38,30 +38,64 @@ else:
     SmolVLMForConditionalGeneration = None
 
 
-def apply_rope(x, positions, max_wavelength=10_000):
+class RotaryPositionalEmbeddings(nn.Module):
+    """Rotary Positional Embeddings (RoPE) with the sin/cos tables precomputed up to
+    ``max_seq_len`` and indexed by position id at rotation time.
+
+    Keeps the split-half pairing SmolVLA checkpoints were trained with (dim ``j`` rotates
+    with dim ``j + dim/2``). Position ids are integers, so the lookup is exact: for ids in
+    ``[0, max_seq_len)`` the output is bitwise-identical to rebuilding the tables per call.
+
+    Args:
+        dim: head dimension the rotation is applied over.
+        max_seq_len: largest position id the cache covers (SmolVLA sequences are ~700
+            tokens); larger ids raise an indexing error.
+        base: base of the geometric progression of rotation frequencies.
     """
-    Applies RoPE positions [B, L] to x [B, L, H, D].
-    """
-    d_half = x.shape[-1] // 2
-    device = x.device
-    dtype = x.dtype
-    x = x.to(torch.float32)
 
-    freq_exponents = (2.0 / x.shape[-1]) * torch.arange(d_half, dtype=torch.float32, device=device)
-    timescale = max_wavelength**freq_exponents
-    radians = positions[..., None].to(torch.float32) / timescale[None, None, :].to(torch.float32)
+    def __init__(self, dim: int, max_seq_len: int = 8192, base: int = 10_000):
+        super().__init__()
+        self.dim = dim
+        self.max_seq_len = max_seq_len
+        self.base = base
+        self.rope_init()
 
-    radians = radians[..., None, :]
+    def rope_init(self) -> None:
+        """(Re)build the sin/cos cache on the module's current device."""
+        device = self.sin.device if hasattr(self, "sin") else None
+        freq_exponents = (2.0 / self.dim) * torch.arange(self.dim // 2, dtype=torch.float32, device=device)
+        timescale = self.base**freq_exponents
+        positions = torch.arange(self.max_seq_len, dtype=torch.float32, device=device)
+        radians = positions[:, None] / timescale[None, :]
+        self.register_buffer("sin", torch.sin(radians), persistent=False)  # [max_seq_len, dim/2]
+        self.register_buffer("cos", torch.cos(radians), persistent=False)
 
-    sin = torch.sin(radians)  # .to(dtype=dtype)
-    cos = torch.cos(radians)  # .to(dtype=dtype)
+    def _apply(self, fn, recurse=True):
+        # Rebuild on every move/cast: sin/cos kernels differ across devices at the ulp level.
+        ret = super()._apply(fn, recurse)
+        self.rope_init()
+        return ret
 
-    x1, x2 = x.split(d_half, dim=-1)
-    res = torch.empty_like(x)
-    res[..., :d_half] = x1 * cos - x2 * sin
-    res[..., d_half:] = x2 * cos + x1 * sin
+    def forward(self, x: torch.Tensor, positions: torch.Tensor, rebase: bool = False) -> torch.Tensor:
+        """Rotate ``x`` [B, L, H, D] at ``positions`` [B, L].
 
-    return res.to(dtype)
+        With ``rebase=True``, positions are first shifted to start at 0 (the
+        action expert's convention for its cross-attention query).
+        """
+        if rebase:
+            positions = positions - torch.min(positions, dim=1, keepdim=True).values
+        sin = self.sin[positions][:, :, None, :]  # [B, L, 1, dim/2]
+        cos = self.cos[positions][:, :, None, :]
+
+        d_half = self.dim // 2
+        dtype = x.dtype
+        x = x.to(torch.float32)
+        x1, x2 = x.split(d_half, dim=-1)
+        res = torch.empty_like(x)
+        res[..., :d_half] = x1 * cos - x2 * sin
+        res[..., d_half:] = x2 * cos + x1 * sin
+
+        return res.to(dtype)
 
 
 def get_intermediate_size(hidden_dim, ffn_dim_multiplier=4, multiple_of=256):
@@ -145,6 +179,7 @@ class SmolVLMWithExpertModel(nn.Module):
         self.attention_mode = attention_mode
         self.expert_hidden_size = lm_expert_config.hidden_size
         self.set_requires_grad()
+        self.rope = RotaryPositionalEmbeddings(config.text_config.head_dim)
 
     def get_vlm_model(self):
         return self.vlm.model
@@ -266,8 +301,8 @@ class SmolVLMWithExpertModel(nn.Module):
         attention_mask_ = _attention_mask
         position_ids_ = _position_ids
 
-        query_states = apply_rope(query_states, position_ids_)
-        key_states = apply_rope(key_states, position_ids_)
+        query_states = self.rope(query_states, position_ids_)
+        key_states = self.rope(key_states, position_ids_)
 
         if use_cache:
             # `DynamicCache` stores tensors as [batch, heads, seq, head_dim]; this module works with
@@ -325,8 +360,8 @@ class SmolVLMWithExpertModel(nn.Module):
             value_states = layer.self_attn.v_proj(hidden_states).view(hidden_shape)
 
             # B,L,H,D with L sequence length, H number of heads, D head dim
-            query_states = apply_rope(query_state, position_id)
-            key_states = apply_rope(key_state, position_id)
+            query_states = self.rope(query_state, position_id)
+            key_states = self.rope(key_state, position_id)
 
             att_output = attention_interface(
                 prefix_attention_mask, batch_size, head_dim, query_states, key_states, value_states
@@ -369,14 +404,12 @@ class SmolVLMWithExpertModel(nn.Module):
                 *_value_states.shape[:-1], -1, expert_layer.self_attn.head_dim
             )
 
-            expert_position_id = (
-                expert_position_id - torch.min(expert_position_id, dim=1, keepdim=True).values
-            )  # start from 0
             expert_attention_mask = attention_mask[
                 :, -inputs_embeds[1].shape[1] :, : expert_key_states.shape[1] :
             ]  # take into account kv
 
-            expert_query_states = apply_rope(expert_query_state, expert_position_id)
+            # rebase=True: expert positions start from 0
+            expert_query_states = self.rope(expert_query_state, expert_position_id, rebase=True)
 
             att_output = attention_interface(
                 expert_attention_mask,
