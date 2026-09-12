@@ -26,6 +26,7 @@ import numpy as np
 import torch
 
 from lerobot.policies import PreTrainedPolicy, prepare_observation_for_inference
+from lerobot.utils.device_utils import is_amp_available
 from lerobot.utils.import_utils import _deepdiff_available, require_package
 
 if TYPE_CHECKING or _deepdiff_available:
@@ -66,7 +67,8 @@ def predict_action(
         device: The `torch.device` (e.g., 'cuda' or 'cpu') to run inference on.
         preprocessor: The `PolicyProcessorPipeline` for preprocessing observations.
         postprocessor: The `PolicyProcessorPipeline` for postprocessing actions.
-        use_amp: A boolean to enable/disable Automatic Mixed Precision for CUDA inference.
+        use_amp: A boolean to enable/disable Automatic Mixed Precision. It only takes effect on
+            devices where AMP is available (see `is_amp_available`).
         task: An optional string identifier for the task.
         robot_type: An optional string identifier for the robot type.
 
@@ -76,7 +78,9 @@ def predict_action(
     observation = copy(observation)
     with (
         torch.inference_mode(),
-        torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
+        torch.autocast(device_type=device.type)
+        if use_amp and is_amp_available(device.type)
+        else nullcontext(),
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         observation = prepare_observation_for_inference(observation, device, task, robot_type)
