@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
 from unittest.mock import Mock
 
 import numpy as np
@@ -2135,3 +2136,107 @@ def test_stats_reconstruction_after_load_state_dict():
         new_result[TransitionKey.OBSERVATION][OBS_STATE],
     )
     torch.testing.assert_close(original_result[TransitionKey.ACTION], new_result[TransitionKey.ACTION])
+
+
+def _prefixed_action_state_dict(prefixes: list[str]) -> dict[str, torch.Tensor]:
+    """Builds a state dict mimicking a checkpoint with one normalization layer per dataset."""
+    state = {}
+    for prefix in prefixes:
+        state[f"{prefix}.buffer.action.mean"] = torch.tensor([10.0, 10.0, 10.0])
+        state[f"{prefix}.buffer.action.std"] = torch.tensor([2.0, 2.0, 2.0])
+    return state
+
+
+def _action_only_step(step_cls):
+    features = {ACTION: PolicyFeature(FeatureType.ACTION, (3,))}
+    norm_map = {FeatureType.ACTION: NormalizationMode.MEAN_STD}
+    return step_cls(features=features, norm_map=norm_map, stats={})
+
+
+def test_load_state_dict_resolves_single_dataset_prefix():
+    unnormalizer = _action_only_step(UnnormalizerProcessorStep)
+
+    unnormalizer.load_state_dict(_prefixed_action_state_dict(["so100"]))
+
+    # The prefixed key is remapped onto the key the action lookup actually uses.
+    assert ACTION in unnormalizer._tensor_stats
+    assert "so100.buffer.action" not in unnormalizer._tensor_stats
+
+    transition = create_transition(action=torch.tensor([0.5, 0.5, 0.5]))
+    unnormalized = unnormalizer(transition)[TransitionKey.ACTION]
+
+    # action * std + mean, i.e. the transform is no longer skipped.
+    torch.testing.assert_close(unnormalized, torch.tensor([11.0, 11.0, 11.0]))
+
+
+def test_load_state_dict_does_not_resolve_across_unrelated_feature_suffix(caplog):
+    """A longer feature name ending with a shorter one must not be mistaken for its stats.
+
+    Candidates are matched on the `.buffer.` marker that every legacy normalization buffer
+    carries, so `observation.state` is not a candidate for a feature named `state`.
+    """
+    features = {"state": PolicyFeature(FeatureType.STATE, (3,))}
+    norm_map = {FeatureType.STATE: NormalizationMode.MEAN_STD}
+    normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats={})
+
+    # Not a dataset-prefixed buffer for `state` — it is a different feature entirely.
+    state_dict = {
+        "observation.state.mean": torch.tensor([10.0, 10.0, 10.0]),
+        "observation.state.std": torch.tensor([2.0, 2.0, 2.0]),
+    }
+
+    with caplog.at_level(logging.WARNING):
+        normalizer.load_state_dict(state_dict)
+
+    # `state` stays unresolved rather than silently adopting `observation.state`'s values.
+    assert "state" not in normalizer._tensor_stats
+    assert "observation.state" in normalizer._tensor_stats
+    assert "state" in caplog.text
+
+
+def test_load_state_dict_raises_on_ambiguous_dataset_prefixes():
+    unnormalizer = _action_only_step(UnnormalizerProcessorStep)
+    state_dict = _prefixed_action_state_dict(["so100", "so100-blue", "so100-red"])
+
+    with pytest.raises(ValueError, match="several dataset-prefixed keys"):
+        unnormalizer.load_state_dict(state_dict)
+
+
+def test_load_state_dict_warns_on_missing_stats(caplog):
+    features = {
+        OBS_STATE: PolicyFeature(FeatureType.STATE, (3,)),
+        ACTION: PolicyFeature(FeatureType.ACTION, (3,)),
+    }
+    norm_map = {
+        FeatureType.STATE: NormalizationMode.MEAN_STD,
+        FeatureType.ACTION: NormalizationMode.MEAN_STD,
+    }
+    normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats={})
+
+    with caplog.at_level(logging.WARNING):
+        normalizer.load_state_dict(_prefixed_action_state_dict(["so100"]))
+
+    # The action stats resolve, the observation stats are absent from the checkpoint.
+    assert ACTION in normalizer._tensor_stats
+    assert OBS_STATE not in normalizer._tensor_stats
+    assert OBS_STATE in caplog.text
+
+
+def test_load_state_dict_does_not_warn_when_stats_are_complete(caplog):
+    normalizer = _action_only_step(NormalizerProcessorStep)
+
+    with caplog.at_level(logging.WARNING):
+        normalizer.load_state_dict(_prefixed_action_state_dict(["so100"]))
+
+    assert "no normalization stats" not in caplog.text
+
+
+def test_identity_features_do_not_require_stats(caplog):
+    features = {ACTION: PolicyFeature(FeatureType.ACTION, (3,))}
+    norm_map = {FeatureType.ACTION: NormalizationMode.IDENTITY}
+    normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats={})
+
+    with caplog.at_level(logging.WARNING):
+        normalizer.load_state_dict({})
+
+    assert "no normalization stats" not in caplog.text
