@@ -1,0 +1,29 @@
+# LeRobot 노트북
+
+이 저장소에는 LeRobot 사용을 위한 예제 노트북이 포함되어 있습니다. 이 노트북들은 표준화된 정책을 사용해 실제 또는 시뮬레이션 데이터셋에서 정책을 학습하는 방법을 보여줍니다.
+
+---
+
+### ACT 학습
+
+[ACT](https://huggingface.co/papers/2304.13705) (Action Chunking Transformer)는 모방 학습(imitation learning)을 위한 트랜스포머 기반 정책 아키텍처입니다. 로봇 상태와 카메라 입력을 처리하여 매끄럽고 청크 단위로 구성된 액션 시퀀스(chunked action sequences)를 생성합니다.
+
+Hugging Face Hub의 데이터셋을 사용해 ACT 정책을 학습할 수 있도록, 바로 실행 가능한 Google Colab 노트북을 제공합니다. Weights & Biases에 선택적으로 로깅할 수 있습니다.
+
+| Notebook                                                                                                | Colab                                                                                                                                                                             |
+| :------------------------------------------------------------------------------------------------------ | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Train ACT with LeRobot](https://github.com/huggingface/notebooks/blob/main/lerobot/training-act.ipynb) | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/notebooks/blob/main/lerobot/training-act.ipynb) |
+
+100k 스텝 기준 예상 학습 시간: NVIDIA A100 GPU에서 배치 크기 `64`로 학습할 때 약 1.5시간.
+
+### SmolVLA 학습
+
+[SmolVLA](https://huggingface.co/papers/2506.01844)는 작지만 효율적인 Vision-Language-Action 모델입니다. 450M 파라미터 규모의 컴팩트한 모델로, Hugging Face에서 개발했습니다.
+
+Hugging Face Hub의 데이터셋을 사용해 SmolVLA 정책을 학습할 수 있도록, 바로 실행 가능한 Google Colab 노트북을 제공합니다. Weights & Biases에 선택적으로 로깅할 수 있습니다.
+
+| Notebook                                                                                                        | Colab                                                                                                                                                                                 |
+| :-------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [Train SmolVLA with LeRobot](https://github.com/huggingface/notebooks/blob/main/lerobot/training-smolvla.ipynb) | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/notebooks/blob/main/lerobot/training-smolvla.ipynb) |
+
+20k 스텝 기준 예상 학습 시간: NVIDIA A100 GPU에서 배치 크기 `64`로 학습할 때 약 5시간.
