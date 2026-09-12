@@ -123,6 +123,8 @@
     title: RoboCerebra
   - local: robomme
     title: RoboMME
+  - local: so101_sim
+    title: SO-101 (MuJoCo)
   - local: envhub_isaaclab_arena
     title: NVIDIA IsaacLab Arena Environments
   - local: vlabench
