@@ -211,8 +211,6 @@ class XVLAConfig(PreTrainedConfig):
             raise ValueError("`use_proprio=True` requires a proprioceptive state feature.")
         if self.num_image_views is None:
             self.num_image_views = len(self.image_features) + self.empty_cameras
-        else:
-            self.num_image_views = max(self.num_image_views, len(self.image_features) + self.empty_cameras)
 
         if self.empty_cameras > 0:
             height, width = (480, 640)
