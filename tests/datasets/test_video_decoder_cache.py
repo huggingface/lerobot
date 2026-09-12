@@ -21,6 +21,7 @@ unbounded growth when iterating over datasets with many distinct video files
 (observed: ~35 GB anon-rss per DataLoader worker on an 8 k-file dataset).
 """
 
+import os
 import shutil
 from pathlib import Path
 
@@ -127,6 +128,42 @@ class TestVideoDecoderCacheBounded:
         for p in paths:
             cache.get_decoder(p)
         assert cache.size() == 4
+
+    def test_forked_child_gets_its_own_decoder(self, tmp_path):
+        """A decoder built before a fork must not be reused by the child.
+
+        ``DataLoader`` workers are forked, so an inherited entry hands the child a
+        decoder whose fsspec handle shares the parent's file offset. Both processes
+        then seek it and torchcodec fails with "Could not push packet to decoder".
+        """
+        paths = _make_distinct_clips(tmp_path, n=1)
+        cache = VideoDecoderCache(max_size=4)
+        parent_decoder = cache.get_decoder(paths[0])
+        assert cache.size() == 1
+
+        read_fd, write_fd = os.pipe()
+        pid = os.fork()
+        if pid == 0:  # child
+            verdict = b"0"
+            try:
+                os.close(read_fd)
+                dropped = str(paths[0]) not in cache and cache.size() == 0
+                child_decoder = cache.get_decoder(paths[0])
+                if dropped and child_decoder is not parent_decoder:
+                    verdict = b"1"
+                os.write(write_fd, verdict)
+                os._exit(0)
+            except BaseException:  # noqa: BLE001 - the parent asserts on the exit status
+                os._exit(1)
+
+        os.close(write_fd)
+        payload = os.read(read_fd, 1)
+        os.close(read_fd)
+        _, status = os.waitpid(pid, 0)
+
+        assert os.WIFEXITED(status), "forked child did not exit cleanly"
+        assert os.WEXITSTATUS(status) == 0
+        assert payload == b"1", "forked child reused the parent's decoder"
 
     def test_env_var_overrides_default(self, tmp_path, monkeypatch):
         """``LEROBOT_VIDEO_DECODER_CACHE_SIZE`` env var sets the default ``max_size``."""
