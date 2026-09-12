@@ -19,6 +19,7 @@ import logging
 
 import numpy as np
 
+from lerobot.configs import is_depth_map
 from lerobot.processor import RelativeActionsProcessorStep
 from lerobot.utils.constants import ACTION, OBS_STATE
 
@@ -533,9 +534,7 @@ def compute_episode_stats(
         )
 
         if features[key]["dtype"] in ["image", "video"]:
-            normalization_factor = (
-                255.0 if not (features[key].get("info") or {}).get("is_depth_map", False) else 1.0
-            )
+            normalization_factor = 1.0 if is_depth_map(features[key]) else 255.0
             ep_stats[key] = {
                 k: v if k == "count" else np.squeeze(v / normalization_factor, axis=0)
                 for k, v in ep_stats[key].items()

@@ -1,0 +1,23 @@
+# Motors
+
+`MotorsBus` is the low-level interface to a chain of servos on a serial bus. Robots use it to read positions
+and write goal positions; you rarely touch it directly unless you are adding hardware.
+
+See [Bring Your Own Hardware](../integrate_hardware) for adding a new bus, and
+[Updating Feetech Firmware](../feetech) and [Damiao Motors and CAN Bus](../damiao) for device-specific notes.
+
+## MotorsBus
+
+[[autodoc]] lerobot.motors.motors_bus.MotorsBus
+
+## Motor
+
+[[autodoc]] lerobot.motors.Motor
+
+## MotorCalibration
+
+[[autodoc]] lerobot.motors.MotorCalibration
+
+## MotorNormMode
+
+[[autodoc]] lerobot.motors.MotorNormMode

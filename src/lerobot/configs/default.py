@@ -32,8 +32,9 @@ class DatasetConfig:
     # "dataset_index" into the returned item. The index mapping is made according to the order in which the
     # datasets are provided.
     repo_id: str
-    # Hub repository type: "dataset" (default) or "bucket" for an HF Storage Bucket streamed over
-    # hf://buckets/. Buckets are streaming-only, so "bucket" requires streaming=true.
+    # Hub repository type: "dataset" (default) or "bucket" for an HF Storage Bucket
+    # (hf://buckets/). Whether a bucket needs streaming=true depends on the dataset's
+    # storage format, so that is checked at load time in the dataset factory.
     repo_type: str = "dataset"
     # Root directory for a concrete local dataset tree (e.g. 'dataset/path'). If None, local datasets are
     # looked up under $HF_LEROBOT_HOME/repo_id and Hub downloads use a revision-safe cache under $HF_LEROBOT_HOME/hub.
@@ -58,13 +59,9 @@ class DatasetConfig:
     def __post_init__(self) -> None:
         if self.repo_type not in ("dataset", "bucket"):
             raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {self.repo_type!r}")
-        if self.repo_type == "bucket" and not self.streaming:
+        if self.eval_split != 0.0 and self.streaming:
             raise ValueError(
-                "repo_type='bucket' is streaming-only: set streaming=true to train from an HF Storage Bucket."
-            )
-        if self.repo_type == "bucket" and self.eval_split != 0.0:
-            raise ValueError(
-                "eval_split requires map-style datasets and is not supported with repo_type='bucket'."
+                "eval_split requires map-style datasets and is not supported with dataset.streaming=true."
             )
         if self.depth_output_unit not in (DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT):
             raise ValueError(
@@ -99,7 +96,11 @@ class WandBConfig:
     entity: str | None = None
     notes: str | None = None
     run_id: str | None = None
+    resume: str | None = None  # Allowed values: 'allow', 'must', 'never', or 'auto'.
     mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
+    console: str = "wrap"
+    console_multipart: bool = False
+    console_chunk_max_seconds: int = 0
     add_tags: bool = True  # If True, save configuration as tags in the WandB run.
 
 
@@ -137,6 +138,59 @@ class EvalConfig:
         # Each async env worker needs ~1 core; leave headroom for main process + inference.
         by_cpu = max(1, math.floor(cpu_cores * 0.7))
         return min(by_cpu, self.n_episodes, 64)
+
+
+@dataclass
+class EMAConfig:
+    """Exponential moving average (EMA) of the policy weights.
+
+    Standard practice for diffusion-style policies (Chi et al. 2023, "Diffusion Policy", section V.D):
+    the reference implementation enables it in every config and evaluates the EMA weights. Off by
+    default here because it keeps a second full copy of the parameters in memory.
+
+    The decay follows the warmup schedule from diffusers' `EMAModel`:
+    `decay_t = 1 - (1 + t / inv_gamma) ** -power`, clamped to `[min_decay, max_decay]`.
+    The defaults mirror the reference implementation. Alternatively, set `decay` for a constant
+    decay at every step, as used by openpi for pi0/pi05 (`ema_decay=0.99`).
+    """
+
+    enable: bool = False
+    # Constant decay coefficient (openpi-style, e.g. 0.99 for pi0/pi05). When set, the warmup
+    # schedule below is bypassed and the shadow uses this decay at every step.
+    decay: float | None = None
+    # Number of optimizer steps during which the shadow stays a hard copy of the live weights.
+    update_after_step: int = 0
+    # Warmup schedule parameters (see class docstring).
+    inv_gamma: float = 1.0
+    power: float = 0.75
+    min_decay: float = 0.0
+    max_decay: float = 0.9999
+    # Evaluate the EMA weights (instead of the live ones) during periodic env eval.
+    # Offline eval-loss (--eval_steps) always uses the live weights: it runs on every rank
+    # while the EMA shadow only lives on the main process.
+    use_for_eval: bool = True
+
+    def __post_init__(self) -> None:
+        if not (0.0 <= self.min_decay <= self.max_decay <= 1.0):
+            raise ValueError(
+                "Expected 0 <= ema.min_decay <= ema.max_decay <= 1, got "
+                f"min_decay={self.min_decay} and max_decay={self.max_decay}."
+            )
+        if self.inv_gamma <= 0:
+            raise ValueError(f"ema.inv_gamma must be positive, got {self.inv_gamma}.")
+        if self.power <= 0:
+            raise ValueError(f"ema.power must be positive, got {self.power}.")
+        if self.update_after_step < 0:
+            raise ValueError(f"ema.update_after_step must be >= 0, got {self.update_after_step}.")
+        if self.decay is not None:
+            if not 0.0 <= self.decay <= 1.0:
+                raise ValueError(f"ema.decay must be in [0, 1], got {self.decay}.")
+            # Keep the literals in sync with the field defaults above.
+            if self.min_decay != 0.0 or self.max_decay != 0.9999:
+                raise ValueError(
+                    "ema.decay (constant decay) and ema.min_decay/ema.max_decay (schedule clamp) are "
+                    "mutually exclusive: set one or the other."
+                )
 
 
 @dataclass

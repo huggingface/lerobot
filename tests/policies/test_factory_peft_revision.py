@@ -18,6 +18,8 @@ from unittest.mock import MagicMock
 import torch
 
 import lerobot.policies.factory as policy_factory
+from lerobot.configs import FeatureType
+from lerobot.utils.constants import ACTION
 
 
 def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch):
@@ -81,3 +83,40 @@ def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch)
         revision="adapter-sha",
         is_trainable=True,
     )
+
+
+def test_make_policy_reads_action_names_through_rename_map(monkeypatch):
+    cfg = SimpleNamespace(
+        type="mock",
+        device="cpu",
+        pretrained_path=None,
+        use_peft=False,
+        input_features={},
+        output_features={},
+        action_feature_names=None,
+    )
+    action_names = ["shoulder", "elbow", "gripper"]
+    dataset_meta = SimpleNamespace(
+        features={
+            "actions": {
+                "dtype": "float32",
+                "shape": (len(action_names),),
+                "names": action_names,
+            }
+        },
+        stats={},
+    )
+
+    policy = torch.nn.Linear(1, 1)
+    policy_class = MagicMock(return_value=policy)
+    monkeypatch.setattr(policy_factory, "get_policy_class", lambda _: policy_class)
+
+    result = policy_factory.make_policy(
+        cfg,
+        ds_meta=dataset_meta,
+        rename_map={"actions": ACTION},
+    )
+
+    assert result is policy
+    assert cfg.action_feature_names == action_names
+    assert cfg.output_features[ACTION].type is FeatureType.ACTION

@@ -29,6 +29,7 @@ from safetensors.torch import load_model as load_model_as_safetensor
 from torch import Tensor, nn
 
 from lerobot.configs import PreTrainedConfig
+from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.import_utils import _peft_available, require_package
@@ -80,6 +81,10 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     # Declarative context-parallel plan (diffusers `ContextParallelModelPlan` semantics:
     # module FQN -> sequence split/gather spec). Reserved for the CP engine round.
     _cp_plan: ClassVar[dict[str, Any] | None] = None
+    # Attribute names `drop_queued_actions` clears: a `populate_queues`-style `_queues` dict
+    # and a bare `_action_queue` deque. A chunking policy using another name must extend this
+    # ClassVar (or override the method), otherwise dropping the queue silently does nothing.
+    _action_queue_attrs: ClassVar[tuple[str, ...]] = ("_queues", "_action_queue")
 
     def __init__(self, config: PreTrainedConfig, *inputs, **kwargs):
         super().__init__()
@@ -97,6 +102,18 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             raise TypeError(f"Class {cls.__name__} must define 'config_class'")
         if not getattr(cls, "name", None):
             raise TypeError(f"Class {cls.__name__} must define 'name'")
+        # The rollout stack gates text queries on supports_text_generation(), so a
+        # generate_text() override without it is unreachable. Compared through the MRO, so an
+        # override inherited from a conforming parent counts.
+        if (
+            cls.generate_text is not PreTrainedPolicy.generate_text
+            and cls.supports_text_generation is PreTrainedPolicy.supports_text_generation
+        ):
+            raise TypeError(
+                f"{cls.__name__} provides generate_text() but not supports_text_generation(). "
+                "Override supports_text_generation() too (returning True, or a "
+                "checkpoint-conditional value), otherwise the text head is never used."
+            )
 
     def _save_pretrained(self, save_directory: Path) -> None:
         """Serialize this policy's parameters (and config) into `save_directory`.
@@ -210,9 +227,43 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """
         raise NotImplementedError
 
+    def drop_queued_actions(self) -> None:
+        """Discard actions precomputed by earlier ``select_action`` calls.
+
+        Forces a fresh forward pass on the next ``select_action`` so a mid-episode conditioning
+        change (e.g. a new instruction) takes effect at once instead of after the queue drains.
+        Unlike :meth:`reset`, the rest of the episode state is kept.  Call it from the thread
+        that calls ``select_action``.  Clears the queues named in :attr:`_action_queue_attrs`;
+        a policy that keeps no action queue inherits a no-op.
+        """
+        for attr in self._action_queue_attrs:
+            queue = getattr(self, attr, None)
+            if isinstance(queue, dict):
+                # populate_queues-style dict: clear only ACTION, not the observation history.
+                if ACTION in queue:
+                    queue[ACTION].clear()
+            elif queue is not None:
+                queue.clear()
+
     def supports_rtc(self) -> bool:
         """Whether this policy implements Real-Time Chunking inference semantics."""
         return False
+
+    def supports_text_generation(self) -> bool:
+        """Whether this policy implements :meth:`generate_text` (override both together)."""
+        return False
+
+    def generate_text(self, batch: dict[str, Any]) -> str:
+        """Run the policy's text head on a preprocessed observation batch.
+
+        The request rides on ``batch`` as complementary data (:data:`~lerobot.utils.constants.QUERY_KIND`
+        / ``QUERY_TEXT``); a ``next_subtask`` reply is fed straight into ``set_task``, so it must be
+        exactly one subtask, not a plan or a numbered list.  Returns the generated text, and must not
+        mutate action-producing state (queues, observation history).
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} has no text head — it cannot answer questions or plan subtasks."
+        )
 
     # TODO(aliberts, rcadene): split into 'forward' and 'compute_loss'?
     @abc.abstractmethod

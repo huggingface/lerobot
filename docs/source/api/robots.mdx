@@ -1,0 +1,147 @@
+# Robots
+
+Every robot in LeRobot implements the [`Robot`] interface: connect, read an observation, send an action,
+disconnect. Writing a policy or a recording script against that interface means it works with any supported
+arm without change.
+
+This page is the generated reference. For wiring, calibration and first-run instructions, start with the
+hardware guides — [SO-101](../so101), [LeKiwi](../lekiwi), [Hope Jr](../hope_jr), [Reachy 2](../reachy2),
+[OpenArm](../openarm) — or [Imitation Learning for Robots](../il_robots) for the end-to-end workflow. To add
+a robot of your own, see [Bring Your Own Hardware](../integrate_hardware).
+
+## Robot
+
+The abstract base class. Subclasses implement every method below; the contract described here is what a
+policy or recording loop can rely on.
+
+[[autodoc]] lerobot.robots.Robot
+    - connect
+    - disconnect
+    - configure
+    - calibrate
+    - get_observation
+    - send_action
+    - observation_features
+    - action_features
+    - is_connected
+    - is_calibrated
+
+## RobotConfig
+
+[[autodoc]] lerobot.robots.RobotConfig
+
+## make_robot_from_config
+
+[[autodoc]] lerobot.robots.make_robot_from_config
+
+## SO-100 and SO-101 followers
+
+`SO100Follower` and `SO101Follower` are aliases of the same `SOFollower` class; the two arms differ in their
+configuration, not their control code. `SO100FollowerConfig` and `SO101FollowerConfig` are likewise aliases
+of `SOFollowerRobotConfig`.
+
+[[autodoc]] lerobot.robots.so_follower.SOFollower
+    - all
+
+[[autodoc]] lerobot.robots.so_follower.SOFollowerRobotConfig
+
+## BiSOFollower
+
+Two SO followers driven as one bimanual robot.
+
+[[autodoc]] lerobot.robots.bi_so_follower.BiSOFollower
+    - all
+
+[[autodoc]] lerobot.robots.bi_so_follower.BiSOFollowerConfig
+
+## KochFollower
+
+[[autodoc]] lerobot.robots.koch_follower.KochFollower
+    - all
+
+[[autodoc]] lerobot.robots.koch_follower.KochFollowerConfig
+
+## LeKiwi
+
+`LeKiwi` runs on the robot itself. `LeKiwiClient` is the host-side proxy that talks to it over the network
+and presents the same [`Robot`] interface.
+
+[[autodoc]] lerobot.robots.lekiwi.LeKiwi
+    - all
+
+[[autodoc]] lerobot.robots.lekiwi.LeKiwiConfig
+
+[[autodoc]] lerobot.robots.lekiwi.LeKiwiClient
+    - all
+
+[[autodoc]] lerobot.robots.lekiwi.LeKiwiClientConfig
+
+## OpenArmFollower
+
+[[autodoc]] lerobot.robots.openarm_follower.OpenArmFollower
+    - all
+
+[[autodoc]] lerobot.robots.openarm_follower.OpenArmFollowerConfig
+
+## BiOpenArmFollower
+
+[[autodoc]] lerobot.robots.bi_openarm_follower.BiOpenArmFollower
+    - all
+
+[[autodoc]] lerobot.robots.bi_openarm_follower.BiOpenArmFollowerConfig
+
+## OmxFollower
+
+[[autodoc]] lerobot.robots.omx_follower.OmxFollower
+    - all
+
+[[autodoc]] lerobot.robots.omx_follower.OmxFollowerConfig
+
+## Reachy2Robot
+
+[[autodoc]] lerobot.robots.reachy2.Reachy2Robot
+    - all
+
+[[autodoc]] lerobot.robots.reachy2.Reachy2RobotConfig
+
+## UnitreeG1
+
+[[autodoc]] lerobot.robots.unitree_g1.UnitreeG1
+    - all
+
+[[autodoc]] lerobot.robots.unitree_g1.UnitreeG1Config
+
+## Hope Jr
+
+The Hope Jr humanoid is exposed as two independent robots, an arm and a hand.
+
+[[autodoc]] lerobot.robots.hope_jr.HopeJrArm
+    - all
+
+[[autodoc]] lerobot.robots.hope_jr.HopeJrArmConfig
+
+[[autodoc]] lerobot.robots.hope_jr.HopeJrHand
+    - all
+
+[[autodoc]] lerobot.robots.hope_jr.HopeJrHandConfig
+
+## RebotB601Follower
+
+[[autodoc]] lerobot.robots.rebot_b601_follower.RebotB601Follower
+    - all
+
+[[autodoc]] lerobot.robots.rebot_b601_follower.RebotB601FollowerRobotConfig
+
+## BiRebotB601Follower
+
+[[autodoc]] lerobot.robots.bi_rebot_b601_follower.BiRebotB601Follower
+    - all
+
+[[autodoc]] lerobot.robots.bi_rebot_b601_follower.BiRebotB601FollowerConfig
+
+## EarthRoverMiniPlus
+
+[[autodoc]] lerobot.robots.earthrover_mini_plus.EarthRoverMiniPlus
+    - all
+
+[[autodoc]] lerobot.robots.earthrover_mini_plus.EarthRoverMiniPlusConfig
