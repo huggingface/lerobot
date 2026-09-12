@@ -74,6 +74,14 @@ class OpenArmFollowerConfigBase:
     # Set to a positive scalar for all motors, or a dict mapping motor names to limits
     max_relative_target: float | dict[str, float] | None = None
 
+    # End-effector kinematics (optional). Point `urdf_path` at the OpenArm URDF and set
+    # `target_frame_name` to the end-effector link in that URDF to enable forward/inverse
+    # kinematics in Cartesian (EE) space -- via `lerobot.model.RobotKinematics` and the
+    # shared FK/IK processor steps. Left as None, the robot behaves exactly as before
+    # (joint space only). The URDF is user-supplied, so no large asset is vendored here.
+    urdf_path: str | None = None
+    target_frame_name: str | None = None
+
     # Camera configurations
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
