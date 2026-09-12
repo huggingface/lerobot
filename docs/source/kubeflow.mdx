@@ -1,0 +1,130 @@
+# Distributed Training with Kubeflow
+
+`--job.target=kubeflow` submits a training run to a Kubernetes cluster you own, via [Kubeflow Trainer V2](https://www.kubeflow.org/docs/components/trainer/). This is different from HF Jobs (`--job.target=<hardware-flavor>`, see [Multi-GPU training](multi_gpu_training)): HF Jobs runs on Hugging Face's hosted infrastructure, while Kubeflow submits to **your own cluster** — on-prem, a private cloud, a managed Kubernetes offering (EKS/GKE/AKS), or a local test cluster like `kind`. Use it when you already have Kubernetes infrastructure and GPUs, or need data residency / air-gapped training that can't leave your own network.
+
+## Prerequisites
+
+- A Kubernetes cluster with `kubectl` configured against it (`kubectl cluster-info` should succeed)
+- [Kubeflow Trainer V2](https://www.kubeflow.org/docs/components/trainer/) installed on the cluster (see below)
+- LeRobot installed with the `kubeflow` extra:
+
+```bash
+uv sync --locked --extra kubeflow
+```
+
+This pulls in the `kubernetes` Python client, required to submit and monitor jobs.
+
+## Installing Kubeflow Trainer V2
+
+The simplest install path is Helm — it handles the CRDs, controller, and built-in `ClusterTrainingRuntime`s in one step:
+
+```bash
+export VERSION=v2.3.0
+helm install kubeflow-trainer oci://ghcr.io/kubeflow/charts/kubeflow-trainer \
+    --namespace kubeflow-system \
+    --create-namespace \
+    --version ${VERSION#v} \
+    --set runtimes.torchDistributed.enabled=true
+```
+
+Enable `runtimes.torchRocmDistributed.enabled=true` too if any of your nodes are AMD GPUs.
+
+Verify the install:
+
+```bash
+kubectl get pods -n kubeflow-system          # controller + JobSet pods should be Running
+kubectl get clustertrainingruntime           # lists "torch-distributed" (and "torch-rocm-distributed" if enabled)
+```
+
+## Launching a job
+
+```bash
+lerobot-train \
+    --job.target=kubeflow \
+    --job.namespace=default \
+    --job.gpus=1 \
+    --job.gpu_vendor=nvidia \
+    --job.image=huggingface/lerobot-gpu:latest \
+    --policy.type=act \
+    --policy.push_to_hub=true \
+    --save_checkpoint_to_hub=true
+    --policy.repo_id=${HF_USER}/act-aloha \
+    --dataset.repo_id=lerobot/aloha_sim_transfer_cube_human \
+    --steps=100000
+```
+
+Multi-node / multi-GPU:
+
+```bash
+--job.nodes=4 --job.gpus=4
+```
+
+CPU-only (also useful as a fast smoke test — no GPU scheduling required):
+
+```bash
+--job.gpus=0
+```
+
+> [!WARNING]
+> `--job.gpu_vendor=auto` (the default) detects CUDA vs. ROCm on **the machine running `lerobot-train`**, not on the cluster. If you're submitting from a laptop without the same accelerator as your cluster, set `--job.gpu_vendor=nvidia` or `amd` explicitly — otherwise, when `gpus > 0`, an unresolvable auto-detection raises a clear error rather than silently submitting without a GPU resource request.
+
+The `image` you set must have `lerobot` installed with the extras your policy/dataset need — `huggingface/lerobot-gpu:latest` and `huggingface/lerobot-cpu:latest` are prebuilt images with everything included (see [Compute Hardware Guide](hardware_guide)); the CPU image is much smaller and faster to pull, so prefer it for smoke tests even against a GPU-capable cluster.
+
+## Monitoring
+
+Submitting prints ready-to-use `kubectl` commands:
+
+```bash
+Submitting TrainJob to Kubeflow (namespace=default, runtime=torch-distributed) ...
+TrainJob created: lerobot-act-20260101-120000
+  Status:  kubectl get trainjob lerobot-act-20260101-120000 -n default
+  Logs:    kubectl logs -l jobset.sigs.k8s.io/jobset-name=lerobot-act-20260101-120000 -n default -f
+  Cancel:  kubectl delete trainjob lerobot-act-20260101-120000 -n default
+```
+
+By default, `lerobot-train` blocks and streams the pod's logs to your terminal until the job finishes. Pass `--job.detach=true` to submit and exit immediately instead — the job keeps running on the cluster regardless. Pressing Ctrl-C while attached also detaches without cancelling the job.
+
+## Resuming a run
+
+Resuming from a Hub repo id is the easy case — `--config_path` is resolvable from any machine, submitter or pod alike. It requires **two separate flags** on the original run, not just one:
+
+```bash
+lerobot-train \
+    --job.target=kubeflow \
+    --job.namespace=default \
+    --policy.type=act \
+    --policy.push_to_hub=true \
+    --policy.repo_id=${HF_USER}/act-aloha \
+    --save_checkpoint_to_hub=true \
+    --dataset.repo_id=lerobot/aloha_sim_transfer_cube_human \
+    --steps=100000
+```
+
+- `--policy.push_to_hub` pushes the **final** model to the repo root once training ends — for distribution/inference, not resuming.
+- `--save_checkpoint_to_hub` pushes **every** intermediate checkpoint (per `--save_freq`) under `checkpoints/<step>/` in that same repo — this is what resume actually downloads from. Without it, `--config_path=<repo> --resume=true` fails with `No checkpoint found in '<repo>' under 'checkpoints/'`.
+
+With both set, resume against that repo id directly:
+
+```bash
+lerobot-train \
+    --job.target=kubeflow \
+    --job.image=huggingface/lerobot-cpu:latest \
+    --job.namespace=default \
+    --resume=true \
+    --config_path=${HF_USER}/act-aloha \
+    --steps=200000
+```
+
+Resuming restores the full saved config (dataset, policy, `push_to_hub`/`repo_id`) from `train_config.json` in that repo, so only `--job.*` flags, `--resume`, `--config_path`, and a new `--steps` target need repeating.
+
+> [!WARNING]
+> **`--steps` must be _greater_ than the step the checkpoint already reached**, or there is nothing left to do. Resuming a checkpoint saved at step 2 with `--steps=2` still unchanged runs **zero** additional steps — training logs `0/0` steps and exits immediately, and a `--policy.push_to_hub` at the end is skipped ("No files have been modified since last commit") since the weights never changed.
+
+> [!WARNING]
+> `--config_path=<path>` only works when `<path>` is reachable from **the machine running `lerobot-train`** — a Hub repo id (as above), or a local directory. A path that only exists inside the cluster (e.g. a volume mounted by a custom `ClusterTrainingRuntime`) can't be resolved from your laptop, and `--job.target=kubeflow` surfaces a clear error rather than attempting it. In that case, run the resume **inside a pod that mounts the same storage**, with `--job.target=local` instead — the path is genuinely local from there. For that local-directory case (not the Hub repo id case above), `--config_path` must point at the checkpoint's `pretrained_model/` subdirectory (where `train_config.json` lives), not the bare step directory.
+
+## Notes
+
+- `--job.kubeconfig=<path>` points at a specific cluster; omit it to use the default (`~/.kube/config`, or in-cluster config if `lerobot-train` itself runs inside the cluster).
+- `--job.timeout` and `--job.tags` are HF-Jobs-specific and ignored for Kubeflow.
+- Only policy training is supported (`--job.target=kubeflow` rejects reward-model training) — run reward models locally or on HF Jobs.
