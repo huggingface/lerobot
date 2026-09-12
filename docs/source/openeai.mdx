@@ -1,0 +1,198 @@
+# OpenEAI-VLA
+
+OpenEAI-VLA is a **Vision-Language-Action (VLA) policy** built on a Qwen3-VL backbone with a DiT action head trained via flow matching. It is integrated into the LeRobot framework for training, fine-tuning, and inference.
+
+## Model Overview
+
+OpenEAI-VLA is an end-to-end VLA policy that combines a **Qwen3-VL** vision-language backbone with a **Diffusion Transformer (DiT)** action head. The architecture consists of three key components:
+
+### Backbone: Qwen3-VL
+
+- **Base model**: `Qwen3-VL-4B-Instruct` (frozen by default during DiT training)
+- Processes joint image + text inputs through `Qwen3VLProcessor`
+- Uses feat-query tokens to extract condition embeddings via cross-attention with Qwen hidden states
+
+### Action Head: DiT with Flow Matching
+
+- **DiT blocks**: 18 layers with RMSNorm, self-attention (32 heads), and cross-attention to Qwen features
+- **MLP expansion ratio**: `ff_ratio=2.67` with GELU(tanh) activation
+- **Flow matching**: Linear flow matching with Beta(1.5, 1.0) time sampling scaled to [0.001, 0.999]
+- **Action chunk**: predicts 50 timesteps of actions per inference (`chunk_size=50`)
+- **Denoising**: 10 Euler integration steps during inference
+
+### Multi-subset Branching
+
+- Per-dataset subset encoders (`state_encoder`, `action_encoder`, `action_decoder`) configured via `data_dim_info`
+- Automatically infers encoder/decoder dimensions from the checkpoint or dataset metadata
+- Fine-tune mode: drops mismatched encoder/decoder weights when dataset dims differ from the checkpoint
+
+### Configuration Defaults
+
+| Parameter         | Default                     | Description                              |
+| ----------------- | --------------------------- | ---------------------------------------- |
+| `qwen_path`       | `Qwen/Qwen3-VL-4B-Instruct` | Backbone model (HF Hub ID or local path) |
+| `qwen_dim`        | 2560                        | Qwen hidden dimension                    |
+| `hidden_dim`      | 1664                        | DiT hidden dimension                     |
+| `n_layers`        | 18                          | Number of DiT blocks                     |
+| `num_heads`       | 32                          | Attention heads per block                |
+| `ff_ratio`        | 2.67                        | MLP expansion ratio                      |
+| `chunk_size`      | 50                          | Action chunk size                        |
+| `denoise_steps`   | 10                          | Flow matching inference steps            |
+| `img_seq_len`     | 64                          | Image token sequence length from Qwen    |
+| `feat_length`     | 20                          | Condition feature (query token) length   |
+| `freeze_backbone` | `true`                      | Freeze Qwen3 backbone during training    |
+| `backbone_dtype`  | `bfloat16`                  | Backbone precision                       |
+| `n_obs_steps`     | 1                           | Number of observation steps (fixed)      |
+| `n_action_steps`  | 50                          | Action steps per inference               |
+
+### Normalization
+
+| Modality | Mode       | Description                         |
+| -------- | ---------- | ----------------------------------- |
+| VISUAL   | `IDENTITY` | Raw pixel values (no normalization) |
+| STATE    | `MEAN_STD` | Mean-std from dataset statistics    |
+| ACTION   | `MEAN_STD` | Mean-std from dataset statistics    |
+
+### Limitations
+
+The current LeRobot integration does **not** yet include the following features from the original OpenEAI-VLA codebase:
+
+- Multi-modal data mixing
+- Multi-source data mixing
+
+## Pretrained Checkpoints
+
+We release pretrained OpenEAI-VLA checkpoints on the Hugging Face Hub:
+
+- **Repository**: [`OpenEAI/OpenEAI-VLA-Pretrained`](https://huggingface.co/OpenEAI/OpenEAI-VLA-Pretrained)
+- **LeRobot-compatible weights**: located under the `openeai-lerobot/` subfolder
+
+> [!NOTE]
+> The repository root contains the original OpenEAI-VLA checkpoint format (`model.safetensors` + `openeai/`).
+> For use with LeRobot, please download from the **`openeai-lerobot/`** subfolder, which contains weights remapped to the LeRobot integration's state-dict layout.
+
+### Downloading the Checkpoint
+
+Using the `hf` to download only the LeRobot-compatible folder:
+
+```bash
+hf download OpenEAI/OpenEAI-VLA-Pretrained \
+  --include "openeai-lerobot/*" \
+  --local-dir ./model/openeai-vla
+```
+
+After downloading, the LeRobot-compatible checkpoint will be at:
+
+```
+./model/openeai-vla/openeai-lerobot/
+```
+
+Alternatively, you can pass the Hugging Face repo ID directly to `--policy.pretrained_path` (see [Fine-tuning](#fine-tuning-from-the-pretrained-checkpoint) below) — LeRobot will download it automatically.
+
+## Training
+
+### Prerequisites
+
+- **LeRobot framework**: install per the [official installation guide](https://huggingface.co/docs/lerobot/installation)
+- **Qwen3-VL-4B-Instruct backbone**: download via `hf download Qwen/Qwen3-VL-4B-Instruct` or use a local path
+- **LeRobot-format dataset**: your dataset must be converted to the LeRobot dataset format (see [LeRobot dataset docs](https://huggingface.co/docs/lerobot/datasets))
+
+### Quick Start
+
+Train from scratch on your dataset:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=${HF_USER}/your_dataset \
+  --policy.type=openeai \
+  --policy.qwen_path=Qwen/Qwen3-VL-4B-Instruct \
+  --policy.freeze_backbone=true \
+  --output_dir=outputs/train/openeai_your_dataset \
+  --policy.device=cuda
+```
+
+### Policy Configuration Parameters
+
+| Parameter                       | Default                     | Description                                        |
+| ------------------------------- | --------------------------- | -------------------------------------------------- |
+| `policy.type`                   | `openeai`                   | Policy type identifier                             |
+| `policy.qwen_path`              | `Qwen/Qwen3-VL-4B-Instruct` | Qwen3-VL backbone (HF Hub ID or local path)        |
+| `policy.freeze_backbone`        | `true`                      | Freeze Qwen3 backbone (set `false` for full FT)    |
+| `policy.backbone_dtype`         | `bfloat16`                  | Backbone precision                                 |
+| `policy.pretrained_path`        | `null`                      | Path or HF repo to load pretrained OpenEAI weights |
+| `policy.push_to_hub`            | `false`                     | Push trained model to the Hugging Face Hub         |
+| `policy.gradient_checkpointing` | `false`                     | Enable gradient checkpointing (saves VRAM)         |
+| `policy.compile_model`          | `false`                     | Compile model with `torch.compile`                 |
+| `policy.device`                 | `cuda`                      | Training device                                    |
+
+### Fine-tuning from the Pretrained Checkpoint
+
+Fine-tune on a downstream task using the released pretrained weights:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=${HF_USER}/your_task_dataset \
+  --policy.type=openeai \
+  --policy.qwen_path=Qwen/Qwen3-VL-4B-Instruct \
+  --policy.freeze_backbone=true \
+  --policy.pretrained_path=./model/openeai-vla/openeai-lerobot \
+  --output_dir=outputs/train/openeai_finetune
+```
+
+You can also load directly from the Hub (LeRobot will download automatically):
+
+```bash
+  --policy.pretrained_path=OpenEAI/OpenEAI-VLA-Pretrained/openeai-lerobot
+```
+
+> [!TIP]
+> When fine-tuning on a dataset with state/action dimensions different from the pretrained checkpoint, the policy automatically drops mismatched encoder/decoder weights and re-initializes them. The DiT and backbone weights are always loaded.
+
+### Full Fine-tuning (Unfreeze Backbone)
+
+To unfreeze the Qwen3-VL backbone for full fine-tuning:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=${HF_USER}/your_task_dataset \
+  --policy.type=openeai \
+  --policy.qwen_path=Qwen/Qwen3-VL-4B-Instruct \
+  --policy.freeze_backbone=false \
+  --policy.pretrained_path=./model/openeai-vla/openeai-lerobot \
+  --output_dir=outputs/train/openeai_full_ft
+```
+
+> [!WARNING]
+> Full fine-tuning requires significantly more VRAM. Consider enabling `--policy.gradient_checkpointing=true`.
+
+## Evaluation
+
+### Rollout on a Real Robot
+
+```bash
+lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=${HF_USER}/openeai_policy \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM0
+```
+
+`--policy.path` can be either a local checkpoint directory or a Hugging Face repo ID.
+
+## Paper
+
+https://arxiv.org/abs/2606.03392
+
+## Citation
+
+```bibtex
+@misc{zhang2026openeaiplatformopensourceembodiedartificial,
+      title={OpenEAI-Platform: An Open-source Embodied Artificial Intelligence Hardware-Software Unified Platform},
+      author={Jinyuan Zhang and Luoyi Fan and Leiyu Wang and Yeqiang Wang and Yicheng Zhu and Cewu Lu and Nanyang Ye},
+      year={2026},
+      eprint={2606.03392},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2606.03392},
+}
+```
