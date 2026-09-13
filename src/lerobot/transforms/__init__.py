@@ -13,6 +13,13 @@
 # limitations under the License.
 
 from .transforms import (
+    BatchedColorJitter,
+    BatchedImageTransforms,
+    BatchedRandomAffine,
+    BatchedRandomRotation,
+    BatchedRandomSubsetApply,
+    BatchedSharpnessJitter,
+    BatchedTransform,
     CoarseDropout,
     GammaCorrection,
     GaussianNoise,
@@ -26,12 +33,20 @@ from .transforms import (
     RandomShadow,
     RandomSubsetApply,
     SharpnessJitter,
+    make_batched_transform_from_config,
     make_transform_from_config,
 )
 
 # An example of transforms effects can be found in: https://github.com/huggingface/lerobot/pull/4210
 
 __all__ = [
+    "BatchedColorJitter",
+    "BatchedImageTransforms",
+    "BatchedRandomAffine",
+    "BatchedRandomRotation",
+    "BatchedRandomSubsetApply",
+    "BatchedSharpnessJitter",
+    "BatchedTransform",
     "CoarseDropout",
     "GammaCorrection",
     "GaussianNoise",
@@ -45,5 +60,6 @@ __all__ = [
     "RandomShadow",
     "RandomSubsetApply",
     "SharpnessJitter",
+    "make_batched_transform_from_config",
     "make_transform_from_config",
 ]

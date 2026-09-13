@@ -315,6 +315,13 @@ class TrainPipelineConfig(HubMixin):
             self.optimizer = active_cfg.get_optimizer_preset()
             self.scheduler = active_cfg.get_scheduler_preset()
 
+        image_transforms = self.dataset.image_transforms
+        if image_transforms.enable and image_transforms.backend == "gpu" and active_cfg.device == "cpu":
+            raise ValueError(
+                "dataset.image_transforms.backend='gpu' needs an accelerator device, but policy.device is 'cpu'. "
+                "Use image_transforms.backend='dataloader' to augment in the DataLoader workers."
+            )
+
         if self.eval_steps > 0 and self.dataset.eval_split == 0.0:
             raise ValueError("eval_steps > 0 requires dataset.eval_split > 0.0 to hold out eval data.")
 

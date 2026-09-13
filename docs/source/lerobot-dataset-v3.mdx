@@ -260,27 +260,33 @@ You can also use any `torchvision.transforms.v2` transform by passing it directl
 - **`random_order`**: Apply transforms in random order vs. standard order (default: `False`)
 - **`weight`**: Sampling probability for each transform (higher = more likely, if sum of weights is not 1, they will be normalized)
 - **`kwargs`**: Transform-specific parameters (e.g., brightness range)
+- **`backend`**: Where the transforms run during training, `"dataloader"` (default) or `"gpu"`; see below
+- **`gpu_compile`**: On the `"gpu"` backend, `torch.compile` the batched transforms (default: `True`)
+- **`gpu_chunk_size`**: On the `"gpu"` backend, augment this many samples at a time to bound transient memory (default: `32`)
 
-### Visualizing transforms
+### Running transforms on the GPU
 
-Use the visualization script to preview how transforms affect your data:
+By default the transforms run per sample in the DataLoader workers. With several cameras that is often the most expensive thing the workers do, and the GPU ends up waiting for data. Set `backend=gpu` to have the workers decode only and apply the same transforms to each batch on the policy device:
 
 ```bash
-lerobot-imgtransform-viz \
-  --repo-id=your-username/your-dataset \
-  --output-dir=./transform_examples \
-  --n-examples=5
+lerobot-train \
+  --dataset.repo_id=your-username/your-dataset \
+  --dataset.image_transforms.enable=true \
+  --dataset.image_transforms.backend=gpu \
+  --policy.type=act \
+  --policy.device=cuda
 ```
 
-This saves example images showing the effect of each transform, helping you tune parameters.
+The randomization is unchanged: each sample draws its own transforms and parameters, and the frames of one camera's history share them. Augmentation is applied to training batches only, before the policy preprocessor; eval batches, rollouts and saved checkpoints are untouched.
 
-### Best practices
+Things to know:
 
-- **Start conservative**: Begin with small ranges (e.g., brightness 0.9-1.1) and increase gradually
-- **Test first**: Use the visualization script to ensure transforms look reasonable
-- **Monitor training**: Strong augmentations can hurt performance if too aggressive
-- **Match your domain**: If your robot operates in varying lighting, use brightness/contrast transforms
-- **Combine wisely**: Using too many transforms simultaneously can make training unstable
+- Requires an accelerator; `--policy.device=cpu` is refused. A dataset built by hand with its own `image_transforms` callable is refused too, since those run in the workers.
+- Supports every LeRobot transform except `JPEGCompression`, and the torchvision `ColorJitter`, `RandomAffine`, `RandomRotation` and `Identity`. Others raise at startup.
+- The custom transforms (`GaussianNoise`, `MotionBlur`, `RandomShadow`, ...) are silent no-ops on the dataloader backend because it sees `uint8` frames. On the GPU they apply, so recipes using them will train differently.
+- Reproducible from `--seed`, with each process seeded differently. Augmentation does not consume the policy's random stream, and `gpu_compile` and `gpu_chunk_size` do not change what is applied.
+- Results are not bit-identical to the dataloader backend, which rounds to `uint8` between transforms.
+- `gpu_compile` costs 15-30 s once per image shape. Peak memory is about two float copies of the batch images plus a few copies of one chunk; lower `gpu_chunk_size` if memory is tight. `random_order=true` multiplies the transform time by `max_num_transforms`.
 
 ## Migrate `v2.1` → `v3.0`
 
