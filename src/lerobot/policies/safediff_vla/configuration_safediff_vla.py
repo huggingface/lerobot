@@ -41,30 +41,30 @@ class SafeDiffVLAConfig(PreTrainedConfig):
     num_diffusion_steps: int = 10
     beta_schedule: str = "cosine"
     prediction_type: str = "epsilon"
-    num_candidates: int = 4
     use_vla_prior_init: bool = True
 
     latent_dim: int = 256
     planner_hidden_dim: int = 512
-    task_critic_hidden_dim: int = 256
-    risk_critic_hidden_dim: int = 256
+    # Hidden width of the self-supervised state-prediction head (see `state_predictor.py`). It
+    # replaces the old task/risk critics, which needed `task_success`/`safety_violation` labels
+    # that no dataset here actually provides and so never trained on anything but noise.
+    state_head_hidden_dim: int = 256
     timestep_embedding_dim: int = 64
 
-    training_mode: str = "joint"
     lambda_diff: float = 1.0
-    lambda_task: float = 1.0
-    lambda_risk: float = 1.0
-    lambda_prior: float = 0.05
-    use_task_critic: bool = True
-    use_safety_critic: bool = True
+    # Weight of the state-prediction regression loss (self-supervised against the state the
+    # dataset actually observed `execute_horizon` steps later — always available, unlike
+    # task/risk labels).
+    lambda_state_pred: float = 1.0
 
     use_diffusion_refinement: bool = True
-    use_critic_guidance: bool = False
-    critic_guidance_scale: float = 0.1
-    critic_gradient_clip: float = 1.0
-    adaptive_planning: bool = False
-    risk_threshold: float = 0.5
-    uncertainty_threshold: float = 0.5
+    # Per-sample squared-L2 gap (in normalized state units) between what the state predictor
+    # expected `execute_horizon` steps after the previous chunk and the state actually observed
+    # now, above which the previous chunk is considered "not complete": instead of committing to
+    # a fresh full-length chunk, `select_action` replans one step at a time (closed-loop) until
+    # the gap closes or `max_replan_retries` is hit.
+    completion_threshold: float = 0.25
+    max_replan_retries: int = 4
     enable_inference_metrics: bool = False
 
     optimizer_lr: float = 1e-4
@@ -89,8 +89,12 @@ class SafeDiffVLAConfig(PreTrainedConfig):
         super().__post_init__()
         if not 0 < self.execute_horizon <= self.action_horizon:
             raise ValueError("execute_horizon must be in [1, action_horizon]")
-        if self.num_diffusion_steps < 1 or self.num_candidates < 1:
-            raise ValueError("num_diffusion_steps and num_candidates must be positive")
+        if self.num_diffusion_steps < 1:
+            raise ValueError("num_diffusion_steps must be positive")
+        if self.completion_threshold < 0:
+            raise ValueError("completion_threshold must be non-negative")
+        if self.max_replan_retries < 0:
+            raise ValueError("max_replan_retries must be non-negative")
         if self.temporal_ensemble_coeff < 0:
             raise ValueError("temporal_ensemble_coeff must be non-negative")
         if self.backbone_action_conversion_semantics not in {"per_step", "velocity"}:
@@ -109,12 +113,16 @@ class SafeDiffVLAConfig(PreTrainedConfig):
             raise ValueError("beta_schedule must be 'linear' or 'cosine'")
         if self.prediction_type != "epsilon":
             raise ValueError("prediction_type must be 'epsilon'")
-        if self.training_mode not in {"diffusion", "critics", "joint"}:
-            raise ValueError("training_mode must be 'diffusion', 'critics', or 'joint'")
 
     def validate_features(self) -> None:
         if self.action_feature is None:
             raise ValueError("SafeDiff-VLA requires an action output feature")
+        if self.robot_state_feature is None:
+            raise ValueError(
+                "SafeDiff-VLA requires an `observation.state` input feature: the diffusion "
+                "planner conditions on it directly and the state-predictor head regresses "
+                "against it."
+            )
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(lr=self.optimizer_lr, weight_decay=self.optimizer_weight_decay)
@@ -137,6 +145,15 @@ class SafeDiffVLAConfig(PreTrainedConfig):
     @property
     def observation_delta_indices(self) -> list[int]:
         return [0]
+
+    @property
+    def state_observation_delta_indices(self) -> list[int]:
+        """Overrides `observation_delta_indices` for `observation.state` only: in addition to the
+        current frame (index 0), also load the state `execute_horizon` steps ahead so the
+        state-prediction head has a real self-supervised regression target during training (see
+        `state_predictor.py`). Images/language keep using `observation_delta_indices` (current
+        frame only)."""
+        return [0, self.execute_horizon]
 
     @property
     def action_delta_indices(self) -> list[int]:

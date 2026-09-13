@@ -8,9 +8,9 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.factory import get_policy_class, make_policy_config
 from lerobot.policies.safediff_vla.configuration_safediff_vla import SafeDiffVLAConfig
-from lerobot.policies.safediff_vla.critics import TrajectoryCritic, score_candidates
 from lerobot.policies.safediff_vla.diffusion_planner import ConditionalDiffusionPlanner
 from lerobot.policies.safediff_vla.modeling_safediff_vla import SafeDiffVLAPolicy
+from lerobot.policies.safediff_vla.state_predictor import StatePredictor, completion_gap, masked_mse_loss
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
@@ -27,6 +27,10 @@ class TinyBackbone(nn.Module):
         self.reset_calls += 1
 
     def extract_safediff_features(self, batch: dict[str, Tensor]) -> tuple[Tensor, Tensor]:
+        # `SafeDiffVLAPolicy._backbone_outputs` always hands the backbone a 2D [B, state_dim]
+        # current-state tensor, even when the caller's own batch carries the extra
+        # future-state slice `state_observation_delta_indices` adds.
+        assert batch[OBS_STATE].ndim == 2
         latent = self.projection(batch[OBS_STATE])
         nominal = latent[:, None, : self.action_dim].expand(-1, self.horizon, -1).tanh()
         return nominal, latent
@@ -40,24 +44,18 @@ def make_config(**overrides) -> SafeDiffVLAConfig:
         "action_horizon": 4,
         "execute_horizon": 2,
         "num_diffusion_steps": 2,
-        "num_candidates": 3,
         "latent_dim": 8,
         "planner_hidden_dim": 16,
-        "task_critic_hidden_dim": 12,
-        "risk_critic_hidden_dim": 12,
+        "state_head_hidden_dim": 12,
         "timestep_embedding_dim": 8,
     }
     values.update(overrides)
     return SafeDiffVLAConfig(**values)
 
 
-def make_batch(batch_size: int = 2) -> dict[str, Tensor]:
-    return {
-        OBS_STATE: torch.randn(batch_size, 5),
-        ACTION: torch.randn(batch_size, 4, 3),
-        "task_success": torch.tensor([1, 0][:batch_size]),
-        "safety_violation": torch.tensor([0, 1][:batch_size]),
-    }
+def make_batch(batch_size: int = 2, with_future_state: bool = True) -> dict[str, Tensor]:
+    state = torch.randn(batch_size, 2, 5) if with_future_state else torch.randn(batch_size, 5)
+    return {OBS_STATE: state, ACTION: torch.randn(batch_size, 4, 3)}
 
 
 def make_policy(**overrides) -> SafeDiffVLAPolicy:
@@ -80,65 +78,64 @@ def test_config_and_registration() -> None:
     assert get_policy_class("safediff_vla") is SafeDiffVLAPolicy
 
 
-def test_training_mode_decodes_from_cli() -> None:
+def test_state_observation_delta_indices_span_execute_horizon() -> None:
+    config = make_config(execute_horizon=3)
+    assert config.state_observation_delta_indices == [0, 3]
+
+
+def test_completion_threshold_decodes_from_cli() -> None:
     config = draccus.parse(
         TrainPipelineConfig,
         args=[
             "--policy.type=safediff_vla",
-            "--policy.training_mode=diffusion",
+            "--policy.completion_threshold=0.1",
             "--dataset.repo_id=VLA/smolvla_libero",
         ],
     )
     assert isinstance(config.policy, SafeDiffVLAConfig)
-    assert config.policy.training_mode == "diffusion"
+    assert config.policy.completion_threshold == 0.1
 
 
-def test_planner_and_critic_shapes() -> None:
-    planner = ConditionalDiffusionPlanner(3, 8, 16, 8)
-    critic = TrajectoryCritic(3, 8, 12)
+def test_planner_and_state_predictor_shapes() -> None:
+    planner = ConditionalDiffusionPlanner(3, 5, 8, 16, 8)
+    predictor = StatePredictor(3, 5, 8, 12)
     actions = torch.randn(2, 4, 3)
     latent = torch.randn(2, 8)
-    assert planner(actions, torch.tensor([0, 1]), latent, actions).shape == actions.shape
-    assert critic(latent, actions).shape == (2,)
-    assert critic(latent, actions[:, None].expand(-1, 3, -1, -1)).shape == (2, 3)
+    state = torch.randn(2, 5)
+    assert planner(actions, torch.tensor([0, 1]), latent, actions, state).shape == actions.shape
+    assert predictor(latent, actions).shape == (2, 5)
 
 
-def test_backbone_freezing_and_training_modes() -> None:
-    policy = make_policy(training_mode="diffusion")
+def test_backbone_and_state_predictor_are_trainable() -> None:
+    policy = make_policy()
     assert all(not parameter.requires_grad for parameter in policy.backbone.parameters())
     assert any(parameter.requires_grad for parameter in policy.planner.parameters())
-    assert all(not parameter.requires_grad for parameter in policy.task_critic.parameters())
+    assert any(parameter.requires_grad for parameter in policy.state_predictor.parameters())
 
 
-def test_joint_training_forward_with_and_without_labels() -> None:
-    policy = make_policy(training_mode="joint")
-    loss, metrics = policy(make_batch())
-    assert loss.ndim == 0 and torch.isfinite(loss)
-    assert {"loss", "loss_diff", "loss_task", "loss_risk"} <= metrics.keys()
-    unlabeled = make_batch()
-    unlabeled.pop("task_success")
-    unlabeled.pop("safety_violation")
-    loss, metrics = policy(unlabeled)
-    assert torch.isfinite(loss)
-    assert metrics["loss_task"] == 0 and metrics["loss_risk"] == 0
-
-
-def test_candidate_shape_and_no_nans() -> None:
+def test_forward_regresses_against_future_state_when_available() -> None:
     policy = make_policy()
-    nominal, latent = policy._backbone_outputs(make_batch())
-    candidates = policy.generate_candidates(latent, nominal)
-    assert candidates.shape == (2, 3, 4, 3)
-    assert torch.isfinite(candidates).all()
+    loss, metrics = policy(make_batch(with_future_state=True))
+    assert loss.ndim == 0 and torch.isfinite(loss)
+    assert {"loss", "loss_diff", "loss_state_pred"} <= metrics.keys()
+    assert metrics["loss_state_pred"] > 0
 
 
-def test_candidate_scoring_argmax_is_batch_safe() -> None:
-    nominal = torch.zeros(2, 4, 3)
-    candidates = torch.stack((nominal, nominal + 1, nominal + 2), dim=1)
-    task_logits = torch.tensor([[0.0, 8.0, 0.0], [0.0, 0.0, 8.0]])
-    risk_logits = torch.full_like(task_logits, -8.0)
-    scores, distances = score_candidates(task_logits, risk_logits, candidates, nominal, 1.0, 0.0)
-    assert scores.argmax(1).tolist() == [1, 2]
-    assert distances.shape == (2, 3)
+def test_forward_skips_state_pred_loss_without_future_state() -> None:
+    policy = make_policy()
+    loss, metrics = policy(make_batch(with_future_state=False))
+    assert torch.isfinite(loss)
+    assert metrics["loss_state_pred"] == 0
+
+
+def test_sample_action_chunk_shape_and_no_nans() -> None:
+    policy = make_policy()
+    batch = make_batch()
+    nominal, latent = policy._backbone_outputs(batch)
+    state = policy._current_state(batch)
+    sample = policy._sample_action_chunk(latent, nominal, state)
+    assert sample.shape == nominal.shape
+    assert torch.isfinite(sample).all()
 
 
 def test_select_action_queue_and_reset() -> None:
@@ -149,19 +146,44 @@ def test_select_action_queue_and_reset() -> None:
     assert len(policy._action_queue) == 1
     policy.reset()
     assert len(policy._action_queue) == 0
+    assert policy._pending_target_state is None
 
 
-def test_ablation_and_adaptive_planning_paths() -> None:
-    batch = make_batch()
+def test_use_diffusion_refinement_false_returns_nominal() -> None:
     baseline = make_policy(use_diffusion_refinement=False)
-    nominal, info = baseline.plan_action_chunk(batch)
-    assert nominal.shape == (2, 4, 3) and info["planner_usage_rate"] == 0
+    nominal, info = baseline.plan_action_chunk(make_batch())
+    assert nominal.shape == (2, 4, 3)
+    assert "predicted_future_state" in info
 
-    adaptive = make_policy(adaptive_planning=True, risk_threshold=2.0)
-    _, info = adaptive.plan_action_chunk(batch)
-    assert info["planner_usage_rate"] == 0
 
-    guided = make_policy(use_critic_guidance=True, use_vla_prior_init=False)
-    actions = guided.predict_action_chunk(batch)
-    assert actions.shape == (2, 4, 3)
-    assert torch.isfinite(actions).all()
+def test_completion_gate_forces_single_step_replan_until_retry_budget_exhausted() -> None:
+    policy = make_policy(completion_threshold=0.0, max_replan_retries=2)
+    batch = make_batch()
+    policy.select_action(batch)  # first chunk: no pending target yet, commits fully
+    assert policy._replan_retries == 0
+    while policy._action_queue:
+        policy.select_action(batch)
+
+    # A real gap of exactly 0.0 will essentially never be met by a random target, so each of the
+    # next `max_replan_retries` chunk boundaries should fall back to a one-step replan instead of
+    # a fresh full commit.
+    policy.select_action(batch)
+    assert policy._replan_retries == 1
+    assert len(policy._action_queue) == 0
+    policy.select_action(batch)
+    assert policy._replan_retries == 2
+    assert len(policy._action_queue) == 0
+
+    # Retry budget exhausted: this call must fall back to a fresh full-length commit.
+    policy.select_action(batch)
+    assert policy._replan_retries == 0
+    assert len(policy._action_queue) == policy.config.execute_horizon - 1
+
+
+def test_completion_gap_and_masked_mse_loss() -> None:
+    predicted = torch.zeros(2, 3)
+    actual = torch.ones(2, 3)
+    assert completion_gap(predicted, actual).allclose(torch.ones(2))
+    loss = masked_mse_loss(predicted, actual, is_pad=torch.tensor([False, True]))
+    # Only the first (non-padded) sample should contribute.
+    assert loss.item() == 1.0

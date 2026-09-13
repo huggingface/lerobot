@@ -15,15 +15,14 @@ from torch import Tensor, nn
 from torch.nn import functional as F  # noqa: N812
 
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .configuration_safediff_vla import SafeDiffVLAConfig
-from .critics import TrajectoryCritic, score_candidates
 from .diffusion_planner import ConditionalDiffusionPlanner
 from .domain_adapter import LiberoBackboneDomainAdapter, load_processor_normalization_stats
-from .losses import optional_binary_loss
 from .scheduler import DDPMScheduler
-from .utils import first_available_label, pad_or_crop_horizon
+from .state_predictor import StatePredictor, completion_gap, masked_mse_loss
+from .utils import pad_or_crop_horizon
 
 
 class SafeDiffVLAPolicy(PreTrainedPolicy):
@@ -57,15 +56,19 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
             self.backbone.requires_grad_(False)
 
         action_dim = config.action_feature.shape[0]
+        state_dim = config.robot_state_feature.shape[0]
         self.latent_projection = nn.Linear(self._latent_in_features(), config.latent_dim)
         self.planner = ConditionalDiffusionPlanner(
-            action_dim, config.latent_dim, config.planner_hidden_dim, config.timestep_embedding_dim
+            action_dim, state_dim, config.latent_dim, config.planner_hidden_dim, config.timestep_embedding_dim
         )
-        self.task_critic = TrajectoryCritic(action_dim, config.latent_dim, config.task_critic_hidden_dim)
-        self.risk_critic = TrajectoryCritic(action_dim, config.latent_dim, config.risk_critic_hidden_dim)
+        # Replaces the old task/risk critics (see `state_predictor.py` for why): predicts the
+        # state expected `execute_horizon` steps after a candidate chunk, trained
+        # self-supervised against the state the dataset actually observed there.
+        self.state_predictor = StatePredictor(
+            action_dim, state_dim, config.latent_dim, config.state_head_hidden_dim
+        )
         self.scheduler = DDPMScheduler(config.num_diffusion_steps, config.beta_schedule)
         self.reset()
-        self._set_training_mode()
 
     def _make_domain_adapter(
         self,
@@ -147,12 +150,6 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
         )
         return SmolVLAPolicy(backbone_config)
 
-    def _set_training_mode(self) -> None:
-        self.planner.requires_grad_(self.config.training_mode in ("diffusion", "joint"))
-        train_critics = self.config.training_mode in ("critics", "joint")
-        self.task_critic.requires_grad_(train_critics)
-        self.risk_critic.requires_grad_(train_critics)
-
     def get_optim_params(self):
         return (parameter for parameter in self.parameters() if parameter.requires_grad)
 
@@ -168,12 +165,24 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
         # ensembling: the k-th most recently appended chunk was queried k steps ago, so its
         # prediction for "now" lives at its own index k (`_ensembled_action` below).
         self._ensemble_buffer: deque[Tensor] = deque(maxlen=self.config.action_horizon)
+        # State the state-predictor expected `execute_horizon` steps after the last *fully
+        # committed* chunk (see `select_action`'s completion gate). None until the first chunk.
+        self._pending_target_state: Tensor | None = None
+        self._replan_retries = 0
         if hasattr(self.backbone, "reset"):
             self.backbone.reset()
 
     def _backbone_outputs(self, batch: dict[str, Tensor]) -> tuple[Tensor, Tensor]:
         """Return target-normalized nominal [B,H,A] and pooled backbone latent [B,D]."""
-        backbone_batch = self.domain_adapter.observation_for_backbone(batch) if self.domain_adapter else batch
+        # The backbone must only ever see the *current* state: the extra future-state slice
+        # `state_observation_delta_indices` adds to `batch[OBS_STATE]` (for the state-predictor's
+        # training target, see `forward()`) is not a real observation SmolVLA should condition on.
+        backbone_input = {**batch, OBS_STATE: self._current_state(batch)}
+        backbone_batch = (
+            self.domain_adapter.observation_for_backbone(backbone_input)
+            if self.domain_adapter
+            else backbone_input
+        )
         if hasattr(self.backbone, "extract_safediff_features"):
             with torch.set_grad_enabled(not self.config.freeze_backbone):
                 nominal, latent = self.backbone.extract_safediff_features(backbone_batch)
@@ -199,130 +208,72 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
             latent.float()
         )
 
-    def diffusion_loss(self, clean: Tensor, latent: Tensor, nominal: Tensor) -> Tensor:
+    @staticmethod
+    def _current_state(batch: dict[str, Tensor]) -> Tensor:
+        """The *current* (t=0) normalized state, whether or not `batch[OBS_STATE]` also carries
+        the extra future-state slice `state_observation_delta_indices` adds for training."""
+        state = batch[OBS_STATE]
+        return state[:, 0] if state.ndim > 2 else state
+
+    def diffusion_loss(self, clean: Tensor, latent: Tensor, nominal: Tensor, state: Tensor) -> Tensor:
         timesteps = torch.randint(self.config.num_diffusion_steps, (clean.shape[0],), device=clean.device)
         noise = torch.randn_like(clean)
         noisy = self.scheduler.add_noise(clean, noise, timesteps)
-        return F.mse_loss(self.planner(noisy, timesteps, latent, nominal), noise)
+        return F.mse_loss(self.planner(noisy, timesteps, latent, nominal, state), noise)
 
     def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict[str, float]]:
         if reduction != "mean":
             raise NotImplementedError("SafeDiff-VLA currently supports reduction='mean' only")
         nominal, latent = self._backbone_outputs(batch)
         clean = pad_or_crop_horizon(batch[ACTION], self.config.action_horizon)
-        zero = latent.sum() * 0
-        loss_diff = (
-            self.diffusion_loss(clean, latent, nominal) if self.config.training_mode != "critics" else zero
-        )
-        task_labels = first_available_label(batch, ("task_success",))
-        risk_labels = first_available_label(batch, ("safety_violation", "collision", "semantic_violation"))
-        task_logits = self.task_critic(latent, clean)
-        risk_logits = self.risk_critic(latent, clean)
-        if self.config.training_mode == "diffusion":
-            loss_task = loss_risk = zero
+        state_seq = batch[OBS_STATE]
+        current_state = state_seq[:, 0] if state_seq.ndim > 2 else state_seq
+        loss_diff = self.diffusion_loss(clean, latent, nominal, current_state)
+        predicted_future_state = self.state_predictor(latent, clean)
+        if state_seq.ndim > 2 and state_seq.shape[1] > 1:
+            future_state_target = state_seq[:, 1]
+            is_pad = batch.get(f"{OBS_STATE}_is_pad")
+            future_is_pad = is_pad[:, 1] if is_pad is not None and is_pad.ndim > 1 else None
+            loss_state_pred = masked_mse_loss(predicted_future_state, future_state_target, future_is_pad)
         else:
-            loss_task = optional_binary_loss(task_logits, task_labels)
-            loss_risk = optional_binary_loss(risk_logits, risk_labels)
-        loss = (
-            self.config.lambda_diff * loss_diff
-            + self.config.lambda_task * loss_task
-            + self.config.lambda_risk * loss_risk
-        )
+            # Caller didn't wire up `state_observation_delta_indices` (no future-state slice in
+            # this batch) — nothing to regress the state predictor against.
+            loss_state_pred = predicted_future_state.sum() * 0
+        loss = self.config.lambda_diff * loss_diff + self.config.lambda_state_pred * loss_state_pred
         metrics = {
             "loss": loss.item(),
             "loss_diff": loss_diff.item(),
-            "loss_task": loss_task.item(),
-            "loss_risk": loss_risk.item(),
+            "loss_state_pred": loss_state_pred.item(),
         }
-        self._add_critic_metrics(metrics, "task", task_logits, task_labels, "positive", "negative")
-        self._add_critic_metrics(metrics, "risk", risk_logits, risk_labels, "unsafe", "safe")
         return loss, metrics
 
-    @staticmethod
-    def _add_critic_metrics(
-        metrics: dict[str, float],
-        prefix: str,
-        logits: Tensor,
-        labels: Tensor | None,
-        true_name: str,
-        false_name: str,
-    ) -> None:
-        if labels is None:
-            return
-        labels = labels.bool().view_as(logits)
-        probabilities = logits.detach().sigmoid()
-        metrics[f"{prefix}_score_{true_name}"] = probabilities[labels].mean().item() if labels.any() else 0.0
-        metrics[f"{prefix}_score_{false_name}"] = (
-            probabilities[~labels].mean().item() if (~labels).any() else 0.0
-        )
-
-    def _apply_guidance(self, sample: Tensor, latent: Tensor, nominal: Tensor) -> Tensor:
-        with torch.enable_grad():
-            guided = sample.detach().requires_grad_(True)
-            objective = (
-                self.task_critic(latent.detach(), guided).sigmoid()
-                - self.config.lambda_risk * self.risk_critic(latent.detach(), guided).sigmoid()
-                - self.config.lambda_prior * (guided - nominal).square().mean(dim=(-1, -2))
-            )
-            gradient = torch.autograd.grad(objective.sum(), guided)[0]
-            norm = gradient.flatten(1).norm(dim=1, keepdim=True).clamp_min(1e-6)
-            clip_scale = (self.config.critic_gradient_clip / norm).clamp(max=1.0)
-            gradient = gradient * clip_scale.view(-1, 1, 1)
-        return sample + self.config.critic_guidance_scale * gradient.detach()
-
-    def generate_candidates(self, latent: Tensor, nominal: Tensor) -> Tensor:
-        batch_size, horizon, action_dim = nominal.shape
-        count = self.config.num_candidates
-        nominal_flat = nominal[:, None].expand(-1, count, -1, -1).reshape(-1, horizon, action_dim)
-        latent_flat = latent[:, None].expand(-1, count, -1).reshape(-1, latent.shape[-1])
-        noise = torch.randn_like(nominal_flat)
+    def _sample_action_chunk(self, latent: Tensor, nominal: Tensor, state: Tensor) -> Tensor:
+        """Single DDPM reverse pass producing one action-chunk sample, optionally anchored near
+        `nominal` (`use_vla_prior_init`) instead of starting from pure noise."""
+        noise = torch.randn_like(nominal)
         if self.config.use_vla_prior_init:
-            last = torch.full(
-                (batch_size * count,), self.config.num_diffusion_steps - 1, device=nominal.device
-            )
-            sample = self.scheduler.add_noise(nominal_flat, noise, last)
+            last = torch.full((nominal.shape[0],), self.config.num_diffusion_steps - 1, device=nominal.device)
+            sample = self.scheduler.add_noise(nominal, noise, last)
         else:
             sample = noise
         for timestep in reversed(range(self.config.num_diffusion_steps)):
             timesteps = torch.full((sample.shape[0],), timestep, device=sample.device, dtype=torch.long)
-            predicted_noise = self.planner(sample, timesteps, latent_flat, nominal_flat)
+            predicted_noise = self.planner(sample, timesteps, latent, nominal, state)
             sample = self.scheduler.step(predicted_noise, timestep, sample)
-            if self.config.use_critic_guidance:
-                sample = self._apply_guidance(sample, latent_flat, nominal_flat)
-        return sample.reshape(batch_size, count, horizon, action_dim)
+        return sample
 
     def plan_action_chunk(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Tensor | float]]:
         started = perf_counter()
         nominal, latent = self._backbone_outputs(batch)
-        nominal_risk = self.risk_critic(latent, nominal).sigmoid()
-        should_plan = self.config.use_diffusion_refinement
-        if self.config.adaptive_planning:
-            should_plan = should_plan and bool((nominal_risk >= self.config.risk_threshold).any())
-        if not should_plan:
-            return nominal, {"planner_usage_rate": 0.0, "mean_risk_score": nominal_risk.mean()}
-
-        candidates = self.generate_candidates(latent, nominal)
-        shape = (nominal.shape[0], self.config.num_candidates)
-        task_logits = (
-            self.task_critic(latent, candidates) if self.config.use_task_critic else nominal.new_zeros(shape)
+        state = self._current_state(batch)
+        selected = (
+            self._sample_action_chunk(latent, nominal, state)
+            if self.config.use_diffusion_refinement
+            else nominal
         )
-        risk_logits = (
-            self.risk_critic(latent, candidates)
-            if self.config.use_safety_critic
-            else nominal.new_full(shape, -20)
-        )
-        scores, prior_distance = score_candidates(
-            task_logits, risk_logits, candidates, nominal, self.config.lambda_risk, self.config.lambda_prior
-        )
-        selected_indices = scores.argmax(dim=1)
-        batch_indices = torch.arange(candidates.shape[0], device=candidates.device)
-        selected = candidates[batch_indices, selected_indices]
+        predicted_future_state = self.state_predictor(latent, selected)
         return selected, {
-            "planner_usage_rate": 1.0,
-            "mean_task_score": task_logits.sigmoid().mean(),
-            "mean_risk_score": risk_logits.sigmoid().mean(),
-            "mean_prior_distance": prior_distance.mean(),
-            "selected_candidate_index": selected_indices,
+            "predicted_future_state": predicted_future_state,
             "diffusion_runtime_ms": (perf_counter() - started) * 1000,
         }
 
@@ -356,6 +307,20 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
         if self.config.use_temporal_ensembling:
             return self._ensembled_action(self.predict_action_chunk(batch))
         if not self._action_queue:
-            chunk = self.predict_action_chunk(batch)
-            self._action_queue.extend(chunk.transpose(0, 1)[: self.config.execute_horizon])
+            not_complete = False
+            if self._pending_target_state is not None:
+                gap = completion_gap(self._pending_target_state, self._current_state(batch))
+                not_complete = bool((gap > self.config.completion_threshold).any())
+            chunk, metrics = self.plan_action_chunk(batch)
+            if not_complete and self._replan_retries < self.config.max_replan_retries:
+                # The sub-goal the last committed chunk aimed for hasn't been reached: don't
+                # commit to a fresh full-length chunk — take one step now, towards the *same*
+                # still-pending target, and reassess on the very next call instead of silently
+                # moving on to whatever the backbone proposes next.
+                self._action_queue.extend(chunk.transpose(0, 1)[:1])
+                self._replan_retries += 1
+            else:
+                self._pending_target_state = metrics["predicted_future_state"]
+                self._action_queue.extend(chunk.transpose(0, 1)[: self.config.execute_horizon])
+                self._replan_retries = 0
         return self._action_queue.popleft()
