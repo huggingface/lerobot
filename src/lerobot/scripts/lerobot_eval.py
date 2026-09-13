@@ -88,6 +88,7 @@ from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_proces
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
 from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.eval_stats import success_summary
 from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
@@ -649,6 +650,7 @@ def eval_policy(
         thread.join()
 
     # Compile eval info.
+    success_stats = success_summary(all_successes[:n_episodes])
     info = {
         "per_episode": [
             {
@@ -672,6 +674,9 @@ def eval_policy(
             "avg_sum_reward": float(np.nanmean(sum_rewards[:n_episodes])),
             "avg_max_reward": float(np.nanmean(max_rewards[:n_episodes])),
             "pc_success": float(np.nanmean(all_successes[:n_episodes]) * 100),
+            "n_episodes": success_stats["n_episodes"],
+            "n_success": success_stats["n_success"],
+            "pc_success_ci95": success_stats["pc_success_ci95"],
             "eval_s": time.time() - start,
             "eval_ep_s": (time.time() - start) / n_episodes,
         },
@@ -807,6 +812,15 @@ def eval_main(cfg: EvalPipelineConfig):
         )
         logger.info("Overall Aggregated Metrics:")
         logger.info(info["overall"])
+        ci_low, ci_high = info["overall"]["pc_success_ci95"]
+        logger.info(
+            "Success rate %.1f%% (%d/%d episodes, 95%% Wilson interval %.1f%% to %.1f%%)",
+            info["overall"]["pc_success"],
+            info["overall"]["n_success"],
+            info["overall"]["n_episodes"],
+            ci_low,
+            ci_high,
+        )
 
         # Print per-suite stats
         for task_group, task_group_info in info.items():
@@ -945,6 +959,16 @@ def run_one(
     return task_group, task_id, metrics
 
 
+def _task_info(task_group: str, task_id: int, metrics: dict) -> dict:
+    """One `per_task` entry: the raw per-episode metrics plus the task's success count and interval."""
+    return {
+        "task_group": task_group,
+        "task_id": task_id,
+        "metrics": metrics,
+        **success_summary(metrics.get("successes") or []),
+    }
+
+
 def eval_policy_all(
     envs: dict[str, dict[int, gym.vector.VectorEnv]],
     policy,
@@ -1040,7 +1064,7 @@ def eval_policy_all(
                 try:
                     tg, tid, metrics = task_runner(task_group, task_id, env)
                     _accumulate_to(tg, metrics)
-                    per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+                    per_task_infos.append(_task_info(tg, tid, metrics))
                 finally:
                     env.close()
                     # Prefetch next task's workers *after* closing current env to prevent
@@ -1061,7 +1085,7 @@ def eval_policy_all(
                     try:
                         tg, tid, metrics = fut.result()
                         _accumulate_to(tg, metrics)
-                        per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+                        per_task_infos.append(_task_info(tg, tid, metrics))
                     finally:
                         env.close()
     finally:
@@ -1077,21 +1101,27 @@ def eval_policy_all(
     # compute per-group aggregates
     groups_aggregated = {}
     for group, acc in group_acc.items():
+        group_success = success_summary(acc["successes"])
         groups_aggregated[group] = {
             "avg_sum_reward": _agg_from_list(acc["sum_rewards"]),
             "avg_max_reward": _agg_from_list(acc["max_rewards"]),
             "pc_success": _agg_from_list(acc["successes"]) * 100 if acc["successes"] else float("nan"),
             "n_episodes": len(acc["sum_rewards"]),
+            "n_success": group_success["n_success"],
+            "pc_success_ci95": group_success["pc_success_ci95"],
             "video_paths": list(acc["video_paths"]),
             "predicted_video_paths": list(acc["predicted_video_paths"]),
         }
 
     # overall aggregates
+    overall_success = success_summary(overall["successes"])
     overall_agg = {
         "avg_sum_reward": _agg_from_list(overall["sum_rewards"]),
         "avg_max_reward": _agg_from_list(overall["max_rewards"]),
         "pc_success": _agg_from_list(overall["successes"]) * 100 if overall["successes"] else float("nan"),
         "n_episodes": len(overall["sum_rewards"]),
+        "n_success": overall_success["n_success"],
+        "pc_success_ci95": overall_success["pc_success_ci95"],
         "eval_s": time.time() - start_t,
         "eval_ep_s": (time.time() - start_t) / max(1, len(overall["sum_rewards"])),
         "video_paths": list(overall["video_paths"]),
