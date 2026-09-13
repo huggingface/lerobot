@@ -263,6 +263,19 @@ def test_rollout_config_rejects_a_multiplier_below_one(multiplier):
         RolloutConfig(robot=MockRobotConfig(), interpolation_multiplier=multiplier)
 
 
+def test_build_rollout_context_rejects_missing_policy() -> None:
+    from lerobot.policies.act.configuration_act import ACTConfig
+    from lerobot.rollout import RolloutConfig, build_rollout_context
+    from tests.mocks.mock_robot import MockRobotConfig
+
+    cfg = RolloutConfig(robot=MockRobotConfig(), policy=ACTConfig(device="cpu"), device="cpu")
+    # Exercise the context builder's guard, not RolloutConfig.__post_init__ validation.
+    cfg.policy = None
+
+    with pytest.raises(ValueError, match="--policy.path is required for rollout"):
+        build_rollout_context(cfg, threading.Event())
+
+
 @pytest.mark.parametrize(
     ("checkpoint_device", "runtime_device"),
     [

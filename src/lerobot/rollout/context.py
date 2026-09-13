@@ -307,14 +307,16 @@ def build_rollout_context(
     """Wire up policy, processors, hardware, dataset, and inference engine.
 
     The order is policy-first / hardware-last so a bad ``--policy.path``
-    fails fast without touching the robot.
+    fails fast without touching the robot. A missing policy configuration raises
+    ``ValueError`` before any policy access.
     """
     is_rtc = isinstance(cfg.inference, RTCInferenceConfig)
 
     # --- 1. Policy (heavy I/O, but no hardware yet) -------------------
-    logger.info("Loading policy from '%s'...", cfg.policy.pretrained_path)
     policy_config = cfg.policy
-    assert policy_config is not None  # Validated by RolloutConfig.__post_init__.
+    if policy_config is None:
+        raise ValueError("--policy.path is required for rollout")
+    logger.info("Loading policy from '%s'...", policy_config.pretrained_path)
     # Policy constructors and custom processors must use the resolved rollout device too.
     policy_config.device = cfg.device
 
@@ -541,7 +543,7 @@ def build_rollout_context(
 
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=policy_config,
-        pretrained_path=cfg.policy.pretrained_path,
+        pretrained_path=policy_config.pretrained_path,
         pretrained_revision=policy_config.pretrained_revision,
         dataset_stats=dataset_stats,
         preprocessor_overrides={
