@@ -100,8 +100,13 @@ def make_batch(*, temporal=False, cameras=2):
 
 @pytest.mark.parametrize("cameras", [1, 2, 3])
 @pytest.mark.parametrize("temporal", [False, True])
-def test_inference_omits_missing_cameras_without_changing_actions(small_policy, cameras, temporal):
+@pytest.mark.parametrize("compile_model", [False, True])
+def test_inference_skips_missing_camera_encoders_without_changing_actions(
+    small_policy, cameras, temporal, compile_model
+):
     policy = small_policy.eval()
+    # Exercise input selection without compiling the CPU-sized model in this unit test.
+    policy.config.compile_model = compile_model
     batch = make_batch(temporal=temporal, cameras=cameras)
     noise = torch.randn(2, 3, 4)
     images, masks = policy._preprocess_images(batch)
@@ -120,13 +125,13 @@ def test_inference_omits_missing_cameras_without_changing_actions(small_policy, 
         hook.remove()
 
     torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
-    assert len(vision_calls) == cameras
-    if temporal:
-        # Keep the existing per-example history masks for every present camera.
-        actual_images, actual_masks = policy._preprocess_images(batch, pad_missing_cameras=False)
-        assert len(actual_images) == cameras
-        for mask in actual_masks:
-            torch.testing.assert_close(mask, torch.tensor([[False, True, True], [False, False, True]]))
+    expected_cameras = len(images) if compile_model else cameras
+    assert len(vision_calls) == expected_cameras
+    actual_images, actual_masks = policy._preprocess_images(batch, encode_missing_cameras=compile_model)
+    assert len(actual_images) == len(images)
+    assert sum(img is not None for img in actual_images) == expected_cameras
+    for actual_mask, expected_mask in zip(actual_masks, masks, strict=True):
+        torch.testing.assert_close(actual_mask, expected_mask)
 
 
 @pytest.mark.parametrize("mode", ["guided", "trained"])

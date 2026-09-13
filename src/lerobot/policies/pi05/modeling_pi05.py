@@ -626,7 +626,12 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                     )
                 return self.paligemma_with_expert.embed_image(img)
 
-            img_emb = self._apply_checkpoint(image_embed_func, img, img_mask)
+            if img is None:
+                # Missing cameras follow the present ones. Keep their masked prefix slots
+                # so skipping the encoder does not change downstream matrix shapes.
+                img_emb = torch.zeros_like(embs[-1])
+            else:
+                img_emb = self._apply_checkpoint(image_embed_func, img, img_mask)
             bsize, num_img_embs = img_emb.shape[:2]
 
             embs.append(img_emb)
@@ -1167,14 +1172,14 @@ class PI05Policy(PreTrainedPolicy):
         return self.config.rtc_config is not None and self.config.rtc_config.enabled
 
     def _preprocess_images(
-        self, batch: dict[str, Tensor], *, pad_missing_cameras: bool = True
-    ) -> tuple[list[Tensor], list[Tensor]]:
+        self, batch: dict[str, Tensor], *, encode_missing_cameras: bool = True
+    ) -> tuple[list[Tensor | None], list[Tensor]]:
         """Preprocess images for the model.
 
         Images from LeRobot are typically in [B, C, H, W] format and normalized to [0, 1].
         PaliGemma expects images in [B, C, H, W] format and normalized to [-1, 1].
         """
-        images = []
+        images: list[Tensor | None] = []
         img_masks = []
 
         # Get device from model parameters
@@ -1237,13 +1242,15 @@ class PI05Policy(PreTrainedPolicy):
                 mask = torch.ones(mask_shape, dtype=torch.bool, device=device)
             img_masks.append(mask)
 
-        if pad_missing_cameras:
-            # Create image features not present in the batch as fully 0 padded images
-            for _num_empty_cameras in range(len(missing_img_keys)):
+        # Keep fully masked slots for image features not present in the batch.
+        for _num_empty_cameras in range(len(missing_img_keys)):
+            if encode_missing_cameras:
                 img = torch.ones_like(img) * -1  # Padded with -1 for SigLIP
-                mask = torch.zeros_like(mask)  # Mask is zero for empty cameras
                 images.append(img)
-                img_masks.append(mask)
+            else:
+                images.append(None)
+            mask = torch.zeros_like(mask)  # Mask is zero for empty cameras
+            img_masks.append(mask)
 
         return images, img_masks
 
@@ -1332,8 +1339,8 @@ class PI05Policy(PreTrainedPolicy):
         ) and not has_temporal_input:
             batch = self._stack_inference_memory(batch)
 
-        # Missing cameras are fully masked, so inference can omit their vision and prefix computation.
-        images, img_masks = self._preprocess_images(batch, pad_missing_cameras=False)
+        # Keep the original compiled graph; eager inference can skip masked camera encoders.
+        images, img_masks = self._preprocess_images(batch, encode_missing_cameras=self.config.compile_model)
         states, state_masks = self._prepare_memory_states(batch)
         tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 

@@ -50,7 +50,7 @@ To use π₀.₅ in your LeRobot configuration, specify the policy type as:
 policy.type=pi05
 ```
 
-During action inference, Pi05 only encodes camera features present in the observation batch. Missing cameras, including slots added by `empty_cameras`, are fully masked and are omitted from the vision encoder and language prefix. Training and loss evaluation retain camera padding. Keep the checkpoint's camera configuration; no inference flag or checkpoint conversion is needed.
+With `compile_model=False`, action inference skips vision encoding for camera features absent from the observation batch, including slots added by `empty_cameras`. Their fully masked prefix slots are retained. Compiled inference, training, and loss evaluation keep the existing camera padding and encoding. Keep the checkpoint's camera configuration; no checkpoint conversion is needed.
 
 ## Training
 
