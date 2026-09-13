@@ -164,6 +164,27 @@ def _build_raw_frame(
     return frame
 
 
+def _get_batch_recording_target(
+    recording_dir: Path | None,
+    recording_repo_id: str | None,
+    batch_ix: int,
+    n_batches: int,
+) -> tuple[Path | None, str | None]:
+    """Return a unique recording destination for each eval batch.
+
+    A single batch keeps the historical path/repo id. With multiple batches,
+    each rollout gets its own dataset root because ``LeRobotDataset.create``
+    expects the target root not to exist yet.
+    """
+    if recording_dir is None or n_batches <= 1:
+        return recording_dir, recording_repo_id
+
+    suffix = f"batch_{batch_ix:04d}"
+    batch_recording_dir = recording_dir / suffix
+    batch_recording_repo_id = f"{recording_repo_id}_{suffix}" if recording_repo_id is not None else None
+    return batch_recording_dir, batch_recording_repo_id
+
+
 def rollout(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
@@ -531,6 +552,13 @@ def eval_policy(
             seeds = range(
                 start_seed + (batch_ix * env.num_envs), start_seed + ((batch_ix + 1) * env.num_envs)
             )
+
+        batch_recording_dir, batch_recording_repo_id = _get_batch_recording_target(
+            recording_dir,
+            recording_repo_id,
+            batch_ix,
+            n_batches,
+        )
         rollout_data = rollout(
             env=env,
             policy=policy,
@@ -541,9 +569,9 @@ def eval_policy(
             seeds=list(seeds) if seeds else None,
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
-            recording_dir=recording_dir,
+            recording_dir=batch_recording_dir,
             env_features=env_features,
-            recording_repo_id=recording_repo_id,
+            recording_repo_id=batch_recording_repo_id,
             recording_private=recording_private,
             predicted_latents_callback=collect_predicted_latents if save_predicted_video else None,
         )
