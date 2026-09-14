@@ -25,13 +25,13 @@ from PIL import Image
 from torch import Tensor
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.lerobot_types import EnvTransition, TransitionKey
+from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
+    ObservationProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
-    ProcessorStep,
     ProcessorStepRegistry,
     policy_action_to_transition,
 )
@@ -105,7 +105,7 @@ def _expand_tasks(task: Any, *, batch_size: int, default: str | None) -> list[st
 
 @dataclass
 @ProcessorStepRegistry.register(name="robometer_encoder")
-class RobometerEncoderProcessorStep(ProcessorStep):
+class RobometerEncoderProcessorStep(ObservationProcessorStep):
     """Encode raw frames + task into Qwen-VL tensors for the Robometer model.
 
     Loads a :class:`~transformers.AutoProcessor` matching ``base_model_id`` and
@@ -160,11 +160,8 @@ class RobometerEncoderProcessorStep(ProcessorStep):
             if token not in tokenizer.get_vocab():
                 tokenizer.add_special_tokens({"additional_special_tokens": [token]})
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = transition.get(TransitionKey.OBSERVATION)
-        complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
-        if not isinstance(observation, dict):
-            raise ValueError("RobometerEncoderProcessorStep requires an observation dict")
+    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+        complementary = self.transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
 
         if self.image_key not in observation:
             raise KeyError(f"Robometer expected image key {self.image_key!r} in observation")
@@ -190,13 +187,9 @@ class RobometerEncoderProcessorStep(ProcessorStep):
         ]
         encoded = self.encode_samples(samples)
 
-        new_observation = dict(observation)
         for key, value in encoded.items():
-            new_observation[f"{ROBOMETER_FEATURE_PREFIX}{key}"] = value
-
-        new_transition = transition.copy()
-        new_transition[TransitionKey.OBSERVATION] = new_observation
-        return new_transition
+            observation[f"{ROBOMETER_FEATURE_PREFIX}{key}"] = value
+        return observation
 
     def encode_samples(self, samples: list[tuple[np.ndarray, str]]) -> dict[str, Tensor]:
         """Run the Qwen-VL processor on a list of ``(frames, task)`` samples."""

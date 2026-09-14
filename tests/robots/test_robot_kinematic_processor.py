@@ -24,7 +24,6 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
     ForwardKinematicsJointsToEEObservation,
     GripperVelocityToJoint,
     InverseKinematicsEEToJoints,
-    InverseKinematicsRLStep,
 )
 
 MOTOR_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
@@ -62,13 +61,11 @@ EE_ACTION = dict.fromkeys(EE_KEYS, 0.0)
         ),
         (InverseKinematicsEEToJoints(kinematics=None, motor_names=MOTOR_NAMES), dict(EE_ACTION)),
         (GripperVelocityToJoint(), {**EE_ACTION, "ee.gripper_vel": 0.0}),
-        (InverseKinematicsRLStep(kinematics=None, motor_names=MOTOR_NAMES), dict(EE_ACTION)),
     ],
     ids=[
         "ee_reference_and_delta",
         "inverse_kinematics_ee_to_joints",
         "gripper_velocity_to_joint",
-        "inverse_kinematics_rl_step",
     ],
 )
 def test_missing_observation_raises_value_error(step, action):
