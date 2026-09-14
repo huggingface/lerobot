@@ -20,9 +20,11 @@ from queue import Queue
 from typing import Any
 
 from lerobot.lerobot_types import RobotAction
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_not_connected
+from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import _pynput_available, require_package
 from lerobot.utils.keyboard_input import pynput_can_capture
+from lerobot.utils.lifecycle import idempotent_connect
 
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
@@ -75,30 +77,35 @@ class KeyboardTeleop(Teleoperator):
 
     @property
     def is_connected(self) -> bool:
-        return PYNPUT_AVAILABLE and isinstance(self.listener, keyboard.Listener) and self.listener.is_alive()
+        return (
+            PYNPUT_AVAILABLE
+            and keyboard is not None
+            and isinstance(self.listener, keyboard.Listener)
+            and self.listener.is_alive()
+        )
 
     @property
     def is_calibrated(self) -> bool:
         pass
 
-    @check_if_already_connected
+    @idempotent_connect
     def connect(self) -> None:
-        if PYNPUT_AVAILABLE and pynput_can_capture():
-            logging.info("pynput is available - enabling local keyboard listener.")
-            self.listener = keyboard.Listener(
-                on_press=self._on_press,
-                on_release=self._on_release,
+        if not PYNPUT_AVAILABLE or not pynput_can_capture():
+            raise DeviceNotConnectedError(
+                "Keyboard teleoperation is unavailable in this environment. pynput can only capture "
+                "key events on an X11 session (Linux), a Windows desktop, or macOS with Accessibility "
+                "/ Input Monitoring granted—not on Wayland or headless machines. Use an X11 session, "
+                "a gamepad, or a leader-arm teleoperator instead."
             )
-            self.listener.start()
-        else:
-            logging.warning(
-                "Keyboard teleoperation is unavailable in this environment. pynput can only "
-                "capture key events on an X11 session (Linux), a Windows desktop, or macOS with "
-                "Accessibility / Input Monitoring granted - not on Wayland or headless machines. "
-                "This keyboard teleoperator will produce no actions; use an X11 session, a "
-                "gamepad, or a leader-arm teleoperator instead."
-            )
-            self.listener = None
+
+        logging.info("pynput is available - enabling local keyboard listener.")
+        self.listener = keyboard.Listener(
+            on_press=self._on_press,
+            on_release=self._on_release,
+        )
+        self.listener.start()
+        if not self.listener.is_alive():
+            raise DeviceNotConnectedError("The keyboard listener stopped during startup.")
 
     def calibrate(self) -> None:
         pass
@@ -140,10 +147,11 @@ class KeyboardTeleop(Teleoperator):
     def send_feedback(self, feedback: dict[str, Any]) -> None:
         pass
 
-    @check_if_not_connected
     def disconnect(self) -> None:
-        if self.listener is not None:
-            self.listener.stop()
+        if self.listener is None:
+            return
+        self.listener.stop()
+        self.listener = None
 
 
 class KeyboardEndEffectorTeleop(KeyboardTeleop):

@@ -110,35 +110,33 @@ def replay(cfg: ReplayConfig):
 
     actions = dataset.select_columns(ACTION)
 
-    robot.connect()
-
     # Replay must hit the dataset's own frame rate, or the trajectory plays back at the
     # wrong speed.  It writes nothing, so a missed deadline is a control-stability
     # problem only.
     timer = CycleTimer(dataset.fps, records_data=False)
 
-    try:
-        log_say("Replaying episode", cfg.play_sounds, blocking=True)
-        for idx in range(dataset.num_frames):
-            timer.tick()
+    with robot:
+        try:
+            log_say("Replaying episode", cfg.play_sounds, blocking=True)
+            for idx in range(dataset.num_frames):
+                timer.tick()
 
-            with timer.section("read_frame"):
-                action_array = actions[idx][ACTION]
-                action = {}
-                for i, name in enumerate(dataset.features[ACTION]["names"]):
-                    action[name] = action_array[i]
+                with timer.section("read_frame"):
+                    action_array = actions[idx][ACTION]
+                    action = {}
+                    for i, name in enumerate(dataset.features[ACTION]["names"]):
+                        action[name] = action_array[i]
 
-            with timer.section("observe"):
-                robot_obs = robot.get_observation()
+                with timer.section("observe"):
+                    robot_obs = robot.get_observation()
 
-            with timer.section("send"):
-                processed_action = robot_action_processor((action, robot_obs))
-                _ = robot.send_action(processed_action)
+                with timer.section("send"):
+                    processed_action = robot_action_processor((action, robot_obs))
+                    _ = robot.send_action(processed_action)
 
-            timer.wait()
-    finally:
-        timer.log_run_summary()
-        robot.disconnect()
+                timer.wait()
+        finally:
+            timer.log_run_summary()
 
 
 def main():

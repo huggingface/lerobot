@@ -69,6 +69,10 @@ def test_action_features_match_joints():
 
 def test_connect_disconnect(leader):
     assert leader.is_connected
+    leader.connect(calibrate=False)
+    assert leader.is_connected
+
+    leader.disconnect()
     leader.disconnect()
     assert not leader.is_connected
 

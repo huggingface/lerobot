@@ -238,7 +238,9 @@ class TestInitialState:
 
     def test_disconnect_is_safe_before_connect(self, make_robot):
         factory, _ = make_robot
-        factory().disconnect()
+        robot = factory()
+        robot.disconnect()
+        robot.disconnect()
 
     def test_name_and_config_class(self, make_robot):
         factory, _ = make_robot

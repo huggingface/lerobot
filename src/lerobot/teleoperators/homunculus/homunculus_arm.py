@@ -21,8 +21,9 @@ from pprint import pformat
 from typing import TYPE_CHECKING
 
 from lerobot.motors.motors_bus import MotorCalibration, MotorNormMode
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_not_connected
 from lerobot.utils.import_utils import _serial_available, require_package
+from lerobot.utils.lifecycle import Cleanup, idempotent_connect
 
 if TYPE_CHECKING or _serial_available:
     import serial
@@ -99,11 +100,16 @@ class HomunculusArm(Teleoperator):
         with self.serial_lock:
             return self.serial.is_open and self.thread.is_alive()
 
-    @check_if_already_connected
+    @idempotent_connect
     def connect(self, calibrate: bool = True) -> None:
         if not self.serial.is_open:
             self.serial.open()
-        self.thread.start()
+        if not self.thread.is_alive():
+            self.stop_event.clear()
+            self.new_state_event.clear()
+            if self.thread.ident is not None:
+                self.thread = threading.Thread(target=self._read_loop, daemon=True, name=f"{self} _read_loop")
+            self.thread.start()
 
         # wait for the thread to ramp up & 1st state to be ready
         if not self.new_state_event.wait(timeout=2):
@@ -111,8 +117,6 @@ class HomunculusArm(Teleoperator):
 
         if not self.is_calibrated and calibrate:
             self.calibrate()
-
-        logger.info(f"{self} connected.")
 
     @property
     def is_calibrated(self) -> bool:
@@ -311,9 +315,14 @@ class HomunculusArm(Teleoperator):
     def send_feedback(self, feedback: dict[str, float]) -> None:
         raise NotImplementedError
 
-    @check_if_not_connected
     def disconnect(self) -> None:
-        self.stop_event.set()
-        self.thread.join(timeout=1)
-        self.serial.close()
-        logger.info(f"{self} disconnected.")
+        with Cleanup(self) as cleanup:
+            self.stop_event.set()
+            if self.thread.is_alive():
+                with cleanup.step("the read thread"):
+                    self.thread.join(timeout=1)
+                    if self.thread.is_alive():
+                        raise TimeoutError(f"{self}: Timed out waiting for the read thread to stop.")
+            if self.serial.is_open:
+                with cleanup.step("the serial port"):
+                    self.serial.close()

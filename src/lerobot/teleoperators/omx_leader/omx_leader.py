@@ -23,7 +23,8 @@ from lerobot.motors.dynamixel import (
     DynamixelMotorsBus,
     OperatingMode,
 )
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_not_connected
+from lerobot.utils.lifecycle import Cleanup, idempotent_connect
 
 from ..teleoperator import Teleoperator
 from .config_omx_leader import OmxLeaderConfig
@@ -68,9 +69,10 @@ class OmxLeader(Teleoperator):
     def is_connected(self) -> bool:
         return self.bus.is_connected
 
-    @check_if_already_connected
+    @idempotent_connect
     def connect(self, calibrate: bool = True) -> None:
-        self.bus.connect()
+        if not self.bus.is_connected:
+            self.bus.connect()
         if not self.is_calibrated and calibrate:
             logger.info(
                 "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
@@ -78,7 +80,6 @@ class OmxLeader(Teleoperator):
             self.calibrate()
 
         self.configure()
-        logger.info(f"{self} connected.")
 
     @property
     def is_calibrated(self) -> bool:
@@ -161,7 +162,6 @@ class OmxLeader(Teleoperator):
         # TODO(rcadene, aliberts): Implement force feedback
         raise NotImplementedError
 
-    @check_if_not_connected
     def disconnect(self) -> None:
-        self.bus.disconnect()
-        logger.info(f"{self} disconnected.")
+        with Cleanup(self) as cleanup, cleanup.step("the motor bus"):
+            self.bus.disconnect()

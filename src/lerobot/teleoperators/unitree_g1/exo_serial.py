@@ -29,6 +29,8 @@ if TYPE_CHECKING or _serial_available:
 else:
     serial = None  # type: ignore[assignment]
 
+from lerobot.utils.lifecycle import idempotent_connect
+
 from .exo_calib import ExoskeletonCalibration, exo_raw_to_angles, run_exo_calibration
 
 logger = logging.getLogger(__name__)
@@ -88,9 +90,11 @@ class ExoskeletonArm:
     def is_calibrated(self) -> bool:
         return self.calibration is not None
 
+    def __str__(self) -> str:
+        return f"{self.side} exoskeleton arm on {self.port}"
+
+    @idempotent_connect
     def connect(self, calibrate: bool = True) -> None:
-        if self.is_connected:
-            return
         try:
             self._ser = serial.Serial(self.port, self.baud_rate, timeout=0.02)
             self._ser.reset_input_buffer()

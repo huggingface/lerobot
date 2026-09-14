@@ -21,7 +21,8 @@ from typing import Any
 from lerobot.lerobot_types import RobotAction
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_not_connected
+from lerobot.utils.lifecycle import Cleanup, idempotent_connect
 
 from ..teleoperator import Teleoperator
 from .config_openarm_leader import OpenArmLeaderConfig
@@ -85,7 +86,7 @@ class OpenArmLeader(Teleoperator):
         """Check if teleoperator is connected."""
         return self.bus.is_connected
 
-    @check_if_already_connected
+    @idempotent_connect
     def connect(self, calibrate: bool = True) -> None:
         """
         Connect to the teleoperator.
@@ -93,12 +94,9 @@ class OpenArmLeader(Teleoperator):
         For manual control, we disable torque after connecting so the
         arm can be moved by hand.
         """
-
-        # Connect to CAN bus
         logger.info(f"Connecting arm on {self.config.port}...")
-        self.bus.connect()
-
-        # Run calibration if needed
+        if not self.bus.is_connected:
+            self.bus.connect()
         if not self.is_calibrated and calibrate:
             logger.info(
                 "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
@@ -109,8 +107,6 @@ class OpenArmLeader(Teleoperator):
 
         if self.is_calibrated:
             self.bus.set_zero_position()
-
-        logger.info(f"{self} connected.")
 
     @property
     def is_calibrated(self) -> bool:
@@ -214,11 +210,8 @@ class OpenArmLeader(Teleoperator):
     def send_feedback(self, feedback: dict[str, float]) -> None:
         raise NotImplementedError("Feedback is not yet implemented for OpenArm leader.")
 
-    @check_if_not_connected
     def disconnect(self) -> None:
         """Disconnect from teleoperator."""
-
-        # Disconnect CAN bus
-        # For manual control, ensure torque is disabled before disconnecting
-        self.bus.disconnect(disable_torque=self.config.manual_control)
-        logger.info(f"{self} disconnected.")
+        with Cleanup(self) as cleanup, cleanup.step("the motor bus"):
+            # For manual control, ensure torque is disabled before disconnecting.
+            self.bus.disconnect(disable_torque=self.config.manual_control)

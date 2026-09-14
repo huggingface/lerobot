@@ -21,7 +21,7 @@ from typing import Any
 
 from lerobot.lerobot_types import RobotAction
 from lerobot.teleoperators import Teleoperator, TeleoperatorConfig
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_not_connected
 
 
 @TeleoperatorConfig.register_subclass("mock_teleop")
@@ -68,8 +68,9 @@ class MockTeleop(Teleoperator):
     def is_connected(self) -> bool:
         return self._is_connected
 
-    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        if self.is_connected:
+            return
         self._is_connected = True
         if calibrate:
             self.calibrate()
@@ -97,6 +98,5 @@ class MockTeleop(Teleoperator):
     @check_if_not_connected
     def send_feedback(self, feedback: dict[str, Any]) -> None: ...
 
-    @check_if_not_connected
     def disconnect(self) -> None:
         self._is_connected = False

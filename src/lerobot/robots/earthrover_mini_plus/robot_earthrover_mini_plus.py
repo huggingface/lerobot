@@ -24,8 +24,9 @@ import numpy as np
 import requests
 
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_not_connected
 from lerobot.utils.errors import DeviceNotConnectedError
+from lerobot.utils.lifecycle import idempotent_connect
 
 from ..robot import Robot
 from .config_earthrover_mini_plus import EarthRoverMiniPlusConfig
@@ -120,7 +121,7 @@ class EarthRoverMiniPlus(Robot):
         """Check if robot is connected to SDK."""
         return self._is_connected
 
-    @check_if_already_connected
+    @idempotent_connect
     def connect(self, calibrate: bool = True) -> None:
         """Connect to robot via Frodobots SDK.
 
@@ -128,10 +129,8 @@ class EarthRoverMiniPlus(Robot):
             calibrate: Not used for SDK-based robot (kept for API compatibility)
 
         Raises:
-            DeviceAlreadyConnectedError: If robot is already connected
             DeviceNotConnectedError: If cannot connect to SDK server
         """
-
         # Verify SDK is running and accessible
         try:
             response = requests.get(f"{self.sdk_base_url}/data", timeout=10.0)
@@ -362,21 +361,21 @@ class EarthRoverMiniPlus(Robot):
             ACTION_ANGULAR_VEL: angular,
         }
 
-    @check_if_not_connected
     def disconnect(self) -> None:
         """Disconnect from robot.
 
         Stops the robot and closes connection to SDK.
 
-        Raises:
-            DeviceNotConnectedError: If robot is not connected
         """
+        if not self.is_connected:
+            return
 
         # Stop the robot before disconnecting
         try:
             self._send_command_to_sdk(0.0, 0.0)
-        except Exception as e:
-            logger.warning(f"Failed to stop robot during disconnect: {e}")
+        except Exception as exc:
+            exc.add_note(f"while stopping {self.name} during disconnect")
+            raise
 
         self._is_connected = False
         logger.info(f"{self.name} disconnected")

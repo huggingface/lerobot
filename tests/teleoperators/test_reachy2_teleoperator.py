@@ -114,11 +114,15 @@ def test_connect_disconnect(reachy2):
 
     reachy2.connect()
     assert reachy2.is_connected
+    sdk = reachy2.reachy
 
+    reachy2.connect()
+
+    reachy2.disconnect()
     reachy2.disconnect()
     assert not reachy2.is_connected
 
-    reachy2.reachy.disconnect.assert_called_once()
+    sdk.disconnect.assert_called_once()
 
 
 def test_get_action(reachy2):
