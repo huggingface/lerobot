@@ -84,7 +84,8 @@ class EarthRoverMiniPlus(Robot):
 
     Attributes:
         config: Robot configuration
-        sdk_base_url: URL of the Frodobots SDK server (default: http://localhost:8000)
+        sdk_base_url: Base URL of the Frodobots SDK server, taken from
+            ``config.sdk_url`` (default: http://localhost:8000)
     """
 
     config_class = EarthRoverMiniPlusConfig
@@ -98,7 +99,7 @@ class EarthRoverMiniPlus(Robot):
         """
         super().__init__(config)
         self.config = config
-        self.sdk_base_url = "http://localhost:8000"
+        self.sdk_base_url = config.sdk_url
 
         # Empty cameras dict for compatibility with recording script
         # Cameras are accessed directly via SDK, not through Camera objects

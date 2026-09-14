@@ -26,6 +26,8 @@ Strategies
     --strategy.type=highlight  Ring buffer + keystroke save
     --strategy.type=dagger     Human-in-the-loop (DAgger / RaC)
     --strategy.type=episodic   Episode-oriented recording with reset phases
+    --strategy.type=<name>     Any strategy from an installed ``lerobot_strategy_*``
+                               package (see "Bring your own strategy" in the docs)
 
 Inference backends
 ------------------
