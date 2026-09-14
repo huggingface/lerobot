@@ -1,0 +1,94 @@
+{
+  "name": "policy_preprocessor",
+  "steps": [
+    {
+      "config": {
+        "rename_map": {}
+      },
+      "registry_name": "rename_observations_processor"
+    },
+    {
+      "config": {},
+      "registry_name": "to_batch_processor"
+    },
+    {
+      "config": {
+        "max_length": 64,
+        "padding": "max_length",
+        "padding_side": "right",
+        "task_key": "task",
+        "tokenizer_name": "facebook/bart-large",
+        "truncation": true
+      },
+      "registry_name": "tokenizer_processor"
+    },
+    {
+      "config": {
+        "image_keys": null,
+        "validate_range": true
+      },
+      "registry_name": "xvla_image_to_float"
+    },
+    {
+      "config": {
+        "image_keys": null
+      },
+      "registry_name": "xvla_imagenet_normalize"
+    },
+    {
+      "config": {
+        "domain_id": 0
+      },
+      "registry_name": "xvla_add_domain_id"
+    },
+    {
+      "config": {
+        "device": "cpu",
+        "float_dtype": null
+      },
+      "registry_name": "device_processor"
+    },
+    {
+      "config": {
+        "eps": 1e-08,
+        "features": {
+          "action": {
+            "shape": [
+              6
+            ],
+            "type": "ACTION"
+          },
+          "observation.image.cam": {
+            "shape": [
+              3,
+              96,
+              96
+            ],
+            "type": "VISUAL"
+          },
+          "observation.images.cam": {
+            "shape": [
+              3,
+              96,
+              96
+            ],
+            "type": "VISUAL"
+          },
+          "observation.state": {
+            "shape": [
+              6
+            ],
+            "type": "STATE"
+          }
+        },
+        "norm_map": {
+          "ACTION": "IDENTITY",
+          "STATE": "IDENTITY",
+          "VISUAL": "IDENTITY"
+        }
+      },
+      "registry_name": "normalizer_processor",
+      "state_file": "policy_preprocessor_step_7_normalizer_processor.safetensors"
+    }
+  ]
+}
