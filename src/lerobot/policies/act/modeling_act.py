@@ -145,7 +145,18 @@ class ACTPolicy(PreTrainedPolicy):
                 - "mean": Return scalar mean loss (default, backward compatible)
                 - "none": Return per-sample losses of shape (batch_size,) for sample
                   weighting (e.g. RA-BC — see `lerobot.utils.sample_weighting`)
+
+        Note:
+            `"none"` averages over valid steps within each sample before the batch is reduced.
+            When samples contain different numbers of valid steps, `loss.mean()` under `"none"`
+            differs slightly from `"mean"`: `"mean"` weights every valid step equally, whereas
+            `"none"` weights every sample equally to support per-sample weighting. Consequently,
+            `loss_dict["l1_loss"]` reports the global step mean under `"mean"` and the mean of
+            sample losses under `"none"`.
         """
+        if reduction not in {"mean", "none"}:
+            raise ValueError(f"Unsupported reduction={reduction!r}. Expected 'mean' or 'none'.")
+
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
