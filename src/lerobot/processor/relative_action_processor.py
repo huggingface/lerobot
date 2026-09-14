@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Generator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -261,6 +262,7 @@ def find_relative_action_step(pipeline: Any) -> RelativeActionsProcessorStep | N
     )
 
 
+@contextmanager
 def pinned_relative_anchor(
     relative_step: RelativeActionsProcessorStep | None,
     policy: _ChunkingPolicy,
