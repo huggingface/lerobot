@@ -180,6 +180,43 @@ lerobot-train \
 
 To share the result on the Hub, replace `--policy.push_to_hub=false` with `--policy.repo_id=${HF_USER}/libero-smolvla`. Evaluate saved checkpoints with `lerobot-eval` as shown in the [Evaluation](#evaluation) section.
 
+## Evaluating SmolVLA on LIBERO
+
+The Hub checkpoints [`lerobot/smolvla_libero`](https://huggingface.co/lerobot/smolvla_libero) and [`HuggingFaceVLA/smolvla_libero`](https://huggingface.co/HuggingFaceVLA/smolvla_libero) are trained for LIBERO. When evaluating, **override `n_action_steps`** — do not trust the Hub default alone.
+
+### Why `n_action_steps` matters
+
+`n_action_steps` is how many actions from each predicted chunk are executed before the policy looks at the scene again. SmolVLA's `chunk_size` is 50, and some Hub configs set `n_action_steps=50`, which plays the full chunk open-loop.
+
+The [SmolVLA paper](https://huggingface.co/papers/2506.01844) Table 13 already shows that executing 50 actions is the worst setting on LIBERO (about 51.8% average), while **10 steps averages about 82.8%** and 1 step about 80.3%. Independent paired evals on `lerobot/smolvla_libero` see a similar ~20 pp drop when forcing 50 vs 10 (see [#4614](https://github.com/huggingface/lerobot/issues/4614)).
+
+Use **`--policy.n_action_steps=10`** for the paper-aligned recipe. `--policy.n_action_steps=1` is also strong and matches `HuggingFaceVLA/smolvla_libero`'s saved config.
+
+<Tip warning={true}>
+  `lerobot/smolvla_libero` currently ships `n_action_steps: 50` in its Hub
+  `config.json`. Until that Hub config is updated, always pass
+  `--policy.n_action_steps=10` (or `1`) on the CLI — otherwise `lerobot-eval`
+  will open-loop the full 50-step chunk and under-report success.
+</Tip>
+
+### Evaluation command
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/smolvla_libero \
+  --policy.n_action_steps=10 \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --env.fps=20 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --env.max_parallel_tasks=1
+```
+
+Keep `--env.fps=20` (the LiberoEnv default). LIBERO actions are deltas; a different control rate changes how far each action moves the arm and can collapse success rates.
+
+If camera keys do not match the checkpoint (for example older `lerobot/smolvla_libero` builds), pass an explicit `--rename_map` as documented in [Rename Map](./rename_map). Empty CLI defaults can overwrite a saved map — see [#4578](https://github.com/huggingface/lerobot/issues/4578).
+
 ## Reproducing published results
 
 We reproduce the results of Pi0.5 on the LIBERO benchmark. We take the Physical Intelligence LIBERO base model (`pi05_libero`) and finetune for an additional 6k steps in bfloat16, with batch size of 256 on 8 H100 GPUs using the [HuggingFace LIBERO dataset](https://huggingface.co/datasets/HuggingFaceVLA/libero).

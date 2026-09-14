@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import abc
 import importlib
+import logging
 from dataclasses import dataclass, field, fields
 from typing import Any
 
@@ -43,6 +44,8 @@ from lerobot.utils.constants import (
     OBS_IMAGES,
     OBS_STATE,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _make_vec_env_cls(use_async: bool, n_envs: int):
@@ -357,6 +360,14 @@ class LiberoEnv(EnvConfig):
     def __post_init__(self):
         if self.fps <= 0:
             raise ValueError(f"fps must be positive, got {self.fps}")
+        if self.fps != 20:
+            logger.warning(
+                "LiberoEnv fps=%s differs from the standard 20 Hz control rate. "
+                "LIBERO uses delta actions, so a different rate changes how far each "
+                "action moves the arm and can severely hurt success rates. Prefer --env.fps=20 "
+                "unless you intentionally retarget control frequency.",
+                self.fps,
+            )
         if not self.hard_reset and not self.init_states:
             raise ValueError("hard_reset=False requires init_states=True")
 
