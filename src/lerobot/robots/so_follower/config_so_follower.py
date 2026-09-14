@@ -52,12 +52,29 @@ class SOFollowerConfig:
     # failure, so the steady-state read cost is unchanged.
     num_read_retries: int = 2
 
+    # Optional host-side stall protection. Keys select the motors to monitor and values are thresholds in
+    # raw Present_Current register units. Protection remains disabled when this is None. When a monitored
+    # motor stays above its threshold while missing its last commanded position, torque is disabled for the
+    # whole arm and send_action raises MotorStallError.
+    stall_current_thresholds: dict[str, float] | None = None
+    stall_position_tolerance: float = 2.0
+    stall_timeout_s: float = 0.5
+
 
 @RobotConfig.register_subclass("so101_follower")
 @RobotConfig.register_subclass("so100_follower")
 @dataclass
 class SOFollowerRobotConfig(RobotConfig, SOFollowerConfig):
-    pass
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.stall_current_thresholds is not None and any(
+            threshold <= 0 for threshold in self.stall_current_thresholds.values()
+        ):
+            raise ValueError("stall_current_thresholds values must be positive")
+        if self.stall_position_tolerance <= 0:
+            raise ValueError("stall_position_tolerance must be positive")
+        if self.stall_timeout_s <= 0:
+            raise ValueError("stall_timeout_s must be positive")
 
 
 SO100FollowerConfig = SOFollowerRobotConfig
