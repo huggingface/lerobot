@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .capabilities import ProgressPrediction as ProgressPrediction, ProgressPredictor as ProgressPredictor
 from .classifier.configuration_classifier import RewardClassifierConfig as RewardClassifierConfig
 from .factory import (
     get_reward_model_class as get_reward_model_class,
@@ -32,6 +33,9 @@ __all__ = [
     "TOPRewardConfig",
     # Base class
     "PreTrainedRewardModel",
+    # Inference capabilities
+    "ProgressPrediction",
+    "ProgressPredictor",
     # Factory functions
     "get_reward_model_class",
     "make_reward_model",

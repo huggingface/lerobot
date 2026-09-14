@@ -21,13 +21,18 @@ TOPReward is a **zero-shot** reward model that extracts token log-probabilities 
 _Reward model type not recognized — please update this template._
 {% endif %}
 
+{% if model_name in ["robometer", "topreward"] %}
+This inference-only reward-model integration can be loaded with [LeRobot](https://github.com/huggingface/lerobot). Training this model through `lerobot-train` is not currently supported.
+{% else %}
 This reward model has been trained and pushed to the Hub using [LeRobot](https://github.com/huggingface/lerobot).
+{% endif %}
 See the full documentation at [LeRobot Docs](https://huggingface.co/docs/lerobot/index).
 
 ---
 
 ## How to Get Started with the Reward Model
 
+{% if model_name not in ["robometer", "topreward"] %}
 ### Train from scratch
 
 ```bash
@@ -42,14 +47,34 @@ lerobot-train \
 ```
 
 _Writes checkpoints to `outputs/train/<desired_reward_model_repo_id>/checkpoints/`._
+{% endif %}
 
 ### Load the reward model in Python
 
 ```python
+from lerobot.configs.rewards import RewardModelConfig
 from lerobot.rewards import make_reward_model
 
-reward_model = make_reward_model(pretrained_path="<hf_user>/<reward_model_repo_id>")
-reward = reward_model.compute_reward(batch)
+model_id = "<hf_user>/<reward_model_repo_id>"
+config = RewardModelConfig.from_pretrained(model_id)
+config.pretrained_path = model_id
+reward_model = make_reward_model(config)
+
+# `batch` is the output of this model's documented preprocessor.
+{% if model_name == "reward_classifier" %}
+reward = reward_model.predict_reward(batch)
+{% elif model_name == "sarm" %}
+prediction = reward_model.predict_progress(batch, head_mode="sparse")
+progress = prediction.progress
+{% elif model_name == "robometer" %}
+prediction = reward_model.predict_progress(batch)
+progress = prediction.progress
+success_probability = prediction.success_probability
+{% elif model_name == "topreward" %}
+log_probability = reward_model.compute_log_probability(batch)
+{% else %}
+# Use the model's documented inference capability.
+{% endif %}
 ```
 
 ---

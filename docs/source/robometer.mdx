@@ -21,15 +21,14 @@ The paper trains ROBOMETER with a composite objective:
 L = L_pref + L_prog + L_succ
 ```
 
-The LeRobot integration is currently **inference-only**. It preserves the preference head so that the published `Robometer-4B` checkpoint loads without remapping, but `compute_reward()` queries the progress or success head only.
+The LeRobot integration is currently **inference-only**. It preserves the preference head so that the published `Robometer-4B` checkpoint loads without remapping. `predict_progress()` queries the progress and success heads in one pass.
 
 ## What the LeRobot Integration Covers
 
 - Standard `reward_model.type=robometer` configuration through LeRobot.
 - Qwen3-VL image and text preprocessing through `RobometerEncoderProcessorStep`.
 - LeRobot reward-model save/load APIs through `PreTrainedRewardModel`.
-- Dense, frame-level progress and success predictions internally.
-- A scalar reward through `compute_reward()` for downstream LeRobot reward-model usage.
+- Typed, frame-level progress and success-probability tensors through `predict_progress()`.
 
 This page focuses on using the published ROBOMETER checkpoint as a zero-shot reward model. Training ROBOMETER from scratch is outside the current LeRobot integration.
 
@@ -65,10 +64,27 @@ In LeRobot datasets, the preprocessor reads:
 | `reward_model.task_key`   | `task`                   | Key in complementary data that stores the task string |
 | `reward_model.max_frames` | `8`                      | Maximum number of frames passed to ROBOMETER          |
 
-The model predicts per-frame progress and success internally. The LeRobot reward API returns a scalar per sample:
+`predict_progress()` returns a `RobometerPrediction` with two float32 tensors of shape `(batch_size, num_frames)`:
 
-- `reward_output="progress"` (default): return the last-frame progress, clamped to `[0, 1]`.
-- `reward_output="success"`: return `1.0` if the last-frame success probability is above `success_threshold`, otherwise `0.0`.
+- `progress`: frame-level progress clamped to `[0, 1]`.
+- `success_probability`: frame-level sigmoid probabilities.
+
+The model does not select a frame or convert probabilities into binary success. Consumers make those decisions explicitly.
+
+Older RoboMeter configurations may contain `reward_output` and `success_threshold`. LeRobot still accepts these fields so existing checkpoints load, but `predict_progress()` does not use them.
+
+### Migrating from the scalar API
+
+````python
+prediction = reward_model.predict_progress(batch)
+
+# Last-frame progress
+reward = prediction.progress[:, -1]
+
+# Last-frame binary success
+reward = (
+    prediction.success_probability[:, -1] > success_threshold
+).float()
 
 ## Usage
 
@@ -80,10 +96,9 @@ from lerobot.rewards.robometer import RobometerConfig, RobometerRewardModel
 cfg = RobometerConfig(
     pretrained_path="lerobot/Robometer-4B",
     device="cuda",
-    reward_output="progress",
 )
 reward_model = RobometerRewardModel.from_pretrained(cfg.pretrained_path, config=cfg)
-```
+````
 
 ### Encode Frames and Compute a Reward
 
@@ -105,10 +120,12 @@ encoder = RobometerEncoderProcessorStep(
 encoded = encoder.encode_samples([(frames, task)])
 batch = {f"{ROBOMETER_FEATURE_PREFIX}{key}": value for key, value in encoded.items()}
 
-reward = reward_model.compute_reward(batch)
+prediction = reward_model.predict_progress(batch)
+last_frame_progress = prediction.progress[:, -1]
+last_frame_success = prediction.success_probability[:, -1] > 0.5
 ```
 
-`reward` is a tensor of shape `(batch_size,)`.
+Both fields preserve the batch and frame axes on the model device.
 
 ### Use the Reward Factory
 
@@ -127,7 +144,7 @@ reward_model = make_reward_model(cfg)
 preprocessor, postprocessor = make_reward_pre_post_processors(cfg)
 ```
 
-The preprocessor writes Qwen-VL tensors under the `observation.robometer.*` namespace, and `compute_reward()` reads those encoded tensors.
+The preprocessor writes Qwen-VL tensors under the `observation.robometer.*` namespace, and `predict_progress()` reads those encoded tensors.
 
 ## Configuration Notes
 
@@ -153,12 +170,12 @@ In the published checkpoint, progress is discrete. The progress head outputs log
 
 ### Success Prediction
 
-The success head outputs raw logits per frame. LeRobot converts them to probabilities with `sigmoid`. When `reward_output="success"`, `compute_reward()` thresholds the last-frame success probability using `success_threshold`.
+The success head outputs raw logits per frame. LeRobot converts them to probabilities with `sigmoid`; consumers choose any frame and threshold appropriate for their task.
 
 ## Limitations
 
 - The current LeRobot integration is inference-only; it does not implement ROBOMETER training or preference-pair training.
-- `compute_reward()` returns a scalar per sample for the LeRobot reward-model API, even though ROBOMETER predicts per-frame progress and success internally.
+- The preference head is preserved for checkpoint compatibility but does not yet have a public comparison capability.
 - ROBOMETER is video-language based; it does not use privileged robot state such as contact forces or object poses.
 
 ## References

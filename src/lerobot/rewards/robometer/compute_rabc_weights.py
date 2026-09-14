@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compute per-frame Robometer progress and success curves for a LeRobot dataset.
+"""Compute per-frame Robometer progress for a LeRobot dataset.
 
 For each episode, builds per-frame sub-samples using the frame-steps
 strategy from the Robometer eval server: for each original frame ``t``,
@@ -48,19 +48,34 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
 
-from lerobot.datasets import LeRobotDataset
 from lerobot.lerobot_types import TransitionKey
 from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
-from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
+from lerobot.rewards.robometer.modeling_robometer import RobometerPrediction, RobometerRewardModel
 from lerobot.rewards.robometer.processor_robometer import RobometerEncoderProcessorStep
+from lerobot.utils.import_utils import (
+    _av_available,
+    _datasets_available,
+    _pyarrow_available,
+    require_package,
+)
+
+if TYPE_CHECKING or _pyarrow_available:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+else:
+    pa = None  # type: ignore[assignment]
+    pq = None  # type: ignore[assignment]
+
+if TYPE_CHECKING or (_datasets_available and _av_available):
+    from lerobot.datasets import LeRobotDataset
+else:
+    LeRobotDataset = None  # type: ignore[assignment, misc]
 
 DEFAULT_OUTPUT_FILENAME = "robometer_progress.parquet"
 
@@ -68,10 +83,21 @@ DEFAULT_OUTPUT_FILENAME = "robometer_progress.parquet"
 DEFAULT_NUM_SUBSAMPLED_FRAMES = 4
 
 
+def _require_dataset_dependencies() -> None:
+    """Require packages used only by dataset scoring and parquet IO."""
+    require_package("pyarrow", extra="dataset")
+    if LeRobotDataset is None:
+        require_package("datasets", extra="dataset")
+        require_package("av", extra="dataset")
+
+
 def get_reward_model_path_from_parquet(parquet_path: Path) -> str | None:
     """Read ``reward_model_path`` from parquet metadata if available."""
     if not parquet_path.exists():
         return None
+    require_package("pyarrow", extra="dataset")
+    if pq is None:
+        raise ImportError("pyarrow.parquet is required to read reward-model metadata")
     try:
         metadata = pq.read_metadata(parquet_path).schema.to_arrow_schema().metadata
         if metadata and b"reward_model_path" in metadata:
@@ -93,11 +119,35 @@ def _build_subsample_indices(num_frames: int, num_subsampled_frames: int) -> lis
     """Frame-steps linspace expansion.
 
     For each ``t in [0, num_frames - 1]`` returns ``num_subsampled_frames``
-    indices from ``np.linspace(0, t, num_subsampled_frames)`` — the first
-    and last frames are always included. Each entry is a fixed-size array
-    so the model can batch them.
+    indices from ``np.linspace(0, t, num_subsampled_frames)``. With at least
+    two sampled frames, the first and current frames are included. The
+    existing one-frame behavior retains only the first frame. Each entry is
+    fixed-size so the model can batch them.
     """
     return [np.linspace(0, t, num_subsampled_frames).round().astype(np.int64) for t in range(num_frames)]
+
+
+def _make_robometer_scoring_encoder(config: RobometerConfig) -> RobometerEncoderProcessorStep:
+    """Build the encoder for frame-steps samples selected by this script."""
+    return RobometerEncoderProcessorStep(
+        base_model_id=config.base_model_id,
+        image_key=config.image_key,
+        task_key=config.task_key,
+        default_task=config.default_task,
+        max_frames=None,
+        use_multi_image=config.use_multi_image,
+        use_per_frame_progress_token=config.use_per_frame_progress_token,
+    )
+
+
+def _select_last_frame_progress(prediction: RobometerPrediction) -> torch.Tensor:
+    """Apply the legacy script's explicit last-frame selection."""
+    if prediction.progress.ndim != 2 or prediction.progress.shape[1] == 0:
+        raise ValueError(
+            "Robometer progress must have shape (batch, time) with at least one frame, "
+            f"got {tuple(prediction.progress.shape)}"
+        )
+    return prediction.progress[:, -1]
 
 
 def compute_robometer_progress(
@@ -110,7 +160,13 @@ def compute_robometer_progress(
     episodes: list[int] | None = None,
     image_key: str | None = None,
 ) -> Path:
-    """Run Robometer over a dataset and write per-frame progress + success."""
+    """Run Robometer over a dataset and write per-frame progress."""
+    if num_subsampled_frames < 1:
+        raise ValueError(f"num_subsampled_frames must be >= 1, got {num_subsampled_frames}")
+    _require_dataset_dependencies()
+    if pa is None or pq is None or LeRobotDataset is None:
+        raise ImportError("Robometer dataset scoring requires pyarrow and LeRobotDataset")
+
     logging.info(f"Loading Robometer: {reward_model_path}")
     config = RobometerConfig(pretrained_path=reward_model_path, device=device)
     if image_key is not None:
@@ -118,15 +174,7 @@ def compute_robometer_progress(
     model = RobometerRewardModel.from_pretrained(reward_model_path, config=config)
     model.to(device).eval()
 
-    encoder = RobometerEncoderProcessorStep(
-        base_model_id=config.base_model_id,
-        image_key=config.image_key,
-        task_key=config.task_key,
-        default_task=config.default_task,
-        max_frames=num_subsampled_frames,
-        use_multi_image=config.use_multi_image,
-        use_per_frame_progress_token=config.use_per_frame_progress_token,
-    )
+    encoder = _make_robometer_scoring_encoder(config)
 
     image_key = config.image_key
 
@@ -174,9 +222,8 @@ def compute_robometer_progress(
                 for key, value in obs.items()
             }
 
-            with torch.no_grad():
-                rewards = model.compute_reward(batch)
-            progress_per_frame[start:end] = rewards.cpu().numpy()
+            prediction = model.predict_progress(batch)
+            progress_per_frame[start:end] = _select_last_frame_progress(prediction).cpu().numpy()
 
         for local in range(num_frames):
             all_index.append(ep_start + local)
@@ -261,6 +308,9 @@ Examples:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    _require_dataset_dependencies()
+    if LeRobotDataset is None:
+        raise ImportError("Robometer dataset scoring requires LeRobotDataset")
 
     reward_model_path = args.reward_model_path
     if reward_model_path is None:

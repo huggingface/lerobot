@@ -464,7 +464,7 @@ def train(cfg: TrainPipelineConfig):
         if not policy.is_trainable:
             raise ValueError(
                 f"Reward model '{policy.name}' is zero-shot and cannot be trained via lerobot-train. "
-                "Use it directly for inference via compute_reward() (e.g. offline precompute)."
+                "Use its documented inference capability directly (for example, for offline scoring)."
             )
     else:
         if is_main_process():
