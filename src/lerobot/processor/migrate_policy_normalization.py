@@ -568,6 +568,9 @@ def main():
 
     # Remove fields that are not part of the config class constructors
     fields_to_remove = ["normalization_mapping", "type"]
+    if policy_type == "vqbet":
+        # Early VQ-BeT configs serialized this field, but the model never used it.
+        fields_to_remove.append("mlp_hidden_dim")
     for field in fields_to_remove:
         if field in cleaned_config:
             print(f"Removing '{field}' field from config")
