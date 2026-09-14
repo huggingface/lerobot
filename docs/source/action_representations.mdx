@@ -168,6 +168,12 @@ lerobot-train \
 
 The `relative_exclude_joints` parameter specifies joints that should remain in absolute space. For example, gripper commands are typically binary (open/close) and don't benefit from relative encoding.
 
+For policy configurations that define `action_feature_names`, `make_policy` fills this list from the dataset action feature's `names` metadata.
+Names may be a flat sequence or a dictionary whose values are all lists or tuples.
+For example, `{"arm": ["shoulder", "elbow"], "hand": ["gripper"]}` becomes `["shoulder", "elbow", "gripper"]`, not the group keys.
+Group insertion order and within-group order are preserved, so declare names in the same order as the action vector.
+Legacy name-to-index mappings retain their key-order behavior.
+
 ### Combining relative actions with RTC
 
 [RTC](https://arxiv.org/abs/2506.07339) runs policy inference at high frequency and sends actions to the robot as they are predicted rather than waiting for a full chunk. Relative actions and RTC are fully compatible: because every chunk in relative mode references the **same** current state (captured at the start of inference), each predicted action in the chunk remains a valid offset even if the robot has already moved. No special handling is needed — `RelativeActionsProcessorStep` caches the state once per inference call and `AbsoluteActionsProcessorStep` applies it to every action in the streamed output.
