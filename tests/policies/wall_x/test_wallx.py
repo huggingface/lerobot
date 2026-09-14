@@ -32,20 +32,21 @@ from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
 from lerobot.policies.wall_x import (
     WallXConfig,  # noqa: E402
 )
+from lerobot.policies.wall_x.constant import WALL_X_PROMPT_SEGMENTS  # noqa: E402
 from lerobot.policies.wall_x.modeling_wall_x import Qwen2_5_VLMoEForAction, WallXPolicy  # noqa: E402
 from lerobot.policies.wall_x.processor_wall_x import (  # noqa: E402
     WallXPromptProcessorStep,
-    WallXTokenizerStep,
     make_wall_x_pre_post_processors,
 )
 from lerobot.policies.wall_x.qwen_model import Qwen2_5_VLMoEModel, Qwen2_5_VLTextConfig  # noqa: E402
+from lerobot.policies.wall_x.utils import get_wallx_normal_text, preprocesser_call  # noqa: E402
 from lerobot.processor import (  # noqa: E402
     RenderRuntimeMessagesStep,
     RenderTrainingMessagesStep,
     batch_to_transition,
     transition_to_batch,
 )
-from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT  # noqa: E402
+from lerobot.utils.constants import MESSAGES_RENDERED, QUERY_KIND, QUERY_TEXT  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 from tests.utils import require_cuda, require_hf_token  # noqa: E402
 
@@ -100,17 +101,6 @@ def _make_unloaded_policy(**config_values):
     return policy
 
 
-def _tokenizer_step() -> WallXTokenizerStep:
-    return WallXTokenizerStep(
-        processor_name="unused",
-        image_keys=["observation.images.face_view"],
-        chunk_size=3,
-        max_state_dim=20,
-        max_action_dim=20,
-        output_action_dim=7,
-    )
-
-
 def _model_inputs() -> dict[str, torch.Tensor]:
     return {
         "input_ids": torch.tensor([[1, 2, 3]]),
@@ -146,6 +136,92 @@ def test_recipe_prompt_targets_only_selected_assistant_and_keeps_action_supervis
     assert prompt[slice(*spans[0])] == "Reach for the cup.<|im_end|>"
     assert prompt.count("<|action|>") == 3
     assert "Proprioception: <|propri|>" in prompt
+
+
+def test_recipe_and_generation_use_the_same_subtask_user_turn():
+    step = WallXPromptProcessorStep(image_keys=["observation.images.face_view"], chunk_size=3)
+    messages = [{"role": "user", "content": "clear the table\nPredict the next action in language.\n"}]
+
+    training, _ = step._recipe_segments(messages, ["high_level"], [], "", ["front view"])
+    generation = step._generation_segments(messages, ["front view"])
+
+    assert "".join(segment["text"] for segment in generation) == (
+        "".join(segment["text"] for segment in training) + "<|im_start|>assistant\n"
+    )
+
+
+def test_low_level_recipe_fallback_uses_the_native_action_prompt():
+    step = WallXPromptProcessorStep(image_keys=["observation.images.face_view"], chunk_size=3)
+    rendered = step.complementary_data(
+        {
+            "task": ["clear the table"],
+            MESSAGES_RENDERED: [[{"role": "user", "content": "clear the table"}]],
+            "message_streams": [["low_level"]],
+            "target_message_indices": [[]],
+        }
+    )
+
+    expected, generated_subtask = get_wallx_normal_text(
+        {"instruction": "clear the table"},
+        action_chunk_size=3,
+        frame_idx=0,
+        priority_order=None,
+        img_keys=["observation.images.face_view"],
+        generate_subtask_ratio=0.0,
+    )
+
+    assert not generated_subtask
+    assert "".join(segment["text"] for segment in rendered[WALL_X_PROMPT_SEGMENTS][0]) == expected
+
+
+def test_text_targets_follow_expanded_image_placeholders():
+    class Tokenized(dict):
+        __getattr__ = dict.__getitem__
+
+    class Tokenizer:
+        pad_token_id = 0
+        eos_token_id = 0
+
+        @staticmethod
+        def encode(value):
+            return [10_000 if value == "<|action|>" else 10_001]
+
+        @staticmethod
+        def __call__(texts, *, return_offsets_mapping, **kwargs):
+            del kwargs
+            length = len(texts[0])
+            tokenized = Tokenized(
+                input_ids=torch.arange(1, length + 1).unsqueeze(0),
+                attention_mask=torch.ones(1, length, dtype=torch.long),
+            )
+            if return_offsets_mapping:
+                tokenized["offset_mapping"] = torch.tensor([[[index, index + 1] for index in range(length)]])
+            return tokenized
+
+    class ImageProcessor:
+        merge_size = 1
+
+        @staticmethod
+        def __call__(**kwargs):
+            del kwargs
+            return {"image_grid_thw": torch.tensor([[1, 2, 2]])}
+
+    processor = SimpleNamespace(tokenizer=Tokenizer(), image_processor=ImageProcessor())
+    text = "prefix <|image_pad|> target"
+    target_start = text.index("target")
+    inputs = preprocesser_call(
+        processor,
+        text=text,
+        images=[[torch.zeros(3, 2, 2)]],
+        target_spans=[[(target_start, target_start + len("target"))]],
+    )
+
+    final_target_start = target_start + len("<|image_pad|>") * 3
+    assert torch.all(inputs.labels[0, :final_target_start] == -100)
+    assert torch.equal(
+        inputs.labels[0, final_target_start : final_target_start + len("target")],
+        inputs.input_ids[0, final_target_start : final_target_start + len("target")],
+    )
 
 
 def test_policy_combines_text_and_flow_losses_with_configured_weights(monkeypatch):
@@ -395,8 +471,6 @@ def test_config_creation():
 
 def test_subtask_prompt_is_token_exact_with_the_trained_template():
     """WALL-OSS declares its mode in the user turn, so the template must match upstream."""
-    from lerobot.policies.wall_x.utils import get_wallx_normal_text
-
     img_keys = ["observation.images.face_view"]
     upstream, generated_subtask = get_wallx_normal_text(
         {"instruction": "clear the table", "subtask_generation": "pick the cup"},
@@ -408,9 +482,14 @@ def test_subtask_prompt_is_token_exact_with_the_trained_template():
     )
     assert generated_subtask
 
-    ours = _tokenizer_step()._generation_text(
-        [{"role": "user", "content": "clear the table\nPredict the next action in language.\n"}],
-        ["front view"],
+    ours = "".join(
+        segment["text"]
+        for segment in WallXPromptProcessorStep(
+            image_keys=["observation.images.face_view"], chunk_size=1
+        )._generation_segments(
+            [{"role": "user", "content": "clear the table\nPredict the next action in language.\n"}],
+            ["front view"],
+        )
     )
 
     # Compare the user turn only: upstream appends its own assistant target, ours ends

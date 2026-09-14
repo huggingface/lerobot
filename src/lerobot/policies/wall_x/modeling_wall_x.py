@@ -1810,7 +1810,6 @@ class WallXPolicy(PreTrainedPolicy):
             "video_grid_thw",
             "second_per_grid_ts",
             "labels",
-            "text_labels",
             "proprioception",
             "agent_pos_mask",
             "action_chunk",

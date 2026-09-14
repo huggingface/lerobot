@@ -148,7 +148,10 @@ def preprocesser_call(
                     raise ValueError(
                         "WALL-X text-supervision spans cannot contain image or video placeholders."
                     )
-            delta = len(replacement) - len(placeholder)
+            # The tokenizer receives the final prompt after each temporary
+            # ``<|placeholder|>`` is restored to ``placeholder``. Shift spans
+            # by that final length change, not by the temporary expansion.
+            delta = len(placeholder) * (token_count - 1)
             spans = [
                 (
                     start + (delta if start >= placeholder_end else 0),

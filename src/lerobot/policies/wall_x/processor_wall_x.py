@@ -236,7 +236,7 @@ class WallXPromptProcessorStep(ComplementaryDataProcessorStep):
             role = str(message.get("role", "user"))
             content = self._message_content(message)
             if role == "user" and not observation_injected:
-                content = f"{self._observation_prompt(image_labels)}\n{content}"
+                content = f"{self._observation_prompt(image_labels)}\nInstruction: {content}"
                 observation_injected = True
             segments.append({"text": f"<|im_start|>{role}\n", "target": False})
             segments.append({"text": f"{content}<|im_end|>", "target": index in target_set})
@@ -260,14 +260,26 @@ class WallXPromptProcessorStep(ComplementaryDataProcessorStep):
     def _generation_segments(
         self, messages: list[dict[str, Any]], image_labels: list[str]
     ) -> list[dict[str, str | bool]]:
-        native = [dict(message) for message in messages]
-        for message in native:
-            if str(message.get("role", "user")) == "user":
-                message["content"] = f"Instruction: {self._message_content(message)}"
-                break
-        segments, _ = self._recipe_segments(native, [None] * len(native), [], "", image_labels)
+        segments, _ = self._recipe_segments(messages, [None] * len(messages), [], "", image_labels)
         segments.append({"text": "<|im_start|>assistant\n", "target": False})
         return segments
+
+    def _action_segments(self, task: str, image_labels: list[str]) -> list[dict[str, str | bool]]:
+        """Render WALL-OSS's native action prompt for rows without text supervision."""
+        return [
+            {
+                "text": (
+                    "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
+                    f"<|im_start|>user\n{self._observation_prompt(image_labels)}\n"
+                    f"Instruction: {task}\n"
+                    "Predict the next action in robot action.\nProprioception: <|propri|>\n"
+                    "<|im_end|>\n<|im_start|>assistant\n<|action_fast|><|im_end|>\n"
+                    + "<|action|>"
+                    * self.chunk_size
+                ),
+                "target": False,
+            }
+        ]
 
     def complementary_data(self, complementary_data: dict[str, Any]) -> dict[str, Any]:
         tasks = complementary_data.get("task")
@@ -295,12 +307,14 @@ class WallXPromptProcessorStep(ComplementaryDataProcessorStep):
                     len(tasks),
                     "target_message_indices",
                 )
-                prompts = [
-                    self._recipe_segments(row, streams, targets, task, image_labels)[0]
-                    for row, streams, targets, task in zip(
-                        message_batch, streams_batch, targets_batch, tasks, strict=True
-                    )
-                ]
+                prompts = []
+                for row, streams, targets, task in zip(
+                    message_batch, streams_batch, targets_batch, tasks, strict=True
+                ):
+                    if not targets and streams and all(stream == "low_level" for stream in streams):
+                        prompts.append(self._action_segments(task, image_labels))
+                    else:
+                        prompts.append(self._recipe_segments(row, streams, targets, task, image_labels)[0])
         else:
             frame_indices = complementary_data.get("frame_index", [0] * len(tasks))
             prompts = []
