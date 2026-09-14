@@ -52,7 +52,12 @@ from lerobot.utils.constants import (
     OBS_STATE,
 )
 
-from ..common.flow_matching import euler_integrate, sample_noise, sample_time_beta
+from ..common.flow_matching import (
+    euler_integrate,
+    make_flow_matching_inputs,
+    sample_noise,
+    sample_time_beta,
+)
 from ..common.vla_utils import (
     clone_past_key_values,
     create_sinusoidal_pos_embedding,
@@ -135,24 +140,6 @@ def _sample_training_rtc_prefix_mask(
     delays = torch.randint(0, max_delay + 1, (batch_size,), device=device)
     positions = torch.arange(action_horizon, device=device)
     return positions.unsqueeze(0) < delays.unsqueeze(1)
-
-
-def _build_flow_matching_inputs(
-    actions: Tensor,
-    noise: Tensor,
-    time: Tensor,
-    prefix_mask: Tensor | None,
-) -> tuple[Tensor, Tensor]:
-    """Keep the sampled RTC prefix clean while noising the remaining action chunk."""
-    if prefix_mask is None:
-        model_time = time
-        expanded_time = time[:, None, None]
-    else:
-        model_time = time[:, None].expand_as(prefix_mask)
-        model_time = torch.where(prefix_mask, torch.zeros_like(model_time), model_time)
-        expanded_time = model_time.unsqueeze(-1)
-    x_t = expanded_time * noise + (1 - expanded_time) * actions
-    return x_t, model_time
 
 
 def _reduce_training_rtc_loss(
@@ -717,8 +704,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         state_masks=None,
     ) -> Tensor:
         """Do a full training forward pass and compute the loss."""
-        x_t, model_time = _build_flow_matching_inputs(actions, noise, time, prefix_mask)
-        u_t = noise - actions
+        x_t, u_t, model_time = make_flow_matching_inputs(actions, noise, time, prefix_mask=prefix_mask)
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, tokens, masks, states, state_masks
