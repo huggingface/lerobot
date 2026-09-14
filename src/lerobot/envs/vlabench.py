@@ -44,8 +44,9 @@ from .utils import _LazyAsyncVectorEnv
 logger = logging.getLogger(__name__)
 
 ACTION_DIM = 7  # pos(3) + euler(3) + gripper(1)
-ACTION_LOW = np.array([-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 0.0], dtype=np.float32)
-ACTION_HIGH = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32)
+# Absolute position (metres), extrinsic xyz Euler orientation (radians), gripper.
+ACTION_LOW = np.array([-1.0, -1.0, -1.0, -np.pi, -np.pi, -np.pi, 0.0], dtype=np.float32)
+ACTION_HIGH = np.array([1.0, 1.0, 1.0, np.pi, np.pi, np.pi, 1.0], dtype=np.float32)
 
 # Default max episode steps per task type
 DEFAULT_MAX_EPISODE_STEPS = 500
