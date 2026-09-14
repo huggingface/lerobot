@@ -274,6 +274,23 @@ def _render_sample(**kwargs) -> dict[str, Any] | None:
     return render_sample(**kwargs)
 
 
+@dataclass
+@ProcessorStepRegistry.register(name="render_messages_processor")
+class RenderMessagesStep(RenderTrainingMessagesStep):
+    """Load pre-split saved pipelines without changing their recipe or normalization.
+
+    New pipelines save the explicit training and runtime steps separately. Old
+    checkpoints used this registry name for one renderer; route explicit text
+    queries through the runtime contract instead of treating them as training.
+    """
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition | None:
+        complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+        if complementary.get(QUERY_KIND) is not None:
+            return RenderRuntimeMessagesStep(self.recipe)(transition)
+        return super().__call__(transition)
+
+
 def _batch_value(value: Any, index: int) -> Any:
     if value is None:
         return None
