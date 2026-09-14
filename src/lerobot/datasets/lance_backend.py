@@ -33,6 +33,7 @@ import json
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from itertools import batched
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -71,6 +72,9 @@ from .lance_utils import (  # noqa: F401
 )
 from .utils import resolve_episode_indices
 from .video_utils import FrameTimestampError, decode_video_frames_pyav
+
+# Keep generated OR trees comfortably below Lance/DataFusion expression-depth limits.
+_ROW_ID_QUERY_BATCH_SIZE = 100
 
 
 class LanceDatasetReader(BaseDatasetReader):
@@ -247,29 +251,13 @@ class LanceDatasetReader(BaseDatasetReader):
         )
         if self.meta.video_keys:
             self._videos_table = db.open_table(VIDEOS_TABLE)
-            # future TODO: resolve row ids lazily per batch.
-            index = (
-                self._videos_table.search()
-                .select(["video_key", "chunk_index", "file_index"])
-                .with_row_id(True)
-                .to_arrow()
-            )
-            self._video_row_ids = {
-                (row["video_key"], row["chunk_index"], row["file_index"]): row["_rowid"]
-                for row in index.to_pylist()
-            }
-            referenced = {
-                (key, int(chunk), int(file))
-                for key, (chunks, files, _) in self._video_locator.items()
-                for chunk, file in zip(chunks, files, strict=True)
-            }
-            missing = referenced - self._video_row_ids.keys()
-            if missing:
-                raise ValueError(
-                    f"videos table is missing {len(missing)} file(s) referenced by episode "
-                    f"metadata, e.g. {sorted(missing)[:3]}. The dataset is incomplete or "
-                    "was converted against different metadata."
-                )
+            # Row ids are resolved lazily, one batch at a time (see _resolve_row_ids),
+            # so opening the dataset never scans the whole videos table. On a remote root
+            # a full scan means one ranged read per fragment (thousands of requests for a
+            # large Blob V2 table), which is both slow and rate-limit-prone; each worker
+            # would repeat it. Referenced-file integrity is likewise checked lazily, only
+            # for the files a batch actually needs.
+            self._video_row_ids = {}
 
     def __getstate__(self) -> dict:
         state = self.__dict__.copy()
@@ -485,6 +473,47 @@ class LanceDatasetReader(BaseDatasetReader):
                 )
         return requests
 
+    def _resolve_row_ids(self, file_keys: list[tuple]) -> None:
+        """Resolve and memoize Lance ``_rowid`` for each ``(video_key, chunk, file)``.
+
+        Replaces the open-time full scan of the videos table: only the files a
+        batch needs are looked up, through a predicate the table's ``video_key``
+        scalar index can prune on, so a remote read costs O(files in batch)
+        rather than O(whole table). Resolved ids are cached for the reader's
+        lifetime; the referenced-file integrity check runs here, scoped to the
+        files actually requested.
+        """
+        unresolved = sorted({key for key in file_keys if key not in self._video_row_ids})
+        if not unresolved:
+            return
+
+        resolved = {}
+        for key_batch in batched(unresolved, _ROW_ID_QUERY_BATCH_SIZE):
+            clauses = []
+            for key, chunk, file in key_batch:
+                safe_key = key.replace("'", "''")
+                clauses.append(
+                    f"(video_key = '{safe_key}' AND chunk_index = {int(chunk)} AND file_index = {int(file)})"
+                )
+            found = (
+                self._videos_table.search()
+                .where(" OR ".join(clauses))
+                .select(["video_key", "chunk_index", "file_index"])
+                .with_row_id(True)
+                .to_arrow()
+            )
+            for row in found.to_pylist():
+                resolved[(row["video_key"], row["chunk_index"], row["file_index"])] = row["_rowid"]
+
+        missing = [key for key in unresolved if key not in resolved]
+        if missing:
+            raise ValueError(
+                f"videos table is missing {len(missing)} file(s) referenced by episode "
+                f"metadata, e.g. {missing[:3]}. The dataset is incomplete or "
+                "was converted against different metadata."
+            )
+        self._video_row_ids.update(resolved)
+
     def _prepare_files(
         self, file_keys: list[tuple], windows: dict[tuple, list[tuple[int, int]]] | None = None
     ) -> dict[tuple, tuple]:
@@ -492,6 +521,8 @@ class LanceDatasetReader(BaseDatasetReader):
         # Lazy load torchcodec
         from torchcodec.decoders import VideoDecoder
 
+        # Resolve row ids for exactly this batch's files before any lookup uses them.
+        self._resolve_row_ids(file_keys)
         self._load_file_meta([key for key in file_keys if key not in self._file_meta])
 
         prepared: dict[tuple, tuple] = {}
