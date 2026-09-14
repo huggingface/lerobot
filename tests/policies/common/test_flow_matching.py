@@ -19,11 +19,18 @@
 ``euler_integrate`` is compared against a verbatim copy of the historical pi0/pi05/
 smolvla sampling loop (including its RTC hook semantics): any divergence from that
 reference is a behavior change for released checkpoints.
+
+The sampler tests do the same per policy: each ``_historical_*`` helper below is a copy of
+the expression a policy used before it adopted the shared primitives, and every recipe is
+asserted bit-identical (``torch.equal`` / ``atol=0``) to it on the same RNG stream.
 """
 
+import pytest
 import torch
 
 from lerobot.policies.common.flow_matching import (
+    _beta_distribution,
+    device_beta_sampler,
     euler_integrate,
     sample_beta,
     sample_noise,
@@ -54,6 +61,19 @@ def test_sample_time_beta_openpi_convention():
     torch.testing.assert_close(time, expected, rtol=0, atol=0)
 
 
+def test_sample_time_beta_defaults_to_the_identity_transform():
+    # The .999/.001 endpoint offsets are the pi-family recipe, not a helper default.
+    torch.manual_seed(1)
+    time = sample_time_beta(512, "cpu", alpha=1.5, beta=1.0)
+    torch.manual_seed(1)
+    expected = sample_beta(1.5, 1.0, 512, "cpu")
+    assert torch.equal(time, expected)
+
+    torch.manual_seed(1)
+    explicit_identity = sample_time_beta(512, "cpu", alpha=1.5, beta=1.0, scale=1.0, offset=0.0)
+    assert torch.equal(explicit_identity, expected)
+
+
 def test_sample_noise_seeded():
     torch.manual_seed(2)
     n1 = sample_noise((2, 8, 4), "cpu")
@@ -61,6 +81,255 @@ def test_sample_noise_seeded():
     n2 = sample_noise((2, 8, 4), "cpu")
     assert torch.equal(n1, n2)
     assert n1.dtype == torch.float32 and n1.shape == (2, 8, 4)
+
+
+# --- Cached Beta concentrations must stay on CPU ------------------------------------------
+
+
+def test_beta_concentrations_are_cpu_under_a_non_cpu_default_device():
+    # Regression: the cache means one construction under an ambient default device would be
+    # reused forever, and Beta's _sample_dirichlet has no meta (or MPS) kernel.
+    alpha, beta = 1.7, 1.3
+    _beta_distribution.cache_clear()
+    try:
+        with torch.device("meta"):
+            dist = _beta_distribution(alpha, beta)
+        assert dist.concentration1.device.type == "cpu"
+        assert dist.concentration0.device.type == "cpu"
+
+        with torch.device("meta"):
+            sample = sample_beta(alpha, beta, 16, "cpu")
+        assert sample.device.type == "cpu"
+        assert sample.shape == (16,) and sample.dtype == torch.float32
+        assert sample.min() >= 0.0 and sample.max() <= 1.0
+    finally:
+        _beta_distribution.cache_clear()
+
+
+def test_unpinned_concentrations_would_have_broken_under_meta():
+    # Pins *why* the explicit device="cpu" above is required rather than incidental.
+    with torch.device("meta"):
+        unpinned = torch.distributions.Beta(torch.tensor(1.7), torch.tensor(1.3), validate_args=False)
+    assert unpinned.concentration1.device.type == "meta"
+    with pytest.raises(NotImplementedError):
+        unpinned.sample((4,))
+
+
+def test_beta_distribution_is_cached_per_concentration_pair():
+    _beta_distribution.cache_clear()
+    try:
+        assert _beta_distribution(1.5, 1.0) is _beta_distribution(1.5, 1.0)
+        assert _beta_distribution(1.5, 1.0) is not _beta_distribution(2.0, 2.0)
+    finally:
+        _beta_distribution.cache_clear()
+
+
+# --- sample_noise dtype and distribution ---------------------------------------------------
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+def test_sample_noise_normal_honors_dtype_and_matches_randn(dtype):
+    torch.manual_seed(6)
+    noise = sample_noise((3, 5, 4), "cpu", dtype=dtype)
+    # Historical groot/wall_x expression: torch.randn(shape, device=..., dtype=...).
+    torch.manual_seed(6)
+    expected = torch.randn((3, 5, 4), device="cpu", dtype=dtype)
+    assert noise.dtype == dtype
+    assert torch.equal(noise, expected)
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.bfloat16])
+def test_sample_noise_uniform_matches_evo1_expression_and_spans_pm_one(dtype):
+    reference_actions = torch.zeros(4, 7, 3, dtype=dtype)
+    torch.manual_seed(7)
+    noise = sample_noise(
+        reference_actions.shape, reference_actions.device, dtype=dtype, distribution="uniform"
+    )
+    # Historical evo1 expression: torch.rand_like(actions_gt) * 2 - 1.
+    torch.manual_seed(7)
+    expected = torch.rand_like(reference_actions) * 2 - 1
+    assert noise.dtype == dtype
+    assert torch.equal(noise, expected)
+    assert noise.min() >= -1.0 and noise.max() < 1.0
+
+
+def test_sample_noise_defaults_to_float32_normal():
+    torch.manual_seed(8)
+    default = sample_noise((2, 3), "cpu")
+    torch.manual_seed(8)
+    explicit = sample_noise((2, 3), "cpu", dtype=torch.float32, distribution="normal")
+    assert default.dtype == torch.float32
+    assert torch.equal(default, explicit)
+
+
+def test_sample_noise_rejects_unknown_distribution():
+    with pytest.raises(ValueError, match="Unknown noise distribution"):
+        sample_noise((2, 3), "cpu", distribution="beta")
+
+
+# --- Per-policy recipes, pinned against their historical expressions -----------------------
+
+
+def _historical_pi_family_sample_time(bsize, device, alpha, beta, scale, offset):
+    """pi0 / pi05 / smolvla / eo1, pre-adoption."""
+    alpha_t = torch.tensor(alpha, dtype=torch.float32)
+    beta_t = torch.tensor(beta, dtype=torch.float32)
+    dist = torch.distributions.Beta(alpha_t, beta_t)
+    time_beta = dist.sample((bsize,)).to(device)
+    time = time_beta * scale + offset
+    return time.to(dtype=torch.float32, device=device)
+
+
+def _historical_groot_sample_time(bsize, device, dtype, alpha, beta, noise_s):
+    """groot_n1_7 GR00T N1.7 action head, pre-adoption."""
+    beta_alpha = torch.tensor(alpha, device="cpu", dtype=torch.float32)
+    beta_beta = torch.tensor(beta, device="cpu", dtype=torch.float32)
+    dist = torch.distributions.Beta(beta_alpha, beta_beta, validate_args=False)
+    sample = dist.sample([bsize]).to(device, dtype=dtype)
+    return (1 - sample) * noise_s
+
+
+def _historical_evo1_sample_time(bsize, device, dtype):
+    """evo1 flow-matching head, pre-adoption."""
+    return torch.distributions.Beta(2, 2).sample((bsize,)).clamp(0.02, 0.98).to(device).to(dtype=dtype)
+
+
+def _historical_wall_x_sample_time(bsize, device, alpha, beta, s):
+    """wall_x action-embedding head, pre-adoption (concentrations and draw on `device`)."""
+    beta_dist = torch.distributions.Beta(
+        torch.tensor(alpha, dtype=torch.float32, device=device),
+        torch.tensor(beta, dtype=torch.float32, device=device),
+    )
+    sample = beta_dist.sample([bsize])
+    return (1 - sample) * s
+
+
+def test_pi_family_recipe_matches_historical_endpoint_offsets():
+    torch.manual_seed(10)
+    time = sample_time_beta(2048, "cpu", alpha=1.5, beta=1.0, scale=0.999, offset=0.001)
+    torch.manual_seed(10)
+    expected = _historical_pi_family_sample_time(2048, "cpu", 1.5, 1.0, 0.999, 0.001)
+    torch.testing.assert_close(time, expected, rtol=0, atol=0)
+    assert time.dtype == torch.float32
+    # Endpoint offsets keep t strictly inside (0, 1].
+    assert time.min() >= 0.001 and time.max() <= 1.0
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_groot_recipe_casts_before_complement_and_scale(dtype):
+    alpha, beta, noise_s, bsize = 1.5, 1.0, 0.999, 1024
+
+    torch.manual_seed(11)
+    sample = sample_beta(alpha, beta, bsize, "cpu", dtype=dtype)
+    time = (1 - sample) * noise_s
+
+    torch.manual_seed(11)
+    expected = _historical_groot_sample_time(bsize, "cpu", dtype, alpha, beta, noise_s)
+
+    assert time.dtype == dtype
+    assert torch.equal(time, expected)
+    # GR00T's buckets are read off the timestep with no clamp (num_timestep_buckets=1000).
+    buckets = (time * 1000).long()
+    assert torch.equal(buckets, (expected * 1000).long())
+    assert buckets.min() >= 0 and buckets.max() <= 1000
+
+
+def test_groot_output_cast_in_the_helper_would_not_reproduce_the_recipe():
+    # Pins the reason the cast stays before the transform: folding it to the end of a
+    # generalized helper double-rounds and gives different bf16 timesteps.
+    alpha, beta, noise_s, bsize = 1.5, 1.0, 0.999, 1024
+
+    torch.manual_seed(12)
+    recipe = (1 - sample_beta(alpha, beta, bsize, "cpu", dtype=torch.bfloat16)) * noise_s
+
+    torch.manual_seed(12)
+    cast_at_the_end = ((1 - sample_beta(alpha, beta, bsize, "cpu")) * noise_s).to(torch.bfloat16)
+
+    assert not torch.equal(recipe, cast_at_the_end)
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_evo1_recipe_clamps_in_float32_before_converting_dtype(dtype):
+    bsize = 4096
+
+    torch.manual_seed(13)
+    t = sample_beta(2.0, 2.0, bsize, "cpu").clamp(0.02, 0.98).to(dtype=dtype)
+
+    torch.manual_seed(13)
+    expected = _historical_evo1_sample_time(bsize, "cpu", dtype)
+
+    assert t.dtype == dtype
+    assert torch.equal(t, expected)
+    assert t.min() >= torch.tensor(0.02, dtype=dtype) and t.max() <= torch.tensor(0.98, dtype=dtype)
+
+    time_index = (t * 999).long().clamp_(0, 999)
+    assert torch.equal(time_index, (expected * 999).long().clamp_(0, 999))
+    assert time_index.min() >= 0 and time_index.max() <= 999
+
+
+def test_evo1_clamp_is_active_at_both_endpoints():
+    # Beta(2, 2) draws land outside [0.02, 0.98] often enough that the clamp is load-bearing.
+    torch.manual_seed(14)
+    raw = sample_beta(2.0, 2.0, 20000, "cpu")
+    assert (raw < 0.02).any() and (raw > 0.98).any()
+    clamped = raw.clamp(0.02, 0.98)
+    assert clamped.min() == pytest.approx(0.02)
+    assert clamped.max() == pytest.approx(0.98)
+
+
+def test_wall_x_recipe_keeps_its_device_side_rng_stream():
+    alpha, beta, s, bsize = 1.5, 1.0, 0.999, 1024
+    device = torch.device("cpu")
+
+    torch.manual_seed(15)
+    sample = sample_beta(alpha, beta, bsize, device, sampler=device_beta_sampler(device))
+    time = (1 - sample) * s
+
+    torch.manual_seed(15)
+    expected = _historical_wall_x_sample_time(bsize, device, alpha, beta, s)
+
+    assert time.dtype == torch.float32
+    assert torch.equal(time, expected)
+
+
+def test_wall_x_recipe_never_draws_from_the_cached_cpu_distribution():
+    # Device-independent proof that wall_x still samples on its own device: the shared CPU
+    # distribution is never even constructed, so the CPU generator is not advanced.
+    device = torch.device("cpu")
+    _beta_distribution.cache_clear()
+    try:
+        sample = sample_beta(1.5, 1.0, 64, device, sampler=device_beta_sampler(device))
+        assert sample.shape == (64,)
+        assert _beta_distribution.cache_info().currsize == 0
+        assert _beta_distribution.cache_info().misses == 0
+    finally:
+        _beta_distribution.cache_clear()
+
+
+def test_device_beta_sampler_builds_concentrations_on_the_requested_device():
+    captured = {}
+
+    def probe(alpha, beta, bsize):
+        sampler = device_beta_sampler("cpu")
+        out = sampler(alpha, beta, bsize)
+        captured["device"] = out.device
+        return out
+
+    sample = sample_beta(1.5, 1.0, 8, "cpu", sampler=probe)
+    assert captured["device"].type == "cpu"
+    assert sample.shape == (8,)
+
+
+def test_injected_sampler_bypasses_the_cached_cpu_distribution():
+    draws = torch.linspace(0.0, 1.0, 8)
+    sample = sample_beta(1.5, 1.0, 8, "cpu", sampler=lambda alpha, beta, bsize: draws)
+    assert torch.equal(sample, draws)
+    # Same injected draws, GR00T's cast-then-transform order, in bf16.
+    sample_bf16 = sample_beta(
+        1.5, 1.0, 8, "cpu", dtype=torch.bfloat16, sampler=lambda alpha, beta, bsize: draws
+    )
+    assert sample_bf16.dtype == torch.bfloat16
+    assert torch.equal(sample_bf16, draws.to(torch.bfloat16))
 
 
 def test_euler_integrate_constant_velocity_is_exact():
