@@ -138,7 +138,10 @@ lerobot-eval \
 
 **Actions:**
 
-- Continuous control in `Box(-1, 1, shape=(7,))` — 3D position + 3D Euler orientation + 1D gripper.
+- A seven-dimensional absolute end-effector target: `[x, y, z, rx, ry, rz, gripper]`.
+- XYZ position: declared bounds `[-1, 1]` metres per coordinate, relative to the robot base.
+- Orientation: extrinsic XYZ Euler angles, with bounds `[-π, π]` radians per angle.
+- Gripper: `[0, 1]`, where `0` is closed and `1` is open.
 
 ## Training
 
