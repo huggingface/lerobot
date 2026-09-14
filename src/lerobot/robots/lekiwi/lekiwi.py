@@ -206,9 +206,7 @@ class LeKiwi(Robot):
 
     def setup_motors(self) -> None:
         for motor in chain(reversed(self.arm_motors), reversed(self.base_motors)):
-            input(f"Connect the controller board to the '{motor}' motor only and press enter.")
-            self.bus.setup_motor(motor)
-            print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
+            self.bus.setup_motor_interactive(motor)
 
     @staticmethod
     def _degps_to_raw(degps: float) -> int:
