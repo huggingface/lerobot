@@ -13,9 +13,9 @@ pytest.importorskip("transformers")
 from transformers.models.gemma.configuration_gemma import GemmaConfig  # noqa: E402
 from transformers.models.gemma.modeling_gemma import GemmaRotaryEmbedding  # noqa: E402
 
+from lerobot.policies.common.flow_matching import make_flow_matching_inputs  # noqa: E402
 from lerobot.policies.pi05.configuration_pi05 import PI05Config  # noqa: E402
 from lerobot.policies.pi05.modeling_pi05 import (  # noqa: E402
-    _build_flow_matching_inputs,
     _reduce_training_rtc_loss,
     compute_layer_complete,
 )
@@ -28,7 +28,7 @@ def test_pi05_training_rtc_uses_clean_prefix_and_per_token_time():
     time = torch.tensor([0.25])
     prefix_mask = torch.tensor([[True, True, False, False]])
 
-    x_t, model_time = _build_flow_matching_inputs(actions, noise, time, prefix_mask)
+    x_t, _, model_time = make_flow_matching_inputs(actions, noise, time, prefix_mask=prefix_mask)
 
     assert model_time.tolist() == [[0.0, 0.0, 0.25, 0.25]]
     assert torch.equal(x_t[:, :2], actions[:, :2])
