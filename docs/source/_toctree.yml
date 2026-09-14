@@ -99,6 +99,8 @@
     title: Use Async Inference
   - local: rtc
     title: Real-Time Chunking (RTC)
+  - local: onnx_export
+    title: Export Policies to ONNX
   title: "Inference"
 - sections:
   - local: envhub
