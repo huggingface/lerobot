@@ -51,17 +51,20 @@ _config_yaml_overrides: dict[str, list[str]] = {}
 
 
 def _flatten_to_cli_args(d: dict, prefix: str = "") -> list[str]:
-    """Recursively flatten a nested dict to CLI-style args (e.g. {"lr": 1e-4} -> ["--lr=0.0001"])."""
+    """Recursively flatten a nested dict to CLI-style args (e.g. {"lr": 1e-4} -> ["--lr=0.0001"]).
+
+    Explicit None values become JSON null so nullable checkpoint settings can be cleared.
+    """
     args = []
     for key, value in d.items():
         if key in (PATH_KEY, draccus.CHOICE_TYPE_KEY):
             continue
         full_key = f"{prefix}.{key}" if prefix else key
-        if isinstance(value, bool):
-            value = str(value).lower()
+        if isinstance(value, bool) or value is None:
+            value = json.dumps(value)
         if isinstance(value, dict):
             args.extend(_flatten_to_cli_args(value, full_key))
-        elif value is not None and not isinstance(value, list):
+        elif not isinstance(value, list):
             args.append(f"--{full_key}={value}")
     return args
 
@@ -414,10 +417,10 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
                 config_path_cli = parse_arg("config_path", cli_args)
                 if has_method(argtype, "__get_path_fields__"):
                     path_fields = argtype.__get_path_fields__()
-                    cli_args = filter_path_args(path_fields, cli_args)
                     # Also extract path fields from the YAML/JSON config file
                     if config_path_cli:
                         config_path_cli = extract_path_fields_from_config(config_path_cli, path_fields)
+                    cli_args = filter_path_args(path_fields, cli_args)
                 try:
                     if has_method(argtype, "from_pretrained") and config_path_cli:
                         cli_args = filter_arg("config_path", cli_args)
