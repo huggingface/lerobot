@@ -114,7 +114,8 @@ class MyPolicy(PreTrainedPolicy):
         super().__init__(config, dataset_stats)
         config.validate_features()  # not called automatically by the base class
         self.config = config
-        self.model = ...  # your nn.Module here
+        self.model = ...  # construct real tensors in FP32
+        self.post_init()  # apply config.dtype and the declared FP32 exceptions
 
     def reset(self):
         """Reset per-episode state. Called by lerobot-eval at the start of each episode."""
@@ -147,6 +148,40 @@ class MyPolicy(PreTrainedPolicy):
         ...
         return loss, {"some_loss_component": some_loss_component.item()}
 ```
+
+### Parameter precision
+
+LeRobot supports Transformers-style precision management. Every policy has `config.dtype` and the read-only `policy.dtype` property, where `config.dtype` is used to configure the precision and `policy.dtype` reflects the policy's actual precision. You can control the parameter precision in various ways:
+
+- When initializing a new model from scratch, you can override the `config.dtype`, for example `dtype: str = "bfloat16"`.
+- When loading a pre-trained checkpoint, use `from_pretrained(dtype=...)` to override the original configuration of the checkpoint.
+
+```python
+config = MyPolicyConfig(dtype="bfloat16")
+policy = MyPolicy(config)
+print(policy.dtype)  # torch.bfloat16
+
+policy = MyPolicy.from_pretrained("owner/checkpoint", dtype=torch.float16)
+```
+
+For your own policies, please call `self.post_init()` after constructing every submodule. It will cast real parameters and floating buffers directly to their final precision, preserving integer buffers and shared parameters.
+
+When you have numerically sensitive parts like action heads, declare them with `_fp32_modules` **on the top-level policy class**. Each entry is a module or tensor path starting at the policy root:
+
+```python
+class MyPolicy(PreTrainedPolicy):
+    config_class = MyPolicyConfig
+    name = "my_policy"
+    _fp32_modules = (
+        "model.action_head",
+        "model.backbone.layers.*.input_layernorm",
+        "model.backbone.norm",
+        "model.backbone.rotary_emb.inv_freq",
+    )
+    # __init__ constructs all modules, then calls self.post_init().
+```
+
+These modules will be kept in fp32 through `self.post_init()`, protecting them from casting to lower precision. The standard PyTorch casting methods remain unchanged and can explicitly cast the entire model, including protected tensors. The declarations apply during initialization and checkpoint loading, not to subsequent user-directed casts.
 
 The methods called by the train/eval loops:
 
