@@ -37,7 +37,11 @@ pytestmark = pytest.mark.skipif(
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.policies.multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
-from lerobot.policies.multi_task_dit.modeling_multi_task_dit import MultiTaskDiTPolicy
+from lerobot.policies.multi_task_dit.modeling_multi_task_dit import (
+    MultiTaskDiTPolicy,
+    TextEncoder,
+    VisionEncoder,
+)
 from lerobot.policies.multi_task_dit.processor_multi_task_dit import (
     make_multi_task_dit_pre_post_processors,
 )
@@ -619,3 +623,87 @@ def test_multi_task_dit_policy_get_optim_params():
     assert "lr" in param_groups[1]
     expected_lr = config.optimizer_lr * config.vision_encoder_lr_multiplier
     assert param_groups[1]["lr"] == expected_lr
+
+
+# --- Encoder family support: CLIP (default) + DINOv2/DINOv3 (vision) + SigLIP/SigLIP 2 (vision & text) ---
+
+VISION_ENCODERS = [
+    "openai/clip-vit-base-patch16",
+    "facebook/dinov3-vitb16-pretrain-lvd1689m",
+    "google/siglip2-base-patch16-224",
+]
+TEXT_ENCODERS = [
+    "openai/clip-vit-base-patch16",
+    "google/siglip2-base-patch16-224",
+]
+
+
+@pytest.mark.parametrize("model_name", VISION_ENCODERS)
+def test_vision_encoder_families(model_name: str):
+    """Each supported vision family loads and returns a (B, embed_dim, 1, 1) global feature."""
+    encoder = VisionEncoder(model_name).eval()
+    with torch.no_grad():
+        out = encoder(torch.rand(2, 3, 224, 224))
+    assert out.shape == (2, encoder.embed_dim, 1, 1)
+
+
+@pytest.mark.parametrize("model_name", TEXT_ENCODERS)
+def test_text_encoder_families(model_name: str):
+    """Each supported text family loads frozen and projects pooled features to projection_dim."""
+    projection_dim = 512
+    encoder = TextEncoder(model_name, projection_dim=projection_dim).eval()
+    assert all(not p.requires_grad for p in encoder.text_encoder.parameters())
+    input_ids = torch.randint(0, 100, (2, 64))
+    attention_mask = torch.ones(2, 64, dtype=torch.long)
+    with torch.no_grad():
+        out = encoder(input_ids, attention_mask)
+    assert out.shape == (2, projection_dim)
+
+
+def test_text_encoder_rejects_vision_only():
+    """A vision-only encoder (DINOv3) has no text tower and must raise."""
+    with pytest.raises(ValueError, match="text tower"):
+        TextEncoder("facebook/dinov3-vitb16-pretrain-lvd1689m")
+
+
+# --- Config-level encoder validation (no network) ---
+
+
+def test_config_accepts_supported_encoders():
+    """CLIP / DINOv3 / SigLIP 2 are all accepted in their valid slots."""
+    for vision in VISION_ENCODERS:
+        MultiTaskDiTConfig(vision_encoder_name=vision)
+    MultiTaskDiTConfig(text_encoder_name="google/siglip2-base-patch16-224", tokenizer_max_length=64)
+
+
+def test_config_rejects_vision_only_text_encoder():
+    """DINOv2/DINOv3 as a text encoder fails with a clear, vision-only message."""
+    with pytest.raises(ValueError, match="vision-only"):
+        MultiTaskDiTConfig(text_encoder_name="facebook/dinov3-vitb16-pretrain-lvd1689m")
+
+
+def test_config_rejects_unsupported_encoders():
+    """Unknown encoder families are rejected for both slots."""
+    with pytest.raises(ValueError, match="vision_encoder_name must be"):
+        MultiTaskDiTConfig(vision_encoder_name="microsoft/resnet-50")
+    with pytest.raises(ValueError, match="text_encoder_name must be"):
+        MultiTaskDiTConfig(text_encoder_name="bert-base-uncased")
+
+
+def test_config_siglip_text_length_guard():
+    """SigLIP text caps at 64 tokens; a larger tokenizer_max_length is rejected."""
+    with pytest.raises(ValueError, match="at most 64"):
+        MultiTaskDiTConfig(text_encoder_name="google/siglip2-base-patch16-224", tokenizer_max_length=77)
+
+
+def test_config_rejects_naflex():
+    """Variable-resolution SigLIP 2 (NaFlex) is explicitly unsupported."""
+    with pytest.raises(ValueError, match="NaFlex"):
+        MultiTaskDiTConfig(vision_encoder_name="google/siglip2-base-patch16-naflex")
+
+
+def test_config_accepts_same_family_checkpoints():
+    """Validation is family-level: other CLIP/DINO/SigLIP checkpoints are accepted (only the
+    current generations are advertised in the docs)."""
+    MultiTaskDiTConfig(vision_encoder_name="facebook/dinov2-base")
+    MultiTaskDiTConfig(vision_encoder_name="google/siglip-base-patch16-224")
