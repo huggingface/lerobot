@@ -59,7 +59,7 @@ from safetensors.torch import load_file as load_safetensors
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.policies import get_policy_class, make_policy_config, make_pre_post_processors
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE
 
 
 def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str, dict[str, torch.Tensor]]:
@@ -364,7 +364,10 @@ def load_state_dict_with_missing_key_handling(
 
 def convert_features_to_policy_features(features_dict: dict[str, dict]) -> dict[str, PolicyFeature]:
     """
-    Converts a feature dictionary from the old config format to the new `PolicyFeature` format.
+    Converts a feature dictionary to `PolicyFeature`, preserving declared feature types.
+
+    Legacy entries without a type use feature-name inference, including the canonical
+    environment-state key. Invalid explicit types raise an error instead of falling back.
 
     Args:
         features_dict: The feature dictionary in the old format, where values are
@@ -376,8 +379,15 @@ def convert_features_to_policy_features(features_dict: dict[str, dict]) -> dict[
     converted_features = {}
 
     for key, feature_dict in features_dict.items():
-        # Determine feature type based on key
-        if "image" in key or "visual" in key:
+        # Preserve declared types; infer only for legacy configs without them.
+        if "type" in feature_dict:
+            try:
+                feature_type = FeatureType(feature_dict["type"])
+            except ValueError as exc:
+                raise ValueError(f"Invalid feature type {feature_dict['type']!r} for {key!r}") from exc
+        elif key == OBS_ENV_STATE:
+            feature_type = FeatureType.ENV
+        elif "image" in key or "visual" in key:
             feature_type = FeatureType.VISUAL
         elif "state" in key:
             feature_type = FeatureType.STATE
