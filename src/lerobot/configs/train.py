@@ -207,10 +207,10 @@ class TrainPipelineConfig(HubMixin):
         policy_path = parser.get_path_arg("policy")
 
         if reward_model_path:
-            cli_overrides = parser.get_cli_overrides("reward_model")
-            self.reward_model = RewardModelConfig.from_pretrained(
-                reward_model_path, cli_overrides=cli_overrides
+            overrides = parser.get_yaml_overrides("reward_model") + (
+                parser.get_cli_overrides("reward_model") or []
             )
+            self.reward_model = RewardModelConfig.from_pretrained(reward_model_path, cli_overrides=overrides)
             self.reward_model.pretrained_path = str(Path(reward_model_path))
         elif policy_path:
             overrides = parser.get_yaml_overrides("policy") + (parser.get_cli_overrides("policy") or [])
