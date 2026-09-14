@@ -25,9 +25,11 @@ References:
 - https://brysonkjones.substack.com/p/dissecting-and-open-sourcing-multitask-diffusion-transformer-policy
 """
 
+import logging
 import math
 from collections import deque
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, TypedDict, Unpack
 
 import einops
 import torch
@@ -62,7 +64,17 @@ from lerobot.utils.constants import (
 )
 
 from ..pretrained import PreTrainedPolicy
+from ..rtc.modeling_rtc import RTCProcessor
 from ..utils import populate_queues
+
+logger = logging.getLogger(__name__)
+
+
+class ActionSelectKwargs(TypedDict, total=False):
+    inference_delay: int | None
+    prev_chunk_left_over: Tensor | None
+    execution_horizon: int | None
+
 
 # -- Policy --
 
@@ -104,6 +116,7 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         else:
             raise ValueError(f"Unsupported objective: {config.objective}")
 
+        self.init_rtc_processor()
         self.reset()
 
     def get_optim_params(self) -> list:
@@ -150,10 +163,49 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         if self.config.image_features:
             self._queues[OBS_IMAGES] = deque(maxlen=self.config.n_obs_steps)
 
+    def supports_rtc(self) -> bool:
+        """RTC guidance is implemented for the diffusion (DDPM/DDIM) objective
+        and for flow matching with euler integration. Returning False for
+        flow + rk4 makes the rollout engine reject the combination at startup
+        (supports_rtc_inference) instead of failing mid-episode on the first
+        guided chunk."""
+        return not (self.config.is_flow_matching and self.config.integration_method != "euler")
+
+    def init_rtc_processor(self) -> None:
+        """Initialize RTC processor if RTC is enabled in config (see pi0)."""
+        self.rtc_processor = None
+        rtc_config = getattr(self.config, "rtc_config", None)
+        if rtc_config is not None:
+            self.rtc_processor = RTCProcessor(rtc_config)
+
+    def _rtc_enabled(self) -> bool:
+        rtc_config = getattr(self.config, "rtc_config", None)
+        return rtc_config is not None and rtc_config.enabled
+
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        """Predict a chunk of actions given environment observations"""
+    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+        """Predict a chunk of actions given environment observations.
+
+        Synchronous select_action calls consume the observation queues. RTC
+        calls are identified by enabled guidance or the RTC keyword arguments
+        supplied by the inference engine. They consume preprocessed temporal
+        history: state (B, n_obs_steps, D) and per-camera images
+        (B, n_obs_steps, C, H, W), including startup padding from the engine.
+        Disabling guidance still consumes this history and ignores the prefix.
+        Enabled guidance steers sampling toward the previous chunk's leftover actions
+        (Real-Time Chunking,
+        https://www.physicalintelligence.company/download/real_time_chunking.pdf).
+        """
         self.eval()
+
+        if self._rtc_enabled() or kwargs:
+            return _predict_action_chunk_rtc(
+                self,
+                batch,
+                inference_delay=int(kwargs.get("inference_delay") or 0),
+                prev_chunk_left_over=kwargs.get("prev_chunk_left_over") if self._rtc_enabled() else None,
+                execution_horizon=kwargs.get("execution_horizon"),
+            )
 
         for k in batch:
             if k in self._queues:
@@ -173,6 +225,10 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations"""
+        assert not self._rtc_enabled(), (
+            "RTC is not supported for select_action, use it with predict_action_chunk"
+        )
+
         if ACTION in batch:
             batch = dict(batch)  # shallow copy to avoid modifying original
             batch.pop(ACTION)
@@ -196,6 +252,172 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         loss = self.objective.compute_loss(self.noise_predictor, batch, conditioning_vec)
 
         return loss, None
+
+
+# -- Real-Time Chunking (RTC) --
+
+
+def _resolve_rtc_processor(policy) -> RTCProcessor:
+    """Return the policy's RTC processor, initializing it from ``rtc_config``
+    if the caller skipped the rollout-context wiring."""
+    if getattr(policy, "rtc_processor", None) is None:
+        policy.init_rtc_processor()
+    return policy.rtc_processor
+
+
+def _predict_action_chunk_rtc(
+    policy,
+    batch: dict[str, Tensor],
+    *,
+    inference_delay: int,
+    prev_chunk_left_over: Tensor | None,
+    execution_horizon: int | None,
+) -> Tensor:
+    policy.eval()
+
+    if policy._rtc_enabled() and not policy.supports_rtc():
+        raise ValueError(
+            "MultiTaskDiT RTC requires diffusion or flow matching with integration_method='euler'."
+        )
+
+    n_obs_steps = policy.config.n_obs_steps
+    batch = dict(batch)
+    for key in [OBS_STATE, *policy.config.image_features]:
+        value = batch[key]
+        single_frame_ndim = len(policy.config.input_features[key].shape) + 1
+        if n_obs_steps == 1 and value.ndim == single_frame_ndim:
+            batch[key] = value.unsqueeze(1)
+        elif value.ndim != single_frame_ndim + 1 or value.shape[1] != n_obs_steps:
+            raise ValueError(
+                f"MultiTaskDiT RTC requires temporal history for {key}: expected "
+                f"(B, {n_obs_steps}, *feature_shape), got {tuple(value.shape)}. "
+                "Use the RTC inference engine to collect and pad observation history, "
+                "or provide the complete temporal batch to predict_action_chunk."
+            )
+    batch = policy._prepare_batch(batch)
+
+    conditioning_vec = policy.observation_encoder.encode(batch)
+    batch_size = conditioning_vec.shape[0]
+    device = next(policy.noise_predictor.parameters()).device
+    dtype = next(policy.noise_predictor.parameters()).dtype
+
+    # Horizon-frame geometry, mirroring _generate_actions.
+    start = n_obs_steps - 1
+    chunk_len = policy.config.n_action_steps
+    horizon = policy.config.horizon
+    action_dim = policy.config.action_feature.shape[0]
+
+    prev_full, weights_full = _build_prefix_targets(
+        policy,
+        prev_chunk_left_over,
+        inference_delay=inference_delay,
+        execution_horizon=execution_horizon,
+        batch_size=batch_size,
+        start=start,
+        chunk_len=chunk_len,
+        horizon=horizon,
+        action_dim=action_dim,
+        device=device,
+        dtype=dtype,
+    )
+
+    if policy.config.is_diffusion:
+        sample = policy.objective.conditional_sample(
+            policy.noise_predictor,
+            batch_size,
+            conditioning_vec,
+            prev_full=prev_full,
+            weights_full=weights_full,
+        )
+    else:
+        denoise_step: Callable[[Tensor, float], Tensor] | None = None
+        if prev_full is not None:
+            processor = _resolve_rtc_processor(policy)
+            if policy.config.sigma_min != 0.0:
+                logger.warning(
+                    "MultiTaskDiT RTC: x0 estimate assumes sigma_min=0 (got %s); guidance is approximate.",
+                    policy.config.sigma_min,
+                )
+            prefix_weights = weights_full.flatten()
+
+            def denoise_step(latent: Tensor, time: float) -> Tensor:
+                t_batch = torch.full((batch_size,), time, dtype=dtype, device=device)
+                # MTDiT integrates noise -> data; RTC uses the opposite time and velocity.
+                return -processor.denoise_step(
+                    latent,
+                    prev_full,
+                    inference_delay,
+                    1 - time,
+                    lambda x: -policy.noise_predictor(x, t_batch, conditioning_vec=conditioning_vec),
+                    execution_horizon=execution_horizon,
+                    prefix_weights=prefix_weights,
+                )
+
+        sample = policy.objective.conditional_sample(
+            policy.noise_predictor,
+            batch_size,
+            conditioning_vec,
+            denoise_step=denoise_step,
+        )
+
+    return sample[:, start : start + chunk_len]
+
+
+def _build_prefix_targets(
+    policy,
+    prev_chunk_left_over: Tensor | None,
+    *,
+    inference_delay: int,
+    execution_horizon: int | None,
+    batch_size: int,
+    start: int,
+    chunk_len: int,
+    horizon: int,
+    action_dim: int,
+    device,
+    dtype,
+) -> tuple[Tensor | None, Tensor | None]:
+    """Embed the chunk-frame RTC prefix into the horizon frame.
+
+    Returns ``(prev_full, weights_full)`` where ``prev_full`` is
+    ``(B, horizon, action_dim)`` with the previous chunk's leftover placed at
+    offset ``start`` (zeros elsewhere) and ``weights_full`` is the soft prefix
+    mask ``(1, horizon, 1)``. Both are None when there is nothing to guide.
+
+    Length/shape handling mirrors RTCProcessor.denoise_step: execution_horizon
+    clamped to the prefix length, prefix zero-padded to the chunk, weights via
+    get_prefix_weights(inference_delay, execution_horizon, chunk_len).
+    """
+    if prev_chunk_left_over is None or prev_chunk_left_over.numel() == 0:
+        return None, None
+
+    prev = prev_chunk_left_over.to(device=device, dtype=dtype)
+    if prev.ndim == 2:
+        prev = prev.unsqueeze(0)
+    if prev.shape[0] == 1 and batch_size > 1:
+        prev = prev.expand(batch_size, *prev.shape[1:])
+
+    processor = _resolve_rtc_processor(policy)
+    if execution_horizon is None:
+        execution_horizon = processor.rtc_config.execution_horizon
+    # "If the previous action chunk is too short then it doesn't make sense to
+    # use a long execution horizon" -- RTCProcessor.denoise_step.
+    execution_horizon = min(int(execution_horizon), prev.shape[1])
+    inference_delay = max(0, min(int(inference_delay), chunk_len))
+
+    weights_chunk = processor.get_prefix_weights(inference_delay, execution_horizon, chunk_len).to(
+        device=device, dtype=dtype
+    )
+
+    prev_len = min(prev.shape[1], chunk_len)
+    prev_dim = min(prev.shape[2], action_dim)
+    prev_full = torch.zeros(batch_size, horizon, action_dim, device=device, dtype=dtype)
+    prev_full[:, start : start + prev_len, :prev_dim] = prev[:, :prev_len, :prev_dim]
+
+    weights_full = torch.zeros(horizon, device=device, dtype=dtype)
+    weights_full[start : start + chunk_len] = weights_chunk
+
+    return prev_full, weights_full.view(1, horizon, 1)
 
 
 # -- Observation Encoders --
@@ -694,7 +916,15 @@ class DiffusionObjective(nn.Module):
 
         return loss.mean()
 
-    def conditional_sample(self, model: nn.Module, batch_size: int, conditioning_vec: Tensor) -> Tensor:
+    def conditional_sample(
+        self,
+        model: nn.Module,
+        batch_size: int,
+        conditioning_vec: Tensor,
+        *,
+        prev_full: Tensor | None = None,
+        weights_full: Tensor | None = None,
+    ) -> Tensor:
         device = next(model.parameters()).device
         dtype = next(model.parameters()).dtype
 
@@ -706,6 +936,10 @@ class DiffusionObjective(nn.Module):
 
         self.noise_scheduler.set_timesteps(self.num_inference_steps)
         for t in self.noise_scheduler.timesteps:
+            if prev_full is not None:
+                t_batch = torch.full((batch_size,), t, dtype=torch.long, device=device)
+                noised_prev = self.noise_scheduler.add_noise(prev_full, torch.randn_like(prev_full), t_batch)
+                sample = weights_full * noised_prev + (1 - weights_full) * sample
             model_output = model(
                 sample,
                 torch.full(sample.shape[:1], t, dtype=torch.long, device=sample.device),
@@ -713,6 +947,8 @@ class DiffusionObjective(nn.Module):
             )
             sample = self.noise_scheduler.step(model_output, t, sample).prev_sample
 
+        if prev_full is not None:
+            sample = weights_full * prev_full + (1 - weights_full) * sample
         return sample
 
 
@@ -759,7 +995,16 @@ class FlowMatchingObjective(nn.Module):
 
         return loss.mean()
 
-    def conditional_sample(self, model: nn.Module, batch_size: int, conditioning_vec: Tensor) -> Tensor:
+    def conditional_sample(
+        self,
+        model: nn.Module,
+        batch_size: int,
+        conditioning_vec: Tensor,
+        *,
+        denoise_step: Callable[[Tensor, float], Tensor] | None = None,
+    ) -> Tensor:
+        if denoise_step is not None and self.config.integration_method != "euler":
+            raise ValueError("A custom denoise_step requires integration_method='euler'.")
         device = next(model.parameters()).device
         dtype = next(model.parameters()).dtype
 
@@ -769,7 +1014,13 @@ class FlowMatchingObjective(nn.Module):
         time_grid = torch.linspace(0, 1, num_steps + 1, device=device)
 
         if self.config.integration_method == "euler":
-            x = self._euler_integrate(model, x, time_grid, conditioning_vec)
+            x = self._euler_integrate(
+                model,
+                x,
+                time_grid,
+                conditioning_vec,
+                denoise_step=denoise_step,
+            )
         elif self.config.integration_method == "rk4":
             x = self._rk4_integrate(model, x, time_grid, conditioning_vec)
         else:
@@ -778,15 +1029,24 @@ class FlowMatchingObjective(nn.Module):
         return x
 
     def _euler_integrate(
-        self, model: nn.Module, x_init: Tensor, time_grid: Tensor, conditioning_vec: Tensor
+        self,
+        model: nn.Module,
+        x_init: Tensor,
+        time_grid: Tensor,
+        conditioning_vec: Tensor,
+        *,
+        denoise_step: Callable[[Tensor, float], Tensor] | None = None,
     ) -> Tensor:
         x = x_init
         for i in range(len(time_grid) - 1):
             t_scalar = time_grid[i].item()
             dt = (time_grid[i + 1] - time_grid[i]).item()
-            t_batch = torch.full((x.shape[0],), t_scalar, dtype=x.dtype, device=x.device)
             with torch.no_grad():
-                velocity = model(x, t_batch, conditioning_vec=conditioning_vec)
+                if denoise_step is None:
+                    t_batch = torch.full((x.shape[0],), t_scalar, dtype=x.dtype, device=x.device)
+                    velocity = model(x, t_batch, conditioning_vec=conditioning_vec)
+                else:
+                    velocity = denoise_step(x, t_scalar)
             x = x + dt * velocity
         return x
 

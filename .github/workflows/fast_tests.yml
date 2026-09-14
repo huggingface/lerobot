@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # This workflow validates each optional-dependency tier in isolation.
-# Each tier installs a different extra and runs the full test suite.
+# The first four tiers run the full suite; the policy tier runs focused RTC tests.
 # Tests that require an extra not installed in the current tier are
 # skipped automatically via pytest.importorskip guards.
 name: Fast Tests
@@ -58,8 +58,8 @@ concurrency:
 
 jobs:
   # This job runs pytests in isolated dependency tiers.
-  # Each tier installs a different extra and runs the full suite;
-  # tests gated behind other extras skip automatically.
+  # Dependency tiers run the full suite, followed by focused policy / RTC tests.
+  # Tests gated behind other extras skip automatically.
   fast-pytest-tests:
     name: Fast Pytest Tests
     runs-on: ubuntu-latest
@@ -126,3 +126,23 @@ jobs:
 
       - name: "Tier 4 — Test: viz"
         run: uv run pytest tests -vv --maxfail=10
+
+      # ── Tier 5: Policy / RTC ─────────────────────────────
+      - name: "Tier 5 — Install: Multi-Task DiT RTC"
+        run: uv sync --locked --extra test --extra dataset --extra multi_task_dit
+
+      - name: "Tier 5 — Test: policy / RTC"
+        env:
+          CI: "true"
+          GITHUB_ACTIONS: "true"
+          HF_HUB_OFFLINE: "1"
+          HF_DATASETS_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+          HF_HUB_DISABLE_IMPLICIT_TOKEN: "1"
+        run: |
+          uv run pytest \
+            tests/policies/multi_task_dit/test_multi_task_dit_rtc.py \
+            tests/policies/rtc \
+            tests/policies/pi0_pi05/test_pi05_memory.py \
+            tests/test_rollout.py \
+            -vv --maxfail=10

@@ -1,6 +1,6 @@
 # Real-Time Chunking (RTC)
 
-Real-Time Chunking (RTC) allows large, flow-matching based robotic policies, such as [Pi0](./pi0), [Pi0.5](./pi05), and [SmolVLA](./smolvla), to produce smooth, continuous, and reactive motion despite having high inference latency. LeRobot provides the original inference-time guided mode and, for compatible Pi05 checkpoints, training-time action conditioning with cheap hard-prefix inference.
+Real-Time Chunking (RTC) allows large, chunk-generating robotic policies, such as [Pi0](./pi0), [Pi0.5](./pi05), [SmolVLA](./smolvla), and [Multi-Task DiT](./multi_task_dit), to produce smooth, continuous, and reactive motion despite having high inference latency. LeRobot provides the original inference-time guided mode and, for compatible Pi05 checkpoints, training-time action conditioning with cheap hard-prefix inference. Multi-Task DiT additionally supports an experimental diffusion (DDPM/DDIM) path via RePaint-inspired inpainting.
 
 These policies generate chunks of future actions (e.g., 50 steps at a time) instead of single actions.
 Because the models are large, producing each chunk takes longer than the time it takes the robot to execute it.
@@ -30,6 +30,9 @@ pip install -e ".[pi]"
 
 # For SmolVLA
 pip install -e ".[smolvla]"
+
+# For the Multi-Task DiT SO-100 rollout example below
+pip install -e ".[multi_task_dit,dataset,feetech]"
 ```
 
 ### Using RTC with Pi0
@@ -87,6 +90,35 @@ for step in range(num_steps):
     # Execute the first N actions
     execute_actions(action)
 ```
+
+### Using RTC with Multi-Task DiT
+
+RTC is opt-in at inference time; it does not change Multi-Task DiT training or checkpoint formats. For a diffusion checkpoint, a rollout can enable it with:
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=${HF_USERNAME}/multi_task_dit_policy \
+    --inference.type=rtc \
+    --inference.rtc.mode=guided \
+    --inference.rtc.execution_horizon=10 \
+    --inference.rtc.max_guidance_weight=10.0 \
+    --inference.rtc.prefix_attention_schedule=EXP \
+    --fps=30 \
+    --robot.type=so100_follower \
+    --robot.port=/dev/tty.usbmodem58FA0834591 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --task="Pick up the cube" \
+    --device=cuda
+```
+
+The SO-100 port and camera settings above are examples. Replace them for your hardware, and configure `--robot.cameras` so the camera names, number of cameras, and resolution match the checkpoint.
+
+Use the objective and scheduler stored in the checkpoint. Diffusion checkpoints support DDPM and DDIM. Flow-matching checkpoints use the shared `RTCProcessor` guidance path and currently require `policy.integration_method=euler`; pass `--policy.integration_method=euler` if the checkpoint config does not already select it.
+
+The diffusion path is experimental. At each denoising timestep, it blends the overlap toward a forward-noised previous chunk. `LINEAR` and `EXP` extend the known prefix with a soft transition mask. The known region receives fresh noise at every timestep, so even DDIM with `eta=0` remains stochastic when RTC guidance is active. This is inspired by RePaint, but it does not implement RePaint's resampling schedule and should not be treated as full RePaint or a standard reference diffusion RTC algorithm. A smoother boundary in a benchmark on one task supports that behavior in that setting; it does not establish broad task success-rate improvements.
+
+The rollout engine collects observation history at every policy tick, pads missing startup frames, and clears the history on reset. Set `--fps` to the checkpoint's training FPS; temporal offsets and any stride must also match training. Multi-Task DiT's default `n_obs_steps=2` uses two consecutive policy ticks. If you call `predict_action_chunk()` yourself, pass the complete preprocessed history on every call: state tensors have shape `(batch, n_obs_steps, state_dim)`, and each camera tensor has shape `(batch, n_obs_steps, channels, height, width)`. Do not pass only the latest frame or advance history once per inference request.
 
 ## Key Parameters
 
