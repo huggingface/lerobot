@@ -39,6 +39,7 @@ from torch import Tensor
 from lerobot.utils.import_utils import _diffusers_available, _transformers_available, require_package
 
 from .configuration_multi_task_dit import MultiTaskDiTConfig
+from .processor_multi_task_dit import OBS_LANGUAGE_ROW_INDEX
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _transformers_available:
@@ -204,16 +205,26 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
 class CLIPVisionEncoder(nn.Module):
     """CLIP vision encoder using the CLS token for global image representation."""
 
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str, compile_model: bool = False, compile_mode: str | None = None):
         super().__init__()
         self.model_name = model_name
         self.model = CLIPVisionModel.from_pretrained(self.model_name)
         self.num_non_spatial_tokens = 1
         self.embed_dim = self.model.config.hidden_size
+        # The compiled callable wraps the bound forward rather than replacing the module, so
+        # parameters, state_dict keys and .to() are untouched.
+        # dynamic=False: a second batch shape (the dataloader's partial last batch, or inference)
+        # compiles its own static graph once instead of moving every shape to slower
+        # dynamic-shape kernels.
+        self._model_forward = (
+            torch.compile(self.model.forward, dynamic=False, mode=compile_mode)
+            if compile_model
+            else self.model.forward
+        )
 
     def forward(self, x: Tensor) -> Tensor:
         """Encode RGB image to CLS token."""
-        outputs = self.model(pixel_values=x, output_hidden_states=False)
+        outputs = self._model_forward(pixel_values=x, output_hidden_states=False)
         cls_token = outputs.last_hidden_state[:, 0]
         b, embed_dim = cls_token.shape
         return cls_token.reshape(b, embed_dim, 1, 1)
@@ -269,11 +280,18 @@ class ObservationEncoder(nn.Module):
 
             if config.use_separate_rgb_encoder_per_camera:
                 self.vision_encoders = nn.ModuleList(
-                    [CLIPVisionEncoder(model_name=config.vision_encoder_name) for _ in self.camera_names]
+                    [
+                        CLIPVisionEncoder(
+                            config.vision_encoder_name, config.compile_model, config.compile_mode
+                        )
+                        for _ in self.camera_names
+                    ]
                 )
                 self.vision_encoder = None
             else:
-                self.vision_encoder = CLIPVisionEncoder(model_name=config.vision_encoder_name)
+                self.vision_encoder = CLIPVisionEncoder(
+                    config.vision_encoder_name, config.compile_model, config.compile_mode
+                )
                 self.vision_encoders = None
         else:
             self.vision_encoder = None
@@ -375,6 +393,10 @@ class ObservationEncoder(nn.Module):
             attention_mask = batch[OBS_LANGUAGE_ATTENTION_MASK]  # [batch_size, seq_length]
 
             text_features = self.text_encoder(input_ids, attention_mask)
+            # The processor tokenizes distinct task strings only; map them back to samples.
+            row_index = batch.get(OBS_LANGUAGE_ROW_INDEX)
+            if row_index is not None:
+                text_features = text_features[row_index]
 
             text_features = text_features.unsqueeze(1).expand(-1, n_obs_steps, -1)
             conditioning_feats.append(text_features)
@@ -606,6 +628,11 @@ class DiffusionTransformer(nn.Module):
 
         self.output_proj = nn.Linear(self.hidden_size, self.action_dim)
         self._initialize_weights()
+        self._blocks_forward = (
+            torch.compile(self._run_blocks, dynamic=False, mode=config.compile_mode)
+            if config.compile_model
+            else self._run_blocks
+        )
 
     def _initialize_weights(self):
         for block in self.transformer_blocks:
@@ -623,10 +650,12 @@ class DiffusionTransformer(nn.Module):
         if self.pos_embedding is not None:
             hidden_seq = hidden_seq + self.pos_embedding[:, :seq_len, :]
 
+        return self.output_proj(self._blocks_forward(hidden_seq, cond_features))
+
+    def _run_blocks(self, hidden_seq: Tensor, cond_features: Tensor) -> Tensor:
         for block in self.transformer_blocks:
             hidden_seq = block(hidden_seq, cond_features)
-
-        return self.output_proj(hidden_seq)
+        return hidden_seq
 
 
 # -- Objectives --

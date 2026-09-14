@@ -76,6 +76,16 @@ class MultiTaskDiTConfig(PreTrainedConfig):
     image_crop_shape: tuple[int, int] | None = (224, 224)  # Crop shape (CLIP default)
     image_crop_is_random: bool = True  # Random crop during training, center at inference
 
+    # Compile the vision tower and the noise predictor with torch.compile. Fuses the
+    # elementwise work (GELU, residual adds, layer norm, autocast casts) that otherwise
+    # dominates the ViT-B/16 forward/backward in eager mode. Costs a one-off compile
+    # (~90s on an A100 at batch 160) at the first step and once per new batch shape: the
+    # dataloader's partial last batch of an epoch, and the inference batch.
+    compile_model: bool = False
+    # torch.compile mode; None is inductor's default. "max-autotune-no-cudagraphs" measured no
+    # throughput gain on an A100 for four times the compile time.
+    compile_mode: str | None = None
+
     # Text Encoder (CLIP)
     text_encoder_name: str = "openai/clip-vit-base-patch16"  # HuggingFace CLIP model
     tokenizer_max_length: int = 77  # Max length for tokenized text (CLIP default is 77)
