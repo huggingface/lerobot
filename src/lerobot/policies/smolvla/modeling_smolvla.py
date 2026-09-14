@@ -65,7 +65,7 @@ from lerobot.utils.import_utils import require_package
 
 from ..common.flow_matching import euler_integrate, sample_noise, sample_time_beta
 from ..common.vla_utils import (
-    create_sinusoidal_pos_embedding,
+    fuse_action_time_embedding,
     make_att_2d_masks,
     pad_vector,
     resize_with_pad,
@@ -650,26 +650,22 @@ class VLAFlowMatching(nn.Module):
         att_masks = []
 
         # Fuse timestep + action information using an MLP
-        action_emb = self.action_in_proj(noisy_actions)
-        device = action_emb.device
-        bsize = action_emb.shape[0]
-        dtype = action_emb.dtype
+        def mlp_func(action_time_emb):
+            action_time_emb = self.action_time_mlp_in(action_time_emb)
+            action_time_emb = F.silu(action_time_emb)  # swish == silu
+            return self.action_time_mlp_out(action_time_emb)
+
         # Embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
-        time_emb = create_sinusoidal_pos_embedding(
+        action_time_emb = fuse_action_time_embedding(
+            noisy_actions,
             timestep,
-            self.vlm_with_expert.expert_hidden_size,
-            self.config.min_period,
-            self.config.max_period,
-            device=device,
+            action_proj=self.action_in_proj,
+            action_time_mlp=mlp_func,
+            embedding_width=self.vlm_with_expert.expert_hidden_size,
+            min_period=self.config.min_period,
+            max_period=self.config.max_period,
         )
-        time_emb = time_emb.type(dtype=dtype)
-
-        time_emb = time_emb[:, None, :].expand_as(action_emb)
-        action_time_emb = torch.cat([action_emb, time_emb], dim=2)
-
-        action_time_emb = self.action_time_mlp_in(action_time_emb)
-        action_time_emb = F.silu(action_time_emb)  # swish == silu
-        action_time_emb = self.action_time_mlp_out(action_time_emb)
+        device = action_time_emb.device
 
         # Add to input tokens
         embs.append(action_time_emb)
