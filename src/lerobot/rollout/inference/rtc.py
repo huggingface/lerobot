@@ -45,6 +45,7 @@ from lerobot.utils.feature_utils import build_dataset_frame
 
 from ..robot_wrapper import ThreadSafeRobot
 from .base import InferenceEngine, PolicyQuery
+from .observation_history import ObservationHistory
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +212,7 @@ class RTCInferenceEngine(InferenceEngine):
         self._action_queue: ActionQueue | None = None
         self._obs_holder: dict[str, Any] = {}
         self._obs_lock = Lock()
+        self._observation_history = ObservationHistory(getattr(policy, "config", None))
         # Bumped by reset() under _obs_lock, so a chunk whose inference started before a
         # reset is discarded instead of merged into the fresh queue.
         self._reset_epoch = 0
@@ -281,10 +283,10 @@ class RTCInferenceEngine(InferenceEngine):
     def start(self) -> None:
         """Launch the RTC background thread."""
         self._action_queue = ActionQueue(self._rtc_config)
-        self._obs_holder = {
-            "obs": None,
-            "robot_type": self._robot.robot_type,
-        }
+        with self._obs_lock:
+            self._obs_holder = {"obs": None, "robot_type": self._robot.robot_type}
+            self._observation_history.clear()
+            self._reset_epoch += 1
         self._shutdown_event.clear()
         self._rtc_thread = Thread(
             target=self._rtc_loop,
@@ -336,6 +338,7 @@ class RTCInferenceEngine(InferenceEngine):
             if self._action_queue is not None:
                 self._action_queue.clear()
             self._obs_holder["obs"] = None
+            self._observation_history.clear()
             self._reset_epoch += 1
         # The queue is empty, so a pending task change has nothing stale to blend against.
         self._discard_task_change()
@@ -364,6 +367,8 @@ class RTCInferenceEngine(InferenceEngine):
     def notify_observation(self, obs: dict) -> None:
         """Publish the latest observation for the RTC thread to consume."""
         with self._obs_lock:
+            if self._observation_history.enabled:
+                obs = self._observation_history.append(obs).observation
             self._obs_holder["obs"] = obs
 
     # ------------------------------------------------------------------
@@ -419,6 +424,7 @@ class RTCInferenceEngine(InferenceEngine):
                 queue = self._action_queue
                 with self._obs_lock:
                     obs = self._obs_holder.get("obs")
+                    history = self._observation_history.snapshot()
                     epoch_before = self._reset_epoch
                 if queue is None or obs is None:
                     time.sleep(_RTC_IDLE_SLEEP_S)
@@ -435,6 +441,7 @@ class RTCInferenceEngine(InferenceEngine):
                     # a reset that landed during the query.
                     with self._obs_lock:
                         obs = self._obs_holder.get("obs")
+                        history = self._observation_history.snapshot()
                         epoch_before = self._reset_epoch
                     if obs is None:  # a reset mid-query dropped the observation
                         continue
@@ -472,13 +479,20 @@ class RTCInferenceEngine(InferenceEngine):
                             # inference; with blending off the queue drains first.
                             logger.info("Task changed to '%s' — applied from the next merged chunk", task)
 
-                        obs_batch = build_dataset_frame(self._hw_features, obs, prefix="observation")
-                        obs_batch = prepare_observation_for_inference(
-                            obs_batch, policy_device, task, self._robot.robot_type
-                        )
-                        obs_batch["task"] = [task]
+                        def prepare(observation: dict, task: str = task) -> dict:
+                            obs_batch = build_dataset_frame(
+                                self._hw_features, observation, prefix="observation"
+                            )
+                            obs_batch = prepare_observation_for_inference(
+                                obs_batch, policy_device, task, self._robot.robot_type
+                            )
+                            obs_batch["task"] = [task]
+                            return self._preprocessor(obs_batch)
 
-                        preprocessed = self._preprocessor(obs_batch)
+                        if self._observation_history.enabled:
+                            preprocessed = self._observation_history.preprocess(history, prepare)
+                        else:
+                            preprocessed = prepare(obs)
 
                         if prev_actions is not None and self._relative_step is not None:
                             # Rebase against the raw cached state so the leftover tail stays in

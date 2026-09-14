@@ -20,10 +20,11 @@ from pprint import pformat
 import torch
 
 from lerobot.configs import PreTrainedConfig
+from lerobot.configs.observation_history import resolve_observation_delta_indices
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.transforms import ImageTransforms
-from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_IMAGE, OBS_PREFIX, OBS_STATE, REWARD
+from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_IMAGE, REWARD
 
 from .dataset_metadata import LeRobotDatasetMetadata
 from .lerobot_dataset import LeRobotDataset
@@ -55,16 +56,7 @@ def resolve_delta_timestamps(
             }
             returns `None` if the resulting dict is empty.
     """
-    # Only policies that opt into modality-specific history (currently Pi05 with MEM)
-    # define these; everything else falls back to the shared observation indices.
     explicit_image_indices = getattr(cfg, "image_observation_delta_indices", None)
-    image_indices = (
-        explicit_image_indices if explicit_image_indices is not None else cfg.observation_delta_indices
-    )
-    explicit_state_indices = getattr(cfg, "state_observation_delta_indices", None)
-    state_indices = (
-        explicit_state_indices if explicit_state_indices is not None else cfg.observation_delta_indices
-    )
 
     delta_timestamps = {}
     matched_image_keys = []
@@ -78,12 +70,8 @@ def resolve_delta_timestamps(
         # conventions; matching `OBS_IMAGES` alone would silently give singular-key
         # datasets no image history at all.
         if policy_key.startswith(OBS_IMAGE):
-            indices = image_indices
             matched_image_keys.append(key)
-        elif policy_key == OBS_STATE:
-            indices = state_indices
-        else:
-            indices = cfg.observation_delta_indices if policy_key.startswith(OBS_PREFIX) else None
+        indices = resolve_observation_delta_indices(cfg, policy_key)
         if indices is not None:
             delta_timestamps[key] = [i / ds_meta.fps for i in indices]
 
