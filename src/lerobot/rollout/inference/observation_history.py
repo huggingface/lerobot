@@ -16,7 +16,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -43,13 +43,19 @@ class ObservationSnapshot:
     observation_id: int
     timestamp: float
     observation: dict[str, Any]
+    policy_tick: int | None = None
 
 
 class ObservationHistory:
-    """Bounded CPU history recorded at observation ticks, independent of inference cadence.
+    """Bounded CPU history recorded once per policy tick, independent of inference cadence.
 
-    The caller synchronizes append, clear and snapshot. Snapshots own their buffers;
-    preprocessing receives copies so in-place processor steps cannot corrupt history.
+    ``capture`` copies an observation without any lock so the control thread never
+    blocks the inference thread on a memcpy; the caller synchronizes ``push``,
+    ``clear`` and ``snapshot``. A frame stamped with the same ``policy_tick`` as the
+    newest entry replaces it: the loop may notify several times per tick while the
+    interpolator is starved, but training-time history offsets are counted in ticks.
+    Snapshots own their buffers; preprocessing receives copies so in-place processor
+    steps cannot corrupt history.
     """
 
     def __init__(self, config: Any) -> None:
@@ -68,11 +74,25 @@ class ObservationHistory:
         self._frames: deque[ObservationSnapshot] = deque(maxlen=capacity)
         self._next_id = 0
 
-    def append(self, observation: dict[str, Any]) -> ObservationSnapshot:
-        frame = ObservationSnapshot(self._next_id, time.monotonic(), _cpu_snapshot(observation))
+    def capture(self, observation: dict[str, Any], policy_tick: int | None = None) -> ObservationSnapshot:
+        """Copy ``observation`` into a snapshot. Safe to call without holding any lock."""
+        return ObservationSnapshot(-1, time.monotonic(), _cpu_snapshot(observation), policy_tick)
+
+    def push(self, frame: ObservationSnapshot) -> ObservationSnapshot:
+        """Record a captured frame, replacing the newest one when it shares its policy tick."""
+        if (
+            frame.policy_tick is not None
+            and self._frames
+            and self._frames[-1].policy_tick == frame.policy_tick
+        ):
+            self._frames.pop()
+        frame = replace(frame, observation_id=self._next_id)
         self._next_id += 1
         self._frames.append(frame)
         return frame
+
+    def append(self, observation: dict[str, Any], policy_tick: int | None = None) -> ObservationSnapshot:
+        return self.push(self.capture(observation, policy_tick))
 
     def clear(self) -> None:
         self._frames.clear()

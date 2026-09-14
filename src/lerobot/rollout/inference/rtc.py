@@ -213,6 +213,7 @@ class RTCInferenceEngine(InferenceEngine):
         self._obs_holder: dict[str, Any] = {}
         self._obs_lock = Lock()
         self._observation_history = ObservationHistory(getattr(policy, "config", None))
+        self._passes_execution_horizon = self._accepts_execution_horizon(policy)
         # Bumped by reset() under _obs_lock, so a chunk whose inference started before a
         # reset is discarded instead of merged into the fresh queue.
         self._reset_epoch = 0
@@ -364,11 +365,20 @@ class RTCInferenceEngine(InferenceEngine):
         self._set_dispatched_task(task)
         return action
 
-    def notify_observation(self, obs: dict) -> None:
-        """Publish the latest observation for the RTC thread to consume."""
+    def notify_observation(self, obs: dict, *, policy_tick: int | None = None) -> None:
+        """Publish the latest observation for the RTC thread to consume.
+
+        ``policy_tick`` identifies the training-rate step this observation belongs to;
+        history-conditioned policies keep one frame per tick even when the control
+        loop notifies more often (see :class:`ObservationHistory`).
+        """
+        frame = None
+        if self._observation_history.enabled:
+            frame = self._observation_history.capture(obs, policy_tick)
+            obs = frame.observation
         with self._obs_lock:
-            if self._observation_history.enabled:
-                obs = self._observation_history.append(obs).observation
+            if frame is not None:
+                self._observation_history.push(frame)
             self._obs_holder["obs"] = obs
 
     # ------------------------------------------------------------------
@@ -403,6 +413,17 @@ class RTCInferenceEngine(InferenceEngine):
     # ------------------------------------------------------------------
     # RTC: background inference thread
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _accepts_execution_horizon(policy: PreTrainedPolicy) -> bool:
+        """Whether ``predict_action_chunk`` takes the true prefix length as ``execution_horizon``."""
+        try:
+            inspect.signature(policy.predict_action_chunk).bind(
+                object(), inference_delay=0, prev_chunk_left_over=None, execution_horizon=1
+            )
+        except (TypeError, ValueError):
+            return False
+        return True
 
     def _rtc_loop(self) -> None:
         """Background thread that generates action chunks via RTC."""
@@ -509,13 +530,25 @@ class RTCInferenceEngine(InferenceEngine):
                                         policy_device=policy_device,
                                     )
 
+                        # The prefix is zero-padded to a fixed length for stable compiled
+                        # inference; the true leftover length travels separately so the
+                        # policy can keep the padding out of the guidance window.
+                        rtc_kwargs: dict[str, Any] = {}
+                        if prev_actions is not None and prev_actions.shape[0] == 0:
+                            prev_actions = None
                         if prev_actions is not None:
+                            valid_steps = min(prev_actions.shape[0], self._rtc_config.execution_horizon)
                             prev_actions = _normalize_prev_actions_length(
                                 prev_actions, target_steps=self._rtc_config.execution_horizon
                             )
+                            if self._passes_execution_horizon:
+                                rtc_kwargs["execution_horizon"] = valid_steps
 
                         actions = self._policy.predict_action_chunk(
-                            preprocessed, inference_delay=delay, prev_chunk_left_over=prev_actions
+                            preprocessed,
+                            inference_delay=delay,
+                            prev_chunk_left_over=prev_actions,
+                            **rtc_kwargs,
                         )
 
                         original = actions.squeeze(0).clone()

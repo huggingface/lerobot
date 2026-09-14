@@ -1251,6 +1251,28 @@ def test_starved_engine_is_counted_through_the_real_dispatch_path(caplog):
     assert dataset.add_frame.call_count == 0
 
 
+def test_starved_loop_stamps_observations_with_the_policy_tick():
+    from lerobot.rollout import BaseStrategyConfig
+    from lerobot.rollout.strategies import BaseStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    # With an empty interpolator buffer ``needs_new_action()`` is True on every
+    # sub-tick, so the engine is notified fps × multiplier times per second.  The
+    # policy tick stamp lets an observation-history engine keep one frame per
+    # training-time step regardless of how often it is notified.
+    ctx, _ = _make_loop_ctx(fps=200.0, multiplier=3, num_ticks=9)
+    ctx.policy.inference.get_action.side_effect = lambda _obs_frame: None
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._engine = ctx.policy.inference
+    strategy._interpolator = ActionInterpolator(multiplier=3)
+
+    strategy.run(ctx)
+
+    calls = ctx.policy.inference.notify_observation.call_args_list
+    assert len(calls) == 9
+    assert [call.kwargs["policy_tick"] for call in calls] == [0, 0, 0, 1, 1, 1, 2, 2, 2]
+
+
 def test_episodic_run_reports_a_summary_per_episode_and_for_the_run(caplog):
     from lerobot.rollout import EpisodicStrategyConfig
     from lerobot.rollout.strategies import EpisodicStrategy

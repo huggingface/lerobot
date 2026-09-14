@@ -57,11 +57,13 @@ class RecordingPolicy:
     def __init__(self, config):
         self.config = config
         self.batches = []
+        self.kwargs = []
         self.engine = None
         self.on_predict = None
 
     def predict_action_chunk(self, batch, **kwargs):
         self.batches.append(batch)
+        self.kwargs.append(kwargs)
         if self.on_predict:
             self.on_predict()
         self.engine._shutdown_event.set()
@@ -109,10 +111,15 @@ def make_engine(indices=(-1, 0), image_indices=None, state_indices=None, steps=(
     return engine, policy, preprocessor
 
 
-def notify(engine, value, image=None):
-    engine.notify_observation(
-        {"joint.pos": value, "camera": np.full((2, 2, 3), value, dtype=np.uint8) if image is None else image}
-    )
+def notify(engine, value, image=None, policy_tick=None):
+    observation = {
+        "joint.pos": value,
+        "camera": np.full((2, 2, 3), value, dtype=np.uint8) if image is None else image,
+    }
+    if policy_tick is None:
+        engine.notify_observation(observation)
+    else:
+        engine.notify_observation(observation, policy_tick=policy_tick)
 
 
 def infer(engine, policy):
@@ -151,6 +158,86 @@ def test_rtc_modality_stride_padding_latest_task_and_relative_anchor():
     assert batch["task"] == ["current task"]
     assert relative.get_cached_state().tolist() == [[3]]
     assert processor.seen == [1, 2, 3]
+
+
+def test_same_policy_tick_replaces_the_latest_history_frame_instead_of_appending():
+    engine, policy, processor = make_engine()
+    notify(engine, 1, policy_tick=0)
+    notify(engine, 2, policy_tick=0)
+    notify(engine, 3, policy_tick=0)
+    notify(engine, 4, policy_tick=1)
+    notify(engine, 5, policy_tick=1)
+    batch = infer(engine, policy)
+    assert batch[OBS_STATE][0, :, 0].tolist() == [3, 5]
+    assert batch[f"{OBS_STATE}_is_pad"].tolist() == [[False, False]]
+    assert processor.seen == [3, 5]
+
+
+def test_history_snapshots_observations_without_holding_the_observation_lock(monkeypatch):
+    import lerobot.rollout.inference.observation_history as history_module
+
+    engine, _, _ = make_engine()
+    original = history_module._cpu_snapshot
+
+    def checked(value):
+        assert engine._obs_lock.acquire(blocking=False), "snapshot must not run under the observation lock"
+        engine._obs_lock.release()
+        return original(value)
+
+    monkeypatch.setattr(history_module, "_cpu_snapshot", checked)
+    notify(engine, 1)
+    assert engine._observation_history.snapshot()[-1].observation["joint.pos"] == 1
+
+
+def test_engine_passes_the_true_leftover_length_alongside_the_padded_prefix():
+    engine, policy, _ = make_engine()
+    notify(engine, 1)
+    notify(engine, 2)
+    infer(engine, policy)
+    leftover = engine._action_queue.get_left_over().shape[0]
+    assert 0 < leftover < engine._rtc_config.execution_horizon
+    engine._shutdown_event.clear()
+    engine._rtc_loop()
+    assert not engine.failed, engine.failure_traceback
+    kwargs = policy.kwargs[-1]
+    assert kwargs["prev_chunk_left_over"].shape == (engine._rtc_config.execution_horizon, 1)
+    assert kwargs["execution_horizon"] == leftover
+
+
+def test_engine_drops_an_empty_leftover_instead_of_padding_it_with_zeros():
+    engine, policy, _ = make_engine()
+    notify(engine, 1)
+    notify(engine, 2)
+    infer(engine, policy)
+    while engine._action_queue.get() is not None:
+        pass
+    assert engine._action_queue.get_left_over().numel() == 0
+    engine._shutdown_event.clear()
+    engine._rtc_loop()
+    assert not engine.failed, engine.failure_traceback
+    assert policy.kwargs[-1]["prev_chunk_left_over"] is None
+
+
+def test_engine_omits_execution_horizon_for_policies_that_do_not_accept_it():
+    engine, policy, _ = make_engine()
+
+    class NarrowPolicy(RecordingPolicy):
+        def predict_action_chunk(self, batch, inference_delay=None, prev_chunk_left_over=None):
+            return super().predict_action_chunk(
+                batch, inference_delay=inference_delay, prev_chunk_left_over=prev_chunk_left_over
+            )
+
+    narrow = NarrowPolicy(policy.config)
+    narrow.engine = engine
+    engine._policy = narrow
+    engine._passes_execution_horizon = engine._accepts_execution_horizon(narrow)
+    notify(engine, 1)
+    notify(engine, 2)
+    infer(engine, narrow)
+    engine._shutdown_event.clear()
+    engine._rtc_loop()
+    assert not engine.failed, engine.failure_traceback
+    assert "execution_horizon" not in narrow.kwargs[-1]
 
 
 def test_rtc_copies_mutable_camera_buffers_and_pads_first_frame_once():
