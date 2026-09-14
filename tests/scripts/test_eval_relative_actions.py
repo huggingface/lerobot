@@ -34,6 +34,8 @@ import pytest
 import torch
 from torch import nn
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.envs.utils import NEW_ROLLOUT_OPTION
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
