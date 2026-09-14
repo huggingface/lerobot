@@ -20,8 +20,11 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
-from lerobot.envs.vlabench import VLABenchEnv
+pytest.importorskip("scipy", reason="VLABench requires scipy (install lerobot[scipy-dep])")
+
+from lerobot.envs.vlabench import VLABenchEnv  # noqa: E402
 
 
 def test_eef_action_space_contains_recorded_primitive_action():
