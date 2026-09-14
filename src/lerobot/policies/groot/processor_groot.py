@@ -753,7 +753,7 @@ def _iter_action_state_training_samples(dataset: Any):
                 ep_idx = _as_int(item["episode_index"])
                 abs_idx = _as_int(item["index"])
                 query_indices, padding = reader._get_query_indices(abs_idx, ep_idx)
-                action = reader._query_hf_dataset({ACTION: query_indices[ACTION]})[ACTION]
+                action = reader._query_hf_dataset([{ACTION: query_indices[ACTION]}])[0][ACTION]
                 pad_mask = padding.get(f"{ACTION}_is_pad")
             yield action, state, pad_mask
         return

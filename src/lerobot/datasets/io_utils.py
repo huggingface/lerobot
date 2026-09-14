@@ -304,7 +304,9 @@ def write_table_one_row_group_per_episode(table: pa.Table, path: Path) -> None:
     writer = pq.ParquetWriter(str(path), table.schema, compression="snappy", use_dictionary=True)
     try:
         for start, stop in zip(starts, np.append(starts[1:], len(episode_index)), strict=True):
-            writer.write_table(table.slice(start, stop - start))  # one episode -> one row group
+            # row_group_size >= slice length guarantees exactly one row group even for
+            # episodes exceeding PyArrow's default 1Mi-row split threshold.
+            writer.write_table(table.slice(start, stop - start), row_group_size=int(stop - start) or None)
     finally:
         writer.close()
 

@@ -63,7 +63,7 @@ def write_video(video_path: str | Path, stacked_frames: list, fps: int) -> None:
     require_package("av", extra="av-dep")
     import av
 
-    with av.open(str(video_path), mode="w") as container:
+    with av.open(str(video_path), mode="w", options={"movflags": "faststart"}) as container:
         orig_height, orig_width = stacked_frames[0].shape[:2]
         # yuv420p requires even dimensions; crop by one pixel if needed
         height = orig_height if orig_height % 2 == 0 else orig_height - 1
