@@ -62,6 +62,9 @@ class SmolVLAConfig(PreTrainedConfig):
     # Decoding
     num_steps: int = 10
 
+    # Optional torch.compile for the action expert denoise loop
+    compile_denoise: bool = False
+
     # Attention utils
     use_cache: bool = True
 
