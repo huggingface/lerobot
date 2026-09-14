@@ -127,8 +127,6 @@ class RTCProcessor:
         time,
         original_denoise_step_partial,
         execution_horizon=None,
-        *,
-        prefix_weights: Tensor | None = None,
     ) -> Tensor:
         """RTC guidance wrapper around an existing denoiser.
 
@@ -148,9 +146,6 @@ class RTCProcessor:
                 computes the base denoised velocity given only ``x_t``.
             execution_horizon (int | None): Horizon used to build prefix weights. If
                 ``None``, defaults to ``self.rtc_config.execution_horizon``.
-            prefix_weights (Tensor | None): Optional weights of shape ``(T,)`` replacing
-                the generated schedule. The caller aligns these weights and the previous
-                chunk to the full latent horizon, including zeros outside the action window.
 
         Returns:
             Tensor: Guided velocity with the same shape as ``v_t``.
@@ -212,19 +207,12 @@ class RTCProcessor:
             "The padded previous chunk must be the same size as the input tensor"
         )
 
-        if prefix_weights is None:
-            weights = (
-                self.get_prefix_weights(inference_delay, execution_horizon, action_chunk_size)
-                .to(x_t.device)
-                .unsqueeze(0)
-                .unsqueeze(-1)
-            )
-        else:
-            if prefix_weights.shape != (action_chunk_size,):
-                raise ValueError(
-                    f"prefix_weights must have shape ({action_chunk_size},), got {prefix_weights.shape}"
-                )
-            weights = prefix_weights.to(device=x_t.device, dtype=x_t.dtype).view(1, action_chunk_size, 1)
+        weights = (
+            self.get_prefix_weights(inference_delay, execution_horizon, action_chunk_size)
+            .to(x_t.device)
+            .unsqueeze(0)
+            .unsqueeze(-1)
+        )
 
         with torch.enable_grad():
             v_t = original_denoise_step_partial(x_t)

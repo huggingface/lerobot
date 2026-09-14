@@ -177,6 +177,11 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         rtc_config = getattr(self.config, "rtc_config", None)
         if rtc_config is not None:
             self.rtc_processor = RTCProcessor(rtc_config)
+            if rtc_config.enabled and self.config.is_flow_matching and self.config.sigma_min != 0.0:
+                logger.warning(
+                    "MultiTaskDiT RTC: the x0 estimate assumes sigma_min=0 (got %s); guidance is approximate.",
+                    self.config.sigma_min,
+                )
 
     def _rtc_enabled(self) -> bool:
         rtc_config = getattr(self.config, "rtc_config", None)
@@ -186,25 +191,36 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
         """Predict a chunk of actions given environment observations.
 
-        Synchronous select_action calls consume the observation queues. RTC
-        calls are identified by enabled guidance or the RTC keyword arguments
-        supplied by the inference engine. They consume preprocessed temporal
-        history: state (B, n_obs_steps, D) and per-camera images
-        (B, n_obs_steps, C, H, W), including startup padding from the engine.
-        Disabling guidance still consumes this history and ignores the prefix.
-        Enabled guidance steers sampling toward the previous chunk's leftover actions
-        (Real-Time Chunking,
-        https://www.physicalintelligence.company/download/real_time_chunking.pdf).
+        The batch shape selects the path. A batch carrying its own temporal
+        history — state (B, n_obs_steps, D) and per-camera images
+        (B, n_obs_steps, C, H, W), as assembled and padded by the RTC inference
+        engine — is consumed directly and never touches the observation queues.
+        A single-frame batch is stacked from the queues populated by
+        select_action (with ``n_obs_steps == 1`` the frame is its own history).
+        With RTC enabled, a single-frame batch is rejected rather than turned
+        into a fake, motionless history.
+
+        With guidance enabled, sampling is steered toward the previous chunk's
+        leftover actions (Real-Time Chunking,
+        https://www.physicalintelligence.company/download/real_time_chunking.pdf);
+        with it disabled the prefix is ignored.
         """
         self.eval()
 
-        if self._rtc_enabled() or kwargs:
+        if _has_temporal_axis(batch) or self.config.n_obs_steps == 1:
             return _predict_action_chunk_rtc(
                 self,
                 batch,
                 inference_delay=int(kwargs.get("inference_delay") or 0),
                 prev_chunk_left_over=kwargs.get("prev_chunk_left_over") if self._rtc_enabled() else None,
                 execution_horizon=kwargs.get("execution_horizon"),
+            )
+        if self._rtc_enabled():
+            raise ValueError(
+                "MultiTaskDiT RTC requires temporal history: expected "
+                f"{OBS_STATE} of shape (B, {self.config.n_obs_steps}, state_dim), got "
+                f"{tuple(batch[OBS_STATE].shape)}. Use the RTC inference engine to collect and pad "
+                "observation history, or provide the complete temporal batch to predict_action_chunk."
             )
 
         for k in batch:
@@ -257,12 +273,9 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
 # -- Real-Time Chunking (RTC) --
 
 
-def _resolve_rtc_processor(policy) -> RTCProcessor:
-    """Return the policy's RTC processor, initializing it from ``rtc_config``
-    if the caller skipped the rollout-context wiring."""
-    if getattr(policy, "rtc_processor", None) is None:
-        policy.init_rtc_processor()
-    return policy.rtc_processor
+def _has_temporal_axis(batch: dict[str, Tensor]) -> bool:
+    state = batch.get(OBS_STATE)
+    return state is not None and state.ndim == 3
 
 
 def _predict_action_chunk_rtc(
@@ -298,98 +311,107 @@ def _predict_action_chunk_rtc(
 
     conditioning_vec = policy.observation_encoder.encode(batch)
     batch_size = conditioning_vec.shape[0]
-    device = next(policy.noise_predictor.parameters()).device
-    dtype = next(policy.noise_predictor.parameters()).dtype
+    model = policy.noise_predictor
+    device = next(model.parameters()).device
+    dtype = next(model.parameters()).dtype
 
-    # Horizon-frame geometry, mirroring _generate_actions.
-    start = n_obs_steps - 1
+    # MultiTaskDiT samples a full ``horizon`` window and returns the actions
+    # that follow the observation history, so RTC's chunk-frame prefix lives at
+    # this offset inside the latent.
     chunk_len = policy.config.n_action_steps
     horizon = policy.config.horizon
     action_dim = policy.config.action_feature.shape[0]
+    window = slice(n_obs_steps - 1, n_obs_steps - 1 + chunk_len)
 
-    prev_full, weights_full = _build_prefix_targets(
+    prefix = _resolve_prefix(
         policy,
         prev_chunk_left_over,
         inference_delay=inference_delay,
         execution_horizon=execution_horizon,
         batch_size=batch_size,
-        start=start,
         chunk_len=chunk_len,
-        horizon=horizon,
         action_dim=action_dim,
         device=device,
         dtype=dtype,
     )
 
     if policy.config.is_diffusion:
+        prev_full = weights_full = None
+        if prefix is not None:
+            prev_chunk, delay, valid = prefix
+            weights = policy.rtc_processor.get_prefix_weights(delay, valid, chunk_len).to(device, dtype)
+            prev_full = torch.zeros(batch_size, horizon, action_dim, device=device, dtype=dtype)
+            prev_full[:, window] = prev_chunk
+            weights_full = torch.zeros(horizon, device=device, dtype=dtype)
+            weights_full[window] = weights
+            weights_full = weights_full.view(1, horizon, 1)
         sample = policy.objective.conditional_sample(
-            policy.noise_predictor,
-            batch_size,
-            conditioning_vec,
-            prev_full=prev_full,
-            weights_full=weights_full,
+            model, batch_size, conditioning_vec, prev_full=prev_full, weights_full=weights_full
         )
     else:
         denoise_step: Callable[[Tensor, float], Tensor] | None = None
-        if prev_full is not None:
-            processor = _resolve_rtc_processor(policy)
-            if policy.config.sigma_min != 0.0:
-                logger.warning(
-                    "MultiTaskDiT RTC: x0 estimate assumes sigma_min=0 (got %s); guidance is approximate.",
-                    policy.config.sigma_min,
-                )
-            prefix_weights = weights_full.flatten()
+        if prefix is not None:
+            prev_chunk, delay, valid = prefix
+            processor = policy.rtc_processor
 
             def denoise_step(latent: Tensor, time: float) -> Tensor:
+                """One euler step's velocity with RTC guidance on the action window.
+
+                ``RTCProcessor.denoise_step`` is written for pi0's convention (time
+                runs 1 -> 0, velocity points data -> noise), so it receives ``1 - time``
+                and a negated velocity, and its guided velocity is negated back.
+                The window slice is embedded into the full latent for the single
+                model call; positions outside the window keep the unguided velocity.
+                """
                 t_batch = torch.full((batch_size,), time, dtype=dtype, device=device)
-                # MTDiT integrates noise -> data; RTC uses the opposite time and velocity.
-                return -processor.denoise_step(
-                    latent,
-                    prev_full,
-                    inference_delay,
-                    1 - time,
-                    lambda x: -policy.noise_predictor(x, t_batch, conditioning_vec=conditioning_vec),
-                    execution_horizon=execution_horizon,
-                    prefix_weights=prefix_weights,
+                cache: dict[str, Tensor] = {}
+
+                def base(chunk: Tensor) -> Tensor:
+                    full = latent.clone()
+                    full[:, window] = chunk
+                    cache["velocity"] = model(full, t_batch, conditioning_vec=conditioning_vec)
+                    return -cache["velocity"][:, window]
+
+                guided = processor.denoise_step(
+                    latent[:, window], prev_chunk, delay, 1 - time, base, execution_horizon=valid
                 )
+                velocity = cache["velocity"].clone()
+                velocity[:, window] = -guided
+                return velocity
 
         sample = policy.objective.conditional_sample(
-            policy.noise_predictor,
-            batch_size,
-            conditioning_vec,
-            denoise_step=denoise_step,
+            model, batch_size, conditioning_vec, denoise_step=denoise_step
         )
 
-    return sample[:, start : start + chunk_len]
+    return sample[:, window]
 
 
-def _build_prefix_targets(
+def _resolve_prefix(
     policy,
     prev_chunk_left_over: Tensor | None,
     *,
     inference_delay: int,
     execution_horizon: int | None,
     batch_size: int,
-    start: int,
     chunk_len: int,
-    horizon: int,
     action_dim: int,
     device,
     dtype,
-) -> tuple[Tensor | None, Tensor | None]:
-    """Embed the chunk-frame RTC prefix into the horizon frame.
+) -> tuple[Tensor, int, int] | None:
+    """Normalize the engine's prefix into ``(prev_chunk, inference_delay, execution_horizon)``.
 
-    Returns ``(prev_full, weights_full)`` where ``prev_full`` is
-    ``(B, horizon, action_dim)`` with the previous chunk's leftover placed at
-    offset ``start`` (zeros elsewhere) and ``weights_full`` is the soft prefix
-    mask ``(1, horizon, 1)``. Both are None when there is nothing to guide.
-
-    Length/shape handling mirrors RTCProcessor.denoise_step: execution_horizon
-    clamped to the prefix length, prefix zero-padded to the chunk, weights via
-    get_prefix_weights(inference_delay, execution_horizon, chunk_len).
+    ``prev_chunk`` is ``(B, chunk_len, action_dim)``. The engine zero-pads the
+    leftover to its configured execution horizon and passes the true length as
+    ``execution_horizon``; only that many rows are committed actions, so the
+    guidance window is clamped to it (and to the chunk) and never covers padding.
+    Returns None when there is nothing to guide toward.
     """
     if prev_chunk_left_over is None or prev_chunk_left_over.numel() == 0:
-        return None, None
+        return None
+    if policy.rtc_processor is None:
+        raise RuntimeError(
+            "RTC processor is not initialized; call init_rtc_processor() after setting rtc_config"
+        )
 
     prev = prev_chunk_left_over.to(device=device, dtype=dtype)
     if prev.ndim == 2:
@@ -397,27 +419,17 @@ def _build_prefix_targets(
     if prev.shape[0] == 1 and batch_size > 1:
         prev = prev.expand(batch_size, *prev.shape[1:])
 
-    processor = _resolve_rtc_processor(policy)
     if execution_horizon is None:
-        execution_horizon = processor.rtc_config.execution_horizon
-    # "If the previous action chunk is too short then it doesn't make sense to
-    # use a long execution horizon" -- RTCProcessor.denoise_step.
-    execution_horizon = min(int(execution_horizon), prev.shape[1])
-    inference_delay = max(0, min(int(inference_delay), chunk_len))
+        execution_horizon = policy.rtc_processor.rtc_config.execution_horizon
+    valid = max(0, min(int(execution_horizon), prev.shape[1], chunk_len))
+    if valid == 0:
+        return None
+    delay = max(0, min(int(inference_delay), valid))
 
-    weights_chunk = processor.get_prefix_weights(inference_delay, execution_horizon, chunk_len).to(
-        device=device, dtype=dtype
-    )
-
-    prev_len = min(prev.shape[1], chunk_len)
     prev_dim = min(prev.shape[2], action_dim)
-    prev_full = torch.zeros(batch_size, horizon, action_dim, device=device, dtype=dtype)
-    prev_full[:, start : start + prev_len, :prev_dim] = prev[:, :prev_len, :prev_dim]
-
-    weights_full = torch.zeros(horizon, device=device, dtype=dtype)
-    weights_full[start : start + chunk_len] = weights_chunk
-
-    return prev_full, weights_full.view(1, horizon, 1)
+    prev_chunk = torch.zeros(batch_size, chunk_len, action_dim, device=device, dtype=dtype)
+    prev_chunk[:, :valid, :prev_dim] = prev[:, :valid, :prev_dim]
+    return prev_chunk, delay, valid
 
 
 # -- Observation Encoders --
