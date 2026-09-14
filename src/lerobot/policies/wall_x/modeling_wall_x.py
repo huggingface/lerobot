@@ -58,7 +58,7 @@ from lerobot.utils.import_utils import (
     require_package,
 )
 
-from ..common.flow_matching import FlowConvention, euler_integrate
+from ..common.flow_matching import FlowConvention, euler_integrate, make_flow_matching_inputs
 from ..pretrained import PreTrainedPolicy
 from ..utils import populate_queues
 from .configuration_wall_x import WallXConfig
@@ -264,13 +264,13 @@ class ActionHead(nn.Module):
 
         # Sample time outside of autocast (Beta distribution needs float32)
         time = self.sample_time(batch_size, device)
-        t = time.unsqueeze(-1).unsqueeze(-1)
 
         # Noise and flow computation in float32
         noise = torch.randn_like(action_chunk, dtype=torch.float32)
         action_chunk_f32 = action_chunk.to(torch.float32)
-        noisy_action = (1 - t) * noise + t * action_chunk_f32
-        flow = action_chunk_f32 - noise
+        noisy_action, flow, _ = make_flow_matching_inputs(
+            action_chunk_f32, noise, time, FlowConvention.NOISE_AT_ZERO
+        )
 
         # Project noisy actions
         if dof_mask is not None:

@@ -16,16 +16,20 @@
 
 """Flow-matching sampling primitives shared across policies.
 
-Canonical versions of the beta-distributed timestep sampler and the forward-Euler
-denoising loop (with its real-time-chunking hook) that the openpi-derived policies
-(pi0, pi05, smolvla, eo1) and the forward-convention policies (evo1, groot, wall_x)
-historically each carried a copy of. All functions are stateless; adopting them does
-not affect checkpoints.
+Canonical versions of the beta-distributed timestep sampler, the training-input
+construction and the forward-Euler denoising loop (with its real-time-chunking hook)
+that the openpi-derived policies (pi0, pi05, smolvla, eo1) and the forward-convention
+policies (evo1, groot, wall_x) historically each carried a copy of. All functions are
+stateless; adopting them does not affect checkpoints.
+
+``FlowConvention`` is the single place the direction of time is decided, and it is shared
+by both halves of a policy's flow matching: ``make_flow_matching_inputs`` at training time
+and ``euler_integrate`` at inference time.
 """
 
 import enum
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import torch
 from torch import Tensor
@@ -82,6 +86,77 @@ def sample_time_beta(bsize: int, device, *, alpha: float, beta: float, scale: fl
     time_beta = sample_beta(alpha, beta, bsize, device)
     time = time_beta * scale + offset
     return time.to(dtype=torch.float32, device=device)
+
+
+class FlowMatchingInputs(NamedTuple):
+    """The three tensors a flow-matching action expert needs at training time."""
+
+    x_t: Tensor
+    """Noised action chunk, the network input."""
+
+    velocity_target: Tensor
+    """Regression target for the predicted velocity field."""
+
+    model_time: Tensor
+    """Timestep fed to the network: ``(batch,)``, or ``(batch, horizon)`` with a prefix."""
+
+
+def make_flow_matching_inputs(
+    actions: Tensor,
+    noise: Tensor,
+    time: Tensor,
+    convention: FlowConvention = FlowConvention.NOISE_AT_ONE,
+    *,
+    prefix_mask: Tensor | None = None,
+) -> FlowMatchingInputs:
+    """Build the noised actions, velocity target and model timesteps for a training step.
+
+    The interpolation is linear between the two endpoints of the probability path, and
+    ``convention`` (see :class:`FlowConvention`) decides which endpoint the noise sits at,
+    and therefore both the interpolation and the sign of the velocity target:
+
+    * ``NOISE_AT_ONE``: ``x_t = t * noise + (1 - t) * actions`` and ``v = noise - actions``.
+    * ``NOISE_AT_ZERO``: ``x_t = (1 - t) * noise + t * actions`` and ``v = actions - noise``.
+
+    This is the training-time half of the contract that :func:`euler_integrate` implements at
+    inference time: a policy must use the same convention for both, or the velocity it learns
+    points the wrong way along the schedule.
+
+    Args:
+        actions: ``(batch, horizon, action_dim)`` clean action chunk.
+        noise: Noise sample broadcastable to ``actions``.
+        time: ``(batch,)`` timesteps.
+        convention: Which end of the schedule holds the noise.
+        prefix_mask: Optional ``(batch, horizon)`` boolean mask marking clean action-prefix
+            positions (real-time chunking). Masked positions are given the model time at the
+            clean end of the schedule, which makes the interpolation return the clean action
+            there, so they are never noised. The inference-time counterpart is
+            ``euler_integrate``'s ``hard_prefix`` / ``hard_prefix_mask``.
+
+    Returns:
+        A :class:`FlowMatchingInputs` triple. ``model_time`` is ``(batch,)`` without a prefix
+        and ``(batch, horizon)`` with one, since a prefix makes the timestep position-dependent.
+    """
+    noise_at_one = convention is FlowConvention.NOISE_AT_ONE
+
+    if prefix_mask is None:
+        model_time = time
+        expanded_time = time[:, None, None]
+    else:
+        # Clean tokens sit at the far end of the schedule from the noise.
+        clean_time = 0.0 if noise_at_one else 1.0
+        model_time = time[:, None].expand_as(prefix_mask)
+        model_time = torch.where(prefix_mask, torch.full_like(model_time, clean_time), model_time)
+        expanded_time = model_time.unsqueeze(-1)
+
+    if noise_at_one:
+        x_t = expanded_time * noise + (1 - expanded_time) * actions
+        velocity_target = noise - actions
+    else:
+        x_t = (1 - expanded_time) * noise + expanded_time * actions
+        velocity_target = actions - noise
+
+    return FlowMatchingInputs(x_t, velocity_target, model_time)
 
 
 def euler_integrate(
