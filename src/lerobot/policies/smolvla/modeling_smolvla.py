@@ -755,9 +755,19 @@ class VLAFlowMatching(nn.Module):
             use_cache=self.config.use_cache,
         )
         num_steps = self.config.num_steps
+        if past_key_values is not None and hasattr(past_key_values, "layers"):
+            past_key_values = tuple((layer.keys, layer.values) for layer in past_key_values.layers)
+
+        step_fn = getattr(self, "_compiled_denoise_step", None)
+        if step_fn is None:
+            if getattr(self.config, "compile_denoise", False) or getattr(self, "_enable_compile", False):
+                self._compiled_denoise_step = torch.compile(self.denoise_step, mode="max-autotune")
+                step_fn = self._compiled_denoise_step
+            else:
+                step_fn = self.denoise_step
 
         return euler_integrate(
-            lambda input_x_t, current_timestep: self.denoise_step(
+            lambda input_x_t, current_timestep: step_fn(
                 x_t=input_x_t,
                 prefix_pad_masks=prefix_pad_masks,
                 past_key_values=past_key_values,
@@ -800,7 +810,7 @@ class VLAFlowMatching(nn.Module):
             inputs_embeds=[None, suffix_embs],
             use_cache=self.config.use_cache,
         )
-        if past_key_values is not None:
+        if past_key_values is not None and hasattr(past_key_values, "crop"):
             # Self-attention layers append suffix K/V in place; restore the prefix for the next step.
             past_key_values.crop(prefix_len)
         suffix_out = outputs_embeds[1]
