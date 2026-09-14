@@ -14,7 +14,7 @@
 
 """Inference engine configs and factory.
 
-Selection is explicit via ``--inference.type=sync|rtc``.  Adding a new
+Selection is explicit via ``--inference.type=sync|rtc|pir2``.  Adding a new
 backend requires registering its config subclass and dispatching it in
 :func:`create_inference_engine`.
 """
@@ -34,6 +34,7 @@ from lerobot.processor import PolicyProcessorPipeline
 
 from ..robot_wrapper import ThreadSafeRobot
 from .base import InferenceEngine
+from .pir2 import PiR2InferenceEngine
 from .rtc import RTCInferenceEngine
 from .sync import SyncInferenceEngine
 
@@ -72,6 +73,17 @@ class RTCInferenceConfig(InferenceEngineConfig):
     # (e.g. ``--inference.rtc.execution_horizon=...``).
     rtc: RTCConfig = field(default_factory=RTCConfig)
     queue_threshold: int = 30
+
+
+@InferenceEngineConfig.register_subclass("pir2")
+@dataclass
+class PiR2InferenceConfig(InferenceEngineConfig):
+    """piR2: one denoising step per call over a continuously sliding action buffer."""
+
+    # Rolling window of action-head call latencies used to derive the per-call delay.
+    latency_window: int = 20
+    # Upper bound on that delay. ``None`` uses the largest the schedule allows (chunk_size // 2).
+    max_delay: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +135,20 @@ def create_inference_engine(
             use_torch_compile=use_torch_compile,
             compile_warmup_inferences=compile_warmup_inferences,
             rtc_queue_threshold=config.queue_threshold,
+            shutdown_event=shutdown_event,
+        )
+    if isinstance(config, PiR2InferenceConfig):
+        return PiR2InferenceEngine(
+            policy=policy,
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            robot_wrapper=robot_wrapper,
+            hw_features=hw_features,
+            task=task,
+            fps=fps,
+            device=device,
+            latency_window=config.latency_window,
+            max_delay=config.max_delay,
             shutdown_event=shutdown_event,
         )
     raise ValueError(f"Unknown inference engine type: {type(config).__name__}")
