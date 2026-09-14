@@ -47,7 +47,6 @@ import torch.nn.functional as functional
 from safetensors import SafetensorError
 from safetensors.torch import load_file
 from torch import Tensor
-from torch.distributions import Beta
 from torch.nn import CrossEntropyLoss
 
 from lerobot.utils.constants import ACTION, MESSAGES_RENDERED
@@ -57,6 +56,7 @@ from lerobot.utils.import_utils import (
 )
 from lerobot.utils.language import require_single_text_output
 
+from ..common.flow_matching import device_beta_sampler, sample_beta, sample_noise
 from ..pretrained import PreTrainedPolicy
 from ..utils import populate_queues
 from .configuration_wall_x import WallXConfig
@@ -153,11 +153,15 @@ class ActionHead(nn.Module):
 
     def sample_time(self, batch_size, device):
         """Sample timesteps using Beta distribution (always in float32 for numerical stability)."""
-        beta_dist = Beta(
-            torch.tensor(self.beta_alpha, dtype=torch.float32, device=device),
-            torch.tensor(self.beta_beta, dtype=torch.float32, device=device),
+        # Drawn on ``device`` rather than on CPU: this policy's released behavior depends on
+        # the device-side RNG stream, which the shared sampler's CPU default would not match.
+        sample = sample_beta(
+            self.beta_alpha,
+            self.beta_beta,
+            batch_size,
+            device,
+            sampler=device_beta_sampler(device),
         )
-        sample = beta_dist.sample([batch_size])
         time = (1 - sample) * self.s
         return time
 
@@ -181,7 +185,7 @@ class ActionHead(nn.Module):
         t = time.unsqueeze(-1).unsqueeze(-1)
 
         # Noise and flow computation in float32
-        noise = torch.randn_like(action_chunk, dtype=torch.float32)
+        noise = sample_noise(action_chunk.shape, action_chunk.device)
         action_chunk_f32 = action_chunk.to(torch.float32)
         noisy_action = (1 - t) * noise + t * action_chunk_f32
         flow = action_chunk_f32 - noise
