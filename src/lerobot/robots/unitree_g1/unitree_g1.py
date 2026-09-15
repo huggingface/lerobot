@@ -20,7 +20,7 @@ import importlib
 import logging
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cached_property
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -360,7 +360,10 @@ class UnitreeG1(Robot):
             from lerobot.envs import make_env
 
             self._ChannelFactoryInitialize(0, "lo")
-            self._env_wrapper = make_env(self.config.sim_env, trust_remote_code=True)
+            # The sim reads the end effector off the config it is handed, and the robot's
+            # own flag is the one that names it.
+            sim_env = replace(self.config.sim_env, end_effector=self.config.end_effector)
+            self._env_wrapper = make_env(sim_env, trust_remote_code=True)
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
         else:

@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig
 from lerobot.envs.configs import G1EndEffector, UnitreeG1MujocoEnv
@@ -82,9 +82,3 @@ class UnitreeG1Config(RobotConfig):
     # Controller class name, e.g. GrootLocomotionController / HolosomaLocomotionController /
     # SonicWholeBodyController. None disables it.
     controller: str | None = None
-
-    def __post_init__(self):
-        super().__post_init__()
-        # One name for what the arms carry. The sim needs it on the config it is handed, so
-        # it is copied there rather than asked for twice.
-        self.sim_env = replace(self.sim_env, end_effector=self.end_effector)
