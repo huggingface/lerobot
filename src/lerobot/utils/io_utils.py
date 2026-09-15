@@ -16,7 +16,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,8 @@ def write_video(video_path: str | Path, stacked_frames: list, fps: int) -> None:
             container.mux(packet)
 
 
-def deserialize_json_into_object[T: JsonLike](fpath: Path, obj: T) -> T:
+T_JSON = TypeVar("T_JSON", bound=JsonLike)
+def deserialize_json_into_object(fpath: Path, obj: T_JSON) -> T_JSON:
     """
     Loads the JSON data from `fpath` and recursively fills `obj` with the
     corresponding values (strictly matching structure and types).
