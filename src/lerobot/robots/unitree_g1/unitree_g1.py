@@ -134,6 +134,17 @@ HAND_CURL_CLOSED = {
     "right": (0.0, -1.0472, -1.74533, 1.5708, 1.74533, 1.5708, 1.74533),
 }
 
+# Dex1 two-jaw gripper, per jaw, in metres of slide travel. Both jaws take the *same*
+# target: the model mirrors their slide axes, so equal values move them symmetrically.
+# Measured jaw separation across the joint range is 107 mm at the positive limit and 12 mm
+# at the negative one, so closed is the negative end. Unlike Dex3's fingers these do not
+# curl from zero, which is why open is carried explicitly rather than assumed to be 0.
+# JAW_OPEN and the gains are the sim's own open-hold values.
+JAW_OPEN = 0.0245
+JAW_CLOSED = -0.023
+JAW_KP = 1000.0
+JAW_KD = 25.0
+
 
 @dataclass
 class MotorState:
@@ -429,16 +440,44 @@ class UnitreeG1(Robot):
         logger.info(f"[UnitreeG1] gripper commands -> {self.config.robot_ip}:{GRIPPER_PORT}")
 
     def _connect_grippers_sim(self) -> None:
-        """Publish Dex3 hand commands into the MuJoCo bridge, which subscribes to these."""
+        """Publish hand commands into the MuJoCo bridge, which subscribes to these."""
         from unitree_sdk2py.idl.default import unitree_hg_msg_dds__HandCmd_ as HandCmd_default
         from unitree_sdk2py.idl.unitree_hg.msg.dds_ import HandCmd_
+
+        # The sim can be built with either end effector and the two want different commands,
+        # so ask it which it has rather than assuming Dex3: driving two prismatic jaws with a
+        # finger-curl vector parks one jaw and sends the other to a travel limit, which reads
+        # as the gripper sliding sideways instead of closing.
+        sim = getattr(self.sim_env, "sim_env", None)
+        hand_dof = getattr(sim, "num_hand_dof", len(HAND_CURL_CLOSED["left"]))
 
         for side in ("left", "right"):
             publisher = self._ChannelPublisher(f"rt/dex3/{side}/cmd", HandCmd_)
             publisher.Init()
+            if hand_dof == 2:
+                at_open, at_closed = (JAW_OPEN,) * 2, (JAW_CLOSED,) * 2
+                # The sim tracks hand targets with a PD whose gains it reads off this very
+                # message, so a command carrying only a position produces no torque at all
+                # and the jaws just sag open. These are metres of slide travel; a Dex3 sim
+                # would need its own gains, in radians of finger curl.
+                kp, kd = JAW_KP, JAW_KD
+            else:
+                at_closed = HAND_CURL_CLOSED[side]
+                at_open = (0.0,) * len(at_closed)
+                kp, kd = 0.0, 0.0
+
+            # Gains never change, so they are written once here rather than every tick.
+            msg = HandCmd_default()
+            for i in range(len(at_closed)):
+                msg.motor_cmd[i].kp = kp
+                msg.motor_cmd[i].kd = kd
+                msg.motor_cmd[i].dq = 0.0
+                msg.motor_cmd[i].tau = 0.0
+
             self._hand_cmd_pubs[side] = publisher
-            self._hand_cmd_msgs[side] = (HandCmd_default(), HAND_CURL_CLOSED[side])
-        logger.info("[UnitreeG1] gripper commands -> sim Dex3 hands (rt/dex3/{left,right}/cmd)")
+            self._hand_cmd_msgs[side] = (msg, at_open, at_closed)
+        hands = "Dex1 two-jaw grippers" if hand_dof == 2 else "Dex3 hands"
+        logger.info(f"[UnitreeG1] gripper commands -> sim {hands} (rt/dex3/{{left,right}}/cmd)")
 
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
         # Initialize DDS channel and simulation environment
@@ -652,9 +691,9 @@ class UnitreeG1(Robot):
     def _send_gripper_cmd(self, action: RobotAction) -> None:
         """Forward gripper closedness to the hands.
 
-        Same 0..1 closedness either way, different transport: in sim the hands are 7-DoF Dex3
-        models the MuJoCo bridge drives over DDS, while on hardware they are two-finger CAN
-        grippers behind the ZMQ bridge.
+        Same 0..1 closedness either way, different transport: in sim the hands are whichever
+        end effector the MuJoCo model carries, driven over DDS by its bridge, while on
+        hardware they are two-finger CAN grippers behind the ZMQ bridge.
 
         On hardware this is sent only on change: the bridge writes CAN on every message it
         accepts, and a policy streaming at 30 Hz would otherwise saturate the bus holding a
@@ -698,16 +737,16 @@ class UnitreeG1(Robot):
         self._gripper_last.update(cmd)
 
     def _send_gripper_cmd_sim(self, action: RobotAction) -> None:
-        """Drive the sim's Dex3 hands from the same closedness the real grippers get."""
+        """Drive the sim's hands from the same closedness the real grippers get."""
         for side, key in (("left", "left_gripper.pos"), ("right", "right_gripper.pos")):
             publisher = self._hand_cmd_pubs.get(side)
             value = action.get(key)
             if publisher is None or value is None:
                 continue
             closedness = min(1.0, max(0.0, float(value)))
-            msg, curl = self._hand_cmd_msgs[side]
-            for i, target in enumerate(curl):
-                msg.motor_cmd[i].q = float(closedness * target)
+            msg, at_open, at_closed = self._hand_cmd_msgs[side]
+            for i, (opened, closed) in enumerate(zip(at_open, at_closed, strict=True)):
+                msg.motor_cmd[i].q = float(opened + closedness * (closed - opened))
             publisher.Write(msg)
 
     def _record_gripper_obs(self, action: RobotAction) -> None:
