@@ -27,7 +27,36 @@ Follow our [Installation Guide](./installation), then install the reBot support:
 pip install -e ".[rebot]"
 ```
 
-This pulls in `motorbridge` (CAN motor control for the B601-DM follower) and `motorbridge-smart-servo` (FashionStar UART servos for the reBot Arm 102 leader).
+This pulls in `motorbridge` (CAN motor control for the B601-DM follower), `motorbridge-smart-servo` (FashionStar UART servos for the reBot Arm 102 leader), and Pinocchio for B601-DM MIT gravity feedforward.
+
+## MIT gravity feedforward and safe-home
+
+When the B601-DM follower uses `control_mode="mit"`, LeRobot evaluates the
+gravity torque from the latest measured pose for each arm-joint MIT command.
+This applies during teleoperation, policy execution, and the safe-home
+trajectory run before disconnecting. The gripper is not part of the supplied
+arm dynamics model and continues to use zero feedforward torque.
+
+Gravity feedforward needs Pinocchio (included in `.[rebot]`) and the
+`ReBot_Arm_DM.urdf` model. You can either clone the Seeed SDK, or provide the
+URDF by itself:
+
+```bash
+# Option 1: clone the SDK; installation of its Python package is optional.
+git clone https://github.com/Seeed-Projects/reBotArm_control_py.git
+export REBOT_GRAVITY_SDK_ROOT="$PWD/reBotArm_control_py"
+
+# Option 2: provide only the dynamics model.
+export REBOT_GRAVITY_URDF=/path/to/ReBot_Arm_DM.urdf
+```
+
+`REBOT_GRAVITY_URDF` takes precedence over `REBOT_GRAVITY_SDK_ROOT`. If the
+SDK Python package is installed, its checkout is also discovered automatically.
+
+On disconnect, B601-DM can interpolate back to an explicit `home_action` or
+the pose captured at connection time. It starts from the latest measured pose,
+checks configured joint limits and final position error, and keeps torque
+enabled when safe-home fails so that the arm can be recovered manually.
 
 ## Registered device types
 

@@ -170,8 +170,11 @@ pyserial-dep = ["pyserial>=3.5,<4.0"]
 deepdiff-dep = ["deepdiff>=7.0.1,<9.0.0"]
 pynput-dep = ["pynput>=1.7.8,<1.9.0"]
 pyzmq-dep = ["pyzmq>=26.2.1,<28.0.0"]
-motorbridge-dep = ["motorbridge>=0.3.2,<0.4.0"]
+motorbridge-dep = ["motorbridge>=0.4.9,<0.6.0"]
 motorbridge-smart-servo-dep = ["motorbridge-smart-servo>=0.0.4,<0.1.0"]
+# gravity.py only relies on stable Pinocchio APIs. The lower bound remains
+# compatible with placo when users install `lerobot[all]`.
+pinocchio-dep = ["pin>=3.4.0,<5.0.0"]
 timm-dep = ["timm>=1.0.0,<1.1.0"]
 
 # Motors
@@ -203,7 +206,11 @@ reachy2 = [
 ]
 # Seeed Studio reBot B601-DM follower (motorbridge / CAN) + StarArm102 / reBot Arm 102
 # leader (motorbridge-smart-servo / FashionStar UART servos).
-rebot = ["lerobot[motorbridge-dep]", "lerobot[motorbridge-smart-servo-dep]"]
+rebot = [
+    "lerobot[motorbridge-dep]",
+    "lerobot[motorbridge-smart-servo-dep]",
+    "lerobot[pinocchio-dep]",
+]
 kinematics = ["lerobot[placo-dep]"]
 intelrealsense = [
     "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",
