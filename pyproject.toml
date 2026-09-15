@@ -137,7 +137,7 @@ viz = [
 ]
 # Optional FiftyOne App backend for `lerobot-dataset-viz --display-mode fiftyone`. Kept out of `viz`
 # because fiftyone ships its own database binary (~200 MB); install on demand with `lerobot[fiftyone]`.
-fiftyone = ["fiftyone>=1.23.0,<2.0.0"]
+fiftyone = ["fiftyone>=1.22.0,<2.0.0"]
 # ── User-facing composite extras (map to CLI scripts) ─────
 # lerobot-record, lerobot-replay, lerobot-calibrate, lerobot-teleoperate, etc.
 core_scripts = ["lerobot[dataset]", "lerobot[hardware]", "lerobot[viz]"]
