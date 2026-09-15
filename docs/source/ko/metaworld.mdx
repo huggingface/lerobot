@@ -1,0 +1,130 @@
+# Meta-World
+
+Meta-World는 연속 제어(continuous-control) 로봇 조작 분야의 **다중 작업 및 메타 강화 학습(multi-task and meta reinforcement learning)** 을 위한 오픈 소스 시뮬레이션 벤치마크입니다. 일상적인 물체와 공통의 테이블탑(tabletop) Sawyer 암(arm)을 활용한 50가지의 다양한 조작 작업을 번들로 제공하며, 알고리즘이 여러 작업을 학습하고 새로운 작업으로 빠르게 일반화할 수 있는지 테스트할 수 있는 표준화된 환경을 제공합니다.
+
+- 논문: [Meta-World: A Benchmark and Evaluation for Multi-Task and Meta Reinforcement Learning paper](https://arxiv.org/abs/1910.10897)
+- GitHub: [Farama-Foundation/Metaworld](https://github.com/Farama-Foundation/Metaworld)
+- 프로젝트 웹사이트: [metaworld.farama.org](https://metaworld.farama.org)
+
+![MetaWorld MT10 demo](https://meta-world.github.io/figures/ml45.gif)
+
+## Available tasks
+
+Meta-World는 난이도 그룹으로 구성된 50개의 작업을 제공합니다. LeRobot에서는 개별 작업, 난이도 그룹, 또는 전체 MT50 스위트(suite)에 대해 평가할 수 있습니다:
+
+| 그룹       | CLI 이름             | 작업 수 | 설명                                                       |
+| ---------- | -------------------- | ------- | ---------------------------------------------------------- |
+| Easy       | `easy`               | 28      | 단순한 동역학과 단일 단계 목표를 가진 작업                 |
+| Medium     | `medium`             | 11      | 다중 단계 추론이 필요한 작업                               |
+| Hard       | `hard`               | 6       | 복잡한 접촉(contact)과 정밀한 조작이 필요한 작업           |
+| Very Hard  | `very_hard`          | 5       | 스위트에서 가장 도전적인 작업                              |
+| MT50 (all) | 쉼표로 구분된 목록   | 50      | 전체 50개 작업 — 가장 도전적인 다중 작업 설정              |
+
+개별 작업명을 직접 전달할 수도 있습니다(예: `assembly-v3`, `dial-turn-v3`).
+
+HF Hub에서 Meta-World MT50을 위한 LeRobot 호환 데이터셋(dataset)을 제공합니다: [lerobot/metaworld_mt50](https://huggingface.co/datasets/lerobot/metaworld_mt50). 이 데이터셋은 일관성을 위해 고정된 물체/목표 위치와 원-핫(one-hot) 작업 벡터를 사용하여 50개 작업 모두를 사용하는 MT50 평가에 맞게 포맷되어 있습니다.
+
+## Installation
+
+LeRobot 설치 지침을 따른 후 다음을 실행하십시오:
+
+```bash
+pip install -e ".[metaworld]"
+```
+
+<Tip warning={true}>
+Meta-World 환경을 실행할 때 `AssertionError: ['human', 'rgb_array', 'depth_array']` 오류가 발생한다면, 이는 Meta-World와 사용 중인 Gymnasium 버전 간의 불일치 때문입니다. 다음 명령으로 해결하십시오:
+
+```bash
+pip install "gymnasium==1.1.0"
+```
+
+</Tip>
+
+## Evaluation
+
+### Default evaluation (recommended)
+
+미디엄(medium) 난이도 분할에 대해 평가합니다(범위와 연산량의 적절한 균형):
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=metaworld \
+  --env.task=medium \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10
+```
+
+### Single-task evaluation
+
+특정 작업에 대해 평가합니다:
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=metaworld \
+  --env.task=assembly-v3 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10
+```
+
+### Multi-task evaluation
+
+여러 작업 또는 난이도 그룹에 걸쳐 평가합니다:
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=metaworld \
+  --env.task=assembly-v3,dial-turn-v3,handle-press-side-v3 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10
+```
+
+- `--env.task`은 명시적인 작업 목록(쉼표로 구분) 또는 난이도 그룹(예: `easy`, `medium`, `hard`, `very_hard`)을 받습니다.
+- `--eval.batch_size`는 병렬로 실행되는 환경의 수를 제어합니다.
+- `--eval.n_episodes`는 작업당 실행할 에피소드(episode) 수를 설정합니다.
+
+### Policy inputs and outputs
+
+**관측(Observations):**
+
+- `observation.image` — 단일 카메라 뷰(`corner2`), 480x480 HWC uint8
+- `observation.state` — 4차원 고유 감각(proprioceptive) 상태 (엔드 이펙터(end-effector) 위치 + 그리퍼(gripper))
+
+**행동(Actions):**
+
+- `Box(-1, 1, shape=(4,))`에서의 연속 제어 — 3D 엔드 이펙터 변화량(delta) + 1D 그리퍼
+
+### Recommended evaluation episodes
+
+재현 가능한 벤치마킹(benchmarking)을 위해서는 **작업당 10개의 에피소드**를 사용하십시오. 전체 MT50 스위트의 경우 총 500개의 에피소드가 됩니다. 일반화 성능에 관심이 있다면 전체 MT50에서 실행하십시오 — 의도적으로 도전적이도록 설계되었으며, 몇 가지 좁은 작업보다 강점/약점을 더 잘 드러냅니다.
+
+## Training
+
+### Example training command
+
+Meta-World 작업의 일부에 대해 SmolVLA 정책(policy)을 훈련합니다:
+
+```bash
+lerobot-train \
+  --policy.type=smolvla \
+  --policy.repo_id=${HF_USER}/metaworld-test \
+  --policy.load_vlm_weights=true \
+  --dataset.repo_id=lerobot/metaworld_mt50 \
+  --env.type=metaworld \
+  --env.task=assembly-v3,dial-turn-v3,handle-press-side-v3 \
+  --output_dir=./outputs/ \
+  --steps=100000 \
+  --batch_size=4 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=1 \
+  --eval_freq=1000
+```
+
+## Practical tips
+
+- 정책에 명시적인 작업 컨텍스트(context)를 부여하기 위해 다중 작업 학습(MT10/MT50 규약)에서 원-핫(one-hot) 작업 조건화(task conditioning)를 사용하십시오.
+- 후처리 또는 로깅을 작성할 때 데이터셋 작업 설명과 `info["is_success"]` 키를 검토하여 성공 지표가 벤치마크와 일치하는지 확인하십시오.
+- 사용 가능한 연산 자원에 맞게 `batch_size`, `steps`, `eval_freq`를 조정하십시오.
