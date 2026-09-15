@@ -64,6 +64,22 @@ This will launch a [MuJoCo sim instance](https://huggingface.co/lerobot/unitree-
 - Press `9` to release the robot
 - Press `7` / `8` to increase / decrease waist height
 
+#### Choosing the End Effector
+
+`--robot.sim_env.end_effector` picks the MuJoCo model: `dex1` for the parallel grippers (the default), `dex3` for the three-finger hands, or `dummy` for bare wrists. It decides which finger actuators the model has and which cameras the scene carries — the wrist cameras are mounted on the end effector, so `dummy` only has `head_camera`.
+
+```bash
+lerobot-teleoperate \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=true \
+  --robot.sim_env.end_effector=dex3 \
+  --teleop.type=unitree_g1 \
+  --teleop.id=wbc_unitree \
+  --robot.controller=GrootLocomotionController
+```
+
+The same config carries the sim's camera options. It publishes the model's cameras over ZMQ on `--robot.sim_env.camera_port` (5555 by default), which is where the `zmq` cameras in `--robot.cameras` read them from. Pass `--robot.sim_env.publish_images=false` to open MuJoCo's interactive window instead: the sim renders either its cameras or its window, so `--robot.sim_env.onscreen` follows `publish_images` unless you set it yourself.
+
 ### Connect to the Physical Robot
 
 The G1's Ethernet IP is fixed at `192.168.123.164`. Your machine must have a static IP on the same subnet: `192.168.123.x` where `x ≠ 164`.
