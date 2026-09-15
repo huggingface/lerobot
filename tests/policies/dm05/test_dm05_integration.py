@@ -31,10 +31,10 @@ pytest.importorskip("transformers")
 from lerobot.common.train_utils import generate_model_card, publish_trained_model
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.policies.dm05.configuration_dm05 import DM05Config
-from lerobot.policies.dm05.constants import ACTION_REFERENCE_OFFSET, STATE_BINS
+from lerobot.policies.dm05.constants import ACTION_REFERENCE_OFFSET, MODEL_INPUT_PREFIX, STATE_BINS
 from lerobot.policies.dm05.conversion_dm05 import (
-    DM05ProcessorArtifactsStep,
     DM05StateBinsProcessorStep,
+    DM05TokenizerProcessorStep,
 )
 from lerobot.policies.dm05.core.modeling import (
     DM05CoreModelConfig,
@@ -66,6 +66,11 @@ from lerobot.utils.constants import (
 
 class _FakeProcessor:
     pass
+
+
+def _tokenizer_step(pipeline) -> DM05TokenizerProcessorStep:
+    """Return the step that owns DM05 tokenization and the Gemma assets."""
+    return next(step for step in pipeline.steps if isinstance(step, DM05TokenizerProcessorStep))
 
 
 def _dm05_config(**kwargs) -> DM05Config:
@@ -419,7 +424,7 @@ def test_dm05_processors_roundtrip(tmp_path):
         "DM05ActionReferenceExtractProcessorStep",
         "DM05StateBinsProcessorStep",
         "DeviceProcessorStep",
-        "DM05ProcessorArtifactsStep",
+        "DM05TokenizerProcessorStep",
     ]
 
     default_processed = loaded_preprocessor(
@@ -435,7 +440,9 @@ def test_dm05_processors_roundtrip(tmp_path):
     assert default_processed["observation.images.front"].device.type == "cpu"
     assert default_processed[STATE_BINS] == [[140, 153, 165]]
     assert any(isinstance(step, DM05StateBinsProcessorStep) for step in loaded_preprocessor.steps)
-    assert any(isinstance(step, DM05ProcessorArtifactsStep) for step in loaded_preprocessor.steps)
+    assert any(isinstance(step, DM05TokenizerProcessorStep) for step in loaded_preprocessor.steps)
+    assert default_processed[f"{MODEL_INPUT_PREFIX}input_ids"].ndim == 2
+    assert f"{MODEL_INPUT_PREFIX}pixel_values" in default_processed
     relative_step = next(
         step for step in loaded_preprocessor.steps if isinstance(step, RelativeActionsProcessorStep)
     )
@@ -824,7 +831,9 @@ def test_dm05_tiny_real_processor_core_save_and_offline_hub_reload(monkeypatch, 
         "meta_data": {},
     }
     before = DM05Tokenization(original_processor, add_state=False).tokenize_robot_batch([sample])
-    after = DM05Tokenization(policy.processor, add_state=False).tokenize_robot_batch([sample])
+    after = DM05Tokenization(
+        _tokenizer_step(preprocessor)._load_processor(), add_state=False
+    ).tokenize_robot_batch([sample])
     torch.testing.assert_close(after, before)
     assert "labels" not in before
 
@@ -892,23 +901,25 @@ def test_dm05_tiny_real_processor_core_save_and_offline_hub_reload(monkeypatch, 
     )
     torch.testing.assert_close(hub_reloaded.state_dict(), policy.state_dict())
     hub_preprocessor, _ = make_pre_post_processors(hub_reloaded.config, pretrained_path=snapshot)
-    assert any(isinstance(step, DM05ProcessorArtifactsStep) for step in hub_preprocessor.steps)
-    hub_tokens = DM05Tokenization(hub_reloaded.processor, add_state=False).tokenize_robot_batch([sample])
+    hub_step = _tokenizer_step(hub_preprocessor)
+    # The reloaded step points at the assets bundled in the snapshot, not at the original source.
+    assert Path(hub_step.processor_name_or_path).name == "dm05_processor"
+    hub_tokens = DM05Tokenization(hub_step._load_processor(), add_state=False).tokenize_robot_batch([sample])
     torch.testing.assert_close(hub_tokens, before)
 
     monkeypatch.chdir(checkpoint.parent)
     reloaded = DM05Policy.from_pretrained(checkpoint.name, strict=True)
-    assert hasattr(reloaded, "processor")
     torch.testing.assert_close(reloaded.state_dict(), gathered_state_dict)
 
     no_state_config = PreTrainedConfig.from_pretrained(checkpoint.name)
     no_state_config.add_state = False
     no_state_config.image_keys = ["observation.images.front"]
     no_state_config.tokenizer_max_length = 64
-    no_state_policy = DM05Policy.from_pretrained(checkpoint.name, config=no_state_config, strict=True)
-    assert no_state_policy._batch_converter._tokenization.add_state is False
-    assert no_state_policy._batch_converter._tokenization.max_length == 64
-    assert no_state_policy._batch_converter.config.image_keys == ["observation.images.front"]
+    no_state_config.processor_name_or_path = str(processor_path)
+    no_state_step = _tokenizer_step(make_dm05_pre_post_processors(no_state_config, stats)[0])
+    assert no_state_step.add_state is False
+    assert no_state_step.tokenizer_max_length == 64
+    assert no_state_step.image_keys == ["observation.images.front"]
 
     resumed_preprocessor, _ = make_pre_post_processors(reloaded.config, pretrained_path=checkpoint.name)
     resumed_normalizer = next(
@@ -1029,10 +1040,10 @@ def test_dm05_tiny_real_processor_core_save_and_offline_hub_reload(monkeypatch, 
 
 def test_dm05_padding_mask_excludes_fabricated_targets_and_preserves_sample_weighting():
     batch = {
-        "input_ids": torch.ones(1, 1, dtype=torch.long),
-        "attention_mask": torch.ones(1, 1, dtype=torch.long),
-        "token_type_ids": torch.zeros(1, 1, dtype=torch.long),
-        "pixel_values": torch.zeros(1, 3, 2, 2),
+        f"{MODEL_INPUT_PREFIX}input_ids": torch.ones(1, 1, dtype=torch.long),
+        f"{MODEL_INPUT_PREFIX}attention_mask": torch.ones(1, 1, dtype=torch.long),
+        f"{MODEL_INPUT_PREFIX}token_type_ids": torch.zeros(1, 1, dtype=torch.long),
+        f"{MODEL_INPUT_PREFIX}pixel_values": torch.zeros(1, 3, 2, 2),
         ACTION: torch.tensor([[[4.0, 5.0, 6.0], [40.0, 50.0, 60.0]]]),
         "action_is_pad": torch.tensor([[False, True]]),
     }
@@ -1047,11 +1058,6 @@ def test_dm05_padding_mask_excludes_fabricated_targets_and_preserves_sample_weig
     torch.nn.Module.__init__(policy)
     policy.config = _dm05_config()
     policy.model = _ShapeOnlyModel()
-    policy._batch_converter = SimpleNamespace(
-        convert_lerobot_batch=lambda values: {
-            key: values[key] for key in ("input_ids", "attention_mask", "token_type_ids", "pixel_values")
-        }
-    )
     converted = policy._prepare_model_inputs(batch, include_actions=True)
 
     assert torch.equal(converted["action_is_pad"], torch.tensor([[False, True]]))

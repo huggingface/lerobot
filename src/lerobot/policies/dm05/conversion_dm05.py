@@ -24,11 +24,11 @@ import torch
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
-from lerobot.processor import ProcessorStep, ProcessorStepRegistry
+from lerobot.processor import ObservationProcessorStep, ProcessorStep, ProcessorStepRegistry
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 
-from .constants import STATE_BINS
+from .constants import MODEL_INPUT_PREFIX, STATE_BINS
 from .core.adapter import build_meta, get_image_keys, normalize_task_batch
 from .core.tokenization import DM05Tokenization, action_to_bin_tokens
 from .core.utils import DM05_STATE_BINS
@@ -67,68 +67,63 @@ class DM05StateBinsProcessorStep(ProcessorStep):
         return features
 
 
-@ProcessorStepRegistry.register(name="dm05_processor_artifacts")
+@ProcessorStepRegistry.register(name="dm05_tokenizer_processor")
 @dataclass
-class DM05ProcessorArtifactsStep(ProcessorStep):
-    """Save Gemma assets with the pipeline, including DCP-only checkpoints."""
+class DM05TokenizerProcessorStep(ObservationProcessorStep):
+    """Build Gemma3 inputs from a normalized, device-resident observation.
+
+    Runs last in the input pipeline, after `DeviceProcessorStep`, so the saved
+    `policy_preprocessor.json` describes the whole path from a raw batch to model-ready
+    inputs. The Gemma assets travel with the pipeline through `save_artifacts`.
+    """
 
     processor_name_or_path: str
+    tokenizer_max_length: int | None = None
+    add_state: bool = True
+    image_keys: list[str] | None = None
+    default_task: str = "Execute the robot action."
+
+    # Injectable so a caller can hand over an already-loaded processor; never serialized.
     processor: Any = field(default=None, repr=False)
+    _tokenization: Any = field(default=None, init=False, repr=False)
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        return transition
+    def _load_processor(self) -> Any:
+        """Load the Gemma processor on first use so building a pipeline stays offline."""
+        if self.processor is None:
+            require_package("transformers", extra="dm05")
+            self.processor = AutoProcessor.from_pretrained(
+                self.processor_name_or_path,
+                fix_mistral_regex=False,
+            )
+        return self.processor
 
-    def get_config(self) -> dict[str, Any]:
-        return {"processor_name_or_path": self.processor_name_or_path}
+    @property
+    def tokenization(self) -> DM05Tokenization:
+        """Return the lazily built DM05 chat-template tokenizer."""
+        if self._tokenization is None:
+            self._tokenization = DM05Tokenization(
+                processor=self._load_processor(),
+                max_length=self.tokenizer_max_length,
+                add_state=self.add_state,
+            )
+        return self._tokenization
 
-    def save_artifacts(self, save_directory: Path) -> dict[str, str]:
-        artifact_path = Path("dm05_processor")
-        target = save_directory / artifact_path
-        # Safetensors saves create this through DM05Policy first; DCP-only saves
-        # serialize only the pipelines and therefore need this fallback.
-        if not (target / "processor_config.json").exists():
-            if self.processor is None:
-                require_package("transformers", extra="dm05")
-                self.processor = AutoProcessor.from_pretrained(
-                    self.processor_name_or_path,
-                    fix_mistral_regex=False,
-                )
-            self.processor.save_pretrained(target)
-        return {"processor_name_or_path": artifact_path.as_posix()}
-
-    def transform_features(
-        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
-    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        return features
-
-
-class DM05LerobotBatchConverter:
-    """Build Gemma3 inputs from a normalized, device-resident LeRobot batch."""
-
-    def __init__(self, config: Any, processor: Any):
-        self.config = config
-        self._tokenization = DM05Tokenization(
-            processor=processor,
-            max_length=config.tokenizer_max_length,
-            add_state=config.add_state,
-        )
-
-    def convert_lerobot_batch(self, batch: dict[str, Any]) -> dict[str, torch.Tensor]:
+    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
         """Tokenize prompt, images, and optional normalized state bins."""
-        if OBS_STATE not in batch:
+        if OBS_STATE not in observation:
             raise ValueError(f"DM05 requires `{OBS_STATE}` after preprocessing.")
-        state = torch.as_tensor(batch[OBS_STATE])
+        state = torch.as_tensor(observation[OBS_STATE])
         if state.ndim == 1:
             state = state.unsqueeze(0)
         if state.ndim != 2:
             raise ValueError(f"DM05 expects batched state [B,D], got {tuple(state.shape)}.")
 
-        image_keys = get_image_keys(batch, self.config.image_keys)
+        image_keys = get_image_keys(observation, self.image_keys)
         if not image_keys:
             raise ValueError("DM05 requires at least one visual observation.")
         image_batches = []
         for key in image_keys:
-            images = batch[key]
+            images = observation[key]
             if not torch.is_tensor(images):
                 raise TypeError(f"DM05 expects tensor images at {key!r}, got {type(images).__name__}.")
             if images.ndim == 3:
@@ -141,10 +136,11 @@ class DM05LerobotBatchConverter:
             image_batches.append(images.float().div(255) if not images.is_floating_point() else images)
 
         batch_size = int(state.shape[0])
-        state_bins = batch.get(STATE_BINS)
-        if self.config.add_state and (not isinstance(state_bins, list) or len(state_bins) != batch_size):
+        complementary_data = self.transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+        state_bins = complementary_data.get(STATE_BINS)
+        if self.add_state and (not isinstance(state_bins, list) or len(state_bins) != batch_size):
             raise ValueError("DM05 state bins are missing or do not match the batch size.")
-        tasks = normalize_task_batch(batch.get("task"), batch_size, "Execute the robot action.")
+        tasks = normalize_task_batch(complementary_data.get("task"), batch_size, self.default_task)
         meta = build_meta(image_keys)
         samples = [
             {
@@ -155,6 +151,37 @@ class DM05LerobotBatchConverter:
             }
             for index in range(batch_size)
         ]
-        tokenized = self._tokenization.tokenize_robot_batch(samples)
+        tokenized = self.tokenization.tokenize_robot_batch(samples)
         device = image_batches[0].device
-        return {key: value.to(device) for key, value in tokenized.items()}
+        return {
+            **observation,
+            **{f"{MODEL_INPUT_PREFIX}{key}": value.to(device) for key, value in tokenized.items()},
+        }
+
+    def get_config(self) -> dict[str, Any]:
+        """Return the serializable processor-step configuration."""
+        return {
+            "processor_name_or_path": self.processor_name_or_path,
+            "tokenizer_max_length": self.tokenizer_max_length,
+            "add_state": self.add_state,
+            "image_keys": list(self.image_keys) if self.image_keys else None,
+            "default_task": self.default_task,
+        }
+
+    def save_artifacts(self, save_directory: Path) -> dict[str, str]:
+        """Save the Gemma assets so a checkpoint reloads its own tokenization offline."""
+        artifact_path = Path("dm05_processor")
+        target = save_directory / artifact_path
+        if not (target / "processor_config.json").exists():
+            self._load_processor().save_pretrained(target)
+        return {"processor_name_or_path": artifact_path.as_posix()}
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Leave policy feature metadata unchanged.
+
+        The tokenized sequence is padded to the longest sample in the batch, so its length
+        varies per batch and no honest fixed shape can be declared here.
+        """
+        return features
