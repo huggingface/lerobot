@@ -40,6 +40,7 @@ Joints listed in `relative_exclude_joints` (e.g., gripper) are kept absolute.
 | `use_relative_actions`    | `bool`      | `False`       | Enable relative-action training                                  |
 | `relative_exclude_joints` | `list[str]` | `["gripper"]` | Joint names to keep absolute (matched by substring)              |
 | `action_feature_names`    | `list[str]` | `None`        | Auto-populated from dataset metadata at runtime by `make_policy` |
+| `relative_state_index_map` | `list[int]` | `None`       | Explicit action-dim → `observation.state` column map for relative actions. Set when the state is not a prefix-aligned copy of the action (e.g. interleaved `[pos, vel]`). `None` = legacy `state[:action_dim]` prefix. Must match the map passed to `recompute-stats`. |
 
 ### Training example
 
