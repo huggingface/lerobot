@@ -30,7 +30,7 @@ import torch.nn.functional as torch_nn_functional
 from huggingface_hub import snapshot_download
 from torch import Tensor
 
-from lerobot.configs import NormalizationMode, PreTrainedConfig
+from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import require_package
 
@@ -456,25 +456,8 @@ class DM05Policy(PreTrainedPolicy):
         """Return the trainable DM05 parameters."""
         return self.parameters()
 
-    def _uses_quantile_clipping(self, feature_type: str) -> bool:
-        """Return whether a normalized feature should be clipped to the model range."""
-        return self.config.norm_clip and self.config.normalization_mapping.get(feature_type) in {
-            NormalizationMode.QUANTILES,
-            NormalizationMode.QUANTILE10,
-        }
-
-    def _prepare_policy_batch(self, batch: dict[str, Any], *, include_actions: bool) -> dict[str, Any]:
-        """Apply DM05-specific clipping before the batch reaches the converter."""
-        batch = dict(batch)
-        if self._uses_quantile_clipping("STATE") and OBS_STATE in batch:
-            batch[OBS_STATE] = torch.as_tensor(batch[OBS_STATE]).clamp(-1.0, 1.0)
-        if include_actions and self._uses_quantile_clipping("ACTION") and ACTION in batch:
-            batch[ACTION] = torch.as_tensor(batch[ACTION]).clamp(-1.0, 1.0)
-        return batch
-
     def _prepare_model_inputs(self, batch: dict[str, Any], include_actions: bool) -> dict[str, Any]:
         """Shape a tokenized batch for the fixed-size DM05 core."""
-        batch = self._prepare_policy_batch(batch, include_actions=include_actions)
         model_inputs = {
             key.removeprefix(MODEL_INPUT_PREFIX): value
             for key, value in batch.items()

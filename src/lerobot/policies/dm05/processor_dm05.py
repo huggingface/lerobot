@@ -19,7 +19,7 @@ from typing import Any
 
 import torch
 
-from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.configs import NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
@@ -40,7 +40,11 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .configuration_dm05 import DM05Config
 from .constants import ACTION_REFERENCE_OFFSET
-from .conversion_dm05 import DM05StateBinsProcessorStep, DM05TokenizerProcessorStep
+from .conversion_dm05 import (
+    DM05ClipNormalizedProcessorStep,
+    DM05StateBinsProcessorStep,
+    DM05TokenizerProcessorStep,
+)
 from .stats_validation_dm05 import (
     dm05_prepare_stats_command,
     dm05_stats_complete,
@@ -221,6 +225,14 @@ def make_dm05_pre_post_processors(
     processor_source = config.processor_name_or_path or config.pretrained_name_or_path
     if not processor_source:
         raise ValueError("DM05 requires processor_name_or_path when creating a new processor pipeline.")
+
+    def clips_quantiles(feature_type: str) -> bool:
+        """Return whether a normalized feature should be clipped to the model range."""
+        return config.norm_clip and config.normalization_mapping.get(feature_type) in {
+            NormalizationMode.QUANTILES,
+            NormalizationMode.QUANTILE10,
+        }
+
     return make_policy_processor_pipelines(
         input_steps=[
             RenameObservationsProcessorStep(rename_map={}),
@@ -230,6 +242,10 @@ def make_dm05_pre_post_processors(
             relative_actions,
             normalizer,
             DM05ActionReferenceExtractProcessorStep(),
+            DM05ClipNormalizedProcessorStep(
+                clip_state=clips_quantiles("STATE"),
+                clip_action=clips_quantiles("ACTION"),
+            ),
             DM05StateBinsProcessorStep(),
             DeviceProcessorStep(device=config.device),
             DM05TokenizerProcessorStep(

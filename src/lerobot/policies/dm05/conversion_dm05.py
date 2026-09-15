@@ -39,6 +39,46 @@ else:
     AutoProcessor = None
 
 
+@ProcessorStepRegistry.register(name="dm05_clip_normalized_processor")
+@dataclass
+class DM05ClipNormalizedProcessorStep(ProcessorStep):
+    """Clamp quantile-normalized state and action into the range DM05 was trained on.
+
+    Runs after `DM05ActionReferenceExtractProcessorStep` so the temporary probes are already
+    consumed; clipping them would corrupt the relative-action reference offset. Whether each
+    field is clipped is decided once, at pipeline construction, from `norm_clip` and the
+    normalization mapping, so a reloaded pipeline cannot silently disagree with the checkpoint.
+    """
+
+    clip_state: bool = False
+    clip_action: bool = False
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        result = transition.copy()
+        if self.clip_state:
+            observation = result.get(TransitionKey.OBSERVATION)
+            state = observation.get(OBS_STATE) if isinstance(observation, dict) else None
+            if state is not None:
+                result[TransitionKey.OBSERVATION] = {
+                    **observation,
+                    OBS_STATE: torch.as_tensor(state).clamp(-1.0, 1.0),
+                }
+        if self.clip_action:
+            action = result.get(TransitionKey.ACTION)
+            if action is not None:
+                result[TransitionKey.ACTION] = torch.as_tensor(action).clamp(-1.0, 1.0)
+        return result
+
+    def get_config(self) -> dict[str, Any]:
+        """Return the serializable processor-step configuration."""
+        return {"clip_state": self.clip_state, "clip_action": self.clip_action}
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
 @ProcessorStepRegistry.register(name="dm05_state_bins_processor")
 @dataclass
 class DM05StateBinsProcessorStep(ProcessorStep):

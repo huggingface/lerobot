@@ -422,6 +422,7 @@ def test_dm05_processors_roundtrip(tmp_path):
     assert [type(step).__name__ for step in loaded_preprocessor.steps[5:]] == [
         "NormalizerProcessorStep",
         "DM05ActionReferenceExtractProcessorStep",
+        "DM05ClipNormalizedProcessorStep",
         "DM05StateBinsProcessorStep",
         "DeviceProcessorStep",
         "DM05TokenizerProcessorStep",
@@ -497,27 +498,24 @@ def test_dm05_processors_roundtrip(tmp_path):
     assert "observation.images.front" in renamed
     assert torch.is_tensor(renamed["observation.images.front"])
 
-    def prepare_policy_batch(policy_config, processed):
-        policy = object.__new__(DM05Policy)
-        torch.nn.Module.__init__(policy)
-        policy.config = policy_config
-        return policy._prepare_policy_batch(processed, include_actions=True)
-
     outlier = {
         OBS_STATE: torch.zeros(3),
         ACTION: torch.tensor([[20.0, 0.0, 0.0]]),
         "observation.images.front": torch.zeros(3, 16, 16),
     }
-    clipped = prepare_policy_batch(config, loaded_preprocessor(outlier.copy()))
+    clipped = loaded_preprocessor(outlier.copy())
     unclipped_config = _dm05_config(
         use_relative_actions=False,
         norm_clip=False,
         processor_name_or_path=str(processor_path),
     )
     unclipped_preprocessor, _ = make_dm05_pre_post_processors(unclipped_config, stats)
-    unclipped = prepare_policy_batch(unclipped_config, unclipped_preprocessor(outlier.copy()))
+    unclipped = unclipped_preprocessor(outlier.copy())
     assert clipped[ACTION][0, 0] == 1
     assert unclipped[ACTION][0, 0] > 1
+    assert [step.clip_state for step in unclipped_preprocessor.steps if hasattr(step, "clip_state")] == [
+        False
+    ]
 
     # Absolute actions do not require state/action dimensions to match.
     asymmetric_config = _dm05_config()
@@ -609,14 +607,9 @@ def test_dm05_relative_actions_use_generation_state_for_training_and_inference(t
         }
     )
 
-    policy = object.__new__(DM05Policy)
-    torch.nn.Module.__init__(policy)
-    policy.config = config
-    prepared = policy._prepare_policy_batch(processed, include_actions=True)
-
     # Both timesteps use the same generation-time state; the gripper stays absolute.
     torch.testing.assert_close(
-        prepared[ACTION],
+        processed[ACTION],
         torch.tensor([[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]]),
         atol=2e-6,
         rtol=0,
