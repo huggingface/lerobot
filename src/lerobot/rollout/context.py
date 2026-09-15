@@ -43,10 +43,10 @@ from lerobot.processor import (
     RobotAction,
     RobotObservation,
     RobotProcessorPipeline,
+    bind_relative_anchor,
     make_default_processors,
     rename_stats,
 )
-from lerobot.processor.relative_action_processor import RelativeActionsProcessorStep
 from lerobot.robots import make_robot_from_config
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
@@ -56,7 +56,6 @@ from .configs import RolloutConfig
 from .inference import (
     InferenceEngine,
     RTCInferenceConfig,
-    SyncInferenceConfig,
     create_inference_engine,
 )
 from .inference.rtc import supports_rtc_inference
@@ -552,19 +551,11 @@ def build_rollout_context(
         },
     )
 
-    relative_action_step = next(
-        (
-            step
-            for step in getattr(preprocessor, "steps", ())
-            if isinstance(step, RelativeActionsProcessorStep) and step.enabled
-        ),
-        None,
-    )
-    if isinstance(cfg.inference, SyncInferenceConfig) and relative_action_step is not None:
-        raise NotImplementedError(
-            "SyncInferenceEngine does not support policies with relative actions for now."
-            "Use --inference.type=rtc or remove relative action processor steps from the policy pipeline."
-        )
+    # A relative-action chunk is anchored to the state it was predicted from, and the engines
+    # below rerun the preprocessor once per tick. Hand the step the policy's queue depth so it
+    # holds that anchor until the chunk drains, instead of following the moving arm. Harmless
+    # for the chunk-at-once engines (RTC), whose policy queue is always empty.
+    bind_relative_anchor(policy, preprocessor)
 
     # --- 7. Inference strategy (needs policy + pre/post + hardware) --
     logger.info(

@@ -33,19 +33,12 @@ from .base import InferenceEngine, PolicyQuery
 logger = logging.getLogger(__name__)
 
 
-# TODO(Steven): support relative-action policies.  The per-tick flow refreshes
-# ``RelativeActionsProcessorStep._last_state`` every call, so cached chunk
-# actions popped on later ticks get reanchored to the *current* robot state and
-# absolute targets drift through the chunk.  Relative-action policies are
-# rejected at context-build time today; RTC postprocesses the whole chunk and
-# is unaffected.
-#
-# Candidate fix: drive the policy via ``predict_action_chunk`` and serve a
-# local FIFO of postprocessed actions.  Eliminates drift by construction and
-# saves per-tick pre/post work, but bypasses ``select_action`` — needs
-# fallbacks for SAC (raises), ACT temporal ensembling (ensembler lives in
-# ``select_action``), and Diffusion-family (obs-history queues populated as a
-# side effect of ``select_action``).
+# Relative-action support needs nothing here. A predicted chunk of offsets is anchored to
+# the robot state at prediction time, and this engine reruns the pre/post pipeline every
+# tick, so the anchor has to be held while the chunk drains -- but that is
+# ``RelativeActionsProcessorStep``'s own job once ``bind_relative_anchor`` has given it the
+# policy's queue depth (done in ``build_rollout_context``). ``select_action`` stays on the
+# hot path, so per-tick side effects (e.g. LingBot-VA keyframe feedback) are preserved.
 
 
 class SyncInferenceEngine(InferenceEngine):

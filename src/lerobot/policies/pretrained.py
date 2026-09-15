@@ -245,6 +245,23 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             elif queue is not None:
                 queue.clear()
 
+    def queued_action_count(self) -> int:
+        """Number of actions already computed and waiting to be served.
+
+        0 for a policy that keeps no action queue (never chunks) or whose queue is
+        currently empty (about to compute a fresh chunk). Reads the same queues
+        :meth:`drop_queued_actions` clears, named in :attr:`_action_queue_attrs`.
+        """
+        total = 0
+        for attr in self._action_queue_attrs:
+            queue = getattr(self, attr, None)
+            if isinstance(queue, dict):
+                action_queue = queue.get(ACTION)
+                total += len(action_queue) if action_queue is not None else 0
+            elif queue is not None:
+                total += len(queue)
+        return total
+
     def supports_rtc(self) -> bool:
         """Whether this policy implements Real-Time Chunking inference semantics."""
         return False
