@@ -33,7 +33,7 @@ This script performs the following steps:
 6.  Optionally pushes all the new artifacts to the Hugging Face Hub.
 
 Usage:
-    python src/lerobot/processor/migrate_policy_normalization.py \
+    python -m lerobot.processor.migrate_policy_normalization \
         --pretrained-path lerobot/act_aloha_sim_transfer_cube_human \
         --push-to-hub \
         --branch main
