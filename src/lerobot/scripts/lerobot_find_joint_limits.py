@@ -44,6 +44,7 @@ import numpy as np
 from lerobot.model import RobotKinematics
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
+    almond_axol,
     bi_openarm_follower,
     bi_rebot_b601_follower,
     bi_so_follower,
@@ -56,6 +57,7 @@ from lerobot.robots import (  # noqa: F401
 )
 from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
+    almond_axol_vr,
     bi_openarm_leader,
     bi_openarm_mini,
     bi_rebot_102_leader,
