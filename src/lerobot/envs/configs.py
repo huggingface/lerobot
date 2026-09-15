@@ -17,7 +17,7 @@ from __future__ import annotations
 import abc
 import importlib
 from dataclasses import dataclass, field, fields
-from typing import Any
+from typing import Any, Literal
 
 import draccus
 import gymnasium as gym
@@ -724,6 +724,20 @@ class IsaaclabArenaEnv(HubEnvConfig):
             ),
             PolicyProcessorPipeline(steps=[]),
         )
+
+
+@EnvConfig.register_subclass("unitree_g1_mujoco")
+@dataclass
+class UnitreeG1MujocoEnv(HubEnvConfig):
+    """Config for the MuJoCo simulation of the Unitree G1.
+
+    The end effector selects the MuJoCo model, and with it the finger actuators and the
+    wrist cameras that exist: "dummy" for bare wrists, "dex1" for the parallel grippers,
+    "dex3" for the three-finger hands.
+    """
+
+    hub_path: str = "lerobot/unitree-g1-mujoco"
+    end_effector: Literal["dummy", "dex1", "dex3"] = "dex1"
 
 
 @EnvConfig.register_subclass("libero_plus")

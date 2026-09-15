@@ -17,6 +17,7 @@
 from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig
+from lerobot.envs.configs import UnitreeG1MujocoEnv
 
 from ..config import RobotConfig
 
@@ -59,11 +60,9 @@ class UnitreeG1Config(RobotConfig):
     # Launch mujoco simulation
     is_simulation: bool = True
 
-    # Which end effector the arms carry: "dex1" parallel grippers, "dex3" articulated
-    # hands, or "dummy" for bare wrists. In simulation this picks the MuJoCo model, and
-    # with it the finger actuators and whether the wrist cameras exist at all. On the
-    # real robot it is currently only a declaration of what is bolted on.
-    end_effector: str = "dex1"
+    # The MuJoCo world brought up when `is_simulation` is set. Its `end_effector` picks the
+    # model, and with it the finger actuators and whether the wrist cameras exist at all.
+    sim_env: UnitreeG1MujocoEnv = field(default_factory=UnitreeG1MujocoEnv)
 
     # Socket config for ZMQ bridge
     robot_ip: str = "192.168.123.164"  # default G1 IP

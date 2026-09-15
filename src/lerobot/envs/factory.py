@@ -61,7 +61,6 @@ def make_env(
     use_async_envs: bool = False,
     hub_cache_dir: str | None = None,
     trust_remote_code: bool = False,
-    **kwargs: Any,
 ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
     """Makes a gym vector environment according to the config or Hub reference.
 
@@ -75,13 +74,8 @@ def make_env(
         hub_cache_dir (str | None): Optional cache path for downloaded hub files.
         trust_remote_code (bool): **Explicit consent** to execute remote code from the Hub.
             Default False — must be set to True to import/exec hub `env.py`.
-        **kwargs: Forwarded verbatim to a hub env's `make_env`, for options only that env
-            knows about (e.g. the G1 sim's `end_effector`), and rejected for local EnvConfigs.
-            An env with several such options should define a `HubEnvConfig` subclass and be
-            passed as `cfg` instead, so this stays the exception.
     Raises:
         ValueError: if n_envs < 1
-        TypeError: if extra keyword arguments are passed alongside a local EnvConfig
         ModuleNotFoundError: If the requested env package is not installed
 
     Returns:
@@ -113,9 +107,7 @@ def make_env(
 
         # call the hub-provided make_env
         env_cfg = None if isinstance(cfg, str) else cfg
-        raw_result = _call_make_env(
-            module, n_envs=n_envs, use_async_envs=use_async_envs, cfg=env_cfg, **kwargs
-        )
+        raw_result = _call_make_env(module, n_envs=n_envs, use_async_envs=use_async_envs, cfg=env_cfg)
 
         # normalize the return into {suite: {task_id: vec_env}}
         return _normalize_hub_result(raw_result)
@@ -123,14 +115,6 @@ def make_env(
     # At this point, cfg must be an EnvConfig (not a string) since hub_path would have been set otherwise
     if isinstance(cfg, str):
         raise TypeError("cfg should be an EnvConfig at this point")
-
-    # Only a hub env can consume extra arguments. Locally there is nothing to forward them
-    # to, so accepting them silently would turn a misspelt argument into a no-op.
-    if kwargs:
-        raise TypeError(
-            f"make_env() got unexpected keyword arguments {sorted(kwargs)}. Extra arguments are "
-            "only forwarded to a hub env's own `make_env`, not to a local EnvConfig."
-        )
 
     if n_envs < 1:
         raise ValueError("`n_envs` must be at least 1")

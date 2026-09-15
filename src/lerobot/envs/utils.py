@@ -453,15 +453,9 @@ def _import_hub_module(local_file: str, repo_id: str) -> Any:
     return module
 
 
-def _call_make_env(
-    module: Any, n_envs: int, use_async_envs: bool, cfg: EnvConfig | None, **kwargs: Any
-) -> Any:
+def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, cfg: EnvConfig | None) -> Any:
     """
     Ensure module exposes make_env and call it.
-
-    Extra keyword arguments are forwarded to the hub's ``make_env``, which is how a caller
-    reaches options that only that env defines -- the G1 sim, for instance, picks its end
-    effector from ``end_effector``.
     """
     if not hasattr(module, "make_env"):
         raise AttributeError(
@@ -470,9 +464,9 @@ def _call_make_env(
     entry_fn = module.make_env
     # Only pass cfg if it's not None (i.e., when an EnvConfig was provided, not a string hub ID)
     if cfg is not None:
-        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, cfg=cfg, **kwargs)
+        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, cfg=cfg)
     else:
-        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, **kwargs)
+        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs)
 
 
 def _normalize_hub_result(result: Any) -> dict[str, dict[int, gym.vector.VectorEnv]]:
