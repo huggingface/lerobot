@@ -40,7 +40,7 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .configuration_dm05 import DM05Config
 from .constants import ACTION_REFERENCE_OFFSET
-from .conversion_dm05 import DM05ProcessorArtifactsStep, DM05StateBinsProcessorStep
+from .conversion_dm05 import DM05StateBinsProcessorStep, DM05TokenizerProcessorStep
 from .stats_validation_dm05 import (
     dm05_prepare_stats_command,
     dm05_stats_complete,
@@ -232,7 +232,12 @@ def make_dm05_pre_post_processors(
             DM05ActionReferenceExtractProcessorStep(),
             DM05StateBinsProcessorStep(),
             DeviceProcessorStep(device=config.device),
-            DM05ProcessorArtifactsStep(processor_name_or_path=processor_source),
+            DM05TokenizerProcessorStep(
+                processor_name_or_path=processor_source,
+                tokenizer_max_length=config.tokenizer_max_length,
+                add_state=config.add_state,
+                image_keys=config.image_keys,
+            ),
         ],
         output_steps=[
             DeviceProcessorStep(device="cpu", float_dtype="float32"),

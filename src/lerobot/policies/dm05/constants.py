@@ -20,3 +20,8 @@ ACTION_REFERENCE_OFFSET = "_dm05_action_reference_offset"
 
 # Runtime-only discretized state carried from the preprocessor to the policy.
 STATE_BINS = "_dm05_state_bins"
+
+# Gemma3 processor outputs carried from the preprocessor to the policy. They sit under the
+# observation prefix so `batch_to_transition` keeps them on a round trip, unlike the private
+# `_dm05_*` keys above, which its complementary-data allowlist drops.
+MODEL_INPUT_PREFIX = "observation.dm05."

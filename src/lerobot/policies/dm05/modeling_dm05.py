@@ -23,7 +23,7 @@ import logging
 import os
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Unpack
+from typing import Any, Unpack
 
 import torch
 import torch.nn.functional as torch_nn_functional
@@ -32,13 +32,12 @@ from torch import Tensor
 
 from lerobot.configs import NormalizationMode, PreTrainedConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
-from lerobot.utils.import_utils import _transformers_available, require_package
+from lerobot.utils.import_utils import require_package
 
 from ..common.vla_utils import pad_vector
 from ..pretrained import ActionSelectKwargs, PreTrainedPolicy, T
 from .configuration_dm05 import DM05Config
-from .constants import ACTION_REFERENCE_OFFSET
-from .conversion_dm05 import DM05LerobotBatchConverter
+from .constants import ACTION_REFERENCE_OFFSET, MODEL_INPUT_PREFIX
 from .core.adapter import (
     flatten_feature_names,
     import_dm05_core,
@@ -53,11 +52,6 @@ from .stats_validation_dm05 import (
 )
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING or _transformers_available:
-    from transformers import AutoProcessor
-else:
-    AutoProcessor = None
 
 
 def setup_compiled_suffix(config: Any, model: Any) -> bool:
@@ -237,23 +231,6 @@ class DM05Policy(PreTrainedPolicy):
             )
 
         core_config_cls, core_model_cls = import_dm05_core()
-        if is_lerobot_checkpoint:
-            processor_source = config.processor_name_or_path
-            if processor_source is None:
-                if config.pretrained_path is None:
-                    raise ValueError("DM05 LeRobot checkpoints require config.pretrained_path.")
-                processor_source = _resolve_processor_source(
-                    config.pretrained_path,
-                    revision=config.pretrained_revision,
-                )
-        else:
-            processor_source = config.processor_name_or_path or raw_source
-        self.processor = AutoProcessor.from_pretrained(
-            processor_source,
-            revision=config.pretrained_revision,
-            fix_mistral_regex=False,
-        )
-
         torch_dtype = resolve_torch_dtype(config.dtype)
         if str(config.device) == "cuda" and torch.cuda.is_available():
             local_rank = os.environ.get("LOCAL_RANK")
@@ -316,13 +293,10 @@ class DM05Policy(PreTrainedPolicy):
         config.core_config = _core_config_payload(self.model)
         self.model.to(config.device)
         self._compile_suffix_active = setup_compiled_suffix(self.config, self.model)
-        self._batch_converter = DM05LerobotBatchConverter(config, self.processor)
         self.reset()
 
     def _save_pretrained(self, save_directory: Path) -> None:
-        """Use the base save path, then add the Gemma processor assets."""
-        from lerobot.distributed.utils import is_main_process
-
+        """Use the base save path; the preprocessor pipeline saves the Gemma assets."""
         self.config.core_config = _core_config_payload(self.model)
 
         # The VLM input embedding is tied to lm_head and is reconstructed on load.
@@ -335,8 +309,6 @@ class DM05Policy(PreTrainedPolicy):
             super()._save_pretrained(save_directory)
         finally:
             hook.remove()
-        if is_main_process():
-            self.processor.save_pretrained(save_directory / "dm05_processor")
 
     @classmethod
     def from_pretrained(
@@ -501,9 +473,18 @@ class DM05Policy(PreTrainedPolicy):
         return batch
 
     def _prepare_model_inputs(self, batch: dict[str, Any], include_actions: bool) -> dict[str, Any]:
-        """Tokenize a processed batch and shape inputs for the fixed-size DM05 core."""
+        """Shape a tokenized batch for the fixed-size DM05 core."""
         batch = self._prepare_policy_batch(batch, include_actions=include_actions)
-        model_inputs = self._batch_converter.convert_lerobot_batch(batch)
+        model_inputs = {
+            key.removeprefix(MODEL_INPUT_PREFIX): value
+            for key, value in batch.items()
+            if key.startswith(MODEL_INPUT_PREFIX)
+        }
+        if "input_ids" not in model_inputs:
+            raise ValueError(
+                f"DM05 requires a batch produced by its preprocessor pipeline; no {MODEL_INPUT_PREFIX}* "
+                "keys found. Run the batch through DM05TokenizerProcessorStep first."
+            )
         model_inputs.update(
             {
                 key: batch[key]
