@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 import threading
 import time
@@ -118,6 +119,32 @@ def make_robot_controller(name: str | None) -> RobotController | None:
 kTopicLowCommand_Debug = "rt/lowcmd"
 kTopicLowState = "rt/lowstate"
 
+# Side-channel for the CAN hands, which are not among the G1's 29 motors and so cannot ride
+# lowcmd. Served by run_g1_server.py --grippers; keep in step with the port it binds.
+GRIPPER_PORT = 6002
+
+# Gripper keys, paired with the single-letter side the bridge's JSON payload uses.
+GRIPPER_KEYS: tuple[tuple[str, str], ...] = (("L", "left_gripper.pos"), ("R", "right_gripper.pos"))
+
+# Dex3 fingers at full clench, in the hand's motor order (thumb 0-2, middle 0-1, index 0-1).
+# Open is all zeros; a command is closedness scaled onto these. The hands mirror, so the two
+# sides differ only in sign. thumb_0 is abduction rather than curl and stays put.
+HAND_CURL_CLOSED = {
+    "left": (0.0, 1.0472, 1.74533, -1.5708, -1.74533, -1.5708, -1.74533),
+    "right": (0.0, -1.0472, -1.74533, 1.5708, 1.74533, 1.5708, 1.74533),
+}
+
+# Dex1 two-jaw gripper, per jaw, in metres of slide travel. Both jaws take the *same*
+# target: the model mirrors their slide axes, so equal values move them symmetrically.
+# Measured jaw separation across the joint range is 107 mm at the positive limit and 12 mm
+# at the negative one, so closed is the negative end. Unlike Dex3's fingers these do not
+# curl from zero, which is why open is carried explicitly rather than assumed to be 0.
+# JAW_OPEN and the gains are the sim's own open-hold values.
+JAW_OPEN = 0.0245
+JAW_CLOSED = -0.023
+JAW_KP = 1000.0
+JAW_KD = 25.0
+
 
 @dataclass
 class MotorState:
@@ -192,6 +219,19 @@ class UnitreeG1(Robot):
         self.subscribe_thread = None
 
         self.arm_ik = G1_29_ArmIK() if config.gravity_compensation else None
+
+        # Gripper commands ride their own ZMQ socket rather than lowcmd: the Damiao hands sit
+        # on a CAN bus the bridge owns, not on the G1's 29 motors.
+        self._gripper_sock = None
+        self._gripper_last: dict[str, float] = {}
+        # Last commanded closedness per hand, echoed back as observation under `raw_proprio`.
+        # The CAN hands report no position, and the teleop recordings never had one either:
+        # their gripper "state" is the previous command verbatim, so this reproduces it.
+        self._gripper_obs: dict[str, float] = {"left_gripper.pos": 0.0, "right_gripper.pos": 0.0}
+        self._gripper_drops = 0
+        self._gripper_drop_logged = 0.0
+        self._hand_cmd_pubs: dict[str, object] = {}
+        self._hand_cmd_msgs: dict[str, tuple] = {}
 
         # Controller loaded dynamically
         self.controller: RobotController | None = make_robot_controller(config.controller)
@@ -280,28 +320,54 @@ class UnitreeG1(Robot):
     def observation_features(self) -> dict[str, type | tuple]:
         # A controller advertising its own proprio state (SONIC's 64-D token echo) replaces the
         # raw joint positions rather than extending them, the way action_features hands the
-        # action space over to the controller.
+        # action space over to the controller. `raw_proprio` opts back out of that handover.
+        if self.config.raw_proprio:
+            return {**self._proprio_ft, **self._grippers_ft, **self._cameras_ft}
+
         controller_ft = getattr(self.controller, "observation_ft", None)
         proprio_ft = self._motors_ft if controller_ft is None else dict(controller_ft)
         return {**proprio_ft, **self._cameras_ft}
+
+    @property
+    def _proprio_ft(self) -> dict[str, type]:
+        """Joint angles under the ``.pos`` suffix that scalar state is routed by.
+
+        The G1 spells its joints ``.q`` everywhere else, inheriting it from the DDS naming,
+        but that suffix is the robot's own: what reaches a policy as ``observation.state`` is
+        selected by ``.pos``, which is also what SONIC's token features already use. The
+        rename lives here so the convention stays in one place.
+        """
+        return {f"{G1_29_JointIndex(motor).name}.pos": float for motor in G1_29_JointIndex}
+
+    @property
+    def _grippers_ft(self) -> dict[str, type]:
+        """Closedness per hand, 0 open .. 1 closed. Not motors, so not part of ``.q``."""
+        if not self.config.grippers:
+            return {}
+        return dict.fromkeys((key for _, key in GRIPPER_KEYS), float)
 
     @cached_property
     def action_features(self) -> dict[str, type]:
         # No controller configured at all: raw 29-DoF joint teleop.
         if self.controller is None:
-            return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
+            return {
+                **{f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex},
+                **self._grippers_ft,
+            }
 
+        # A controller that advertises its own action space takes over the joints, but the
+        # hands are the robot's, not the controller's, so they are appended either way.
         # Whole-body controllers (SONIC): 64-D latent token.
         controller_ft = getattr(self.controller, "action_ft", None)
         if controller_ft is not None:
-            return dict(controller_ft)
+            return {**controller_ft, **self._grippers_ft}
 
         # Locomotion controllers (GR00T / Holosoma): arm joint targets + joystick axes.
         # TODO: have GR00T/Holosoma advertise their own action_features too, so every
         # controller declares its action space and this fallthrough can be dropped.
         arm_features = {f"{G1_29_JointArmIndex(motor).name}.q": float for motor in G1_29_JointArmIndex}
         remote_features = dict.fromkeys(REMOTE_AXES, float)
-        return {**arm_features, **remote_features}
+        return {**arm_features, **remote_features, **self._grippers_ft}
 
     def _controller_loop(self):
         """Background thread that runs controller at policy's control_dt."""
@@ -354,6 +420,65 @@ class UnitreeG1(Robot):
     def configure(self) -> None:
         pass
 
+    def _connect_grippers(self) -> None:
+        """Open the side channel the hands are driven over."""
+        if not self.config.grippers:
+            return
+        if self.config.is_simulation:
+            self._connect_grippers_sim()
+            return
+
+        import zmq
+
+        # Bounded queue and no linger: a bridge that stops draining must not stall the caller,
+        # and a stale grip command is worth less than the control loop it would block. The
+        # send in _send_gripper_cmd stays non-blocking.
+        self._gripper_sock = zmq.Context.instance().socket(zmq.PUSH)
+        self._gripper_sock.setsockopt(zmq.LINGER, 0)
+        self._gripper_sock.setsockopt(zmq.SNDHWM, 4)
+        self._gripper_sock.connect(f"tcp://{self.config.robot_ip}:{GRIPPER_PORT}")
+        logger.info(f"[UnitreeG1] gripper commands -> {self.config.robot_ip}:{GRIPPER_PORT}")
+
+    def _connect_grippers_sim(self) -> None:
+        """Publish hand commands into the MuJoCo bridge, which subscribes to these."""
+        from unitree_sdk2py.idl.default import unitree_hg_msg_dds__HandCmd_ as HandCmd_default
+        from unitree_sdk2py.idl.unitree_hg.msg.dds_ import HandCmd_
+
+        # The sim can be built with either end effector and the two want different commands,
+        # so ask it which it has rather than assuming Dex3: driving two prismatic jaws with a
+        # finger-curl vector parks one jaw and sends the other to a travel limit, which reads
+        # as the gripper sliding sideways instead of closing.
+        sim = getattr(self.sim_env, "sim_env", None)
+        hand_dof = getattr(sim, "num_hand_dof", len(HAND_CURL_CLOSED["left"]))
+
+        for side in ("left", "right"):
+            publisher = self._ChannelPublisher(f"rt/dex3/{side}/cmd", HandCmd_)
+            publisher.Init()
+            if hand_dof == 2:
+                at_open, at_closed = (JAW_OPEN,) * 2, (JAW_CLOSED,) * 2
+                # The sim tracks hand targets with a PD whose gains it reads off this very
+                # message, so a command carrying only a position produces no torque at all
+                # and the jaws just sag open. These are metres of slide travel; a Dex3 sim
+                # would need its own gains, in radians of finger curl.
+                kp, kd = JAW_KP, JAW_KD
+            else:
+                at_closed = HAND_CURL_CLOSED[side]
+                at_open = (0.0,) * len(at_closed)
+                kp, kd = 0.0, 0.0
+
+            # Gains never change, so they are written once here rather than every tick.
+            msg = HandCmd_default()
+            for i in range(len(at_closed)):
+                msg.motor_cmd[i].kp = kp
+                msg.motor_cmd[i].kd = kd
+                msg.motor_cmd[i].dq = 0.0
+                msg.motor_cmd[i].tau = 0.0
+
+            self._hand_cmd_pubs[side] = publisher
+            self._hand_cmd_msgs[side] = (msg, at_open, at_closed)
+        hands = "Dex1 two-jaw grippers" if hand_dof == 2 else "Dex3 hands"
+        logger.info(f"[UnitreeG1] gripper commands -> sim {hands} (rt/dex3/{{left,right}}/cmd)")
+
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
         # Initialize DDS channel and simulation environment
         if self.config.is_simulation:
@@ -382,6 +507,8 @@ class UnitreeG1(Robot):
                 cam.connect()
 
         logger.info(f"Connected {len(self._cameras)} camera(s).")
+
+        self._connect_grippers()
 
         # Initialize lowcmd message
         self.crc = CRC()
@@ -486,6 +613,10 @@ class UnitreeG1(Robot):
             self.sim_env = None
             self._env_wrapper = None
 
+        if self._gripper_sock is not None:
+            self._gripper_sock.close()
+            self._gripper_sock = None
+
         # Disconnect cameras
         for cam in self._cameras.values():
             cam.disconnect()
@@ -505,6 +636,9 @@ class UnitreeG1(Robot):
             obs[f"{name}.q"] = lowstate.motor_state[idx].q
             obs[f"{name}.dq"] = lowstate.motor_state[idx].dq
             obs[f"{name}.tau"] = lowstate.motor_state[idx].tau_est
+            if self.config.raw_proprio:
+                # Same angle under the suffix `_proprio_ft` advertises it by.
+                obs[f"{name}.pos"] = lowstate.motor_state[idx].q
 
         # IMU - gyroscope
         if lowstate.imu_state.gyroscope:
@@ -540,6 +674,11 @@ class UnitreeG1(Robot):
         if self.controller is not None and hasattr(self.controller, "observation_state"):
             obs.update(self.controller.observation_state())
 
+        # The hands are on the bridge's CAN bus and report nothing back, so their state is
+        # ours to supply.
+        if self.config.grippers:
+            obs.update(self._gripper_obs)
+
         # Cameras - read images from ZMQ cameras
         for cam_name, cam in self._cameras.items():
             if getattr(cam, "use_rgb", True):
@@ -549,7 +688,85 @@ class UnitreeG1(Robot):
 
         return obs
 
+    def _send_gripper_cmd(self, action: RobotAction) -> None:
+        """Forward gripper closedness to the hands.
+
+        Same 0..1 closedness either way, different transport: in sim the hands are whichever
+        end effector the MuJoCo model carries, driven over DDS by its bridge, while on
+        hardware they are two-finger CAN grippers behind the ZMQ bridge.
+
+        On hardware this is sent only on change: the bridge writes CAN on every message it
+        accepts, and a policy streaming at 30 Hz would otherwise saturate the bus holding a
+        constant grip.
+        """
+        if self.config.is_simulation:
+            self._send_gripper_cmd_sim(action)
+            return
+        if self._gripper_sock is None:
+            return
+
+        import zmq
+
+        cmd = {}
+        for side, key in GRIPPER_KEYS:
+            value = action.get(key)
+            if value is None:
+                continue
+            value = min(1.0, max(0.0, float(value)))
+            if self._gripper_last.get(side) != value:
+                cmd[side] = value
+        if not cmd:
+            return
+        try:
+            self._gripper_sock.send_string(json.dumps(cmd), flags=zmq.NOBLOCK)
+        except zmq.ZMQError as exc:
+            # A stalled hand must never take the balance loop down with it. Throttled because
+            # the usual cause -- nothing listening on the robot's gripper port -- fails on
+            # every tick, and at policy rate that buries the rest of the log.
+            self._gripper_drops += 1
+            now = time.time()
+            if now - self._gripper_drop_logged > 5.0:
+                logger.warning(
+                    f"[UnitreeG1] dropped {self._gripper_drops} gripper command(s), latest "
+                    f"{cmd}: {exc}. Is run_g1_server.py running with --grippers on "
+                    f"{self.config.robot_ip}:{GRIPPER_PORT}?"
+                )
+                self._gripper_drop_logged = now
+                self._gripper_drops = 0
+            return
+        self._gripper_last.update(cmd)
+
+    def _send_gripper_cmd_sim(self, action: RobotAction) -> None:
+        """Drive the sim's hands from the same closedness the real grippers get."""
+        for side, key in (("left", "left_gripper.pos"), ("right", "right_gripper.pos")):
+            publisher = self._hand_cmd_pubs.get(side)
+            value = action.get(key)
+            if publisher is None or value is None:
+                continue
+            closedness = min(1.0, max(0.0, float(value)))
+            msg, at_open, at_closed = self._hand_cmd_msgs[side]
+            for i, (opened, closed) in enumerate(zip(at_open, at_closed, strict=True)):
+                msg.motor_cmd[i].q = float(opened + closedness * (closed - opened))
+            publisher.Write(msg)
+
+    def _record_gripper_obs(self, action: RobotAction) -> None:
+        """Latch the commanded closedness so the next observation can report it.
+
+        Read before the following ``send_action``, this lands one tick behind the command,
+        which is the relation the recordings hold: state[t + 1] is action[t] exactly.
+        """
+        for key in self._gripper_obs:
+            value = action.get(key)
+            if value is not None:
+                self._gripper_obs[key] = min(1.0, max(0.0, float(value)))
+
     def send_action(self, action: RobotAction) -> RobotAction:
+        # The hands hang off the bridge's CAN bus, not off lowcmd, so their commands take
+        # their own side channel rather than riding the joint targets below.
+        if self.config.grippers:
+            self._send_gripper_cmd(action)
+            self._record_gripper_obs(action)
+
         action_to_publish = action
         if self.controller is not None:
             # Controller thread owns legs/waist. Here we only update joystick inputs

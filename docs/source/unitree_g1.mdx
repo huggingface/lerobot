@@ -59,7 +59,7 @@ lerobot-teleoperate \
   --robot.controller=GrootLocomotionController
 ```
 
-This will launch a [MuJoCo sim instance](https://huggingface.co/lerobot/unitree-g1-mujoco/tree/main) for the G1. You can connect a gamepad to your machine before launching in order to control the robot's locomotion in sim. We support both [HolosomaLocomotionController](https://github.com/amazon-far/holosoma) and [GrootLocomotionController](https://github.com/NVlabs/GR00T-WholeBodyControl) via `--robot.controller`.
+This will launch a [MuJoCo sim instance](https://huggingface.co/lerobot/unitree-g1-mujoco/tree/main) for the G1. You can connect a gamepad to your machine before launching in order to control the robot's locomotion in sim. `--robot.controller` selects one of three. [GrootLocomotionController](https://github.com/NVlabs/GR00T-WholeBodyControl) and [HolosomaLocomotionController](https://github.com/amazon-far/holosoma) are locomotion controllers: they turn gamepad or teleop input into a gait. `SonicWholeBodyController` is the third, and differs in kind — it is driven by a 64-D latent motion token emitted by a policy rather than by a human, and is covered in [Part 5](#part-5-sonic-whole-body-control-latent-token-policies). All three run in simulation and on hardware.
 
 - Press `9` to release the robot
 - Press `7` / `8` to increase / decrease waist height
@@ -181,6 +181,63 @@ cd ~/lerobot
 python src/lerobot/robots/unitree_g1/run_g1_server.py --camera
 ```
 
+### Serve Several Cameras
+
+`--camera` publishes one camera (device index 4) under the name `head_camera`. For manipulation you usually want a head view and both wrists, which is what `--cameras` is for:
+
+```bash
+python src/lerobot/robots/unitree_g1/run_g1_server.py --camera-fps 30 \
+  --cameras "{
+    head_camera: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 30, fourcc: MJPG, backend: V4L2, warmup_s: 5},
+    left_wrist: {type: opencv, index_or_path: /dev/v4l/by-path/<PATH>-video-index0, width: 1280, height: 720, fps: 30, fourcc: MJPG, backend: V4L2, warmup_s: 5},
+    right_wrist: {type: opencv, index_or_path: /dev/v4l/by-path/<PATH>-video-index0, width: 1280, height: 720, fps: 30, fourcc: MJPG, backend: V4L2, warmup_s: 5}
+  }"
+```
+
+This is the same `CameraConfig` syntax as `--robot.cameras` in every other `lerobot-` script, so a camera block that works on the laptop can be pasted here unchanged. Each camera carries its own resolution, since cameras on the same robot rarely agree on one. List the devices with `ls /dev/v4l/by-path/*-video-index0` and identify them with `udevadm info -q property -n /dev/videoN | grep ID_MODEL`.
+
+Set `fourcc: MJPG` and `backend: V4L2` for USB cameras. MJPG is what lets a UVC camera negotiate its full rate, and the default backend is read-only for capture properties, so without V4L2 it cannot apply the format or resolution at all and the camera fails to connect. `warmup_s` is worth raising when several cameras share a USB bus, where the first frame can take seconds.
+
+Prefer the `by-path` names: bare `/dev/videoN` indices reshuffle when a camera re-enumerates, and `by-id` names collide when two cameras share a serial number. The bridge resolves a `by-path` name to the index OpenCV needs, because its V4L2 backend can only capture by index.
+
+Ask for the resolution you actually want to publish, since a camera that can capture it costs nothing and a camera that can't fails to connect rather than quietly returning another size. `--camera-publish-size` is for the cameras that refuse: it downscales each frame before encoding, which spends CPU on the robot but keeps the link from carrying 1280x720 frames a policy will resize to 224x224 anyway. The bridge warns at startup for every camera where this is in play.
+
+All cameras are published on one ZMQ socket, so a client picks a stream by name:
+
+```bash
+--robot.cameras='{"left_wrist": {"type": "zmq", "server_address": "<ROBOT_IP>", "port": 5555, "camera_name": "left_wrist", "width": 1280, "height": 720, "fps": 30}}'
+```
+
+A camera that refuses its requested rate, or reports a failed resolution change that actually took effect, is a warning rather than a fatal error, and a device that's slow or briefly busy at startup is retried. USB cameras on a shared bus need this often enough that the alternative is a bridge that won't come up.
+
+### Control the Grippers
+
+The G1's hands are OpenArm Damiao grippers on CAN, one per side. Bring the buses up first, then enable them:
+
+```bash
+lerobot-setup-can --mode=setup --interfaces=can1,can0
+lerobot-setup-can --mode=test  --interfaces=can1,can0   # expect motor 0x08 found, replying 0x18, on both
+
+python src/lerobot/robots/unitree_g1/run_g1_server.py --grippers --gripper-kp 1
+```
+
+`--mode=setup` is the only mode that changes anything: it takes each interface down, sets the bitrate and CAN-FD parameters, and brings it back up, so it needs `sudo` and is a once-per-boot step. `--mode=test` is read-only — it checks the interface is up, then sends each Damiao id an enable frame and prints who answers, which is the quickest way to tell a wiring fault from a software one. There is also a `--mode=speed` for round-trip timing.
+
+Left is `can1` and right is `can0` by default (`--gripper-port-left`/`--gripper-port-right`). Grip force is roughly `kp × (close target − actual position)`, and the jaw stalls on an object well before reaching the close target, so a high `--gripper-kp` keeps pushing and crushes it. Step down per object — 15 is fine for rigid things, 1 for a drinks can — and use `--gripper-close-deg` to stop the jaw earlier. The CAN ids, motor type and travel come from the OpenArm follower config, since these are the same grippers.
+
+Commands arrive as JSON `{"L": <closedness>, "R": <closedness>}` on port 6002, where 0 is fully open and 1 fully closed. Teleop only knows a button state so it sends the two endpoints, while a policy sends the fraction in between; both are the same field read the same way. A command reaches the bus only when that side moves by more than a small deadband, so a stream of near-identical values doesn't saturate CAN:
+
+```python
+import json, zmq
+
+sock = zmq.Context().socket(zmq.PUSH)
+sock.connect("tcp://<ROBOT_IP>:6002")
+sock.send_string(json.dumps({"L": 1, "R": 0}))    # close left, open right
+sock.send_string(json.dumps({"L": 0.4}))          # left to a partial grip, right unchanged
+```
+
+If the grippers fail to connect, the bridge warns and carries on without them, so a camera-only or locomotion-only session isn't blocked by an unpowered CAN bus.
+
 ### Run the Locomotion Policy
 
 You can run the teleoperation client from your laptop over Ethernet, over WiFi (experimental), or directly on the robot itself. Mind potential latency introduced by your network.
@@ -199,7 +256,7 @@ lerobot-teleoperate \
   --robot.controller=HolosomaLocomotionController
 ```
 
-We support both [GrootLocomotionController](https://github.com/NVlabs/GR00T-WholeBodyControl) and [HolosomaLocomotionController](https://github.com/amazon-far/holosoma) via `--robot.controller`.
+Either locomotion controller drives this — swap [HolosomaLocomotionController](https://github.com/amazon-far/holosoma) for [GrootLocomotionController](https://github.com/NVlabs/GR00T-WholeBodyControl) with `--robot.controller`. The third controller, `SonicWholeBodyController`, takes a policy's latent token instead of teleop input, so it has its own section in [Part 5](#part-5-sonic-whole-body-control-latent-token-policies).
 
 ---
 

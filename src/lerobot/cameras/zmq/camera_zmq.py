@@ -80,6 +80,11 @@ class ZMQCamera(Camera):
         ```
     """
 
+    # Declared, not assigned: mypy checks this file with `follow_imports = skip`, so the
+    # base class's assignment is invisible to it. The values come from Camera.__init__.
+    width: int | None
+    height: int | None
+
     def __init__(self, config: ZMQCameraConfig):
         require_package("pyzmq", extra="pyzmq-dep", import_name="zmq")
         super().__init__(config)
@@ -89,6 +94,7 @@ class ZMQCamera(Camera):
         self.port = config.port
         self.camera_name = config.camera_name
         self.color_mode = config.color_mode
+        self.jpeg_is_rgb = config.jpeg_is_rgb
         self.timeout_ms = config.timeout_ms
 
         # ZMQ Context and Socket
@@ -132,15 +138,7 @@ class ZMQCamera(Camera):
             self.socket.connect(f"tcp://{self.server_address}:{self.port}")
             self._connected = True
 
-            # Auto-detect resolution if not provided
-            if self.width is None or self.height is None:
-                # Read directly from hardware because the thread isn't running yet
-                temp_frame = self._read_from_hardware()
-                h, w = temp_frame.shape[:2]
-                self.height = h
-                self.width = w
-                logger.info(f"{self} resolution detected: {w}x{h}")
-
+            self._configure_capture_settings()
             self._start_read_thread()
             logger.info(f"{self} connected.")
 
@@ -158,6 +156,28 @@ class ZMQCamera(Camera):
         except Exception as e:
             self._cleanup()
             raise RuntimeError(f"Failed to connect to {self}: {e}") from e
+
+    @check_if_not_connected
+    def _configure_capture_settings(self) -> None:
+        """Reconcile the configured resolution against what the publisher actually sends.
+
+        The publisher is the device here, and a subscriber cannot negotiate with it, so an
+        unset width/height is filled in from the first frame and a set one is checked
+        against it. Disagreeing quietly is the bad outcome: a robot builds its camera
+        features from the config, so it would advertise a shape the policy never receives.
+
+        Reads straight from the socket because the background thread is not running yet.
+        """
+        frame = self._read_from_hardware()
+        height, width = frame.shape[:2]
+
+        if self.width is None or self.height is None:
+            self.width, self.height = width, height
+            logger.info(f"{self} resolution detected: {width}x{height}")
+        elif (self.width, self.height) != (width, height):
+            raise RuntimeError(
+                f"{self} publishes {width}x{height} but the config asks for {self.width}x{self.height}."
+            )
 
     def _cleanup(self):
         """Clean up ZMQ resources."""
@@ -210,6 +230,12 @@ class ZMQCamera(Camera):
 
         if frame is None:
             raise RuntimeError(f"{self} failed to decode image")
+
+        # Convert only if what the JPEG holds differs from what was asked for. Getting this
+        # wrong hands policies red and blue swapped against their training data, which is
+        # invisible in the tensor shapes and hard to see in any desaturated scene.
+        if (self.color_mode == ColorMode.RGB) != self.jpeg_is_rgb:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         return frame
 
