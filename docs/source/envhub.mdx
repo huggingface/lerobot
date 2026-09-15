@@ -25,7 +25,7 @@ This `env.py` file needs to expose a small API so LeRobot can load and run it. I
 - A single `gym.Env` (will be automatically wrapped)
 - A dict mapping `{suite_name: {task_id: VectorEnv}}` (for multi-task benchmarks)
 
-You can also pass an `EnvConfig` object to `make_env` to configure the environment (e.g. the number of environments, task, camera name, initial states, control mode, episode length, etc.).
+You can pass a `HubEnvConfig` object to LeRobot's `make_env` to configure a Hub environment. The factory receives this object when it accepts `cfg` as a keyword argument or accepts `**kwargs`; a factory with only `n_envs` and `use_async_envs` also works. When loading through a string Hub reference, LeRobot does not pass `cfg`, so a factory that declares a `cfg` parameter must give it a default value to support that entry point.
 
 Finally, your environment must implement the standard `gym.vector.VectorEnv` interface so it works with LeRobot, including methods like `reset` and `step`.
 
