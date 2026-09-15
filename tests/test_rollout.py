@@ -1145,6 +1145,49 @@ def test_dagger_records_policy_actions_after_a_correction_of_any_length(correcti
     assert all(float(a).is_integer() for a in autonomous), autonomous
 
 
+def test_dagger_hand_back_resets_the_engine_after_a_gap_in_observation_notifications():
+    from lerobot.rollout import DAggerStrategyConfig
+    from lerobot.rollout.strategies import DAggerStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    # Documents the current hand-back semantics for history-conditioned policies:
+    # no observation reaches the engine while the human is in control, and the
+    # engine is reset on the way back to AUTONOMOUS, so the first chunk after a
+    # correction is conditioned on padded (repeated-frame) history rather than
+    # the consecutive frames recorded into the dataset across the intervention.
+    strategy = DAggerStrategy(
+        DAggerStrategyConfig(record_autonomous=True, num_episodes=1, smooth_handover=False)
+    )
+    schedule = {6: "pause_resume", 7: "correction", 10: "correction", 11: "pause_resume"}
+    events: list[tuple[str, int]] = []
+    current = {"tick": 0}
+
+    def on_tick(n):
+        current["tick"] = n
+        if (event := schedule.get(n)) is not None:
+            strategy._events.request_transition(event)
+
+    ctx, _ = _make_loop_ctx(fps=200.0, multiplier=1, num_ticks=16, on_tick=on_tick)
+    ctx.hardware.teleop.get_action.return_value = {"m.pos": 0.0}
+    engine = ctx.policy.inference
+    engine.notify_observation.side_effect = lambda *a, **k: events.append(("notify", current["tick"]))
+    engine.reset.side_effect = lambda: events.append(("reset", current["tick"]))
+    strategy._engine = engine
+    strategy._interpolator = ActionInterpolator(multiplier=1)
+    strategy._episode_duration_s = 1e9
+
+    strategy._run_continuous(ctx)
+
+    # Transitions requested on tick n take effect on tick n + 1.
+    notified = [tick for kind, tick in events if kind == "notify"]
+    assert notified and max(notified) > 12, notified
+    assert not any(7 <= tick <= 11 for tick in notified), notified
+    last_before = max(tick for tick in notified if tick <= 6)
+    first_after = min(tick for tick in notified if tick >= 12)
+    resets = [tick for kind, tick in events if kind == "reset"]
+    assert any(last_before < tick < first_after for tick in resets), events
+
+
 def test_dagger_correction_frames_keep_the_cycle_cadence_and_are_tagged():
     from lerobot.rollout import DAggerStrategyConfig
     from lerobot.rollout.strategies import DAggerStrategy
@@ -1249,6 +1292,28 @@ def test_starved_engine_is_counted_through_the_real_dispatch_path(caplog):
     assert "ticks with no action to send (inference engine starved): 4" in summary
     assert ctx.hardware.robot_wrapper.send_action.call_count == 0
     assert dataset.add_frame.call_count == 0
+
+
+def test_starved_loop_stamps_observations_with_the_policy_tick():
+    from lerobot.rollout import BaseStrategyConfig
+    from lerobot.rollout.strategies import BaseStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    # With an empty interpolator buffer ``needs_new_action()`` is True on every
+    # sub-tick, so the engine is notified fps × multiplier times per second.  The
+    # policy tick stamp lets an observation-history engine keep one frame per
+    # training-time step regardless of how often it is notified.
+    ctx, _ = _make_loop_ctx(fps=200.0, multiplier=3, num_ticks=9)
+    ctx.policy.inference.get_action.side_effect = lambda _obs_frame: None
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._engine = ctx.policy.inference
+    strategy._interpolator = ActionInterpolator(multiplier=3)
+
+    strategy.run(ctx)
+
+    calls = ctx.policy.inference.notify_observation.call_args_list
+    assert len(calls) == 9
+    assert [call.kwargs["policy_tick"] for call in calls] == [0, 0, 0, 1, 1, 1, 2, 2, 2]
 
 
 def test_episodic_run_reports_a_summary_per_episode_and_for_the_run(caplog):
