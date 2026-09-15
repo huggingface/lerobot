@@ -21,7 +21,6 @@ from typing import Any
 
 import torch
 
-from lerobot.utils.constants import OBS_IMAGES
 from lerobot.utils.import_utils import require_package
 
 
@@ -104,14 +103,6 @@ def normalize_task_batch(task: Any, batch_size: int, default_task: str) -> list[
     if isinstance(task, Sequence) and len(values := list(task)) in {1, batch_size}:
         return [str(values[0 if len(values) == 1 else idx]) for idx in range(batch_size)]
     raise ValueError(f"Cannot broadcast task={task!r} to batch_size={batch_size}")
-
-
-def get_image_keys(batch: dict[str, Any], configured_keys: Sequence[str] | None = None) -> list[str]:
-    """Resolve the ordered image observation keys used by DM05."""
-    if configured_keys:
-        return [key for key in configured_keys if key in batch]
-    keys = [key for key in batch if key.startswith(f"{OBS_IMAGES}.")]
-    return sorted(keys or (["observation.image"] if "observation.image" in batch else []))
 
 
 def build_meta(image_keys: Sequence[str]) -> dict[str, Any]:

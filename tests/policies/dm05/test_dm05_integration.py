@@ -291,6 +291,10 @@ def test_dm05_relative_stats_preparation_uses_training_chunks(tmp_path):
     config = _dm05_config(processor_name_or_path=str(processor_path))
     config.set_dataset_feature_metadata(meta.features)
     assert config.action_feature_names == ["joint", "gripper", "tool"]
+    # The numeric fixture declares no camera; DM05 needs one for the pipeline to be constructible.
+    config.input_features["observation.images.front"] = PolicyFeature(
+        type=FeatureType.VISUAL, shape=(3, 16, 16)
+    )
 
     meta.repo_id = "local/numeric"
     meta.root = tmp_path
