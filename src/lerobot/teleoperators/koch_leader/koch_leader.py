@@ -100,22 +100,41 @@ class KochLeader(Teleoperator):
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
-        self.bus.write("Drive_Mode", "elbow_flex", DriveMode.INVERTED.value)
-        drive_modes = {motor: 1 if motor == "elbow_flex" else 0 for motor in self.bus.motors}
+        inverted_motors = {"shoulder_pan", "wrist_flex", "wrist_roll"}
+        for motor in self.bus.motors:
+            drive_mode = DriveMode.INVERTED if motor in inverted_motors else DriveMode.NON_INVERTED
+            self.bus.write("Drive_Mode", motor, drive_mode.value)
+        drive_modes = {
+            motor: DriveMode.INVERTED.value if motor in inverted_motors else DriveMode.NON_INVERTED.value
+            for motor in self.bus.motors
+        }
 
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
 
-        full_turn_motors = ["shoulder_pan", "wrist_roll"]
-        unknown_range_motors = [motor for motor in self.bus.motors if motor not in full_turn_motors]
+        full_turn_motors = ["wrist_roll"]
+        half_turn_motors = ["shoulder_pan"]
+        known_range_motors = full_turn_motors + half_turn_motors
+        unknown_range_motors = [motor for motor in self.bus.motors if motor not in known_range_motors]
         print(
-            f"Move all joints except {full_turn_motors} sequentially through their "
+            f"Move all joints except {known_range_motors} sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
+
+        for motor in self.bus.motors:
+            self.bus.write("Operating_Mode", motor, OperatingMode.CURRENT_POSITION.value)
+            self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
+
         range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
         for motor in full_turn_motors:
             range_mins[motor] = 0
             range_maxes[motor] = 4095
+        for motor in half_turn_motors:
+            range_mins[motor] = 1024
+            range_maxes[motor] = 3072
+        for motor in range_mins:
+            range_mins[motor] = max(0, min(4095, range_mins[motor]))
+            range_maxes[motor] = max(0, min(4095, range_maxes[motor]))
 
         self.calibration = {}
         for motor, m in self.bus.motors.items():
