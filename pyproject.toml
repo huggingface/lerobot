@@ -276,7 +276,10 @@ video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 # NOTE: Explicitly listing scipy helps flatten the dependecy tree.
 aloha = ["lerobot[dataset]", "gym-aloha>=0.1.4,<0.2.0", "lerobot[scipy-dep]"]
 pusht = ["lerobot[dataset]", "gym-pusht>=0.1.5,<0.2.0", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
-libero = ["lerobot[dataset]", "lerobot[transformers-dep]", "hf-libero>=0.1.4,<0.2.0; sys_platform == 'linux'", "lerobot[scipy-dep]"]
+# NOTE: Pin mujoco below 3.4. hf-libero allows <3.9, but mujoco>=3.4 changes
+# reset settle on libero_spatial task 5 so the bowl no longer seats on the ramekin.
+# See https://github.com/huggingface/lerobot/issues/4390
+libero = ["lerobot[dataset]", "lerobot[transformers-dep]", "hf-libero>=0.1.4,<0.2.0; sys_platform == 'linux'", "mujoco>=3.2.7,<3.4.0; sys_platform == 'linux'", "lerobot[scipy-dep]"]
 metaworld = ["lerobot[dataset]", "metaworld==3.0.0", "lerobot[scipy-dep]"]
 # NOTE: vlabench is NOT exposed as a `lerobot` extra. Its only distribution
 # is the OpenMOSS/VLABench GitHub repo (package name `VLABench`, no PyPI
