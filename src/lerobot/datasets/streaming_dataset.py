@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Callable, Generator, Iterable, Iterator
 from pathlib import Path
 from typing import Literal
@@ -61,6 +61,11 @@ class LookAheadError(Exception):
 
 class _ShardExhaustedError(Exception):
     """Raised when a streaming dataset shard has no more items."""
+
+
+def _is_selected_episode(episode_index: int, selected_episode_ids: frozenset[int]) -> bool:
+    """Return whether a raw dataset row belongs to the requested episode subset."""
+    return episode_index in selected_episode_ids
 
 
 class Backtrackable[T]:
@@ -306,6 +311,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         self.image_transforms = image_transforms
         self.episodes = episodes
+        episode_counts = Counter(episodes or [])
+        duplicates = sorted(episode for episode, count in episode_counts.items() if count > 1)
+        if duplicates:
+            raise ValueError(f"Episode indices contain duplicates: {duplicates}")
+        self._selected_episode_ids = frozenset(episodes) if episodes is not None else None
         self.tolerance_s = tolerance_s
         self.revision = revision if revision else CODEBASE_VERSION
         self.seed = seed
@@ -337,6 +347,23 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.meta.rescale_depth_stats(self._depth_output_unit)
         # Check version
         check_version_compatibility(self.repo_id, self.meta._version, CODEBASE_VERSION)
+
+        self._selected_num_frames: int | None = None
+        self._selected_num_episodes: int | None = None
+        if self._selected_episode_ids is not None:
+            invalid_episode_ids = sorted(
+                episode_id
+                for episode_id in self._selected_episode_ids
+                if not 0 <= episode_id < self.meta.total_episodes
+            )
+            if invalid_episode_ids:
+                raise ValueError(
+                    f"Episode indices must be in [0, {self.meta.total_episodes}), got: {invalid_episode_ids}"
+                )
+            self._selected_num_frames = sum(
+                int(self.meta.episodes[episode_id]["length"]) for episode_id in self._selected_episode_ids
+            )
+            self._selected_num_episodes = len(self._selected_episode_ids)
 
         self._depth_encoder_configs: dict[str, DepthEncoderConfig] = {
             vid_key: DepthEncoderConfig.from_video_info(self.meta.features[vid_key].get("info"))
@@ -379,14 +406,25 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 **token_kwargs,
             )
 
+        if self._selected_episode_ids is not None:
+            self.hf_dataset = self.hf_dataset.filter(
+                _is_selected_episode,
+                input_columns=["episode_index"],
+                fn_kwargs={"selected_episode_ids": self._selected_episode_ids},
+            )
+
         self.num_shards = min(self.hf_dataset.num_shards, max_num_shards)
 
     @property
     def num_frames(self):
+        if self._selected_num_frames is not None:
+            return self._selected_num_frames
         return self.meta.total_frames
 
     @property
     def num_episodes(self):
+        if self._selected_num_episodes is not None:
+            return self._selected_num_episodes
         return self.meta.total_episodes
 
     @property
