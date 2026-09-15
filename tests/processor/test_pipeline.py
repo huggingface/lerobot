@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import json
+import logging
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -1188,6 +1189,31 @@ def test_from_pretrained_invalid_override_key():
             DataProcessorPipeline.from_pretrained(
                 tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
             )
+
+
+def test_from_pretrained_invalid_override_key_non_strict_warns(caplog):
+    """Regression test for #3998: with strict_overrides=False, unmatched override
+    keys (e.g. the trainer's `normalizer_processor` on a policy whose pipeline uses
+    a custom normalization step) are skipped with a warning instead of raising."""
+    step = MockStepWithNonSerializableParam()
+    pipeline = DataProcessorPipeline([step])
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        pipeline.save_pretrained(tmp_dir)
+
+        overrides = {"normalizer_processor": {"stats": {"x": 1.0}}}
+
+        with caplog.at_level(logging.WARNING):
+            loaded = DataProcessorPipeline.from_pretrained(
+                tmp_dir,
+                config_filename="dataprocessorpipeline.json",
+                overrides=overrides,
+                strict_overrides=False,
+            )
+
+    assert len(loaded.steps) == 1
+    assert "normalizer_processor" in caplog.text
+    assert "were skipped" in caplog.text
 
 
 def test_from_pretrained_multiple_invalid_override_keys():
