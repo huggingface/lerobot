@@ -100,6 +100,27 @@ class RebotB601FollowerConfig:
         }
     )
 
+    # Safe shutdown lifecycle. Positions are physical joint-space degrees.
+    # When home_action is omitted, the arm pose captured immediately after
+    # connection is used as the session-local return target.
+    home_action: dict[str, float] = field(default_factory=dict)
+    home_from_start_position: bool = True
+    home_duration_s: float = 6.0
+    home_hz: float = 25.0
+    home_velocity_deg_s: float = 12.0
+    home_tolerance_deg: float = 8.0
+    # Emit target-versus-feedback traces during safe_home. Kept off for normal
+    # operation; the MIT isolation script enables it explicitly.
+    safe_home_debug: bool = False
+    open_gripper_before_home: bool = True
+    gripper_open_position_deg: float = -270.0
+    gripper_open_duration_s: float = 0.75
+    keep_gripper_open_during_home: bool = True
+    close_gripper_after_home: bool = True
+    gripper_closed_position_deg: float = 0.0
+    gripper_close_duration_s: float = 0.75
+    home_on_disconnect: bool = True
+
 
 @RobotConfig.register_subclass("rebot_b601_follower")
 @dataclass
