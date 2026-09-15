@@ -1374,7 +1374,7 @@ def _build_sync_engine(policy, pre, post):
     from lerobot.processor import bind_relative_anchor
     from lerobot.rollout import SyncInferenceEngine
 
-    bind_relative_anchor(policy.queued_action_count, pre)
+    bind_relative_anchor(policy, pre)
     return SyncInferenceEngine(
         policy=policy,
         preprocessor=pre,
@@ -1432,5 +1432,5 @@ def test_sync_engine_without_a_relative_step_binds_nothing():
 
     policy = MagicMock()
     policy.config.use_amp = False
-    assert bind_relative_anchor(policy.queued_action_count, MagicMock(steps=[])) is None
+    assert bind_relative_anchor(policy, MagicMock(steps=[])) is None
     _build_sync_engine(policy, MagicMock(steps=[]), MagicMock())  # must not raise
