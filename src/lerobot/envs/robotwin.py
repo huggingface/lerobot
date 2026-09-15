@@ -54,8 +54,12 @@ ACTION_DIM = 14  # 7 DOF × 2 arms (joint-space control mode)
 # End-effector-pose control mode: per arm [x, y, z, qx, qy, qz, qw, gripper] = 8, dual-arm = 16.
 # Used by world-model policies (e.g. LingBot-VA) that predict eef-pose deltas executed via CuRobo IK.
 EEF_ACTION_DIM = 16
-ACTION_LOW = -1.0
-ACTION_HIGH = 1.0
+EEF_ACTION_LOW = -1.0
+EEF_ACTION_HIGH = 1.0
+# qpos mode uses six arm joints plus one normalized gripper per side. These arm limits mirror the
+# Aloha-AgileX URDF selected by RoboTwin's demo_clean config; grippers are normalized by RoboTwin.
+JOINT_ACTION_LOW = np.array(([-10.0] * 6 + [0.0]) * 2, dtype=np.float32)
+JOINT_ACTION_HIGH = np.array(([10.0] * 6 + [1.0]) * 2, dtype=np.float32)
 DEFAULT_EPISODE_LENGTH = 1200
 OFFICIAL_INSTRUCTION_ENV = "LEROBOT_ROBOTWIN_OFFICIAL_INSTRUCTION"
 OFFICIAL_INSTRUCTION_TYPE_ENV = "LEROBOT_ROBOTWIN_INSTRUCTION_TYPE"
@@ -336,7 +340,10 @@ class RoboTwinEnv(gym.Env):
 
     Actions
     -------
-    14-dim float32 array in ``[-1, 1]`` (joint-space, 7 DOF per arm).
+    ``joint`` (default) accepts 14-dim float32 absolute qpos targets: six
+    joint targets in ``[-10, 10]`` plus one ``[0, 1]`` gripper target per arm,
+    matching the Aloha-AgileX runtime asset. ``ee`` accepts 16-dim float32
+    end-effector-pose deltas in ``[-1, 1]``.
 
     Autograd
     --------
@@ -403,9 +410,19 @@ class RoboTwinEnv(gym.Env):
                 "agent_pos": spaces.Box(low=-np.inf, high=np.inf, shape=(ACTION_DIM,), dtype=np.float32),
             }
         )
-        self.action_space = spaces.Box(
-            low=ACTION_LOW, high=ACTION_HIGH, shape=(self._action_dim,), dtype=np.float32
-        )
+        if self.action_mode == "ee":
+            self.action_space = spaces.Box(
+                low=EEF_ACTION_LOW,
+                high=EEF_ACTION_HIGH,
+                shape=(EEF_ACTION_DIM,),
+                dtype=np.float32,
+            )
+        else:
+            self.action_space = spaces.Box(
+                low=JOINT_ACTION_LOW,
+                high=JOINT_ACTION_HIGH,
+                dtype=np.float32,
+            )
 
     def _ensure_env(self) -> None:
         """Create the SAPIEN environment on first use.
