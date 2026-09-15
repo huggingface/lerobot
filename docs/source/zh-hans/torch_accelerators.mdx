@@ -1,0 +1,42 @@
+# PyTorch 加速器
+
+LeRobot 支持多种用于训练与推理的硬件加速选项。
+
+这些选项包括：
+
+- **CPU**：由 CPU 执行所有计算，不使用专用加速器
+- **CUDA**：使用 NVIDIA 和 AMD GPU 加速
+- **MPS**：使用 Apple 芯片（Apple Silicon）GPU 加速
+- **XPU**：使用 Intel 集成 GPU 和独立 GPU 加速
+
+## 入门
+
+若要使用特定的加速器，需要安装与之匹配的 PyTorch 版本。
+
+对于 CPU、CUDA 和 MPS 后端，请按照 [PyTorch 安装页面](https://pytorch.org/get-started/locally)提供的说明操作。
+对于 XPU 后端，请按照 [PyTorch 文档](https://docs.pytorch.org/docs/stable/notes/get_start_xpu.html)中的说明操作。
+
+### 验证安装
+
+安装完成后，可以运行以下代码检查加速器是否可用：
+
+```python
+import torch
+print(torch.<backend_name>.is_available())  # <backend_name> 为 cuda、mps 或 xpu
+```
+
+## 如何运行训练或评估
+
+运行 `lerobot-train` 或 `lerobot-eval` 时，可通过 `--policy.device` 参数选择所需的加速器。例如，若要在 Apple 芯片上使用 MPS，请运行：
+
+```bash
+lerobot-train
+    --policy.device=mps ...
+```
+
+```bash
+lerobot-eval \
+    --policy.device=mps ...
+```
+
+不过，在大多数情况下，系统会自动检测可用的加速器，因此可在 CLI 命令中省略 `policy.device` 参数。
