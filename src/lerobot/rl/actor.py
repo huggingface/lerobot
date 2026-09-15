@@ -114,6 +114,12 @@ from .gym_manipulator import (
 from .queue import get_last_item_from_queue
 from .train_rl import TrainRLServerPipelineConfig
 
+# Deadline (seconds) for the Ready() handshake in establish_learner_connection(). Without a
+# deadline, a learner whose gRPC thread pool is saturated (e.g. by a still-connected previous
+# actor) never answers Ready(), the call blocks forever, and the surrounding retry loop never
+# gets a chance to retry. This fits the loop's existing 2s-sleep / 30-attempt cadence.
+READY_RPC_TIMEOUT_S = 5.0
+
 # Main entry point
 
 
@@ -452,7 +458,7 @@ def establish_learner_connection(
         # Force a connection attempt and check state
         try:
             logging.info("[ACTOR] Send ready message to Learner")
-            if stub.Ready(services_pb2.Empty()) == services_pb2.Empty():
+            if stub.Ready(services_pb2.Empty(), timeout=READY_RPC_TIMEOUT_S) == services_pb2.Empty():
                 return True
         except grpc.RpcError as e:
             logging.error(f"[ACTOR] Waiting for Learner to be ready... {e}")
