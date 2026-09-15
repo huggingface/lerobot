@@ -11,17 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Chunk-anchor pinning on the ``lerobot-eval`` path.
+"""``lerobot-eval`` binds the relative-action anchor to the policy's action queue.
 
 ``rollout()`` drives the policy directly -- preprocessor, ``select_action``, postprocessor,
-once per step -- so a relative-action chunk would be re-anchored to the current (moved)
-state on every tick after the one that generated it, and the absolute targets would drift.
-Every action of a chunk must resolve to ``r + S0``, the state observed when the chunk was
-predicted.
-
-These assertions fail loudly in both directions: without pinning the target drifts with the
-arm, and with a second correction stacked on top (e.g. a policy carrying its own private
-compensator) it overshoots by ``S0 - Sk``.
+once per step -- so a relative-action chunk would be re-anchored to the current (moved) state
+on every tick after the one that generated it. The hold itself lives in
+``RelativeActionsProcessorStep`` and is tested in ``tests/policies/test_relative_actions.py``;
+what is worth testing here is that this path actually calls ``bind_relative_anchor``, end to
+end through a real gym env. Both tests below fail if that call is removed.
 """
 
 from __future__ import annotations
@@ -42,19 +39,12 @@ from lerobot.processor import (
     RelativeActionsProcessorStep,
     TransitionKey,
     create_transition,
-    find_relative_action_step,
-    pinned_relative_anchor,
 )
 from lerobot.scripts.lerobot_eval import rollout
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import OBS_STATE
 
 ACTION_DIM = 4
 ACTION_NAMES = [f"joint_{i}.pos" for i in range(ACTION_DIM)]
-
-
-# --------------------------------------------------------------------------------------
-# Fakes
-# --------------------------------------------------------------------------------------
 
 
 class _MovingEnv(gym.Env):
@@ -92,8 +82,9 @@ class _MovingEnv(gym.Env):
 class _ChunkingRelativePolicy(nn.Module):
     """Serves a fixed chunk of relative offsets one action per call, refilling when drained.
 
-    Mirrors the ``_action_queue`` shape shared by pi0/pi05/DM05: ``select_action`` predicts a
-    whole chunk when the queue is empty, then pops from it without re-predicting.
+    Mirrors the ``_action_queue`` shape shared by pi0/pi05/DM05, including the contract
+    ``bind_relative_anchor`` relies on: ``queued_action_count`` reads the same queue
+    ``select_action`` drains.
     """
 
     def __init__(self, chunk_rel: torch.Tensor):
@@ -112,8 +103,8 @@ class _ChunkingRelativePolicy(nn.Module):
     def select_action(self, batch):
         if not self._queue:
             self.predict_calls += 1
-            # What the real policies do implicitly: the chunk is generated against the state
-            # in *this* batch, so record it to assert the anchor pinning matches it.
+            # The chunk is generated against the state in *this* batch; record it so the test
+            # can assert the anchor the postprocessor used matches it.
             self.anchors_seen.append(batch[OBS_STATE].clone())
             batch_size = batch[OBS_STATE].shape[0]
             for step_rel in self.chunk_rel:
@@ -159,21 +150,21 @@ class _Identity:
         pass
 
 
-def _make_env(num_envs: int, s0: float, drift: float, max_steps: int):
-    return gym.vector.SyncVectorEnv(
-        [lambda: _MovingEnv(s0=s0, drift=drift, max_steps=max_steps) for _ in range(num_envs)],
-        autoreset_mode=gym.vector.AutoresetMode.NEXT_STEP,
-    )
-
-
 def _chunk(n: int) -> torch.Tensor:
     """A distinct offset per chunk step, so a wrong anchor cannot be masked by a flat chunk."""
     return torch.stack([torch.full((ACTION_DIM,), 0.1 * (i + 1)) for i in range(n)])
 
 
+def _expected_state(s0: float, drift: float, t: int) -> torch.Tensor:
+    return torch.tensor([s0 + drift * t + i for i in range(ACTION_DIM)])
+
+
 def _run_eval(policy, num_envs: int, s0: float, drift: float, max_steps: int):
+    env = gym.vector.SyncVectorEnv(
+        [lambda: _MovingEnv(s0=s0, drift=drift, max_steps=max_steps) for _ in range(num_envs)],
+        autoreset_mode=gym.vector.AutoresetMode.NEXT_STEP,
+    )
     pre, post, relative_step = _relative_pipelines()
-    env = _make_env(num_envs, s0=s0, drift=drift, max_steps=max_steps)
     try:
         data = rollout(
             env,
@@ -187,15 +178,6 @@ def _run_eval(policy, num_envs: int, s0: float, drift: float, max_steps: int):
     finally:
         env.close()
     return data["action"], relative_step
-
-
-def _expected_state(s0: float, drift: float, t: int) -> torch.Tensor:
-    return torch.tensor([s0 + drift * t + i for i in range(ACTION_DIM)])
-
-
-# --------------------------------------------------------------------------------------
-# Eval loop
-# --------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("num_envs", [1, 3])
@@ -233,149 +215,10 @@ def test_eval_anchor_advances_on_chunk_refill():
         # The policy saw exactly the state we expect to be anchored to.
         torch.testing.assert_close(policy.anchors_seen[chunk_idx], anchor.unsqueeze(0))
         for i in range(n):
-            expected = anchor + chunk_rel[i]
-            torch.testing.assert_close(actions[0, chunk_idx * n + i], expected)
+            torch.testing.assert_close(actions[0, chunk_idx * n + i], anchor + chunk_rel[i])
 
     # After the loop the cached anchor is the second chunk's, not a held stale one.
     torch.testing.assert_close(relative_step.get_cached_state(), _expected_state(s0, drift, n).unsqueeze(0))
-
-
-def test_eval_drifts_without_pinning():
-    """Guard the guard: with pinning removed, the same setup drifts."""
-    n = 4
-    chunk_rel = _chunk(n)
-    s0, drift = 1.0, 0.5
-    policy = _ChunkingRelativePolicy(chunk_rel)
-    pre, post, _ = _relative_pipelines()
-
-    # Reproduce the eval inner loop verbatim, minus `pinned_relative_anchor`.
-    outputs = []
-    for tick in range(n):
-        obs = {OBS_STATE: _expected_state(s0, drift, tick).unsqueeze(0)}
-        outputs.append(post(policy.select_action(pre(obs))))
-
-    anchor = _expected_state(s0, drift, 0)
-    # Tick 0 is correct by construction; every later tick is off by exactly the arm's motion.
-    torch.testing.assert_close(outputs[0][0], anchor + chunk_rel[0])
-    for tick in range(1, n):
-        moved = _expected_state(s0, drift, tick) - anchor
-        torch.testing.assert_close(outputs[tick][0], anchor + chunk_rel[tick] + moved)
-        assert not torch.allclose(outputs[tick][0], anchor + chunk_rel[tick])
-
-
-def test_eval_reanchors_per_episode():
-    """A second rollout must anchor to its own initial state, not the previous episode's."""
-    n = 3
-    chunk_rel = _chunk(n)
-    policy = _ChunkingRelativePolicy(chunk_rel)
-
-    _run_eval(policy, num_envs=1, s0=1.0, drift=1.0, max_steps=n)
-    actions, _ = _run_eval(policy, num_envs=1, s0=100.0, drift=1.0, max_steps=n)
-
-    anchor = _expected_state(100.0, 1.0, 0)
-    for tick in range(n):
-        torch.testing.assert_close(actions[0, tick], anchor + chunk_rel[tick])
-
-
-# --------------------------------------------------------------------------------------
-# Eval and the sync engine must agree
-# --------------------------------------------------------------------------------------
-
-
-def test_eval_and_sync_engine_agree_on_the_chunk():
-    """Both callers of the shared helper resolve the same chunk to the same absolute targets."""
-    from lerobot.rollout import SyncInferenceEngine
-
-    n = 4
-    chunk_rel = _chunk(n)
-    s0, drift = 1.0, 0.5
-
-    eval_actions, _ = _run_eval(_ChunkingRelativePolicy(chunk_rel), 1, s0=s0, drift=drift, max_steps=n)
-
-    pre, post, _ = _relative_pipelines()
-    sync_policy = _ChunkingRelativePolicy(chunk_rel)
-    sync_policy.config = type("_Cfg", (), {"use_amp": False, "action_feature_names": list(ACTION_NAMES)})()
-    engine = SyncInferenceEngine(
-        policy=sync_policy,
-        preprocessor=pre,
-        postprocessor=post,
-        dataset_features={ACTION: {"names": list(ACTION_NAMES)}},
-        ordered_action_keys=list(ACTION_NAMES),
-        task="test",
-        device="cpu",
-        robot_type="mock",
-    )
-    sync_actions = [
-        engine.get_action({OBS_STATE: _expected_state(s0, drift, tick).numpy()}) for tick in range(n)
-    ]
-
-    assert sync_policy.predict_calls == 1
-    for tick in range(n):
-        torch.testing.assert_close(sync_actions[tick], eval_actions[0, tick])
-
-
-# --------------------------------------------------------------------------------------
-# Helper semantics
-# --------------------------------------------------------------------------------------
-
-
-def test_pinned_anchor_is_a_noop_without_a_relative_step():
-    policy = _ChunkingRelativePolicy(_chunk(2))
-    with pinned_relative_anchor(None, policy):
-        pass  # must not raise, and must not consult the policy's queue
-
-
-def test_pinned_anchor_ignores_a_disabled_step():
-    """A disabled step still caches state; pinning it would freeze an anchor nobody reads."""
-    step = RelativeActionsProcessorStep(enabled=False, action_names=list(ACTION_NAMES))
-    policy = _ChunkingRelativePolicy(_chunk(2))
-    policy._queue.append(torch.zeros(1, ACTION_DIM))
-
-    with pinned_relative_anchor(step, policy):
-        step(create_transition(observation={OBS_STATE: torch.ones(1, ACTION_DIM)}))
-
-    torch.testing.assert_close(step.get_cached_state(), torch.ones(1, ACTION_DIM))
-
-
-def test_pinned_anchor_lets_an_empty_queue_advance():
-    """An empty queue means a fresh chunk: the anchor must follow the current state."""
-    step = RelativeActionsProcessorStep(enabled=True, action_names=list(ACTION_NAMES))
-    step.set_cached_state(torch.zeros(1, ACTION_DIM))
-    policy = _ChunkingRelativePolicy(_chunk(2))  # queue is empty
-
-    with pinned_relative_anchor(step, policy):
-        step(create_transition(observation={OBS_STATE: torch.full((1, ACTION_DIM), 5.0)}))
-
-    torch.testing.assert_close(step.get_cached_state(), torch.full((1, ACTION_DIM), 5.0))
-
-
-def test_pinned_anchor_restores_on_exception():
-    """A failed inference must not leave the anchor pointing at the moved state."""
-    step = RelativeActionsProcessorStep(enabled=True, action_names=list(ACTION_NAMES))
-    step.set_cached_state(torch.zeros(1, ACTION_DIM))
-    policy = _ChunkingRelativePolicy(_chunk(2))
-    policy._queue.append(torch.zeros(1, ACTION_DIM))
-
-    with pytest.raises(RuntimeError), pinned_relative_anchor(step, policy):
-        step(create_transition(observation={OBS_STATE: torch.full((1, ACTION_DIM), 5.0)}))
-        raise RuntimeError("inference blew up")
-
-    torch.testing.assert_close(step.get_cached_state(), torch.zeros(1, ACTION_DIM))
-
-
-def test_find_relative_action_step_skips_disabled_and_missing():
-    enabled = RelativeActionsProcessorStep(enabled=True)
-    disabled = RelativeActionsProcessorStep(enabled=False)
-
-    assert find_relative_action_step(type("_P", (), {"steps": [disabled, enabled]})()) is enabled
-    assert find_relative_action_step(type("_P", (), {"steps": [disabled]})()) is None
-    assert find_relative_action_step(type("_P", (), {})()) is None
-
-
-def test_eval_wires_up_the_pinning_lookup():
-    """The eval path finds the same step the engine does."""
-    pre, _, relative_step = _relative_pipelines()
-    assert find_relative_action_step(pre) is relative_step
 
 
 def test_moving_env_actually_moves():

@@ -1294,7 +1294,7 @@ _REL_ACTION_NAMES = ["j0.pos", "j1.pos", "j2.pos", "gripper.pos"]
 _REL_ACTION_DIM = len(_REL_ACTION_NAMES)
 
 
-def _relative_pre_post(exclude_joints=None):
+def _relative_pre_post():
     """Pre/post processors wrapping the real relative (caches anchor) and absolute
     (relative + cached state) steps, mirroring what the sync engine feeds them."""
     from lerobot.processor import (
@@ -1305,9 +1305,7 @@ def _relative_pre_post(exclude_joints=None):
     )
     from lerobot.utils.constants import OBS_STATE
 
-    relative_step = RelativeActionsProcessorStep(
-        enabled=True, exclude_joints=exclude_joints or [], action_names=list(_REL_ACTION_NAMES)
-    )
+    relative_step = RelativeActionsProcessorStep(enabled=True, action_names=list(_REL_ACTION_NAMES))
     absolute_step = AbsoluteActionsProcessorStep(enabled=True, relative_step=relative_step)
 
     class _Pre:
@@ -1333,14 +1331,13 @@ def _relative_pre_post(exclude_joints=None):
     return _Pre(), _Post(), relative_step
 
 
-def _fake_relative_policy(chunk_rel, n_action_steps, chunking=True):
-    """Fake relative-action policy for the sync engine.
+def _fake_relative_policy(chunk_rel, n_action_steps):
+    """Fake chunking relative-action policy for the sync engine (pi0/fastwam/lingbot/act shape).
 
-    ``chunking=True`` buffers a chunk and serves it one action per tick, computing a fresh
-    chunk only on refill (pi0/fastwam/lingbot/act). ``chunking=False`` returns an action
-    directly and never queues (e.g. ACT with temporal ensembling). ``queued_action_count()``
-    mirrors the real ``PreTrainedPolicy`` contract: it reads the same queue ``select_action``
-    drains, so the engine sees an accurate depth *before* this tick's call runs.
+    Buffers a chunk and serves it one action per tick, computing a fresh chunk only on refill.
+    ``queued_action_count()`` mirrors the real ``PreTrainedPolicy`` contract: it reads the same
+    queue ``select_action`` drains, so the bound step sees an accurate depth *before* this
+    tick's call runs.
     """
     from collections import deque
 
@@ -1355,8 +1352,6 @@ def _fake_relative_policy(chunk_rel, n_action_steps, chunking=True):
         return chunk_rel.unsqueeze(0)  # [B=1, n, dim]
 
     def select_action(_observation):
-        if not chunking:
-            return chunk_rel[0].unsqueeze(0)
         if len(queue) == 0:
             actions = policy.predict_action_chunk(_observation)
             queue.extend(actions.transpose(0, 1))  # [n, 1, dim]
@@ -1371,8 +1366,15 @@ def _fake_relative_policy(chunk_rel, n_action_steps, chunking=True):
 
 
 def _build_sync_engine(policy, pre, post):
+    """Build the engine the way ``build_rollout_context`` does.
+
+    The engine itself knows nothing about relative actions; the anchor hold lives in
+    ``RelativeActionsProcessorStep`` and is armed once, here, by ``bind_relative_anchor``.
+    """
+    from lerobot.processor import bind_relative_anchor
     from lerobot.rollout import SyncInferenceEngine
 
+    bind_relative_anchor(policy.queued_action_count, pre)
     return SyncInferenceEngine(
         policy=policy,
         preprocessor=pre,
@@ -1400,7 +1402,7 @@ def test_sync_relative_holds_anchor_across_chunk():
     policy = _fake_relative_policy(chunk_rel, n_action_steps=n)
     engine = _build_sync_engine(policy, pre, post)
 
-    assert engine._relative_step is relative_step  # introspection wired the step
+    assert relative_step._queued_action_count == policy.queued_action_count  # binding wired up
 
     s0 = [1.0, 2.0, 3.0, 4.0]
     outputs = []
@@ -1424,74 +1426,11 @@ def test_sync_relative_holds_anchor_across_chunk():
     torch.testing.assert_close(relative_step.get_cached_state(), torch.tensor([s_next]))
 
 
-def test_sync_relative_reset_reanchors_new_episode():
-    """After ``reset()`` the first tick of the next episode anchors to the new state."""
-    n = 3
-    chunk_rel = torch.stack([torch.full((_REL_ACTION_DIM,), 0.2) for _ in range(n)])
-    pre, post, relative_step = _relative_pre_post()
-    policy = _fake_relative_policy(chunk_rel, n_action_steps=n)
-    engine = _build_sync_engine(policy, pre, post)
+def test_sync_engine_without_a_relative_step_binds_nothing():
+    """A pipeline with no enabled relative step has nothing to bind, and the engine still runs."""
+    from lerobot.processor import bind_relative_anchor
 
-    # Episode 1: one tick anchors to s0 and leaves cached actions in the queue.
-    engine.get_action(_obs_frame([1.0, 1.0, 1.0, 1.0]))
-    assert policy._predict_state["predict_calls"] == 1
-
-    engine.reset()  # clears the policy's action queue via policy.reset()
-
-    # Episode 2: a fresh state must produce a fresh chunk anchored to that state,
-    # not carry over the previous episode's anchor.
-    s_new = [7.0, 8.0, 9.0, 10.0]
-    out = engine.get_action(_obs_frame(s_new))
-    assert policy._predict_state["predict_calls"] == 2
-    torch.testing.assert_close(out, torch.tensor(s_new) + chunk_rel[0])
-    torch.testing.assert_close(relative_step.get_cached_state(), torch.tensor([s_new]))
-
-
-def test_sync_relative_non_chunking_policy_refreshes_every_tick():
-    """A policy that never calls ``predict_action_chunk`` must not freeze the anchor."""
-    n = 3
-    chunk_rel = torch.stack([torch.full((_REL_ACTION_DIM,), 0.5) for _ in range(n)])
-    pre, post, _ = _relative_pre_post()
-    policy = _fake_relative_policy(chunk_rel, n_action_steps=n, chunking=False)
-    engine = _build_sync_engine(policy, pre, post)
-
-    s0 = [1.0, 1.0, 1.0, 1.0]
-    for tick in range(3):
-        state = [v + tick for v in s0]
-        out = engine.get_action(_obs_frame(state))
-        # Anchor must track the current state every tick (no chunk => no hold).
-        torch.testing.assert_close(out, torch.tensor(state) + chunk_rel[0])
-    assert policy._predict_state["predict_calls"] == 0
-
-
-def test_sync_engine_no_relative_step_is_none():
-    """Without an enabled relative step, the engine takes the plain select_action path."""
     policy = MagicMock()
     policy.config.use_amp = False
-    engine = _build_sync_engine(policy, MagicMock(steps=[]), MagicMock())
-    assert engine._relative_step is None
-
-
-def test_sync_relative_exclude_joints_stay_absolute():
-    """With ``exclude_joints``, excluded dims pass through absolute while the relative
-    dims still hold the tick-0 anchor across the chunk."""
-    n = 4
-    # Distinct offset per step *and* per dim so a wrong anchor or a wrong mask shows up.
-    chunk_rel = torch.stack([torch.full((_REL_ACTION_DIM,), 0.1 * (i + 1)) for i in range(n)])
-    pre, post, relative_step = _relative_pre_post(exclude_joints=["gripper"])
-    policy = _fake_relative_policy(chunk_rel, n_action_steps=n)
-    engine = _build_sync_engine(policy, pre, post)
-
-    # gripper (last dim) is kept absolute; j0..j2 are relative.
-    mask = torch.tensor([1.0, 1.0, 1.0, 0.0])
-    s0 = [1.0, 2.0, 3.0, 4.0]
-    outputs = []
-    for tick in range(n):
-        state = [v + tick for v in s0]  # moving state; a drifting anchor would use it
-        outputs.append(engine.get_action(_obs_frame(state)))
-
-    assert policy._predict_state["predict_calls"] == 1  # one chunk held across n ticks
-    for tick in range(n):
-        # relative dims: anchor held at s0; excluded gripper dim: raw predicted value.
-        expected = chunk_rel[tick] + torch.tensor(s0) * mask
-        torch.testing.assert_close(outputs[tick], expected)
+    assert bind_relative_anchor(policy.queued_action_count, MagicMock(steps=[])) is None
+    _build_sync_engine(policy, MagicMock(steps=[]), MagicMock())  # must not raise

@@ -24,7 +24,7 @@ import torch
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import make_robot_action, prepare_observation_for_inference
-from lerobot.processor import PolicyProcessorPipeline, find_relative_action_step, pinned_relative_anchor
+from lerobot.processor import PolicyProcessorPipeline
 from lerobot.utils.constants import OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
 
@@ -33,14 +33,12 @@ from .base import InferenceEngine, PolicyQuery
 logger = logging.getLogger(__name__)
 
 
-# Relative-action support: a predicted chunk of offsets is anchored to the robot
-# state at prediction time, but the sync engine reruns the pre/post pipeline every
-# tick, so ``RelativeActionsProcessorStep`` would re-anchor cached actions to the
-# current (moved) state and drift through the chunk. We pin the anchor per chunk:
-# ``PreTrainedPolicy.queued_action_count()`` reports whether this tick will serve an
-# already-computed action (hold the anchor) or force a fresh prediction (let it
-# advance). ``select_action`` stays on the hot path, so per-tick side effects (e.g.
-# LingBot-VA keyframe feedback) are preserved.
+# Relative-action support needs nothing here. A predicted chunk of offsets is anchored to
+# the robot state at prediction time, and this engine reruns the pre/post pipeline every
+# tick, so the anchor has to be held while the chunk drains -- but that is
+# ``RelativeActionsProcessorStep``'s own job once ``bind_relative_anchor`` has given it the
+# policy's queue depth (done in ``build_rollout_context``). ``select_action`` stays on the
+# hot path, so per-tick side effects (e.g. LingBot-VA keyframe feedback) are preserved.
 
 
 class SyncInferenceEngine(InferenceEngine):
@@ -70,19 +68,6 @@ class SyncInferenceEngine(InferenceEngine):
         self._ordered_action_keys = ordered_action_keys
         self._device = torch.device(device or "cpu")
         self._robot_type = robot_type
-
-        # Find an enabled RelativeActionsProcessorStep to pin its anchor per chunk
-        # (see module comment), mirroring the RTC engine.
-        self._relative_step = find_relative_action_step(preprocessor)
-        if self._relative_step is not None:
-            # ``action_names`` is optional on the step; fill it lazily from the
-            # policy/dataset so the relative<->absolute mask is built correctly. This is
-            # a deliberate engine->step side effect (the step is configured by its consumer).
-            if self._relative_step.action_names is None:
-                cfg_names = getattr(policy.config, "action_feature_names", None)
-                self._relative_step.action_names = list(cfg_names) if cfg_names else list(ordered_action_keys)
-            logger.info("Relative actions enabled: chunk anchor pinned per predicted chunk")
-
         logger.info(
             "SyncInferenceEngine initialized (device=%s, action_keys=%d)",
             self._device,
@@ -127,14 +112,9 @@ class SyncInferenceEngine(InferenceEngine):
                 # than ``policy.reset``: observation history and other episode state stay.
                 logger.info("Task changed to '%s' — dropping precomputed actions", task)
                 self._policy.drop_queued_actions()
-            # Hold the chunk anchor across ticks that serve an already-queued action; the
-            # postprocessor runs outside the block so it reads the restored anchor.
-            with pinned_relative_anchor(self._relative_step, self._policy):
-                observation = prepare_observation_for_inference(
-                    observation, self._device, task, self._robot_type
-                )
-                observation = self._preprocessor(observation)
-                action = self._policy.select_action(observation)
+            observation = prepare_observation_for_inference(observation, self._device, task, self._robot_type)
+            observation = self._preprocessor(observation)
+            action = self._policy.select_action(observation)
             action = self._postprocessor(action)
         action_tensor = action.squeeze(0).cpu()
 
