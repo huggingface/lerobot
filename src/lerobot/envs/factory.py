@@ -76,9 +76,12 @@ def make_env(
         trust_remote_code (bool): **Explicit consent** to execute remote code from the Hub.
             Default False — must be set to True to import/exec hub `env.py`.
         **kwargs: Forwarded verbatim to a hub env's `make_env`, for options only that env
-            knows about (e.g. the G1 sim's `end_effector`). Ignored for local EnvConfigs.
+            knows about (e.g. the G1 sim's `end_effector`), and rejected for local EnvConfigs.
+            An env with several such options should define a `HubEnvConfig` subclass and be
+            passed as `cfg` instead, so this stays the exception.
     Raises:
         ValueError: if n_envs < 1
+        TypeError: if extra keyword arguments are passed alongside a local EnvConfig
         ModuleNotFoundError: If the requested env package is not installed
 
     Returns:
@@ -120,6 +123,14 @@ def make_env(
     # At this point, cfg must be an EnvConfig (not a string) since hub_path would have been set otherwise
     if isinstance(cfg, str):
         raise TypeError("cfg should be an EnvConfig at this point")
+
+    # Only a hub env can consume extra arguments. Locally there is nothing to forward them
+    # to, so accepting them silently would turn a misspelt argument into a no-op.
+    if kwargs:
+        raise TypeError(
+            f"make_env() got unexpected keyword arguments {sorted(kwargs)}. Extra arguments are "
+            "only forwarded to a hub env's own `make_env`, not to a local EnvConfig."
+        )
 
     if n_envs < 1:
         raise ValueError("`n_envs` must be at least 1")

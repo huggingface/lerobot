@@ -276,6 +276,13 @@ def test_make_env_from_hub_async():
     env.close()
 
 
+def test_make_env_rejects_extra_kwargs_for_local_config():
+    """A local EnvConfig has nothing to forward to, so a stray argument must not be a no-op."""
+    cfg = make_env_config("pusht")
+    with pytest.raises(TypeError, match="unexpected keyword arguments"):
+        make_env(cfg, n_env=4)  # typo for n_envs
+
+
 @pytest.mark.parametrize("cfg", [None, "sentinel_cfg"])
 def test_call_make_env_forwards_extra_kwargs_to_hub_env(cfg):
     """A hub env must receive options only it defines, e.g. the G1 sim's end_effector."""
