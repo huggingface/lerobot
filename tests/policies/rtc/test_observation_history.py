@@ -17,7 +17,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
+from torch import nn
 
+from lerobot.configs.observation_history import resolve_observation_delta_indices
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.rtc import ActionQueue
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
@@ -26,10 +28,11 @@ from lerobot.processor import (
     RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
 )
-from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.rollout.inference.observation_history import ObservationHistory  # noqa: E402
 from lerobot.rollout.inference.rtc import RTCInferenceEngine  # noqa: E402
 
 CAMERA = "observation.images.camera"
@@ -376,11 +379,9 @@ def test_query_refreshes_observation_history_and_reset_epoch_before_chunk():
 
 @pytest.mark.parametrize("visual,proprio", [(True, True), (True, False), (False, True)])
 def test_rtc_temporal_batch_reaches_pi05_mem_without_advancing_policy_queue(visual, proprio):
-    from torch import nn
-
-    from lerobot.policies.pi05.configuration_pi05 import PI05Config
-    from lerobot.policies.pi05.modeling_pi05 import PI05Policy
-    from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
+    pi05_config = pytest.importorskip("lerobot.policies.pi05.configuration_pi05")
+    pi05_model = pytest.importorskip("lerobot.policies.pi05.modeling_pi05")
+    PI05Config, PI05Policy = pi05_config.PI05Config, pi05_model.PI05Policy  # noqa: N806
 
     engine, _, processor = make_engine()
     config = PI05Config(
@@ -414,8 +415,6 @@ def test_rtc_temporal_batch_reaches_pi05_mem_without_advancing_policy_queue(visu
     policy.model = RecordingMEMModel()
     policy.reset()
     engine._policy = policy
-    from lerobot.rollout.inference.observation_history import ObservationHistory
-
     engine._observation_history = ObservationHistory(config)
 
     class Tokenizer:
@@ -472,3 +471,15 @@ def test_history_without_current_offset_still_anchors_actions_on_latest_state():
 def test_history_rejects_unavailable_or_invalid_offsets(indices):
     with pytest.raises(ValueError, match="past/current integers"):
         make_engine(indices)
+
+
+def test_delta_index_resolution_does_not_swallow_errors_from_the_shared_property():
+    class BrokenConfig:
+        image_observation_delta_indices = None
+
+        @property
+        def observation_delta_indices(self):
+            raise AttributeError("renamed field")
+
+    with pytest.raises(AttributeError, match="renamed field"):
+        resolve_observation_delta_indices(BrokenConfig(), OBS_STATE)

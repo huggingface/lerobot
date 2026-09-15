@@ -1145,6 +1145,49 @@ def test_dagger_records_policy_actions_after_a_correction_of_any_length(correcti
     assert all(float(a).is_integer() for a in autonomous), autonomous
 
 
+def test_dagger_hand_back_resets_the_engine_after_a_gap_in_observation_notifications():
+    from lerobot.rollout import DAggerStrategyConfig
+    from lerobot.rollout.strategies import DAggerStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    # Documents the current hand-back semantics for history-conditioned policies:
+    # no observation reaches the engine while the human is in control, and the
+    # engine is reset on the way back to AUTONOMOUS, so the first chunk after a
+    # correction is conditioned on padded (repeated-frame) history rather than
+    # the consecutive frames recorded into the dataset across the intervention.
+    strategy = DAggerStrategy(
+        DAggerStrategyConfig(record_autonomous=True, num_episodes=1, smooth_handover=False)
+    )
+    schedule = {6: "pause_resume", 7: "correction", 10: "correction", 11: "pause_resume"}
+    events: list[tuple[str, int]] = []
+    current = {"tick": 0}
+
+    def on_tick(n):
+        current["tick"] = n
+        if (event := schedule.get(n)) is not None:
+            strategy._events.request_transition(event)
+
+    ctx, _ = _make_loop_ctx(fps=200.0, multiplier=1, num_ticks=16, on_tick=on_tick)
+    ctx.hardware.teleop.get_action.return_value = {"m.pos": 0.0}
+    engine = ctx.policy.inference
+    engine.notify_observation.side_effect = lambda *a, **k: events.append(("notify", current["tick"]))
+    engine.reset.side_effect = lambda: events.append(("reset", current["tick"]))
+    strategy._engine = engine
+    strategy._interpolator = ActionInterpolator(multiplier=1)
+    strategy._episode_duration_s = 1e9
+
+    strategy._run_continuous(ctx)
+
+    # Transitions requested on tick n take effect on tick n + 1.
+    notified = [tick for kind, tick in events if kind == "notify"]
+    assert notified and max(notified) > 12, notified
+    assert not any(7 <= tick <= 11 for tick in notified), notified
+    last_before = max(tick for tick in notified if tick <= 6)
+    first_after = min(tick for tick in notified if tick >= 12)
+    resets = [tick for kind, tick in events if kind == "reset"]
+    assert any(last_before < tick < first_after for tick in resets), events
+
+
 def test_dagger_correction_frames_keep_the_cycle_cadence_and_are_tagged():
     from lerobot.rollout import DAggerStrategyConfig
     from lerobot.rollout.strategies import DAggerStrategy

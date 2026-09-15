@@ -27,7 +27,8 @@ def resolve_observation_delta_indices(config: Any, key: str) -> list[int] | None
         return None
     else:
         indices = None
-    return cast(
-        list[int] | None,
-        indices if indices is not None else getattr(config, "observation_delta_indices", None),
-    )
+    if indices is not None:
+        return cast(list[int] | None, indices)
+    # The shared property is abstract on PreTrainedConfig: read it directly so an
+    # error raised inside a config's implementation is not mistaken for "no history".
+    return cast(list[int] | None, config.observation_delta_indices)

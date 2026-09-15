@@ -185,6 +185,18 @@ lerobot-rollout \
     --device=cuda
 ```
 
+## Observation History
+
+Policies that condition on more than the current frame — Multi-Task DiT with `n_obs_steps > 1`, or Pi0.5 with MEM — declare their temporal offsets through `observation_delta_indices` (and the per-modality `image_observation_delta_indices` / `state_observation_delta_indices`). The RTC inference engine reads those offsets and assembles the same history the policy saw in training:
+
+- one observation is kept per policy tick (loop ticks divided by `--interpolation_multiplier`), so a starved interpolator that requests observations on every sub-tick does not compress the history;
+- missing frames at the start of an episode are filled by repeating the earliest one, with the matching `*_is_pad` flags;
+- the history is cleared on `reset()`.
+
+Set `--fps` to the checkpoint's training FPS; the offsets and any stride are counted in ticks. Policies whose only offset is the current frame are unaffected.
+
+Known limitation with DAgger: no observation reaches the engine while a human is correcting, and the engine is reset when control returns to the policy, so the first chunk after a hand-back is conditioned on padded history even though the dataset records consecutive frames across the intervention. Preserving history across a hand-back would need the reset to distinguish clearing the action queue from clearing the observation history.
+
 ## How It Differs from the Async Inference in LeRobot
 
 Both RTC and [async inference](./async) improve real-time robot control, but they solve different problems.
