@@ -361,15 +361,6 @@ def test_wall_x_runtime_query_is_rendered_by_the_default_input_pipeline():
     assert QUERY_TEXT not in batch
 
 
-def test_wall_x_loads_an_explicit_external_recipe(tmp_path):
-    path = tmp_path / "recipe.yaml"
-    path.write_text("messages:\n  - {role: user, content: '${task}', stream: low_level}\n")
-    config = WallXConfig(device="cpu", recipe_path=str(path))
-
-    assert config.recipe is not None
-    assert config.recipe["messages"] is not None
-
-
 @require_cuda
 @require_hf_token
 def test_policy_instantiation():

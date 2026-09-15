@@ -100,8 +100,8 @@ lerobot-train \
 
 ### Train with language annotations
 
-WALL-X uses its built-in recipe to train from LeRobot's optional language
-columns. Set `recipe_path` only to replace that recipe:
+WALL-X stores its language recipe in the policy configuration and uses it to
+train from LeRobot's optional language columns:
 
 ```bash
 lerobot-train \
@@ -122,7 +122,7 @@ tokens, and padding are excluded from text loss. Set `policy.recipe=null` to
 use WALL-OSS's original action-only training path.
 
 See [Language columns and recipes](./language_and_recipes) for the annotation
-schema and available recipes.
+schema and recipe structure.
 
 ### Training Arguments
 
@@ -142,7 +142,7 @@ schema and available recipes.
 
 Language training uses `policy.text_loss_weight` (default `0.01`),
 `policy.flow_loss_weight` (default `1.0`), and `policy.tokenizer_max_length`
-(default `768`). `policy.recipe_path` optionally replaces the built-in recipe.
+(default `768`). Set `policy.recipe=null` to disable recipe rendering.
 
 ## License
 

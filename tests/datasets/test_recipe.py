@@ -1,8 +1,5 @@
 #!/usr/bin/env python
 
-from pathlib import Path
-from textwrap import dedent
-
 import pytest
 
 pytest.importorskip("datasets", reason="recipes require lerobot[dataset]")
@@ -11,9 +8,7 @@ pytest.importorskip("av", reason="recipes require lerobot[dataset]")
 from lerobot.datasets.recipe import (  # noqa: E402
     MessageTurn,
     TrainingRecipe,
-    load_recipe,
     render_message_turns,
-    resolve_recipe_override,
 )
 
 
@@ -38,18 +33,11 @@ def test_message_recipe_validates_unknown_binding():
         )
 
 
-def test_canonical_recipe_loads():
-    """The canonical PI052 blend YAML loads + validates."""
-    recipe = TrainingRecipe.from_yaml(Path("src/lerobot/configs/recipes/subtask_mem_vqa_speech.yaml"))
-    assert recipe.blend is not None
-    assert sum(c.weight for c in recipe.blend.values()) == pytest.approx(1.0)
-
-
 def test_message_turn_requires_a_stream():
     """Every turn must declare a stream — None is rejected at construction.
 
     Previously this only failed at render time (``_validate_rendered``);
-    catching it here means a malformed recipe YAML errors at load instead
+    catching it here means a malformed policy recipe errors at construction instead
     of at the first training sample.
     """
     with pytest.raises(ValueError, match="missing a stream"):
@@ -135,7 +123,7 @@ def test_blend_components_cannot_themselves_define_a_blend():
         TrainingRecipe(blend={"outer": nested})
 
 
-# ── from_dict / from_yaml round-trips ────────────────────────────────
+# ── from_dict ───────────────────────────────────────────────────────
 
 
 def test_from_dict_with_nested_blend():
@@ -164,37 +152,6 @@ def test_from_dict_with_nested_blend():
     assert recipe.blend["b"].weight == 2.0
     # Inner messages were promoted to MessageTurn instances.
     assert isinstance(recipe.blend["a"].messages[0], MessageTurn)
-
-
-def test_from_yaml_round_trips_through_load_recipe(tmp_path: Path):
-    yaml_text = dedent(
-        """
-        bindings:
-          custom: "active_at(t, style=subtask)"
-        messages:
-          - {role: user, content: "${task}: ${custom}", stream: high_level}
-          - {role: assistant, content: "ok", stream: high_level, target: true}
-        """
-    ).strip()
-    path = tmp_path / "recipe.yaml"
-    path.write_text(yaml_text)
-
-    via_classmethod = TrainingRecipe.from_yaml(path)
-    via_helper = load_recipe(path)
-
-    assert via_classmethod.bindings == {"custom": "active_at(t, style=subtask)"}
-    assert via_classmethod.messages[1].target is True
-    # ``load_recipe`` is just a wrapper, but assert the two paths agree
-    # on the structural result so a future divergence is caught here.
-    assert via_helper.bindings == via_classmethod.bindings
-    assert len(via_helper.messages) == len(via_classmethod.messages)
-
-
-def test_from_yaml_rejects_non_mapping(tmp_path: Path):
-    path = tmp_path / "bad.yaml"
-    path.write_text("- just\n- a\n- list\n")
-    with pytest.raises(ValueError, match="mapping at the top level"):
-        TrainingRecipe.from_yaml(path)
 
 
 def test_prompt_turns_returns_prefix_before_matching_assistant_target():
@@ -257,21 +214,3 @@ def test_render_message_turns_substitutes_without_dataset_dependencies():
         "message_streams": ["high_level", "high_level"],
         "target_message_indices": [1],
     }
-
-
-def test_resolve_recipe_override_normalizes_inline_dict_and_loads_explicit_path(tmp_path: Path):
-    inline = {
-        "messages": [
-            {"role": "user", "content": "${task}", "stream": "low_level"},
-        ]
-    }
-    normalized = resolve_recipe_override(inline, None)
-    assert isinstance(normalized, TrainingRecipe)
-
-    override = tmp_path / "override.yaml"
-    override.write_text("messages:\n  - {role: user, content: external, stream: low_level}\n")
-    assert resolve_recipe_override(normalized, override).messages[0].content == "external"
-
-    assert resolve_recipe_override(normalized, tmp_path / "stale.yaml") is normalized
-    with pytest.raises(FileNotFoundError):
-        resolve_recipe_override(None, tmp_path / "missing.yaml")

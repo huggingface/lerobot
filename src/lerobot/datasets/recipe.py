@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Recipe definitions, validation, loading and shared message rendering."""
+"""Recipe definitions, validation, and shared message rendering."""
 
 from __future__ import annotations
 
@@ -22,7 +22,6 @@ import copy
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Literal, get_args
 
 from lerobot.utils.constants import MESSAGES_RENDERED
@@ -149,17 +148,6 @@ class TrainingRecipe:
                 for name, recipe in data["blend"].items()
             }
         return cls(**data)
-
-    @classmethod
-    def from_yaml(cls, path: str | Path) -> TrainingRecipe:
-        """Load a :class:`TrainingRecipe` from a YAML file at ``path``."""
-        import yaml  # type: ignore[import-untyped]
-
-        with open(path) as f:
-            data = yaml.safe_load(f)
-        if not isinstance(data, dict):
-            raise ValueError(f"Recipe YAML must contain a mapping at the top level: {path}")
-        return cls.from_dict(data)
 
     def _validate_message_recipe(self) -> None:
         """Validate bindings and require text or low-level action supervision."""
@@ -331,30 +319,3 @@ def _substitute(template: str, bindings: dict[str, Any]) -> str:
         return str(value)
 
     return PLACEHOLDER_RE.sub(replace, template)
-
-
-def load_recipe(path: str | Path) -> TrainingRecipe:
-    """Load a :class:`TrainingRecipe` from a YAML file at ``path``."""
-    return TrainingRecipe.from_yaml(path)
-
-
-def resolve_recipe_override(
-    recipe: TrainingRecipe | dict[str, Any] | None,
-    recipe_path: str | Path | None,
-) -> TrainingRecipe | None:
-    """Normalize an inline recipe and apply a portable YAML override.
-
-    A checkpoint may retain the original training-machine path alongside its
-    serialized recipe. In that case the inline recipe remains usable when the
-    path does not exist on the inference machine.
-    """
-    if isinstance(recipe, dict):
-        recipe = TrainingRecipe.from_dict(recipe)
-    if recipe_path is None:
-        return recipe
-    try:
-        return load_recipe(recipe_path)
-    except FileNotFoundError:
-        if recipe is None:
-            raise
-        return recipe
