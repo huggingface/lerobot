@@ -42,7 +42,6 @@ lerobot-replay \
 """
 
 import logging
-import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
@@ -71,8 +70,8 @@ from lerobot.robots import (  # noqa: F401
     unitree_g1,
 )
 from lerobot.utils.constants import ACTION
+from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.import_utils import register_third_party_plugins
-from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import (
     init_logging,
     log_say,
@@ -113,25 +112,32 @@ def replay(cfg: ReplayConfig):
 
     robot.connect()
 
+    # Replay must hit the dataset's own frame rate, or the trajectory plays back at the
+    # wrong speed.  It writes nothing, so a missed deadline is a control-stability
+    # problem only.
+    timer = CycleTimer(dataset.fps, records_data=False)
+
     try:
         log_say("Replaying episode", cfg.play_sounds, blocking=True)
         for idx in range(dataset.num_frames):
-            start_episode_t = time.perf_counter()
+            timer.tick()
 
-            action_array = actions[idx][ACTION]
-            action = {}
-            for i, name in enumerate(dataset.features[ACTION]["names"]):
-                action[name] = action_array[i]
+            with timer.section("read_frame"):
+                action_array = actions[idx][ACTION]
+                action = {}
+                for i, name in enumerate(dataset.features[ACTION]["names"]):
+                    action[name] = action_array[i]
 
-            robot_obs = robot.get_observation()
+            with timer.section("observe"):
+                robot_obs = robot.get_observation()
 
-            processed_action = robot_action_processor((action, robot_obs))
+            with timer.section("send"):
+                processed_action = robot_action_processor((action, robot_obs))
+                _ = robot.send_action(processed_action)
 
-            _ = robot.send_action(processed_action)
-
-            dt_s = time.perf_counter() - start_episode_t
-            precise_sleep(max(1 / dataset.fps - dt_s, 0.0))
+            timer.wait()
     finally:
+        timer.log_run_summary()
         robot.disconnect()
 
 

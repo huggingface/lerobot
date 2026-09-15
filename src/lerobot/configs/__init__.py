@@ -24,7 +24,6 @@ Import them directly: ``from lerobot.configs.train import TrainPipelineConfig``
 from .dataset import DatasetRecordConfig
 from .default import DatasetConfig, EMAConfig, EvalConfig, JobConfig, PeftConfig, TensorBoardConfig, WandBConfig
 from .policies import PreTrainedConfig
-from .recipe import MessageTurn, TrainingRecipe, load_recipe
 from .types import (
     FeatureType,
     NormalizationMode,
@@ -44,6 +43,7 @@ from .video import (
     depth_encoder_defaults,
     encoder_config_from_video_info,
     infer_depth_unit,
+    is_depth_map,
     rgb_encoder_defaults,
 )
 
@@ -60,13 +60,10 @@ __all__ = [
     "EMAConfig",
     "EvalConfig",
     "JobConfig",
-    "MessageTurn",
     "PeftConfig",
     "PreTrainedConfig",
-    "TrainingRecipe",
     "TensorBoardConfig",
     "WandBConfig",
-    "load_recipe",
     "VideoEncoderConfig",
     "RGBEncoderConfig",
     "DepthEncoderConfig",
@@ -76,6 +73,7 @@ __all__ = [
     # Factories
     "encoder_config_from_video_info",
     "infer_depth_unit",
+    "is_depth_map",
     # Constants
     "DEFAULT_DEPTH_UNIT",
     "DEPTH_METER_UNIT",

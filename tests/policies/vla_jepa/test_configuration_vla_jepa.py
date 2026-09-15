@@ -1,5 +1,19 @@
 #!/usr/bin/env python
 
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 import pytest
@@ -31,6 +45,17 @@ def test_too_few_video_frames_raises() -> None:
         )
 
 
+def test_freeze_qwen_warns_about_fixed_embodied_action_readouts(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level("WARNING", logger="lerobot.policies.vla_jepa.configuration_vla_jepa"):
+        config = VLAJEPAConfig(freeze_qwen=True)
+
+    assert not config.enable_world_model
+    assert "freeze_qwen=True" in caplog.text
+    assert "<|embodied_action|>" in caplog.text
+    assert "source checkpoint" in caplog.text
+    assert "domain shift" in caplog.text
+
+
 def test_validate_features_no_image_raises() -> None:
     config = VLAJEPAConfig(
         input_features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(STATE_DIM,))},
@@ -55,3 +80,22 @@ def test_validate_features_sets_action_dim_from_feature() -> None:
     config = make_config(action_dim=6, state_dim=10)
     assert config.action_dim == 6
     assert config.state_dim == 10
+
+
+def test_dataset_metadata_survives_validate_features() -> None:
+    """Cross-embodiment fine-tuning: the dataset dims must win over the checkpoint's."""
+    config = make_config(action_dim=6, state_dim=10)
+    config.set_dataset_feature_metadata(
+        {
+            OBS_STATE: {"shape": (14,)},
+            ACTION: {"shape": (14,), "names": [f"joint_{i}" for i in range(14)]},
+        }
+    )
+    # `make_policy` rebuilds `output_features` from the dataset before the policy is built.
+    config.output_features = {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(14,))}
+
+    config.validate_features()
+
+    assert config.state_dim == 14
+    assert config.action_dim == 14
+    assert config.input_features[OBS_STATE].shape == (14,)
