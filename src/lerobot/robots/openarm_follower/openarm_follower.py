@@ -138,19 +138,23 @@ class OpenArmFollower(Robot):
         logger.info(f"Connecting arm on {self.config.port}...")
         self.bus.connect()
 
-        # Run calibration if needed
-        if not self.is_calibrated and calibrate:
-            logger.info(
-                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
-            )
-            self.calibrate()
+        try:
+            # Run calibration if needed
+            if not self.is_calibrated and calibrate:
+                logger.info(
+                    "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
+                )
+                self.calibrate()
 
-        for cam in self.cameras.values():
-            cam.connect()
+            for cam in self.cameras.values():
+                cam.connect()
 
-        self.configure()
+            self.configure()
 
-        self.bus.enable_torque()
+            self.bus.enable_torque()
+        except BaseException:
+            self._release_after_failed_connect()
+            raise
 
         logger.info(f"{self} connected.")
 

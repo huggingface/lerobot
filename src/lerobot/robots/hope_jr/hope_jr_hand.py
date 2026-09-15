@@ -126,14 +126,19 @@ class HopeJrHand(Robot):
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         self.bus.connect()
-        if not self.is_calibrated and calibrate:
-            self.calibrate()
+        try:
+            if not self.is_calibrated and calibrate:
+                self.calibrate()
 
-        # Connect the cameras
-        for cam in self.cameras.values():
-            cam.connect()
+            # Connect the cameras
+            for cam in self.cameras.values():
+                cam.connect()
 
-        self.configure()
+            self.configure()
+        except BaseException:
+            self._release_after_failed_connect()
+            raise
+
         logger.info(f"{self} connected.")
 
     @property
