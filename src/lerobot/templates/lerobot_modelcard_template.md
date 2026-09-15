@@ -43,6 +43,8 @@ This is a Gaussian Actor policy (Gaussian policy with a tanh squash) — the pol
 [FastWAM](https://arxiv.org/abs/2603.16666) is a World Action Model policy that keeps video world-modeling during training but predicts actions directly at inference time, initializing its visual world-model components from the Wan2.2 video-diffusion stack.
 {% elif model_name == "lingbot_va" %}
 [LingBot-VA](https://github.com/Robbyant/lingbot-va) is an autoregressive video-action world-model policy built on the Wan2.2 video-diffusion stack. It interleaves the prediction of future video latents and robot actions in a single autoregressive sequence, feeding observed keyframes back into its KV cache for closed-loop world modeling.
+{% elif model_name == "hy_vla" %}
+[Hy-Embodied-0.5-VLA](https://github.com/Tencent-Hunyuan/Hy-Embodied-0.5-VLA) is a bimanual vision-language-action policy that combines the Hy-Embodied-0.5 vision-language model with a flow-matching action expert to predict dual-arm pose-action chunks.
 {% else %}
 This is a **{{ model_name }}** policy trained with [LeRobot](https://github.com/huggingface/lerobot).
 {% endif %}
@@ -84,7 +86,8 @@ This policy has been trained and pushed to the Hub using [LeRobot](https://githu
   "wall_x": "walloss",
   "evo1": "evo1",
   "fastwam": "fastwam",
-  "lingbot_va": "lingbot_va"
+  "lingbot_va": "lingbot_va",
+  "hy_vla": "hy_vla"
 } %}
 {% if policy_docs.get(model_name) %}Learn how to train and run it in the [LeRobot {{ model_name }} guide](https://huggingface.co/docs/lerobot/main/en/{{ policy_docs[model_name] }}), or browse the [full documentation](https://huggingface.co/docs/lerobot/index).
 {% else %}See the [full LeRobot documentation](https://huggingface.co/docs/lerobot/index).
