@@ -168,6 +168,7 @@ _COMPLEMENTARY_KEYS = (
     "index",
     "task_index",
     "episode_index",
+    "frame_index",
     "timestamp",
     "language_persistent",
     "language_events",
