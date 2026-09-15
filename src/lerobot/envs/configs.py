@@ -726,6 +726,11 @@ class IsaaclabArenaEnv(HubEnvConfig):
         )
 
 
+# What the G1's arms carry, by hardware name. Shared with UnitreeG1Config, which owns the
+# robot-level flag: "dummy" is bare wrists, "dex1" the parallel grippers, "dex3" the hands.
+G1EndEffector = Literal["dummy", "dex1", "dex3"]
+
+
 @EnvConfig.register_subclass("unitree_g1_mujoco")
 @dataclass
 class UnitreeG1MujocoEnv(HubEnvConfig):
@@ -741,7 +746,7 @@ class UnitreeG1MujocoEnv(HubEnvConfig):
     """
 
     hub_path: str = "lerobot/unitree-g1-mujoco"
-    end_effector: Literal["dummy", "dex1", "dex3"] = "dex1"
+    end_effector: G1EndEffector = "dex1"
     publish_images: bool = True
     camera_port: int = 5555
     onscreen: bool | None = None
