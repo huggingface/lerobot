@@ -1,7 +1,12 @@
+import logging
 from dataclasses import dataclass, field
 
 from lerobot.configs import NormalizationMode, PreTrainedConfig
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
+
+logger = logging.getLogger(__name__)
+
+ARCHITECTURES = {"smolvla_nominal", "temporal_decoder", "temporal_decoder_future_state", "legacy_diffusion"}
 
 
 @PreTrainedConfig.register_subclass("safediff_vla")
@@ -9,9 +14,30 @@ from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 class SafeDiffVLAConfig(PreTrainedConfig):
     """Configuration for the external SafeDiff-VLA trajectory planner."""
 
+    # Which action-generation architecture to use (see `modeling_safediff_vla.py`'s module
+    # docstring for the full data flow of each):
+    #   "temporal_decoder" (default, recommended): VLM latent tokens + current state ->
+    #       TemporalActionDecoder -> actions directly. Does not consult SmolVLA's own nominal
+    #       action chunk at all.
+    #   "temporal_decoder_future_state": as above, plus a predicted subgoal state (from
+    #       `FutureStatePredictor`) as additional per-timestep decoder conditioning.
+    #   "smolvla_nominal": ablation baseline — returns SmolVLA's own nominal action chunk
+    #       unmodified. No trainable parameters of its own; not meant to be trained, only eval'd.
+    #   "legacy_diffusion": the original design — an external diffusion planner refining
+    #       SmolVLA's nominal action chunk. Kept only to reproduce past experiments: every
+    #       configuration of it tried (critic-free, state-conditioned, subgoal-conditioned,
+    #       temporal-conv-mixed) matched or underperformed "smolvla_nominal", so it is no longer
+    #       the default.
+    architecture: str = "temporal_decoder"
     n_obs_steps: int = 1
-    action_horizon: int = 16
-    execute_horizon: int = 4
+    # Must match the backbone's own native chunk size (`backbone.config.chunk_size` /
+    # `n_action_steps`) — `lerobot/smolvla_vlabench` uses 50. A mismatch here silently truncates
+    # SmolVLA's own coherent 50-step plan to the first `action_horizon` steps and replans far more
+    # often than the backbone was ever run at, which by itself measurably hurt `legacy_diffusion`
+    # results; `__post_init__` below only warns (not hard-fails) since deliberately mismatched
+    # experiments are still sometimes useful, but treat any warning here as a red flag.
+    action_horizon: int = 50
+    execute_horizon: int = 50
     # ACT-style temporal ensembling: replan every env step instead of every `execute_horizon`
     # steps, and blend each step's action across all still-relevant past chunk predictions
     # with exponential-decay weights (newest chunk weighted highest) instead of just executing
@@ -45,17 +71,47 @@ class SafeDiffVLAConfig(PreTrainedConfig):
 
     latent_dim: int = 256
     planner_hidden_dim: int = 512
-    # Hidden width of the self-supervised state-prediction head (see `state_predictor.py`). It
-    # replaces the old task/risk critics, which needed `task_success`/`safety_violation` labels
-    # that no dataset here actually provides and so never trained on anything but noise.
+    # 1D-conv kernel size / layer count the *legacy* diffusion planner uses to mix information
+    # across the horizon axis (see `diffusion_planner.py`) — without this, each of the chunk's
+    # timesteps is denoised in complete isolation from its neighbors, which per-step noise-MSE
+    # doesn't penalize but produces trajectories with no coherence step-to-step. Only used by
+    # `architecture="legacy_diffusion"`.
+    temporal_kernel_size: int = 5
+    num_temporal_layers: int = 2
+    # Hidden width of the self-supervised subgoal state-prediction head (see
+    # `state_predictor.py`). It replaces the old task/risk critics, which needed
+    # `task_success`/`safety_violation` labels that no dataset here actually provides and so
+    # never trained on anything but noise.
     state_head_hidden_dim: int = 256
     timestep_embedding_dim: int = 64
 
+    # -- `temporal_decoder` / `temporal_decoder_future_state` only (see `temporal_decoder.py`) --
+    decoder_hidden_dim: int = 512
+    decoder_num_layers: int = 4
+    decoder_num_heads: int = 8
+    decoder_ffn_dim: int = 1024
+    decoder_dropout: float = 0.1
+    # Weight of the primary supervised action-prediction loss (MSE against the ground-truth
+    # action chunk). Deliberately *not* a diffusion loss for the first version of this decoder —
+    # see the module docstring in `modeling_safediff_vla.py`.
+    lambda_action: float = 1.0
+    # Weight of an optional trajectory-smoothness regularizer (mean squared acceleration).
+    # Defaults to off (0.0): the first experiment should characterize the plain supervised
+    # decoder's own behavior before adding regularization on top of it.
+    lambda_smooth: float = 0.0
+
     lambda_diff: float = 1.0
-    # Weight of the state-prediction regression loss (self-supervised against the state the
-    # dataset actually observed `execute_horizon` steps later — always available, unlike
-    # task/risk labels).
-    lambda_state_pred: float = 1.0
+    # Weight of the subgoal state-prediction regression loss. Only contributes when the batch
+    # carries an `observation.subgoal_state` label (see `subgoal_labels_path` below) — otherwise
+    # it's a no-op zero loss.
+    lambda_subgoal: float = 1.0
+    # Path to a local parquet produced by `examples/safediff_vla/compute_subgoal_labels.py`,
+    # mapping each dataset frame's global `index` to the proprioceptive state at the next
+    # demonstrated pick/place event (gripper open<->close transition). When set, `make_dataset()`
+    # wraps the training dataset so every batch carries `observation.subgoal_state` — the
+    # state-predictor head's regression target. Only affects training; at inference the head
+    # predicts this from scratch (see `state_predictor.py`).
+    subgoal_labels_path: str | None = None
 
     use_diffusion_refinement: bool = True
     # Per-sample squared-L2 gap (in normalized state units) between what the state predictor
@@ -65,6 +121,12 @@ class SafeDiffVLAConfig(PreTrainedConfig):
     # the gap closes or `max_replan_retries` is hit.
     completion_threshold: float = 0.25
     max_replan_retries: int = 4
+    # Set False to always commit a fresh full-length chunk regardless of the subgoal gap —
+    # useful to isolate an action-generation architecture's own quality from the gate's effect
+    # (e.g. when comparing `temporal_decoder` against `temporal_decoder_future_state`, put both
+    # through with this off first). Has no effect on architectures with no subgoal signal
+    # (`smolvla_nominal`, `temporal_decoder`) — those never gate regardless.
+    use_completion_gate: bool = True
     enable_inference_metrics: bool = False
 
     optimizer_lr: float = 1e-4
@@ -91,6 +153,10 @@ class SafeDiffVLAConfig(PreTrainedConfig):
             raise ValueError("execute_horizon must be in [1, action_horizon]")
         if self.num_diffusion_steps < 1:
             raise ValueError("num_diffusion_steps must be positive")
+        if self.temporal_kernel_size < 1:
+            raise ValueError("temporal_kernel_size must be positive")
+        if self.num_temporal_layers < 1:
+            raise ValueError("num_temporal_layers must be positive")
         if self.completion_threshold < 0:
             raise ValueError("completion_threshold must be non-negative")
         if self.max_replan_retries < 0:
@@ -113,6 +179,40 @@ class SafeDiffVLAConfig(PreTrainedConfig):
             raise ValueError("beta_schedule must be 'linear' or 'cosine'")
         if self.prediction_type != "epsilon":
             raise ValueError("prediction_type must be 'epsilon'")
+        if self.architecture not in ARCHITECTURES:
+            raise ValueError(
+                f"architecture must be one of {sorted(ARCHITECTURES)}, got {self.architecture!r}"
+            )
+        if self.decoder_hidden_dim % self.decoder_num_heads != 0:
+            raise ValueError("decoder_hidden_dim must be divisible by decoder_num_heads")
+        if self.lambda_smooth < 0:
+            raise ValueError("lambda_smooth must be non-negative")
+        backbone_chunk_size = self._backbone_native_chunk_size()
+        if backbone_chunk_size is not None and backbone_chunk_size != self.action_horizon:
+            logger.warning(
+                "SafeDiffVLAConfig.action_horizon=%d does not match backbone_name=%r's own native "
+                "chunk_size=%d. This silently truncates/replans more often than the backbone was "
+                "ever run at -- exactly the mismatch that measurably hurt earlier `legacy_diffusion` "
+                "results (see modeling_safediff_vla.py's module docstring). Set action_horizon=%d "
+                "(and execute_horizon to match) unless this mismatch is deliberate.",
+                self.action_horizon,
+                self.backbone_name,
+                backbone_chunk_size,
+                backbone_chunk_size,
+            )
+
+    def _backbone_native_chunk_size(self) -> int | None:
+        """Best-effort lookup of `backbone_name`'s own saved `chunk_size`, without downloading or
+        constructing the full backbone (`__post_init__` runs on every config parse, including
+        cheap CLI validation, so this must stay cheap and must never raise)."""
+        if not self.backbone_name:
+            return None
+        try:
+            from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
+
+            return SmolVLAConfig.from_pretrained(self.backbone_name).chunk_size
+        except Exception:  # noqa: BLE001 - best-effort; never block config construction on this
+            return None
 
     def validate_features(self) -> None:
         if self.action_feature is None:
@@ -145,15 +245,6 @@ class SafeDiffVLAConfig(PreTrainedConfig):
     @property
     def observation_delta_indices(self) -> list[int]:
         return [0]
-
-    @property
-    def state_observation_delta_indices(self) -> list[int]:
-        """Overrides `observation_delta_indices` for `observation.state` only: in addition to the
-        current frame (index 0), also load the state `execute_horizon` steps ahead so the
-        state-prediction head has a real self-supervised regression target during training (see
-        `state_predictor.py`). Images/language keep using `observation_delta_indices` (current
-        frame only)."""
-        return [0, self.execute_horizon]
 
     @property
     def action_delta_indices(self) -> list[int]:

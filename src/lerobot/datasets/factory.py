@@ -189,6 +189,12 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             for stats_type, stats in IMAGENET_STATS.items():
                 dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
 
+    subgoal_labels_path = getattr(cfg.trainable_config, "subgoal_labels_path", None)
+    if subgoal_labels_path is not None:
+        from lerobot.datasets.adapters.vlabench_subgoal import SubgoalLabelDataset
+
+        dataset = SubgoalLabelDataset(dataset, subgoal_labels_path)
+
     return dataset
 
 
