@@ -1,0 +1,388 @@
+# 多任務 DiT Policy（Multitask DiT Policy）
+
+多任務擴散 Transformer（Multitask Diffusion Transformer, DiT）策略（policy）是原始擴散策略架構（Diffusion Policy architecture）的進化版本，利用大型 DiT 搭配文本（text）與視覺條件化（vision conditioning）來實現多任務機器人學習（multitask robot learning）。此實作支援擴散（diffusion）和流匹配（flow matching）兩種目標函數（objectives）來生成動作（action generation），使機器人能以語言指令（language instructions）為條件執行多樣化的操作任務（manipulation tasks）。
+
+## 模型概覽（model overview）
+
+此模型（model）使用：
+
+- **CLIP 視覺編碼器（CLIP vision encoder）**：處理來自多個攝影機視角（multiple camera views）的 RGB 影像（images）
+- **CLIP 文本編碼器（CLIP text encoder）**：編碼語言任務指令（encodes language task instructions，凍結權重 frozen weights 搭配可學習的投影層 learnable projection）
+- **擴散 Transformer（Diffusion Transformer）**：根據觀測與語言（observations and language）條件預測動作序列（action sequences）
+- **兩種目標函數（two objectives）**：支援擴散（DDPM/DDIM）和流匹配（flow matching）兩種動作生成（action generation）方式
+
+這個模型（model）令人興奮之處在於，您僅需約 4.5 億參數（~450M parameter）就能實現極高的靈巧度（dexterity），
+其表現可與數十億參數的 VLA 模型競爭，且所需的訓練（training）量顯著更少。
+
+## 安裝需求（installation requirements）
+
+多任務DiT 策略（Multitask DiT Policy）有額外的依賴套件（dependencies）。請使用以下指令安裝：
+
+```bash
+pip install lerobot[multi_task_dit]
+```
+
+這將安裝所有必要的依賴套件（dependencies），包括用於 CLIP 模型（models）的 HuggingFace Transformers 函式庫。
+
+## 使用方式（usage）
+
+若要在 LeRobot 配置中使用多任務 DiT（Multitask DiT），請將策略類型（policy type）指定為：
+
+```python
+policy.type=multi_task_dit
+```
+
+## 訓練（training）
+
+### 基本訓練指令（basic training command）
+
+以下是在您的資料集（dataset）上訓練多任務 DiT （training Multitask DiT）的完整訓練指令：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=YOUR_DATASET \
+  --output_dir=./outputs/multitask_dit_training \
+  --batch_size=32 \
+  --steps=5000 \
+  --save_freq=500 \
+  --log_freq=100 \
+  --policy.type=multi_task_dit \
+  --policy.device=cuda \
+  --policy.repo_id="HF_USER/multitask-dit-your-robot" \
+  --wandb.enable=true
+```
+
+### 建議的超參數與資料集細節（recommended hyperparameters and dataset details，30Hz 控制頻率）
+
+為獲得可靠的效能，建議從以下預設超參數（hyperparameters）開始：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=YOUR_DATASET \
+  --output_dir=./outputs/mutitask_dit_training \
+  --batch_size=320 \
+  --steps=30000 \
+  --policy.type=multi_task_dit \
+  --policy.device=cuda \
+  --policy.horizon=32 \
+  --policy.n_action_steps=24 \
+  --policy.objective=diffusion \
+  --policy.noise_scheduler_type=DDPM \
+  --policy.num_train_timesteps=100 \
+  --policy.repo_id="HF_USER/multitask-dit-your-robot" \
+  --wandb.enable=true
+```
+
+**關鍵參數（key parameters）：**
+
+- **Batch Size**：192-320 - 如果您有支援此規模的 GPU，將獲得最佳的訓練動態（training dynamics）
+- **Horizon**：32 - 預測的動作步數（number of action steps to predict），在 30Hz 下約為 1.0 秒
+- **n_action_steps**：24 - 在 30Hz 下約為 0.8 秒
+- **Objective**：`diffusion` - 建議先從擴散（diffusion）開始，若生成品質（generation quality）不佳再嘗試流匹配（flow matching）
+- **Training Steps**：單一任務（single task）建議 >30k 步（steps）
+
+### 訓練配置參數（training configuration parameters）
+
+#### 目標函數選擇（objective selection）
+
+在擴散（diffusion）和流匹配（flow matching）之間選擇：
+
+```bash
+# 擴散目標函數（預設）
+--policy.objective=diffusion \
+--policy.noise_scheduler_type=DDPM \  # 或 "DDIM"
+--policy.num_train_timesteps=100 \
+--policy.num_inference_steps=10 \  # 加速推論
+--policy.beta_schedule=squaredcos_cap_v2 \  # 噪聲排程類型
+--policy.prediction_type=epsilon \  # "epsilon"（預測噪聲）或 "sample"（預測乾淨樣本）
+--policy.clip_sample=true \  # 在去噪過程中裁剪樣本
+--policy.clip_sample_range=1.0  # 裁剪範圍 [-x, x]
+
+# 流匹配目標函數
+--policy.objective=flow_matching \
+--policy.timestep_sampling_strategy=beta \  # 或 "uniform" | beta 採樣策略在實務中表現明顯更好
+--policy.num_integration_steps=100 \
+--policy.integration_method=euler \  # 或 "rk4"
+--policy.sigma_min=0.0  # 流插值路徑中的最小噪聲
+```
+
+#### Transformer 架構（Transformer architecture）
+
+根據資料集大小（dataset size）調整模型容量（model capacity）：
+
+```bash
+# 小型資料集（< 100 個範例）
+--policy.num_layers=4 \
+--policy.hidden_dim=512 \
+--policy.num_heads=8  # 理想情況下應為 hidden_dim // 64
+
+# 中型資料集（100-5k 個範例）- 預設值
+--policy.num_layers=6 \
+--policy.hidden_dim=512 \
+--policy.num_heads=8  # 理想情況下應為 hidden_dim // 64
+
+# 大型資料集（> 5k 個範例）
+--policy.num_layers=8 \
+--policy.hidden_dim=512 \
+--policy.num_heads=8   # 理想情況下應為 hidden_dim // 64
+```
+
+**位置編碼選項（positional encoding options）：**
+
+本模型（model）支援兩種動作序列（action sequences）的位置編碼（positional encoding）方法：
+
+```bash
+# 旋轉位置嵌入（Rotary Position Embedding, RoPE）- 預設，建議使用
+--policy.use_rope=true \
+--policy.rope_base=10000.0  # RoPE 的基礎頻率
+
+# 絕對位置編碼
+--policy.use_positional_encoding=true  # 設為 true 時停用 RoPE
+```
+
+**其他 Transformer 參數（other transformer parameters）：**
+
+```bash
+--policy.dropout=0.1  # DiT 區塊的 dropout 率（0.0-1.0）
+--policy.timestep_embed_dim=256  # 時間步嵌入維度
+```
+
+#### 視覺編碼器配置（vision encoder configuration）
+
+```bash
+# 使用不同的 CLIP 模型以獲得更強的表達力，但會犧牲推論速度
+# 根據任務複雜度與資料集大小，嘗試使用更大或更小的模型
+--policy.vision_encoder_name=openai/clip-vit-large-patch14
+
+# 為每個相機使用獨立的視覺編碼器
+# 當相機特性差異顯著時可能有用，
+# 但請注意 VRAM 佔用會增加
+--policy.use_separate_rgb_encoder_per_camera=true
+
+# 影像前處理
+--policy.image_resize_shape=[XXX,YYY] \ # 您可能需要調整影像大小以加速推論
+--policy.image_crop_shape=[224,224] \
+--policy.image_crop_is_random=true  # 訓練時隨機裁剪，推論時中心裁剪
+```
+
+#### 文本編碼器配置（text encoder configuration）
+
+```bash
+# 使用不同的 CLIP 文本編碼器模型
+# 與視覺編碼器相同：根據任務複雜度與資料集大小
+# 嘗試使用更大或更小的模型
+--policy.text_encoder_name=openai/clip-vit-large-patch14
+```
+
+#### 學習率配置（learning rate configuration）
+
+視覺編碼器（vision encoder）使用獨立的學習率倍率（learning rate multiplier），建議以 1/10 作為理想的起始點：
+
+```bash
+--policy.optimizer_lr=2e-5 \
+--policy.vision_encoder_lr_multiplier=0.1  # 視覺編碼器學習率 = 0.1 * optimizer_lr
+```
+
+### 訓練調校指南（training tuning guidelines）
+
+#### 1. 搭配 Beta 採樣的流匹配（Flow Matching with Beta sampling）
+
+此處的原始擴散實作（original diffusion implementation）基於 [TRI 的 LBM 論文](https://arxiv.org/abs/2507.05331) 中描述的工作。
+
+此外，我們實作了流匹配目標函數（flow-matching objective），其高層（high-level）概念描述於 [Boston Dynamics 部落格文章](https://bostondynamics.com/blog/large-behavior-models-atlas-find-new-footing/) 中。
+
+建議測試流匹配目標函數（flow-matching objective）並評估其對您任務（task）的效能差異：
+
+```bash
+--policy.objective=flow_matching \
+--policy.timestep_sampling_strategy=beta \
+--policy.timestep_sampling_alpha=1.5 \
+--policy.timestep_sampling_beta=1.0 \
+--policy.timestep_sampling_s=0.999
+```
+
+這並未被證明是適用於所有使用情境的銀色子彈（silver bullet），但在某些情況下確實能帶來更流暢且更一致的動作（actions）。
+
+#### 2. Transformer 層數（number of Transformer layers）
+
+根據資料集大小（dataset size）匹配模型容量（model capacity）：
+
+- **小型資料集（dataset）**（< 100 個範例）：減少至 4 層（layers）
+- **大型資料集（dataset）**（> 5k 個範例）：增加至 8 層（layers）
+
+#### 3. `horizon` 調校（horizon tuning）
+
+模型（model）對您選擇的水平（horizon）可能相當敏感。建議根據控制頻率（control frequency），從大約 1 秒的水平（horizon）開始：
+
+- **30 Hz 頻率**：`horizon=30`
+- **10 Hz 頻率**：`horizon=10`
+
+然後實驗從此基礎逐步增加。水平（horizon）決定了模型預測未來動作的時間範圍（how far into the future the model predicts actions）。
+
+#### 4. `n_action_steps` 敏感度（n_action_steps sensitivity）
+
+模型（model）對 `n_action_steps` 也可能非常敏感。建議根據控制頻率（control frequency），從大約 0.8 秒開始調整：
+
+- **較低值（lower values）**：反應更靈敏，但在長水平任務（long-horizon tasks）中可能較不穩定
+- **較高值（higher values）**：長水平執行（long-horizon execution）效果更好，但開迴路失敗（open-loop failures）的恢復（recovery）能力受限
+
+### 推論調校（inference tuning）
+
+為加速推論（inference），使用 DDIM 搭配較少的採樣步數（sampling steps）：
+
+```bash
+--policy.noise_scheduler_type=DDIM \
+--policy.num_inference_steps=10
+```
+
+### 接續訓練（resuming training）
+
+從檢查點（checkpoint）接續訓練（resume training）：
+
+```bash
+lerobot-train \
+  --config_path=./outputs/mutitask_dit_training/checkpoints/last/pretrained_model/train_config.json \
+  --resume=true
+```
+
+檢查點目錄應包含 `model.safetensors` 和 `config.json` 檔案（訓練過程中自動儲存）。接續訓練（resuming training）時，配置（configuration）會從檢查點（checkpoint）載入，因此不需要指定其他參數（parameters）。
+
+## 常見失敗模式與除錯（common failure modes and debugging）
+
+訓練這些模型（training these models）可能相當棘手。以下是常見的失敗模式（failure modes）與除錯方法（debugging approaches）：
+
+### 靜止不動／無動作（idling / no motion）
+
+模型（model）可能在推論（inference）時「崩潰（collapse）」，導致靜止或無動作（static or no motion）輸出。這可能發生在：
+
+1. **訓練資料不足（insufficient training data）**：如果您只有 20-50 個範例（examples），嘗試將資料集大小（dataset size）大致翻倍。一旦超過 300 個範例仍然出現此問題，可能是任務過於複雜（task may be too complex）。
+
+2. **多個相似任務（multiple similar tasks）**：當您的資料集（dataset）包含多個相似任務（multiple similar tasks，例如抓取 2 個不同物體）時，模型（model）可能過度依賴語言條件（language conditioning），而語言描述可能不夠豐富（not be rich enough）。
+
+**除錯建議（debugging tips）：**
+
+- 增加資料集大小（dataset size，持續翻倍直到超過 300 個範例）
+- 延長訓練（training）時間，最多至 100k 步（steps），即使損失已趨平穩（loss flatlines）
+- 檢查模型（model）是否接收到正確的語言指令（proper language instructions），或增加指令（instruction）的多樣性
+
+### 執行錯誤的任務（executing the wrong task）
+
+有時機器人會完全忽略您的指令（instruction）而執行其他任務（task）。這通常只在您訓練（training）了多個任務（multiple tasks）時才會發生。
+
+**可能原因（potential causes）：**
+
+- 語言指令模糊不清（language instruction ambiguity）
+- 特定任務的訓練資料不足（insufficient task-specific training data）
+- 模型對多任務資料集中的相似任務之間發生混淆（model confusion between similar tasks in the multitask dataset）
+
+**除錯建議（debugging tips）：**
+
+- 驗證語言指令的具體性（verify language instruction specificity），特別是多個任務之間描述相似（descriptions are similar between multiple tasks）時
+- 檢查訓練資料集中的任務分佈（task distribution in your training dataset），並對失敗/被忽略的任務（failing/ignored task）增加權重（weighting）
+- 考慮針對特定任務進行微調（task-specific fine-tuning）
+
+### 訓練不穩定（training instability）
+
+如果訓練損失（training loss）不穩定或發散（unstable or diverging）：
+
+- 嘗試將學習率（learning rate）調整在 `1e-5` 到 `3e-4` 之間
+- 盡可能增加批次大小（batch size）
+- 檢查資料集的正規化（dataset normalization）是否正確
+- 驗證影像前處理（image preprocessing）是否正常運作
+
+## 效能考量（performance considerations）
+
+### GPU 需求
+
+- **推論（inference）**：建議至少使用 RTX 5070 Ti（或同等級 GPU）以獲得合理的速度表現
+- **訓練（training）**：理想情況下需要足夠 VRAM 以支援 >64 的批次大小（batch size），具體需求視影像觀測數量（number of image observations）等因素而異
+
+### Batch Size 建議
+
+- **最小值**：64（低於此值可能導致訓練（training）不穩定）
+- **建議值**：256-320（最佳效能，需要較大的 GPU）
+
+## 範例：在自訂資料集上訓練（training on custom dataset）
+
+以下是在自訂資料集（custom dataset）上訓練（training）的完整範例：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=YOUR_DATASET \
+  --output_dir=./outputs/mutitask_dit_training \
+  --batch_size=320 \
+  --steps=30000 \
+  --save_freq=1000 \
+  --log_freq=100 \
+  --env_eval_freq=1000 \
+  --policy.type=multi_task_dit \
+  --policy.device=cuda \
+  --policy.horizon=32 \
+  --policy.n_action_steps=24 \
+  --policy.objective=diffusion \
+  --policy.noise_scheduler_type=DDPM \
+  --policy.num_layers=6 \
+  --policy.hidden_dim=512 \
+  --policy.vision_encoder_name=openai/clip-vit-base-patch16 \
+  --policy.image_resize_shape=[320,240] \
+  --policy.image_crop_shape=[224,224] \
+  --policy.repo_id="HF_USER/multitask-dit-your-robot" \
+  --wandb.enable=true \
+  --wandb.project=multitask_dit
+```
+
+## Libero 的結果（Libero results）
+
+```
+python -m lerobot.scripts.lerobot_train \
+  --dataset.repo_id=HuggingFaceVLA/libero \
+  --policy.type=multi_task_dit \
+  --policy.push_to_hub=false \
+  --output_dir="./outputs/multitask_dit_libero" \
+  --job_name="multitask-dit-libero" \
+  --wandb.enable=true \
+  --wandb.project=multitask_dit_libero \
+  --dataset.image_transforms.enable=true \
+  --dataset.image_transforms.max_num_transforms=4 \
+  --dataset.image_transforms.tfs='{"brightness":{"type":"ColorJitter","kwargs":{"brightness":[0.75,1.25]}},"contrast":{"type":"ColorJitter","kwargs":{"contrast":[0.6,1.4]}},"saturation":{"type":"ColorJitter","kwargs":{"saturation":[0.8,1.2]}},"hue":{"type":"ColorJitter","kwargs":{"hue":[-0.05,0.05]}},"sharpness":{"type":"SharpnessJitter","kwargs":{"sharpness":[0.6,1.4]}},"rotation":{"type":"RandomRotation","kwargs":{"degrees":[-5,5]}},"translation":{"type":"RandomAffine","kwargs":{"degrees":0,"translate":[0.1,0.1]}}}' \
+  --dataset.video_backend=torchcodec \
+  --policy.use_amp=true \
+  --policy.horizon=48 \
+  --policy.n_obs_steps=2 \
+  --policy.use_rope=true \
+  --policy.use_positional_encoding=false \
+  --policy.hidden_dim=768 \
+  --policy.num_layers=8 \
+  --policy.num_heads=12 \
+  --policy.dropout=0.1 \
+  --policy.timestep_embed_dim=256 \
+  --policy.objective=diffusion \
+  --policy.optimizer_lr=3e-4 \
+  --policy.optimizer_weight_decay=0 \
+  --policy.scheduler_warmup_steps=0 \
+  --policy.vision_encoder_name=openai/clip-vit-base-patch16 \
+  --policy.image_resize_shape=[256,256] \
+  --policy.image_crop_is_random=true \
+  --policy.text_encoder_name=openai/clip-vit-base-patch16 \
+  --policy.vision_encoder_lr_multiplier=0.1 \
+  --policy.device=cuda \
+  --num_workers=8 \
+  --save_freq=4000 \
+  --log_freq=100 \
+  --steps=100000 \
+  --batch_size=320
+```
+
+結果：
+
+| LIBERO Spatial | LIBERO Object | LIBERO Goal | LIBERO 10 | 平均（average） |
+| -------------- | ------------- | ----------- | --------- | --------------- |
+| 87.0           | 98.2          | 93.8        | 83.2      | 90.6            |
+
+## 參考文獻
+
+如需了解更多技術實作（technical implementation）與架構（architecture），請參閱：
+
+- [A Careful Examination of Large Behavior Models for Multitask Dexterous Manipulation](https://arxiv.org/abs/2507.05331)
+- [Large Behavior Models and Atlas Find New Footing](https://bostondynamics.com/blog/large-behavior-models-atlas-find-new-footing/)
+- [Dissecting and Open-Sourcing Multitask Diffusion Transformer Policy](https://brysonkjones.substack.com/p/dissecting-and-open-sourcing-multitask-diffusion-transformer-policy)

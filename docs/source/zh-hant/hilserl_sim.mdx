@@ -1,0 +1,154 @@
+# 在模擬環境中訓練 RL（train RL in simulation）
+
+本指南說明如何使用 gym_hil 模擬環境（simulation environments）作為真實機器人的替代方案，搭配 LeRobot 框架進行人在迴圈中（Human-In-the-Loop, HIL）的強化學習（reinforcement learning）。
+
+`gym_hil` 是一個提供 Gymnasium 相容模擬環境（simulation environments）的套件，專為人在迴圈中的強化學習（Human-In-the-Loop reinforcement learning）所設計。這些環境讓您可以：
+
+- 在模擬（simulation）中訓練策略（train policies），以便在真實機器人上訓練之前測試強化學習堆疊（test the RL stack）
+
+- 使用外部裝置（如遊戲手把或鍵盤）在模擬（simulation）中收集示範資料（collect demonstrations）
+- 在策略學習（policy learning）過程中執行人為介入（human interventions）
+
+目前，主要環境（main environment）是基於 MuJoCo 的 Franka Panda 機器人模擬（simulation），包含撿取方塊等任務（task）。
+
+## 安裝（installation）
+
+先，在 LeRobot 環境中安裝 `gym_hil` 套件（package）：
+
+```bash
+pip install -e ".[hilserl]"
+```
+
+## 我需要什麼？（what do I need?）
+
+- 一個遊戲手把或鍵盤來控制機器人
+- 一張 Nvidia GPU
+
+## 配置（configuration）
+
+若要搭配 LeRobot 使用 `gym_hil`，您需要建立一個配置檔案（configuration file）。範例請參考[此處](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/gym_hil/env_config.json)。主要配置片段（configuration sections）包括：
+
+### 環境類型與任務（environment type and task）
+
+```json
+{
+  "env": {
+    "type": "gym_manipulator",
+    "name": "gym_hil",
+    "task": "PandaPickCubeGamepad-v0",
+    "fps": 10
+  },
+  "device": "cuda"
+}
+```
+
+可用任務（task）：
+
+- `PandaPickCubeBase-v0`：基礎環境（basic environment）
+- `PandaPickCubeGamepad-v0`：搭配遊戲手把控制
+- `PandaPickCubeKeyboard-v0`：搭配鍵盤控制
+
+### 處理器配置（processor configuration）
+
+```json
+{
+  "env": {
+    "processor": {
+      "control_mode": "gamepad",
+      "gripper": {
+        "use_gripper": true,
+        "gripper_penalty": -0.02
+      },
+      "reset": {
+        "control_time_s": 15.0,
+        "fixed_reset_joint_positions": [
+          0.0, 0.195, 0.0, -2.43, 0.0, 2.62, 0.785
+        ]
+      },
+      "inverse_kinematics": {
+        "end_effector_step_sizes": {
+          "x": 0.025,
+          "y": 0.025,
+          "z": 0.025
+        }
+      }
+    }
+  }
+}
+```
+
+重要參數（parameter）：
+
+- `gripper.gripper_penalty`：夾爪（gripper）過度移動的懲罰值（penalty）
+- `gripper.use_gripper`：是否啟用夾爪（gripper）控制
+- `inverse_kinematics.end_effector_step_sizes`：末端執行器（end-effector）在 x、y、z 軸的步進大小（size of the steps in the x,y,z axes）
+- `control_mode`：設定為 `"gamepad"` 以使用遊戲手把控制器
+
+## 搭配 LeRobot 的 HILRL 執行（running with HIL RL of LeRobot）
+
+### 基本用法（basic usage）
+
+若要執行環境（environment），將 mode 設為 null：
+
+```bash
+python -m lerobot.rl.gym_manipulator --config_path path/to/gym_hil_env.json
+```
+
+### 錄製資料集（recording a dataset）
+
+若要收集資料集（dataset），將 mode 設為 `record`，同時定義 repo_id 和要錄製的回合數（number of episodes to record）：
+
+```json
+{
+  "env": {
+    "type": "gym_manipulator",
+    "name": "gym_hil",
+    "task": "PandaPickCubeGamepad-v0"
+  },
+  "dataset": {
+    "repo_id": "username/sim_dataset",
+    "root": null,
+    "task": "pick_cube",
+    "num_episodes_to_record": 10,
+    "replay_episode": null,
+    "push_to_hub": true
+  },
+  "mode": "record"
+}
+```
+
+```bash
+python -m lerobot.rl.gym_manipulator --config_path path/to/gym_hil_env.json
+```
+
+### 訓練策略（training a policy）
+
+若要訓練策略（train a policy），請參考[此處](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/gym_hil/train_config.json)提供的組態範例，然後跑執行者與學習者伺服器（actor and learner servers）：
+
+```bash
+python -m lerobot.rl.actor --config_path path/to/train_gym_hil_env.json
+```
+
+在另一個終端機（terminal）中，執行學習者伺服器（learn server）：
+
+```bash
+python -m lerobot.rl.learner --config_path path/to/train_gym_hil_env.json
+```
+
+模擬環境（simulation environment）提供了一個安全且可重複的方式，讓您在部署（deployment）到真實機器人之前，開發和測試人在迴圈中的強化學習（Human-In-the-Loop reinforcement learning）的各個元件（components）。
+
+恭喜 🎉，您已完成本教學！
+
+> [!TIP]
+> 如果您有任何問題或需要協助，請透過 [Discord](https://discord.com/invite/s3KuuzsPFb) 與我們聯繫。
+
+論文引用：
+
+```
+@article{luo2024precise,
+  title={Precise and Dexterous Robotic Manipulation via Human-in-the-Loop Reinforcement Learning},
+  author={Luo, Jianlan and Xu, Charles and Wu, Jeffrey and Levine, Sergey},
+  journal={arXiv preprint arXiv:2410.21845},
+  year={2024}
+}
+```
