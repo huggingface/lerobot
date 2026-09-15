@@ -17,6 +17,7 @@
 from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig
+from lerobot.envs.configs import G1EndEffector, UnitreeG1MujocoEnv
 
 from ..config import RobotConfig
 
@@ -59,6 +60,16 @@ class UnitreeG1Config(RobotConfig):
     # Launch mujoco simulation
     is_simulation: bool = True
 
+    # What the arms carry: "dex1" parallel grippers, "dex3" articulated hands, or "dummy"
+    # for bare wrists. In simulation it selects the MuJoCo model, and with it the finger
+    # actuators and whether the wrist cameras exist at all. On the real robot it is for
+    # now only a declaration of what is bolted on.
+    end_effector: G1EndEffector = "dex1"
+
+    # The MuJoCo world brought up when `is_simulation` is set, and where its camera and
+    # viewer options live. Its own end effector follows the one above.
+    sim_env: UnitreeG1MujocoEnv = field(default_factory=UnitreeG1MujocoEnv)
+
     # Socket config for ZMQ bridge
     robot_ip: str = "192.168.123.164"  # default G1 IP
 
@@ -71,3 +82,9 @@ class UnitreeG1Config(RobotConfig):
     # Controller class name, e.g. GrootLocomotionController / HolosomaLocomotionController /
     # SonicWholeBodyController. None disables it.
     controller: str | None = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        # One name for what the arms carry. The sim reads it off the config it is handed,
+        # so it is copied there rather than asked for twice.
+        self.sim_env.end_effector = self.end_effector
