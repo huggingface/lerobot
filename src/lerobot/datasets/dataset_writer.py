@@ -23,11 +23,12 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import datasets
 import numpy as np
-import pandas as pd
 import PIL.Image
+import pyarrow as pa
 import pyarrow.parquet as pq
 import torch
 
@@ -96,6 +97,30 @@ def _encode_video_worker(
     )
     shutil.rmtree(img_dir)
     return temp_path
+
+
+def _attach_video_metadata(path: Path, rows: dict[int, dict[str, Any]]) -> None:
+    """Write video metadata columns into an episodes parquet, matching rows by
+    episode_index. Only existing rows are touched: an episode missing from the
+    file is a bookkeeping error and must fail loudly rather than be appended as
+    a row without an episode_index.
+    """
+    table = pq.read_table(path)
+    position = {ep: i for i, ep in enumerate(table["episode_index"].to_pylist())}
+    missing = sorted(set(rows) - set(position))
+    if missing:
+        raise RuntimeError(f"episodes {missing} are not in {path}; cannot attach their video metadata")
+    for col in sorted({col for values in rows.values() for col in values}):
+        values = table[col].to_pylist() if col in table.column_names else [None] * table.num_rows
+        for ep, ep_values in rows.items():
+            values[position[ep]] = ep_values[col]
+        dtype = pa.int64() if col.endswith(("chunk_index", "file_index")) else pa.float64()
+        array = pa.array(values, type=dtype)
+        if col in table.column_names:
+            table = table.set_column(table.column_names.index(col), col, array)
+        else:
+            table = table.append_column(col, array)
+    pq.write_table(table.replace_schema_metadata(None), path)
 
 
 class DatasetWriter:
@@ -402,41 +427,63 @@ class DatasetWriter:
             f"Batch encoding {self._batch_encoding_size} videos for episodes {start_episode} to {end_episode - 1}"
         )
 
-        chunk_idx = self._meta.episodes[start_episode]["data/chunk_index"]
-        file_idx = self._meta.episodes[start_episode]["data/file_index"]
-        episode_df_path = self._root / DEFAULT_EPISODES_PATH.format(
-            chunk_index=chunk_idx, file_index=file_idx
-        )
-        episode_df = pd.read_parquet(episode_df_path)
+        # Episodes saved since the last flush only exist in the metadata buffer
+        # and in a parquet file whose writer is still open (no footer yet), so
+        # `self._meta.episodes` does not contain them and the file itself is
+        # not readable. Flush so the per-episode rows indexed below exist on
+        # disk.
+        self._meta.flush()
 
+        # Video packing appends each episode onto the previous one's video
+        # file, so track where the last encoded episode ended. The anchor is
+        # the episode just before this batch (None when the dataset has no
+        # encoded videos yet). `self._meta.latest_episode` cannot be used as-is
+        # for this: it holds the last *saved* episode, whose video columns are
+        # exactly the ones this batch is about to fill in.
+        video_anchor = None
+        if start_episode > 0:
+            prev_ep = self._meta.episodes[start_episode - 1]
+            if prev_ep.get(f"videos/{self._meta.video_keys[0]}/chunk_index") is not None:
+                video_anchor = {
+                    f"videos/{key}/{field}": [prev_ep[f"videos/{key}/{field}"]]
+                    for key in self._meta.video_keys
+                    for field in ("chunk_index", "file_index", "to_timestamp")
+                }
+
+        # Video metadata per episodes parquet file, attached after encoding.
+        updates: dict[Path, dict[int, dict[str, Any]]] = {}
         for ep_idx in range(start_episode, end_episode):
             logger.info(f"Encoding videos for episode {ep_idx}")
+            ep_row = self._meta.episodes[ep_idx]
+            # The episodes parquet holding this row is addressed by the
+            # *metadata* file indices. The data file indices are a different
+            # sequence (the two writers roll over independently), even though
+            # both start at chunk 0 / file 0.
+            episode_df_path = self._root / DEFAULT_EPISODES_PATH.format(
+                chunk_index=ep_row["meta/episodes/chunk_index"],
+                file_index=ep_row["meta/episodes/file_index"],
+            )
 
-            if (
-                self._meta.episodes[ep_idx]["data/chunk_index"] != chunk_idx
-                or self._meta.episodes[ep_idx]["data/file_index"] != file_idx
-            ):
-                episode_df.to_parquet(episode_df_path)
-                self._meta.episodes = load_episodes(self._root)
-
-                chunk_idx = self._meta.episodes[ep_idx]["data/chunk_index"]
-                file_idx = self._meta.episodes[ep_idx]["data/file_index"]
-                episode_df_path = self._root / DEFAULT_EPISODES_PATH.format(
-                    chunk_index=chunk_idx, file_index=file_idx
-                )
-                episode_df = pd.read_parquet(episode_df_path)
-
+            self._meta.latest_episode = video_anchor
             video_ep_metadata = {}
             for video_key in self._meta.video_keys:
                 video_ep_metadata.update(self._save_episode_video(video_key, ep_idx))
+            video_anchor = {
+                f"videos/{key}/{field}": [video_ep_metadata[f"videos/{key}/{field}"]]
+                for key in self._meta.video_keys
+                for field in ("chunk_index", "file_index", "to_timestamp")
+            }
             video_ep_metadata.pop("episode_index")
-            video_ep_df = pd.DataFrame(video_ep_metadata, index=[ep_idx]).convert_dtypes(
-                dtype_backend="pyarrow"
-            )
+            updates.setdefault(episode_df_path, {})[ep_idx] = video_ep_metadata
 
-            episode_df = episode_df.combine_first(video_ep_df)
-            episode_df.to_parquet(episode_df_path)
-            self._meta.episodes = load_episodes(self._root)
+        for path, rows in updates.items():
+            _attach_video_metadata(path, rows)
+        self._meta.episodes = load_episodes(self._root)
+
+        # Leave a clean slate: the next episode save must not mistake the
+        # anchor for a fully saved episode. With latest_episode unset, the
+        # metadata writer re-anchors on the (now complete) on-disk episodes.
+        self._meta.latest_episode = None
 
     def _save_episode_data(self, episode_buffer: dict) -> dict:
         """Save episode data to a parquet file."""
@@ -524,11 +571,15 @@ class DatasetWriter:
         ):
             chunk_idx, file_idx = 0, 0
             if self._meta.episodes is not None and len(self._meta.episodes) > 0:
-                old_chunk_idx = self._meta.episodes[-1][f"videos/{video_key}/chunk_index"]
-                old_file_idx = self._meta.episodes[-1][f"videos/{video_key}/file_index"]
-                chunk_idx, file_idx = update_chunk_file_indices(
-                    old_chunk_idx, old_file_idx, self._meta.chunks_size
-                )
+                old_chunk_idx = self._meta.episodes[-1].get(f"videos/{video_key}/chunk_index")
+                old_file_idx = self._meta.episodes[-1].get(f"videos/{video_key}/file_index")
+                # The last episode row may predate its video encoding (batched
+                # encoding fills the video columns in later): null indices mean
+                # no video file exists yet, so start at chunk 0 / file 0.
+                if old_chunk_idx is not None and old_file_idx is not None:
+                    chunk_idx, file_idx = update_chunk_file_indices(
+                        old_chunk_idx, old_file_idx, self._meta.chunks_size
+                    )
             latest_duration_in_s = 0.0
             new_path = self._root / self._meta.video_path.format(
                 video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
