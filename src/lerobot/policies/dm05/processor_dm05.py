@@ -19,7 +19,7 @@ from typing import Any
 
 import torch
 
-from lerobot.configs import NormalizationMode, PipelineFeatureType, PolicyFeature
+from lerobot.configs import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
@@ -226,6 +226,20 @@ def make_dm05_pre_post_processors(
     if not processor_source:
         raise ValueError("DM05 requires processor_name_or_path when creating a new processor pipeline.")
 
+    # Pin the camera set at construction so it is serialized with the pipeline. Sniffing it from
+    # the observation dict lets an extra inference camera change the prompt with no error.
+    image_keys = (
+        list(config.image_keys)
+        if config.image_keys
+        else sorted(
+            key for key, feature in config.input_features.items() if feature.type is FeatureType.VISUAL
+        )
+    )
+    if not image_keys:
+        raise ValueError("DM05 requires at least one visual input feature.")
+    if unknown := [key for key in image_keys if key not in config.input_features]:
+        raise ValueError(f"DM05 image_keys are not declared in input_features: {unknown}.")
+
     def clips_quantiles(feature_type: str) -> bool:
         """Return whether a normalized feature should be clipped to the model range."""
         return config.norm_clip and config.normalization_mapping.get(feature_type) in {
@@ -252,7 +266,7 @@ def make_dm05_pre_post_processors(
                 processor_name_or_path=processor_source,
                 tokenizer_max_length=config.tokenizer_max_length,
                 add_state=config.add_state,
-                image_keys=config.image_keys,
+                image_keys=image_keys,
             ),
         ],
         output_steps=[
