@@ -37,9 +37,8 @@ class Clutch:
     - ``_last_commanded_pos`` / ``_last_commanded_rot``: last commanded EE pose; held
       while disengaged so the arm freezes where it was left.
     - ``_home_pos`` / ``_home_rot``: latched on engage — the EE pose the delta applies to.
-      The position comes from the arm's MEASURED pose when the caller provides it (so an
-      arm that moved while disengaged is not snapped back to a stale command); the
-      orientation always comes from the last commanded rotation (see NOTE below).
+      Both come from the arm's MEASURED pose when the caller provides it, so the first IK
+      target after re-clutch exactly matches the current FK pose.
     - ``_origin_pos`` / ``_origin_rot``: latched on engage — the controller pose the delta
       is measured against.
 
@@ -52,11 +51,9 @@ class Clutch:
     delta is left-composed (base frame), so hand rotation about base Z maps to EE rotation
     about base Z. A re-clutch latches a fresh home/origin.
 
-    NOTE: ``_home_rot`` is the last *commanded* orientation even when the measured pose is
-    supplied: the 5-DOF SO-101 tracks orientation only softly, so its measured wrist
-    orientation persistently differs from the command, and latching the measurement would
-    inject that offset into the commanded signal on every re-clutch. Position has no such
-    tracking gap, and there latching the measurement is what prevents the snap-back.
+    Re-anchoring measured orientation matters on this 5-DOF arm: carrying a stale soft
+    orientation target across a processor reset can select a very different IK solution even
+    when Cartesian position is continuous.
     """
 
     def __init__(self, home_base_T_ee: np.ndarray):  # noqa: N803
@@ -78,17 +75,18 @@ class Clutch:
     ) -> None:
         """Latch the engage home (where the arm is now) and controller origin.
 
-        Pass ``measured_base_T_ee`` (FK of the measured joints) so the home POSITION is
+        Pass ``measured_base_T_ee`` (FK of the measured joints) so the complete home pose is
         where the arm physically is — if the arm moved while disengaged (gravity sag,
         external contact), latching the stale last-commanded position would make the
-        first engaged frame command a full-speed jump back to it. The home ORIENTATION
-        always stays the last commanded one (see the class NOTE).
+        first engaged frame command a jump back to it.
         """
         if measured_base_T_ee is not None:
-            self._home_pos = np.asarray(measured_base_T_ee, dtype=float)[:3, 3].copy()
+            measured = np.asarray(measured_base_T_ee, dtype=float)
+            self._home_pos = measured[:3, 3].copy()
+            self._home_rot = Rotation.from_matrix(measured[:3, :3])
         else:
             self._home_pos = self._last_commanded_pos.copy()
-        self._home_rot = self._last_commanded_rot
+            self._home_rot = self._last_commanded_rot
         self._origin_pos = np.asarray(grip_pos, dtype=float).copy()
         self._origin_rot = Rotation.from_quat(np.asarray(grip_quat, dtype=float))
 
