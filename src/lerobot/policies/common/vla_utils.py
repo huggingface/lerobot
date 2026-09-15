@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
@@ -229,6 +229,19 @@ def resize_with_pad(img: torch.Tensor, height: int, width: int, *, pad_value: fl
     if current_height == height and current_width == width:
         return img
 
+    # Cast uint8 to float32 before F.interpolate.
+    # PyTorch's ROCm backend lacks a uint8 bilinear-interpolation kernel,
+    # so F.interpolate(mode='bilinear') raises NotImplementedError when
+    # the input dtype is torch.uint8. CUDA ships such a kernel, which is
+    # why this bug only manifests on AMD GPUs.
+    #
+    # The cast is semantically correct: all downstream consumers (SigLIP,
+    # etc.) expect float32 input in [0, 1] or [-1, 1] range. The only
+    # reason uint8 reaches this point is when a user bypasses
+    # prepare_observation_for_inference() and constructs a batch manually.
+    if img.dtype == torch.uint8:
+        img = img.to(dtype=torch.float32)
+
     ratio = max(current_width / width, current_height / height)
     resized_height = int(current_height / ratio)
     resized_width = int(current_width / ratio)
@@ -240,3 +253,4 @@ def resize_with_pad(img: torch.Tensor, height: int, width: int, *, pad_value: fl
     pad_width = max(0, width - resized_width)
     padded_img = F.pad(resized_img, (pad_width, 0, pad_height, 0), value=pad_value)
     return padded_img
+
