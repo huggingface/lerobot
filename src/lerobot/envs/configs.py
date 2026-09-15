@@ -734,10 +734,27 @@ class UnitreeG1MujocoEnv(HubEnvConfig):
     The end effector selects the MuJoCo model, and with it the finger actuators and the
     wrist cameras that exist: "dummy" for bare wrists, "dex1" for the parallel grippers,
     "dex3" for the three-finger hands.
+
+    The sim renders either its cameras or its window, never both: the offscreen contexts
+    are bound to the thread that creates them, which is not the one driving the viewer.
+    `onscreen` is therefore resolved from `publish_images` unless it is set explicitly.
     """
 
     hub_path: str = "lerobot/unitree-g1-mujoco"
     end_effector: Literal["dummy", "dex1", "dex3"] = "dex1"
+    publish_images: bool = True
+    camera_port: int = 5555
+    onscreen: bool | None = None
+
+    def __post_init__(self) -> None:
+        if self.onscreen is None:
+            self.onscreen = not self.publish_images
+        elif self.onscreen and self.publish_images:
+            raise ValueError(
+                "The G1 sim cannot publish camera images and open its viewer in the same "
+                "process. Set publish_images=False to watch the window, or onscreen=False "
+                "to take the image stream."
+            )
 
 
 @EnvConfig.register_subclass("libero_plus")
