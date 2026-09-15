@@ -474,6 +474,9 @@ known-first-party = ["lerobot"]
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
+[tool.ruff.lint.extend-per-file-ignores]
+"src/lerobot/optim/muon.py" = ["N806", "SIM108", "SIM109", "SIM110", "SIM300", "SIM401"] # Vendored Newton-Schulz numerics kept identical to torch.optim._muon
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
