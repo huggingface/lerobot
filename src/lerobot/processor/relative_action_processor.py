@@ -12,10 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Generator, Sequence
-from contextlib import contextmanager
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any
 
 import torch
 from torch import Tensor
@@ -33,8 +32,7 @@ __all__ = [
     "MapTensorToDeltaActionDictStep",
     "RelativeActionsProcessorStep",
     "AbsoluteActionsProcessorStep",
-    "find_relative_action_step",
-    "pinned_relative_anchor",
+    "bind_relative_anchor",
     "to_relative_actions",
     "to_absolute_actions",
 ]
@@ -119,6 +117,7 @@ class RelativeActionsProcessorStep(ProcessorStep):
     exclude_joints: list[str] = field(default_factory=list)
     action_names: list[str] | None = None
     _last_state: torch.Tensor | None = field(default=None, init=False, repr=False)
+    _queued_action_count: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
     def _build_mask(self, action_dim: int) -> list[bool]:
         if not self.exclude_joints or self.action_names is None:
@@ -143,8 +142,10 @@ class RelativeActionsProcessorStep(ProcessorStep):
         observation = transition.get(TransitionKey.OBSERVATION, {})
         state = observation.get(OBS_STATE) if observation else None
 
-        # Always cache state for the paired AbsoluteActionsProcessorStep.
-        if state is not None:
+        # Cache state for the paired AbsoluteActionsProcessorStep -- but hold it for as long
+        # as the policy is still serving the chunk that was generated against it. A fresh
+        # chunk re-anchors on the tick the queue runs dry.
+        if state is not None and not self._chunk_in_flight():
             self._last_state = state
 
         if not self.enabled:
@@ -162,14 +163,16 @@ class RelativeActionsProcessorStep(ProcessorStep):
     def reset(self) -> None:
         self._last_state = None
 
+    def _chunk_in_flight(self) -> bool:
+        """Whether the policy still holds actions generated against the cached anchor."""
+        return self._queued_action_count is not None and self._queued_action_count() > 0
+
+    def bind_action_queue(self, queued_action_count: Callable[[], int] | None) -> None:
+        self._queued_action_count = queued_action_count
+
     def get_cached_state(self) -> torch.Tensor | None:
         """Return the cached ``observation.state`` used as the reference point for relative/absolute action conversions."""
         return self._last_state
-
-    def set_cached_state(self, state: torch.Tensor | None) -> None:
-        """Override the cached anchor state, e.g. to re-pin a chunk's anchor after the
-        per-tick pipeline overwrote it (see ``SyncInferenceEngine``)."""
-        self._last_state = state
 
     def get_config(self) -> dict[str, Any]:
         return {
@@ -236,23 +239,25 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
         return features
 
 
-class _ChunkingPolicy(Protocol):
-    """The slice of :class:`~lerobot.policies.pretrained.PreTrainedPolicy` anchor pinning needs.
+def bind_relative_anchor(
+    queued_action_count: Callable[[], int],
+    pipeline: Any,
+) -> RelativeActionsProcessorStep | None:
+    """Let ``pipeline``'s relative-action step hold a chunk's anchor until the chunk drains.
 
-    Declared structurally to keep this module free of a ``lerobot.policies`` import
-    (``pretrained`` already imports from ``lerobot.processor``).
+    Call this once, wherever a policy and its preprocessor are built together; every caller
+    of that pipeline is then correct, including bare
+    ``preprocess -> select_action -> postprocess`` loops that know nothing about anchoring.
+    Forgetting it is not a new failure mode -- the step falls back to advancing the anchor on
+    every state, which is what it did before this existed.
+
+    ``pipeline`` is a preprocessor pipeline (anything exposing ``steps``); a disabled step is
+    treated as absent, because it neither converts actions nor needs its anchor held.
+
+    Returns:
+        The step that was bound, or ``None`` if the pipeline has no enabled one.
     """
-
-    def queued_action_count(self) -> int: ...
-
-
-def find_relative_action_step(pipeline: Any) -> RelativeActionsProcessorStep | None:
-    """Return the enabled :class:`RelativeActionsProcessorStep` in ``pipeline``, if any.
-
-    ``pipeline`` is a preprocessor pipeline (anything exposing ``steps``); a disabled step
-    is treated as absent because it neither converts actions nor needs its anchor pinned.
-    """
-    return next(
+    step = next(
         (
             s
             for s in getattr(pipeline, "steps", ())
@@ -260,21 +265,6 @@ def find_relative_action_step(pipeline: Any) -> RelativeActionsProcessorStep | N
         ),
         None,
     )
-
-
-@contextmanager
-def pinned_relative_anchor(
-    relative_step: RelativeActionsProcessorStep | None,
-    policy: _ChunkingPolicy,
-) -> Generator[None]:
-    """Hold the chunk's anchor across ticks that serve an already-queued action."""
-    hold = relative_step is not None and relative_step.enabled and policy.queued_action_count() > 0
-    # ``clone`` so the snapshot survives even if the cached tensor is ever mutated in place
-    # (today it is only rebound, but the copy is cheap for a state vector).
-    anchor = relative_step.get_cached_state() if hold else None
-    anchor = anchor.clone() if anchor is not None else None
-    try:
-        yield
-    finally:
-        if hold:
-            relative_step.set_cached_state(anchor)
+    if step is not None:
+        step.bind_action_queue(queued_action_count)
+    return step

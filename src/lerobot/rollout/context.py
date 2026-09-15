@@ -43,6 +43,7 @@ from lerobot.processor import (
     RobotAction,
     RobotObservation,
     RobotProcessorPipeline,
+    bind_relative_anchor,
     make_default_processors,
     rename_stats,
 )
@@ -549,6 +550,12 @@ def build_rollout_context(
             "rename_observations_processor": {"rename_map": cfg.rename_map},
         },
     )
+
+    # A relative-action chunk is anchored to the state it was predicted from, and the engines
+    # below rerun the preprocessor once per tick. Hand the step the policy's queue depth so it
+    # holds that anchor until the chunk drains, instead of following the moving arm. Harmless
+    # for the chunk-at-once engines (RTC), whose policy queue is always empty.
+    bind_relative_anchor(policy.queued_action_count, preprocessor)
 
     # --- 7. Inference strategy (needs policy + pre/post + hardware) --
     logger.info(

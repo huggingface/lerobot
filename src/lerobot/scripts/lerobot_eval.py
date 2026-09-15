@@ -85,7 +85,7 @@ from lerobot.envs import (
 from lerobot.envs.utils import NEW_ROLLOUT_OPTION
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
-from lerobot.processor import PolicyProcessorPipeline, find_relative_action_step, pinned_relative_anchor
+from lerobot.processor import PolicyProcessorPipeline, bind_relative_anchor
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.eval_stats import success_summary
@@ -265,14 +265,15 @@ def rollout(
 
     # A relative-action policy predicts a chunk of offsets anchored to the state at prediction
     # time, but this loop reruns the pre/post pipeline every step, which would re-anchor queued
-    # actions to the current (moved) state. Pin the anchor per chunk, as SyncInferenceEngine does.
+    # actions to the current (moved) state. Bind the step to the policy's queue depth so it holds
+    # the anchor until the chunk drains. Done here rather than in `eval_main` so that every caller
+    # of this public loop is covered; rebinding the same callable each rollout is a no-op.
     # The anchor is [B, state_dim] and tracks exactly what the single shared action queue tracks,
     # so it inherits the queue's batching assumptions rather than adding any: every sub-env
     # refills on the same step, and a sub-env that finished early is frozen by
     # FreezeAfterEpisodeEnd and its transitions discarded.
-    relative_step = find_relative_action_step(preprocessor)
-    if relative_step is not None:
-        logging.info("Relative actions enabled: chunk anchor pinned per predicted chunk")
+    if bind_relative_anchor(policy.queued_action_count, preprocessor) is not None:
+        logging.info("Relative actions enabled: chunk anchor held until the action queue drains")
 
     step = 0
     # Keep track of which environments are done.
@@ -305,14 +306,9 @@ def rollout(
             # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
             observation = env_preprocessor(observation)
 
-            # Hold the chunk anchor across ticks that serve an already-queued action, so a
-            # relative-action chunk resolves against the state it was generated from instead of
-            # drifting with the arm. The postprocessor runs outside the block: that is where
-            # AbsoluteActionsProcessorStep reads the anchor this restores.
-            with pinned_relative_anchor(relative_step, policy):
-                observation = preprocessor(observation)
-                with torch.inference_mode():
-                    action = policy.select_action(observation)
+            observation = preprocessor(observation)
+            with torch.inference_mode():
+                action = policy.select_action(observation)
             if predicted_latents_callback is not None:
                 predicted_latents_callback(policy)
             action = postprocessor(action)
