@@ -83,6 +83,8 @@
     title: Multitask DiT Policy
   - local: walloss
     title: WALL-OSS
+  - local: wall_oss_05
+    title: Wall-OSS-0.5
   title: "Policies"
 - sections:
   - local: sarm

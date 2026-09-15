@@ -34,6 +34,7 @@ from .tdmpc.configuration_tdmpc import TDMPCConfig as TDMPCConfig
 from .utils import make_robot_action, prepare_observation_for_inference
 from .vla_jepa.configuration_vla_jepa import VLAJEPAConfig as VLAJEPAConfig
 from .vqbet.configuration_vqbet import VQBeTConfig as VQBeTConfig
+from .wall_oss_05.configuration_wall_oss_05 import WallOSS05Config as WallOSS05Config
 from .wall_x.configuration_wall_x import WallXConfig as WallXConfig
 from .xvla.configuration_xvla import XVLAConfig as XVLAConfig
 
@@ -61,6 +62,7 @@ __all__ = [
     "VLAJEPAConfig",
     "VQBeTConfig",
     "WallXConfig",
+    "WallOSS05Config",
     "XVLAConfig",
     # Base class
     "PreTrainedPolicy",

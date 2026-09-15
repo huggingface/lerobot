@@ -51,6 +51,7 @@ from .groot.configuration_groot import GrootConfig
 from .molmoact2.configuration_molmoact2 import MolmoAct2Config
 from .pretrained import PreTrainedPolicy
 from .utils import validate_visual_features_consistency
+from .wall_oss_05.configuration_wall_oss_05 import WallOSS05Config
 
 if TYPE_CHECKING or _peft_available:
     from peft import PeftConfig, PeftModel
@@ -178,6 +179,18 @@ def make_pre_post_processors(
     Raises:
         ValueError: If no processor factory exists for the given policy configuration type.
     """
+    if (
+        pretrained_path
+        and isinstance(policy_cfg, WallOSS05Config)
+        and kwargs.get("dataset_stats") is not None
+        and (policy_cfg.use_language_recipe or policy_cfg.recipe_path)
+    ):
+        return _make_processors_from_policy_config(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            dataset_meta=kwargs.get("dataset_meta"),
+        )
+
     if pretrained_path:
         if isinstance(policy_cfg, GrootConfig):
             from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
@@ -242,6 +255,14 @@ def make_pre_post_processors(
             from .evo1.processor_evo1 import reconcile_evo1_processors
 
             preprocessor, postprocessor = reconcile_evo1_processors(
+                policy_cfg,
+                preprocessor,
+                postprocessor,
+            )
+        if isinstance(policy_cfg, WallOSS05Config):
+            from .wall_oss_05.processor_wall_oss_05 import reconcile_wall_oss_05_processors
+
+            preprocessor, postprocessor = reconcile_wall_oss_05_processors(
                 policy_cfg,
                 preprocessor,
                 postprocessor,
