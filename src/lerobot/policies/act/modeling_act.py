@@ -474,6 +474,14 @@ class ACT(nn.Module):
             # NOTE: If modifying this section, verify on MPS devices that
             # gradients remain stable (no explosions or NaNs).
             for img in batch[OBS_IMAGES]:
+                # Single-channel cameras (e.g. depth maps, which the dataset
+                # layer already dequantizes to physical units and which
+                # `dataset_to_policy_features` classifies as FeatureType.VISUAL)
+                # are expanded to 3 channels so they can share the RGB backbone.
+                # `expand` is a zero-copy view. Mirrors
+                # Qwen3VLInterface.to_pixel_values in policies/vla_jepa.
+                if img.shape[-3] == 1:
+                    img = img.expand(*img.shape[:-3], 3, *img.shape[-2:])
                 cam_features = self.backbone(img)["feature_map"]
                 cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
                 cam_features = self.encoder_img_feat_input_proj(cam_features)
