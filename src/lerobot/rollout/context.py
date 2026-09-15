@@ -555,7 +555,7 @@ def build_rollout_context(
     # below rerun the preprocessor once per tick. Hand the step the policy's queue depth so it
     # holds that anchor until the chunk drains, instead of following the moving arm. Harmless
     # for the chunk-at-once engines (RTC), whose policy queue is always empty.
-    bind_relative_anchor(policy.queued_action_count, preprocessor)
+    bind_relative_anchor(policy, preprocessor)
 
     # --- 7. Inference strategy (needs policy + pre/post + hardware) --
     logger.info(

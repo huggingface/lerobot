@@ -272,7 +272,7 @@ def rollout(
     # so it inherits the queue's batching assumptions rather than adding any: every sub-env
     # refills on the same step, and a sub-env that finished early is frozen by
     # FreezeAfterEpisodeEnd and its transitions discarded.
-    if bind_relative_anchor(policy.queued_action_count, preprocessor) is not None:
+    if bind_relative_anchor(policy, preprocessor) is not None:
         logging.info("Relative actions enabled: chunk anchor held until the action queue drains")
 
     step = 0
