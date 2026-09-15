@@ -24,7 +24,7 @@ def test_language_rollout_loads_checkpoint_processors_even_when_dataset_stats_ar
     monkeypatch.setattr(factory, "_make_processors_from_policy_config", rebuild)
 
     result = factory.make_pre_post_processors(
-        SimpleNamespace(recipe={"messages": []}, recipe_path="recipe.yaml"),
+        SimpleNamespace(recipe={"messages": []}),
         pretrained_path="checkpoint",
         dataset_stats={"action": {"mean": 42.0}},
     )
@@ -114,7 +114,7 @@ def _run_training_until_processors(monkeypatch, cfg, stats, *, main_process=Fals
     return pipelines
 
 
-@pytest.mark.parametrize("recipe_mode", ["absent", "disabled", "builtin", "yaml"])
+@pytest.mark.parametrize("recipe_mode", ["absent", "disabled", "builtin"])
 @pytest.mark.parametrize("main_process", [False, True])
 @pytest.mark.parametrize("resume", [False, True])
 def test_training_entrypoint_only_rebuilds_for_language_finetuning(
@@ -125,14 +125,10 @@ def test_training_entrypoint_only_rebuilds_for_language_finetuning(
     pre.save_pretrained(tmp_path)
     post.save_pretrained(tmp_path)
     config.pretrained_path = str(tmp_path)
-    from lerobot.datasets.recipe import MessageTurn, TrainingRecipe, resolve_recipe_override
+    from lerobot.datasets.recipe import MessageTurn, TrainingRecipe
 
     recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="${task}", stream="low_level")])
-    if recipe_mode == "yaml":
-        recipe_path = tmp_path / "active-recipe.yaml"
-        recipe_path.write_text("messages:\n  - {role: user, content: '${task}', stream: low_level}\n")
-        config.recipe = resolve_recipe_override(None, recipe_path)
-    elif recipe_mode != "absent":
+    if recipe_mode != "absent":
         config.recipe = recipe if recipe_mode == "builtin" else None
     cfg = SimpleNamespace(
         trainable_config=config, policy=config, resume=resume, rename_map={}, is_reward_model_training=False

@@ -155,8 +155,9 @@ padding are excluded from text loss. Set `policy.recipe=null` to disable recipe 
 action-only training path.
 
 See [Language columns and recipes](./language_and_recipes) for the annotation
-schema and recipe structure. `recipe_path` may point to an explicit external
-YAML override; LeRobot does not provide shared default recipe files.
+schema and recipe structure. EO-1 stores its recipe in the policy
+configuration, so checkpoints retain the language contract they were trained
+with.
 The default system prompt is part of EO1's recipe and can be replaced by a custom
 system turn. Rendered inputs without a system turn, including VQA prompts,
 remain without one. The action-only path without rendered messages keeps the
@@ -180,7 +181,7 @@ to the rendered messages before Qwen formatting and tokenization.
 | `policy.force_fp32_autocast`           | `true`                        | Keeps the flow head in fp32 even when the backbone uses mixed precision |
 | `policy.supervise_padding_action_dims` | `true`                        | Controls whether padded action dimensions are supervised                |
 | `policy.supervise_padding_actions`     | `true`                        | Controls whether padded future action rows are supervised               |
-| `policy.recipe_path`                   | `None`                        | Enables recipe-driven text and per-sample action supervision            |
+| `policy.recipe`                        | built-in                      | Defines recipe-driven text and per-sample action supervision            |
 | `policy.text_loss_weight`              | `0.01`                        | Weight for supervised assistant-token cross-entropy                     |
 | `policy.flow_loss_weight`              | `1.0`                         | Weight for continuous flow-action loss                                  |
 | `policy.tokenizer_max_length`          | `1000`                        | Maximum joint vision-language-action sequence length                    |

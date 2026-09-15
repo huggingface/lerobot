@@ -14,10 +14,10 @@ The design splits cleanly into three layers:
    `data/chunk-*/file-*.parquet` as two optional columns (`language_persistent`
    and `language_events`). Datasets without these columns keep their existing
    behavior.
-2. **Recipe** — a YAML file that declares which annotation rows to bind and
-   how to lay them out as chat turns (`role`, `content`, optional images,
-   optional tool calls). Recipes are pure config; no Python required to add a
-   new one.
+2. **Recipe** — a dictionary in the policy configuration that declares which
+   annotation rows to bind and how to lay them out as chat turns (`role`,
+   `content`, optional images, optional tool calls). The recipe is serialized
+   with the model configuration.
 3. **Training format** — at sample time, `RenderMessagesStep` resolves the
    recipe against the per-frame annotations and emits HF-style `messages` plus
    LeRobot-specific sidecars (`message_streams`, `target_message_indices`)
@@ -66,15 +66,18 @@ The language stack itself has three internal modules backing layer 1:
 
 ## Layer 2 — recipe anatomy
 
-Recipes are YAML files backed by `TrainingRecipe` and `MessageTurn` from
-`lerobot.datasets.recipe`. They
-declare which annotation rows to pull (via `bindings`) and how to compose them
-into chat turns (`messages`).
+Recipes are policy-configuration dictionaries validated by `TrainingRecipe`
+and `MessageTurn` from `lerobot.datasets.recipe`. They declare which annotation
+rows to pull (via `bindings`) and how to compose them into chat turns
+(`messages`).
 
-```yaml
-messages:
-  - { role: user, content: "${task}", stream: high_level }
-  - { role: assistant, content: "${subtask}", stream: low_level, target: true }
+```python
+recipe = {
+    "messages": [
+        {"role": "user", "content": "${task}", "stream": "high_level"},
+        {"role": "assistant", "content": "${subtask}", "stream": "low_level", "target": True},
+    ]
+}
 ```
 
 A recipe can also branch into a weighted **blend** of sub-recipes. At sample
@@ -107,26 +110,32 @@ camera at the same timestamp; without `camera=`, those resolvers see two
 matches and raise an ambiguity error. Recipes consume each camera through its
 own binding plus a matching image block, e.g.
 
-```yaml
-ask_vqa_top:
-  route: vqa
-  bindings:
-    vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.top)"
-    vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.top)"
-  messages:
-    - role: user
-      stream: high_level
-      if_present: vqa_query
-      content:
-        - { type: image, feature: observation.images.top }
-        - { type: text, text: "${vqa_query}" }
-    - {
-        role: assistant,
-        content: "${vqa}",
-        stream: high_level,
-        target: true,
-        if_present: vqa,
-      }
+```python
+recipe = {
+    "route": "vqa",
+    "bindings": {
+        "vqa_query": "emitted_at(t, style=vqa, role=user, camera=observation.images.top)",
+        "vqa": "emitted_at(t, style=vqa, role=assistant, camera=observation.images.top)",
+    },
+    "messages": [
+        {
+            "role": "user",
+            "stream": "high_level",
+            "if_present": "vqa_query",
+            "content": [
+                {"type": "image", "feature": "observation.images.top"},
+                {"type": "text", "text": "${vqa_query}"},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": "${vqa}",
+            "stream": "high_level",
+            "target": True,
+            "if_present": "vqa",
+        },
+    ],
+}
 ```
 
 Add one such sub-recipe per camera the dataset records. The explicit
@@ -147,14 +156,9 @@ The renderer does not apply a tokenizer chat template. Policy processors decide 
 
 ## Blends
 
-Blend recipes select one weighted sub-recipe deterministically from the sample index.
-`recipes/subtask_mem.yaml` trains the compact core blend — high-level subtask prediction, low-level execution, and memory. `recipes/subtask_mem_vqa_speech.yaml` is the fuller variant that also adds VQA and spoken interjection responses.
-
-`recipes/subtask_joint.yaml` demonstrates joint sequence training rather than a
-weighted blend. For the same sample, its assistant subtask is supervised with
-text cross-entropy on the `low_level` stream while action prediction remains
-active, matching the joint setup from the π0.5 paper. Enable
-`--policy.joint_subtask_conditioning=true` to use that subtask conditioning at inference.
+Blend recipes select one weighted sub-recipe deterministically from the sample
+index. Define the blend in the policy's `recipe` dictionary so the exact
+language contract is stored with each checkpoint.
 
 ## Graceful absence
 
