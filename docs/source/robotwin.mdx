@@ -68,7 +68,7 @@ ds = load_dataset("lerobot/robotwin_unified", split="train")
 
 ## Installation
 
-RoboTwin 2.0 requires **Linux** with an NVIDIA GPU (CUDA 12.1 recommended). Installation takes approximately 20 minutes.
+RoboTwin 2.0 requires **Linux** with an NVIDIA GPU and a CUDA 13 driver (580.65 or newer). Installation takes approximately 20 minutes.
 
 ### 1. Create a conda environment
 
@@ -97,12 +97,31 @@ bash script/_download_assets.sh
 The install script handles all Python dependencies including SAPIEN, CuRobo, mplib, and pytorch3d.
 
 <Tip warning={true}>
-If the automated install fails, install manually:
+If the automated install fails, install manually.
+
+On PyTorch 2.12 and newer, CUDA sources are compiled as C++20, and two of the packages below do not build under it without a small edit. Both edits have to happen before the build that needs them, so the steps are ordered here to do that.
 
 ```bash
 pip install -r requirements.txt
-pip install "git+https://github.com/facebookresearch/pytorch3d.git@stable"
-cd envs && git clone https://github.com/NVlabs/curobo.git && cd curobo
+
+# PyTorch3D pins C++17 for its own extension, and that pin wins over what PyTorch asks for.
+git clone --branch stable --depth 1 https://github.com/facebookresearch/pytorch3d.git
+sed -i 's/"-std=c++17"/"-std=c++20"/g' pytorch3d/setup.py
+pip install ./pytorch3d --no-build-isolation
+
+cd envs && git clone --branch v0.7.8 --depth 1 https://github.com/NVlabs/curobo.git && cd curobo
+# CuRobo declares its own `lerp` for plain floats, which now clashes with the standard library
+# one. Guard only that overload; the float2, float3 and float4 ones take different argument
+# types, so they do not clash and must stay.
+python - <<'PATCH'
+import pathlib
+p = pathlib.Path("src/curobo/curobolib/cpp/helper_math.h")
+s = p.read_text()
+d = "inline __device__ __host__ float lerp(float a, float b, float t)"
+i = s.index(d)
+j = s.index("}", i) + 1
+p.write_text(s[:i] + "#if __cplusplus < 202002L\n" + s[i:j] + "\n#endif" + s[j:])
+PATCH
 pip install -e . --no-build-isolation
 ```
 
