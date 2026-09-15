@@ -13,9 +13,11 @@
 # limitations under the License.
 
 # This workflow validates each optional-dependency tier in isolation.
-# The first four tiers run the full suite; the policy tier runs focused RTC tests.
+# Each tier installs a different extra and runs the full test suite.
 # Tests that require an extra not installed in the current tier are
 # skipped automatically via pytest.importorskip guards.
+# The last tier installs transformers/diffusers, which no other tier
+# has, and runs the policy directory that depends on them.
 name: Fast Tests
 
 on:
@@ -58,8 +60,8 @@ concurrency:
 
 jobs:
   # This job runs pytests in isolated dependency tiers.
-  # Dependency tiers run the full suite, followed by focused policy / RTC tests.
-  # Tests gated behind other extras skip automatically.
+  # Each tier installs a different extra and runs the full suite;
+  # tests gated behind other extras skip automatically.
   fast-pytest-tests:
     name: Fast Pytest Tests
     runs-on: ubuntu-latest
@@ -127,22 +129,16 @@ jobs:
       - name: "Tier 4 — Test: viz"
         run: uv run pytest tests -vv --maxfail=10
 
-      # ── Tier 5: Policy / RTC ─────────────────────────────
-      - name: "Tier 5 — Install: Multi-Task DiT RTC"
+      # ── Tier 5: multi_task_dit (transformers + diffusers) ──
+      # Scoped to the policy's own test directory so new files there are
+      # picked up automatically; the hub stays offline so nothing downloads.
+      - name: "Tier 5 — Install: multi_task_dit"
         run: uv sync --locked --extra test --extra dataset --extra multi_task_dit
 
-      - name: "Tier 5 — Test: policy / RTC"
+      - name: "Tier 5 — Test: multi_task_dit"
         env:
-          CI: "true"
-          GITHUB_ACTIONS: "true"
           HF_HUB_OFFLINE: "1"
           HF_DATASETS_OFFLINE: "1"
           TRANSFORMERS_OFFLINE: "1"
           HF_HUB_DISABLE_IMPLICIT_TOKEN: "1"
-        run: |
-          uv run pytest \
-            tests/policies/multi_task_dit/test_multi_task_dit_rtc.py \
-            tests/policies/rtc \
-            tests/policies/pi0_pi05/test_pi05_memory.py \
-            tests/test_rollout.py \
-            -vv --maxfail=10
+        run: uv run pytest tests/policies/multi_task_dit -vv --maxfail=10
