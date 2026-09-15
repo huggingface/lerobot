@@ -15,6 +15,7 @@
 # limitations under the License.
 import importlib
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 import gymnasium as gym
 import numpy as np
@@ -27,6 +28,7 @@ from lerobot.configs.types import PolicyFeature
 from lerobot.envs.configs import EnvConfig
 from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import (
+    _call_make_env,
     _normalize_hub_result,
     _parse_hub_url,
     preprocess_observation,
@@ -272,3 +274,20 @@ def test_make_env_from_hub_async():
 
     # clean up
     env.close()
+
+
+@pytest.mark.parametrize("cfg", [None, "sentinel_cfg"])
+def test_call_make_env_forwards_extra_kwargs_to_hub_env(cfg):
+    """A hub env must receive options only it defines, e.g. the G1 sim's end_effector."""
+    received = {}
+    result = object()
+
+    def stub_make_env(n_envs, use_async_envs, **kwargs):
+        received.update(kwargs)
+        return result
+
+    module = SimpleNamespace(make_env=stub_make_env)
+    assert _call_make_env(module, n_envs=1, use_async_envs=False, cfg=cfg, end_effector="dex3") is result
+    assert received.pop("end_effector") == "dex3"
+    # cfg reaches the hub env only when one was built locally.
+    assert received == ({} if cfg is None else {"cfg": cfg})

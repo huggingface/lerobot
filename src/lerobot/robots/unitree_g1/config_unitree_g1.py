@@ -59,6 +59,12 @@ class UnitreeG1Config(RobotConfig):
     # Launch mujoco simulation
     is_simulation: bool = True
 
+    # Which end effector the arms carry: "dex1" parallel grippers, "dex3" articulated
+    # hands, or "dummy" for bare wrists. In simulation this picks the MuJoCo model, and
+    # with it the finger actuators and whether the wrist cameras exist at all. On the
+    # real robot it is currently only a declaration of what is bolted on.
+    end_effector: str = "dex1"
+
     # Socket config for ZMQ bridge
     robot_ip: str = "192.168.123.164"  # default G1 IP
 
