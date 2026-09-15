@@ -360,9 +360,6 @@ class UnitreeG1(Robot):
             from lerobot.envs import make_env
 
             self._ChannelFactoryInitialize(0, "lo")
-            # The sim reads the end effector off the config it is handed, and the robot's
-            # own flag is the one that names it.
-            self.config.sim_env.end_effector = self.config.end_effector
             self._env_wrapper = make_env(self.config.sim_env, trust_remote_code=True)
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]

@@ -82,3 +82,9 @@ class UnitreeG1Config(RobotConfig):
     # Controller class name, e.g. GrootLocomotionController / HolosomaLocomotionController /
     # SonicWholeBodyController. None disables it.
     controller: str | None = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        # One name for what the arms carry. The sim reads it off the config it is handed,
+        # so it is copied there rather than asked for twice.
+        self.sim_env.end_effector = self.end_effector
