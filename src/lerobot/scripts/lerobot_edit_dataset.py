@@ -108,6 +108,12 @@ Remove camera feature:
         --operation.type remove_feature \
         --operation.feature_names "['observation.image']"
 
+Rename features (also moves video files for video features):
+    lerobot-edit-dataset \
+        --repo_id lerobot/pusht \
+        --operation.type rename_feature \
+        --operation.feature_mapping '{"observation.image": "observation.images.top"}'
+
 Modify tasks - set a single task for all episodes (WARNING: modifies in-place):
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
@@ -264,6 +270,7 @@ from lerobot.datasets import (
     recompute_stats,
     reencode_dataset,
     remove_feature,
+    rename_feature,
     split_dataset,
 )
 from lerobot.utils.constants import HF_LEROBOT_HOME
@@ -303,6 +310,12 @@ class MergeConfig(OperationConfig):
 @dataclass
 class RemoveFeatureConfig(OperationConfig):
     feature_names: list[str] | None = None
+
+
+@OperationConfig.register_subclass("rename_feature")
+@dataclass
+class RenameFeatureConfig(OperationConfig):
+    feature_mapping: dict[str, str] | None = None
 
 
 @OperationConfig.register_subclass("modify_tasks")
@@ -558,6 +571,41 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
 
     logging.info(f"Dataset saved to {output_dir}")
     logging.info(f"Remaining features: {list(new_dataset.meta.features.keys())}")
+
+    if cfg.push_to_hub:
+        logging.info(f"Pushing to hub as {output_repo_id}")
+        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
+
+
+def handle_rename_feature(cfg: EditDatasetConfig) -> None:
+    if not isinstance(cfg.operation, RenameFeatureConfig):
+        raise ValueError("Operation config must be RenameFeatureConfig")
+
+    if not cfg.operation.feature_mapping:
+        raise ValueError("feature_mapping must be specified for rename_feature operation")
+
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    output_repo_id, output_dir, backup_path = get_output_path(
+        cfg.repo_id,
+        new_repo_id=cfg.new_repo_id,
+        root=cfg.root,
+        new_root=cfg.new_root,
+    )
+
+    # In case of in-place modification, make the dataset point to the backup directory
+    if backup_path is not None:
+        dataset.root = backup_path
+
+    logging.info(f"Renaming features {cfg.operation.feature_mapping} in {cfg.repo_id}")
+    new_dataset = rename_feature(
+        dataset,
+        feature_mapping=cfg.operation.feature_mapping,
+        output_dir=output_dir,
+        repo_id=output_repo_id,
+    )
+
+    logging.info(f"Dataset saved to {output_dir}")
+    logging.info(f"Features: {list(new_dataset.meta.features.keys())}")
 
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {output_repo_id}")
@@ -855,6 +903,8 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_merge(cfg)
     elif operation_type == "remove_feature":
         handle_remove_feature(cfg)
+    elif operation_type == "rename_feature":
+        handle_rename_feature(cfg)
     elif operation_type == "modify_tasks":
         handle_modify_tasks(cfg)
     elif operation_type == "convert_image_to_video":
