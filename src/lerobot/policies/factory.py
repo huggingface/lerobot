@@ -46,6 +46,7 @@ from lerobot.utils.constants import (
 from lerobot.utils.feature_utils import dataset_to_policy_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
+from .being_h05.configuration_being_h05 import BeingH05Config
 from .evo1.configuration_evo1 import Evo1Config
 from .groot.configuration_groot import GrootConfig
 from .molmoact2.configuration_molmoact2 import MolmoAct2Config
@@ -178,6 +179,18 @@ def make_pre_post_processors(
     Raises:
         ValueError: If no processor factory exists for the given policy configuration type.
     """
+    if (
+        pretrained_path
+        and isinstance(policy_cfg, BeingH05Config)
+        and kwargs.get("dataset_stats") is not None
+        and policy_cfg.rebuild_pretrained_processors
+    ):
+        return _make_processors_from_policy_config(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            dataset_meta=kwargs.get("dataset_meta"),
+        )
+
     if pretrained_path:
         if isinstance(policy_cfg, GrootConfig):
             from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
