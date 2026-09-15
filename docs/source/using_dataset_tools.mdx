@@ -319,6 +319,15 @@ Once executed, the tool opens `rerun.io` and displays the camera streams, robot 
 
 To use [Foxglove](https://foxglove.dev) instead of Rerun, install the extra add `--display-mode foxglove`. This starts a WebSocket server (connect the Foxglove app to `ws://127.0.0.1:8765`) that serves the episode as a seekable timeline you can play/pause and scrub.
 
+To use [FiftyOne](https://docs.voxel51.com) instead, install its extra (`pip install 'lerobot[fiftyone]'`) and add `--display-mode fiftyone`. FiftyOne imports the episode directly from the on-disk dataset (no re-encoding) and opens the FiftyOne App in your browser at `http://localhost:5151`. Each episode shows one Image tile per camera, a **State & Action** tile with the per-dimension curves synchronized to the video, per-dimension **Plot** tiles, plus **Streams** and **Statistics** tabs. Add `--all-episodes` to browse the whole dataset, or `--remote` on a headless machine (then forward the port with `ssh -N -L 5151:127.0.0.1:5151 user@host`). The FiftyOne dataset is kept when you exit, so any tags or saved views you add in the App survive and you can reopen it with `fiftyone app launch <name>`; pass `--no-persistent` for a throwaway session.
+
+```bash
+lerobot-dataset-viz \
+    --repo-id lerobot/pusht \
+    --episode-index 0 \
+    --display-mode fiftyone
+```
+
 For advanced usage—including visualizing datasets stored on a remote server—run:
 
 ```bash
