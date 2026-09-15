@@ -104,9 +104,6 @@ class RunningQuantileStats:
     def get_statistics(self) -> dict[str, np.ndarray]:
         """Compute and return the statistics of the vectors processed so far.
 
-        Args:
-            quantiles: List of quantiles to compute (e.g., [0.01, 0.10, 0.50, 0.90, 0.99]). If None, no quantiles computed.
-
         Returns:
             Dictionary containing the computed statistics.
         """
