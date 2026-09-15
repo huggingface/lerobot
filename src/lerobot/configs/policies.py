@@ -233,4 +233,12 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
 
         cli_overrides = policy_kwargs.pop("cli_overrides", [])
         with draccus.config_type("json"):
-            return draccus.parse(config_cls, config_file, args=cli_overrides)
+            config = draccus.parse(config_cls, config_file, args=cli_overrides)
+
+        # The serialized config.json does not carry the source path, so parsing
+        # yields pretrained_path=None. Backfill it: downstream code (e.g.
+        # make_policy / make_pre_post_processors) silently builds an untrained
+        # processor pipeline without it, instead of loading the pretrained stats.
+        config.pretrained_path = model_id
+        config.pretrained_revision = revision
+        return config
