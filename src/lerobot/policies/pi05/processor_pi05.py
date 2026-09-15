@@ -123,8 +123,6 @@ def make_pi05_pre_post_processors(
     Args:
         config: The configuration object for the PI0 policy.
         dataset_stats: A dictionary of statistics for normalization.
-        preprocessor_kwargs: Additional arguments for the pre-processor pipeline.
-        postprocessor_kwargs: Additional arguments for the post-processor pipeline.
 
     Returns:
         A tuple containing the configured pre-processor and post-processor pipelines.

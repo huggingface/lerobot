@@ -54,8 +54,6 @@ class VQBeTPolicy(PreTrainedPolicy):
         Args:
             config: Policy configuration class instance or None, in which case the default instantiation of
                 the configuration class is used.
-            dataset_stats: Dataset statistics to be used for normalization. If not passed here, it is expected
-                that they will be passed with a call to `load_state_dict` before the policy is used.
         """
         super().__init__(config)
         config.validate_features()
