@@ -231,3 +231,90 @@ def newcombe_interval(
     low = d - math.sqrt((p_a - l_a) ** 2 + (u_b - p_b) ** 2)
     high = d + math.sqrt((u_a - p_a) ** 2 + (p_b - l_b) ** 2)
     return (max(-1.0, low), min(1.0, high))
+
+
+def compare_success_counts(
+    k_baseline: int,
+    n_baseline: int,
+    k_candidate: int,
+    n_candidate: int,
+    min_drop_pp: float = 5.0,
+    confidence: float = 0.95,
+    min_episodes: int = 10,
+) -> dict:
+    """Compare a candidate's success count against a baseline's on one task and call it.
+
+    The verdict is decided on the interval of the difference, not on the p-value alone:
+
+    - `REGRESSED`: the whole interval of `candidate - baseline` sits at or below `-min_drop_pp`.
+    - `SUSPECT`: the point difference is at or below `-min_drop_pp` but the interval reaches above it,
+      so at this episode count the drop is not separable from noise.
+    - `IMPROVED`: the whole interval is above zero.
+    - `HELD`: none of the above. Not "unchanged": `resolvable_drop_pp` says how large a drop could hide.
+    - `UNDERPOWERED`: fewer than `min_episodes` on either side; no call is made.
+
+    Args:
+        k_baseline (`int`):
+            Successes of the baseline (the policy you run now).
+        n_baseline (`int`):
+            Episodes evaluated for the baseline.
+        k_candidate (`int`):
+            Successes of the candidate (the policy you are about to ship).
+        n_candidate (`int`):
+            Episodes evaluated for the candidate.
+        min_drop_pp (`float`, *optional*, defaults to `5.0`):
+            Absolute floor in percentage points: a drop smaller than this is never called a regression.
+        confidence (`float`, *optional*, defaults to `0.95`):
+            Coverage of the reported interval.
+        min_episodes (`int`, *optional*, defaults to `10`):
+            Below this many episodes on either side the task is reported as `UNDERPOWERED`.
+
+    Returns:
+        `dict`: `baseline_pct`, `candidate_pct`, `delta_pp`, `ci95_pp` (two-element list, percentage
+        points), `p_value` (two-sided Fisher exact, `nan` when a side has no episodes), `verdict`, and
+        `resolvable_drop_pp`, the smallest drop that would have been called `REGRESSED` at this width.
+
+    Example:
+        ```python
+        >>> from lerobot.utils.eval_stats import compare_success_counts
+        >>> compare_success_counts(92, 100, 82, 100)["verdict"]
+        'SUSPECT'
+        ```
+    """
+    _check_counts(k_baseline, n_baseline)
+    _check_counts(k_candidate, n_candidate)
+    if n_baseline == 0 or n_candidate == 0:
+        return {
+            "baseline_pct": math.nan,
+            "candidate_pct": math.nan,
+            "delta_pp": math.nan,
+            "ci95_pp": [math.nan, math.nan],
+            "p_value": math.nan,
+            "verdict": "UNDERPOWERED",
+            "resolvable_drop_pp": math.nan,
+        }
+    baseline_pct = 100.0 * k_baseline / n_baseline
+    candidate_pct = 100.0 * k_candidate / n_candidate
+    delta_pp = candidate_pct - baseline_pct
+    low, high = newcombe_interval(k_candidate, n_candidate, k_baseline, n_baseline, confidence)
+    low_pp, high_pp = 100.0 * low, 100.0 * high
+    p_value = fisher_exact(k_baseline, n_baseline, k_candidate, n_candidate)
+    if n_baseline < min_episodes or n_candidate < min_episodes:
+        verdict = "UNDERPOWERED"
+    elif high_pp <= -min_drop_pp:
+        verdict = "REGRESSED"
+    elif delta_pp <= -min_drop_pp:
+        verdict = "SUSPECT"
+    elif low_pp > 0.0:
+        verdict = "IMPROVED"
+    else:
+        verdict = "HELD"
+    return {
+        "baseline_pct": baseline_pct,
+        "candidate_pct": candidate_pct,
+        "delta_pp": delta_pp,
+        "ci95_pp": [low_pp, high_pp],
+        "p_value": p_value,
+        "verdict": verdict,
+        "resolvable_drop_pp": min_drop_pp + (high_pp - delta_pp),
+    }
