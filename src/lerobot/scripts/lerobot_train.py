@@ -164,6 +164,8 @@ def update_policy(
 
     Args:
         train_metrics (MetricsTracker): A MetricsTracker instance to record training statistics.
+            Under fp16 it also receives the loss scale, but only if it declares a `grad_scale`
+            meter; callers that do not want it simply omit it.
         policy (PreTrainedPolicy): The policy model to be trained (as returned by `accelerator.prepare`).
         batch (Any): A batch of training data.
         optimizer (Optimizer): The optimizer used to update the policy's parameters.
@@ -264,7 +266,9 @@ def update_policy(
     # recording it would poison the whole logging window's average.
     if grad_norm is not None and not update_was_skipped:
         train_metrics.grad_norm = grad_norm.item()
-    if accelerator.scaler is not None:
+    # Only when the caller declared the meter: `MetricsTracker` raises on an undeclared name,
+    # and the loss scale is diagnostic, not something a caller must opt into to train in fp16.
+    if accelerator.scaler is not None and "grad_scale" in train_metrics.metrics:
         train_metrics.grad_scale = accelerator.scaler.get_scale()
     train_metrics.lr = optimizer.param_groups[0]["lr"]
     train_metrics.update_s = time.perf_counter() - start_time

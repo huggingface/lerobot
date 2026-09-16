@@ -51,7 +51,7 @@ lerobot-train \
     --accelerator.mixed_precision=bf16 ...
 ```
 
-Mixed precision requires an accelerator: it is rejected on `--policy.device=cpu`.
+`fp16` requires an accelerator: it is rejected on `--policy.device=cpu`, where accelerate builds no loss scaler and the run would silently fall back to full precision. `bf16` autocasts on CPU too, so it is not restricted.
 
 `bf16` requires hardware support (Ampere or newer on NVIDIA GPUs). On older accelerators such as V100 or T4, use `fp16`.
 

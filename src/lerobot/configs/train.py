@@ -373,7 +373,8 @@ class TrainPipelineConfig(HubMixin):
             raise ValueError(
                 "mixed_precision=fp16 requires an accelerator device; on CPU accelerate "
                 "builds no GradScaler and the run silently falls back to full precision. "
-                "Use --policy.device=cuda (or mps), or --accelerator.mixed_precision=no."
+                "Use --policy.device=cuda, or --accelerator.mixed_precision=bf16 "
+                "(which does autocast on CPU) or =no."
             )
         if self.parallelism.is_sharded:
             if self.peft is not None:

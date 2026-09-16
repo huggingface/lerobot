@@ -144,6 +144,14 @@ class GradScalerConfig:
                 (the scale could never recover), ``backoff_factor`` is not in (0, 1) (an
                 overflow could never be escaped), or ``growth_interval`` is < 1.
         """
+        # Coerced, not just validated, so the fields honour their annotations however the
+        # config was built. `init_scale` is the one that matters: the scaler reports it
+        # verbatim while still lazy but reports a float once materialized, so an int reaching
+        # it here (a direct Python constructor call — the CLI coerces) would write a float
+        # into the checkpoint and then fail the strict type check on the *second* resume.
+        self.init_scale = float(self.init_scale)
+        self.growth_factor = float(self.growth_factor)
+        self.backoff_factor = float(self.backoff_factor)
         if self.init_scale <= 0:
             raise ValueError(f"grad_scaler.init_scale must be > 0, got {self.init_scale}.")
         if self.growth_factor <= 1:

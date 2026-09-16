@@ -83,6 +83,7 @@ FP16_BACKOFF_FACTOR = 0.5
 # still bounding a deadlocked collective to minutes instead of a hung CI job.
 WATCHDOG_TIMEOUT_S = 240.0
 _JOIN_POLL_S = 5.0
+_PORT_RETRIES = 3  # rendezvous port clashes only; see _spawn
 
 
 # -------------------------------------------------------------------------------------------
@@ -97,7 +98,25 @@ def _find_free_port() -> int:
 
 
 def _spawn(world_size: int, worker, *args, timeout_s: float = WATCHDOG_TIMEOUT_S) -> None:
-    """Run ``worker(rank, world_size, port, *args)`` on ``world_size`` fresh processes.
+    """Run ``worker(rank, world_size, port, *args)``, retrying only a rendezvous port clash.
+
+    ``_find_free_port`` closes its probe socket before the workers bind it, so the port can be
+    taken in between and rank 0's ``TCPStore`` fails with ``EADDRINUSE`` before any test code
+    runs. That is an artefact of the harness, not a result, so it is retried with a fresh port.
+    The match is deliberately narrow: every other worker exception propagates on the first
+    attempt, because a blanket retry would paper over a genuinely flaky test.
+    """
+    for attempt in range(_PORT_RETRIES):
+        try:
+            _spawn_once(world_size, worker, *args, timeout_s=timeout_s)
+            return
+        except Exception as error:  # noqa: PERF203
+            if "EADDRINUSE" not in str(error) or attempt == _PORT_RETRIES - 1:
+                raise
+
+
+def _spawn_once(world_size: int, worker, *args, timeout_s: float = WATCHDOG_TIMEOUT_S) -> None:
+    """One spawn attempt on ``world_size`` fresh processes.
 
     Watchdog approach: ``mp.spawn(join=False)`` returns a ``ProcessContext`` whose ``join`` is
     polled under a deadline. On timeout every surviving worker is SIGKILLed and the test fails
@@ -377,14 +396,19 @@ def _overflow_worker(
 ) -> None:
     """Three steps — finite, overflowing, finite — with per-rank assertions at each one.
 
-    The overflow is injected where it can actually happen for the topology under test, which is
-    the whole point: how the skip decision becomes unanimous differs between them.
+    The overflow is injected where it can actually arise for the topology under test, which is
+    the whole point: what makes the skip unanimous differs between them. The discriminator is
+    whether the mesh has a replicate dim, not whether it is sharded.
 
-    - **Sharded**: after the reduce-scatter, one rank's local gradient shard is set to inf. No
-      further communication of the gradients happens, so the skip can only become unanimous
-      through torch's cross-mesh reduction of the GradScaler's found-inf flag.
-    - **DDP**: gradients are all-reduced inside `backward`, so an inf has to enter before that
-      — one rank gets an inf observation, and every rank ends up holding the inf.
+    - **Pure FSDP2** (``dp_replicate == 1``): inject after the reduce-scatter, into one rank's
+      local gradient shard. Nothing communicates the gradients afterwards, so the skip can only
+      become unanimous through torch's cross-mesh reduction of the GradScaler's found-inf flag.
+    - **Replicated meshes — DDP and HSDP** (``dp_replicate > 1``): inject before the reduction,
+      as an inf observation on one rank. A post-reduction injection would be meaningless here:
+      torch reduces found-inf with ``Partial("max")`` only along sharded mesh dims and leaves
+      the replicate dim ``Replicate()``, so poking one rank after the fact would make replica
+      peers disagree by construction — a state real training cannot produce, because the
+      replicate all-reduce has already made their gradients identical.
 
     With ``mixed_precision="no"`` only the finite step runs; the test uses that to obtain the
     fp32 reference gradient norm.
@@ -392,7 +416,8 @@ def _overflow_worker(
     _init_worker_env(rank, world_size, port)
     cfg = _make_cfg(world_size, dp_replicate=dp_replicate, dp_shard=dp_shard, mixed_precision=mixed_precision)
     accelerator = _build_accelerator(cfg)
-    sharded = dp_shard > 1
+    # DDP and HSDP both reduce across replicas, so both need the pre-reduction injection.
+    replicated = dp_replicate > 1
     fp16 = mixed_precision == "fp16"
     policy = _make_policy(SEED)
     optimizer = torch.optim.SGD(policy.parameters(), lr=0.1)
@@ -404,13 +429,13 @@ def _overflow_worker(
 
     def run_step(step: int, *, overflow: bool) -> float:
         batch = _batch(step, rank, accelerator.device)
-        if overflow and not sharded and rank == 0:
+        if overflow and replicated and rank == 0:
             batch = {"observation.state": batch["observation.state"].clone()}
             batch["observation.state"][0, 0] = float("inf")
         with accelerator.autocast():
             loss, _ = policy(batch)
         accelerator.backward(loss)
-        if overflow and sharded and rank == 0:
+        if overflow and not replicated and rank == 0:
             grad = next(p.grad for p in policy.parameters() if p.grad is not None)
             (grad.to_local() if hasattr(grad, "to_local") else grad).fill_(float("inf"))
         grad_norm = accelerator.clip_grad_norm_(policy.parameters(), GRAD_CLIP_NORM)
@@ -655,6 +680,19 @@ def test_fp16_overflow_skips_the_update_on_every_rank_ddp(tmp_path):
     """dp_replicate=2: the same contract on the replicated path, where the all-reduce — not a
     DTensor reduction — is what makes every rank see the overflow."""
     _spawn(2, _overflow_worker, str(tmp_path), 2, 1, "fp16", "ddp")
+
+
+@pytest.mark.multigpu
+@pytest.mark.skipif(torch.cuda.device_count() < 4, reason="requires 4 GPUs")
+def test_fp16_overflow_skips_the_update_on_every_rank_hsdp(tmp_path):
+    """2x2: the composition, where the two mechanisms have to hold at once.
+
+    HSDP is the only topology where "the skip is unanimous" has two halves — torch reduces the
+    found-inf flag across the shard dim, while agreement across the replicate dim rests on
+    FSDP2's all-reduce having already made those gradients identical. Covering FSDP2 and DDP
+    separately does not exercise the two together.
+    """
+    _spawn(4, _overflow_worker, str(tmp_path), 2, 2, "fp16", "hsdp")
 
 
 @pytest.mark.multigpu

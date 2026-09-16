@@ -175,9 +175,11 @@ def save_sharded_optimizer(
     """
     from accelerate.utils import save_fsdp_optimizer
 
-    # Unwrapped: this path can reach torch's `_init_optim_state` too — an optimizer whose
-    # state is still empty (every update so far skipped, or a save inside the first
-    # accumulation window) gets it materialized here. See `_inner_optimizer`.
+    # Unwrapped: this path can reach torch's `_init_optim_state` too. It bails out early when
+    # any parameter still holds a gradient, so a save mid-accumulation-window is not the case
+    # to worry about; what does reach the dummy step is an optimizer whose state is empty
+    # after `zero_grad()` — every update so far skipped, or a stateless optimizer such as
+    # momentum-free SGD, which never populates `state` at all. See `_inner_optimizer`.
     save_fsdp_optimizer(
         _fsdp_plugin(accelerator), accelerator, _inner_optimizer(optimizer), model, str(output_dir)
     )
