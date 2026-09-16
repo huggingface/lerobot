@@ -431,6 +431,12 @@ def test_lawam_postprocessor_config_round_trip(tmp_path) -> None:
         "observation.images.front",
         "observation.images.wrist",
     ]
+    action = torch.tensor([[2.0, -2.0, 0.1, 0.25], [-2.0, 2.0, 0.2, 0.24]])
+    original = action.clone()
+    expected = torch.tensor([[1.0, -1.0, 0.1, 1.0], [-1.0, 1.0, 0.2, -1.0]])
+    torch.testing.assert_close(postprocessor(action), expected)
+    torch.testing.assert_close(loaded_postprocessor(action), expected)
+    torch.testing.assert_close(action, original)
 
 
 def test_sft_rebuilds_pretraining_processors_for_current_config(tmp_path) -> None:

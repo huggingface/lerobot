@@ -25,7 +25,9 @@ from lerobot.processor import (
     EnvTransition,
     ImageCropResizeProcessorStep,
     NormalizerProcessorStep,
+    ObservationProcessorStep,
     PolicyAction,
+    PolicyActionProcessorStep,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
@@ -50,17 +52,12 @@ from .latent_world.vlm_adapter import (
 
 
 @ProcessorStepRegistry.register(name="lawam_clip_actions")
-class LaWAMClipActionsProcessorStep(ProcessorStep):
+class LaWAMClipActionsProcessorStep(PolicyActionProcessorStep):
     """Clamp normalized actions to the range expected by LaWAM."""
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        """Clamp an action transition to the normalized interval."""
-        action = transition.get(TransitionKey.ACTION)
-        if action is None:
-            return transition
-        transition = dict(transition)
-        transition[TransitionKey.ACTION] = action.clamp(-1.0, 1.0)
-        return transition
+    def action(self, action: PolicyAction) -> PolicyAction:
+        """Clamp an action tensor to the normalized interval."""
+        return action.clamp(-1.0, 1.0)
 
     def transform_features(self, features):
         """Preserve feature declarations because clipping does not change shape."""
@@ -100,25 +97,22 @@ class LaWAMPreSnapGripperProcessorStep(ProcessorStep):
 
 
 @ProcessorStepRegistry.register(name="lawam_binarize_gripper")
-class LaWAMBinarizeGripperProcessorStep(ProcessorStep):
+class LaWAMBinarizeGripperProcessorStep(PolicyActionProcessorStep):
     """Map the emitted gripper channel to the LIBERO minus-one/plus-one convention."""
 
     def __init__(self, gripper_dim: int = 6, threshold: float = 0.5):
         self.gripper_dim = gripper_dim
         self.threshold = threshold
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
+    def action(self, action: PolicyAction) -> PolicyAction:
         """Binarize the configured gripper channel when it is present."""
-        action = transition.get(TransitionKey.ACTION)
-        if action is None or action.shape[-1] <= self.gripper_dim:
-            return transition
-        transition = dict(transition)
+        if action.shape[-1] <= self.gripper_dim:
+            return action
         binarized = action.clone()
         binarized[..., self.gripper_dim] = (
             2.0 * (binarized[..., self.gripper_dim] > self.threshold).float() - 1.0
         )
-        transition[TransitionKey.ACTION] = binarized
-        return transition
+        return binarized
 
     def transform_features(self, features):
         """Preserve feature declarations because binarization does not change shape."""
@@ -160,7 +154,7 @@ def _task_batch(tasks: Any, *, batch_size: int, default_task: str) -> list[str]:
 
 
 @ProcessorStepRegistry.register(name="lawam_resize_images")
-class LaWAMResizeImagesProcessorStep(ProcessorStep):
+class LaWAMResizeImagesProcessorStep(ObservationProcessorStep):
     """Resize current and temporal image batches to the LaWAM input grid."""
 
     def __init__(
@@ -173,8 +167,8 @@ class LaWAMResizeImagesProcessorStep(ProcessorStep):
         self.image_hw = (int(image_hw[0]), int(image_hw[1]))
         self._resize_step = ImageCropResizeProcessorStep(resize_size=self.image_hw)
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = transition.get(TransitionKey.OBSERVATION) or {}
+    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+        """Resize camera tensors while retaining their batch and time dimensions."""
         missing = [key for key in self.image_features if key not in observation]
         if missing:
             raise KeyError(f"LaWAM input batch is missing configured camera features: {missing}.")
@@ -198,9 +192,7 @@ class LaWAMResizeImagesProcessorStep(ProcessorStep):
             resized = resized_images[key]
             resized_observation[key] = resized.reshape(*leading_shapes[key], *resized.shape[-3:])
 
-        result = dict(transition)
-        result[TransitionKey.OBSERVATION] = resized_observation
-        return result
+        return resized_observation
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
