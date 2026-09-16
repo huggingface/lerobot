@@ -549,13 +549,16 @@ def train(cfg: TrainPipelineConfig):
             **processor_kwargs,
         )
 
-    # Created BEFORE prepare on the unsharded parameters — accelerate's FSDP2 path requires the
-    # model and optimizer in one prepare() call and rebinds the param groups itself.
-    policy = apply_torch_compile(policy, cfg.accelerator.compile)
-
     if is_main_process():
         logging.info("Creating optimizer and scheduler")
+    # Created BEFORE compile, so that a policy selecting a parameter group by name still matches:
+    # torch.compile replaces `policy.model` with a wrapper, and ACT picks its backbone group by the
+    # `model.backbone` prefix, which reads `model._orig_mod.backbone` once wrapped. Also before
+    # prepare on the unsharded parameters: accelerate's FSDP2 path requires the model and optimizer
+    # in one prepare() call and rebinds the param groups itself.
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
+
+    policy = apply_torch_compile(policy, cfg.accelerator.compile)
 
     # --- resume phase 1 + dataloaders ----------------------------------------------------------
     step = 0  # number of loop steps (= micro-batches consumed per data-parallel worker)
