@@ -38,10 +38,13 @@ class FakeFastWAMCore(nn.Module):
         self.dit = nn.Linear(2, 2)
         self.encode_prompt_calls: list[list[str]] = []
 
-    def training_loss(self, sample):
+    def training_loss(self, sample, reduction="mean"):
         assert sample["video"].ndim == 5
         assert sample["context"].ndim == 3
-        return sample[ACTION].sum() * 0.0 + torch.tensor(1.0), {"loss_action": 1.0}
+        zero = sample[ACTION].sum() * 0.0
+        if reduction == "none":
+            return zero + torch.ones(sample[ACTION].shape[0]), {"loss_action": 1.0}
+        return zero + torch.tensor(1.0), {"loss_action": 1.0}
 
     def encode_prompt(self, prompt):
         prompts = [prompt] if isinstance(prompt, str) else list(prompt)
@@ -148,6 +151,39 @@ def test_preprocessor_passes_images_through_and_postprocessor_toggles_actions(tm
     assert torch.equal(
         loaded_postprocessor(torch.tensor([[0.25, 0.5, 1.0]])), torch.tensor([[0.25, 0.5, -1.0]])
     )
+
+
+def test_forward_returns_per_sample_losses_under_reduction_none(monkeypatch):
+    monkeypatch.setattr(FastWAMPolicy, "_build_core_model", lambda self, config: FakeFastWAMCore())
+    cfg = FastWAMConfig(
+        action_dim=3,
+        proprio_dim=2,
+        action_horizon=4,
+        n_action_steps=2,
+        num_video_frames=5,
+        action_video_freq_ratio=1,
+        image_size=(16, 16),
+        input_features={
+            "observation.images.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 16, 16)),
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(2,)),
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
+        base_model_id=None,
+    )
+    policy = FastWAMPolicy(cfg)
+    batch = {
+        "observation.images.image": torch.zeros(2, 3, 16, 16),
+        OBS_STATE: torch.zeros(2, 2),
+        ACTION: torch.zeros(2, 4, 3),
+        "context": torch.zeros(2, 5, 4096),
+        "context_mask": torch.ones(2, 5, dtype=torch.bool),
+    }
+
+    scalar_loss, _ = policy.forward(batch)
+    per_sample_loss, _ = policy.forward(batch, reduction="none")
+
+    assert scalar_loss.shape == ()
+    assert per_sample_loss.shape == (2,)
 
 
 def test_policy_forward_and_predict_action_adapt_lerobot_batches(monkeypatch):

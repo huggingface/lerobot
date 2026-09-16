@@ -203,7 +203,7 @@ class FastWAMPolicy(PreTrainedPolicy):
                 sample["proprio"] = state.unsqueeze(1) if state.ndim == 2 else state
         return sample
 
-    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Any]]:
+    def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict[str, Any]]:
         """Compute FastWAM training loss for a LeRobot batch.
 
         Args:
@@ -211,15 +211,17 @@ class FastWAMPolicy(PreTrainedPolicy):
                 (`video`, `action`, `context`, `context_mask`) or LeRobot keys
                 that can be adapted (`observation.images.*`, `observation.state`,
                 `action`, `action_is_pad`).
+            reduction (str): "mean" returns the scalar loss (default); "none" returns per-sample
+                losses of shape (B,) for sample weighting (RA-BC).
 
         Returns:
-            tuple[Tensor, dict[str, Any]]: The scalar loss to backprop, and a dict of
-            logging metrics (e.g. `loss_video`, `loss_action`) — the `(loss, output_dict)`
-            contract the LeRobot training loop expects.
+            tuple[Tensor, dict[str, Any]]: The loss to backprop (scalar for "mean", per-sample (B,)
+            for "none"), and a dict of logging metrics (e.g. `loss_video`, `loss_action`) — the
+            `(loss, output_dict)` contract the LeRobot training loop expects.
         """
 
         sample = self._batch_to_training_sample(batch)
-        loss, metrics = self.model.training_loss(sample)
+        loss, metrics = self.model.training_loss(sample, reduction=reduction)
         return loss, dict(metrics or {})
 
     @torch.no_grad()
