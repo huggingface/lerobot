@@ -659,6 +659,7 @@ def publish_trained_model(
 # ---------------------------------------------------------------------------------------------
 
 _BASE_MODEL_MAPPING = {
+    "dm05": "Dexmal/DM05",
     "smolvla": "lerobot/smolvla_base",
     "pi0": "lerobot/pi0_base",
     "pi05": "lerobot/pi05_base",
