@@ -763,6 +763,7 @@ class UnitreeG1MujocoEnv(HubEnvConfig):
     onscreen: bool | None = None
 
     def __post_init__(self) -> None:
+        self.end_effector = G1EndEffector(self.end_effector)
         if self.onscreen is None:
             self.onscreen = not self.publish_images
         elif self.onscreen and self.publish_images:

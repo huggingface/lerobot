@@ -60,17 +60,18 @@ class UnitreeG1Config(RobotConfig):
     # Launch mujoco simulation
     is_simulation: bool = True
 
-    # What the arms carry. In sim it picks the MuJoCo model, hence the finger actuators
-    # and the wrist cameras; on the real robot it only states what is bolted on.
+    # Supports dummy, dex1, dex3
     end_effector: G1EndEffector = G1EndEffector.DEX1
+
+    # Loads the lerobot/unitree-g1-mujoco environment
+    sim_env: UnitreeG1MujocoEnv = field(init=False)
 
     # Where the sim's cameras are published, or its viewer instead when publishing is off.
     sim_publish_images: bool = True
     sim_camera_port: int = 5555
 
-    # Built rather than taken: an EnvConfig a RobotConfig can reach loops the draccus
-    # parser tree, since the `gym_manipulator` env carries a RobotConfig of its own.
-    sim_env: UnitreeG1MujocoEnv = field(init=False)
+    # Toggle the viewer on or off
+    sim_onscreen: bool | None = None
 
     # Socket config for ZMQ bridge
     robot_ip: str = "192.168.123.164"  # default G1 IP
@@ -89,7 +90,8 @@ class UnitreeG1Config(RobotConfig):
         super().__post_init__()
         self.end_effector = G1EndEffector(self.end_effector)  # from Python it is still a string
         self.sim_env = UnitreeG1MujocoEnv(
-            publish_images=self.sim_publish_images, 
+            publish_images=self.sim_publish_images,
             camera_port=self.sim_camera_port,
-            end_effector=self.end_effector
+            onscreen=self.sim_onscreen,
+            end_effector=self.end_effector,
         )
