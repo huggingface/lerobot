@@ -176,7 +176,7 @@ class EpisodicStrategy(RolloutStrategy):
 
                         elif self.config.reset_to_initial_position:
                             # No teleop: return the robot to its startup position.
-                            self._return_to_initial_position(hw=ctx.hardware, duration_s=1)
+                            self.return_to_initial_position(hw=ctx.hardware, duration_s=1)
 
                         self._reset_loop(
                             ctx=ctx,
@@ -199,7 +199,7 @@ class EpisodicStrategy(RolloutStrategy):
 
                         # returns to its initial joint positions captured at startup
                         if not teleop and self.config.reset_to_initial_position:
-                            self._return_to_initial_position(hw=ctx.hardware, duration_s=1)
+                            self.return_to_initial_position(hw=ctx.hardware, duration_s=1)
 
                         continue
 

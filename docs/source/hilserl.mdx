@@ -107,7 +107,7 @@ class GripperConfig:
     gripper_penalty: float = 0.0    # Penalty for inappropriate gripper usage
 
 class ResetConfig:
-    fixed_reset_joint_positions: Any | None = None    # Joint positions for reset
+    fixed_reset_joint_positions: list[float] | None = None    # Joint positions for reset
     reset_time_s: float = 5.0    # Time to wait during reset
     control_time_s: float = 20.0    # Maximum episode duration
     terminate_on_success: bool = True    # Whether to terminate episodes on success detection
