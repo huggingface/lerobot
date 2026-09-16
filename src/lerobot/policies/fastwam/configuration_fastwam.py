@@ -191,6 +191,15 @@ class FastWAMConfig(PreTrainedConfig):
     action_video_freq_ratio: int = 4
     image_size: tuple[int, int] = (224, 448)
     context_len: int = 128
+
+    # Relative actions: subtract the current state from the action during preprocessing and add it
+    # back at postprocessing, so the model predicts offsets instead of absolute poses. Needs
+    # `proprio_dim` (OBS_STATE) to be set.
+    use_relative_actions: bool = False
+    # Joint names kept absolute (never converted). Empty list = every dim goes relative.
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # Filled in at runtime from dataset metadata by `make_policy`; used to build the exclude mask.
+    action_feature_names: list[str] | None = None
     model_id: str = WAN22_MODEL_ID
     tokenizer_model_id: str = WAN_T5_TOKENIZER_ID
     text_encoder_model_id: str = WAN22_DIFFUSERS_MODEL_ID
