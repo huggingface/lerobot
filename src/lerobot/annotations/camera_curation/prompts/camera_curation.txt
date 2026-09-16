@@ -275,16 +275,27 @@ Required mount decision
 
 Follow this order:
 
-1. GRIPPER-IN-FOREGROUND CHECK — DO THIS FIRST. Is the robot's OWN gripper /
-   end-effector / jaws / fingers sitting in the NEAR FOREGROUND, aligned with the
-   view (pointing into the scene from near the lens, e.g. dark jaws parked at the
-   bottom edge reaching up into the scene), and staying in roughly the SAME spot
-   across the frames rather than sweeping through? If YES -> "robot_mounted"
-   (wrist). This OVERRIDES the background test below: the robot's own gripper
-   anchored in the foreground is decisive EVEN IF the background looks static or
-   blank. A green screen, plain wall, or empty tabletop hides the camera's motion
-   (no trackable texture), so you must NOT conclude "fixed" from an unchanging
-   backdrop when a gripper is anchored in the foreground — that is a wrist.
+1. GRIPPER-IN-FOREGROUND CHECK — DO THIS FIRST. Is the CAMERA'S OWN gripper in the
+   near foreground? The wrist signature is that the gripper belongs to the SAME arm
+   the camera rides on: it EMERGES FROM THE NEAR EDGE of the frame (usually the
+   bottom), you see only its FRONT part / jaws pointing forward into the scene from
+   near the lens (e.g. dark jaws at the bottom edge reaching up), it connects back
+   toward YOUR viewpoint, and it stays in roughly the SAME spot across the frames
+   rather than sweeping through. If YES -> "robot_mounted" (wrist). This OVERRIDES
+   the background test below: the camera's own gripper anchored in the foreground is
+   decisive EVEN IF the background looks static or blank (a green screen, plain
+   wall, or empty tabletop hides the camera's motion), so do NOT conclude "fixed"
+   from an unchanging backdrop when the camera's own gripper is anchored there.
+
+   CRUCIAL — the gripper must BELONG TO THE CAMERA'S ARM, not just be visible. If
+   you instead see a WHOLE, SEPARATE arm as an EXTERNAL OBJECT out in the scene —
+   its joints, servos, links and gripper all visible from the OUTSIDE, positioned
+   in front of you like something you are looking AT (even a large, close one that
+   fills much of the frame, e.g. a side camera watching an arm pour/manipulate) —
+   that is NOT this cue. You are looking at another arm, not out along your own;
+   that is a FIXED camera. The tell: a wrist sees only the near, forward-facing END
+   of its own gripper connected to the viewpoint; a fixed camera sees a complete
+   arm from the side as a separate body in the scene.
 2. Otherwise, identify static environment landmarks and compare their image
    position/perspective across ALL frames.
 3. If they remain geometrically stable AND there is no anchored foreground gripper
