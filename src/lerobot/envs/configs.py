@@ -757,7 +757,7 @@ class UnitreeG1MujocoEnv(HubEnvConfig):
     """
 
     hub_path: str = "lerobot/unitree-g1-mujoco"
-    end_effector: G1EndEffector = G1EndEffector.DEX1
+    end_effector: G1EndEffector = field(init=False, default=G1EndEffector.DEX1)
     publish_images: bool = True
     camera_port: int = 5555
     onscreen: bool | None = None
