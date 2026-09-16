@@ -410,7 +410,9 @@ class FlowmatchingActionHead(nn.Module):
         action_dim_total = self.action_dim
         per_action_dim = self.per_action_dim
 
-        action = torch.rand(batch_size, action_dim_total, device=device, dtype=context_tokens.dtype) * 2 - 1
+        action = sample_noise(
+            (batch_size, action_dim_total), device, dtype=context_tokens.dtype, distribution="uniform"
+        )
         action_seq = action.view(batch_size, self.horizon, per_action_dim)
         action_mask = self._expand_action_mask(
             action_mask,

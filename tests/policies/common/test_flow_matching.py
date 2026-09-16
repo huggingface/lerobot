@@ -332,6 +332,52 @@ def test_injected_sampler_bypasses_the_cached_cpu_distribution():
     assert torch.equal(sample_bf16, draws.to(torch.bfloat16))
 
 
+# --- Inference-time initial noise, pinned against the same historical expressions ----------
+
+
+def test_groot_inference_noise_matches_historical_expression():
+    shape, dtype = (2, 16, 32), torch.bfloat16
+
+    torch.manual_seed(16)
+    noise = sample_noise(shape, "cpu", dtype=dtype)
+
+    # Historical groot get_action_with_features expression.
+    torch.manual_seed(16)
+    expected = torch.randn(size=shape, dtype=dtype, device="cpu")
+
+    assert noise.dtype == dtype
+    assert torch.equal(noise, expected)
+
+
+def test_wall_x_inference_noise_matches_historical_expression():
+    shape = (2, 32, 14)
+
+    torch.manual_seed(17)
+    noise = sample_noise(shape, "cpu")
+
+    # Historical wall_x diffusion-mode expression: always float32, whatever the action dtype.
+    torch.manual_seed(17)
+    expected = torch.randn(size=shape, dtype=torch.float32, device="cpu")
+
+    assert noise.dtype == torch.float32
+    assert torch.equal(noise, expected)
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_evo1_inference_noise_matches_historical_expression(dtype):
+    batch_size, action_dim_total = 3, 24
+
+    torch.manual_seed(18)
+    noise = sample_noise((batch_size, action_dim_total), "cpu", dtype=dtype, distribution="uniform")
+
+    # Historical evo1 get_action expression: uniform on [-1, 1), in the context-token dtype.
+    torch.manual_seed(18)
+    expected = torch.rand(batch_size, action_dim_total, device="cpu", dtype=dtype) * 2 - 1
+
+    assert noise.dtype == dtype
+    assert torch.equal(noise, expected)
+
+
 def test_euler_integrate_constant_velocity_is_exact():
     # With v_t == c constant, x_0 = x_1 + sum(dt * c) = x_1 - c exactly (num_steps * dt = -1).
     noise = torch.randn(3, 5, 2)

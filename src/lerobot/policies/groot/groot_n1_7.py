@@ -651,10 +651,8 @@ class GR00TN17ActionHead(nn.Module):
         vl_embeds = backbone_features
         batch_size = vl_embeds.shape[0]
         device = vl_embeds.device
-        actions = torch.randn(
-            size=(batch_size, self.config.action_horizon, self.action_dim),
-            dtype=vl_embeds.dtype,
-            device=device,
+        actions = sample_noise(
+            (batch_size, self.config.action_horizon, self.action_dim), device, dtype=vl_embeds.dtype
         )
         dt = 1.0 / self.num_inference_timesteps
         vel_strength = torch.ones_like(actions)

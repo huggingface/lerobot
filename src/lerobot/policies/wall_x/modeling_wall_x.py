@@ -1344,11 +1344,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         # Handle diffusion-based action prediction
         if predict_mode == "diffusion":
             # Initialize with random noise
-            noisy_action = torch.randn(
-                size=(batch_size, pred_horizon, action_dim),
-                dtype=torch.float32,
-                device=inputs_embeds.device,
-            )
+            noisy_action = sample_noise((batch_size, pred_horizon, action_dim), inputs_embeds.device)
             dof_mask = dof_mask.to(inputs_embeds.device).to(torch.float32)
 
             def step(timestep, noisy_action):
