@@ -156,6 +156,9 @@ class RelativeActionsProcessorStep(ProcessorStep):
         new_transition[TransitionKey.ACTION] = to_relative_actions(action, state, mask)
         return new_transition
 
+    def reset(self) -> None:
+        self._last_state = None
+
     def get_cached_state(self) -> torch.Tensor | None:
         """Return the cached ``observation.state`` used as the reference point for relative/absolute action conversions."""
         return self._last_state
