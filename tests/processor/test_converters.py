@@ -243,6 +243,18 @@ def test_batch_to_transition_with_index_fields():
     assert comp_data["task"] == batch["task"]
 
 
+@pytest.mark.parametrize("frame_index", [0, torch.tensor(0), torch.tensor([0, 9])])
+def test_frame_index_survives_batch_transition_round_trip(frame_index: int | torch.Tensor) -> None:
+    batch = {OBS_STATE: torch.zeros(2, 7), "frame_index": frame_index}
+
+    transition = batch_to_transition(batch)
+
+    complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+    assert isinstance(complementary_data, dict)
+    assert complementary_data["frame_index"] is frame_index
+    assert transition_to_batch(transition)["frame_index"] is frame_index
+
+
 def testtransition_to_batch_with_index_fields():
     """Test that transition_to_batch handles index and task_index fields correctly."""
 
@@ -289,6 +301,7 @@ def test_batch_to_transition_without_index_fields():
     assert "task" in comp_data
     assert "index" not in comp_data
     assert "task_index" not in comp_data
+    assert "frame_index" not in comp_data
 
 
 def test_transition_to_batch_without_index_fields():
@@ -307,3 +320,4 @@ def test_transition_to_batch_without_index_fields():
     assert "task" in batch
     assert "index" not in batch
     assert "task_index" not in batch
+    assert "frame_index" not in batch
