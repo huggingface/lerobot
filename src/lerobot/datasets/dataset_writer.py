@@ -292,7 +292,7 @@ class DatasetWriter:
             if streaming and key in self._meta.video_keys:
                 produced = episode_length - self._streaming_encoder.dropped_frame_count(key)
             else:
-                frame_path = self._get_image_file_path(episode_index, key, frame_index=0)
+                frame_path = Path(episode_buffer[key][0])
                 img_dir = frame_path.parent
                 produced = len(list(img_dir.glob(f"*{frame_path.suffix}"))) if img_dir.is_dir() else 0
             if produced != episode_length:
