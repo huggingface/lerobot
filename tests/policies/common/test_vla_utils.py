@@ -289,6 +289,46 @@ def test_fuse_action_time_embedding_matches_pi0_block(apply_checkpoint):
     assert actual.shape == (BATCH, HORIZON, WIDTH)
 
 
+@pytest.mark.parametrize("apply_checkpoint", [_call_directly, _checkpointed])
+def test_fuse_action_time_embedding_matches_pi0_block_under_bf16_autocast(apply_checkpoint):
+    """pi0 trains under bf16 autocast, which is where the two blocks disagree about dtype.
+
+    The historical block cast the time embedding to the timestep's dtype (fp32) and let the
+    concatenation promote; the helper casts it to the action embedding's (bf16 here). The MLP's
+    autocast wrapper rounds its whole input to bf16 either way, and that rounding is elementwise,
+    so doing it before or after the concatenation lands on the same bits.
+    """
+    torch.manual_seed(7)
+    reference_layers = _ActionTimeLayers(dtype=torch.float32)
+    migrated_layers = copy.deepcopy(reference_layers)
+    noisy_actions, timestep = _suffix_inputs()
+
+    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+        expected = _pi0_reference(reference_layers, noisy_actions, timestep, apply_checkpoint)
+        actual = _pi0_migrated(migrated_layers, noisy_actions, timestep, apply_checkpoint)
+
+    assert expected.dtype == torch.bfloat16 and actual.dtype == torch.bfloat16
+    assert torch.equal(actual, expected)
+
+
+def test_fuse_action_time_embedding_pi0_time_embedding_follows_the_action_dtype():
+    """Pins the one case where the helper deliberately departs from the historical pi0 block.
+
+    With bf16 weights and no autocast to reconcile them, casting the time embedding to the
+    timestep's fp32 built a mixed-dtype concatenation that the MLP rejects outright. Following
+    the action embedding's dtype instead is what makes the block dtype-agnostic.
+    """
+    torch.manual_seed(8)
+    layers = _ActionTimeLayers(dtype=torch.bfloat16)
+    noisy_actions, timestep = _suffix_inputs()
+    noisy_actions = noisy_actions.to(torch.bfloat16)
+
+    with pytest.raises(RuntimeError, match="same dtype"):
+        _pi0_reference(layers, noisy_actions, timestep, _call_directly)
+
+    assert _pi0_migrated(layers, noisy_actions, timestep, _call_directly).dtype == torch.bfloat16
+
+
 def test_fuse_action_time_embedding_matches_smolvla_block():
     torch.manual_seed(2)
     reference_layers = _ActionTimeLayers()
@@ -338,6 +378,22 @@ def test_fuse_action_time_embedding_pi0_gradients_match(apply_checkpoint):
     _pi0_migrated(migrated_layers, migrated_actions, timestep, apply_checkpoint).sum().backward()
 
     # Both stages are differentiable and identical: the projection *and* the MLP.
+    _assert_grads_equal(reference_layers, migrated_layers)
+    assert torch.equal(migrated_actions.grad, reference_actions.grad)
+
+
+@pytest.mark.parametrize("apply_checkpoint", [_call_directly, _checkpointed])
+def test_fuse_action_time_embedding_pi0_gradients_match_under_bf16_autocast(apply_checkpoint):
+    torch.manual_seed(9)
+    reference_layers = _ActionTimeLayers(dtype=torch.float32)
+    migrated_layers = copy.deepcopy(reference_layers)
+    reference_actions, timestep = _suffix_inputs(requires_grad=True)
+    migrated_actions = reference_actions.detach().clone().requires_grad_(True)
+
+    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+        _pi0_reference(reference_layers, reference_actions, timestep, apply_checkpoint).sum().backward()
+        _pi0_migrated(migrated_layers, migrated_actions, timestep, apply_checkpoint).sum().backward()
+
     _assert_grads_equal(reference_layers, migrated_layers)
     assert torch.equal(migrated_actions.grad, reference_actions.grad)
 
