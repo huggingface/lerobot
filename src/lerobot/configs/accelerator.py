@@ -168,11 +168,11 @@ class GradientAccumulationConfig:
 
 @dataclass
 class CompileConfig:
-    """torch.compile knobs — a configured placeholder: wiring lands in a later round.
+    """torch.compile knobs, wired for DDP and single-process runs.
 
-    The setup-order contract it will follow is already fixed: compile applies
-    after CP dispatch install and activation checkpointing, before `fully_shard`, regionally
-    (per wrap unit) — the only combination proven with FSDP2.
+    A sharded run is still rejected. The setup-order contract it will follow there is unchanged:
+    compile applies after CP dispatch install and activation checkpointing, before `fully_shard`,
+    regionally (per wrap unit), the only combination proven with FSDP2.
     """
 
     # None = auto: on when the policy declares `_compile_regions` and the run is not sharded.
@@ -182,8 +182,10 @@ class CompileConfig:
     # mode replaces them with as many Triton launches; only graph replay removes the cost.
     mode: str | None = "reduce-overhead"
     regional: bool = True
-    # Keep eager RNG semantics inside compiled regions (dropout, the VAE's randn_like), so a
-    # compiled run reproduces the eager one to fp32 rounding at the same seed.
+    # Draw the random numbers of a compiled region (dropout, the VAE's randn_like) with eager's
+    # implementation instead of inductor's. This does not make a compiled run reproduce an eager
+    # one: fusion still moves the point at which each mask is drawn, so with ACT's dropout on the
+    # two part at step 1.
     fallback_random: bool = True
 
 
