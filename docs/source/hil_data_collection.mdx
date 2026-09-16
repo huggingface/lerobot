@@ -116,6 +116,8 @@ lerobot-rollout --strategy.type=dagger \
     --interpolation_multiplier=2
 ```
 
+With `--interpolation_multiplier=N`, the robot receives `N` interpolated commands per policy action (control runs at `fps × N` Hz) while policy inference and dataset recording stay at `--fps`, so the recorded dataset matches its declared FPS.
+
 **With RTC for large models (Pi0, Pi0.5, SmolVLA):**
 
 For models with high inference latency, enable RTC for smooth execution:

@@ -25,8 +25,10 @@ import torch
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import make_robot_action, prepare_observation_for_inference
 from lerobot.processor import PolicyProcessorPipeline
+from lerobot.utils.constants import OBS_STR
+from lerobot.utils.feature_utils import build_dataset_frame
 
-from .base import InferenceEngine
+from .base import InferenceEngine, PolicyQuery
 
 logger = logging.getLogger(__name__)
 
@@ -65,12 +67,12 @@ class SyncInferenceEngine(InferenceEngine):
         device: str | None,
         robot_type: str,
     ) -> None:
+        super().__init__(task=task)
         self._policy = policy
         self._preprocessor = preprocessor
         self._postprocessor = postprocessor
         self._dataset_features = dataset_features
         self._ordered_action_keys = ordered_action_keys
-        self._task = task
         self._device = torch.device(device or "cpu")
         self._robot_type = robot_type
         logger.info(
@@ -93,6 +95,8 @@ class SyncInferenceEngine(InferenceEngine):
         self._policy.reset()
         self._preprocessor.reset()
         self._postprocessor.reset()
+        # The policy was just reset, so a pending task change has nothing stale to flush.
+        self._discard_task_change()
 
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
         """Run the full inference pipeline on ``obs_frame`` and return an action tensor."""
@@ -107,10 +111,15 @@ class SyncInferenceEngine(InferenceEngine):
             if self._device.type == "cuda" and self._policy.config.use_amp
             else nullcontext()
         )
+        task, task_changed = self._take_task()
         with torch.inference_mode(), autocast_ctx:
-            observation = prepare_observation_for_inference(
-                observation, self._device, self._task, self._robot_type
-            )
+            if task_changed:
+                # Chunking policies queue actions computed under the previous instruction,
+                # so drop them and let the new one take effect on this tick.  Narrower
+                # than ``policy.reset``: observation history and other episode state stay.
+                logger.info("Task changed to '%s' — dropping precomputed actions", task)
+                self._policy.drop_queued_actions()
+            observation = prepare_observation_for_inference(observation, self._device, task, self._robot_type)
             observation = self._preprocessor(observation)
             action = self._policy.select_action(observation)
             action = self._postprocessor(action)
@@ -119,4 +128,41 @@ class SyncInferenceEngine(InferenceEngine):
         # Reorder to match dataset action ordering so the caller can treat
         # the returned tensor uniformly across backends.
         action_dict = make_robot_action(action_tensor, self._dataset_features)
+        # ``task`` is the pre-inference snapshot: a /subtask landing mid-inference must
+        # not relabel this action.
+        self._set_dispatched_task(task)
         return torch.tensor([action_dict[k] for k in self._ordered_action_keys])
+
+    # ------------------------------------------------------------------
+    # Text queries
+    # ------------------------------------------------------------------
+
+    @property
+    def supports_text_queries(self) -> bool:
+        """True when the policy has a text head."""
+        return self._policy.supports_text_generation()
+
+    @property
+    def control_thread_owns_policy(self) -> bool:
+        """Inference runs inline on the control thread, so queries are served there too."""
+        return True
+
+    def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
+        """Run the policy's text head on the current observation."""
+        obs_frame = build_dataset_frame(self._dataset_features, obs_processed, prefix=OBS_STR)
+        autocast_ctx = (
+            torch.autocast(device_type=self._device.type)
+            if self._device.type == "cuda" and self._policy.config.use_amp
+            else nullcontext()
+        )
+        # Live task, read without consuming the task-changed edge (the action path needs it).
+        task = self.task
+        with torch.inference_mode(), autocast_ctx:
+            observation = prepare_observation_for_inference(obs_frame, self._device, task, self._robot_type)
+            observation = self._mark_query(observation, query)
+            # Reusing the action path's preprocessor is safe only while its steps are
+            # stateless per call; the one that is not (an enabled RelativeActionsProcessorStep)
+            # is rejected for this backend at context-build time.
+            observation = self._preprocessor(observation)
+            # No str() coercion: _service_query validates the return value.
+            return self._policy.generate_text(observation)
