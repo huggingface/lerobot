@@ -842,11 +842,13 @@ def test_pretrained_load_stages_lawam_checkpoint_on_cpu(tmp_path, monkeypatch) -
 
     monkeypatch.setattr(PreTrainedPolicy, "_load_as_safetensor", classmethod(fake_load))
     monkeypatch.setattr(LaWAMPolicy, "to", fake_to)
+    native_model = _FakeNativeLaWAM()
+    monkeypatch.setattr(native_model, "to", lambda device: native_model)
 
     policy = LaWAMPolicy.from_pretrained(
         tmp_path,
         config=cfg,
-        native_model=_FakeNativeLaWAM(),
+        native_model=native_model,
     )
 
     assert events == {

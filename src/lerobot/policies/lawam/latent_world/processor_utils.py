@@ -17,9 +17,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from transformers import AutoProcessor
+from lerobot.utils.import_utils import _transformers_available, require_package
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import AutoProcessor
 
 
 @dataclass(frozen=True)
@@ -62,6 +65,7 @@ def load_latent_world_processor(
     spec: LatentWorldProcessorSpec,
 ) -> tuple[Any, Any, int]:
     """Load and configure the Qwen processor described by a portable spec."""
+    require_package("transformers", extra="lawam")
     processor = AutoProcessor.from_pretrained(spec.model_id)
     return configure_latent_world_processor(
         processor,

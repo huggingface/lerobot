@@ -23,8 +23,11 @@ def test_language_rollout_loads_checkpoint_processors_even_when_dataset_stats_ar
     monkeypatch.setattr(factory.PolicyProcessorPipeline, "from_pretrained", load)
     monkeypatch.setattr(factory, "_make_processors_from_policy_config", rebuild)
 
+    config = _act_config()
+    config.recipe = {"messages": []}
+    config.recipe_path = "recipe.yaml"
     result = factory.make_pre_post_processors(
-        SimpleNamespace(recipe={"messages": []}, recipe_path="recipe.yaml"),
+        config,
         pretrained_path="checkpoint",
         dataset_stats={"action": {"mean": 42.0}},
     )
