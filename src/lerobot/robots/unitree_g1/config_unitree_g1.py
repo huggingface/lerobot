@@ -60,21 +60,16 @@ class UnitreeG1Config(RobotConfig):
     # Launch mujoco simulation
     is_simulation: bool = True
 
-    # What the arms carry: "dex1" parallel grippers, "dex3" articulated hands, or "dummy"
-    # for bare wrists. In simulation it selects the MuJoCo model, and with it the finger
-    # actuators and whether the wrist cameras exist at all. On the real robot it is for
-    # now only a declaration of what is bolted on.
+    # What the arms carry. In sim it picks the MuJoCo model, hence the finger actuators
+    # and the wrist cameras; on the real robot it only states what is bolted on.
     end_effector: G1EndEffector = G1EndEffector.DEX1
 
-    # The sim publishes the model's cameras over ZMQ on this port, which is where the
-    # `zmq` cameras read them from. With publishing off it opens its viewer instead.
+    # Where the sim's cameras are published, or its viewer instead when publishing is off.
     sim_publish_images: bool = True
     sim_camera_port: int = 5555
 
-    # The MuJoCo world brought up when `is_simulation` is set, assembled from the fields
-    # above. It is built rather than taken: draccus walks every choice of every registry
-    # it reaches, so an EnvConfig a RobotConfig can reach closes a loop through the
-    # `gym_manipulator` env, which carries a RobotConfig of its own.
+    # Built rather than taken: an EnvConfig a RobotConfig can reach loops the draccus
+    # parser tree, since the `gym_manipulator` env carries a RobotConfig of its own.
     sim_env: UnitreeG1MujocoEnv = field(init=False)
 
     # Socket config for ZMQ bridge
@@ -92,13 +87,8 @@ class UnitreeG1Config(RobotConfig):
 
     def __post_init__(self):
         super().__post_init__()
-        # A name given in Python arrives as a plain string, unlike one parsed off the
-        # command line, and only the enum vets it.
-        self.end_effector = G1EndEffector(self.end_effector)
+        self.end_effector = G1EndEffector(self.end_effector)  # from Python it is still a string
         self.sim_env = UnitreeG1MujocoEnv(
-            publish_images=self.sim_publish_images,
-            camera_port=self.sim_camera_port,
+            publish_images=self.sim_publish_images, camera_port=self.sim_camera_port
         )
-        # One name for what the arms carry. The sim reads it off the config it is handed,
-        # so it is copied there rather than asked for twice.
-        self.sim_env.end_effector = self.end_effector
+        self.sim_env.end_effector = self.end_effector  # one name for what the arms carry
