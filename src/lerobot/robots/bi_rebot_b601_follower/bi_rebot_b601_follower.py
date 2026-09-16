@@ -15,11 +15,13 @@
 # limitations under the License.
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from functools import cached_property
 
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.bimanual import BimanualMixin
 from lerobot.utils.decorators import check_if_not_connected
+from lerobot.utils.errors import DeviceAlreadyConnectedError
 
 from ..rebot_b601_follower import RebotB601Follower, RebotB601FollowerRobotConfig
 from ..robot import Robot
@@ -73,6 +75,21 @@ class BiRebotB601Follower(BimanualMixin, Robot):
             gripper_mit_kp=config.left_arm_config.gripper_mit_kp,
             gripper_mit_kd=config.left_arm_config.gripper_mit_kd,
             joint_limits=config.left_arm_config.joint_limits,
+            home_action=config.left_arm_config.home_action,
+            home_from_start_position=config.left_arm_config.home_from_start_position,
+            home_duration_s=config.left_arm_config.home_duration_s,
+            home_hz=config.left_arm_config.home_hz,
+            home_velocity_deg_s=config.left_arm_config.home_velocity_deg_s,
+            home_tolerance_deg=config.left_arm_config.home_tolerance_deg,
+            safe_home_debug=config.left_arm_config.safe_home_debug,
+            open_gripper_before_home=config.left_arm_config.open_gripper_before_home,
+            gripper_open_position_deg=config.left_arm_config.gripper_open_position_deg,
+            gripper_open_duration_s=config.left_arm_config.gripper_open_duration_s,
+            keep_gripper_open_during_home=config.left_arm_config.keep_gripper_open_during_home,
+            close_gripper_after_home=config.left_arm_config.close_gripper_after_home,
+            gripper_closed_position_deg=config.left_arm_config.gripper_closed_position_deg,
+            gripper_close_duration_s=config.left_arm_config.gripper_close_duration_s,
+            home_on_disconnect=config.left_arm_config.home_on_disconnect,
         )
 
         right_arm_config = RebotB601FollowerRobotConfig(
@@ -94,6 +111,21 @@ class BiRebotB601Follower(BimanualMixin, Robot):
             gripper_mit_kp=config.right_arm_config.gripper_mit_kp,
             gripper_mit_kd=config.right_arm_config.gripper_mit_kd,
             joint_limits=config.right_arm_config.joint_limits,
+            home_action=config.right_arm_config.home_action,
+            home_from_start_position=config.right_arm_config.home_from_start_position,
+            home_duration_s=config.right_arm_config.home_duration_s,
+            home_hz=config.right_arm_config.home_hz,
+            home_velocity_deg_s=config.right_arm_config.home_velocity_deg_s,
+            home_tolerance_deg=config.right_arm_config.home_tolerance_deg,
+            safe_home_debug=config.right_arm_config.safe_home_debug,
+            open_gripper_before_home=config.right_arm_config.open_gripper_before_home,
+            gripper_open_position_deg=config.right_arm_config.gripper_open_position_deg,
+            gripper_open_duration_s=config.right_arm_config.gripper_open_duration_s,
+            keep_gripper_open_during_home=config.right_arm_config.keep_gripper_open_during_home,
+            close_gripper_after_home=config.right_arm_config.close_gripper_after_home,
+            gripper_closed_position_deg=config.right_arm_config.gripper_closed_position_deg,
+            gripper_close_duration_s=config.right_arm_config.gripper_close_duration_s,
+            home_on_disconnect=config.right_arm_config.home_on_disconnect,
         )
 
         self.left_arm = RebotB601Follower(left_arm_config)
@@ -126,6 +158,25 @@ class BiRebotB601Follower(BimanualMixin, Robot):
     def action_features(self) -> dict[str, type]:
         return self._motors_ft
 
+    def connect(self, calibrate: bool = True) -> None:
+        if self.left_arm.bus is not None or self.right_arm.bus is not None:
+            raise DeviceAlreadyConnectedError(f"{self.__class__.__name__} is already connected.")
+        try:
+            self.left_arm.connect(calibrate)
+            self.right_arm.connect(calibrate)
+        except Exception:
+            logger.exception("Bimanual B601 connection failed; cleaning up initialized motor buses.")
+            for arm in (self.right_arm, self.left_arm):
+                if arm.bus is None:
+                    continue
+                if not arm._startup_home_action and not arm.config.home_action:
+                    arm.emergency_disable()
+                try:
+                    arm.disconnect()
+                except Exception:
+                    logger.exception("Failed cleaning up one B601 arm after connection failure.")
+            raise
+
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
         obs_dict: RobotObservation = {}
@@ -151,3 +202,32 @@ class BiRebotB601Follower(BimanualMixin, Robot):
             **{f"left_{k}": v for k, v in sent_action_left.items()},
             **{f"right_{k}": v for k, v in sent_action_right.items()},
         }
+
+    def safe_home(self) -> bool:
+        """Return both arms concurrently so their shutdown trajectories stay synchronized."""
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            left_future = executor.submit(self.left_arm.safe_home)
+            right_future = executor.submit(self.right_arm.safe_home)
+            return bool(left_future.result()) and bool(right_future.result())
+
+    def emergency_disable(self) -> None:
+        for arm in (self.left_arm, self.right_arm):
+            arm.emergency_disable()
+
+    def disconnect(self) -> None:
+        arms_requiring_home = [
+            arm
+            for arm in (self.left_arm, self.right_arm)
+            if arm.config.home_on_disconnect and not arm._emergency_disable_requested
+        ]
+        if arms_requiring_home:
+            with ThreadPoolExecutor(max_workers=len(arms_requiring_home)) as executor:
+                results = list(executor.map(lambda arm: arm.safe_home(), arms_requiring_home))
+            if not all(results):
+                raise RuntimeError(
+                    "Refusing to disconnect bimanual B601 after failed safe_home; "
+                    "torque and both motor buses remain enabled for manual recovery."
+                )
+
+        self.left_arm.disconnect()
+        self.right_arm.disconnect()
