@@ -77,7 +77,7 @@ lerobot-teleoperate \
   --robot.controller=GrootLocomotionController
 ```
 
-The same config carries the sim's camera options. It publishes the model's cameras over ZMQ on `--robot.sim_env.camera_port` (5555 by default), which is where the `zmq` cameras in `--robot.cameras` read them from. Pass `--robot.sim_env.publish_images=false` to open MuJoCo's interactive window instead: the sim renders either its cameras or its window, so `--robot.sim_env.onscreen` follows `publish_images` unless you set it yourself.
+The sim publishes the model's cameras over ZMQ on `--robot.sim_camera_port` (5555 by default), which is where the `zmq` cameras in `--robot.cameras` read them from. Pass `--robot.sim_publish_images=false` to open MuJoCo's interactive window instead: the sim renders either its cameras or its window, never both, since the offscreen contexts belong to the thread that creates them rather than to the viewer's.
 
 ### Connect to the Physical Robot
 
