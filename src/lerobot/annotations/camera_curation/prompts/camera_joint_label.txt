@@ -205,6 +205,14 @@ top
 
 Use "top" for a camera mounted ABOVE the workspace and aimed DOWN at it.
 
+DECISIVE — WORKSPACE LAID OUT BELOW YOU = TOP. If the table/box/objects lie BELOW
+the camera and you look DOWN at them (into open boxes, the tops of things), it is
+"top" — full stop. A vertical WALL/backdrop behind, a table RECEDING with strong
+perspective, and visible object FRONT faces are NORMAL for an elevated top camera
+and DO NOT make it side. WHEN IN DOUBT between top and side, choose TOP. Reserve
+"side" ONLY for a camera at the workspace's own level looking roughly HORIZONTALLY
+ACROSS it (objects edge-on at the camera's height, arms standing up at eye level).
+
 THE DECIDING QUESTION IS SIMPLE: camera ABOVE the workspace looking DOWN -> "top";
 camera low / at table height, beside it, looking ACROSS -> "side". Decide on that
 alone and LEAN toward "top". An elevated camera aimed down is "top" even at a
@@ -276,11 +284,11 @@ A visible wall, visible robot column, or visible vertical surfaces do NOT
 automatically mean side. Likewise, an elevated camera or a large visible
 tabletop do NOT automatically mean top.
 
-When borderline, LEAN top: if the camera clearly looks DOWN onto the workspace
-(work surface dominant, mostly the tops of things), label it top even with
-noticeable obliqueness or perspective. Reserve side for a camera that clearly views
-the workspace from AROUND / BESIDE it (looking across from the perimeter, strong
-near-to-far depth, objects seen mainly by their sides).
+When borderline, CHOOSE top: if the camera looks DOWN onto the workspace at all
+(work area below the lens, tops of things / into boxes), label it top even with
+strong obliqueness, perspective, a wall behind, or visible object fronts. Reserve
+side ONLY for a camera at the workspace's own level looking roughly HORIZONTALLY
+ACROSS it (objects edge-on at the camera's height, arms standing up at eye level).
 
 SIDE DIRECTION — CAMERA POSITION IN THE ROBOT FRAME
 

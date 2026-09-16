@@ -349,6 +349,20 @@ top
 
 Use "top" for a camera mounted ABOVE the workspace and aimed DOWN at it.
 
+DECISIVE — WORKSPACE LAID OUT BELOW YOU = TOP. If the table / box / objects are
+spread out BELOW the camera and you look DOWN at them (the work surface lies below
+the lens, you see into open boxes and the tops of things), it is "top" — full stop.
+A vertical WALL or backdrop behind the workspace, a table that RECEDES into the
+distance with strong PERSPECTIVE, and visible object FRONT faces are all NORMAL for
+an elevated top camera and DO NOT make it a side view. Do not be talked out of
+"top" by a wall, perspective, or a diagonal angle. WHEN IN DOUBT between top and
+side, choose TOP.
+
+Only call "side" when the camera is DOWN at the workspace's OWN level (near eye /
+table height) looking roughly HORIZONTALLY ACROSS it — the scene seen EDGE-ON, with
+objects at the camera's own height rather than laid out below it (e.g. a camera
+that sees the robot arms standing UP at eye level across the table).
+
 THE DECIDING QUESTION IS SIMPLE: is the camera ABOVE the workspace looking DOWN at
 it -> "top"; or down near TABLE LEVEL / beside it looking ACROSS -> "side". Decide
 top vs side on that alone, and LEAN toward "top".
@@ -436,11 +450,12 @@ Do NOT use any single secondary cue as a veto. In particular:
   - a large tabletop does NOT automatically mean top;
   - an elevated camera does NOT automatically mean top.
 
-When the geometry is genuinely borderline, LEAN "top": if the camera is clearly
-looking DOWN onto the workspace (work surface dominant, mostly the tops of things),
-label it "top" even with noticeable obliqueness or perspective. Reserve "side" for
-a camera that clearly views the workspace from AROUND / BESIDE it — looking ACROSS
-from the perimeter, strong near-to-far depth, objects seen mainly by their sides.
+When the geometry is genuinely borderline, CHOOSE "top". If the camera looks DOWN
+onto the workspace at all (the work area lies below the lens, you see the tops of
+things / into boxes), label it "top" even with strong obliqueness, perspective, a
+wall behind, or visible object fronts. Reserve "side" ONLY for a camera clearly at
+the workspace's own level looking roughly HORIZONTALLY ACROSS it (objects edge-on
+at the camera's height, arms standing up at eye level).
 
 SIDE DIRECTION
 
