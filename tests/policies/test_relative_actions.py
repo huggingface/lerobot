@@ -86,6 +86,17 @@ def test_roundtrip_2d(action_dim):
     torch.testing.assert_close(recovered, actions)
 
 
+def test_stacked_state_anchors_on_the_current_frame(action_dim):
+    """A (B, T_obs, state_dim) state collapses to frame 0, not to some mix of the stack."""
+    actions = torch.randn(4, CHUNK_SIZE, action_dim)
+    stacked = torch.randn(4, 3, action_dim)
+    mask = [True] * action_dim
+
+    relative = to_relative_actions(actions, stacked, mask)
+    torch.testing.assert_close(relative, to_relative_actions(actions, stacked[:, 0], mask))
+    torch.testing.assert_close(to_absolute_actions(relative, stacked, mask), actions)
+
+
 def test_no_mutation(action_dim):
     actions = torch.randn(2, CHUNK_SIZE, action_dim)
     original = actions.clone()
