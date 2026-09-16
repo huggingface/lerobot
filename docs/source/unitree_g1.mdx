@@ -6,7 +6,70 @@
   style={{ width: "100%" }}
 />
 
-The Unitree G1 humanoid is now supported in LeRobot! You can teleoperate, train locomanipulation policies, test in sim, and more. Both 29 and 23 DoF variants are supported.
+The Unitree G1 humanoid is supported in LeRobot. G1-29 retains the existing runtime,
+simulation, and controller interfaces. G1-23 currently has embodiment configuration
+and joint-mapping support; its runtime integration is not enabled by this layer.
+
+## Embodiment Selection
+
+One `UnitreeG1` class selects its joint definitions through `UnitreeG1Config.embodiment`.
+The default is `g1_29`; existing G1-29 configuration values, gain defaults, and controller
+behavior are preserved. The CLI field is `--robot.embodiment=g1_29`.
+
+```python
+from lerobot.robots.unitree_g1 import UnitreeG1Config
+
+config = UnitreeG1Config(embodiment="g1_23")
+```
+
+| Capability | G1-29 | G1-23 in this layer |
+|---|---|---|
+| Joint configuration and action/observation features | 29 body joints, 14 arm joints | 23 body joints, 10 arm joints |
+| Sparse command/feedback mapping | Existing layout | Implemented and tested with mocked transport |
+| Simulation connection | Existing Hub environment | Not implemented; rejected before transport initialization |
+| Physical connection | Existing interface, separate hardware requirements | Not supported; rejected before transport initialization |
+| Gravity compensation | Existing solver, off by default | Rejected until the G1-23 kinematics implementation is added |
+| Locomotion/whole-body controllers | Existing G1-29 controllers | Rejected; no implicit G1-29 controller reuse |
+
+**Joint counts are not transport widths.** Both configurations use 29-element `kp`, `kd`,
+and `default_positions` vectors indexed by DDS body slots. G1-23's active arm slots are
+`15..19` and `22..26`. Slots `13, 14, 20, 21, 27, 28` have no active joint; their config
+values must be zero. They are omitted from action/observation features, not renumbered.
+Inactive and reserved command entries are cleared before publishing a G1-23 message.
+Explicit gain overrides must be finite, nonnegative, and use the same sparse layout.
+
+G1-23 defaults preserve the integration reference's source-derived grouping: wrist
+`kp/kd=40/1.5`; other arm joints and ankle-pitch joints `80/3`; remaining active body
+joints `300/3`. These are not hardware safety or optimal-gain claims. The source is
+Unitree's [G1_23_ArmController](https://github.com/unitreerobotics/xr_teleoperate/blob/817fb00c63cde15e5f24a0f8fa08e1e33ed89d3b/teleop/robot_control/robot_arm.py),
+with active-joint selection checked against the
+[G1-23 model](https://github.com/unitreerobotics/unitree_mujoco/blob/1eb6642e3f3fdfb7fb13a9794fd6a2dd93ea0e7d/unitree_robots/g1/g1_23dof.xml).
+G1-29 retains LeRobot's original gains, not these derived gains.
+
+`g1_embodiments.py` records URDF repository/path metadata for each embodiment. This is
+source identification, not an asset downloader, a physical hardware identity check, or
+an implemented G1-23 solver. G1-29 keeps its existing Hub runtime unchanged. Future
+kinematics/simulation integration must select compatible, pinned model revisions;
+joint count alone does not identify a hardware/model revision.
+
+Shared IK/FK, a G1-23 simulator, XR/video, and optional hand composition are separate
+extensions. This layer deliberately cannot connect a G1-23 configuration to the existing
+G1-29 simulator. No physical robot was used for the embodiment regression tests.
+
+### Embodiment Regression Tests
+
+From a checkout with test dependencies installed:
+
+```bash
+PYTHONPATH=src python -m pytest \
+  tests/robots/test_unitree_g1.py \
+  tests/robots/test_unitree_g1_utils.py \
+  tests/robots/test_unitree_g1_embodiments.py \
+  tests/teleoperators/test_unitree_g1_teleoperator.py -q
+```
+
+The SDK, cameras, and environment are mocked in driver tests; no simulator, asset
+download, or hardware connection is required. The runtime instructions below apply to G1-29.
 
 ---
 
