@@ -206,6 +206,11 @@ class FastWAMConfig(PreTrainedConfig):
     base_model_id: str | None = FASTWAM_BASE_MODEL_ID
     tokenizer_max_len: int = 128
     load_text_encoder: bool = True
+    # Device for the frozen ~11GB UMT5-XXL text encoder. `None` keeps it on the main policy
+    # `device` (default). Set to e.g. "cpu" to keep it off the GPU and save VRAM; prompts are then
+    # encoded there and the embeddings moved to the policy device. Trades GPU memory for slower
+    # (CPU) text encoding — which the per-episode cache below makes a one-off cost per episode.
+    text_encoder_device: str | None = None
     mot_checkpoint_mixed_attn: bool = False
     torch_dtype: str = "bfloat16"
     prompt_template: str = (
