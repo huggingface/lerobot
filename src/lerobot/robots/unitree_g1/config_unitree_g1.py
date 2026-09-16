@@ -89,6 +89,7 @@ class UnitreeG1Config(RobotConfig):
         super().__post_init__()
         self.end_effector = G1EndEffector(self.end_effector)  # from Python it is still a string
         self.sim_env = UnitreeG1MujocoEnv(
-            publish_images=self.sim_publish_images, camera_port=self.sim_camera_port
+            publish_images=self.sim_publish_images, 
+            camera_port=self.sim_camera_port,
+            end_effector=self.end_effector
         )
-        self.sim_env.end_effector = self.end_effector  # one name for what the arms carry
