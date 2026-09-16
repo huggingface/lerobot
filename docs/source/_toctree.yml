@@ -69,6 +69,8 @@
     title: VLA-JEPA
   - local: eo1
     title: EO-1
+  - local: being_h05
+    title: Being-H0.5
   - local: lingbot_va
     title: LingBot-VA
   - local: fastwam
