@@ -271,8 +271,13 @@ class DatasetWriter:
         self,
         episode_data: dict | None = None,
         parallel_encoding: bool = True,
-    ) -> None:
-        """Save the current episode in self.episode_buffer to disk."""
+    ) -> bool:
+        """Save the current episode in self.episode_buffer to disk.
+
+        Returns ``True`` if the episode was committed, ``False`` if it was
+        discarded (e.g. a frame shortfall), so callers can gate their own
+        episode counters on a correctly saved episode.
+        """
         episode_buffer = episode_data if episode_data is not None else self.episode_buffer
 
         validate_episode_buffer(episode_buffer, self._meta.total_episodes, self._meta.features)
@@ -305,7 +310,7 @@ class DatasetWriter:
                 "Discarding this episode and moving on.\n" + "!" * 80
             )
             self.clear_episode_buffer(delete_images=True)
-            return
+            return False
 
         # size and task are special cases that won't be added to hf_dataset
         episode_buffer.pop("size")
@@ -417,6 +422,8 @@ class DatasetWriter:
             if len(self._meta.image_keys) > 0:
                 self._delete_camera_frame_dirs(self._meta.image_keys)
             self.episode_buffer = self._create_episode_buffer()
+
+        return True
 
     def _batch_save_episode_video(self, start_episode: int, end_episode: int | None = None) -> None:
         """Batch save videos for multiple episodes."""

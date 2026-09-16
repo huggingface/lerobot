@@ -474,22 +474,25 @@ class DAggerStrategy(RolloutStrategy):
                     elapsed = time.perf_counter() - episode_start
                     if elapsed >= episode_duration_s and phase != DAggerPhase.CORRECTING:
                         with self._episode_lock:
-                            dataset.save_episode()
-                        episodes_since_push += 1
-                        self._needs_push.set()
-                        logger.info(
-                            "Episode saved (total: %d, elapsed: %.1fs)",
-                            dataset.num_episodes,
-                            elapsed,
-                        )
-                        log_say(f"Episode {dataset.num_episodes} saved", play_sounds)
+                            saved = dataset.save_episode()
+                        if saved:
+                            episodes_since_push += 1
+                            self._needs_push.set()
+                            logger.info(
+                                "Episode saved (total: %d, elapsed: %.1fs)",
+                                dataset.num_episodes,
+                                elapsed,
+                            )
+                            log_say(f"Episode {dataset.num_episodes} saved", play_sounds)
                         # ``save_episode`` blocks inside the timed loop body: report
                         # the episode, then drop the partial group and the gap it
                         # opened, which are finalisation rather than cadence.
-                        timer.log_episode_summary(f"episode {dataset.num_episodes}")
+                        timer.log_episode_summary(
+                            f"episode {dataset.num_episodes}" if saved else "discarded episode"
+                        )
                         timer.restart()
 
-                        if episodes_since_push >= self.config.upload_every_n_episodes:
+                        if saved and episodes_since_push >= self.config.upload_every_n_episodes:
                             self._background_push(dataset, cfg)
                             episodes_since_push = 0
 
@@ -584,19 +587,22 @@ class DAggerStrategy(RolloutStrategy):
                         # Correction ended -> save episode (blocking if not streaming)
                         if old_phase == DAggerPhase.CORRECTING and new_phase == DAggerPhase.PAUSED:
                             with self._episode_lock:
-                                dataset.save_episode()
-                            recorded += 1
-                            self._needs_push.set()
-                            logger.info(
-                                "Correction %d/%d saved",
-                                recorded,
-                                self.config.num_episodes,
-                            )
-                            log_say(f"Correction {recorded} saved", play_sounds)
+                                saved = dataset.save_episode()
+                            if saved:
+                                recorded += 1
+                                self._needs_push.set()
+                                logger.info(
+                                    "Correction %d/%d saved",
+                                    recorded,
+                                    self.config.num_episodes,
+                                )
+                                log_say(f"Correction {recorded} saved", play_sounds)
                             # ``save_episode`` blocks inside the timed loop body: report
                             # the correction, then drop the partial group and the gap it
                             # opened, which are finalisation rather than cadence.
-                            timer.log_episode_summary(f"correction {recorded}")
+                            timer.log_episode_summary(
+                                f"correction {recorded}" if saved else "discarded correction"
+                            )
                             timer.restart()
 
                     # On-demand upload

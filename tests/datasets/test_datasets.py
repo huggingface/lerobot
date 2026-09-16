@@ -352,7 +352,7 @@ def test_save_episode_discards_on_missing_png_frames(image_dataset, caplog):
         png.unlink()  # simulate a dropped image write
 
     with caplog.at_level(logging.WARNING):
-        dataset.save_episode()
+        assert dataset.save_episode() is False
 
     assert "number of stored frames does not match" in caplog.text
     assert dataset.meta.total_episodes == 0
@@ -370,7 +370,7 @@ def test_save_episode_discards_on_dropped_streaming_frames(tmp_path, empty_lerob
     dataset.writer._streaming_encoder._dropped_frames[vid_key] = 1  # simulate a dropped frame (full queue)
 
     with caplog.at_level(logging.WARNING):
-        dataset.save_episode()
+        assert dataset.save_episode() is False
 
     assert "number of stored frames does not match" in caplog.text
     assert dataset.meta.total_episodes == 0
@@ -379,7 +379,7 @@ def test_save_episode_discards_on_dropped_streaming_frames(tmp_path, empty_lerob
 def test_add_frame_image(image_dataset):
     dataset = image_dataset
     dataset.add_frame({"image": np.random.rand(*DUMMY_CHW), "task": "Dummy task"})
-    dataset.save_episode()
+    assert dataset.save_episode() is True
     dataset.finalize()
 
     assert dataset[0]["image"].shape == torch.Size(DUMMY_CHW)

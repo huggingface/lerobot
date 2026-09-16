@@ -203,7 +203,10 @@ class EpisodicStrategy(RolloutStrategy):
 
                         continue
 
-                    dataset.save_episode()
+                    if not dataset.save_episode():
+                        # Episode was discarded (e.g. a frame shortfall); do not count it.
+                        timer.log_episode_summary("discarded episode")
+                        continue
                     recorded_episodes += 1
                     timer.log_episode_summary(f"episode {dataset.num_episodes}")
             finally:

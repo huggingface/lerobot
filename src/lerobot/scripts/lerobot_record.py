@@ -543,7 +543,12 @@ def record(
                     timer.restart()
                     continue
 
-                dataset.save_episode()
+                if not dataset.save_episode():
+                    # Episode was discarded (e.g. a frame shortfall); do not count it.
+                    timer.log_episode_summary("discarded episode")
+                    timer.restart()
+                    continue
+
                 recorded_episodes += 1
                 # Close the window on the episode just saved.  The digest is emitted on
                 # the next episode's first tick, so the reset phase, `save_episode` and
