@@ -5,6 +5,8 @@ from types import MethodType, SimpleNamespace
 import pytest
 import torch
 
+pytest.importorskip("transformers")
+
 from lerobot.policies.lingbot_vla_v2.model_core.qwen3vl_in_vla import (
     forward_without_grid_thw,
     preprcess_grid_thw,

@@ -175,7 +175,7 @@ class LingbotVLAConfig(PretrainedConfig):
         self.vit_attn_implementation = vit_attn_implementation
 
 
-class LingbotVLAV2Config(LingbotVLAConfig):
+class LingbotVLAV2InternalConfig(LingbotVLAConfig):
     def __init__(self, **kwargs):
         kwargs.setdefault("attention_implementation", "flex_cached")
         kwargs.setdefault("vit_attn_implementation", "flash_attention_2")
@@ -192,5 +192,5 @@ class LingbotVLAV2Config(LingbotVLAConfig):
         self.vlm_family = "qwen3_vl"
 
 
-ConfigClass = [LingbotVLAConfig, LingbotVLAV2Config]
-__all__ = ["LingbotVLAConfig", "LingbotVLAV2Config"]
+ConfigClass = [LingbotVLAConfig, LingbotVLAV2InternalConfig]
+__all__ = ["LingbotVLAConfig", "LingbotVLAV2InternalConfig"]

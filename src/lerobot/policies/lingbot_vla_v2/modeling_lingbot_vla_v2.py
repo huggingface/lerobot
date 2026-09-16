@@ -21,7 +21,6 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .configuration_lingbot_vla_v2 import LingbotVLAV2Config as LeRobotLingbotVLAV2Config
 from .configuration_lingbot_vla_v2 import resolve_robot_config_and_stats
-from .model_core.configuration_lingbot_vla_v2_internal import LingbotVLAV2Config
 from .model_core.qwen3vl_in_vla import (
     Qwen3VLForConditionalGeneration,
     Qwen3VLTextModel,

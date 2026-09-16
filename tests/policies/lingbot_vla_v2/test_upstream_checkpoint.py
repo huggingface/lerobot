@@ -8,6 +8,10 @@
 
 """Tests for the raw-upstream -> LeRobot checkpoint conversion helpers."""
 
+import pytest
+
+pytest.importorskip("transformers")
+
 from lerobot.policies.lingbot_vla_v2.configuration_lingbot_vla_v2 import LingbotVLAV2Config
 from lerobot.policies.lingbot_vla_v2.scripts.convert_upstream_checkpoint import (
     ALLOWED_SKIPPED_PREFIXES,

@@ -17,12 +17,18 @@
 # every other policy takes (the outer `policies/__init__.py` stays config-only,
 # which keeps `import lerobot` free of the heavy optional deps: transformers,
 # qwen-vl-utils etc. arrive via `pip install 'lerobot[lingbot_vla2]'`).
+#
+# NOTE: the modeling module is deliberately NOT imported here. It pulls in
+# `transformers` at module top level (the vendored Qwen2/Qwen3-VL cores derive
+# from `PreTrainedModel`), so importing it eagerly would break
+# `import lerobot.policies` in environments without `lerobot[lingbot_vla2]`
+# (e.g. the doc-builder light-install). `LingbotVLAV2Policy` is imported lazily
+# by every consumer (factory `get_policy_class`, scripts, tests) directly from
+# `.modeling_lingbot_vla_v2`.
 from .configuration_lingbot_vla_v2 import LingbotVLAV2Config
-from .modeling_lingbot_vla_v2 import LingbotVLAV2Policy
 from .processor_lingbot_vla_v2 import make_lingbot_vla_v2_pre_post_processors
 
 __all__ = [
     "LingbotVLAV2Config",
-    "LingbotVLAV2Policy",
     "make_lingbot_vla_v2_pre_post_processors",
 ]

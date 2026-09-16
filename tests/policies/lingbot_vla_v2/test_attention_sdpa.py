@@ -19,6 +19,7 @@ a pretrained model's outputs. Runs on CPU via the SDPA math backend."""
 import pytest
 
 torch = pytest.importorskip("torch")
+pytest.importorskip("transformers")
 
 
 def _valid_mask(bsize, seq):
