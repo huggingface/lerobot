@@ -161,8 +161,15 @@ wrist (per the cue above), while a gripper crossing a stable scene is fixed.
 
 A visible gripper alone is NOT sufficient.
 
-If static background landmarks remain geometrically stable, the camera MUST be
-"fixed".
+GRIPPER-IN-FOREGROUND OVERRIDES A STATIC BACKGROUND. Check first: if the robot's
+own gripper/jaws are anchored in the NEAR FOREGROUND, aligned with the view and
+pinned to roughly the same spot across frames (not sweeping through), the camera is
+robot_mounted (wrist) EVEN IF the background looks static or blank. A green screen
+/ plain wall / empty tabletop hides the camera's motion, so do NOT conclude "fixed"
+from an unchanging backdrop when a gripper is anchored in the foreground.
+
+If static background landmarks remain geometrically stable AND there is no gripper
+anchored in the foreground per the override above, the camera is "fixed".
 
 If there is insufficient evidence to contradict a preliminary "fixed"
 classification, KEEP "fixed".
@@ -196,13 +203,15 @@ when direct comparison provides stronger geometric evidence.
 
 top
 
-Use "top" for a camera that looks predominantly DOWN ONTO the workspace from ABOVE.
+Use "top" for a camera mounted ABOVE the workspace and aimed DOWN at it.
 
-It does NOT need to be near-nadir / perfect bird's-eye — a clearly downward-looking
-overhead view counts as "top" even with noticeable perspective or a moderately
-oblique angle, as long as you look DOWN ONTO the work surface (mostly the tops of
-things) rather than ACROSS it from beside the workspace. Lean toward "top" for any
-camera mounted above and aimed down at the manipulation area.
+THE DECIDING QUESTION IS SIMPLE: camera ABOVE the workspace looking DOWN -> "top";
+camera low / at table height, beside it, looking ACROSS -> "side". Decide on that
+alone and LEAN toward "top". An elevated camera aimed down is "top" even at a
+strong DIAGONAL, with perspective, seeing object FRONTS/SIDES (e.g. looking down
+INTO an open box so you also see its front wall and bottle labels), or a bit of
+wall — none of that demotes it. It need NOT be near-nadir. Reserve "side" for a
+low, table-height camera looking ACROSS the workspace from its edge.
 
 Positive evidence for "top":
 

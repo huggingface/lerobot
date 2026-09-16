@@ -275,20 +275,30 @@ Required mount decision
 
 Follow this order:
 
-1. Identify static environment landmarks.
-2. Compare their image position and perspective across ALL frames.
-3. If they remain geometrically stable -> "fixed".
+1. GRIPPER-IN-FOREGROUND CHECK — DO THIS FIRST. Is the robot's OWN gripper /
+   end-effector / jaws / fingers sitting in the NEAR FOREGROUND, aligned with the
+   view (pointing into the scene from near the lens, e.g. dark jaws parked at the
+   bottom edge reaching up into the scene), and staying in roughly the SAME spot
+   across the frames rather than sweeping through? If YES -> "robot_mounted"
+   (wrist). This OVERRIDES the background test below: the robot's own gripper
+   anchored in the foreground is decisive EVEN IF the background looks static or
+   blank. A green screen, plain wall, or empty tabletop hides the camera's motion
+   (no trackable texture), so you must NOT conclude "fixed" from an unchanging
+   backdrop when a gripper is anchored in the foreground — that is a wrist.
+2. Otherwise, identify static environment landmarks and compare their image
+   position/perspective across ALL frames.
+3. If they remain geometrically stable AND there is no anchored foreground gripper
+   per step 1 -> "fixed".
 4. If they undergo clear GLOBAL viewpoint/parallax changes correlated with robot
    motion -> "robot_mounted".
 5. If there is insufficient evidence -> "unknown".
 
-"robot_mounted" requires POSITIVE evidence of CAMERA motion.
+"robot_mounted" requires POSITIVE evidence of camera motion OR a gripper anchored
+in the foreground per step 1.
 
 Do not infer robot mounting merely because you cannot prove that the camera is
-fixed.
-
-If stable background structure is visible and remains registered across frames,
-the camera MUST be "fixed".
+fixed. But DO call wrist whenever step 1 holds, and do not let a static/blank
+background veto it.
 
 3. VIEW LABEL
 
@@ -337,14 +347,19 @@ image-left/image-right directly to robot-left/robot-right.
 
 top
 
-Use "top" for a camera that looks predominantly DOWN ONTO the workspace from
-ABOVE.
+Use "top" for a camera mounted ABOVE the workspace and aimed DOWN at it.
 
-It does NOT need to be near-nadir / perfect bird's-eye. A clearly downward-looking
-overhead view counts as "top" even with noticeable perspective or a moderately
-oblique angle, as long as you are looking DOWN ONTO the work surface (seeing mostly
-the tops of things) rather than ACROSS it from beside the workspace. Lean toward
-"top" for any camera mounted above and aimed down at the manipulation area.
+THE DECIDING QUESTION IS SIMPLE: is the camera ABOVE the workspace looking DOWN at
+it -> "top"; or down near TABLE LEVEL / beside it looking ACROSS -> "side". Decide
+top vs side on that alone, and LEAN toward "top".
+
+An elevated camera aimed down at the workspace is "top" even when it is at a strong
+DIAGONAL, shows noticeable perspective, sees the FRONTS or SIDES of objects (e.g.
+looking down INTO an open box so you also see its front wall and the labels on
+standing bottles), or catches a bit of wall/background. None of that demotes it —
+if you are positioned above and looking down at the work area, it is "top". It does
+NOT need to be near-nadir / perfect bird's-eye. Reserve "side" for a camera that is
+low, roughly at table height, looking ACROSS the workspace from its edge.
 
 Positive evidence for "top":
 
