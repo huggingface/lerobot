@@ -2458,7 +2458,7 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
                 "when training from a checkpoint whose saved processor predates the "
                 "distillation wiring, or when the processor was constructed from a "
                 "config without align_params. Rebuild with the align_params-carrying "
-                "config (see docs/source/lingbot_vla_v2_depth_dino_README.md)."
+                "config."
             )
 
         teachers = self._ensure_align_teachers()

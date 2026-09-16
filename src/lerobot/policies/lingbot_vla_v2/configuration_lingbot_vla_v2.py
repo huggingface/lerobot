@@ -499,8 +499,7 @@ class LingbotVLAV2Config(PreTrainedConfig):
                 "enable_expert_vision is not available in this LeRobot integration: the "
                 "expert-vision branch has no forward path and no weight loading here. It is "
                 "NOT the DINO-video distillation teacher (that lives under "
-                "align_params.video in the upstream codebase — see "
-                "docs/source/lingbot_vla_v2_depth_dino_README.md). Keep "
+                "align_params.video in the upstream codebase). Keep "
                 "enable_expert_vision=false for action-only training."
             )
 
@@ -531,8 +530,7 @@ class LingbotVLAV2Config(PreTrainedConfig):
 
         Mirrors the hard requirements the model code enforces (mode/model_type
         exclusivity, required keys, query-divisibility) but raises them all at
-        config-construction time with actionable messages, upstream values and
-        the full key list in ``docs/source/lingbot_vla_v2_depth_dino_README.md``.
+        config-construction time with actionable messages and upstream values.
         """
         params = self.align_params
 

@@ -1,32 +1,34 @@
-# RoboTwin 原始 HDF5 回合 -> lerobot v3 数据集 转换器
+# RoboTwin raw HDF5 episodes -> lerobot v3 dataset converter
 #
-# 这是把 RoboTwin 采集的原始数据转成 lingbot-vla-v2 (lerobot 框架) 可训练格式的第 1 步。
-# 产物 schema 与本机 data/lerobot/rotate_qrcode_joint_v30 完全一致:
+# This is step 1 of turning raw data collected by RoboTwin into a format trainable by
+# lingbot-vla-v2 (the lerobot framework).
+# The output schema matches the local data/lerobot/rotate_qrcode_joint_v30 exactly:
 #   observation.state  (14,) float32   [left_arm6, left_ee, right_arm6, right_ee]
-#   action             (14,) float32   state[t+1](teacher-shift,与 pkl2hdf5 的 split 对齐)
+#   action             (14,) float32   state[t+1] (teacher-shift, aligned with the pkl2hdf5 split)
 #   observation.images.cam_high        video (3,H,W)
 #   observation.images.cam_left_wrist  video (3,H,W)
 #   observation.images.cam_right_wrist video (3,H,W)
 #   task               str
 #
-# 源 HDF5 是 pkl2hdf5.create_xpolicylab_hdf5 的产出,结构:
-#   state/{left,right}_{arm,ee}_joint_states   (T-1, d)   每帧状态
-#   action/{left,right}_{arm,ee}_joint_states  (T-1, d)   每帧动作
-#   vision/cam_head|cam_left_wrist|cam_right_wrist/colors  (T-1,) JPEG 编码字节
-#   instructions                                 JSON 字符串列表
-#   additional_info/frequency                    采集频率
+# The source HDF5 is the output of pkl2hdf5.create_xpolicylab_hdf5, structured as:
+#   state/{left,right}_{arm,ee}_joint_states   (T-1, d)   per-frame state
+#   action/{left,right}_{arm,ee}_joint_states  (T-1, d)   per-frame action
+#   vision/cam_head|cam_left_wrist|cam_right_wrist/colors  (T-1,) JPEG-encoded bytes
+#   instructions                                 JSON-encoded list of strings
+#   additional_info/frequency                    collection frequency
 #
-# 相机映射与 pkl2hdf5 一致(cam_head -> cam_high),目标键与 lingbot robotwin.yaml 的
-# origin_keys 对齐,转完即可直接喂给 lerobot-train / 转换器 --profile robotwin。
+# The camera mapping matches pkl2hdf5 (cam_head -> cam_high), and the target keys align with
+# the origin_keys of lingbot robotwin.yaml, so the converted output can be fed directly to
+# lerobot-train / the converter --profile robotwin.
 #
-# 用法:
-#   python scripts/robotwin_to_lerobot.py \
+# Usage:
+#   python -m lerobot.policies.lingbot_vla_v2.scripts.robotwin_to_lerobot \
 #       --input-dir /path/to/robwin_task_episodes \
 #       --repo-id my_robotwin_task \
 #       --fps 15 \
 #       [--robot-type aloha_agilex] [--mode video|image] [--out-dir ...] [--max-episodes N]
 #
-# 依赖 lerobot(本仓 lingbot_vla_v2 环境) + h5py + numpy + opencv(解 JPEG)。
+# Requires lerobot (this repo's lingbot_vla_v2 environment) + h5py + numpy + opencv (JPEG decoding).
 
 import argparse
 import json
@@ -40,14 +42,14 @@ from PIL import Image
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-# HDF5 源相机键 -> lerobot 目标相机键(与 pkl2hdf5.CAMERA_MAP + robotwin.yaml 对齐)
+# HDF5 source camera keys -> lerobot target camera keys (aligned with pkl2hdf5.CAMERA_MAP + robotwin.yaml)
 VISION_TO_LEROBOT_CAM = {
     "cam_head": "cam_high",
     "cam_left_wrist": "cam_left_wrist",
     "cam_right_wrist": "cam_right_wrist",
 }
 
-# 关节字段(左臂+左夹爪在前,右臂+右夹爪在后,与 _robot_info.json 的双臂定义一致)
+# Joint fields (left arm + left gripper first, then right arm + right gripper, matching the dual-arm definition in _robot_info.json)
 JOINT_FIELDS = [
     ("left_arm_joint_states", "arm"),
     ("left_ee_joint_states", "ee"),
@@ -57,20 +59,20 @@ JOINT_FIELDS = [
 
 
 def _decode_jpeg(buf) -> np.ndarray:
-    """把 pkl2hdf5 写入的 JPEG 字节解成 HWC uint8 RGB。"""
+    """Decode the JPEG bytes written by pkl2hdf5 into HWC uint8 RGB."""
     import cv2
 
     if isinstance(buf, np.ndarray) and buf.ndim == 3:
-        return buf  # 已是解码后的图像
+        return buf  # already a decoded image
     arr = np.frombuffer(bytes(buf), dtype=np.uint8)
     bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if bgr is None:
-        raise ValueError("cv2.imdecode 失败:字节流不是有效 JPEG")
+        raise ValueError("cv2.imdecode failed: the byte stream is not a valid JPEG")
     return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
 
 def _load_episode(ep_path: Path) -> dict:
-    """读一个 RoboTwin HDF5 回合,返回 state/action/images/instructions。"""
+    """Load one RoboTwin HDF5 episode and return state/action/images/instructions."""
     with h5py.File(ep_path, "r") as f:
         state_parts, action_parts = [], []
         for field, _kind in JOINT_FIELDS:
@@ -78,7 +80,7 @@ def _load_episode(ep_path: Path) -> dict:
                 state_parts.append(np.asarray(f[f"state/{field}"], dtype=np.float32))
                 action_parts.append(np.asarray(f[f"action/{field}"], dtype=np.float32))
         if not state_parts:
-            raise KeyError(f"{ep_path} 缺 state/*_joint_states")
+            raise KeyError(f"{ep_path} is missing state/*_joint_states")
 
         state = np.concatenate(state_parts, axis=1)  # (T-1, 14)
         action = np.concatenate(action_parts, axis=1)  # (T-1, 14)
@@ -123,7 +125,7 @@ def _create_dataset(
     img_shape: tuple,
     mode: str,
 ) -> LeRobotDataset:
-    """建空 lerobot v3 数据集,schema 对齐本机 rotate_qrcode_joint_v30。"""
+    """Create an empty lerobot v3 dataset with a schema aligned to the local rotate_qrcode_joint_v30."""
     h, w, _c = img_shape
     features = {
         "observation.state": {
@@ -144,12 +146,11 @@ def _create_dataset(
             "names": ["height", "width", "channels"],
         }
 
-    # pyav 后端默认 vcodec=libsvtav1 在本机不可用 -> 显式用 h264(最通用)。
-    # 注:DatasetWriter 即使 image 模式也会构造默认 RGBEncoderConfig 并在 av<15 上炸,
-    # 所以无条件传 h264;真正编码只在 video 模式发生。
+    # The pyav backend defaults to vcodec=libsvtav1, which is unavailable on this machine
+    # -> explicitly use h264 (the most widely supported option).
+    # Note: DatasetWriter constructs a default RGBEncoderConfig even in image mode and crashes
+    # on av<15, so we always pass h264; actual encoding only happens in video mode.
     from lerobot.configs.video import RGBEncoderConfig
-
-    create_kwargs = {"rgb_encoder": RGBEncoderConfig(vcodec="h264")}
 
     return LeRobotDataset.create(
         repo_id=repo_id,
@@ -160,38 +161,38 @@ def _create_dataset(
         use_videos=(mode == "video"),
         image_writer_processes=0,
         image_writer_threads=4,
-        **create_kwargs,
+        rgb_encoder=RGBEncoderConfig(vcodec="h264"),
     )
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="RoboTwin HDF5 -> lerobot v3 数据集转换器")
-    ap.add_argument("--input-dir", required=True, help="含 episode_*.hdf5 的目录(递归找)")
-    ap.add_argument("--repo-id", required=True, help="lerobot repo_id(如 my_robotwin_task)")
-    ap.add_argument("--out-dir", default=None, help="输出根目录(默认 HF_LEROBOT_HOME/repo_id)")
-    ap.add_argument("--fps", type=int, default=15, help="采集频率(HDF5 里有 frequency 时以其为准)")
-    ap.add_argument("--robot-type", default="aloha_agilex", help="robot_type 标签")
-    ap.add_argument("--mode", choices=["video", "image"], default="video", help="图像存视频还是散图")
-    ap.add_argument("--max-episodes", type=int, default=None, help="只转前 N 个回合(调试用)")
+    ap = argparse.ArgumentParser(description="RoboTwin HDF5 -> lerobot v3 dataset converter")
+    ap.add_argument("--input-dir", required=True, help="Directory containing episode_*.hdf5 files (searched recursively)")
+    ap.add_argument("--repo-id", required=True, help="lerobot repo_id (e.g. my_robotwin_task)")
+    ap.add_argument("--out-dir", default=None, help="Output root directory (defaults to HF_LEROBOT_HOME/repo_id)")
+    ap.add_argument("--fps", type=int, default=15, help="Collection frequency (the HDF5 frequency takes precedence when present)")
+    ap.add_argument("--robot-type", default="aloha_agilex", help="robot_type tag")
+    ap.add_argument("--mode", choices=["video", "image"], default="video", help="Store frames as video or as individual images")
+    ap.add_argument("--max-episodes", type=int, default=None, help="Only convert the first N episodes (for debugging)")
     args = ap.parse_args()
 
     input_dir = Path(args.input_dir)
     ep_files = sorted(input_dir.rglob("*.hdf5"))
     if not ep_files:
-        raise FileNotFoundError(f"{input_dir} 下没有 *.hdf5 回合文件")
+        raise FileNotFoundError(f"No *.hdf5 episode files found under {input_dir}")
     if args.max_episodes is not None:
         ep_files = ep_files[: args.max_episodes]
-    print(f"发现 {len(ep_files)} 个回合,开始转换 -> repo_id={args.repo_id}")
+    print(f"Found {len(ep_files)} episodes, starting conversion -> repo_id={args.repo_id}")
 
-    # 先用第一个回合探测维度/图像形状/fps,再建数据集
+    # Probe dimensions/image shape/fps from the first episode, then create the dataset
     first = _load_episode(ep_files[0])
     action_dim = int(first["state"].shape[1])
     if not first["images"]:
-        raise ValueError(f"{ep_files[0]} 没有任何相机图像,无法确定图像形状")
+        raise ValueError(f"{ep_files[0]} has no camera images; cannot determine the image shape")
     any_cam = sorted(first["images"])[0]
     img_shape = first["images"][any_cam].shape[1:]  # (H, W, 3)
     fps = first["fps"] or args.fps
-    print(f"探测: action_dim={action_dim}, img={img_shape}, fps={fps}, cams={list(first['images'])}")
+    print(f"Probe: action_dim={action_dim}, img={img_shape}, fps={fps}, cams={list(first['images'])}")
 
     root = Path(args.out_dir) / args.repo_id if args.out_dir else None
     dataset = _create_dataset(
@@ -221,18 +222,19 @@ def main() -> None:
                 }
                 for cam, imgs in images.items():
                     if i < imgs.shape[0]:
-                        # add_frame 收 HWC uint8(lerobot 内部自转 CHW 编码),别先 permute。
+                        # add_frame expects HWC uint8 (lerobot internally converts to CHW for
+                        # encoding); do not permute beforehand.
                         frame[f"observation.images.{cam}"] = torch.from_numpy(imgs[i])
                 dataset.add_frame(frame)
 
             dataset.save_episode()
             n_frames += T
-            print(f"  {ep_path.name}: {T} 帧")
-        except Exception as e:  # noqa: BLE001 - 单回合失败不拖垮整批
-            print(f"  {ep_path.name}: 失败({e}),跳过", file=sys.stderr)
+            print(f"  {ep_path.name}: {T} frames")
+        except Exception as e:  # noqa: BLE001 - a single episode failure must not abort the whole batch
+            print(f"  {ep_path.name}: failed ({e}), skipping", file=sys.stderr)
 
-    print(f"完成:{len(ep_files)} 回合 / {n_frames} 帧 -> {dataset.root}")
-    print("下一步: 生成 norm_stats(--quantiles) + 转换器 --profile robotwin,即可 lerobot-train")
+    print(f"Done: {len(ep_files)} episodes / {n_frames} frames -> {dataset.root}")
+    print("Next steps: generate norm_stats (--quantiles) + converter --profile robotwin, then it is ready for lerobot-train")
 
 
 if __name__ == "__main__":

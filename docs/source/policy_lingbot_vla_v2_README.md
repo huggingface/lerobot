@@ -25,6 +25,11 @@ pip install "lerobot[lingbot_vla2]"
 lerobot-info
 ```
 
+> Requires Python ≥3.12. `flash-attn` is optional (the sdpa/eager attention
+> fallbacks are used when it is absent); the distillation teachers and the
+> feature-transform tests expect the Qwen3-VL processor files locally (see
+> [Model & Teacher Weights](#model--teacher-weights)).
+
 ## Model & Teacher Weights
 
 All weights are hosted on [Hugging Face](https://huggingface.co) and, where marked, mirrored on [ModelScope](https://modelscope.cn). The base checkpoint is gated on HF — request access first; the ModelScope mirror is an alternative.
@@ -48,7 +53,7 @@ hf download robbyant/lingbot-vla-v2-6b --include "depth/*" "dino_video/*"
 modelscope download --model Robbyant/lingbot-vla-v2-6b
 ```
 
-Note: the MoGe teacher has its own repo, but the MoRGBD and DINO-video teachers have no standalone repository — they are files inside the gated `robbyant/lingbot-vla-v2-6b` checkpoint with no per-file link. Either use the `hf download --include` command above, or open the linked `depth/` / `dino_video/` folders in a browser and download the files manually after gaining access to the base checkpoint. The full distillation recipe is in [`lingbot_vla_v2_depth_dino_README.md`](../../../../../docs/source/lingbot_vla_v2_depth_dino_README.md).
+Note: the MoGe teacher has its own repo, but the MoRGBD and DINO-video teachers have no standalone repository — they are files inside the gated `robbyant/lingbot-vla-v2-6b` checkpoint with no per-file link. Either use the `hf download --include` command above, or open the linked `depth/` / `dino_video/` folders in a browser and download the files manually after gaining access to the base checkpoint. See the distillation setup in [`lingbot_vla_v2.mdx`](./lingbot_vla_v2.mdx).
 
 Use local paths with `--policy.processor_path`, `--policy.tokenizer_path`, or `--policy.pretrained_path` when running offline.
 
@@ -90,7 +95,7 @@ Everything runs inside the lerobot stack — no upstream LingBot training code.
 **1. Convert data** (14-dim dual-arm, 3 cameras, teacher-shifted actions):
 
 ```bash
-python scripts/robotwin_to_lerobot.py \
+python -m lerobot.policies.lingbot_vla_v2.scripts.robotwin_to_lerobot \
   --input-dir /path/to/robotwin_task_episodes \
   --repo-id my_robotwin_task \
   --fps 15 --mode video
@@ -99,7 +104,7 @@ python scripts/robotwin_to_lerobot.py \
 **2. Norm stats** (`bounds_99_woclip` needs the `q01/q99` quantiles):
 
 ```bash
-python scripts/gen_rebot_norm_stats.py \
+python -m lerobot.policies.lingbot_vla_v2.scripts.gen_rebot_norm_stats \
   --dataset-root /path/to/lerobot_dataset \
   --quantiles --out norm_stats.robotwin.json
 ```
@@ -148,7 +153,7 @@ torchrun --nproc_per_node=8 -m lerobot.scripts.lerobot_train <same args> \
 
 Smoke-test with 2 processes × 20 steps before scaling up.
 
-**4. Evaluate** on the official benchmark: copy `scripts/lingbot_vla_v2_policy_lerobot.py` into the RoboTwin checkout's `deploy/`, then point the **unchanged** official launcher at it:
+**4. Evaluate** on the official benchmark: copy `src/lerobot/policies/lingbot_vla_v2/scripts/lingbot_vla_v2_policy_lerobot.py` into the RoboTwin checkout's `deploy/`, then point the **unchanged** official launcher at it:
 
 ```bash
 bash experiment/robotwin/start_robotwin_infer_and_eval.sh \
@@ -160,7 +165,13 @@ bash experiment/robotwin/start_robotwin_infer_and_eval.sh \
   --num_tasks 1 --num_gpus 1 --num_per_gpu 1   # smoke; --num_tasks 50 for the full benchmark
 ```
 
-Full walkthrough with download links and the sim/training environment split: [`ROBOTWIN_GUIDE.md`](./ROBOTWIN_GUIDE.md).
+> **Two RoboTwin eval paths exist.** `lerobot-eval --env.type=robotwin --env.task=<task>
+> --policy.path=<ckpt>` runs the policy through LeRobot's native RoboTwin env — note it
+> emits the env's camera keys (`head_camera`/`left_camera`/`right_camera`), so it needs a
+> robot config that maps those onto the canonical slots. The **official RoboTwin
+> websocket client** (step 4 above) drives the unchanged upstream benchmark harness; the
+> published benchmark numbers use the official client so they stay comparable with the
+> RoboTwin leaderboard.
 
 ### Path B — Real-Robot Fine-Tuning (`--profile real`): fast, light
 
@@ -212,11 +223,20 @@ torchrun --nproc_per_node=N -m lerobot.scripts.lerobot_train <same args> \
   --policy.use_depth=true --policy.dataset_fps=<dataset fps>
 ```
 
-Acceptance: `depth_loss`, `future_depth_loss`, and `future_video_loss` all appear in the training logs. Teacher weights are listed in [Model & Teacher Weights](#model--teacher-weights); the full recipe is in [`lingbot_vla_v2_depth_dino_README.md`](../../../../../docs/source/lingbot_vla_v2_depth_dino_README.md).
+Acceptance: `depth_loss`, `future_depth_loss`, and `future_video_loss` all appear in the training logs. Teacher weights are listed in [Model & Teacher Weights](#model--teacher-weights); the distillation walkthrough is in [`lingbot_vla_v2.mdx`](./lingbot_vla_v2.mdx).
 
 **3. Deploy** — see [Inference & Deployment](#inference--deployment) below (`lerobot-rollout` on the robot).
 
-A validated 2×24GB FSDP2 path also exists — see [`DEPLOYMENT.md`](./DEPLOYMENT.md) for the accelerate YAML and the four hard requirements.
+A validated 2×24GB FSDP2 path also exists (Accelerate `fully_shard` with a CPU-offloaded optimizer, gradient checkpointing, validated robot config, and embedded norm stats).
+
+### Optimizer
+
+The default recipe uses AdamW and is fully supported. A Muon-based optimizer
+(`--policy.optimizer_type=muon`) matching the upstream training recipe is provided by
+the standalone Muon PR — it implements the 3D-MoE / FSDP2-distributed Muon that
+`torch.optim.Muon` does not (batched Newton–Schulz over expert stacks, sharded-parameter
+mega-batching). The benchmark numbers in this README were produced with the default
+AdamW recipe unless a checkpoint notes otherwise.
 
 ## Inference & Deployment
 
@@ -253,13 +273,11 @@ For a real-robot closed loop, set `num_steps=7` and `n_action_steps=5` in the ch
 
 Inference speed is baked into the checkpoint's `config.json` — sparse MoE routing, a hand-written grouped-`bmm` MoE kernel, CUDA graphs, and `torch.compile` — delivering ~170ms per 7-step denoise chunk on an RTX 4090 (model-only latency; camera capture and observation assembly are extra).
 
-Cross-machine serving (gRPC policy server), the safety checklist, per-key config, and RTC tuning: [`DEPLOYMENT.md`](./DEPLOYMENT.md).
-
 ## Adapting to a New Embodiment
 
 Fine-tuning on a robot the checkpoint was not converted for requires only two new assets — a robot-config YAML and a norm-stats JSON — passed as `--policy.robot_config_path` / `--policy.norm_stats_path`. Explicit paths take precedence over the assets embedded in the checkpoint (a warning is logged when they differ), and checkpoints saved during fine-tuning embed the new assets so they remain self-contained.
 
-A filled-in single-arm example (7-DoF, absolute joint angles, `front` + `wrist` cameras) and the canonical-slot semantics are in the full walkthrough: [`docs/source/lingbot_vla_v2.mdx`](../../../../../docs/source/lingbot_vla_v2.mdx).
+The canonical slot vocabulary (the 55-D layout, per-slot normalization modes), how to derive the norm-stats JSON for a custom dataset, and the native-depth / DINO-video distillation setup are covered in the full walkthrough: [`lingbot_vla_v2.mdx`](./lingbot_vla_v2.mdx).
 
 ## Citation
 
