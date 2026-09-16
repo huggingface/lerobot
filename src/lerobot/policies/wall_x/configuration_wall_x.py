@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 
 from lerobot.configs import (
     FeatureType,
@@ -91,11 +91,7 @@ class WallXConfig(PreTrainedConfig):
     # otherwise falls back to the native per-chunk SDPA implementation.
     vision_attn_implementation: str = "auto"
 
-    # Optional explicit external language-recipe override.
-    recipe_path: str | None = None
-    # WALL-X's language contract: defaults to the WALL-OSS trained subtask wording;
-    # a fine-tune with `recipe_path` replaces it, and the checkpoint then prompts
-    # itself with the recipe it was trained on.
+    # WALL-X's language contract, stored with the model configuration.
     recipe: dict | None = field(default_factory=_wall_x_default_recipe)
     tokenizer_max_length: int = 768
     text_temperature: float = 0.0
@@ -116,11 +112,6 @@ class WallXConfig(PreTrainedConfig):
 
     def __post_init__(self):
         super().__post_init__()
-
-        if self.recipe_path is not None:
-            from lerobot.datasets.recipe import resolve_recipe_override
-
-            self.recipe = asdict(resolve_recipe_override(self.recipe, self.recipe_path))
 
         # Input validation
         if self.n_action_steps > self.chunk_size:

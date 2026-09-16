@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from lerobot.configs.policies import PreTrainedConfig
@@ -117,12 +117,7 @@ class EO1Config(PreTrainedConfig):
 
     # Training settings.
     gradient_checkpointing: bool = False  # Enable gradient checkpointing for memory optimization
-    # The built-in recipe handles annotated training and runtime prompts.
-    # recipe_path optionally overrides it; recipe=None disables recipe training.
-    recipe_path: str | None = None
-    # EO-1's language contract. Defaults to the subtask wording the released
-    # checkpoints answer; a fine-tune with `recipe_path` replaces it, and the
-    # checkpoint then prompts itself with the recipe it was trained on.
+    # EO-1's language contract, stored with the model configuration.
     recipe: dict | None = field(default_factory=_eo1_default_recipe)
     tokenizer_max_length: int = 1000
     text_temperature: float = 0.0
@@ -154,11 +149,6 @@ class EO1Config(PreTrainedConfig):
 
     def __post_init__(self):
         super().__post_init__()
-
-        if self.recipe_path is not None:
-            from lerobot.datasets.recipe import resolve_recipe_override
-
-            self.recipe = asdict(resolve_recipe_override(self.recipe, self.recipe_path))
 
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
