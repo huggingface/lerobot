@@ -83,7 +83,8 @@ def test_success_summary_of_nothing_is_nan_not_an_error():
 
 
 def test_success_summary_accepts_numeric_flags():
-    # eval_policy stores successes as 0/1 ints after einops reduction on some backends.
+    # eval_policy yields Python bools today; accept 0/1 ints too so a future change to the
+    # reduction cannot silently change what gets counted.
     summary = success_summary([1, 0, 1, 1])
     assert summary["n_success"] == 3
     assert summary["pc_success"] == pytest.approx(75.0)

@@ -84,18 +84,18 @@ def wilson_interval(n_success: int, n_trials: int, confidence: float = 0.95) -> 
     return (max(0.0, centre - half_width), min(1.0, centre + half_width))
 
 
-def success_summary(successes: Sequence[bool | int | float], confidence: float = 0.95) -> dict:
+def success_summary(successes: Sequence[bool | int | float]) -> dict:
     """Summarise a list of per-episode success flags.
 
     Args:
         successes (`Sequence[bool | int | float]`):
             One truthy/falsy flag per evaluated episode.
-        confidence (`float`, *optional*, defaults to `0.95`):
-            Coverage of the reported interval.
 
     Returns:
         `dict`: `n_episodes`, `n_success`, `pc_success` (percent) and `pc_success_ci95` (a two-element
-        list with the interval bounds in percent). When there are no episodes the rate and the bounds are
+        list with the 95% Wilson interval bounds in percent). The coverage is fixed at 95% so the
+        key name always matches the number; `wilson_interval` takes a `confidence` argument for
+        callers that want a different one. When there are no episodes the rate and the bounds are
         `nan`, matching how the other aggregated metrics behave.
 
     Example:
@@ -113,7 +113,7 @@ def success_summary(successes: Sequence[bool | int | float], confidence: float =
         low, high = math.nan, math.nan
     else:
         pc_success = 100.0 * n_success / n_episodes
-        low, high = wilson_interval(n_success, n_episodes, confidence=confidence)
+        low, high = wilson_interval(n_success, n_episodes)
         low, high = 100.0 * low, 100.0 * high
     return {
         "n_episodes": n_episodes,
