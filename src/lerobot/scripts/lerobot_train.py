@@ -157,6 +157,11 @@ def update_policy(
     learning rate scheduler. Accelerator handles mixed-precision training automatically, and — under
     gradient accumulation — suppresses gradient sync on non-final micro-batches and rescales the loss.
 
+    Under `mixed_precision=fp16` accelerate owns a `GradScaler`: it scales the loss in `backward()`,
+    unscales before clipping, and skips the optimizer step whenever a gradient overflowed. State that
+    tracks applied updates (the policy's `update()`, and the EMA shadow in the caller) is gated on the
+    step having actually landed; the scheduler is not, because it advances per micro-batch by design.
+
     Args:
         train_metrics (MetricsTracker): A MetricsTracker instance to record training statistics.
         policy (PreTrainedPolicy): The policy model to be trained (as returned by `accelerator.prepare`).
@@ -227,25 +232,40 @@ def update_policy(
         if accelerator.sync_gradients and grad_clip_norm > 0:
             grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
 
-        # Optimizer step (a no-op on non-final micro-batches under gradient accumulation)
+        # Optimizer step (a no-op on non-final micro-batches under gradient accumulation).
+        # Under fp16 the scaler runs it and skips it whenever a gradient overflowed.
         with lock if lock is not None else nullcontext():
             optimizer.step()
         optimizer.zero_grad()
 
-        # Step through pytorch scheduler at every batch instead of epoch
+        # `optimizer_step_was_skipped` is only refreshed on sync micro-batches, so elsewhere it
+        # is a stale value from the previous update and must be read together with
+        # `sync_gradients`. It is always False without a scaler ("no"/bf16 runs).
+        update_was_skipped = accelerator.sync_gradients and accelerator.optimizer_step_was_skipped
+
+        # Step through pytorch scheduler at every batch instead of epoch. Deliberately not
+        # gated on the scaler: the schedule is a function of micro-batches consumed, and under
+        # gradient accumulation it already advances on micro-batches that apply no update.
         if lr_scheduler is not None:
             lr_scheduler.step()
 
     # Update internal buffers if policy has update method. These track optimizer updates
-    # (EMA, target networks), not micro-batches: gate on the sync step under accumulation.
-    if accelerator.sync_gradients and has_method(
-        accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"
+    # (EMA, target networks), not micro-batches: gate on the sync step under accumulation, and
+    # on the update having actually landed — a skipped fp16 step left the weights untouched.
+    if (
+        accelerator.sync_gradients
+        and not update_was_skipped
+        and has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update")
     ):
         accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
     train_metrics.loss = loss.item()
-    if grad_norm is not None:
+    # A skipped step's norm is inf/nan by construction (that is what the scaler detected);
+    # recording it would poison the whole logging window's average.
+    if grad_norm is not None and not update_was_skipped:
         train_metrics.grad_norm = grad_norm.item()
+    if accelerator.scaler is not None:
+        train_metrics.grad_scale = accelerator.scaler.get_scale()
     train_metrics.lr = optimizer.param_groups[0]["lr"]
     train_metrics.update_s = time.perf_counter() - start_time
     if torch.cuda.is_available():
@@ -706,6 +726,11 @@ def train(cfg: TrainPipelineConfig):
         "step_s": AverageMeter("step_s", ":.3f", reduction="max"),
         "samples_per_s": AverageMeter("smp/s", ":.0f"),
     }
+    if accelerator.scaler is not None:
+        # fp16 only. Identical on every rank (the overflow flag is reduced before the scaler
+        # updates), so it needs no reduction — same as grad_norm and lr above. A falling scale
+        # is the visible signature of skipped updates.
+        train_metrics["grad_scale"] = AverageMeter("scale", ":.0f")
     if torch.cuda.is_available():
         # max() because headroom is gated by the worst-case rank.
         train_metrics["gpu_mem_gb"] = AverageMeter("mem_gb", ":.2f", reduction="max")
@@ -754,8 +779,9 @@ def train(cfg: TrainPipelineConfig):
 
         # Pull one optimizer step of the live weights into the EMA shadow (main process only).
         # The shadow tracks optimizer updates, not micro-batches: gate on the sync step under
-        # gradient accumulation.
-        if ema is not None and accelerator.sync_gradients:
+        # gradient accumulation, and skip the fp16 steps the scaler discarded (the weights are
+        # unchanged there, so stepping the shadow would decay it against a stale target).
+        if ema is not None and accelerator.sync_gradients and not accelerator.optimizer_step_was_skipped:
             ema.step(accelerator.unwrap_model(policy).parameters())
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we

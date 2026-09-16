@@ -83,6 +83,8 @@ torchrun --nproc-per-node=4 $(which lerobot-train) \
 
 `--parallelism.dp_shard=-1` shards over however many processes the launcher started.
 
+`--accelerator.mixed_precision` support both `bf16` and `fp16`. Details in [mixed precision](./torch_accelerators#mixed-precision)
+
 ### Wrap units
 
 FSDP shards the model in units (typically the repeated transformer block) and gathers one unit at a time during forward/backward. Policies declare their wrap units via `_fsdp_wrap_modules` on the policy class. For example, ACT declares `["ACTEncoderLayer", "ACTDecoderLayer"]` and FastWAM declares `["MoTLayer"]`. For a policy without a `_fsdp_wrap_modules` declaration, pass one of the flags below. You can specify the module class name explicitly, or use a size-based policy instead:
@@ -126,12 +128,13 @@ Every checkpoint contains a `pretrained_model/` directory and a `training_state/
 │   ├── policy_postprocessor.json  # postprocessor config (when the run has a postprocessor)
 │   └── policy_postprocessor_step_*.safetensors  # state of the stateful postprocessor steps
 └── training_state/
-    ├── training_step.json  # step counter, topology, and batch semantics
+    ├── optimizer_param_groups.json  # optimizer param groups (non-sharded runs)
+    ├── optimizer_state.safetensors  # optimizer state (non-sharded runs)
+    ├── optimizer_0/  # DCP optimizer shards (sharded runs)
     ├── rng_state.safetensors  # rng states
     ├── scheduler_state.json  # scheduler state (when the run has a scheduler)
-    ├── optimizer_state.safetensors  # full optimizer state (non-sharded runs)
-    ├── optimizer_param_groups.json  # optimizer param groups (non-sharded runs)
-    └── optimizer_0/  # DCP optimizer shards (sharded runs)
+    ├── scaler_state.json  # fp16 loss-scaler state (mixed_precision=fp16 only)
+    └── training_step.json  # step + dp_world_size/batch_size/grad_accum/precision + topology
 ```
 
 During single-GPU or DDP training, the pipeline serializes each state dict into a single file: `model.safetensors` for the model and `optimizer_state.safetensors` for the optimizer.
