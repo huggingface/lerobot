@@ -64,7 +64,7 @@ class UnitreeG1Config(RobotConfig):
     # for bare wrists. In simulation it selects the MuJoCo model, and with it the finger
     # actuators and whether the wrist cameras exist at all. On the real robot it is for
     # now only a declaration of what is bolted on.
-    end_effector: G1EndEffector = "dex1"
+    end_effector: G1EndEffector = G1EndEffector.DEX1
 
     # The MuJoCo world brought up when `is_simulation` is set, and where its camera and
     # viewer options live. Its own end effector follows the one above.

@@ -17,7 +17,8 @@ from __future__ import annotations
 import abc
 import importlib
 from dataclasses import dataclass, field, fields
-from typing import Any, Literal
+from enum import Enum
+from typing import Any
 
 import draccus
 import gymnasium as gym
@@ -726,9 +727,19 @@ class IsaaclabArenaEnv(HubEnvConfig):
         )
 
 
-# What the G1's arms carry, by hardware name. Shared with UnitreeG1Config, which owns the
-# robot-level flag: "dummy" is bare wrists, "dex1" the parallel grippers, "dex3" the hands.
-G1EndEffector = Literal["dummy", "dex1", "dex3"]
+class G1EndEffector(str, Enum):
+    """What the G1's arms carry, by hardware name.
+
+    Shared with UnitreeG1Config, which owns the robot-level flag.
+    """
+
+    DUMMY = "dummy"  # bare wrists
+    DEX1 = "dex1"  # parallel grippers
+    DEX3 = "dex3"  # three-finger hands
+
+    @classmethod
+    def _missing_(cls, value: object) -> None:
+        raise ValueError(f"`end_effector` is expected to be in {list(cls)}, but {value} is provided.")
 
 
 @EnvConfig.register_subclass("unitree_g1_mujoco")
@@ -746,7 +757,7 @@ class UnitreeG1MujocoEnv(HubEnvConfig):
     """
 
     hub_path: str = "lerobot/unitree-g1-mujoco"
-    end_effector: G1EndEffector = "dex1"
+    end_effector: G1EndEffector = G1EndEffector.DEX1
     publish_images: bool = True
     camera_port: int = 5555
     onscreen: bool | None = None
