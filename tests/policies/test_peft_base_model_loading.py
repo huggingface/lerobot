@@ -126,17 +126,24 @@ def test_make_policy_existing_adapter_uses_peft_loading(mock_get_cls, _mock_feat
 
     policy_cls.from_pretrained.return_value = torch.nn.Linear(1, 1)
 
-    fake_peft = MagicMock()
+    # `factory` imports PeftConfig/PeftModel at module level (guarded by `_peft_available`),
+    # so patch those names rather than `sys.modules["peft"]`. `require_package` is stubbed so
+    # this test stays runnable without `peft` installed.
     fake_peft_config = MagicMock()
     fake_peft_config.base_model_name_or_path = "lerobot/lingbot_va_base"
-    fake_peft.PeftConfig.from_pretrained.return_value = fake_peft_config
-    fake_peft.PeftModel.from_pretrained.return_value = torch.nn.Linear(1, 1)
+    fake_peft_config.revision = None
+    mock_peft_config_cls = MagicMock()
+    mock_peft_config_cls.from_pretrained.return_value = fake_peft_config
+    mock_peft_model_cls = MagicMock()
+    mock_peft_model_cls.from_pretrained.return_value = torch.nn.Linear(1, 1)
 
     with (
         patch.object(factory, "_has_peft_adapter_config", return_value=True),
-        patch.dict("sys.modules", {"peft": fake_peft}),
+        patch.object(factory, "require_package"),
+        patch.object(factory, "PeftConfig", mock_peft_config_cls),
+        patch.object(factory, "PeftModel", mock_peft_model_cls),
     ):
         factory.make_policy(cfg=cfg, env_cfg=env_cfg)
 
-    fake_peft.PeftConfig.from_pretrained.assert_called_once_with("some/adapter-repo")
-    fake_peft.PeftModel.from_pretrained.assert_called_once()
+    mock_peft_config_cls.from_pretrained.assert_called_once_with("some/adapter-repo", revision=None)
+    mock_peft_model_cls.from_pretrained.assert_called_once()
