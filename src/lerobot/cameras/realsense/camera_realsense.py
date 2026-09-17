@@ -664,6 +664,21 @@ class RealSenseCamera(Camera):
 
         return processed_image
 
+    @staticmethod
+    def _depth_frame_to_millimeters(depth_frame: "rs.depth_frame") -> NDArray[np.uint16]:
+        """Convert sensor-native Z16 values to the camera API's millimeter unit."""
+        depth_units_m = float(depth_frame.get_units())
+        if not np.isfinite(depth_units_m) or depth_units_m <= 0:
+            raise RuntimeError(f"Invalid RealSense depth scale: {depth_units_m}")
+
+        raw_depth = np.asanyarray(depth_frame.get_data())
+        millimeters_per_unit = depth_units_m * 1000.0
+        if millimeters_per_unit == 1.0:
+            return raw_depth.astype(np.uint16, copy=False)
+
+        depth_mm = np.rint(raw_depth.astype(np.float64) * millimeters_per_unit)
+        return np.clip(depth_mm, 0, np.iinfo(np.uint16).max).astype(np.uint16)
+
     def _read_loop(self) -> None:
         """
         Internal loop run by the background thread for asynchronous reading.
@@ -691,7 +706,7 @@ class RealSenseCamera(Camera):
 
                 if self.use_depth:
                     depth_frame_raw = frame.get_depth_frame()
-                    depth_frame = np.asanyarray(depth_frame_raw.get_data())
+                    depth_frame = self._depth_frame_to_millimeters(depth_frame_raw)
                     processed_depth_frame = self._postprocess_image(depth_frame, depth_frame=True)
                     if processed_depth_frame.ndim == 2:  # (H, W) -> (H, W, 1)
                         processed_depth_frame = processed_depth_frame[..., np.newaxis]
