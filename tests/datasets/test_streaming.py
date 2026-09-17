@@ -111,6 +111,116 @@ def test_streaming_dataset_forwards_hub_token_only_for_remote_data(tmp_path, mon
     assert not hasattr(dataset, "_token")
 
 
+@pytest.mark.parametrize("empty_selection", [False, True])
+def test_streaming_dataset_respects_episode_subset(
+    tmp_path,
+    lerobot_dataset_factory,
+    empty_selection,
+):
+    root = tmp_path / "episode-subset"
+    repo_id = f"{DUMMY_REPO_ID}-episode-subset"
+
+    source_dataset = lerobot_dataset_factory(
+        root=root,
+        repo_id=repo_id,
+        total_episodes=4,
+        total_frames=40,
+        use_videos=False,
+        camera_features={},
+    )
+
+    episode_lengths = {
+        int(episode["episode_index"]): int(episode["length"]) for episode in source_dataset.meta.episodes
+    }
+    selected_episodes = [] if empty_selection else [max(episode_lengths, key=episode_lengths.get)]
+    expected_num_frames = sum(episode_lengths[episode_id] for episode_id in selected_episodes)
+
+    dataset = StreamingLeRobotDataset(
+        repo_id=repo_id,
+        root=root,
+        episodes=selected_episodes,
+        buffer_size=4,
+        max_num_shards=1,
+        shuffle=False,
+        seed=42,
+    )
+
+    frames = list(dataset)
+
+    assert {int(frame["episode_index"]) for frame in frames} == set(selected_episodes)
+    assert len(frames) == expected_num_frames
+    assert dataset.num_frames == expected_num_frames
+    assert dataset.num_episodes == len(selected_episodes)
+
+
+def test_streaming_dataset_preserves_delta_padding_for_noncontiguous_episode_subset(
+    tmp_path,
+    empty_lerobot_dataset_factory,
+):
+    features = {
+        "state": {"dtype": "float32", "shape": (2,), "names": ["episode", "frame"]},
+    }
+    source_dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "episode-subset-deltas",
+        features=features,
+        use_videos=False,
+        fps=10,
+    )
+
+    frames_per_episode = 5
+    for episode_index in range(5):
+        for frame_index in range(frames_per_episode):
+            source_dataset.add_frame(
+                {
+                    "state": torch.tensor([episode_index, frame_index], dtype=torch.float32),
+                    "task": f"task_{episode_index}",
+                }
+            )
+        source_dataset.save_episode()
+    source_dataset.finalize()
+
+    selected_episodes = [1, 3]
+    dataset = StreamingLeRobotDataset(
+        repo_id=source_dataset.repo_id,
+        root=source_dataset.root,
+        episodes=selected_episodes,
+        delta_timestamps={"state": [-0.2, -0.1, 0.0, 0.1, 0.2]},
+        buffer_size=1,
+        max_num_shards=1,
+        shuffle=False,
+    )
+
+    frames = list(dataset)
+
+    assert len(frames) == len(selected_episodes) * frames_per_episode
+    assert dataset.num_frames == len(frames)
+    assert dataset.num_episodes == len(selected_episodes)
+    assert {int(frame["episode_index"]) for frame in frames} == set(selected_episodes)
+
+    for episode_index in selected_episodes:
+        episode_frames = sorted(
+            (frame for frame in frames if int(frame["episode_index"]) == episode_index),
+            key=lambda frame: int(frame["frame_index"]),
+        )
+        assert [int(frame["frame_index"]) for frame in episode_frames] == list(range(frames_per_episode))
+        for frame_index, frame in enumerate(episode_frames):
+            delta_indices = range(-2, 3)
+            expected_frame_indices = [
+                min(max(frame_index + delta, 0), frames_per_episode - 1) for delta in delta_indices
+            ]
+            state_window = frame["state"]
+            expected_state_window = torch.tensor(
+                [[episode_index, expected_frame_index] for expected_frame_index in expected_frame_indices],
+                dtype=state_window.dtype,
+                device=state_window.device,
+            )
+            assert state_window.shape == (len(expected_frame_indices), 2)
+            torch.testing.assert_close(state_window, expected_state_window)
+
+            expected_padding = [not 0 <= frame_index + delta < frames_per_episode for delta in delta_indices]
+            assert frame["state_is_pad"].tolist() == expected_padding
+
+
 def test_single_frame_consistency(tmp_path, lerobot_dataset_factory):
     """Test if are correctly accessed"""
     ds_num_frames = 400
@@ -496,9 +606,39 @@ def _fake_meta(*args, **kwargs):
     meta._version = "v3.0"
     meta.depth_keys = []
     meta.image_keys = []
+    meta.total_frames = 3
+    meta.total_episodes = 3
+    meta.episodes = [
+        {"episode_index": episode_index, "length": 1} for episode_index in range(meta.total_episodes)
+    ]
     meta.rescale_depth_stats = lambda *_a, **_k: None
     meta.repo_type = kwargs.get("repo_type", "dataset")
     return meta
+
+
+def test_streaming_dataset_rejects_duplicate_episode_indices_before_io():
+    metadata_cls = Mock()
+    with (
+        patch("lerobot.datasets.streaming_dataset.LeRobotDatasetMetadata", metadata_cls),
+        pytest.raises(ValueError, match=r"Episode indices contain duplicates: \[1\]"),
+    ):
+        StreamingLeRobotDataset(DUMMY_REPO_ID, episodes=[1, 1])
+
+    metadata_cls.assert_not_called()
+
+
+@pytest.mark.parametrize("episodes", [[-1], [3]])
+def test_streaming_dataset_rejects_out_of_range_episode_indices_before_data_load(episodes):
+    load_dataset = Mock()
+    with (
+        patch("lerobot.datasets.streaming_dataset.LeRobotDatasetMetadata", _fake_meta),
+        patch("lerobot.datasets.streaming_dataset.check_version_compatibility"),
+        patch("lerobot.datasets.streaming_dataset.load_dataset", load_dataset),
+        pytest.raises(ValueError, match=r"Episode indices must be in \[0, 3\)"),
+    ):
+        StreamingLeRobotDataset(DUMMY_REPO_ID, episodes=episodes)
+
+    load_dataset.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -611,18 +751,51 @@ def test_bucket_metadata_sync_uses_stable_cache_and_token(tmp_path):
 
 def test_repo_type_is_keyword_only_and_preserves_positional_episodes():
     episodes = [1, 2]
+    hf_dataset = Mock(num_shards=1)
+    hf_dataset.filter.return_value = hf_dataset
     with (
         patch("lerobot.datasets.streaming_dataset.LeRobotDatasetMetadata", _fake_meta),
         patch("lerobot.datasets.streaming_dataset.check_version_compatibility"),
         patch(
             "lerobot.datasets.streaming_dataset.load_dataset",
-            return_value=SimpleNamespace(num_shards=1),
+            return_value=hf_dataset,
         ),
     ):
         dataset = StreamingLeRobotDataset(DUMMY_REPO_ID, None, episodes)
 
     assert dataset.episodes == episodes
     assert dataset.repo_type == "dataset"
+    assert dataset.num_frames == 2
+    assert dataset.num_episodes == 2
+
+
+@pytest.mark.parametrize("repo_type", ["dataset", "bucket"])
+def test_episode_subset_filters_dataset_before_sharding(repo_type):
+    episodes = [0, 2]
+    loaded_dataset = Mock(num_shards=3)
+    filtered_dataset = Mock(num_shards=2)
+    loaded_dataset.filter.return_value = filtered_dataset
+    with (
+        patch("lerobot.datasets.streaming_dataset.LeRobotDatasetMetadata", _fake_meta),
+        patch("lerobot.datasets.streaming_dataset.check_version_compatibility"),
+        patch(
+            "lerobot.datasets.streaming_dataset.load_dataset",
+            return_value=loaded_dataset,
+        ),
+    ):
+        dataset = StreamingLeRobotDataset(
+            DUMMY_REPO_ID,
+            episodes=episodes,
+            repo_type=repo_type,
+        )
+
+    assert dataset.hf_dataset is filtered_dataset
+    assert dataset.num_shards == filtered_dataset.num_shards
+    loaded_dataset.filter.assert_called_once_with(
+        streaming_dataset_module._is_selected_episode,
+        input_columns=["episode_index"],
+        fn_kwargs={"selected_episode_ids": frozenset(episodes)},
+    )
 
 
 def test_bucket_root_caches_metadata_without_switching_to_local_streaming(tmp_path):
