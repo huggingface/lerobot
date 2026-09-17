@@ -38,7 +38,7 @@ from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypedDict, TypeVar, cast
+from typing import Any, TypedDict, TypeVar, cast, overload
 
 import torch
 from huggingface_hub import hf_hub_download, snapshot_download
@@ -61,6 +61,7 @@ from .converters import batch_to_transition, create_transition, transition_to_ba
 # Generic type variables for pipeline input and output.
 TInput = TypeVar("TInput")
 TOutput = TypeVar("TOutput")
+TStep = TypeVar("TStep", bound="ProcessorStep")
 
 
 class ProcessorStepRegistry:
@@ -1654,6 +1655,49 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                 after_step_hooks=self.after_step_hooks.copy(),
             )
         return self.steps[idx]
+
+    @staticmethod
+    def _step_matches(step: ProcessorStep, step_type: type[ProcessorStep] | str) -> bool:
+        if isinstance(step_type, str):
+            step_cls = type(step)
+            return step_type in (getattr(step_cls, "_registry_name", None), step_cls.__name__)
+        return isinstance(step, step_type)
+
+    @overload
+    def get_steps(self, step_type: type[TStep]) -> list[TStep]: ...
+
+    @overload
+    def get_steps(self, step_type: str) -> list[ProcessorStep]: ...
+
+    def get_steps(self, step_type: type[ProcessorStep] | str) -> list[ProcessorStep]:
+        """Returns every step matching ``step_type``, in pipeline order.
+
+        Args:
+            step_type: A `ProcessorStep` subclass (matched with ``isinstance``, so base
+                classes and mixins work) or a string matched against the step's registry
+                name or class name.
+        """
+        return [step for step in self.steps if self._step_matches(step, step_type)]
+
+    @overload
+    def get_step(self, step_type: type[TStep]) -> TStep | None: ...
+
+    @overload
+    def get_step(self, step_type: str) -> ProcessorStep | None: ...
+
+    def get_step(self, step_type: type[ProcessorStep] | str) -> ProcessorStep | None:
+        """Returns the first step matching ``step_type``, or ``None`` if there is none.
+
+        See `get_steps` for how ``step_type`` is matched.
+        """
+        return next((step for step in self.steps if self._step_matches(step, step_type)), None)
+
+    def has_step(self, step_type: type[ProcessorStep] | str) -> bool:
+        """Returns whether any step in the pipeline matches ``step_type``.
+
+        See `get_steps` for how ``step_type`` is matched.
+        """
+        return self.get_step(step_type) is not None
 
     def register_before_step_hook(self, fn: Callable[[int, EnvTransition], None]):
         """Registers a function to be called before each step.
