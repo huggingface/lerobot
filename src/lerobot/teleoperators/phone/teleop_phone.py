@@ -69,7 +69,7 @@ class BasePhone:
     @property
     def feedback_features(self) -> dict[str, type]:
         # No haptic or other feedback implemented yet
-        pass
+        return {}
 
     def configure(self) -> None:
         # No additional configuration required for phone teleop
@@ -88,7 +88,7 @@ class IOSPhone(BasePhone, Teleoperator):
         require_package("teleop", extra="phone")
         super().__init__(config)
         self.config = config
-        self._group = None
+        self._group: hebi.Group | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -142,6 +142,7 @@ class IOSPhone(BasePhone, Teleoperator):
             if button_b is not None:
                 button_b1_pressed = bool(button_b.get_int(1))
             if button_b1_pressed:
+                assert position is not None and rotation is not None
                 return position, rotation
 
             time.sleep(0.01)
@@ -162,6 +163,7 @@ class IOSPhone(BasePhone, Teleoperator):
             - The orientation as a `Rotation` object, or None if not available.
             - The raw HEBI feedback object for accessing other data like button presses.
         """
+        assert self._group is not None
         fbk = self._group.get_next_feedback()
         pose = fbk[0]
         ar_pos = getattr(pose, "ar_position", None)
@@ -186,6 +188,8 @@ class IOSPhone(BasePhone, Teleoperator):
         has_pose, raw_position, raw_rotation, fb_pose = self._read_current_pose()
         if not has_pose or not self.is_calibrated:
             return {}
+        assert raw_position is not None and raw_rotation is not None
+        assert self._calib_pos is not None and self._calib_rot_inv is not None
 
         # Collect raw inputs (B1 / analogs on iOS, move/scale on Android)
         raw_inputs: dict[str, float | int | bool] = {}
@@ -235,10 +239,10 @@ class AndroidPhone(BasePhone, Teleoperator):
         require_package("teleop", extra="phone")
         super().__init__(config)
         self.config = config
-        self._teleop = None
-        self._teleop_thread = None
-        self._latest_pose = None
-        self._latest_message = None
+        self._teleop: Teleop | None = None
+        self._teleop_thread: threading.Thread | None = None
+        self._latest_pose: np.ndarray | None = None
+        self._latest_message: dict | None = None
         self._android_lock = threading.Lock()
 
     @property
@@ -283,11 +287,12 @@ class AndroidPhone(BasePhone, Teleoperator):
         """
         while True:
             with self._android_lock:
-                msg = self._latest_message or {}
+                msg: dict = self._latest_message or {}
 
             if bool(msg.get("move", False)):
                 ok, pos, rot, _pose = self._read_current_pose()
                 if ok:
+                    assert pos is not None and rot is not None
                     return pos, rot
 
             time.sleep(0.01)
@@ -339,10 +344,12 @@ class AndroidPhone(BasePhone, Teleoperator):
         ok, raw_pos, raw_rot, pose = self._read_current_pose()
         if not ok or not self.is_calibrated:
             return {}
+        assert raw_pos is not None and raw_rot is not None
+        assert self._calib_pos is not None and self._calib_rot_inv is not None
 
         # Collect raw inputs (B1 / analogs on iOS, move/scale on Android)
         raw_inputs: dict[str, float | int | bool] = {}
-        msg = self._latest_message or {}
+        msg: dict = self._latest_message or {}
         raw_inputs["move"] = bool(msg.get("move", False))
         raw_inputs["scale"] = float(msg.get("scale", 1.0))
         raw_inputs["reservedButtonA"] = bool(msg.get("reservedButtonA", False))
@@ -405,7 +412,7 @@ class Phone(Teleoperator):
     def is_connected(self) -> bool:
         return self._phone_impl.is_connected
 
-    def connect(self) -> None:
+    def connect(self, calibrate: bool = True) -> None:
         return self._phone_impl.connect()
 
     def calibrate(self) -> None:
