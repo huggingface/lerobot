@@ -22,6 +22,7 @@ import sys
 import threading
 from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import MagicMock
 
 import pytest
@@ -262,6 +263,86 @@ def test_rollout_config_rejects_a_multiplier_below_one(multiplier):
         RolloutConfig(robot=MockRobotConfig(), interpolation_multiplier=multiplier)
 
 
+def test_build_rollout_context_rejects_missing_policy() -> None:
+    from lerobot.policies.act.configuration_act import ACTConfig
+    from lerobot.rollout import RolloutConfig, build_rollout_context
+    from tests.mocks.mock_robot import MockRobotConfig
+
+    cfg = RolloutConfig(robot=MockRobotConfig(), policy=ACTConfig(device="cpu"), device="cpu")
+    # Exercise the context builder's guard, not RolloutConfig.__post_init__ validation.
+    cfg.policy = None
+
+    with pytest.raises(ValueError, match="--policy.path is required for rollout"):
+        build_rollout_context(cfg, threading.Event())
+
+
+@pytest.mark.parametrize(
+    ("checkpoint_device", "runtime_device"),
+    [
+        ("cuda", "cpu"),
+        ("mps", "cpu"),
+        ("cpu", "cpu"),
+        ("cpu", None),
+        pytest.param(
+            "cpu", "cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")
+        ),
+    ],
+)
+def test_build_rollout_context_uses_resolved_device(
+    monkeypatch: pytest.MonkeyPatch, checkpoint_device: str, runtime_device: str | None
+) -> None:
+    import lerobot.rollout.context as rollout_context
+    from lerobot.policies.act.configuration_act import ACTConfig
+    from lerobot.processor import (
+        DeviceProcessorStep,
+        PolicyProcessorPipeline,
+        batch_to_transition,
+        transition_to_batch,
+    )
+    from lerobot.rollout import RolloutConfig
+    from lerobot.utils.constants import OBS_STATE
+    from tests.mocks.mock_robot import MockRobot, MockRobotConfig
+
+    policy_config = ACTConfig(device="cpu", pretrained_path=Path("unused-checkpoint"))
+    # Emulate a checkpoint saved on a different host without needing that device locally.
+    policy_config.device = checkpoint_device
+    robot_config = MockRobotConfig(random_values=False, static_values=[0.0, 0.0, 0.0])
+    cfg = RolloutConfig(robot=robot_config, policy=policy_config, device=runtime_device)
+    robot = MockRobot(robot_config)
+    policy = torch.nn.Linear(3, 3)
+
+    def load_policy(config: ACTConfig) -> torch.nn.Linear:
+        # Check at construction time: synchronizing after the load would be too late.
+        assert config.device == cfg.device == (runtime_device or checkpoint_device)
+        return policy
+
+    def make_processors(
+        *, policy_cfg: ACTConfig, preprocessor_overrides: dict[str, dict[str, str]], **kwargs: object
+    ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
+        assert policy_cfg.device == preprocessor_overrides["device_processor"]["device"]
+        processor = PolicyProcessorPipeline(
+            steps=[DeviceProcessorStep(device=policy_cfg.device)],
+            to_transition=batch_to_transition,
+            to_output=transition_to_batch,
+        )
+        return processor, PolicyProcessorPipeline(steps=[])
+
+    monkeypatch.setattr(rollout_context, "_load_pretrained_policy", load_policy)
+    monkeypatch.setattr(rollout_context, "make_pre_post_processors", make_processors)
+    monkeypatch.setattr(rollout_context, "make_robot_from_config", lambda _: robot)
+
+    try:
+        ctx = rollout_context.build_rollout_context(cfg, threading.Event())
+        batch = ctx.policy.preprocessor({OBS_STATE: torch.zeros(1, 3)})
+        model_device = next(ctx.policy.policy.parameters()).device
+        assert model_device == batch[OBS_STATE].device
+        assert model_device.type == torch.device(runtime_device or checkpoint_device).type
+        assert policy_config.device == cfg.device
+    finally:
+        if robot.is_connected:
+            robot.disconnect()
+
+
 def test_load_pretrained_policy_passes_revision(monkeypatch):
     import lerobot.rollout.context as rollout_context
 
@@ -453,12 +534,91 @@ def test_create_strategy_dispatches():
 
 
 def test_create_strategy_unknown_raises():
-    from lerobot.rollout import create_strategy
+    from lerobot.rollout import RolloutStrategyConfig, create_strategy
 
-    cfg = MagicMock()
-    cfg.type = "bogus"
-    with pytest.raises(ValueError, match="Unknown strategy type"):
-        create_strategy(cfg)
+    # Registered config, but no ``BogusStrategy`` class importable next to it.
+    @RolloutStrategyConfig.register_subclass("bogus")
+    @dataclasses.dataclass
+    class BogusStrategyConfig(RolloutStrategyConfig):
+        pass
+
+    try:
+        with pytest.raises(ValueError, match="Could not locate device class 'BogusStrategy'"):
+            create_strategy(BogusStrategyConfig())
+    finally:
+        RolloutStrategyConfig.get_known_choices().pop("bogus")
+
+
+# ---------------------------------------------------------------------------
+# Strategy capability declarations (what a third-party strategy relies on)
+# ---------------------------------------------------------------------------
+
+
+def test_rollout_config_enforces_strategy_declarations():
+    from lerobot.configs.dataset import DatasetRecordConfig
+    from lerobot.rollout import BaseStrategyConfig, DAggerStrategyConfig, RolloutConfig, RolloutStrategyConfig
+    from tests.mocks.mock_robot import MockRobotConfig
+    from tests.mocks.mock_teleop import MockTeleopConfig
+
+    @RolloutStrategyConfig.register_subclass("test_recorder")
+    @dataclasses.dataclass
+    class RecorderConfig(RolloutStrategyConfig):
+        dataset_mode: ClassVar[str] = "required"
+        requires_teleop: ClassVar[bool] = True
+
+        def requires_streaming_encoding(self) -> bool:
+            return True
+
+    def make(**kwargs):
+        return RolloutConfig(robot=MockRobotConfig(), policy=SimpleNamespace(device="cpu"), **kwargs)
+
+    dataset = DatasetRecordConfig(repo_id="user/rollout_test")
+    try:
+        with pytest.raises(ValueError, match="test_recorder strategy requires --teleop.type"):
+            make(strategy=RecorderConfig(), dataset=dataset)
+        with pytest.raises(ValueError, match="test_recorder strategy requires --dataset.repo_id"):
+            make(strategy=RecorderConfig(), teleop=MockTeleopConfig())
+        with pytest.raises(ValueError, match="--dataset.repo_id must be set"):
+            make(strategy=RecorderConfig(), teleop=MockTeleopConfig(), dataset=DatasetRecordConfig())
+        with pytest.raises(ValueError, match="base strategy does not record data"):
+            make(strategy=BaseStrategyConfig(), dataset=dataset)
+
+        cfg = make(strategy=RecorderConfig(), teleop=MockTeleopConfig(), dataset=dataset)
+        assert cfg.dataset.streaming_encoding is True
+
+        # requires_streaming_encoding() is a method so it can depend on the config's fields.
+        dagger = make(
+            strategy=DAggerStrategyConfig(record_autonomous=False),
+            teleop=MockTeleopConfig(),
+            dataset=DatasetRecordConfig(repo_id="user/rollout_test"),
+        )
+        assert dagger.dataset.streaming_encoding is False
+    finally:
+        RolloutStrategyConfig.get_known_choices().pop("test_recorder")
+
+
+def test_setup_defaults_to_starting_the_engine():
+    from lerobot.rollout import BaseStrategyConfig, RolloutStrategy
+
+    class MinimalStrategy(RolloutStrategy):
+        def run(self, ctx):
+            pass
+
+        def teardown(self, ctx):
+            pass
+
+    engine = MagicMock()
+    ctx = SimpleNamespace(
+        runtime=SimpleNamespace(cfg=SimpleNamespace(interpolation_multiplier=2)),
+        policy=SimpleNamespace(inference=engine),
+    )
+    strategy = MinimalStrategy(BaseStrategyConfig())
+
+    strategy.setup(ctx)
+
+    assert strategy._engine is engine
+    assert strategy._interpolator.multiplier == 2
+    engine.start.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
