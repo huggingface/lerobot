@@ -32,7 +32,7 @@ Because the method only depends on a frozen VLM, TOPReward is **zero-shot**: the
 - Standard `reward_model.type=topreward` configuration through LeRobot.
 - VLM loading via the `transformers` `Qwen3VLForConditionalGeneration` API.
 - Prompt assembly + tokenisation in the processor (matching upstream `QwenClient.compute_instruction_reward`).
-- `compute_reward()` returns one scalar log-prob per sample.
+- `compute_log_probability()` returns one raw scalar log-probability per sample.
 - LeRobot reward-model save/load — `save_pretrained` writes only `config.json` (the VLM is identified by `vlm_name`).
 - An offline labeling script that writes a `topreward_progress.parquet` (SARM-compatible schema) for RA-BC and overlay.
 
@@ -72,9 +72,7 @@ In LeRobot datasets the preprocessor reads:
 | `reward_model.fps`        | `2.0`                       | Metadata passed to the Qwen video processor   |
 | `reward_model.vlm_name`   | `Qwen/Qwen3-VL-8B-Instruct` | Hugging Face Hub id of the underlying VLM     |
 
-The model returns:
-
-- `compute_reward(batch)`: one log-probability per sample. Higher = better task-video alignment. When `success_threshold` is finite, returns the binary thresholded value instead.
+The model returns one float32 tensor of shape `(batch_size,)` through `compute_log_probability(batch)`. Higher values mean better task-video alignment. The method always returns the raw log-probability; thresholding and normalization belong to the consumer.
 
 ## Usage
 
@@ -105,11 +103,20 @@ reward_model = make_reward_model(cfg)
 preprocessor, postprocessor = make_reward_pre_post_processors(cfg)
 ```
 
-The preprocessor tokenises the full prompt (video + prefix + instruction suffix), writes Qwen-VL tensors + `prompt_length` under `observation.topreward.*`. The model reads those tensors, label-masks based on `prompt_length`, and extracts the log-prob reward.
+The preprocessor tokenises the full prompt (video + prefix + instruction suffix), writes Qwen-VL tensors and terminal-token labels under `observation.topreward.*`, and masks every label except the terminal answer token. The model reads those tensors and extracts its log-probability:
+
+```python
+encoded_batch = preprocessor(batch)
+log_probability = reward_model.compute_log_probability(encoded_batch)
+```
+
+The serialized `success_threshold` field remains for compatibility with existing configs, but it does not modify the raw output. Apply any task-specific threshold explicitly in the caller.
 
 ### Offline dataset labeling
 
 Write a `topreward_progress.parquet` for RA-BC training and overlay videos:
+
+The legacy labeling script preserves existing artifact behavior: if a loaded config has a finite `success_threshold`, it applies that threshold before per-episode normalization. New Python consumers always receive the raw value from `compute_log_probability()`.
 
 ```bash
 # Sparse-dense (15 anchors per episode, matches upstream)
