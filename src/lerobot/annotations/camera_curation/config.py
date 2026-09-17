@@ -141,42 +141,6 @@ class CameraCurationConfig:
     promote_direction_candidate: bool = False
     promote_direction_min_confidence: float = 0.4
 
-    # Borrow a direction from the existing key name: when the VLM labels a camera a
-    # plain base that accepts a direction (``side``/``wrist``, no direction) and the
-    # ORIGINAL key name carries a direction qualifier (``front``/``rear``/``left``/
-    # ``right`` — e.g. ``observation.images.front_side``), adopt it so the label
-    # becomes ``front_side``. ONLY the direction qualifier is borrowed, never a
-    # position word, so a mislabeled position in the key (a "top" that is really a
-    # side) cannot leak in. This is the last-resort fix when the model refuses to
-    # emit the direction itself (not even as a candidate). Off by default; unlike
-    # the label decision it deliberately still reads the key even under
-    # ignore_key_names, since a bare direction qualifier is usually trustworthy.
-    direction_from_key_name: bool = False
-
-    # Trust the key name's direction OVER the VLM's. Like direction_from_key_name
-    # but stronger: when the ORIGINAL key carries a direction qualifier, it REPLACES
-    # whatever direction the VLM assigned, correcting a wrong left/right/front/rear
-    # (e.g. a camera keyed ``left_side`` the model called ``right_side`` becomes
-    # ``left_side``). Only the direction qualifier is overridden; the VLM's position
-    # (``side``/``wrist``) is kept, so a wrong position in the key cannot leak in.
-    # Use it when the model is unreliable on direction but the owner's key naming is
-    # trustworthy — the reliable fix for left/right, which VLMs read poorly even
-    # from a clear frame. Implies direction_from_key_name. Off by default.
-    trust_key_direction: bool = False
-
-    # Trust the key name for MOUNT TYPE (wrist vs fixed). VLMs are unreliable at
-    # wrist-vs-fixed on ambiguous close-ups: a prominent foreground gripper appears
-    # both on a wrist camera AND on a fixed camera mounted close to the arm, and a
-    # blank backdrop hides the drift — so the call goes wrong in both directions. The
-    # owner's key encodes it reliably. With this flag: a key whose position word is
-    # ``wrist`` -> robot_mounted (+ ``left``/``right`` handedness from the key); a key
-    # with a fixed-type position word (``top``/``side``/``bottom``, incl. ``*_side``)
-    # -> fixed. For a forced-fixed camera, the VLM's own top-vs-side label is KEPT
-    # when valid (owner top/side naming is unreliable — see realman/LegoBot); only if
-    # the VLM's label was a wrist (now contradicting the mount) is the key's position
-    # used as the fallback. Generic keys (``cam0``) -> trust the VLM. Off by default.
-    mount_from_key_name: bool = False
-
     # Derive left/right from localization instead of asking the VLM for the label.
     # VLMs are near-chance at the left_side/right_side call itself (an allocentric
     # flip) but decent at plain localization ("the base is on the RIGHT of the

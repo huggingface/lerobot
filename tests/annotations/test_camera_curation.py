@@ -472,49 +472,6 @@ def test_promote_direction_candidate_gated():
     )
 
 
-def test_direction_from_key_name():
-    # VLM won't emit or even propose a direction (plain "side", no useful candidate),
-    # but the key name carries "front" -> borrow it -> front_side.
-    cfg = CameraCurationConfig(view_vocabulary=VOCAB, direction_from_key_name=True)
-    frames = {"observation.images.front_side": [_tiny_image()]}
-    vlm = _queued_vlm(
-        [{"usable": True, "mount_type": "fixed", "view_label": "side", "confidence": 0.7}]
-    )
-    v = {x.camera_key: x for x in curate_cameras(frames, cfg, vlm)}["observation.images.front_side"]
-    assert v.view_label == "front_side"
-
-
-def test_mount_from_key_name():
-    cfg = CameraCurationConfig(view_vocabulary=VOCAB, mount_from_key_name=True)
-
-    def _run(key, resp):
-        return {x.camera_key: x for x in curate_cameras({key: [_tiny_image()]}, cfg, _queued_vlm([resp]))}[key]
-
-    # Key says wrist but VLM called it fixed/left_side -> forced robot_mounted/left_wrist.
-    v = _run("observation.images.left_wrist",
-             {"usable": True, "mount_type": "fixed", "view_label": "left_side"})
-    assert (v.mount_type, v.view_label) == ("robot_mounted", "left_wrist")
-    # Key says side but VLM called it wrist -> forced fixed; VLM's wrist label invalid
-    # -> fall back to the key's position (left_side).
-    v = _run("observation.images.left_side",
-             {"usable": True, "mount_type": "robot_mounted", "view_label": "wrist"})
-    assert (v.mount_type, v.view_label) == ("fixed", "left_side")
-    # Key says top but VLM gave a valid fixed position (side) -> mount forced fixed,
-    # the VLM's top-vs-side label is KEPT (owner top/side naming is unreliable).
-    v = _run("observation.images.top",
-             {"usable": True, "mount_type": "fixed", "view_label": "side"})
-    assert (v.mount_type, v.view_label) == ("fixed", "side")
-    # Generic key -> untouched.
-    v = _run("observation.images.cam0",
-             {"usable": True, "mount_type": "robot_mounted", "view_label": "wrist"})
-    assert (v.mount_type, v.view_label) == ("robot_mounted", "wrist")
-    # Off by default -> untouched.
-    cfg_off = CameraCurationConfig(view_vocabulary=VOCAB)
-    v = {x.camera_key: x for x in curate_cameras({"observation.images.left_wrist": [_tiny_image()]}, cfg_off,
-         _queued_vlm([{"usable": True, "mount_type": "fixed", "view_label": "left_side"}]))}["observation.images.left_wrist"]
-    assert (v.mount_type, v.view_label) == ("fixed", "left_side")
-
-
 def test_derive_left_right_from_localization():
     cfg = CameraCurationConfig(view_vocabulary=VOCAB, derive_left_right_from_localization=True)
 
@@ -556,60 +513,6 @@ def test_derive_left_right_from_localization():
     vlm = _queued_vlm([{"usable": True, "mount_type": "fixed", "view_label": "left_side",
                         "base_image_side": "left", "workspace_image_side": "right"}])
     assert {x.camera_key: x for x in curate_cameras({"cam": [_tiny_image()]}, cfg_off, vlm)}["cam"].view_label == "left_side"
-
-
-def test_trust_key_direction_overrides_wrong_direction():
-    # VLM commits to the WRONG direction; trust_key_direction replaces it from the key.
-    cfg = CameraCurationConfig(view_vocabulary=VOCAB, trust_key_direction=True)
-    frames = {"observation.images.left_side_2": [_tiny_image()]}
-    vlm = _queued_vlm(
-        [{"usable": True, "mount_type": "fixed", "view_label": "right_side", "confidence": 0.8}]
-    )
-    v = {x.camera_key: x for x in curate_cameras(frames, cfg, vlm)}["observation.images.left_side_2"]
-    assert v.view_label == "left_side"  # right_side (VLM) overridden by left (key)
-
-
-def test_trust_key_direction_keeps_position_not_from_key():
-    # Key position word must NOT leak: a camera keyed "left_side" the VLM called a
-    # plain "wrist" keeps the wrist POSITION, only taking the left/right qualifier.
-    cfg = CameraCurationConfig(view_vocabulary=VOCAB, trust_key_direction=True)
-    frames = {"observation.images.left_side_2": [_tiny_image()]}
-    vlm = _queued_vlm(
-        [{"usable": True, "mount_type": "robot_mounted", "view_label": "wrist", "confidence": 0.8}]
-    )
-    v = {x.camera_key: x for x in curate_cameras(frames, cfg, vlm)}["observation.images.left_side_2"]
-    assert v.view_label == "left_wrist"  # position wrist kept, left borrowed
-    # Plain fill mode (no override) leaves an already-directional label alone.
-    cfg_fill = CameraCurationConfig(view_vocabulary=VOCAB, direction_from_key_name=True)
-    vlm2 = _queued_vlm(
-        [{"usable": True, "mount_type": "fixed", "view_label": "right_side", "confidence": 0.8}]
-    )
-    v2 = {x.camera_key: x for x in curate_cameras({"observation.images.left_side_2": [_tiny_image()]}, cfg_fill, vlm2)}[
-        "observation.images.left_side_2"
-    ]
-    assert v2.view_label == "right_side"  # fill mode does NOT override a wrong direction
-
-
-def test_direction_from_key_name_only_borrows_direction():
-    # A position word in the key (here "top") must NOT be borrowed — only a
-    # direction qualifier. Plain "side" with a "top"-keyed camera stays "side".
-    cfg = CameraCurationConfig(view_vocabulary=VOCAB, direction_from_key_name=True)
-    frames = {"observation.images.top_cam": [_tiny_image()]}
-    vlm = _queued_vlm(
-        [{"usable": True, "mount_type": "fixed", "view_label": "side", "confidence": 0.7}]
-    )
-    v = {x.camera_key: x for x in curate_cameras(frames, cfg, vlm)}["observation.images.top_cam"]
-    assert v.view_label == "side"
-    # And it's off by default.
-    cfg_off = CameraCurationConfig(view_vocabulary=VOCAB)
-    vlm2 = _queued_vlm(
-        [{"usable": True, "mount_type": "fixed", "view_label": "side", "confidence": 0.7}]
-    )
-    frames2 = {"observation.images.front_side": [_tiny_image()]}
-    v2 = {x.camera_key: x for x in curate_cameras(frames2, cfg_off, vlm2)}[
-        "observation.images.front_side"
-    ]
-    assert v2.view_label == "side"
 
 
 def test_candidate_fallback_resolves_collision():

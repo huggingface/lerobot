@@ -317,44 +317,6 @@ def _parse_candidates(
     return sorted(best.items(), key=lambda kv: kv[1], reverse=True)
 
 
-def _mount_from_source_name(verdict: CameraVerdict, cfg: CameraCurationConfig) -> None:
-    """Force the mount type (and, for a wrist, the label) from the key name.
-
-    VLMs are unreliable at wrist-vs-fixed on ambiguous close-ups (a prominent
-    foreground gripper appears on both a wrist camera and a fixed camera mounted
-    close to the arm), but the owner's key encodes it. When the key's POSITION word
-    is ``wrist`` -> ``robot_mounted`` (plus ``left``/``right`` handedness from the
-    key); when it is a fixed-type position (``top``/``side``/``bottom``) -> ``fixed``.
-    For a forced-fixed camera the VLM's own top-vs-side label is KEPT when it is a
-    valid fixed label (owner top/side naming is unreliable); only if the VLM's label
-    was a wrist (now contradicting the mount) is the key's position used as fallback.
-    Generic keys with no position word are left to the VLM. Mutates ``verdict``.
-    No-op unless ``cfg.mount_from_key_name``.
-    """
-    if not cfg.mount_from_key_name:
-        return
-    toks = _extract_vocab_tokens(verdict.camera_key, cfg.view_vocabulary)
-    key_positions = [t for t in toks if t not in _QUALIFIERS]
-    if not key_positions:
-        return  # generic key -> trust the VLM
-    if _WRIST_POSITION in key_positions:
-        verdict.mount_type = MOUNT_ROBOT
-        hand = next((t for t in toks if t in ("left", "right")), None)
-        verdict.view_label = (
-            _order_combo([_WRIST_POSITION, hand], cfg.view_vocabulary) if hand else _WRIST_POSITION
-        )
-        return
-    # A fixed-type position word in the key -> a fixed camera (never a wrist mount).
-    verdict.mount_type = MOUNT_FIXED
-    label = verdict.view_label
-    if label is None or _position_token(label) == _WRIST_POSITION:
-        # The VLM's label is missing or a (now-invalid) wrist -> fall back to the
-        # key's own position + direction for this fixed camera.
-        pos = key_positions[0]
-        qual = next((t for t in toks if t in _QUALIFIERS), None)
-        verdict.view_label = _order_combo([pos, qual], cfg.view_vocabulary) if qual else pos
-
-
 def _promote_direction_candidate(verdict: CameraVerdict, cfg: CameraCurationConfig) -> None:
     """Upgrade a plain base label to a directional candidate from the VLM's own list.
 
@@ -392,54 +354,6 @@ def _promote_direction_candidate(verdict: CameraVerdict, cfg: CameraCurationConf
             )
             verdict.view_label = cand_label
             return
-
-
-def _direction_from_source_name(verdict: CameraVerdict, cfg: CameraCurationConfig) -> None:
-    """Take a direction qualifier from the camera's original key name.
-
-    Two modes, both keeping the VLM's POSITION word (``side``/``wrist``) and only
-    touching the direction qualifier (``front``/``rear``/``left``/``right``):
-
-    - ``direction_from_key_name`` (fill): only when ``view_label`` is a PLAIN base
-      with no direction yet — borrow the key's direction so ``side`` becomes
-      ``front_side``. It never changes a direction the VLM already committed to.
-    - ``trust_key_direction`` (override): the key's direction REPLACES whatever the
-      VLM assigned, correcting a wrong left/right/front/rear (e.g. a camera keyed
-      ``left_side`` the VLM called ``right_side`` becomes ``left_side``). Use when
-      the model is unreliable on direction but the key encodes it. Implies fill.
-
-    Only a direction qualifier is ever taken, never a position word, so a
-    mislabeled position in the key cannot leak in. Mutates ``verdict``. No-op
-    unless one of the two flags is set.
-    """
-    override = cfg.trust_key_direction
-    if not (cfg.direction_from_key_name or override) or not cfg.allow_combos:
-        return
-    label = verdict.view_label
-    if not label:
-        return
-    position = _position_token(label)
-    if position not in (_SIDE_POSITION, _WRIST_POSITION):
-        return
-    # Fill mode only acts on a plain base; override also replaces an existing direction.
-    if "_" in label and not override:
-        return
-    qualifier = next(
-        (tok for tok in _extract_vocab_tokens(verdict.camera_key, cfg.view_vocabulary) if tok in _QUALIFIERS),
-        None,
-    )
-    if qualifier is None:
-        return
-    combined = _order_combo([position, qualifier], cfg.view_vocabulary)
-    if is_valid_view_label(combined, cfg.view_vocabulary, allow_combos=True) and combined != label:
-        logger.info(
-            "camera %s: %s direction from key -> %r (was %r)",
-            verdict.camera_key,
-            "overriding" if override else "borrowing",
-            combined,
-            label,
-        )
-        verdict.view_label = combined
 
 
 def _parse_view_label(camera_key: str, raw_label: Any, cfg: CameraCurationConfig) -> str | None:
@@ -520,10 +434,8 @@ def curate_cameras(
         # "front_side" when its candidates carry it). Runs after joint labeling so
         # it normalizes whichever label ended up on the verdict.
         for key in callable_keys:
-            _mount_from_source_name(verdicts[key], cfg)
             _promote_direction_candidate(verdicts[key], cfg)
             _derive_left_right(verdicts[key], cfg)
-            _direction_from_source_name(verdicts[key], cfg)
 
     return [verdicts[k] for k in ordered_keys]
 
