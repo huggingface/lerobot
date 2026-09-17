@@ -24,6 +24,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 import lerobot.datasets.streaming_dataset as streaming_dataset_module
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+from lerobot.datasets.feature_utils import get_delta_indices
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.datasets.utils import safe_shard
 from lerobot.utils.constants import ACTION
@@ -383,6 +384,57 @@ def test_frames_with_delta_consistency(tmp_path, lerobot_dataset_factory, state_
         )
 
 
+def test_frames_with_delta_beyond_default_window(tmp_path, lerobot_dataset_factory):
+    """Deltas reaching farther than the old fixed 100-frame Backtrackable window.
+
+    With 300-frame episodes and 3.5 s deltas (105 frames at 30 fps), the fixed-bounds
+    implementation marked in-episode frames as padding because the buffer could not
+    reach them. Bounds derived from delta_indices must reproduce the map-style
+    dataset's padding masks exactly.
+    """
+    ds_num_frames = 600
+    ds_num_episodes = 2  # 300 frames per episode
+
+    local_path = tmp_path / "test"
+    repo_id = f"{DUMMY_REPO_ID}-long-deltas"
+
+    delta_timestamps = {
+        "state": [-3.5, 0],  # 105 frames back at 30 fps
+        ACTION: [0, 3.5],  # 105 frames ahead
+    }
+
+    ds = lerobot_dataset_factory(
+        root=local_path,
+        repo_id=repo_id,
+        total_episodes=ds_num_episodes,
+        total_frames=ds_num_frames,
+        delta_timestamps=delta_timestamps,
+    )
+    streaming_ds = StreamingLeRobotDataset(
+        repo_id=repo_id,
+        root=local_path,
+        buffer_size=10,
+        seed=42,
+        shuffle=False,
+        delta_timestamps=delta_timestamps,
+    )
+
+    far_delta_served = False
+    for streaming_frame in streaming_ds:
+        target_frame = ds[streaming_frame["index"]]
+        for key in ("state", ACTION):
+            pad_key = f"{key}_is_pad"
+            assert torch.equal(streaming_frame[pad_key], target_frame[pad_key]), (
+                f"Padding mask mismatch for {key} at index {streaming_frame['index']}"
+            )
+            valid = ~streaming_frame[pad_key]
+            assert torch.allclose(streaming_frame[key][valid], target_frame[key][valid])
+        # the -3.5s slot: served (not padded) once frame_index >= 105 within the episode
+        far_delta_served |= not streaming_frame["state_is_pad"][0]
+
+    assert far_delta_served, "no frame exercised a lookback beyond the old 100-frame window"
+
+
 @pytest.mark.parametrize(
     "state_deltas, action_deltas",
     [
@@ -480,6 +532,33 @@ def test_frames_with_delta_consistency_with_shards(
         assert all(t[1] for t in key_checks), (
             f"Checking {list(filter(lambda t: not t[1], key_checks))[0][0]} left and right were found different (i: {i}, frame_idx: {frame_idx})"
         )
+
+
+@pytest.mark.parametrize(
+    "delta_indices, expected",
+    [
+        (None, (1, 1)),  # no deltas: minimal valid Backtrackable windows
+        ({}, (1, 1)),  # empty mapping: nothing to peek
+        ({"state": []}, (1, 1)),  # empty per-key lists: nothing to peek
+        # history = deepest peek_back + 1 slot for the current item held in _back_buf
+        ({"state": [-3, 0], "action": [0, 3, 6]}, (4, 6)),  # extremes across all keys
+        ({"action": [0, 1, 2]}, (1, 2)),  # future-only: lookback clamped to 1
+        ({"state": [-5, 0]}, (6, 1)),  # past-only: lookahead clamped to 1
+    ],
+)
+def test_window_steps_tight_bounds(delta_indices, expected):
+    ds = SimpleNamespace(delta_indices=delta_indices)
+    assert StreamingLeRobotDataset._get_window_steps(ds) == expected
+
+
+def test_window_steps_match_delta_indices_rounding():
+    # -0.999s @ 30fps rounds to index -30; a bound derived from the float product
+    # (-29.97 truncated to 29) would silently pad a real frame. Bounds must come
+    # from get_delta_indices so they match what _get_delta_frames indexes with.
+    delta_indices = get_delta_indices({"state": [-0.999, 0.999]}, fps=30)
+    assert delta_indices == {"state": [-30, 30]}
+    ds = SimpleNamespace(delta_indices=delta_indices)
+    assert StreamingLeRobotDataset._get_window_steps(ds) == (31, 30)
 
 
 class _StopConstructionError(Exception):
