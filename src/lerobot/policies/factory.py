@@ -48,6 +48,7 @@ from lerobot.utils.import_utils import _peft_available, require_package
 
 from .evo1.configuration_evo1 import Evo1Config
 from .groot.configuration_groot import GrootConfig
+from .molmoact2.configuration_molmoact2 import MolmoAct2Config
 from .pretrained import PreTrainedPolicy
 from .utils import validate_visual_features_consistency
 
@@ -197,6 +198,43 @@ def make_pre_post_processors(
                 ),
             )
 
+        if isinstance(policy_cfg, MolmoAct2Config):
+            from .molmoact2.processor_molmoact2 import (
+                make_molmoact2_pre_post_processors_from_pretrained,
+            )
+
+            return make_molmoact2_pre_post_processors_from_pretrained(
+                config=policy_cfg,
+                pretrained_path=pretrained_path,
+                revision=pretrained_revision,
+                preprocessor_overrides=kwargs.get("preprocessor_overrides"),
+                postprocessor_overrides=kwargs.get("postprocessor_overrides"),
+                preprocessor_config_filename=kwargs.get(
+                    "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+                ),
+                postprocessor_config_filename=kwargs.get(
+                    "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+                ),
+            )
+
+        custom_processors = _make_pretrained_processors_from_policy_config(
+            config=policy_cfg,
+            pretrained_path=pretrained_path,
+            revision=pretrained_revision,
+            dataset_stats=kwargs.get("dataset_stats"),
+            dataset_meta=kwargs.get("dataset_meta"),
+            preprocessor_overrides=kwargs.get("preprocessor_overrides"),
+            postprocessor_overrides=kwargs.get("postprocessor_overrides"),
+            preprocessor_config_filename=kwargs.get(
+                "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+            ),
+            postprocessor_config_filename=kwargs.get(
+                "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+            ),
+        )
+        if custom_processors is not None:
+            return custom_processors
+
         preprocessor = PolicyProcessorPipeline.from_pretrained(
             pretrained_model_name_or_path=pretrained_path,
             config_filename=kwargs.get(
@@ -326,6 +364,11 @@ def make_policy(
         )
         action_names = raw_action_feature.get("names") if raw_action_feature is not None else None
         if action_names is not None:
+            # Grouped metadata stores dimension names in the values, not the group keys.
+            if isinstance(action_names, dict) and all(
+                isinstance(group, (list, tuple)) for group in action_names.values()
+            ):
+                action_names = [name for group in action_names.values() for name in group]
             cfg.action_feature_names = list(action_names)
     if ds_meta is not None:
         set_dataset_feature_metadata = getattr(cfg, "set_dataset_feature_metadata", None)
@@ -457,6 +500,43 @@ def _get_policy_cls_from_policy_name(name: str) -> type[PreTrainedPolicy]:
             f"Policies must expose '<Name>Policy' in the sibling 'modeling_*' module by naming convention."
         )
     return policy_cls
+
+
+def _make_pretrained_processors_from_policy_config(
+    config: PreTrainedConfig,
+    pretrained_path: str,
+    *,
+    revision: str | None,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None,
+    dataset_meta: Any | None,
+    preprocessor_overrides: dict[str, Any] | None,
+    postprocessor_overrides: dict[str, Any] | None,
+    preprocessor_config_filename: str,
+    postprocessor_config_filename: str,
+) -> tuple[Any, Any] | None:
+    """Let a policy rebuild pretrained processors when its current runtime requires it."""
+    function_name = f"make_{config.type}_pre_post_processors_from_pretrained"
+    module_path = config.__class__.__module__.replace("configuration_", "processor_")
+    try:
+        module = importlib.import_module(module_path)
+    except ModuleNotFoundError as exc:
+        if exc.name == module_path:
+            return None
+        raise
+    function = getattr(module, function_name, None)
+    if function is None:
+        return None
+    return function(
+        config=config,
+        pretrained_path=pretrained_path,
+        revision=revision,
+        dataset_stats=dataset_stats,
+        dataset_meta=dataset_meta,
+        preprocessor_overrides=preprocessor_overrides,
+        postprocessor_overrides=postprocessor_overrides,
+        preprocessor_config_filename=preprocessor_config_filename,
+        postprocessor_config_filename=postprocessor_config_filename,
+    )
 
 
 def _make_processors_from_policy_config(

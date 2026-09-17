@@ -621,13 +621,7 @@ class UnitreeG1(Robot):
             from lerobot.envs import make_env
 
             self._ChannelFactoryInitialize(0, "lo")
-            # publish_images=False: the sim would otherwise stand up an offscreen renderer and
-            # a ZMQ image server for its own cameras. This robot's cameras are configured
-            # separately (and may well point at the real hardware), so that renderer is never
-            # read -- it just costs a GL context, which is what fails on headless boxes.
-            self._env_wrapper = make_env(
-                "lerobot/unitree-g1-mujoco", trust_remote_code=True, publish_images=False
-            )
+            self._env_wrapper = make_env(self.config.sim_env, trust_remote_code=True)
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
         elif self.config.onboard:

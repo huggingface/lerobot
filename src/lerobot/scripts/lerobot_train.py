@@ -495,6 +495,15 @@ def train(cfg: TrainPipelineConfig):
     # --- processors (overrides built once, as one typed mapping) -------------------------------
     active_cfg = cfg.trainable_config
     processor_pretrained_path = active_cfg.pretrained_path
+    if not cfg.resume and getattr(active_cfg, "recipe", None) is not None:
+        if processor_pretrained_path is not None and is_main_process():
+            logging.warning(
+                "Language recipe fine-tuning rebuilds processors from the active configuration; "
+                "saved processors from %s will not be loaded.",
+                processor_pretrained_path,
+            )
+        # Language fine-tuning must use the active recipe, not the saved processor recipe.
+        processor_pretrained_path = None
 
     processor_kwargs = ProcessorConfigKwargs()
     processor_dataset_stats = rename_stats(dataset.meta.stats, cfg.rename_map)
