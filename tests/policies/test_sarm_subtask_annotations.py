@@ -17,12 +17,15 @@
 import pytest
 
 pytest.importorskip("transformers")
+pytest.importorskip("datasets")
+pytest.importorskip("pyarrow")
 
 from lerobot.data_processing.sarm_annotations.subtask_annotation import (
     Subtask,
     SubtaskAnnotation,
     Timestamp,
     compute_temporal_proportions,
+    save_annotations_to_dataset,
 )
 
 
@@ -39,6 +42,33 @@ def make_annotation(subtasks: list[tuple[str, int, int]]) -> SubtaskAnnotation:
             for name, start, end in subtasks
         ]
     )
+
+
+def test_save_annotations_uses_local_row_for_sharded_episode_files(tmp_path):
+    import pandas as pd
+
+    episodes_dir = tmp_path / "meta" / "episodes" / "chunk-000"
+    episodes_dir.mkdir(parents=True)
+
+    for file_index, episode_indices in enumerate(([0, 1], [2, 3])):
+        pd.DataFrame(
+            {
+                "episode_index": episode_indices,
+                "meta/episodes/chunk_index": [0] * len(episode_indices),
+                "meta/episodes/file_index": [file_index] * len(episode_indices),
+            }
+        ).to_parquet(episodes_dir / f"file-{file_index:03d}.parquet")
+
+    annotations = {episode_index: make_annotation([("fold", 0, 1)]) for episode_index in range(4)}
+    save_annotations_to_dataset(tmp_path, annotations, fps=30)
+
+    for file_index, episode_indices in enumerate(([0, 1], [2, 3])):
+        saved = pd.read_parquet(episodes_dir / f"file-{file_index:03d}.parquet")
+        for episode_index in episode_indices:
+            row = saved.loc[saved["episode_index"] == episode_index].iloc[0]
+            assert row["sparse_subtask_names"] == ["fold"]
+            assert row["sparse_subtask_start_frames"] == [0]
+            assert row["sparse_subtask_end_frames"] == [30]
 
 
 class TestComputeTemporalProportions:
