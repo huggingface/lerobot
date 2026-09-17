@@ -1,0 +1,227 @@
+# GR00T 策略
+
+GR00T 是 NVIDIA 的基础模型系列，用于通用人形机器人推理和技能。它是一个跨具身策略，接受多模态输入，包括语言、图像和本体感知，以在不同环境中执行操作任务。
+
+LeRobot 通过 `groot` 策略类型集成 GR00T N1.7。
+
+> [!WARNING]
+> **重大变更：** GR00T N1.5 支持已从 LeRobot 中移除，当前版本仅支持 GR00T N1.7。N1.5 检查点和配置会被拒绝并附带迁移说明。如需继续使用 N1.5 检查点，请固定到支持它的最后一个版本：`pip install 'lerobot==0.5.1'`。如需使用当前版本，请迁移到 GR00T N1.7（基础模型 [`nvidia/GR00T-N1.7-3B`](https://huggingface.co/nvidia/GR00T-N1.7-3B)）。
+
+## 模型概述
+
+GR00T N1.7 使用 Cosmos-Reason2/Qwen3-VL 骨干网络，并提供 SimplerEnv、DROID 和 LIBERO 的检查点。
+
+开发者和研究人员可以使用自己的真实或合成数据对 GR00T 进行后训练，使其适配特定的人形机器人或任务。
+
+GR00T 使用预训练的视觉和语言编码器，配合流匹配动作 Transformer 来建模以视觉、语言和本体感知为条件的动作块。
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-groot-paper1%20(1).png"
+  alt="GR00T 概览"
+  width="80%"
+/>
+
+其强大的性能源于在广泛且多样化的人形数据集上进行训练，包括：
+
+- 来自机器人的真实捕获数据。
+- 使用 NVIDIA Isaac GR00T Blueprint 生成的合成数据。
+- 互联网规模的视频数据。
+
+这种方法使模型能够通过后训练高度适配不同的具身形态、任务和环境。
+
+## 安装要求
+
+GR00T 适用于 NVIDIA GPU 加速系统。使用 GR00T 扩展安装 LeRobot：
+
+```bash
+pip install "lerobot[groot]"
+```
+
+从源码安装：
+
+```bash
+pip install -e ".[groot]"
+```
+
+## 使用方法
+
+使用 GR00T N1.7：
+
+```bash
+--policy.type=groot
+```
+
+## 训练
+
+### 训练命令示例
+
+以下是在自己的数据集上微调基础 GR00T 模型的完整训练命令：
+
+此命令使用 `new_embodiment` 标志，用于 SO-101 机器人，[了解更多关于 GR00T 如何处理不同具身形态的信息](https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/policy.md#--embodiment-tag)。
+
+```bash
+# 安装训练所需的额外依赖
+pip install "lerobot[training]"
+
+hf auth login
+wandb login
+
+export DATASET_NAME=your_data_set
+export HF_USER=your_hf_username
+export DATASET=$HF_USER/$DATASET_NAME
+export REPO_ID="${DATASET}_GR00T17" #这是将上传到 Hugging Face 的模型
+export OUTPUT_DIR=outputs/train/$REPO_ID
+
+lerobot-train \
+  --dataset.repo_id=$DATASET \
+  --dataset.image_transforms.enable=true \
+  --policy.type=groot \
+  --policy.device=cuda \
+  --policy.base_model_path=nvidia/GR00T-N1.7-3B \
+  --policy.embodiment_tag=new_embodiment \
+  --policy.chunk_size=16 \
+  --policy.n_action_steps=16 \
+  --policy.use_relative_actions=true \
+  --policy.relative_exclude_joints='["gripper"]' \
+  --policy.use_bf16=true \
+  --policy.push_to_hub=true \
+  --policy.repo_id=$REPO_ID \
+  --seed=42 \
+  --batch_size=64 \
+  --steps=20000 \
+  --save_checkpoint=true \
+  --save_freq=5000 \
+  --use_policy_training_preset=true \
+  --env_eval_freq=0 \
+  --eval_steps=0 \
+  --log_freq=10 \
+  --output_dir=$OUTPUT_DIR \
+  --job_name=$DATASET \
+  --wandb.enable=true \
+  --wandb.disable_artifact=true
+
+```
+
+## 性能结果
+
+### LIBERO 基准测试结果
+
+> [!NOTE]
+> 在运行 `lerobot-eval` 之前，请按照 [LIBERO](./libero) 设置说明进行配置。
+
+GR00T N1.7 在 LIBERO 基准测试套件上展示了强大的性能。要复现 LeRobot 的结果，请按照 [LIBERO](./libero) 部分的说明操作。
+
+### 在 LIBERO 上训练
+
+LIBERO 套件的训练命令示例（以 `libero_spatial` 为例）：
+
+```bash
+IMAGE_TRANSFORMS='{
+  "brightness": {"weight": 1.0, "type": "ColorJitter", "kwargs": {"brightness": [0.7, 1.3]}},
+  "contrast":   {"weight": 1.0, "type": "ColorJitter", "kwargs": {"contrast":   [0.6, 1.4]}},
+  "saturation": {"weight": 1.0, "type": "ColorJitter", "kwargs": {"saturation": [0.5, 1.5]}},
+  "hue":        {"weight": 1.0, "type": "ColorJitter", "kwargs": {"hue":        [-0.08, 0.08]}}
+}'
+
+lerobot-train \
+  --dataset.repo_id=IPEC-COMMUNITY/libero_spatial_no_noops_1.0.0_lerobot \
+  --dataset.root=/datasets/libero_spatial \
+  --dataset.revision=main \
+  --dataset.video_backend=pyav \
+  --dataset.image_transforms.enable=true \
+  --dataset.image_transforms.max_num_transforms=4 \
+  --dataset.image_transforms.tfs="$IMAGE_TRANSFORMS" \
+  --policy.type=groot \
+  --policy.base_model_path=nvidia/GR00T-N1.7-3B \
+  --policy.embodiment_tag=libero_sim \
+  --policy.push_to_hub=false \
+  --policy.use_relative_actions=false \
+  --policy.max_steps=20000 \
+  --batch_size=320 \
+  --steps=20000 \
+  --save_freq=2000 \
+  --env_eval_freq=0 \
+  --eval_steps=0 \
+  --log_freq=10 \
+  --wandb.enable=true \
+  --wandb.project=lerobot \
+  --wandb.mode=online \
+  --wandb.disable_artifact=true \
+  --num_workers=4 \
+  --prefetch_factor=2 \
+  --persistent_workers=true \
+  --output_dir=$OUTPUT_DIR \
+  --job_name=$JOB_NAME
+```
+
+这将遵循[此处](https://github.com/NVIDIA/Isaac-GR00T/blob/main/examples/LIBERO/README.md)的方案。
+
+### GR00T N1.7 LIBERO 结果
+
+LeRobot 集成的初步结果（GR00T-LeRobot，每个套件 `eval.n_episodes >= 50`）：
+
+| 套件             | 成功率  | 检查点                                                                                                     |
+| ---------------- | ------: | ---------------------------------------------------------------------------------------------------------- |
+| LIBERO Spatial   |    95%  | [nvidia/gr00t17-lerobot-libero_spatial-640](https://huggingface.co/nvidia/gr00t17-lerobot-libero_spatial-640) |
+| LIBERO Object    |   100%  | [nvidia/gr00t17-lerobot-libero_object-640](https://huggingface.co/nvidia/gr00t17-lerobot-libero_object-640)   |
+| LIBERO Goal      |    98%  | [nvidia/gr00t17-lerobot-libero_goal-640](https://huggingface.co/nvidia/gr00t17-lerobot-libero_goal-640)       |
+| LIBERO 10（长任务）|   93%  | [nvidia/gr00t17-lerobot-libero_10-640](https://huggingface.co/nvidia/gr00t17-lerobot-libero_10-640)           |
+| **平均**         | **96.5%** |                                                                                                          |
+
+```bash
+export MODEL_ID=your_trained_model_on_huggingface
+
+lerobot-eval \
+  --policy.type=groot \
+  --policy.base_model_path=$MODEL_ID \
+  --policy.embodiment_tag=libero_sim \
+  --env.type=libero \
+  --env.task=libero_spatial \
+  --eval.n_episodes=50
+```
+
+报告成功率时请使用 `eval.n_episodes >= 50`。
+
+### 在您的硬件环境中评估
+
+使用自己的参数训练模型后，可以在下游任务中运行推理。请按照[策略部署（lerobot-rollout）](./inference)中的说明操作。例如：
+
+```bash
+# 安装部署和真实硬件所需的额外依赖
+pip install "lerobot[feetech,viz]"
+
+export MODEL_ID=your_trained_model_on_huggingface
+
+# 确保相机索引与您的设置匹配！
+# 使用 `uv run lerobot-find-cameras opencv` 查找索引
+WRIST_CAM='wrist: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30, fourcc: "MJPG"}'
+FRONT_CAM='front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30, fourcc: "MJPG"}'
+export ROBOT_CAMERAS="{ $WRIST_CAM, $FRONT_CAM }"
+export ROBOT_ID=follower_robot
+export ROBOT_PORT=/dev/ttyACM0
+
+uv run lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=$MODEL_ID \
+  --policy.base_model_path=nvidia/GR00T-N1.7-3B \
+  --policy.n_action_steps=8 \
+  --robot.type=so101_follower \
+  --robot.port=$ROBOT_PORT \
+  --robot.id=$ROBOT_ID \
+  --robot.cameras="$ROBOT_CAMERAS" \
+  --task="place the vial in the rack" \
+  --duration=60 \
+  --device=cuda \
+  --display_data=true \
+  --inference.type=rtc \
+  --inference.rtc.enabled=True \ # 如果导致推理不稳定，设为 False
+  --inference.rtc.execution_horizon=8 \
+  --inference.queue_threshold=0
+```
+
+> [!NOTE]
+> `inference.queue_threshold` 的值不应超过 5，以确保稳定的推理。
+
+## 许可证
+
+GR00T N1.7 在 [NVIDIA 开放模型许可协议](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/)下发布。
