@@ -139,68 +139,38 @@ def _validate_trained_rtc_rollout_config(policy_config, inference_config: RTCInf
         )
 
 
-def _resolve_action_key_order(
-    policy_action_names: list[str] | None, dataset_action_names: list[str]
-) -> list[str]:
-    """Choose action name ordering for mapping policy tensor outputs to robot action dicts."""
-    if not policy_action_names:
-        return dataset_action_names
-    policy_action_names = list(policy_action_names)
-    if len(policy_action_names) != len(dataset_action_names):
-        logger.warning(
-            "policy.action_feature_names length (%d) != dataset action dim (%d); using dataset order",
-            len(policy_action_names),
-            len(dataset_action_names),
-        )
-        return dataset_action_names
-    if set(dataset_action_names) != set(policy_action_names):
-        logger.warning("policy.action_feature_names keys don't match dataset; using dataset order")
-        return dataset_action_names
-    return policy_action_names
-
-
-def _align_state_feature_order(
-    observation_features_hw: dict[str, type | tuple], policy_action_names: list[str] | None
+def _align_to_checkpoint_order(
+    features: dict[str, type | tuple], policy_action_names: list[str] | None, *, what: str
 ) -> dict[str, type | tuple]:
-    """Order scalar state features to match the checkpoint's joint order."""
+    """Order ``features`` so its motor entries follow the checkpoint's joint order.
+
+    One rule for both sides: the policy emits and consumes tensors in the order it was
+    trained on, so whichever dict is about to be flattened into a tensor has to match it.
+    Only the scalar motor entries take part; anything else (camera shapes, on the state
+    side) keeps its relative order at the end.
+
+    A set mismatch is left alone rather than forced: extra ``.vel`` channels or an
+    uncommanded base mean the two describe different things, and the robot's own order is
+    the only meaningful one. ``what`` names the side being aligned, so the warning says
+    which of the two reordered.
+    """
     if not policy_action_names:
-        return observation_features_hw
+        return features
 
-    scalar_names = [
-        name for name, feature in observation_features_hw.items() if not isinstance(feature, tuple)
-    ]
-    if set(scalar_names) != set(policy_action_names) or scalar_names == policy_action_names:
-        return observation_features_hw
+    motor_names = [name for name, feature in features.items() if not isinstance(feature, tuple)]
+    if set(motor_names) != set(policy_action_names) or motor_names == policy_action_names:
+        return features
 
-    reordered = {name: observation_features_hw[name] for name in policy_action_names}
-    reordered.update(
-        {name: feature for name, feature in observation_features_hw.items() if name not in reordered}
-    )
     logger.warning(
-        "Robot state order %s differs from checkpoint joint order %s; reordering state",
-        scalar_names,
+        "Robot %s order %s differs from checkpoint joint order %s; reordering %s",
+        what,
+        motor_names,
         policy_action_names,
+        what,
     )
+    reordered = {name: features[name] for name in policy_action_names}
+    reordered.update({name: feature for name, feature in features.items() if name not in reordered})
     return reordered
-
-
-def _align_action_feature_order(
-    action_features_hw: dict[str, type], policy_action_names: list[str] | None
-) -> dict[str, type]:
-    """Order action features to match the checkpoint's joint order."""
-    if not policy_action_names:
-        return action_features_hw
-
-    raw_names = list(action_features_hw)
-    if set(raw_names) != set(policy_action_names) or raw_names == policy_action_names:
-        return action_features_hw
-
-    logger.warning(
-        "Robot action order %s differs from checkpoint joint order %s; reordering actions",
-        raw_names,
-        policy_action_names,
-    )
-    return {name: action_features_hw[name] for name in policy_action_names}
 
 
 def _assert_state_matches_action_order(dataset_features: dict, ordered_action_keys: list[str]) -> None:
@@ -468,9 +438,9 @@ def build_rollout_context(
         if isinstance(v, tuple) or (v is float and k.endswith((".pos", ".vel")))
     }
     policy_action_names = getattr(policy_config, "action_feature_names", None)
-    observation_features_hw = _align_state_feature_order(
-        observation_features_hw,
-        list(policy_action_names) if policy_action_names else None,
+    checkpoint_order = list(policy_action_names) if policy_action_names else None
+    observation_features_hw = _align_to_checkpoint_order(
+        observation_features_hw, checkpoint_order, what="state"
     )
     # Keep both joint-position (.pos) and base-velocity (.vel) action features so
     # mobile manipulators command the base too (e.g. LeKiwi: 6 arm .pos +
@@ -478,11 +448,7 @@ def build_rollout_context(
     # a no-op for them. Without the .vel keys the base velocities are silently
     # dropped from dataset_features[ACTION]/ordered_action_keys and the base never moves.
     action_features_hw = {k: v for k, v in robot.action_features.items() if k.endswith((".pos", ".vel"))}
-    # Align the action side by the same rule used for the state above.
-    action_features_hw = _align_action_feature_order(
-        action_features_hw,
-        list(policy_action_names) if policy_action_names else None,
-    )
+    action_features_hw = _align_to_checkpoint_order(action_features_hw, checkpoint_order, what="action")
 
     # The action side is always needed: sync inference reads action names from
     # ``dataset_features[ACTION]`` to map policy tensors back to robot actions.
@@ -499,11 +465,8 @@ def build_rollout_context(
     )
     dataset_features = combine_feature_dicts(action_dataset_features, observation_dataset_features)
     hw_features = hw_to_dataset_features(observation_features_hw, "observation")
-    raw_action_keys = list(action_features_hw.keys())
-    ordered_action_keys = _resolve_action_key_order(
-        list(policy_action_names) if policy_action_names else None,
-        raw_action_keys,
-    )
+    # ``action_features_hw`` is already in checkpoint order, so it *is* the dispatch order.
+    ordered_action_keys = list(action_features_hw)
     _assert_state_matches_action_order(dataset_features, ordered_action_keys)
 
     # Validate visual features if no rename_map is active

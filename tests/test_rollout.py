@@ -649,8 +649,8 @@ def test_create_inference_engine_sync():
 # ---------------------------------------------------------------------------
 
 
-def test_align_state_feature_order_matches_checkpoint_and_preserves_cameras(caplog):
-    from lerobot.rollout.context import _align_state_feature_order
+def test_align_to_checkpoint_order_reorders_motors_and_preserves_cameras(caplog):
+    from lerobot.rollout.context import _align_to_checkpoint_order
     from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_features
 
     features = {
@@ -659,7 +659,7 @@ def test_align_state_feature_order_matches_checkpoint_and_preserves_cameras(capl
         "joint_a.pos": float,
     }
 
-    aligned = _align_state_feature_order(features, ["joint_a.pos", "joint_b.pos"])
+    aligned = _align_to_checkpoint_order(features, ["joint_a.pos", "joint_b.pos"], what="state")
 
     assert list(aligned) == ["joint_a.pos", "joint_b.pos", "wrist_camera"]
     assert aligned["wrist_camera"] == (480, 640, 3)
@@ -674,42 +674,19 @@ def test_align_state_feature_order_matches_checkpoint_and_preserves_cameras(capl
     assert frame["observation.state"].tolist() == [1.0, 2.0]
 
 
-@pytest.mark.parametrize(
-    ("policy_action_names", "feature_names"),
-    [
-        (None, ["joint_b.pos", "joint_a.pos", "wrist_camera"]),
-        (["joint_b.pos", "joint_a.pos"], ["joint_b.pos", "joint_a.pos", "wrist_camera"]),
-        (["joint_a.pos"], ["joint_b.pos", "joint_a.pos", "wrist_camera"]),
-        (["joint_a.pos", "gripper.pos"], ["joint_b.pos", "joint_a.pos", "wrist_camera"]),
-    ],
-)
-def test_align_state_feature_order_is_noop_without_an_exact_name_match(policy_action_names, feature_names):
-    from lerobot.rollout.context import _align_state_feature_order
-
-    features = {
-        "joint_b.pos": float,
-        "joint_a.pos": float,
-        "wrist_camera": (480, 640, 3),
-    }
-
-    aligned = _align_state_feature_order(features, policy_action_names)
-
-    assert aligned is features
-    assert list(aligned) == feature_names
-
-
-def test_align_action_feature_order_matches_checkpoint(caplog):
-    """The action side must be reordered whenever the state side is."""
-    from lerobot.rollout.context import _align_action_feature_order
+def test_align_to_checkpoint_order_aligns_the_action_side_by_the_same_rule(caplog):
+    """One primitive serves both sides; the action dict simply has no camera entries."""
+    from lerobot.rollout.context import _align_to_checkpoint_order
 
     features = {"joint_b.pos": float, "joint_a.pos": float}
 
-    aligned = _align_action_feature_order(features, ["joint_a.pos", "joint_b.pos"])
+    aligned = _align_to_checkpoint_order(features, ["joint_a.pos", "joint_b.pos"], what="action")
 
     assert list(aligned) == ["joint_a.pos", "joint_b.pos"]
-    assert "reordering actions" in caplog.text
+    assert "reordering action" in caplog.text
 
 
+@pytest.mark.parametrize("what", ["state", "action"])
 @pytest.mark.parametrize(
     "policy_action_names",
     [
@@ -719,15 +696,20 @@ def test_align_action_feature_order_matches_checkpoint(caplog):
         ["joint_a.pos", "gripper.pos"],  # different set
     ],
 )
-def test_align_action_feature_order_is_noop_without_an_exact_name_match(policy_action_names):
-    from lerobot.rollout.context import _align_action_feature_order
+def test_align_to_checkpoint_order_is_noop_without_an_exact_name_match(policy_action_names, what):
+    """A set mismatch means the two describe different things: keep the robot's own order."""
+    from lerobot.rollout.context import _align_to_checkpoint_order
 
-    features = {"joint_b.pos": float, "joint_a.pos": float}
+    features = {
+        "joint_b.pos": float,
+        "joint_a.pos": float,
+        "wrist_camera": (480, 640, 3),
+    }
 
-    aligned = _align_action_feature_order(features, policy_action_names)
+    aligned = _align_to_checkpoint_order(features, policy_action_names, what=what)
 
     assert aligned is features
-    assert list(aligned) == ["joint_b.pos", "joint_a.pos"]
+    assert list(aligned) == ["joint_b.pos", "joint_a.pos", "wrist_camera"]
 
 
 def test_assert_state_matches_action_order_rejects_a_permutation():
