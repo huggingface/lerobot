@@ -72,6 +72,7 @@ class RolloutStrategy(abc.ABC):
         self._interpolator: ActionInterpolator | None = None
         self._warmup_flushed: bool = False
         self._cached_obs_processed: dict | None = None
+        self._loop_tick: int = 0
 
     def _init_engine(self, ctx: RolloutContext) -> None:
         """Attach the inference engine and action interpolator, then start the backend.
@@ -104,6 +105,7 @@ class RolloutStrategy(abc.ABC):
         if self._interpolator is not None:
             self._interpolator.reset()
         self._cached_obs_processed = None
+        self._loop_tick = 0
 
     def _process_observation_and_notify(self, processors: ProcessorContext, obs_raw: dict) -> dict:
         """Run the observation processor and notify the engine — throttled to policy ticks.
@@ -121,10 +123,18 @@ class RolloutStrategy(abc.ABC):
         The cache is implicitly invalidated whenever ``interpolator.reset()`` is
         called (warmup completion, DAgger phase transitions back to AUTONOMOUS),
         because reset makes ``needs_new_action()`` return True on the next call.
+
+        While the interpolator is starved (startup, warmup flush, queue drained)
+        ``needs_new_action()`` is True on every sub-tick, so notifications can
+        arrive ``interpolation_multiplier`` times per policy tick.  Each one is
+        stamped with the policy tick (loop ticks // multiplier) so engines that
+        condition on observation history keep one frame per training-rate step.
         """
+        policy_tick = self._loop_tick // self._interpolator.multiplier
+        self._loop_tick += 1
         if self._cached_obs_processed is None or self._interpolator.needs_new_action():
             obs_processed = processors.robot_observation_processor(obs_raw)
-            self._engine.notify_observation(obs_processed)
+            self._engine.notify_observation(obs_processed, policy_tick=policy_tick)
             self._cached_obs_processed = obs_processed
         return self._cached_obs_processed
 

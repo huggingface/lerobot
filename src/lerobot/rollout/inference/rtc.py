@@ -45,6 +45,7 @@ from lerobot.utils.feature_utils import build_dataset_frame
 
 from ..robot_wrapper import ThreadSafeRobot
 from .base import InferenceEngine, PolicyQuery
+from .observation_history import ObservationHistory
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +212,8 @@ class RTCInferenceEngine(InferenceEngine):
         self._action_queue: ActionQueue | None = None
         self._obs_holder: dict[str, Any] = {}
         self._obs_lock = Lock()
+        self._observation_history = ObservationHistory(getattr(policy, "config", None))
+        self._passes_execution_horizon = self._accepts_execution_horizon(policy)
         # Bumped by reset() under _obs_lock, so a chunk whose inference started before a
         # reset is discarded instead of merged into the fresh queue.
         self._reset_epoch = 0
@@ -281,10 +284,10 @@ class RTCInferenceEngine(InferenceEngine):
     def start(self) -> None:
         """Launch the RTC background thread."""
         self._action_queue = ActionQueue(self._rtc_config)
-        self._obs_holder = {
-            "obs": None,
-            "robot_type": self._robot.robot_type,
-        }
+        with self._obs_lock:
+            self._obs_holder = {"obs": None, "robot_type": self._robot.robot_type}
+            self._observation_history.clear()
+            self._reset_epoch += 1
         self._shutdown_event.clear()
         self._rtc_thread = Thread(
             target=self._rtc_loop,
@@ -336,6 +339,7 @@ class RTCInferenceEngine(InferenceEngine):
             if self._action_queue is not None:
                 self._action_queue.clear()
             self._obs_holder["obs"] = None
+            self._observation_history.clear()
             self._reset_epoch += 1
         # The queue is empty, so a pending task change has nothing stale to blend against.
         self._discard_task_change()
@@ -361,9 +365,20 @@ class RTCInferenceEngine(InferenceEngine):
         self._set_dispatched_task(task)
         return action
 
-    def notify_observation(self, obs: dict) -> None:
-        """Publish the latest observation for the RTC thread to consume."""
+    def notify_observation(self, obs: dict, *, policy_tick: int | None = None) -> None:
+        """Publish the latest observation for the RTC thread to consume.
+
+        ``policy_tick`` identifies the training-rate step this observation belongs to;
+        history-conditioned policies keep one frame per tick even when the control
+        loop notifies more often (see :class:`ObservationHistory`).
+        """
+        frame = None
+        if self._observation_history.enabled:
+            frame = self._observation_history.capture(obs, policy_tick)
+            obs = frame.observation
         with self._obs_lock:
+            if frame is not None:
+                self._observation_history.push(frame)
             self._obs_holder["obs"] = obs
 
     # ------------------------------------------------------------------
@@ -399,6 +414,17 @@ class RTCInferenceEngine(InferenceEngine):
     # RTC: background inference thread
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _accepts_execution_horizon(policy: PreTrainedPolicy) -> bool:
+        """Whether ``predict_action_chunk`` takes the true prefix length as ``execution_horizon``."""
+        try:
+            inspect.signature(policy.predict_action_chunk).bind(
+                object(), inference_delay=0, prev_chunk_left_over=None, execution_horizon=1
+            )
+        except (TypeError, ValueError):
+            return False
+        return True
+
     def _rtc_loop(self) -> None:
         """Background thread that generates action chunks via RTC."""
         try:
@@ -419,6 +445,7 @@ class RTCInferenceEngine(InferenceEngine):
                 queue = self._action_queue
                 with self._obs_lock:
                     obs = self._obs_holder.get("obs")
+                    history = self._observation_history.snapshot()
                     epoch_before = self._reset_epoch
                 if queue is None or obs is None:
                     time.sleep(_RTC_IDLE_SLEEP_S)
@@ -435,6 +462,7 @@ class RTCInferenceEngine(InferenceEngine):
                     # a reset that landed during the query.
                     with self._obs_lock:
                         obs = self._obs_holder.get("obs")
+                        history = self._observation_history.snapshot()
                         epoch_before = self._reset_epoch
                     if obs is None:  # a reset mid-query dropped the observation
                         continue
@@ -472,13 +500,20 @@ class RTCInferenceEngine(InferenceEngine):
                             # inference; with blending off the queue drains first.
                             logger.info("Task changed to '%s' — applied from the next merged chunk", task)
 
-                        obs_batch = build_dataset_frame(self._hw_features, obs, prefix="observation")
-                        obs_batch = prepare_observation_for_inference(
-                            obs_batch, policy_device, task, self._robot.robot_type
-                        )
-                        obs_batch["task"] = [task]
+                        def prepare(observation: dict, task: str = task) -> dict:
+                            obs_batch = build_dataset_frame(
+                                self._hw_features, observation, prefix="observation"
+                            )
+                            obs_batch = prepare_observation_for_inference(
+                                obs_batch, policy_device, task, self._robot.robot_type
+                            )
+                            obs_batch["task"] = [task]
+                            return self._preprocessor(obs_batch)
 
-                        preprocessed = self._preprocessor(obs_batch)
+                        if self._observation_history.enabled:
+                            preprocessed = self._observation_history.preprocess(history, prepare)
+                        else:
+                            preprocessed = prepare(obs)
 
                         if prev_actions is not None and self._relative_step is not None:
                             # Rebase against the raw cached state so the leftover tail stays in
@@ -495,13 +530,25 @@ class RTCInferenceEngine(InferenceEngine):
                                         policy_device=policy_device,
                                     )
 
+                        # The prefix is zero-padded to a fixed length for stable compiled
+                        # inference; the true leftover length travels separately so the
+                        # policy can keep the padding out of the guidance window.
+                        rtc_kwargs: dict[str, Any] = {}
+                        if prev_actions is not None and prev_actions.shape[0] == 0:
+                            prev_actions = None
                         if prev_actions is not None:
+                            valid_steps = min(prev_actions.shape[0], self._rtc_config.execution_horizon)
                             prev_actions = _normalize_prev_actions_length(
                                 prev_actions, target_steps=self._rtc_config.execution_horizon
                             )
+                            if self._passes_execution_horizon:
+                                rtc_kwargs["execution_horizon"] = valid_steps
 
                         actions = self._policy.predict_action_chunk(
-                            preprocessed, inference_delay=delay, prev_chunk_left_over=prev_actions
+                            preprocessed,
+                            inference_delay=delay,
+                            prev_chunk_left_over=prev_actions,
+                            **rtc_kwargs,
                         )
 
                         original = actions.squeeze(0).clone()
