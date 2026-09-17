@@ -23,6 +23,8 @@ from .constants import (
     DEFAULT_FPS,
     DEFAULT_INFERENCE_LATENCY,
     DEFAULT_OBS_QUEUE_TIMEOUT,
+    IMAGE_COMPRESSION_NONE,
+    SUPPORTED_IMAGE_COMPRESSIONS,
 )
 
 # Aggregate function registry for CLI usage
@@ -137,6 +139,26 @@ class RobotClientConfig:
     chunk_size_threshold: float = field(default=0.5, metadata={"help": "Threshold for chunk size control"})
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Frames per second"})
 
+    # Observation compression configuration
+    observation_image_compression: str = field(
+        default=IMAGE_COMPRESSION_NONE,
+        metadata={
+            "help": (
+                "Image compression codec for observations sent to the policy server. "
+                f"Options: {SUPPORTED_IMAGE_COMPRESSIONS}"
+            )
+        },
+    )
+    observation_image_compression_quality: int = field(
+        default=90,
+        metadata={
+            "help": (
+                "Image compression quality in [1, 100]. Higher values improve quality; "
+                "for PNG, higher values use less compression work."
+            )
+        },
+    )
+
     # Aggregate function configuration (CLI-compatible)
     aggregate_fn_name: str = field(
         default="weighted_average",
@@ -179,6 +201,21 @@ class RobotClientConfig:
         if self.actions_per_chunk <= 0:
             raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
 
+        if self.observation_image_compression not in SUPPORTED_IMAGE_COMPRESSIONS:
+            raise ValueError(
+                f"observation_image_compression must be one of {SUPPORTED_IMAGE_COMPRESSIONS}, "
+                f"got {self.observation_image_compression}"
+            )
+
+        if (
+            self.observation_image_compression_quality < 1
+            or self.observation_image_compression_quality > 100
+        ):
+            raise ValueError(
+                "observation_image_compression_quality must be between 1 and 100, "
+                f"got {self.observation_image_compression_quality}"
+            )
+
         self.aggregate_fn = get_aggregate_function(self.aggregate_fn_name)
 
     @classmethod
@@ -198,6 +235,8 @@ class RobotClientConfig:
             "fps": self.fps,
             "actions_per_chunk": self.actions_per_chunk,
             "task": self.task,
+            "observation_image_compression": self.observation_image_compression,
+            "observation_image_compression_quality": self.observation_image_compression_quality,
             "debug_visualize_queue_size": self.debug_visualize_queue_size,
             "aggregate_fn_name": self.aggregate_fn_name,
         }
