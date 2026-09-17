@@ -318,3 +318,40 @@ def test_wrap_uses_cleaned_config_for_draccus_parse():
 
     _config_path_args.clear()
     _config_yaml_overrides.clear()
+
+
+def test_reward_model_yaml_overrides_reach_from_pretrained(tmp_path):
+    """Regression: `reward_model.path` siblings in a YAML config were captured and then dropped.
+
+    `TrainPipelineConfig.__get_path_fields__()` covers both "policy" and "reward_model", so
+    `extract_path_fields_from_config` strips the whole `reward_model:` block out of the YAML and
+    stashes its siblings as CLI-style overrides. The policy branch merges those back in via
+    `get_yaml_overrides("policy")`; the reward-model branch only read the CLI ones, so the YAML
+    values were silently lost and the checkpoint's values stood.
+    """
+    from lerobot.configs.default import DatasetConfig
+    from lerobot.configs.train import TrainPipelineConfig
+    from lerobot.rewards.classifier.configuration_classifier import (  # noqa: F401  (registers "reward_classifier")
+        RewardClassifierConfig,
+    )
+
+    checkpoint = tmp_path / "reward_ckpt"
+    checkpoint.mkdir()
+    (checkpoint / "config.json").write_text(json.dumps({"type": "reward_classifier", "num_cameras": 2}))
+
+    config_path = tmp_path / "train.yaml"
+    config_path.write_text(yaml.dump({"reward_model": {"path": str(checkpoint), "num_cameras": 1}}))
+
+    _config_path_args.clear()
+    _config_yaml_overrides.clear()
+    extract_path_fields_from_config(str(config_path), ["policy", "reward_model"])
+
+    cfg = TrainPipelineConfig(dataset=DatasetConfig(repo_id="dummy/repo"))
+    with patch.object(sys, "argv", ["prog", f"--config_path={config_path}"]):
+        cfg._resolve_pretrained_from_cli()
+
+    assert cfg.reward_model is not None
+    assert cfg.reward_model.num_cameras == 1
+
+    _config_path_args.clear()
+    _config_yaml_overrides.clear()
