@@ -267,29 +267,25 @@ def teleoperate(cfg: TeleoperateConfig):
     robot = make_robot_from_config(cfg.robot)
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
-    teleop.connect()
-    robot.connect()
-
     try:
-        teleop_loop(
-            teleop=teleop,
-            robot=robot,
-            fps=cfg.fps,
-            display_data=cfg.display_data,
-            display_mode=cfg.display_mode,
-            duration=cfg.teleop_time_s,
-            teleop_action_processor=teleop_action_processor,
-            robot_action_processor=robot_action_processor,
-            robot_observation_processor=robot_observation_processor,
-            display_compressed_images=display_compressed_images,
-        )
+        with teleop, robot:
+            teleop_loop(
+                teleop=teleop,
+                robot=robot,
+                fps=cfg.fps,
+                display_data=cfg.display_data,
+                display_mode=cfg.display_mode,
+                duration=cfg.teleop_time_s,
+                teleop_action_processor=teleop_action_processor,
+                robot_action_processor=robot_action_processor,
+                robot_observation_processor=robot_observation_processor,
+                display_compressed_images=display_compressed_images,
+            )
     except KeyboardInterrupt:
         pass
     finally:
         if cfg.display_data:
             shutdown_visualization(cfg.display_mode)
-        teleop.disconnect()
-        robot.disconnect()
 
 
 def main():

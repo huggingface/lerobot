@@ -25,8 +25,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_not_connected
 from lerobot.utils.import_utils import _hebi_available, _teleop_available, require_package
+from lerobot.utils.lifecycle import idempotent_connect
 from lerobot.utils.rotation import Rotation
 
 if TYPE_CHECKING or _hebi_available:
@@ -94,17 +95,15 @@ class IOSPhone(BasePhone, Teleoperator):
     def is_connected(self) -> bool:
         return self._group is not None
 
-    @check_if_already_connected
+    @idempotent_connect
     def connect(self) -> None:
         logger.info("Connecting to IPhone, make sure to open the HEBI Mobile I/O app.")
         lookup = hebi.Lookup()
         time.sleep(2.0)
-        group = lookup.get_group_from_names(["HEBI"], ["mobileIO"])
-        if group is None:
+        self._group = lookup.get_group_from_names(["HEBI"], ["mobileIO"])
+        if self._group is None:
             raise RuntimeError("Mobile I/O not found — check name/family settings in the app.")
-        self._group = group
-        logger.info(f"{self} connected to HEBI group with {group.size} module(s).")
-
+        logger.info(f"{self} connected to HEBI group with {self._group.size} module(s).")
         self.calibrate()
 
     def calibrate(self) -> None:
@@ -222,7 +221,6 @@ class IOSPhone(BasePhone, Teleoperator):
             "phone.enabled": self._enabled,
         }
 
-    @check_if_not_connected
     def disconnect(self) -> None:
         self._group = None
 
@@ -245,7 +243,7 @@ class AndroidPhone(BasePhone, Teleoperator):
     def is_connected(self) -> bool:
         return self._teleop is not None
 
-    @check_if_already_connected
+    @idempotent_connect
     def connect(self) -> None:
         logger.info("Starting teleop stream for Android...")
         self._teleop = Teleop()
@@ -367,13 +365,15 @@ class AndroidPhone(BasePhone, Teleoperator):
             "phone.enabled": self._enabled,
         }
 
-    @check_if_not_connected
     def disconnect(self) -> None:
         self._teleop = None
-        if self._teleop_thread and self._teleop_thread.is_alive():
-            self._teleop_thread.join(timeout=1.0)
-            self._teleop_thread = None
+        thread = self._teleop_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1.0)
+        self._teleop_thread = None
+        with self._android_lock:
             self._latest_pose = None
+            self._latest_message = None
 
 
 class Phone(Teleoperator):

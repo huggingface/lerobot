@@ -20,8 +20,9 @@ from typing import TYPE_CHECKING
 
 from lerobot.lerobot_types import RobotAction
 from lerobot.motors import MotorCalibration
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_not_connected
 from lerobot.utils.import_utils import _motorbridge_smart_servo_available, require_package
+from lerobot.utils.lifecycle import idempotent_connect
 
 from ..teleoperator import Teleoperator
 from .config_rebot_102_leader import RebotArm102LeaderTeleopConfig
@@ -68,30 +69,22 @@ class RebotArm102Leader(Teleoperator):
     def is_connected(self) -> bool:
         return self.bus is not None
 
-    @check_if_already_connected
+    @idempotent_connect
     def connect(self, calibrate: bool = True) -> None:
         logger.info(f"Connecting {self} on {self.config.port}...")
-        bus = FashionStarServo(self.config.port, baudrate=self.config.baudrate)
-        try:
-            for motor_name, motor_id in self.config.joint_ids.items():
-                if not bus.ping(motor_id):
-                    raise RuntimeError(f"Servo not found for {motor_name} (id={motor_id}).")
-                self._last_raw_positions[motor_name] = 0.0
-            self.bus = bus
+        self.bus = FashionStarServo(self.config.port, baudrate=self.config.baudrate)
+        for motor_name, motor_id in self.config.joint_ids.items():
+            if not self.bus.ping(motor_id):
+                raise RuntimeError(f"Servo not found for {motor_name} (id={motor_id}).")
+            self._last_raw_positions[motor_name] = 0.0
 
-            if not self.is_calibrated and calibrate:
-                logger.info(
-                    "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
-                )
-                self.calibrate()
+        if not self.is_calibrated and calibrate:
+            logger.info(
+                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
+            )
+            self.calibrate()
 
-            self.configure()
-        except Exception:
-            bus.close()
-            self.bus = None
-            raise
-
-        logger.info(f"{self} connected.")
+        self.configure()
 
     @property
     def is_calibrated(self) -> bool:
@@ -200,8 +193,9 @@ class RebotArm102Leader(Teleoperator):
     def send_feedback(self, feedback: dict[str, float]) -> None:
         raise NotImplementedError("Feedback is not implemented for the reBot Arm 102 leader.")
 
-    @check_if_not_connected
     def disconnect(self) -> None:
+        if self.bus is None:
+            return
         self.bus.close()
         self.bus = None
         logger.info(f"{self} disconnected.")

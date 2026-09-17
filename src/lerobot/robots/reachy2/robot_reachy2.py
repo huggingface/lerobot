@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.import_utils import _reachy2_sdk_available, require_package
+from lerobot.utils.lifecycle import Cleanup, idempotent_connect
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -125,15 +126,26 @@ class Reachy2Robot(Robot):
 
     @property
     def is_connected(self) -> bool:
-        return self.reachy.is_connected() if self.reachy is not None else False
+        return (
+            self.reachy is not None
+            and self.reachy.is_connected()
+            and all(cam.is_connected for cam in self.cameras.values())
+        )
 
+    @idempotent_connect
     def connect(self, calibrate: bool = False) -> None:
-        self.reachy = ReachySDK(self.config.ip_address)
-        if not self.is_connected:
-            raise ConnectionError()
+        if self.reachy is not None and not self.reachy.is_connected():
+            # A stale SDK handle cannot be reused: drop it and open a fresh one.
+            self.reachy.disconnect()
+            self.reachy = None
+        if self.reachy is None:
+            self.reachy = ReachySDK(self.config.ip_address)
+        if not self.reachy.is_connected():
+            raise ConnectionError(f"Could not connect to {self}")
 
         for cam in self.cameras.values():
-            cam.connect()
+            if not cam.is_connected:
+                cam.connect()
 
         self.configure()
 
@@ -228,9 +240,15 @@ class Reachy2Robot(Robot):
         return action
 
     def disconnect(self) -> None:
-        if self.reachy is not None:
-            for cam in self.cameras.values():
-                cam.disconnect()
-            if self.config.disable_torque_on_disconnect:
-                self.reachy.turn_off_smoothly()
-            self.reachy.disconnect()
+        with Cleanup(self) as cleanup:
+            for name, cam in self.cameras.items():
+                with cleanup.step(f"camera '{name}'"):
+                    cam.disconnect()
+
+            if self.reachy is not None:
+                if self.config.disable_torque_on_disconnect and self.reachy.is_connected():
+                    with cleanup.step("the torque of the joints"):
+                        self.reachy.turn_off_smoothly()
+                with cleanup.step("the SDK connection"):
+                    self.reachy.disconnect()
+                    self.reachy = None
