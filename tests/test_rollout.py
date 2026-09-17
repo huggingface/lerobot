@@ -1335,7 +1335,7 @@ def _fake_relative_policy(chunk_rel, n_action_steps):
     """Fake chunking relative-action policy for the sync engine (pi0/fastwam/lingbot/act shape).
 
     Buffers a chunk and serves it one action per tick, computing a fresh chunk only on refill.
-    ``queued_action_count()`` mirrors the real ``PreTrainedPolicy`` contract: it reads the same
+    ``count_queued_actions()`` mirrors the real ``PreTrainedPolicy`` contract: it reads the same
     queue ``select_action`` drains, so the bound step sees an accurate depth *before* this
     tick's call runs.
     """
@@ -1360,7 +1360,7 @@ def _fake_relative_policy(chunk_rel, n_action_steps):
     policy.predict_action_chunk.side_effect = predict_action_chunk
     policy.select_action.side_effect = select_action
     policy.reset.side_effect = queue.clear
-    policy.queued_action_count.side_effect = lambda: len(queue)
+    policy.count_queued_actions.side_effect = lambda: len(queue)
     policy._predict_state = state
     return policy
 
@@ -1402,7 +1402,7 @@ def test_sync_relative_holds_anchor_across_chunk():
     policy = _fake_relative_policy(chunk_rel, n_action_steps=n)
     engine = _build_sync_engine(policy, pre, post)
 
-    assert relative_step._queued_action_count == policy.queued_action_count  # binding wired up
+    assert relative_step._count_queued_actions == policy.count_queued_actions  # binding wired up
 
     s0 = [1.0, 2.0, 3.0, 4.0]
     outputs = []

@@ -117,7 +117,7 @@ class RelativeActionsProcessorStep(ProcessorStep):
     exclude_joints: list[str] = field(default_factory=list)
     action_names: list[str] | None = None
     _last_state: torch.Tensor | None = field(default=None, init=False, repr=False)
-    _queued_action_count: Callable[[], int] | None = field(default=None, init=False, repr=False)
+    _count_queued_actions: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
     def _build_mask(self, action_dim: int) -> list[bool]:
         if not self.exclude_joints or self.action_names is None:
@@ -165,10 +165,10 @@ class RelativeActionsProcessorStep(ProcessorStep):
 
     def _chunk_in_flight(self) -> bool:
         """Whether the policy still holds actions generated against the cached anchor."""
-        return self._queued_action_count is not None and self._queued_action_count() > 0
+        return self._count_queued_actions is not None and self._count_queued_actions() > 0
 
-    def bind_action_queue(self, queued_action_count: Callable[[], int] | None) -> None:
-        self._queued_action_count = queued_action_count
+    def bind_action_queue(self, count_queued_actions: Callable[[], int] | None) -> None:
+        self._count_queued_actions = count_queued_actions
 
     def get_cached_state(self) -> torch.Tensor | None:
         """Return the cached ``observation.state`` used as the reference point for relative/absolute action conversions."""
@@ -252,7 +252,7 @@ def bind_relative_anchor(policy: Any, pipeline: Any) -> RelativeActionsProcessor
     treated as absent, because it neither converts actions nor needs its anchor held.
 
     ``policy`` is read only once such a step is found, and only for
-    :meth:`~lerobot.policies.pretrained.PreTrainedPolicy.queued_action_count`: duck-typed, so
+    :meth:`~lerobot.policies.pretrained.PreTrainedPolicy.count_queued_actions`: duck-typed, so
     this module needs no ``lerobot.policies`` import, and never touched by the overwhelming
     majority of pipelines that convert nothing. Binding that bound method keeps the policy
     alive for as long as the pipeline is -- fine while the policy does not hold the pipeline
@@ -270,5 +270,5 @@ def bind_relative_anchor(policy: Any, pipeline: Any) -> RelativeActionsProcessor
         None,
     )
     if step is not None:
-        step.bind_action_queue(policy.queued_action_count)
+        step.bind_action_queue(policy.count_queued_actions)
     return step

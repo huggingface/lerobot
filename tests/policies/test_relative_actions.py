@@ -434,12 +434,12 @@ def test_binding_is_reversible():
 def test_bind_relative_anchor_skips_disabled_and_missing_steps():
     """A disabled step converts nothing, so holding its anchor would freeze what nobody reads."""
     enabled, disabled = _anchor_step(), RelativeActionsProcessorStep(enabled=False)
-    policy = SimpleNamespace(queued_action_count=lambda: 3)
+    policy = SimpleNamespace(count_queued_actions=lambda: 3)
 
     assert bind_relative_anchor(policy, SimpleNamespace(steps=[disabled, enabled])) is enabled
-    assert enabled._queued_action_count == policy.queued_action_count
+    assert enabled._count_queued_actions == policy.count_queued_actions
     assert bind_relative_anchor(policy, SimpleNamespace(steps=[disabled])) is None
-    assert disabled._queued_action_count is None
+    assert disabled._count_queued_actions is None
     assert bind_relative_anchor(policy, SimpleNamespace()) is None
 
 
@@ -460,7 +460,7 @@ def test_bare_loop_holds_the_anchor_across_a_chunk():
         return queue.pop(0)
 
     bind_relative_anchor(
-        SimpleNamespace(queued_action_count=lambda: len(queue)), SimpleNamespace(steps=[relative_step])
+        SimpleNamespace(count_queued_actions=lambda: len(queue)), SimpleNamespace(steps=[relative_step])
     )
 
     anchor = torch.full((1, 4), 10.0)

@@ -245,7 +245,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             elif queue is not None:
                 queue.clear()
 
-    def queued_action_count(self) -> int:
+    def count_queued_actions(self) -> int:
         """Number of actions already computed and waiting to be served.
 
         0 for a policy that keeps no action queue (never chunks) or whose queue is

@@ -33,14 +33,6 @@ from .base import InferenceEngine, PolicyQuery
 logger = logging.getLogger(__name__)
 
 
-# Relative-action support needs nothing here. A predicted chunk of offsets is anchored to
-# the robot state at prediction time, and this engine reruns the pre/post pipeline every
-# tick, so the anchor has to be held while the chunk drains -- but that is
-# ``RelativeActionsProcessorStep``'s own job once ``bind_relative_anchor`` has given it the
-# policy's queue depth (done in ``build_rollout_context``). ``select_action`` stays on the
-# hot path, so per-tick side effects (e.g. LingBot-VA keyframe feedback) are preserved.
-
-
 class SyncInferenceEngine(InferenceEngine):
     """Inline synchronous inference: compute one action per call.
 
