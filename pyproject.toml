@@ -94,6 +94,14 @@ dependencies = [
 [project.optional-dependencies]
 
 # ── Feature-scoped extras ──────────────────────────────────
+lancedb = [
+    "lerobot[dataset]",
+    "lancedb>=0.37.1,<0.40.0",
+]
+lancedb-convert = [
+    "lerobot[lancedb]",
+    "lerobot-lancedb>=0.3.1,<0.4.0",
+]
 dataset = [
     "datasets>=4.8.0,<5.0.0",
     "pandas>=2.0.0,<3.0.0", # NOTE: Transitive dependency of datasets
@@ -289,6 +297,7 @@ metaworld = ["lerobot[dataset]", "metaworld==3.0.0", "lerobot[scipy-dep]"]
 all = [
     # Feature-scoped extras
     "lerobot[dataset]",
+    "lerobot[lancedb]",
     "lerobot[training]",
     "lerobot[hardware]",
     "lerobot[viz]",

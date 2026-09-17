@@ -47,6 +47,7 @@ from .io_utils import (
     write_tasks,
 )
 from .language import DEFAULT_TOOLS, LANGUAGE_COLUMNS
+from .storage import DEFAULT_STORAGE_FORMAT
 from .utils import (
     DEFAULT_EPISODES_PATH,
     check_version_compatibility,
@@ -356,6 +357,11 @@ class LeRobotDatasetMetadata:
         file_idx = ep[f"videos/{vid_key}/file_index"]
         fpath = self.video_path.format(video_key=vid_key, chunk_index=chunk_idx, file_index=file_idx)
         return Path(fpath)
+
+    @property
+    def storage_format(self) -> str:
+        """Format holding the underlying data files (``"lerobot"`` by default)."""
+        return self.info.storage_format or DEFAULT_STORAGE_FORMAT
 
     @property
     def data_path(self) -> str:

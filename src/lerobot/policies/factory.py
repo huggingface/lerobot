@@ -48,6 +48,7 @@ from lerobot.utils.import_utils import _peft_available, require_package
 
 from .evo1.configuration_evo1 import Evo1Config
 from .groot.configuration_groot import GrootConfig
+from .molmoact2.configuration_molmoact2 import MolmoAct2Config
 from .pretrained import PreTrainedPolicy
 from .utils import validate_visual_features_consistency
 
@@ -197,6 +198,25 @@ def make_pre_post_processors(
                 ),
             )
 
+        if isinstance(policy_cfg, MolmoAct2Config):
+            from .molmoact2.processor_molmoact2 import (
+                make_molmoact2_pre_post_processors_from_pretrained,
+            )
+
+            return make_molmoact2_pre_post_processors_from_pretrained(
+                config=policy_cfg,
+                pretrained_path=pretrained_path,
+                revision=pretrained_revision,
+                preprocessor_overrides=kwargs.get("preprocessor_overrides"),
+                postprocessor_overrides=kwargs.get("postprocessor_overrides"),
+                preprocessor_config_filename=kwargs.get(
+                    "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+                ),
+                postprocessor_config_filename=kwargs.get(
+                    "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+                ),
+            )
+
         preprocessor = PolicyProcessorPipeline.from_pretrained(
             pretrained_model_name_or_path=pretrained_path,
             config_filename=kwargs.get(
@@ -326,6 +346,11 @@ def make_policy(
         )
         action_names = raw_action_feature.get("names") if raw_action_feature is not None else None
         if action_names is not None:
+            # Grouped metadata stores dimension names in the values, not the group keys.
+            if isinstance(action_names, dict) and all(
+                isinstance(group, (list, tuple)) for group in action_names.values()
+            ):
+                action_names = [name for group in action_names.values() for name in group]
             cfg.action_feature_names = list(action_names)
     if ds_meta is not None:
         set_dataset_feature_metadata = getattr(cfg, "set_dataset_feature_metadata", None)
