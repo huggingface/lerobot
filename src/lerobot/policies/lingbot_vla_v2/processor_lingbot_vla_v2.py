@@ -76,6 +76,52 @@ def _future_video_fps(dataset_fps: float, offset: int, action_is_pad=None):
     return float(dataset_fps) / max(1, offset)
 
 
+def _derive_slot_stats_from_dataset(
+    robot_config: dict,
+    dataset_stats: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Derive per-slot norm stats from a LeRobot dataset's per-feature stats.
+
+    The robot_config's ``origin_keys`` define how raw feature dims map onto canonical
+    slots (e.g. ``arm.position = state[0:6] + state[7:13]``). Since mean/std/quantiles
+    are per-dim independent statistics, slicing the dataset stats with the same offsets
+    yields the slot stats bit-for-bit.
+
+    Returns a ``{"norm_stats": {slot_key: {stat: [...], ...}, ...}, "count": N}`` dict
+    matching the format LingbotVLAV2FeatureTransformStep expects.
+    """
+    norm_stats: dict[str, dict[str, Any]] = {}
+    total_count = 0
+
+    for section in ("states", "actions"):
+        for entry in robot_config.get(section, []):
+            for slot_key, slot_cfg in entry.items():
+                origin_keys = slot_cfg.get("origin_keys", [])
+                slot_stats: dict[str, list] = {}
+                for origin in origin_keys:
+                    for raw_key, span in origin.items():
+                        if raw_key not in dataset_stats:
+                            raise KeyError(
+                                f"robot_config slot {slot_key!r} references {raw_key!r} "
+                                f"which is not in dataset_stats (keys: {sorted(dataset_stats)})"
+                            )
+                        feat = dataset_stats[raw_key]
+                        start, end = span["start"], span["end"]
+                        for stat_name in ("mean", "std", "q01", "q99", "q02", "q98", "min", "max"):
+                            if stat_name not in feat:
+                                continue
+                            values = feat[stat_name]
+                            # stats are per-dim lists/arrays; slice the same span
+                            sliced = values[start:end] if isinstance(values, list) else values[start:end].tolist()
+                            slot_stats.setdefault(stat_name, []).extend(sliced)
+                        if total_count == 0 and "count" in feat:
+                            total_count = int(feat["count"][0]) if isinstance(feat["count"], list) else int(feat["count"])
+                if slot_stats:
+                    norm_stats[slot_key] = slot_stats
+
+    return {"norm_stats": norm_stats, "count": total_count}
+
+
 def _collate(values: list[torch.Tensor]) -> torch.Tensor:
     """Stack per-item tensors, right-padding 1-D ragged tensors (e.g. language)."""
     shapes = {tuple(v.shape) for v in values}
@@ -355,9 +401,13 @@ def make_lingbot_vla_v2_pre_post_processors(
 ]:
     """Build the LingBot-VLA 2.0 pre- and post-processing pipelines.
 
-    Normalization + slot mapping live inside the feature-transform step (using the
-    per-slot ``norm_stats``), so this pipeline does not add a separate
-    LeRobot normalizer.
+    Normalization + slot mapping live inside the feature-transform step. The per-slot
+    stats are resolved with the following precedence:
+    1. ``dataset_stats`` (from LeRobot's standard mechanism) → slot stats derived via
+       the robot_config's YAML offsets — the recommended path for fine-tuning.
+    2. ``config.norm_stats`` (embedded in the checkpoint) — the fallback for released
+       checkpoints and backward compatibility.
+    3. ``config.norm_stats_path`` (explicit file) — override for custom setups.
     """
     resolve_robot_config_and_stats(config)
     if not config.robot_config:
@@ -366,11 +416,17 @@ def make_lingbot_vla_v2_pre_post_processors(
             "robot config mapping raw features onto the canonical slots)."
         )
 
+    # Prefer LeRobot dataset_stats (derive slot stats via YAML offsets) over the
+    # checkpoint-embedded norm_stats.
+    norm_stats = config.norm_stats
+    if dataset_stats is not None:
+        norm_stats = _derive_slot_stats_from_dataset(config.robot_config, dataset_stats)
+
     feature_step = LingbotVLAV2FeatureTransformStep(
         robot_config_path=config.robot_config_path,
         norm_stats_path=config.norm_stats_path,
         robot_config=config.robot_config,
-        norm_stats=config.norm_stats,
+        norm_stats=norm_stats,
         processor_path=config.processor_path or config.tokenizer_path,
         chunk_size=config.chunk_size,
         max_state_dim=config.max_state_dim,
