@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,9 +21,10 @@ import numpy as np
 import torch
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.lerobot_types import EnvTransition, TransitionKey
+from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
+    ComplementaryDataProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
@@ -41,7 +41,7 @@ from .configuration_pi05 import PI05Config
 
 @ProcessorStepRegistry.register(name="pi05_prepare_state_tokenizer_processor_step")
 @dataclass
-class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
+class Pi05PrepareStateTokenizerProcessorStep(ComplementaryDataProcessorStep):
     """
     Processor step to prepare the state and tokenize the language input.
     """
@@ -53,18 +53,13 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
     # Set from `PI05Config.use_proprioceptive_memory`; stock PI0.5 keeps it in the prompt.
     include_state_in_prompt: bool = True
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        transition = transition.copy()
-
-        state = transition.get(TransitionKey.OBSERVATION, {}).get(OBS_STATE)
+    def complementary_data(self, complementary_data: dict[str, Any]) -> dict[str, Any]:
+        state = (self.transition.get(TransitionKey.OBSERVATION) or {}).get(OBS_STATE)
         if state is None:
             raise ValueError("State is required for PI05")
-        tasks = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.task_key)
+        tasks = complementary_data.get(self.task_key)
         if tasks is None:
             raise ValueError("No task found in complementary data")
-
-        # TODO: check if this necessary
-        state = deepcopy(state)
 
         discretized_states = None
         if self.include_state_in_prompt:
@@ -84,10 +79,15 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
                 full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
             full_prompts.append(full_prompt)
 
-        transition[TransitionKey.COMPLEMENTARY_DATA][self.task_key] = full_prompts
-        # Normalize state to [-1, 1] range if needed (assuming it's already normalized by normalizer processor step!!)
-        # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
-        return transition
+        complementary_data[self.task_key] = full_prompts
+        return complementary_data
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "task_key": self.task_key,
+            "max_state_dim": self.max_state_dim,
+            "include_state_in_prompt": self.include_state_in_prompt,
+        }
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]

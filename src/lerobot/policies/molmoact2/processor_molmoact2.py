@@ -41,7 +41,9 @@ from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
+    ObservationProcessorStep,
     PolicyAction,
+    PolicyActionProcessorStep,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
@@ -1060,7 +1062,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
 
 @ProcessorStepRegistry.register(name="molmoact2_state_frame_transform")
 @dataclass
-class MolmoAct2StateFrameTransformStep(ProcessorStep):
+class MolmoAct2StateFrameTransformStep(ObservationProcessorStep):
     """Convert robot state from arm frame to model frame before normalization.
 
     Required for zero-shot deployment of MolmoAct2-SO100_101 on SO-100/101
@@ -1076,25 +1078,21 @@ class MolmoAct2StateFrameTransformStep(ProcessorStep):
     See: https://huggingface.co/docs/lerobot/backwardcomp
     """
 
+    skip_if_missing = True
+
     joint_signs: list[float] | None = None
     joint_offsets: list[float] | None = None
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        if self.joint_signs is None or self.joint_offsets is None:
-            return transition
-        observation = transition.get(TransitionKey.OBSERVATION)
-        if not isinstance(observation, dict) or OBS_STATE not in observation:
-            return transition
-        transition = transition.copy()
-        observation = observation.copy()
+    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+        if self.joint_signs is None or self.joint_offsets is None or OBS_STATE not in observation:
+            return observation
         state = torch.as_tensor(observation[OBS_STATE], dtype=torch.float32).clone()
         n = len(self.joint_signs)
         signs = torch.tensor(self.joint_signs, dtype=torch.float32, device=state.device)
         offsets = torch.tensor(self.joint_offsets, dtype=torch.float32, device=state.device)
         state[..., :n] = signs * state[..., :n] + offsets
         observation[OBS_STATE] = state
-        transition[TransitionKey.OBSERVATION] = observation
-        return transition
+        return observation
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -1107,7 +1105,7 @@ class MolmoAct2StateFrameTransformStep(ProcessorStep):
 
 @ProcessorStepRegistry.register(name="molmoact2_action_frame_transform")
 @dataclass
-class MolmoAct2ActionFrameTransformStep(ProcessorStep):
+class MolmoAct2ActionFrameTransformStep(PolicyActionProcessorStep):
     """Convert model action from model frame back to arm frame after unnormalization.
 
     Inverse of MolmoAct2StateFrameTransformStep. Required for zero-shot
@@ -1118,23 +1116,20 @@ class MolmoAct2ActionFrameTransformStep(ProcessorStep):
     See: https://huggingface.co/docs/lerobot/backwardcomp
     """
 
+    skip_if_missing = True
+
     joint_signs: list[float] | None = None
     joint_offsets: list[float] | None = None
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
+    def action(self, action: PolicyAction) -> PolicyAction:
         if self.joint_signs is None or self.joint_offsets is None:
-            return transition
-        action = transition.get(TransitionKey.ACTION)
-        if action is None:
-            return transition
-        transition = transition.copy()
+            return action
         action = torch.as_tensor(action, dtype=torch.float32).clone()
         n = len(self.joint_signs)
         signs = torch.tensor(self.joint_signs, dtype=torch.float32, device=action.device)
         offsets = torch.tensor(self.joint_offsets, dtype=torch.float32, device=action.device)
         action[..., :n] = signs * (action[..., :n] - offsets)
-        transition[TransitionKey.ACTION] = action
-        return transition
+        return action
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -1147,13 +1142,11 @@ class MolmoAct2ActionFrameTransformStep(ProcessorStep):
 
 @ProcessorStepRegistry.register(name="molmoact2_clamp_action")
 @dataclass
-class MolmoAct2ClampActionProcessorStep(ProcessorStep):
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        transition = transition.copy()
-        action = transition.get(TransitionKey.ACTION)
-        if action is not None:
-            transition[TransitionKey.ACTION] = torch.as_tensor(action).clamp(-1.0, 1.0)
-        return transition
+class MolmoAct2ClampActionProcessorStep(PolicyActionProcessorStep):
+    skip_if_missing = True
+
+    def action(self, action: PolicyAction) -> PolicyAction:
+        return action.clamp(-1.0, 1.0)
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]

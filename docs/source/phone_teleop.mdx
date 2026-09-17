@@ -187,7 +187,7 @@ We use different IK initial guesses in the kinematic steps. As initial guess eit
 - EEBoundsAndSafety: clamps the EE pose to a workspace and rate‑limits jumps for safety. Also declares `action.ee.*` features.
 - InverseKinematicsEEToJoints: turns an EE pose into joint positions with IK. `initial_guess_current_joints=True` is recommended for closed‑loop control; set `False` for open‑loop replay for stability.
 - GripperVelocityToJoint: integrates a velocity‑like gripper input into an absolute gripper position using the current measured state.
-- ForwardKinematicsJointsToEE: computes `observation.state.ee.*` from observed joints for logging and training on EE state.
+- ForwardKinematicsJointsToEEObservation: computes `observation.state.ee.*` from observed joints for logging and training on EE state.
 
 ### Troubleshooting
 

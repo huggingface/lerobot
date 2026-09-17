@@ -36,7 +36,7 @@ from lerobot.processor import (
 )
 from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
 from lerobot.robots.so_follower.robot_kinematic_processor import (
-    ForwardKinematicsJointsToEE,
+    ForwardKinematicsJointsToEEObservation,
     InverseKinematicsEEToJoints,
 )
 from lerobot.rollout import BaseStrategyConfig, RolloutConfig, build_rollout_context
@@ -78,7 +78,7 @@ def main():
 
     # Joint-space observation → EE-space observation (consumed by the policy).
     robot_joints_to_ee_pose_processor = RobotProcessorPipeline[RobotObservation, RobotObservation](
-        steps=[ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=motor_names)],
+        steps=[ForwardKinematicsJointsToEEObservation(kinematics=kinematics_solver, motor_names=motor_names)],
         to_transition=observation_to_transition,
         to_output=transition_to_observation,
     )
