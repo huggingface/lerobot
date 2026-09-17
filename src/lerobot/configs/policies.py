@@ -29,6 +29,7 @@ from huggingface_hub.errors import HfHubHTTPError
 from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.device_utils import auto_select_torch_device, is_amp_available, is_torch_device_available
+from lerobot.utils.dtype import get_dtype
 from lerobot.utils.hub import HubMixin
 
 from .types import FeatureType, PolicyFeature
@@ -60,6 +61,9 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     output_features: dict[str, PolicyFeature] | None = field(default_factory=dict)
 
     device: str | None = None  # e.g. "cuda", "cuda:0", "cpu", or "mps"
+    # Parameter storage dtype. None uses PyTorch's default when constructing a policy.
+    # FP32-sensitive modules are declared by the policy and keep their precision.
+    dtype: str | None = None
     # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
     # automatic gradient scaling is used.
     use_amp: bool = False
@@ -83,6 +87,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     pretrained_revision: str | None = None
 
     def __post_init__(self) -> None:
+        if self.dtype is not None:
+            self.dtype = str(get_dtype(self.dtype)).removeprefix("torch.")
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
             logger.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
