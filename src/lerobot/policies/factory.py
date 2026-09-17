@@ -61,6 +61,7 @@ from .pi0.configuration_pi0 import PI0Config
 from .pi05.configuration_pi05 import PI05Config
 from .pretrained import PreTrainedPolicy
 from .safediff_vla.configuration_safediff_vla import SafeDiffVLAConfig
+from .safediff_vla.legacy.configuration_legacy_diffusion import LegacySafeDiffVLAConfig
 from .smolvla.configuration_smolvla import SmolVLAConfig
 from .tdmpc.configuration_tdmpc import TDMPCConfig
 from .utils import validate_visual_features_consistency
@@ -453,7 +454,7 @@ def make_pre_post_processors(
             dataset_stats=kwargs.get("dataset_stats"),
         )
 
-    elif isinstance(policy_cfg, (SafeDiffVLAConfig, SmolVLAConfig)):
+    elif isinstance(policy_cfg, (SafeDiffVLAConfig, LegacySafeDiffVLAConfig, SmolVLAConfig)):
         from .smolvla.processor_smolvla import make_smolvla_pre_post_processors
 
         processors = make_smolvla_pre_post_processors(

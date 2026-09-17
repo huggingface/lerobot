@@ -1,27 +1,7 @@
-"""SafeDiff-VLA: pluggable action-generation architectures on a frozen (by default) SmolVLA
-multimodal encoder.
+"""SafeDiff-VLA: a temporal action decoder on top of a frozen (by default) SmolVLA multimodal
+encoder.
 
-## Old data flow, traced (`architecture="legacy_diffusion"`)
-
-    image / language / state
-        -> SmolVLA.predict_action_chunk()  [@torch.no_grad(), inside SmolVLA itself]
-        -> a forward-pre-hook on `action_out_proj` captures its *input*, mean-pooled over the
-           chunk axis -> `latent` [B, latent_dim]   (this pooling throws away all per-timestep
-           structure the hook's raw capture actually had — see `_backbone_outputs`)
-        -> nominal = pad_or_crop_horizon(nominal, action_horizon)   (silently truncates/replans
-           more often than the backbone was ever run at if action_horizon != the backbone's own
-           `chunk_size`, e.g. cropping 50 -> 16 at the old default)
-        -> ConditionalDiffusionPlanner(noisy_actions, latent, nominal, state, subgoal) denoises a
-           chunk *initialized from* `nominal` (`use_vla_prior_init`) -> refined action chunk
-
-    i.e. the nominal action chunk is the primary signal end to end; the planner's job is framed
-    as "correct it". Every configuration of this tried (critic-free, state-conditioned,
-    subgoal-conditioned, temporal-conv-mixed across the horizon axis) matched or underperformed
-    just executing `nominal` unmodified once the horizon mismatch above was fixed — refining a
-    nominal action chunk post hoc never once helped. `legacy_diffusion` is kept only to reproduce
-    those experiments; it is no longer the default.
-
-## New data flow (`architecture="temporal_decoder"` / `"temporal_decoder_future_state"`, default)
+## Data flow (`architecture="temporal_decoder"` / `"temporal_decoder_subgoal"`, default)
 
     image / language / state
         -> SmolVLA.embed_prefix() + SmolVLMWithExpertModel.forward(inputs_embeds=[prefix, None])
@@ -31,16 +11,23 @@ multimodal encoder.
         -> latent_tokens [B, N_tokens, hidden_size]: the VLM's own post-self-attention
            representation of image+language+state, never mean-pooled, never touching the
            flow-matching action-generation loop at all.
-        -> TemporalActionDecoder(latent_tokens, current_state, [predicted_states])
+        -> TemporalActionDecoder(latent_tokens, current_state, [subgoal_state])
                learned per-position action-query tokens cross-attend to `latent_tokens` and
                self-attend across the horizon axis (see `temporal_decoder.py`)
         -> actions [B, action_horizon, action_dim] directly -- `nominal` (SmolVLA's own action
            head output) is never consulted; it exists elsewhere only as the `smolvla_nominal`
            ablation baseline.
+
+Action generation (`plan_action_chunk`) and execution strategy (queueing, temporal ensembling,
+completion-gated replanning) are deliberately separate: `select_action` below just calls into
+`execution.ActionExecutor`, which holds no model weights, so the same checkpoint can be evaluated
+under different execution strategies with no retraining.
+
+The original nominal-refinement diffusion design (`legacy_diffusion`) has moved out of this module
+entirely -- see `legacy/modeling_legacy_diffusion.py`'s `LegacySafeDiffVLAPolicy`
+(`--policy.type=safediff_vla_legacy`), kept only to reproduce past experiments.
 """
 
-import math
-from collections import deque
 from time import perf_counter
 from typing import Any
 
@@ -53,10 +40,9 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 
 from .configuration_safediff_vla import SafeDiffVLAConfig
-from .diffusion_planner import ConditionalDiffusionPlanner
 from .domain_adapter import LiberoBackboneDomainAdapter, load_processor_normalization_stats
-from .scheduler import DDPMScheduler
-from .state_predictor import FutureStatePredictor, StatePredictor, completion_gap
+from .execution import ActionExecutor
+from .state_predictor import SubgoalStatePredictor
 from .temporal_decoder import TemporalActionDecoder
 from .utils import pad_or_crop_horizon
 
@@ -95,26 +81,8 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
         action_dim = config.action_feature.shape[0]
         state_dim = config.robot_state_feature.shape[0]
 
-        if self.architecture == "legacy_diffusion":
-            self.latent_projection = nn.Linear(self._latent_in_features(), config.latent_dim)
-            self.planner = ConditionalDiffusionPlanner(
-                action_dim,
-                state_dim,
-                config.latent_dim,
-                config.planner_hidden_dim,
-                config.timestep_embedding_dim,
-                temporal_kernel_size=config.temporal_kernel_size,
-                num_temporal_layers=config.num_temporal_layers,
-            )
-            # Replaces the old task/risk critics (see `state_predictor.py` for why): predicts the
-            # subgoal state (next pick/place event), trained self-supervised against a label
-            # derived offline from each episode's own gripper-transition frames.
-            self.state_predictor = StatePredictor(
-                action_dim, state_dim, config.latent_dim, config.state_head_hidden_dim
-            )
-            self.scheduler = DDPMScheduler(config.num_diffusion_steps, config.beta_schedule)
-        elif self.architecture in ("temporal_decoder", "temporal_decoder_future_state"):
-            use_future_state = self.architecture == "temporal_decoder_future_state"
+        if self.architecture in ("temporal_decoder", "temporal_decoder_subgoal"):
+            use_subgoal = self.architecture == "temporal_decoder_subgoal"
             self.decoder = TemporalActionDecoder(
                 action_dim,
                 state_dim,
@@ -125,16 +93,18 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
                 num_heads=config.decoder_num_heads,
                 ffn_dim=config.decoder_ffn_dim,
                 dropout=config.decoder_dropout,
-                use_future_state=use_future_state,
+                use_subgoal=use_subgoal,
             )
-            if use_future_state:
+            if use_subgoal:
                 self.latent_pool_projection = nn.Linear(self._multimodal_latent_dim(), config.latent_dim)
-                self.future_state_predictor = FutureStatePredictor(
+                self.subgoal_state_predictor = SubgoalStatePredictor(
                     state_dim, config.latent_dim, config.state_head_hidden_dim
                 )
-        elif self.architecture != "smolvla_nominal":
+        elif self.architecture not in ("smolvla_nominal", "smolvla_finetune"):
             raise ValueError(f"Unknown architecture {self.architecture!r}")
-        # "smolvla_nominal": nothing to build -- ablation baseline, no trainable parameters.
+        # "smolvla_nominal" / "smolvla_finetune": nothing to build -- both just call the backbone's
+        # own flow-matching action expert directly (see `_nominal_actions`); the only difference is
+        # whether the backbone is frozen (config.freeze_backbone, enforced in __post_init__ above).
 
         self.reset()
 
@@ -183,29 +153,11 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
         vlm_with_expert.freeze_vision_encoder = False
         vlm_with_expert.get_vlm_model().vision_model.requires_grad_(True)
 
-    def _latent_in_features(self) -> int:
-        """Hidden size of the pooled action-token latent `_backbone_outputs` (legacy_diffusion
-        only) feeds into `latent_projection`.
-
-        Matches whichever branch `_backbone_outputs` will take: the captured `action_out_proj`
-        input (`expert_hidden_size`) for a plain SmolVLA backbone, or a custom backbone's own
-        reported latent width. Resolved eagerly (instead of via `nn.LazyLinear`) because
-        `lerobot-train` counts `policy.parameters()` before any forward pass, which raises on
-        uninitialized lazy parameters.
-        """
-        if hasattr(self.backbone, "extract_safediff_features"):
-            latent_dim = getattr(self.backbone, "safediff_latent_dim", None)
-            if latent_dim is None:
-                raise ValueError(
-                    "Backbone exposes extract_safediff_features() but not a safediff_latent_dim "
-                    "attribute; SafeDiffVLAPolicy needs it to size latent_projection up front."
-                )
-            return latent_dim
-        return self.backbone.model.action_out_proj.in_features
-
     def _multimodal_latent_dim(self) -> int:
         """Token width of `_encode_multimodal_latent`'s output, to size the decoder's own input
-        projection up front (see `_latent_in_features` for why this must be eager, not lazy)."""
+        projection up front. Resolved eagerly (instead of via `nn.LazyLinear`) because
+        `lerobot-train` counts `policy.parameters()` before any forward pass, which raises on
+        uninitialized lazy parameters."""
         if hasattr(self.backbone, "multimodal_latent_dim"):
             return self.backbone.multimodal_latent_dim
         return self.backbone.model.vlm_with_expert.config.text_config.hidden_size
@@ -236,17 +188,7 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
         return self
 
     def reset(self) -> None:
-        self._action_queue: deque[Tensor] = deque(maxlen=self.config.execute_horizon)
-        # Holds up to `action_horizon` past chunk predictions, oldest first, for temporal
-        # ensembling: the k-th most recently appended chunk was queried k steps ago, so its
-        # prediction for "now" lives at its own index k (`_ensembled_action` below).
-        self._ensemble_buffer: deque[Tensor] = deque(maxlen=self.config.action_horizon)
-        # Subgoal state predicted as of the last *fully committed* chunk, and the gap to it
-        # measured at that same moment (see `select_action`'s completion gate). Both stay None
-        # forever for architectures with no subgoal signal (`smolvla_nominal`, `temporal_decoder`).
-        self._pending_target_state: Tensor | None = None
-        self._last_gap: Tensor | None = None
-        self._replan_retries = 0
+        self._executor = ActionExecutor(self.config)
         if hasattr(self.backbone, "reset"):
             self.backbone.reset()
 
@@ -277,8 +219,7 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
         return (latent_tokens * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1)
 
     def _nominal_actions(self, batch: dict[str, Tensor]) -> Tensor:
-        """SmolVLA's own action-head output, unmodified. Used by `architecture="smolvla_nominal"`
-        and, for `legacy_diffusion`, as the `use_vla_prior_init` anchor."""
+        """SmolVLA's own action-head output, unmodified. Used by `architecture="smolvla_nominal"`."""
         backbone_batch = self._prepare_backbone_batch(batch)
         with torch.set_grad_enabled(not self.config.freeze_backbone):
             nominal = self.backbone.predict_action_chunk(dict(backbone_batch))
@@ -287,35 +228,19 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
             nominal = self.domain_adapter.nominal_for_target(nominal)
         return nominal.detach() if self.config.freeze_backbone else nominal
 
-    def _backbone_outputs(self, batch: dict[str, Tensor]) -> tuple[Tensor, Tensor]:
-        """Return (nominal, pooled_latent) via the hook-based capture. `legacy_diffusion` only —
-        see this module's docstring for why the *pooled* latent this produces isn't used by the
-        newer architectures (`_encode_multimodal_latent` below)."""
+    def _forward_smolvla_finetune(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, float]]:
+        """`architecture="smolvla_finetune"`: train the backbone's own flow-matching action expert
+        directly -- same module, same noise/time-sampled velocity-regression objective, same
+        multi-step Euler sampler at inference (`_nominal_actions` -> `backbone.predict_action_chunk`)
+        as SmolVLA itself, unlike `temporal_decoder`'s from-scratch decoder + decomposed MSE. No new
+        parameters of our own; requires `freeze_backbone=False` (enforced in config validation)."""
         backbone_batch = self._prepare_backbone_batch(batch)
-        if hasattr(self.backbone, "extract_safediff_features"):
-            with torch.set_grad_enabled(not self.config.freeze_backbone):
-                nominal, latent = self.backbone.extract_safediff_features(backbone_batch)
-        else:
-            hidden_states: list[Tensor] = []
-
-            def capture_action_hidden(_module, inputs) -> None:
-                hidden_states.append(inputs[0])
-
-            handle = self.backbone.model.action_out_proj.register_forward_pre_hook(capture_action_hidden)
-            try:
-                nominal = self.backbone.predict_action_chunk(dict(backbone_batch))
-            finally:
-                handle.remove()
-            if not hidden_states:
-                raise RuntimeError("SmolVLA action-token hook did not capture a hidden state")
-            latent = hidden_states[-1].mean(dim=1)
-
-        nominal = pad_or_crop_horizon(nominal, self.config.action_horizon)
-        if self.domain_adapter is not None:
-            nominal = self.domain_adapter.nominal_for_target(nominal)
-        return nominal.detach() if self.config.freeze_backbone else nominal, self.latent_projection(
-            latent.float()
+        loss, backbone_metrics = self.backbone.forward(backbone_batch)
+        metrics = {"loss": loss.item()}
+        metrics.update(
+            {f"backbone_{k}": (v.item() if torch.is_tensor(v) else v) for k, v in backbone_metrics.items()}
         )
+        return loss, metrics
 
     def _encode_multimodal_latent(self, batch: dict[str, Tensor]) -> tuple[Tensor, Tensor | None]:
         """Direct multimodal-encoder path: SmolVLA's own `embed_prefix` plus one self-attention
@@ -325,12 +250,9 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
         reimplements the first few lines of `sample_actions`. Entirely read-only wrt
         `modeling_smolvla.py` (no changes there, no new interface added to it): a test double can
         instead implement `encode_multimodal_latent(batch) -> (tokens, pad_mask_or_None)` and
-        `multimodal_latent_dim` directly (mirrors the existing `extract_safediff_features` /
-        `safediff_latent_dim` test-double convention for `legacy_diffusion`).
+        `multimodal_latent_dim` directly.
 
-        If `freeze_backbone=False` this is also how gradients would actually reach the VLM,
-        unlike the `legacy_diffusion` hook-based path which necessarily goes through
-        `predict_action_chunk`'s `@torch.no_grad()`.
+        If `freeze_backbone=False` this is also how gradients would actually reach the VLM.
         """
         if hasattr(self.backbone, "encode_multimodal_latent"):
             return self.backbone.encode_multimodal_latent(self._prepare_backbone_batch(batch))
@@ -365,92 +287,33 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
             latent_tokens = latent_tokens.detach()
         return latent_tokens, prefix_pad_masks
 
-    # ---- legacy_diffusion -----------------------------------------------------------------
+    # ---- temporal_decoder / temporal_decoder_subgoal ---------------------------------------
 
-    def diffusion_loss(
-        self, clean: Tensor, latent: Tensor, nominal: Tensor, state: Tensor, subgoal: Tensor
-    ) -> Tensor:
-        timesteps = torch.randint(self.config.num_diffusion_steps, (clean.shape[0],), device=clean.device)
-        noise = torch.randn_like(clean)
-        noisy = self.scheduler.add_noise(clean, noise, timesteps)
-        return F.mse_loss(self.planner(noisy, timesteps, latent, nominal, state, subgoal), noise)
-
-    def _forward_legacy_diffusion(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, float]]:
-        nominal, latent = self._backbone_outputs(batch)
-        clean = pad_or_crop_horizon(batch[ACTION], self.config.action_horizon)
-        current_state = self._current_state(batch)
-        # Always predicted from `nominal` (never the ground-truth `clean` chunk) so this matches
-        # exactly what `plan_action_chunk` does at inference — see `state_predictor.py`.
-        predicted_subgoal = self.state_predictor(latent, nominal, current_state)
-        loss_diff = self.diffusion_loss(clean, latent, nominal, current_state, predicted_subgoal.detach())
-        subgoal_target = batch.get("observation.subgoal_state")
-        if subgoal_target is not None:
-            loss_subgoal = F.mse_loss(predicted_subgoal, subgoal_target)
-        else:
-            # No precomputed label in this batch (`policy.subgoal_labels_path` unset) — nothing
-            # to regress the state predictor against.
-            loss_subgoal = predicted_subgoal.sum() * 0
-        loss = self.config.lambda_diff * loss_diff + self.config.lambda_subgoal * loss_subgoal
-        metrics = {
-            "loss": loss.item(),
-            "loss_diff": loss_diff.item(),
-            "loss_subgoal": loss_subgoal.item(),
-        }
-        return loss, metrics
-
-    def _sample_action_chunk(self, latent: Tensor, nominal: Tensor, state: Tensor, subgoal: Tensor) -> Tensor:
-        """Single DDPM reverse pass producing one action-chunk sample, optionally anchored near
-        `nominal` (`use_vla_prior_init`) instead of starting from pure noise."""
-        noise = torch.randn_like(nominal)
-        if self.config.use_vla_prior_init:
-            last = torch.full((nominal.shape[0],), self.config.num_diffusion_steps - 1, device=nominal.device)
-            sample = self.scheduler.add_noise(nominal, noise, last)
-        else:
-            sample = noise
-        for timestep in reversed(range(self.config.num_diffusion_steps)):
-            timesteps = torch.full((sample.shape[0],), timestep, device=sample.device, dtype=torch.long)
-            predicted_noise = self.planner(sample, timesteps, latent, nominal, state, subgoal)
-            sample = self.scheduler.step(predicted_noise, timestep, sample)
-        return sample
-
-    def _plan_legacy_diffusion(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Tensor | float]]:
-        started = perf_counter()
-        nominal, latent = self._backbone_outputs(batch)
-        state = self._current_state(batch)
-        # Predicted once up front from (latent, nominal, state) alone, *before* diffusion
-        # sampling: the subgoal (next pick/place point) doesn't depend on which candidate action
-        # chunk gets sampled, only on the current situation. Detached so the diffusion loss can't
-        # push the state predictor towards subgoals that merely make denoising easier.
-        predicted_subgoal = self.state_predictor(latent, nominal, state).detach()
-        selected = (
-            self._sample_action_chunk(latent, nominal, state, predicted_subgoal)
-            if self.config.use_diffusion_refinement
-            else nominal
-        )
-        return selected, {
-            "predicted_subgoal_state": predicted_subgoal,
-            "runtime_ms": (perf_counter() - started) * 1000,
-        }
-
-    # ---- temporal_decoder / temporal_decoder_future_state ----------------------------------
+    def _predict_subgoal(self, latent_tokens: Tensor, latent_pad_mask: Tensor | None, current_state: Tensor) -> Tensor:
+        """`temporal_decoder_subgoal` only: a single predicted subgoal state `[B, state_dim]` from
+        the pooled scene latent + current state (see `state_predictor.py`'s `SubgoalStatePredictor`)."""
+        pooled = self.latent_pool_projection(self._pooled_latent(latent_tokens, latent_pad_mask))
+        return self.subgoal_state_predictor(pooled, current_state)
 
     def _forward_temporal_decoder(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, float]]:
         latent_tokens, latent_pad_mask = self._encode_multimodal_latent(batch)
         current_state = self._current_state(batch)
         clean = pad_or_crop_horizon(batch[ACTION], self.config.action_horizon)
 
-        predicted_states = None
+        subgoal_state = None
         loss_subgoal = clean.new_zeros(())
-        if self.architecture == "temporal_decoder_future_state":
-            pooled = self.latent_pool_projection(self._pooled_latent(latent_tokens, latent_pad_mask))
-            predicted_subgoal = self.future_state_predictor(pooled, current_state)
-            predicted_states = predicted_subgoal[:, None, :].expand(-1, self.config.action_horizon, -1)
+        if self.architecture == "temporal_decoder_subgoal":
+            predicted_subgoal = self._predict_subgoal(latent_tokens, latent_pad_mask, current_state)
+            subgoal_state = predicted_subgoal
             subgoal_target = batch.get("observation.subgoal_state")
             if subgoal_target is not None:
                 loss_subgoal = F.mse_loss(predicted_subgoal, subgoal_target)
 
-        pred_actions = self.decoder(latent_tokens, latent_pad_mask, current_state, predicted_states)
-        loss_action = F.mse_loss(pred_actions, clean)
+        pred_actions = self.decoder(latent_tokens, latent_pad_mask, current_state, subgoal_state)
+
+        loss_pos = F.mse_loss(pred_actions[..., :3], clean[..., :3])
+        loss_rot = F.mse_loss(pred_actions[..., 3:6], clean[..., 3:6])
+        loss_grip = F.mse_loss(pred_actions[..., 6:7], clean[..., 6:7])
         if self.config.lambda_smooth > 0:
             velocity = pred_actions[:, 1:] - pred_actions[:, :-1]
             acceleration = velocity[:, 1:] - velocity[:, :-1]
@@ -458,16 +321,36 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
         else:
             loss_smooth = pred_actions.new_zeros(())
 
+        # `F.mse_loss` reduces to the mean *within* each slice, so `loss_pos`/`loss_rot`/
+        # `loss_grip` alone aren't comparable to each other or to a single pooled
+        # `F.mse_loss(pred_actions, clean)` over all 7 dims -- that pooled mean is itself the
+        # dim-count-weighted average `(3*loss_pos + 3*loss_rot + 1*loss_grip) / 7` (position and
+        # orientation, being 3-wide, each contribute 3x a 1-wide gripper at equal per-dimension
+        # weight). Pre-multiplying by each slice's dim count and dividing by `action_dim` (7)
+        # here reproduces that exactly, so lambda_pos=lambda_rot=lambda_grip=1.0 (the default)
+        # is numerically identical to the old single pooled MSE -- see
+        # `test_decomposed_loss_equals_old_pooled_mse_at_default_weights`.
+        position_dim, rotation_dim, gripper_dim = 3, 3, 1
+        action_dim = position_dim + rotation_dim + gripper_dim
+        loss_action = (
+            self.config.lambda_pos * position_dim * loss_pos
+            + self.config.lambda_rot * rotation_dim * loss_rot
+            + self.config.lambda_grip * gripper_dim * loss_grip
+        ) / action_dim
         loss = (
-            self.config.lambda_action * loss_action
+            loss_action
             + self.config.lambda_subgoal * loss_subgoal
             + self.config.lambda_smooth * loss_smooth
         )
         metrics = {
             "loss": loss.item(),
-            "loss_action": loss_action.item(),
+            "loss_pos": loss_pos.item(),
+            "loss_rot": loss_rot.item(),
+            "loss_grip": loss_grip.item(),
             "loss_subgoal": loss_subgoal.item(),
             "loss_smooth": loss_smooth.item(),
+            "action_mean": clean.mean().item(),
+            "action_std": clean.std().item(),
         }
         return loss, metrics
 
@@ -476,14 +359,17 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
         latent_tokens, latent_pad_mask = self._encode_multimodal_latent(batch)
         current_state = self._current_state(batch)
         metrics: dict[str, Tensor | float] = {}
-        predicted_states = None
-        if self.architecture == "temporal_decoder_future_state":
-            pooled = self.latent_pool_projection(self._pooled_latent(latent_tokens, latent_pad_mask))
-            predicted_subgoal = self.future_state_predictor(pooled, current_state)
-            predicted_states = predicted_subgoal[:, None, :].expand(-1, self.config.action_horizon, -1)
-            metrics["predicted_subgoal_state"] = predicted_subgoal
-        actions = self.decoder(latent_tokens, latent_pad_mask, current_state, predicted_states)
+        subgoal_state = None
+        if self.architecture == "temporal_decoder_subgoal":
+            subgoal_state = self._predict_subgoal(latent_tokens, latent_pad_mask, current_state)
+            metrics["predicted_subgoal_state"] = subgoal_state
+        actions = self.decoder(latent_tokens, latent_pad_mask, current_state, subgoal_state)
         metrics["runtime_ms"] = (perf_counter() - started) * 1000
+        if actions.shape[1] > 2:
+            velocity = actions[:, 1:] - actions[:, :-1]
+            acceleration = velocity[:, 1:] - velocity[:, :-1]
+            metrics["mean_abs_delta_action"] = velocity.abs().mean().item()
+            metrics["mean_abs_delta2_action"] = acceleration.abs().mean().item()
         return actions, metrics
 
     # ---- dispatch -----------------------------------------------------------------------
@@ -491,20 +377,25 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
     def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict[str, float]]:
         if reduction != "mean":
             raise NotImplementedError("SafeDiff-VLA currently supports reduction='mean' only")
-        if self.architecture == "legacy_diffusion":
-            return self._forward_legacy_diffusion(batch)
-        if self.architecture in ("temporal_decoder", "temporal_decoder_future_state"):
+        if self.architecture in ("temporal_decoder", "temporal_decoder_subgoal"):
             return self._forward_temporal_decoder(batch)
+        if self.architecture == "smolvla_finetune":
+            return self._forward_smolvla_finetune(batch)
         raise NotImplementedError(
             f"architecture={self.architecture!r} has no training objective — it's an eval-only "
             "ablation baseline (SmolVLA's own nominal action chunk, unmodified)."
         )
 
     def plan_action_chunk(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Tensor | float]]:
-        if self.architecture == "smolvla_nominal":
-            return self._nominal_actions(batch), {}
-        if self.architecture == "legacy_diffusion":
-            return self._plan_legacy_diffusion(batch)
+        if self.architecture in ("smolvla_nominal", "smolvla_finetune"):
+            actions = self._nominal_actions(batch)
+            metrics: dict[str, Tensor | float] = {}
+            if actions.shape[1] > 2:
+                velocity = actions[:, 1:] - actions[:, :-1]
+                acceleration = velocity[:, 1:] - velocity[:, :-1]
+                metrics["mean_abs_delta_action"] = velocity.abs().mean().item()
+                metrics["mean_abs_delta2_action"] = acceleration.abs().mean().item()
+            return actions, metrics
         return self._plan_temporal_decoder(batch)
 
     @torch.no_grad()
@@ -514,63 +405,7 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
         self.last_inference_metrics = metrics if self.config.enable_inference_metrics else {}
         return actions
 
-    def _ensembled_action(self, chunk: Tensor) -> Tensor:
-        """Blend "now"-predictions from every buffered chunk with exponential-decay weights.
-
-        `chunk` (this step's fresh prediction) is pushed last, so iterating the buffer newest
-        -> oldest via `reversed()` lines up positional age with the offset each chunk holds its
-        prediction for "now" at: age 0 is `chunk` itself (offset 0), age 1 is last step's chunk
-        (offset 1, since it was queried one step ago), and so on.
-        """
-        self._ensemble_buffer.append(chunk)
-        predictions, weights = [], []
-        for age, past_chunk in enumerate(reversed(self._ensemble_buffer)):
-            predictions.append(past_chunk[:, age])
-            weights.append(math.exp(-self.config.temporal_ensemble_coeff * age))
-        weights = torch.tensor(weights, device=chunk.device, dtype=chunk.dtype)
-        weights /= weights.sum()
-        return (torch.stack(predictions, dim=0) * weights[:, None, None]).sum(dim=0)
-
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         self.eval()
-        if self.config.use_temporal_ensembling:
-            return self._ensembled_action(self.predict_action_chunk(batch))
-        if not self._action_queue:
-            # A subgoal can legitimately be many chunks away (~36 steps on average across
-            # `lerobot/vlabench_unified` — see `examples/safediff_vla/compute_subgoal_labels.py`),
-            # so "not yet arrived after one execute_horizon" is the normal case, not a problem:
-            # gating on that (as an earlier version of this method did) made the gate fire on
-            # almost every commit, collapsing execution into a near-permanent single-step replan
-            # loop and producing visibly jerky motion. What actually signals trouble is the gap
-            # *growing* since the last check: the last chunk moved away from the target it was
-            # aiming for, while still being meaningfully far from it.
-            gap = (
-                completion_gap(self._pending_target_state, self._current_state(batch))
-                if self._pending_target_state is not None
-                else None
-            )
-            diverging = (
-                gap is not None
-                and self._last_gap is not None
-                and bool((gap > self._last_gap).any())
-                and bool((gap > self.config.completion_threshold).any())
-            )
-            chunk, metrics = self.plan_action_chunk(batch)
-            # Architectures with no subgoal signal (`smolvla_nominal`, `temporal_decoder`) never
-            # gate: there's nothing to measure progress against, so always commit a fresh chunk.
-            has_subgoal = self.config.use_completion_gate and "predicted_subgoal_state" in metrics
-            if has_subgoal and diverging and self._replan_retries < self.config.max_replan_retries:
-                # Take one corrective step towards the *same* still-pending target and reassess
-                # on the very next call, instead of silently moving on to whatever the backbone
-                # proposes next.
-                self._action_queue.extend(chunk.transpose(0, 1)[:1])
-                self._replan_retries += 1
-                self._last_gap = gap
-            else:
-                if has_subgoal:
-                    self._pending_target_state = metrics["predicted_subgoal_state"]
-                    self._last_gap = completion_gap(self._pending_target_state, self._current_state(batch))
-                self._action_queue.extend(chunk.transpose(0, 1)[: self.config.execute_horizon])
-                self._replan_retries = 0
-        return self._action_queue.popleft()
+        return self._executor.select_action(self._current_state(batch), lambda: self.plan_action_chunk(batch))

@@ -1,20 +1,26 @@
-"""Deterministic Temporal Action Decoder.
+"""Deterministic Temporal Action Decoder -- the main SafeDiff-VLA architecture.
 
-Replaces "diffuse a residual on top of SmolVLA's own nominal action chunk" as the *primary* path:
-every configuration tried in the `legacy_diffusion` architecture (critic-free, state-conditioned,
-subgoal-conditioned, temporal-conv-mixed) matched or underperformed simply executing SmolVLA's
-own nominal chunk unmodified once the `action_horizon`/`execute_horizon` mismatch against
-SmolVLA's native `chunk_size` was fixed — i.e. refining a nominal action chunk post hoc never
-once helped. This module instead treats SmolVLA purely as a multimodal *encoder* (see
-`SafeDiffVLAPolicy._encode_multimodal_latent`) and generates the action chunk directly:
+Replaces "diffuse a residual on top of SmolVLA's own nominal action chunk" (the old
+`legacy_diffusion` architecture, see `legacy/diffusion_planner.py`): every configuration tried
+there (critic-free, state-conditioned, subgoal-conditioned, temporal-conv-mixed) matched or
+underperformed simply executing SmolVLA's own nominal chunk unmodified, once the
+`action_horizon`/`execute_horizon` mismatch against SmolVLA's native `chunk_size` was fixed --
+i.e. refining a nominal action chunk post hoc never once helped. This module instead treats
+SmolVLA purely as a multimodal *encoder* (see `SafeDiffVLAPolicy._encode_multimodal_latent`) and
+generates the action chunk directly:
 
-    VLM latent tokens + current state (+ optional predicted future states)
+    VLM latent tokens + current state (+ optional predicted subgoal state)
         -> Temporal Action Decoder (cross-attention + self-attention across the horizon axis)
         -> action trajectory [B, H, A]
 
-`nominal` (SmolVLA's own action-head output) is not an input here at all — it's kept around
+`nominal` (SmolVLA's own action-head output) is not an input here at all -- it's kept around
 elsewhere only as an ablation baseline (`architecture: smolvla_nominal`) and an optional
 auxiliary-loss target, never as something this decoder edits.
+
+The horizon-axis temporal mixing here is `nn.TransformerDecoder`'s self-attention among the
+`horizon` action-query positions -- there is no additional Conv1D mixing layer in this decoder
+(the Conv1D `temporal_kernel_size` / `num_temporal_layers` mixer lives only in the *legacy*
+`ConditionalDiffusionPlanner`, see `legacy/diffusion_planner.py`).
 """
 
 import math
@@ -65,11 +71,11 @@ class TemporalActionDecoder(nn.Module):
         num_heads: int = 8,
         ffn_dim: int = 1024,
         dropout: float = 0.1,
-        use_future_state: bool = False,
+        use_subgoal: bool = False,
     ) -> None:
         super().__init__()
         self.horizon = horizon
-        self.use_future_state = use_future_state
+        self.use_subgoal = use_subgoal
         self.latent_projection = nn.Linear(latent_dim, hidden_dim)
         self.action_queries = nn.Parameter(torch.randn(horizon, hidden_dim) * 0.02)
         # Fixed (non-learnable) sin/cos position embedding, one per horizon slot. `action_queries`
@@ -81,8 +87,8 @@ class TemporalActionDecoder(nn.Module):
             "horizon_position_embedding", sinusoidal_positions(horizon, hidden_dim, torch.device("cpu"))
         )
         self.state_encoder = StateEncoder(state_dim, hidden_dim)
-        if use_future_state:
-            self.future_state_encoder = StateEncoder(state_dim, hidden_dim)
+        if use_subgoal:
+            self.subgoal_encoder = StateEncoder(state_dim, hidden_dim)
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=hidden_dim,
             nhead=num_heads,
@@ -99,7 +105,7 @@ class TemporalActionDecoder(nn.Module):
         latent_tokens: Tensor,
         latent_pad_mask: Tensor | None,
         current_state: Tensor,
-        predicted_states: Tensor | None = None,
+        subgoal_state: Tensor | None = None,
     ) -> Tensor:
         """
         Args:
@@ -108,21 +114,23 @@ class TemporalActionDecoder(nn.Module):
             latent_pad_mask: [B, N_tokens] bool, True where `latent_tokens` is real (not padding),
                 or None if every token is valid.
             current_state: [B, state_dim].
-            predicted_states: [B, H, state_dim] per-timestep predicted future state, required iff
-                `use_future_state=True` (see `state_predictor.py`).
+            subgoal_state: [B, state_dim] predicted subgoal state -- a single target, not a
+                per-timestep trajectory (see `state_predictor.py`'s `SubgoalStatePredictor`) --
+                added as global conditioning to every query position. Required iff
+                `use_subgoal=True`.
 
         Returns: action trajectory [B, H, action_dim].
         """
-        if self.use_future_state and predicted_states is None:
-            raise ValueError("This decoder was built with use_future_state=True but got none.")
+        if self.use_subgoal and subgoal_state is None:
+            raise ValueError("This decoder was built with use_subgoal=True but got none.")
         batch_size = latent_tokens.shape[0]
         memory = self.latent_projection(latent_tokens)
         memory_key_padding_mask = None if latent_pad_mask is None else ~latent_pad_mask
 
         queries = (self.action_queries + self.horizon_position_embedding)[None].expand(batch_size, -1, -1)
         queries = queries + self.state_encoder(current_state)[:, None, :]
-        if self.use_future_state:
-            queries = queries + self.future_state_encoder(predicted_states)
+        if self.use_subgoal:
+            queries = queries + self.subgoal_encoder(subgoal_state)[:, None, :]
 
         decoded = self.transformer(
             tgt=queries, memory=memory, memory_key_padding_mask=memory_key_padding_mask

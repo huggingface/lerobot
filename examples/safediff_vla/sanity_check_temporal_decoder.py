@@ -1,6 +1,6 @@
 #!/usr/bin/env python
-"""Pre-flight checks for the new `temporal_decoder` / `temporal_decoder_future_state`
-architectures, against the *real* `lerobot/smolvla_vlabench` backbone and a handful of real
+"""Pre-flight checks for the `temporal_decoder` / `temporal_decoder_subgoal` architectures,
+against the *real* `lerobot/smolvla_vlabench` backbone and a handful of real
 `lerobot/vlabench_unified` frames — run this before any real (20k+ step) training, not after.
 
 Checks (see SafeDiff-VLA redesign spec, section 11):
@@ -15,7 +15,7 @@ Checks (see SafeDiff-VLA redesign spec, section 11):
 
 Usage:
     uv run python examples/safediff_vla/sanity_check_temporal_decoder.py
-    uv run python examples/safediff_vla/sanity_check_temporal_decoder.py --architecture temporal_decoder_future_state
+    uv run python examples/safediff_vla/sanity_check_temporal_decoder.py --architecture temporal_decoder_subgoal
 """
 
 import argparse
@@ -72,7 +72,7 @@ def main() -> None:
     parser.add_argument(
         "--architecture",
         default="temporal_decoder",
-        choices=["temporal_decoder", "temporal_decoder_future_state"],
+        choices=["temporal_decoder", "temporal_decoder_subgoal"],
     )
     parser.add_argument("--backbone-name", default="lerobot/smolvla_vlabench")
     parser.add_argument("--repo-id", default="lerobot/vlabench_unified")
@@ -82,13 +82,13 @@ def main() -> None:
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
 
-    use_future_state = args.architecture == "temporal_decoder_future_state"
+    use_subgoal = args.architecture == "temporal_decoder_subgoal"
     config = SafeDiffVLAConfig(
         architecture=args.architecture,
         backbone_name=args.backbone_name,
         device=args.device,
         freeze_backbone=True,
-        subgoal_labels_path=SUBGOAL_LABELS_PATH if use_future_state else None,
+        subgoal_labels_path=SUBGOAL_LABELS_PATH if use_subgoal else None,
     )
 
     logger.info("=== building dataset (episodes=%s) ===", args.episodes)
@@ -140,10 +140,10 @@ def main() -> None:
     describe("latent pad mask", latent_pad_mask)
     describe("current_state", current_state)
     describe("target actions", batch["action"])
-    if use_future_state:
+    if use_subgoal:
         pooled = policy.latent_pool_projection(policy._pooled_latent(latent_tokens, latent_pad_mask))
-        predicted_states = policy.future_state_predictor(pooled, current_state)
-        describe("predicted subgoal state", predicted_states)
+        predicted_subgoal = policy.subgoal_state_predictor(pooled, current_state)
+        describe("predicted subgoal state", predicted_subgoal)
     pred_actions, metrics = policy.plan_action_chunk(batch)
     describe("predicted actions", pred_actions)
     assert pred_actions.shape == batch["action"].shape[:1] + (
