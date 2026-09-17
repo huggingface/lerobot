@@ -328,6 +328,32 @@ def test_save_pretrained_single_file_artifact(dummy_dataset_metadata, tmp_path):
     torch.testing.assert_close(list(policy.parameters()), list(loaded_policy.parameters()), rtol=0, atol=0)
 
 
+def test_load_pretrained_dimension_mismatch_error(dummy_dataset_metadata, tmp_path):
+    """Loading a checkpoint into a model with different action/state dims should raise a clear error."""
+    policy_cls = get_policy_class("act")
+    policy_cfg = make_policy_config("act")
+    features = dataset_to_policy_features(dummy_dataset_metadata.features)
+    policy_cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
+    policy_cfg.input_features = {
+        key: ft for key, ft in features.items() if key not in policy_cfg.output_features
+    }
+    policy = policy_cls(policy_cfg)
+    policy.to(policy_cfg.device)
+    save_dir = tmp_path / "dimension_mismatch"
+    policy.save_pretrained(save_dir)
+
+    # A config whose action dimension differs from the saved checkpoint's, simulating loading a
+    # checkpoint trained for one robot's action/state dims into a model built for another's.
+    mismatched_cfg = deepcopy(policy_cfg)
+    mismatched_cfg.output_features = {
+        key: PolicyFeature(type=ft.type, shape=(ft.shape[0] * 2,))
+        for key, ft in policy_cfg.output_features.items()
+    }
+
+    with pytest.raises(RuntimeError, match="action/state feature dimensions"):
+        policy_cls.from_pretrained(save_dir, config=mismatched_cfg)
+
+
 @pytest.mark.parametrize("multikey", [True, False])
 def test_multikey_construction(multikey: bool):
     """
