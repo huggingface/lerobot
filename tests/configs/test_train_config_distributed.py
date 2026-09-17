@@ -50,11 +50,16 @@ class TestDistributedFailFasts:
         with pytest.raises(ValueError, match="inference-only"):
             cfg._validate_distributed()
 
-    def test_compile_placeholder(self):
-        cfg = make_cfg()
+    def test_compile_rejected_when_sharded(self):
+        cfg = make_cfg(parallelism=sharded())
         cfg.accelerator.compile.enabled = True
         with pytest.raises(ValueError, match="compile"):
             cfg._validate_distributed()
+
+    def test_compile_accepted_without_sharding(self):
+        cfg = make_cfg()
+        cfg.accelerator.compile.enabled = True
+        cfg._validate_distributed()
 
     def test_activation_checkpointing_placeholder(self):
         cfg = make_cfg()

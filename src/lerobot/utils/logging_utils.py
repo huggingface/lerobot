@@ -188,6 +188,8 @@ class MetricsTracker:
         Caller-registered metrics (those passed to the constructor) are never overridden.
         """
         for name, value in values.items():
+            if isinstance(value, torch.Tensor) and value.numel() == 1:
+                value = value.item()  # a 0-d tensor a policy left on the device, read back here
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 continue
             if name in self._caller_metrics:
