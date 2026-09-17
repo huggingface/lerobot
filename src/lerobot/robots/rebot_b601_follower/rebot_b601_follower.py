@@ -73,10 +73,17 @@ class RebotB601Follower(Robot):
         self.motors: dict = {}
         self.motor_names = list(config.motor_can_ids.keys())
         self.cameras = make_cameras_from_configs(config.cameras)
+        # Last complete arm target (degrees) actually sent by `send_action`, used as the
+        # command-space start point of the safe-home trajectory.
+        self._last_arm_target: dict[str, float] = {}
 
     @property
     def _motors_ft(self) -> dict[str, type]:
         return {f"{motor}.pos": float for motor in self.motor_names}
+
+    @property
+    def _arm_motor_names(self) -> list[str]:
+        return [motor for motor in self.motor_names if motor != GRIPPER_MOTOR]
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -104,6 +111,7 @@ class RebotB601Follower(Robot):
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         logger.info(f"Connecting {self} on {self.config.port} (adapter={self.config.can_adapter})...")
+        self._last_arm_target = {}
         if self.config.can_adapter == "damiao":
             self.bus = MotorBridgeController.from_dm_serial(
                 serial_port=self.config.port,
@@ -183,6 +191,10 @@ class RebotB601Follower(Robot):
                 f"Unsupported gripper_control_mode '{self.config.gripper_control_mode}'. "
                 "Use 'force_pos' or 'mit'."
             )
+        if self.config.safe_home_rate_hz <= 0:
+            raise ValueError(f"safe_home_rate_hz must be > 0, got {self.config.safe_home_rate_hz}.")
+        if self.config.safe_home_duration_s < 0:
+            raise ValueError(f"safe_home_duration_s must be >= 0, got {self.config.safe_home_duration_s}.")
         use_mit = self.config.control_mode == "mit"
         gripper_use_mit = self.config.gripper_control_mode == "mit"
         self.bus.enable_all()
@@ -255,15 +267,7 @@ class RebotB601Follower(Robot):
         always returned.
         """
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
-
-        # Clip against soft joint limits.
-        for motor_name in list(goal_pos):
-            if motor_name in self.config.joint_limits:
-                min_limit, max_limit = self.config.joint_limits[motor_name]
-                clipped = max(min_limit, min(max_limit, goal_pos[motor_name]))
-                if clipped != goal_pos[motor_name]:
-                    logger.debug(f"Clipped {motor_name} from {goal_pos[motor_name]:.2f} to {clipped:.2f}")
-                goal_pos[motor_name] = clipped
+        goal_pos = self._clip_to_joint_limits(goal_pos)
 
         # Tolerate 6-DOF leaders that have no wrist_yaw joint by holding it at zero.
         # This is intentional: it lets a 6-DOF leader such as the SO-100 / SO-101
@@ -278,6 +282,34 @@ class RebotB601Follower(Robot):
             goal_present_pos = {key: (g, present_pos.get(key, g)) for key, g in goal_pos.items()}
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
+        self._send_goal_pos(goal_pos)
+        # A motor keeps its last commanded target until a new one is sent, so remember
+        # the joints just commanded without forgetting the ones this action left out.
+        self._last_arm_target.update(
+            {
+                motor_name: goal_pos[motor_name]
+                for motor_name in self._arm_motor_names
+                if motor_name in goal_pos
+            }
+        )
+
+        return {f"{motor}.pos": val for motor, val in goal_pos.items()}
+
+    def _clip_to_joint_limits(self, goal_pos: dict[str, float]) -> dict[str, float]:
+        """Clip a goal position mapping (degrees) against the configured soft limits."""
+        clipped_pos = dict(goal_pos)
+        for motor_name, position_deg in goal_pos.items():
+            if motor_name not in self.config.joint_limits:
+                continue
+            min_limit, max_limit = self.config.joint_limits[motor_name]
+            clipped = max(min_limit, min(max_limit, position_deg))
+            if clipped != position_deg:
+                logger.debug(f"Clipped {motor_name} from {position_deg:.2f} to {clipped:.2f}")
+            clipped_pos[motor_name] = clipped
+        return clipped_pos
+
+    def _send_goal_pos(self, goal_pos: dict[str, float]) -> None:
+        """Send a goal position mapping (degrees) to the motors in their control mode."""
         use_mit = self.config.control_mode == "mit"
         for motor_name, position_deg in goal_pos.items():
             motor = self.motors.get(motor_name)
@@ -307,21 +339,83 @@ class RebotB601Follower(Robot):
                 )
                 motor.send_pos_vel(pos_rad, math.radians(vel_deg_s))
 
-        return {f"{motor}.pos": val for motor, val in goal_pos.items()}
+    def _safe_home(self) -> None:
+        """Interpolate the arm back to `safe_home_target` before torque is released.
+
+        In MIT mode the position loop holds the arm up through the error between the
+        commanded target and the measured position, so the trajectory starts from the
+        last commanded arm target rather than from feedback: restarting from feedback
+        would zero that supporting error and let the arm dip under gravity. Feedback is
+        read for the log lines, and is only used as the trajectory start when no complete
+        previous target is available.
+        """
+        arm_names = self._arm_motor_names
+        feedback = self._present_pos()
+        if all(motor_name in self._last_arm_target for motor_name in arm_names):
+            start = {motor_name: self._last_arm_target[motor_name] for motor_name in arm_names}
+        else:
+            logger.info("No complete arm target recorded yet, starting safe-home from feedback.")
+            start = {motor_name: feedback.get(motor_name, 0.0) for motor_name in arm_names}
+        logger.info(f"{self} entering safe-home from {start} (feedback {feedback}).")
+
+        period_s = 1.0 / self.config.safe_home_rate_hz
+        hold = dict(start)
+        if self.config.safe_home_gripper_pos is not None:
+            hold[GRIPPER_MOTOR] = self.config.safe_home_gripper_pos
+        hold = self._clip_to_joint_limits(hold)
+
+        # Hold the command-space start point while the gripper pre-open dwell runs, so
+        # the arm command stays continuous across the control-to-homing boundary.
+        self._send_goal_pos(hold)
+        if self.config.safe_home_gripper_pos is not None:
+            dwell_end = time.perf_counter() + self.config.safe_home_gripper_dwell_s
+            while time.perf_counter() < dwell_end:
+                time.sleep(period_s)
+                self._send_goal_pos(hold)
+
+        target = {
+            motor_name: self.config.safe_home_target.get(motor_name, start[motor_name])
+            for motor_name in arm_names
+        }
+        steps = max(round(self.config.safe_home_duration_s * self.config.safe_home_rate_hz), 1)
+        for step in range(1, steps + 1):
+            ratio = step / steps
+            waypoint = {
+                motor_name: start[motor_name] + ratio * (target[motor_name] - start[motor_name])
+                for motor_name in arm_names
+            }
+            time.sleep(period_s)
+            self._send_goal_pos(self._clip_to_joint_limits(waypoint))
+
+        self._last_arm_target = dict(target)
+        logger.info(f"{self} safe-home done, final feedback {self._present_pos()}.")
 
     @check_if_not_connected
     def disconnect(self) -> None:
-        for motor in self.motors.values():
-            if self.config.disable_torque_on_disconnect:
-                motor.disable()
-            motor.clear_error()
-            motor.close()
+        homed = True
+        try:
+            if self.config.safe_home_on_disconnect:
+                self._safe_home()
+        except Exception:
+            homed = False
+            logger.exception("Safe-home failed, keeping torque enabled for manual recovery.")
+        except BaseException:
+            # A second Ctrl+C during homing must still release the bus and the cameras.
+            homed = False
+            raise
+        finally:
+            for motor in self.motors.values():
+                if self.config.disable_torque_on_disconnect and homed:
+                    motor.disable()
+                motor.clear_error()
+                motor.close()
 
-        self.bus.close()
-        self.bus = None
-        self.motors = {}
+            self.bus.close()
+            self.bus = None
+            self.motors = {}
+            self._last_arm_target = {}
 
-        for cam in self.cameras.values():
-            cam.disconnect()
+            for cam in self.cameras.values():
+                cam.disconnect()
 
-        logger.info(f"{self} disconnected.")
+            logger.info(f"{self} disconnected.")

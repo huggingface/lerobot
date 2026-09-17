@@ -14,7 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import itertools
 import math
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -65,6 +67,37 @@ def follower():
         yield robot
         if robot.is_connected:
             robot.disconnect()
+
+
+@contextmanager
+def _connected_follower(**config_kwargs):
+    """Connected follower with mocked motors, configurable at the config level."""
+    bus_mock = _make_bus_mock()
+    with (
+        patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
+        patch(f"{_MODULE}.MotorBridgeController") as controller_cls,
+        patch(f"{_MODULE}.MotorBridgeMode", MagicMock()),
+    ):
+        controller_cls.from_dm_serial.return_value = bus_mock
+        robot = RebotB601Follower(RebotB601FollowerRobotConfig(port="/dev/null", **config_kwargs))
+        robot.connect(calibrate=False)
+        yield robot
+
+
+# Safe-home settings that keep the trajectory to a single fast step in tests.
+_FAST_SAFE_HOME = {
+    "safe_home_on_disconnect": True,
+    "safe_home_duration_s": 0.0,
+    "safe_home_rate_hz": 1000.0,
+}
+_ARM_ACTION = {
+    "shoulder_pan.pos": 10.0,
+    "shoulder_lift.pos": -56.69,
+    "elbow_flex.pos": -30.0,
+    "wrist_flex.pos": 5.0,
+    "wrist_yaw.pos": -5.0,
+    "wrist_roll.pos": 15.0,
+}
 
 
 def test_features_match_joints():
@@ -131,3 +164,95 @@ def test_bimanual_prefixes_features():
     assert any(k.startswith("right_") for k in robot.action_features)
     assert "left_gripper.pos" in robot.action_features
     assert "right_gripper.pos" in robot.action_features
+
+
+def test_safe_home_starts_from_last_commanded_target():
+    with _connected_follower(**_FAST_SAFE_HOME) as robot:
+        robot.send_action(_ARM_ACTION)
+        feedback_deg = robot.get_observation()["shoulder_lift.pos"]
+        motor = robot.motors["shoulder_lift"]
+        motor.send_mit.reset_mock()
+
+        robot.disconnect()
+
+        # Safe-home must hand the MIT loop the last commanded target, not the measured
+        # position: starting from feedback would zero the error that carries the arm.
+        first_home_pos_rad = motor.send_mit.call_args_list[0].args[0]
+        assert first_home_pos_rad == pytest.approx(math.radians(-56.69))
+        assert first_home_pos_rad != pytest.approx(math.radians(feedback_deg))
+        # The trajectory still ends on the configured home target.
+        assert motor.send_mit.call_args_list[-1].args[0] == pytest.approx(0.0)
+
+
+def test_safe_home_falls_back_to_feedback_without_a_commanded_target():
+    with _connected_follower(**_FAST_SAFE_HOME) as robot:
+        feedback_deg = robot.get_observation()["shoulder_pan.pos"]
+        motor = robot.motors["shoulder_pan"]
+
+        robot.disconnect()
+
+        assert motor.send_mit.call_args_list[0].args[0] == pytest.approx(math.radians(feedback_deg))
+
+
+def test_safe_home_pre_opens_the_gripper():
+    with _connected_follower(
+        **_FAST_SAFE_HOME, safe_home_gripper_pos=-30.0, safe_home_gripper_dwell_s=0.0
+    ) as robot:
+        gripper = robot.motors["gripper"]
+
+        robot.disconnect()
+
+        assert gripper.send_force_pos.call_args_list[0].args[0] == pytest.approx(math.radians(-30.0))
+
+
+def test_safe_home_failure_keeps_torque_enabled():
+    with _connected_follower(**_FAST_SAFE_HOME) as robot:
+        motors = dict(robot.motors)
+        motors["shoulder_pan"].send_mit.side_effect = RuntimeError("CAN bus down")
+
+        robot.disconnect()
+
+        assert not robot.is_connected
+        for motor in motors.values():
+            motor.disable.assert_not_called()
+            motor.close.assert_called_once()
+
+
+def test_safe_home_interpolates_towards_the_home_target():
+    # Three trajectory steps, so the waypoint blending actually runs.
+    with _connected_follower(
+        safe_home_on_disconnect=True, safe_home_duration_s=0.003, safe_home_rate_hz=1000.0
+    ) as robot:
+        robot.send_action(_ARM_ACTION)
+        motor = robot.motors["shoulder_pan"]
+        motor.send_mit.reset_mock()
+
+        robot.disconnect()
+
+        sent_deg = [math.degrees(call.args[0]) for call in motor.send_mit.call_args_list]
+        assert sent_deg[0] == pytest.approx(10.0)
+        assert sent_deg[-1] == pytest.approx(0.0)
+        # Strictly monotonic from the last commanded target down to the home target.
+        assert len(sent_deg) == 4
+        assert all(later < earlier for earlier, later in itertools.pairwise(sent_deg))
+
+
+def test_invalid_safe_home_timing_is_rejected():
+    for kwargs in ({"safe_home_rate_hz": 0.0}, {"safe_home_duration_s": -1.0}):
+        with pytest.raises(ValueError), _connected_follower(**kwargs):
+            pass
+
+
+def test_safe_home_keeps_teardown_on_keyboard_interrupt():
+    with _connected_follower(**_FAST_SAFE_HOME) as robot:
+        motors = dict(robot.motors)
+        bus = robot.bus
+        motors["shoulder_pan"].send_mit.side_effect = KeyboardInterrupt
+
+        with pytest.raises(KeyboardInterrupt):
+            robot.disconnect()
+
+        for motor in motors.values():
+            motor.disable.assert_not_called()
+            motor.close.assert_called_once()
+        bus.close.assert_called_once()
