@@ -671,6 +671,14 @@ class TestDisconnect:
 # ---------------------------------------------------------------------------
 
 
+def test_position_command_clears_sdk_velocity(make_robot):
+    factory, mocks = make_robot
+    robot = arm_for_publish(factory(), mocks)
+    robot.msg.motor_cmd[22].dq = 4.0
+    robot.publish_lowcmd({"kRightShoulderPitch.q": 0.2})
+    assert robot.msg.motor_cmd[22].dq == 0.0
+
+
 class TestControllerInput:
     def test_starts_from_a_zeroed_remote(self, make_robot):
         factory, _ = make_robot
