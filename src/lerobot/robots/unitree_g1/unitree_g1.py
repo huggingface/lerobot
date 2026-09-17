@@ -355,6 +355,52 @@ class UnitreeG1(Robot):
         pass
 
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
+        try:
+            self._connect()
+        except BaseException:
+            self._release_after_failed_connect()
+            raise
+
+    def _release_after_failed_connect(self) -> None:
+        """Stops the threads and cameras that connect() had already started.
+
+        The subscribe thread is not a daemon, so leaving it running blocks interpreter
+        exit rather than letting the original error surface.
+        """
+        self._shutdown_event.set()
+
+        for thread, label in (
+            (self._controller_thread, "Controller"),
+            (self.subscribe_thread, "Subscribe"),
+        ):
+            if thread is None:
+                continue
+            thread.join(timeout=2.0)
+            if thread.is_alive():
+                logger.warning(f"{label} thread did not stop cleanly after {self} failed to connect.")
+
+        self._controller_thread = None
+        self.subscribe_thread = None
+
+        for cam in self._cameras.values():
+            try:
+                if cam.is_connected:
+                    cam.disconnect()
+            except Exception:
+                logger.exception(f"Failed to disconnect {cam} after {self} failed to connect.")
+
+        if self.sim_env is not None:
+            try:
+                self.sim_env.close()
+            except Exception:
+                logger.exception(f"Failed to close the sim env after {self} failed to connect.")
+            self.sim_env = None
+            self._env_wrapper = None
+
+        # Cleared last so a later connect() attempt starts from a usable state.
+        self._shutdown_event.clear()
+
+    def _connect(self) -> None:
         # Initialize DDS channel and simulation environment
         if self.config.is_simulation:
             from lerobot.envs import make_env
