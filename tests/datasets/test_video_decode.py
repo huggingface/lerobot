@@ -14,24 +14,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for ``lerobot.datasets.video_utils.VideoDecoderCache``.
+"""Unit tests for video frame decoding in ``lerobot.datasets.video_utils``.
 
-These cover the LRU bounding + file-handle release behaviour added to prevent
-unbounded growth when iterating over datasets with many distinct video files
-(observed: ~35 GB anon-rss per DataLoader worker on an 8 k-file dataset).
+Covers two things:
+- each backend (pyav, torchcodec) selects the correct frames, in order, verified against an
+  oracle independent of the decoder: the committed ``indexed_clip_60frames.mp4`` artifact whose
+  frame ``i`` is painted the constant value ``i``, so decoded content equals the known index;
+- ``VideoDecoderCache`` LRU bounding + file-handle release (torchcodec decode path).
 """
 
+import importlib.util
 import shutil
 from pathlib import Path
 
 import pytest
 
-pytest.importorskip("torchcodec", reason="torchcodec is required (install lerobot[dataset])")
+pytest.importorskip("av", reason="av is required (install lerobot[dataset])")
 
-from lerobot.datasets.video_utils import VideoDecoderCache  # noqa: E402
+import torch  # noqa: E402
+
+from lerobot.datasets.video_utils import VideoDecoderCache, decode_video_frames  # noqa: E402
+
+FPS = 30
 
 TEST_ARTIFACTS_DIR = Path(__file__).resolve().parent.parent / "artifacts" / "encoded_videos"
 SRC_CLIP = TEST_ARTIFACTS_DIR / "clip_4frames.mp4"
+# 60-frame 16x16 lossless-RGB clip (libx264rgb, qp=0, gop=2) with frame ``i`` painted the constant
+# value ``i``. Lossless RGB avoids the YUV<->RGB range shift, so decoded pixels equal the frame index exactly.
+INDEXED_CLIP = TEST_ARTIFACTS_DIR / "indexed_clip_60frames.mp4"
+
+torchcodec_required = pytest.mark.skipif(
+    importlib.util.find_spec("torchcodec") is None,
+    reason="torchcodec not available",
+)
 
 
 def _make_distinct_clips(tmp_path: Path, n: int) -> list[Path]:
@@ -49,7 +64,42 @@ def _make_distinct_clips(tmp_path: Path, n: int) -> list[Path]:
     return paths
 
 
+@pytest.mark.parametrize(
+    "backend",
+    ["pyav", pytest.param("torchcodec", marks=torchcodec_required)],
+)
+@pytest.mark.parametrize(
+    "indices",
+    [
+        [3, 50, 20, 58, 10],  # far apart, unsorted -> a seek per keyframe cluster
+        list(range(20, 31)),  # contiguous window -> single forward pass
+        [5, 6, 7, 40, 41, 42],  # two contiguous clusters far apart
+        [58, 40, 20, 0],  # descending
+        [30, 30, 31],  # duplicates
+        [42],  # single frame
+    ],
+)
+def test_decode_selects_correct_frames(backend, indices):
+    """Each backend returns exactly the requested frames, in order.
+
+    ``INDEXED_CLIP`` paints frame ``i`` the constant value ``i``, so the expected content is the
+    frame index itself -- an oracle independent of the decoder under test.
+    """
+    tolerance_s = 1.0 / FPS
+    frames = decode_video_frames(
+        INDEXED_CLIP, [i / FPS for i in indices], tolerance_s, backend, return_uint8=True
+    )
+    expected = torch.tensor([i % 256 for i in indices], dtype=torch.uint8).view(-1, 1, 1, 1).expand_as(frames)
+    assert frames.shape[0] == len(indices)
+    assert torch.equal(frames, expected)
+
+
+@torchcodec_required
 class TestVideoDecoderCacheBounded:
+    """LRU bounding + file-handle release, added to prevent unbounded growth when iterating over
+    datasets with many distinct video files (observed: ~35 GB anon-rss per DataLoader worker on an
+    8 k-file dataset)."""
+
     def test_default_cache_is_bounded(self):
         """The default cache must have a finite ``max_size`` to bound RSS growth."""
         cache = VideoDecoderCache()
