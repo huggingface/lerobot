@@ -372,11 +372,19 @@ def test_resolve_step_class_import_path():
 
 
 def test_resolve_step_class_invalid_import_path():
-    """Test resolution with invalid import path."""
+    """Test resolution with invalid import path when trust_remote_code=True."""
     step_entry = {"class": "nonexistent.module.ClassName"}
 
     with pytest.raises(ImportError, match="Failed to load processor step"):
-        DataProcessorPipeline._resolve_step_class(step_entry)
+        DataProcessorPipeline._resolve_step_class(step_entry, trust_remote_code=True)
+
+
+def test_resolve_step_class_untrusted_import_path():
+    """Test resolution with untrusted custom import path raises ValueError."""
+    step_entry = {"class": "nonexistent.module.ClassName"}
+
+    with pytest.raises(ValueError, match="requires `trust_remote_code=True`"):
+        DataProcessorPipeline._resolve_step_class(step_entry, trust_remote_code=False)
 
 
 # Override Validation Tests

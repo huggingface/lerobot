@@ -177,6 +177,8 @@ class TrainPipelineConfig(HubMixin):
 
     # Sample weighting configuration (e.g., for RA-BC training)
     sample_weighting: SampleWeightingConfig | None = None
+    # Explicit consent to execute remote code from the Hub (required for hub environments/custom processors).
+    trust_remote_code: bool = False
 
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
