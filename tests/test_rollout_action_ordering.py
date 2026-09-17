@@ -127,8 +127,8 @@ class _StubRelativePolicy:
     def reset(self):
         pass
 
-    # Borrow the real queue accounting rather than restate it: the relative-action step keys
-    # the anchor hold off ``count_queued_actions``, so a stub that answered it by hand could
+    # Borrow the real queue accounting rather than restate it: the relative-action step keys the
+    # anchor hold off ``count_queued_actions``, so a stub that answered it by hand could
     # drift from ``PreTrainedPolicy`` and hide a wiring break. This policy keeps no queue
     # attribute at all, so it reports 0 (fresh prediction every tick).
     _action_queue_attrs = PreTrainedPolicy._action_queue_attrs
@@ -187,25 +187,28 @@ def _make_pipelines():
 
 def _build_features(*, align_state: bool, align_action: bool):
     """Reproduce ``build_rollout_context``'s feature reconciliation for one variant."""
-    from lerobot.rollout.context import (
-        _align_action_feature_order,
-        _align_state_feature_order,
-        _resolve_action_key_order,
-    )
+    from lerobot.rollout.context import _align_to_checkpoint_order
 
     observation_features_hw = {**dict.fromkeys(HW_ORDER, float), **_CAMERAS}
     action_features_hw = dict.fromkeys(HW_ORDER, float)
 
     if align_state:
-        observation_features_hw = _align_state_feature_order(observation_features_hw, list(CKPT_ORDER))
+        observation_features_hw = _align_to_checkpoint_order(
+            observation_features_hw, list(CKPT_ORDER), what="state"
+        )
     if align_action:
-        action_features_hw = _align_action_feature_order(action_features_hw, list(CKPT_ORDER))
+        action_features_hw = _align_to_checkpoint_order(action_features_hw, list(CKPT_ORDER), what="action")
 
     dataset_features = combine_feature_dicts(
         hw_to_dataset_features(action_features_hw, "action"),
         hw_to_dataset_features(observation_features_hw, "observation"),
     )
-    ordered_action_keys = _resolve_action_key_order(list(CKPT_ORDER), list(action_features_hw))
+    # HW_ORDER and CKPT_ORDER are permutations of one another, so the resolver these variants
+    # were written against always answered CKPT_ORDER, whatever ``align_action`` did. Spell that
+    # out rather than deriving it: the variants below model historical revisions, and only the
+    # aligned one ("head") is a state today's ``build_rollout_context`` can still produce --
+    # there ``list(action_features_hw)`` is CKPT_ORDER too.
+    ordered_action_keys = list(CKPT_ORDER)
     return dataset_features, ordered_action_keys
 
 
