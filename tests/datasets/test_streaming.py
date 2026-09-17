@@ -22,10 +22,14 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import lerobot.datasets.factory as factory_module
 import lerobot.datasets.streaming_dataset as streaming_dataset_module
+from lerobot.configs.default import DatasetConfig
+from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.datasets.utils import safe_shard
+from lerobot.policies.factory import make_policy_config
 from lerobot.utils.constants import ACTION
 from tests.fixtures.constants import DUMMY_REPO_ID
 
@@ -645,3 +649,41 @@ def test_bucket_root_caches_metadata_without_switching_to_local_streaming(tmp_pa
 def test_invalid_repo_type_fails_before_io():
     with pytest.raises(ValueError, match="repo_type must be 'dataset' or 'bucket'"):
         StreamingLeRobotDataset(DUMMY_REPO_ID, repo_type="space")
+
+
+def test_make_dataset_forwards_depth_output_unit_to_streaming(tmp_path, lerobot_dataset_factory, monkeypatch):
+    """`--dataset.depth_output_unit` must reach the streaming dataset too.
+
+    make_dataset() forwards it to LeRobotDataset (both in make_dataset and in
+    make_train_eval_datasets), so flipping `--dataset.streaming` must not silently
+    change the physical unit depth maps are dequantized to.
+    """
+    root = tmp_path / "test"
+    lerobot_dataset_factory(root=root, repo_id=DUMMY_REPO_ID, total_episodes=1, total_frames=4)
+
+    captured: dict = {}
+
+    class _CaptureStreamingDataset:
+        def __init__(self, repo_id, **kwargs):
+            captured.update(kwargs)
+            self.meta = SimpleNamespace(camera_keys=[], depth_keys=[], stats={})
+
+    monkeypatch.setattr(factory_module, "StreamingLeRobotDataset", _CaptureStreamingDataset)
+    monkeypatch.setattr(
+        factory_module,
+        "load_dataset_metadata",
+        lambda *args, **kwargs: LeRobotDatasetMetadata(DUMMY_REPO_ID, root=root),
+    )
+
+    cfg = TrainPipelineConfig(
+        dataset=DatasetConfig(
+            repo_id=DUMMY_REPO_ID,
+            root=str(root),
+            streaming=True,
+            depth_output_unit="m",
+        ),
+        policy=make_policy_config("act"),
+    )
+    factory_module.make_dataset(cfg)
+
+    assert captured["depth_output_unit"] == "m"
