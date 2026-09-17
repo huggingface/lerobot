@@ -62,6 +62,19 @@ def is_package_available(
             else:
                 # For packages other than "torch", don't attempt the fallback and set as not available
                 package_exists = False
+
+        # Verify the package can actually be imported — find_spec only checks
+        # that the distribution metadata exists, not that the package is
+        # loadable at runtime (e.g. a dependency conflict can leave a package
+        # installed but broken, as with transformers + huggingface-hub on
+        # ROCm cloud images).
+        if package_exists:
+            try:
+                importlib.import_module(import_name)
+            except Exception:
+                package_exists = False
+                package_version = "N/A"
+
         logging.debug(f"Detected {pkg_name} version: {package_version}")
     if return_version:
         return package_exists, package_version
