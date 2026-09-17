@@ -62,6 +62,34 @@ from lerobot.policies import get_policy_class, make_policy_config, make_pre_post
 from lerobot.utils.constants import ACTION
 
 
+def split_dataset_prefix(buffer_name: str) -> tuple[str | None, str]:
+    """
+    Splits a normalization buffer name into its dataset prefix and feature name.
+
+    Policies trained on a single dataset name their buffers `'buffer_<feature>'`.
+    Policies trained on several datasets register one buffer per dataset instead,
+    named `'<dataset>_buffer_<feature>'`. Keeping the dataset name inside the feature
+    name would produce keys such as `'so100.buffer.action'`, which never match the
+    `'action'` key the normalization step looks up at inference time.
+
+    Args:
+        buffer_name: The buffer name, with any module prefix already removed.
+
+    Returns:
+        A tuple of the dataset name (`None` when the buffer is not dataset-scoped)
+        and the feature name, still using `'_'` as its separator.
+    """
+    marker = "_buffer_"
+    if buffer_name.startswith("buffer_"):
+        return None, buffer_name[len("buffer_") :]
+
+    dataset, sep, feature_name = buffer_name.partition(marker)
+    if sep:
+        return dataset, feature_name
+
+    return None, buffer_name
+
+
 def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str, dict[str, torch.Tensor]]:
     """
     Scans a model's state_dict to find and extract normalization statistics.
@@ -70,6 +98,9 @@ def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str
     for mean, std, min, max) based on a set of predefined patterns and organizes
     them into a nested dictionary.
 
+    Dataset-scoped buffers are recognised and their prefix is stripped, so that the
+    resulting keys match the feature names used at inference time.
+
     Args:
         state_dict: The state dictionary of a pretrained policy model.
 
@@ -77,8 +108,14 @@ def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str
         A nested dictionary where outer keys are feature names (e.g.,
         'observation.state') and inner keys are statistic types ('mean', 'std'),
         mapping to their corresponding tensor values.
+
+    Raises:
+        ValueError: If the state dict holds statistics for more than one dataset.
+            The processor pipeline stores a single set of statistics per feature, so
+            there is no correct way to pick one of them here.
     """
     stats = {}
+    datasets: set[str] = set()
 
     # Define patterns to match and their prefixes to remove
     normalization_patterns = [
@@ -89,7 +126,7 @@ def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str
         "unnormalize.",  # Must come after unnormalize_* patterns
         "input_normalizer.",
         "output_normalizer.",
-        "normalalize_inputs.",
+        "normalize_inputs.",
         "unnormalize_outputs.",
         "normalize_targets.",
         "unnormalize_targets.",
@@ -108,8 +145,11 @@ def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str
                 if len(parts) >= 2:
                     # Last part is the stat type (mean, std, min, max, etc.)
                     stat_type = parts[-1]
-                    # Everything else is the feature name
-                    feature_name = ".".join(parts[:-1]).replace("_", ".")
+                    # Everything else is the buffer name, possibly dataset-scoped
+                    dataset, buffer_name = split_dataset_prefix(".".join(parts[:-1]))
+                    feature_name = buffer_name.replace("_", ".")
+                    if dataset is not None:
+                        datasets.add(dataset)
 
                     # Add to stats
                     if feature_name not in stats:
@@ -118,6 +158,16 @@ def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str
 
                 # Only process the first matching pattern
                 break
+
+    if len(datasets) > 1:
+        raise ValueError(
+            f"This checkpoint holds normalization statistics for {len(datasets)} datasets "
+            f"({', '.join(sorted(datasets))}), but a processor pipeline stores a single set of "
+            "statistics per feature. Migrating would keep whichever dataset happens to be read "
+            "last and silently normalize with the wrong values. Migrate the checkpoint once per "
+            "dataset, or attach the statistics of the dataset you intend to use at load time via "
+            'overrides={"normalizer_processor": {"stats": dataset.meta.stats}}.'
+        )
 
     return stats
 
