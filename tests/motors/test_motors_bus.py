@@ -358,3 +358,22 @@ def test_sync_write_by_value_dict(data_name, ids_values, dummy_motors):
     mock__encode_sign.assert_called_once_with(data_name, ids_values)
     if data_name in bus.normalized_data:
         mock__unnormalize.assert_called_once_with(ids_values)
+
+
+def test_setup_motor_interactive_retries_on_failure(dummy_motors, capsys):
+    bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
+
+    with (
+        patch("builtins.input", return_value=""),
+        patch.object(
+            MockMotorsBus,
+            "setup_motor",
+            side_effect=[RuntimeError("Motor 'dummy_1' not found"), None],
+        ) as mock_setup_motor,
+    ):
+        bus.setup_motor_interactive("dummy_1")
+
+    assert mock_setup_motor.call_count == 2
+    captured = capsys.readouterr()
+    assert "Setting up 'dummy_1' motor failed" in captured.out
+    assert "'dummy_1' motor id set to 1" in captured.out

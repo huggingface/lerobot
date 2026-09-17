@@ -172,9 +172,7 @@ class SOFollower(Robot):
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
-            input(f"Connect the controller board to the '{motor}' motor only and press enter.")
-            self.bus.setup_motor(motor)
-            print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
+            self.bus.setup_motor_interactive(motor)
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
