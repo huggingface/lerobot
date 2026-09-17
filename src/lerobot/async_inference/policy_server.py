@@ -415,7 +415,7 @@ def serve(cfg: PolicyServerConfig):
     """Start the PolicyServer with the given configuration.
 
     Args:
-        config: PolicyServerConfig instance. If None, uses default configuration.
+        cfg: PolicyServerConfig instance.
     """
     logging.info(pformat(asdict(cfg)))
 

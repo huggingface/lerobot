@@ -115,7 +115,7 @@ def parse_plugin_args(plugin_arg_suffix: str, args: Sequence[str]) -> dict[str, 
 
     Args:
         plugin_arg_suffix (str): The suffix to identify plugin-related arguments.
-        cli_args (Sequence[str]): A sequence of command-line arguments to parse.
+        args (Sequence[str]): A sequence of command-line arguments to parse.
 
     Returns:
         dict: A dictionary containing the parsed plugin arguments where:
