@@ -1,0 +1,165 @@
+# 达妙电机与 CAN 总线
+
+本指南介绍如何通过 CAN 总线通信，在 LeRobot 中设置和使用达妙电机。
+
+目前仅支持 Linux，因为 OpenArms CAN 适配器只有 Linux 驱动。
+
+## Linux CAN 设置
+
+在使用达妙电机之前，需要在你的 Linux 系统上设置 CAN 接口。
+
+### 安装 CAN 工具
+
+```bash
+sudo apt-get install can-utils
+```
+
+### 配置 CAN 接口（手动）
+
+对于标准 CAN FD（推荐用于 OpenArms）：
+
+```bash
+sudo ip link set can0 down
+sudo ip link set can0 type can bitrate 1000000 dbitrate 5000000 fd on
+sudo ip link set can0 up
+```
+
+对于标准 CAN（不使用 FD）：
+
+```bash
+sudo ip link set can0 down
+sudo ip link set can0 type can bitrate 1000000
+sudo ip link set can0 up
+```
+
+### 配置 CAN 接口（使用 LeRobot）
+
+LeRobot 提供了一个实用脚本，用于设置和测试 CAN 接口：
+
+```bash
+# 设置多个接口（例如，带有 2 条 CAN 总线的 OpenArms Followers）
+lerobot-setup-can --mode=setup --interfaces=can0,can1
+```
+
+## 调试 CAN 通信
+
+使用内置调试工具测试电机通信：
+
+```bash
+# 测试所有接口上的电机
+lerobot-setup-can --mode=test --interfaces=can0,can1
+
+# 运行速度/延迟测试
+lerobot-setup-can --mode=speed --interfaces=can0
+```
+
+测试模式会扫描电机（ID 0x01-0x08），并报告哪些电机有响应。示例输出：
+
+```
+can0: UP (CAN FD)
+  Motor 0x01 (joint_1): ✓ FOUND
+    → Response 0x11 [FD]: 00112233...
+  Motor 0x02 (joint_2): ✓ FOUND
+  Motor 0x03 (joint_3): ✗ No response
+  ...
+  Summary: 2/8 motors found
+```
+
+## 使用
+
+### 基本设置
+
+```python
+from lerobot.motors import Motor
+from lerobot.motors.damiao import DamiaoMotorsBus
+
+# 使用发送/接收 CAN ID 定义你的电机
+motors = {
+    "joint_1": Motor(id=0x01, motor_type_str="dm8009", recv_id=0x11),
+    "joint_2": Motor(id=0x02, motor_type_str="dm4340", recv_id=0x12),
+    "joint_3": Motor(id=0x03, motor_type_str="dm4310", recv_id=0x13),
+}
+
+# 创建总线
+bus = DamiaoMotorsBus(
+    port="can0",  # Linux socketcan 接口
+    motors=motors,
+)
+
+# 连接
+bus.connect()
+```
+
+### 读取电机状态
+
+```python
+# 读取单个电机位置（度）
+position = bus.read("Present_Position", "joint_1")
+
+# 从多个电机读取
+positions = bus.sync_read("Present_Position")  # 所有电机
+positions = bus.sync_read("Present_Position", ["joint_1", "joint_2"])
+
+# 一次读取所有状态（位置、速度、扭矩）
+states = bus.sync_read_all_states()
+# 返回：{'joint_1': {'position': 45.2, 'velocity': 1.3, 'torque': 0.5}, ...}
+```
+
+### 写入电机命令
+
+```python
+# 启用扭矩
+bus.enable_torque()
+
+# 设置目标位置（度）
+bus.write("Goal_Position", "joint_1", 45.0)
+
+# 为多个电机设置位置
+bus.sync_write("Goal_Position", {
+    "joint_1": 45.0,
+    "joint_2": -30.0,
+    "joint_3": 90.0,
+})
+
+# 禁用扭矩
+bus.disable_torque()
+```
+
+## 配置选项
+
+| 参数           | 默认值    | 说明                                            |
+| -------------- | --------- | ----------------------------------------------- |
+| `port`         | -         | CAN 接口（`can0`）或串口（`/dev/cu.usbmodem*`） |
+| `use_can_fd`   | `True`    | 启用 CAN FD 以获得更高的数据速率                |
+| `bitrate`      | `1000000` | 标称比特率（1 Mbps）                            |
+| `data_bitrate` | `5000000` | CAN FD 数据比特率（5 Mbps）                     |
+
+## 电机配置
+
+每个电机都需要：
+
+- `id`：用于发送命令的 CAN ID
+- `motor_type`：支持的电机类型之一（例如 `"dm8009"`、`"dm4340"`）
+- `recv_id`：用于接收响应的 CAN ID
+
+OpenArms 默认 ID 遵循以下模式：发送 ID 为 `0x0N`，接收 ID 为 `0x1N`，其中 N 是关节编号。
+
+## 故障排查
+
+### 电机无响应
+
+1. **检查电源**
+2. **确认 CAN 接线**：检查 CAN-H、CAN-L 和 GND 连接
+3. **检查电机 ID**：使用达妙调试工具验证/配置 ID
+4. **测试 CAN 接口**：运行 `candump can0` 查看是否正在接收消息
+5. **运行诊断**：`lerobot-setup-can --mode=test --interfaces=can0`
+
+### 电机超时参数
+
+如果电机配置为 `timeout=0`，它们不会响应命令。使用达妙调试工具设置非零超时值。
+
+### 验证 CAN FD 状态
+
+```bash
+ip -d link show can0 | grep fd
+```
