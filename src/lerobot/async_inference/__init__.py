@@ -23,8 +23,9 @@ Available modules (import directly)::
     from lerobot.async_inference.robot_client import ...
 """
 
-from lerobot.utils.import_utils import require_package
+from lerobot.utils.import_utils import is_package_available, require_package
 
-require_package("grpcio", extra="async", import_name="grpc")
+if not (is_package_available("grpc") or is_package_available("zmq")):
+    require_package("grpcio", extra="async", import_name="grpc")
 
 __all__: list[str] = []

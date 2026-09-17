@@ -53,6 +53,9 @@ class PolicyServerConfig:
     # Networking configuration
     host: str = field(default="localhost", metadata={"help": "Host address to bind the server to"})
     port: int = field(default=8080, metadata={"help": "Port number to bind the server to"})
+    transport: str = field(
+        default="grpc", metadata={"help": "Transport mechanism to use ('grpc' or 'zmq')"}
+    )
 
     # Timing configuration
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Frames per second"})
@@ -66,6 +69,9 @@ class PolicyServerConfig:
 
     def __post_init__(self):
         """Validate configuration after initialization."""
+        if self.transport not in ("grpc", "zmq"):
+            raise ValueError(f"transport must be 'grpc' or 'zmq', got '{self.transport}'")
+
         if self.port < 1 or self.port > 65535:
             raise ValueError(f"Port must be between 1 and 65535, got {self.port}")
 
@@ -93,6 +99,7 @@ class PolicyServerConfig:
         return {
             "host": self.host,
             "port": self.port,
+            "transport": self.transport,
             "fps": self.fps,
             "environment_dt": self.environment_dt,
             "inference_latency": self.inference_latency,
@@ -123,6 +130,9 @@ class RobotClientConfig:
 
     # Network configuration
     server_address: str = field(default="localhost:8080", metadata={"help": "Server address to connect to"})
+    transport: str = field(
+        default="grpc", metadata={"help": "Transport mechanism to use ('grpc' or 'zmq')"}
+    )
 
     # Device configuration
     policy_device: str = field(default="cpu", metadata={"help": "Device for policy inference"})
@@ -155,6 +165,9 @@ class RobotClientConfig:
 
     def __post_init__(self):
         """Validate configuration after initialization."""
+        if self.transport not in ("grpc", "zmq"):
+            raise ValueError(f"transport must be 'grpc' or 'zmq', got '{self.transport}'")
+
         if not self.server_address:
             raise ValueError("server_address cannot be empty")
 
@@ -190,6 +203,7 @@ class RobotClientConfig:
         """Convert the configuration to a dictionary."""
         return {
             "server_address": self.server_address,
+            "transport": self.transport,
             "policy_type": self.policy_type,
             "pretrained_name_or_path": self.pretrained_name_or_path,
             "policy_device": self.policy_device,
