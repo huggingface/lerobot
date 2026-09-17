@@ -652,7 +652,7 @@ def main():
     # migrated policy config does not carry the original repo's card fields.
     from lerobot.common.train_utils import generate_model_card
 
-    card = generate_model_card(policy.config)
+    card = generate_model_card(policy.config, validate_on_hub=False)
     card.data.datasets = dataset_repo_id
     card.data.license = license
     card.data.tags = sorted(tags)
@@ -662,6 +662,8 @@ def main():
     print(f"Model card saved to {output_dir / 'README.md'}")
     # Push all files to hub in a single operation if requested
     if args.push_to_hub and hub_repo_id:
+        # Validate the final metadata only when publishing; local migration works offline.
+        card.validate()
         api = HfApi()
 
         # Determine if we should create a PR (automatically if branch is specified)

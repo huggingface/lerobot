@@ -731,6 +731,8 @@ def generate_model_card(
     model_cfg: PreTrainedConfig | RewardModelConfig,
     cfg: TrainPipelineConfig | None = None,
     dataset_meta: "LeRobotDatasetMetadata | None" = None,
+    *,
+    validate_on_hub: bool = True,
 ) -> ModelCard:
     """Render the LeRobot model card for a trained policy or reward model.
 
@@ -747,9 +749,12 @@ def generate_model_card(
             dataset card sections. Defaults to None.
         dataset_meta (LeRobotDatasetMetadata | None, optional): Dataset metadata for the
             dataset card sections. Defaults to None.
+        validate_on_hub (bool, optional): Validate the rendered metadata through the Hub API.
+            Set to False for local-only rendering or when validating after metadata edits.
+            Defaults to True, preserving validation for existing publishing callers.
 
     Returns:
-        ModelCard: The rendered and validated LeRobot model card.
+        ModelCard: The rendered LeRobot model card, validated when requested.
     """
     model_type = model_cfg.type
     base_model = _BASE_MODEL_MAPPING.get(model_type)
@@ -782,5 +787,6 @@ def generate_model_card(
         base_model=base_model,
     )
     card = ModelCard.from_template(card_data, template_str=template_card, **context)
-    card.validate()
+    if validate_on_hub:
+        card.validate()
     return card
