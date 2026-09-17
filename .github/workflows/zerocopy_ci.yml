@@ -1,0 +1,47 @@
+name: Zero-Copy IPC Transport CI
+
+on:
+  push:
+    branches: [ main, feature/zero-copy-ipc ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-zerocopy-transport:
+    name: Test Zero-Copy Transport (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ['3.10', '3.11', '3.12']
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Build Tools and Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install cmake pybind11 setuptools wheel torch numpy pytest opencv-python-headless huggingface_hub
+
+      - name: Install Zero-Copy IPC Package
+        run: |
+          pip install git+https://github.com/ved197338/lerobot-zerocopy-ipc.git
+
+      - name: Install LeRobot Package
+        run: |
+          pip install -e . --no-deps
+
+      - name: Run Zero-Copy Transport Unit Tests
+        run: |
+          PYTHONPATH=src python tests/test_zerocopy_transport.py
+
+      - name: Run HD Video Streaming Example
+        run: |
+          PYTHONPATH=src python examples/demo_zerocopy_video_stream.py
