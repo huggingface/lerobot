@@ -537,15 +537,12 @@ def _reconnect_groot_n1_7_pack_decode_steps(
     decoding reads its reference state from; the link itself is not serialized.
     """
 
-    pack_step = next(
-        (step for step in preprocessor.steps if isinstance(step, GrootN17PackInputsStep)),
-        None,
-    )
+    pack_step = preprocessor.get_step(GrootN17PackInputsStep)
     if pack_step is None:
         return
 
-    for step in postprocessor.steps:
-        if isinstance(step, GrootN17ActionDecodeStep) and step.pack_step is None:
+    for step in postprocessor.get_steps(GrootN17ActionDecodeStep):
+        if step.pack_step is None:
             step.pack_step = pack_step
 
 
