@@ -143,7 +143,8 @@ def test_chunk_stats_have_larger_std_than_frame_stats(dataset, action_dim):
     frame_stats = get_feature_stats(frame_relatives, axis=0, keepdims=frame_relatives.ndim == 1)
 
     assert chunk_stats["std"].mean() >= frame_stats["std"].mean(), (
-        f"Chunk std ({chunk_stats['std'].mean():.4f}) should be >= " f"frame std ({frame_stats['std'].mean():.4f})"
+        f"Chunk std ({chunk_stats['std'].mean():.4f}) should be >= "
+        f"frame std ({frame_stats['std'].mean():.4f})"
     )
 
 
@@ -177,9 +178,9 @@ def test_full_pipeline_roundtrip(dataset, action_dim):
     t2 = normalizer(t1)
 
     normalized_action = t2[TransitionKey.ACTION]
-    assert (
-        normalized_action.abs().mean() < 10
-    ), f"Normalized actions should be in reasonable range, got mean abs {normalized_action.abs().mean():.2f}"
+    assert normalized_action.abs().mean() < 10, (
+        f"Normalized actions should be in reasonable range, got mean abs {normalized_action.abs().mean():.2f}"
+    )
 
     # Reverse: unnormalize → absolute
     t3 = unnormalizer(t2)
@@ -207,11 +208,13 @@ def test_normalized_relative_values_are_reasonable(dataset, action_dim):
     all_normalized = torch.cat(all_normalized, dim=0)
 
     pct_in_range = (all_normalized.abs() < 5).float().mean()
-    assert pct_in_range > 0.9, f"Only {pct_in_range * 100:.1f}% of normalized values in [-5, 5], expected >90%"
+    assert pct_in_range > 0.9, (
+        f"Only {pct_in_range * 100:.1f}% of normalized values in [-5, 5], expected >90%"
+    )
 
-    assert (
-        all_normalized.mean().abs() < 1.0
-    ), f"Mean of normalized relative actions is {all_normalized.mean():.2f}, expected near 0"
+    assert all_normalized.mean().abs() < 1.0, (
+        f"Mean of normalized relative actions is {all_normalized.mean():.2f}, expected near 0"
+    )
 
 
 def test_processor_step_roundtrip(dataset, action_dim):
