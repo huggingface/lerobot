@@ -36,11 +36,20 @@ class FakeFastWAMCore(nn.Module):
     def __init__(self):
         super().__init__()
         self.dit = nn.Linear(2, 2)
+        self.encode_prompt_calls: list[list[str]] = []
 
-    def training_loss(self, sample):
+    def training_loss(self, sample, reduction="mean"):
         assert sample["video"].ndim == 5
         assert sample["context"].ndim == 3
-        return sample[ACTION].sum() * 0.0 + torch.tensor(1.0), {"loss_action": 1.0}
+        zero = sample[ACTION].sum() * 0.0
+        if reduction == "none":
+            return zero + torch.ones(sample[ACTION].shape[0]), {"loss_action": 1.0}
+        return zero + torch.tensor(1.0), {"loss_action": 1.0}
+
+    def encode_prompt(self, prompt):
+        prompts = [prompt] if isinstance(prompt, str) else list(prompt)
+        self.encode_prompt_calls.append(prompts)
+        return torch.zeros(len(prompts), 5, 4096), torch.ones(len(prompts), 5, dtype=torch.bool)
 
     def infer_action(self, **kwargs):
         return {"action": torch.ones(1, kwargs["action_horizon"], 3)}
@@ -144,6 +153,39 @@ def test_preprocessor_passes_images_through_and_postprocessor_toggles_actions(tm
     )
 
 
+def test_forward_returns_per_sample_losses_under_reduction_none(monkeypatch):
+    monkeypatch.setattr(FastWAMPolicy, "_build_core_model", lambda self, config: FakeFastWAMCore())
+    cfg = FastWAMConfig(
+        action_dim=3,
+        proprio_dim=2,
+        action_horizon=4,
+        n_action_steps=2,
+        num_video_frames=5,
+        action_video_freq_ratio=1,
+        image_size=(16, 16),
+        input_features={
+            "observation.images.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 16, 16)),
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(2,)),
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
+        base_model_id=None,
+    )
+    policy = FastWAMPolicy(cfg)
+    batch = {
+        "observation.images.image": torch.zeros(2, 3, 16, 16),
+        OBS_STATE: torch.zeros(2, 2),
+        ACTION: torch.zeros(2, 4, 3),
+        "context": torch.zeros(2, 5, 4096),
+        "context_mask": torch.ones(2, 5, dtype=torch.bool),
+    }
+
+    scalar_loss, _ = policy.forward(batch)
+    per_sample_loss, _ = policy.forward(batch, reduction="none")
+
+    assert scalar_loss.shape == ()
+    assert per_sample_loss.shape == (2,)
+
+
 def test_policy_forward_and_predict_action_adapt_lerobot_batches(monkeypatch):
     captured = []
 
@@ -154,6 +196,7 @@ def test_policy_forward_and_predict_action_adapt_lerobot_batches(monkeypatch):
                     "image_shape": tuple(kwargs["input_image"].shape),
                     "proprio_shape": tuple(kwargs["proprio"].shape),
                     "prompt": kwargs["prompt"],
+                    "context_shape": tuple(kwargs["context"].shape),
                     "compile_action_infer": kwargs["compile_action_infer"],
                 }
             )
@@ -206,11 +249,36 @@ def test_policy_forward_and_predict_action_adapt_lerobot_batches(monkeypatch):
     assert action[:, 0, 0].tolist() == [1.0, 2.0]
     assert [item["image_shape"] for item in captured] == [(1, 3, 16, 16), (1, 3, 16, 16)]
     assert [item["proprio_shape"] for item in captured] == [(1, 2), (1, 2)]
-    assert [item["prompt"] for item in captured] == [
-        cfg.prompt_template.format(task="task 0"),
-        cfg.prompt_template.format(task="task 1"),
+    # The task is encoded once per episode and the cached context is forwarded instead of the raw
+    # prompt, so `infer_action` sees `prompt=None` and a per-item slice of the encoded context.
+    assert [item["prompt"] for item in captured] == [None, None]
+    assert [item["context_shape"] for item in captured] == [(1, 5, 4096), (1, 5, 4096)]
+    assert policy.model.encode_prompt_calls == [
+        [
+            cfg.prompt_template.format(task="task 0"),
+            cfg.prompt_template.format(task="task 1"),
+        ]
     ]
     assert all(item["compile_action_infer"] for item in captured)
+
+    # A second call with the same tasks reuses the cache; `reset()` drops it.
+    policy.predict_action_chunk(
+        {
+            "observation.images.image": torch.stack([torch.zeros(3, 16, 16), torch.ones(3, 16, 16)]),
+            OBS_STATE: torch.tensor([[0.0, 1.0], [2.0, 3.0]]),
+            "task": ["task 0", "task 1"],
+        }
+    )
+    assert len(policy.model.encode_prompt_calls) == 1
+    policy.reset()
+    policy.predict_action_chunk(
+        {
+            "observation.images.image": torch.stack([torch.zeros(3, 16, 16), torch.ones(3, 16, 16)]),
+            OBS_STATE: torch.tensor([[0.0, 1.0], [2.0, 3.0]]),
+            "task": ["task 0", "task 1"],
+        }
+    )
+    assert len(policy.model.encode_prompt_calls) == 2
 
 
 def test_cached_inference_paths_support_fullgraph_compile():

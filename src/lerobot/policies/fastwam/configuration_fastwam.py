@@ -191,12 +191,26 @@ class FastWAMConfig(PreTrainedConfig):
     action_video_freq_ratio: int = 4
     image_size: tuple[int, int] = (224, 448)
     context_len: int = 128
+
+    # Relative actions: subtract the current state from the action during preprocessing and add it
+    # back at postprocessing, so the model predicts offsets instead of absolute poses. Needs
+    # `proprio_dim` (OBS_STATE) to be set.
+    use_relative_actions: bool = False
+    # Joint names kept absolute (never converted). Empty list = every dim goes relative.
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # Filled in at runtime from dataset metadata by `make_policy`; used to build the exclude mask.
+    action_feature_names: list[str] | None = None
     model_id: str = WAN22_MODEL_ID
     tokenizer_model_id: str = WAN_T5_TOKENIZER_ID
     text_encoder_model_id: str = WAN22_DIFFUSERS_MODEL_ID
     base_model_id: str | None = FASTWAM_BASE_MODEL_ID
     tokenizer_max_len: int = 128
     load_text_encoder: bool = True
+    # Device for the frozen ~11GB UMT5-XXL text encoder. `None` keeps it on the main policy
+    # `device` (default). Set to e.g. "cpu" to keep it off the GPU and save VRAM; prompts are then
+    # encoded there and the embeddings moved to the policy device. Trades GPU memory for slower
+    # (CPU) text encoding — which the per-episode cache below makes a one-off cost per episode.
+    text_encoder_device: str | None = None
     mot_checkpoint_mixed_attn: bool = False
     torch_dtype: str = "bfloat16"
     prompt_template: str = (
