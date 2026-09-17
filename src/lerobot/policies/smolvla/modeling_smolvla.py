@@ -499,6 +499,7 @@ class VLAFlowMatching(nn.Module):
             train_expert_only=self.config.train_expert_only,
             load_vlm_weights=self.config.load_vlm_weights,
             attention_mode=self.config.attention_mode,
+            attention_backend=self.config.attention_backend,
             num_expert_layers=self.config.num_expert_layers,
             num_vlm_layers=self.config.num_vlm_layers,
             self_attn_every_n_layers=self.config.self_attn_every_n_layers,
@@ -755,13 +756,26 @@ class VLAFlowMatching(nn.Module):
             use_cache=self.config.use_cache,
         )
         num_steps = self.config.num_steps
+        # Masks and position ids are identical for every denoise step: build once.
+        _, suffix_pad_masks, suffix_att_masks = self.embed_suffix(
+            noise, torch.full((bsize,), 1.0, dtype=torch.float32, device=device)
+        )
+        suffix_len = suffix_pad_masks.shape[1]
+        prefix_len = prefix_pad_masks.shape[1]
+        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(bsize, suffix_len, prefix_len)
+        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
+        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
+        prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
 
         return euler_integrate(
             lambda input_x_t, current_timestep: self.denoise_step(
                 x_t=input_x_t,
-                prefix_pad_masks=prefix_pad_masks,
+                prefix_len=prefix_len,
                 past_key_values=past_key_values,
                 timestep=current_timestep,
+                full_att_2d_masks=full_att_2d_masks,
+                position_ids=position_ids,
             ),
             noise,
             num_steps,
@@ -774,24 +788,15 @@ class VLAFlowMatching(nn.Module):
 
     def denoise_step(
         self,
-        prefix_pad_masks,
+        prefix_len,
         past_key_values,
         x_t,
         timestep,
+        full_att_2d_masks,
+        position_ids,
     ):
         """Apply one denoising step of the noise `x_t` at a given timestep."""
-        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(x_t, timestep)
-
-        suffix_len = suffix_pad_masks.shape[1]
-        batch_size = prefix_pad_masks.shape[0]
-        prefix_len = prefix_pad_masks.shape[1]
-        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
-
-        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
-
-        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
-        prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
-        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
+        suffix_embs, _, _ = self.embed_suffix(x_t, timestep)
 
         outputs_embeds, _ = self.vlm_with_expert.forward(
             attention_mask=full_att_2d_masks,
