@@ -86,7 +86,7 @@ import tqdm
 
 from lerobot.configs import DEPTH_MILLIMETER_UNIT
 from lerobot.datasets import LeRobotDataset
-from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD, SUCCESS
+from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD, SUCCESS, TASK
 from lerobot.utils.utils import init_logging
 
 logger = logging.getLogger(__name__)
@@ -135,9 +135,9 @@ def to_hwc_float32_numpy(chw_float32_torch: torch.Tensor) -> np.ndarray:
 def build_blueprint_from_dataset(dataset: LeRobotDataset):
     """Build a Rerun blueprint laying out camera images and time series for the given dataset.
 
-    Camera images and scalar signals (action, state, reward, done, success) are arranged in a grid.
-    The per-dimension series names for ``action`` and ``state`` are applied directly
-    via blueprint overrides.
+    Camera images and scalar signals (action, state, reward, done, success) are arranged in a grid,
+    alongside a text view showing the natural-language task. The per-dimension series names for
+    ``action`` and ``state`` are applied directly via blueprint overrides.
     """
     import rerun as rr
     import rerun.blueprint as rrb
@@ -154,7 +154,15 @@ def build_blueprint_from_dataset(dataset: LeRobotDataset):
         if key in dataset.features:
             views.append(rrb.TimeSeriesView(origin=key, name=key))
 
-    return rrb.Blueprint(rrb.Grid(*views))
+    # Put the language instruction in a thin banner across the top rather than in the grid: it is a
+    # single line of text, so a full grid cell would waste space and break up the camera layout.
+    return rrb.Blueprint(
+        rrb.Vertical(
+            rrb.TextDocumentView(origin=TASK, name="task"),
+            rrb.Grid(*views),
+            row_shares=[1, 9],
+        )
+    )
 
 
 def visualize_dataset(
@@ -245,6 +253,7 @@ def visualize_dataset(
         depth_ranges[key] = (float(np.asarray(lo).item()), float(np.asarray(hi).item()))
 
     first_index = None
+    prev_task = None
     for batch in tqdm.tqdm(dataloader, total=len(dataloader)):
         if first_index is None:
             first_index = batch["index"][0].item()
@@ -286,6 +295,17 @@ def visualize_dataset(
 
             if SUCCESS in batch:
                 rr.log(SUCCESS, rr.Scalars(batch[SUCCESS][i].item()))
+
+            # display the natural-language task (re-logged only when it changes)
+            # Markdown renders it as a heading in the thin banner.
+            if TASK in batch:
+                task = batch[TASK][i]
+                if task != prev_task:
+                    rr.log(
+                        TASK,
+                        rr.TextDocument(f"### {task}", media_type=rr.MediaType.MARKDOWN),
+                    )
+                    prev_task = task
 
     # save .rrd locally
     if mode == "local" and save:
