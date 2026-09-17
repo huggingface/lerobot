@@ -236,10 +236,7 @@ class RTCInferenceEngine(InferenceEngine):
             (s for s in preprocessor.steps if isinstance(s, RelativeActionsProcessorStep) and s.enabled),
             None,
         )
-        self._normalizer_step = next(
-            (s for s in preprocessor.steps if isinstance(s, NormalizerProcessorStep)),
-            None,
-        )
+        self._normalizer_step = preprocessor.get_step(NormalizerProcessorStep)
         if self._relative_step is not None:
             if self._relative_step.action_names is None:
                 cfg_names = getattr(policy.config, "action_feature_names", None)

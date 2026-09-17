@@ -69,11 +69,11 @@ def _reconnect_relative_absolute_steps(
     the RelativeActionsProcessorStep so it can read the cached state at inference time.
     That reference is not serializable, so we re-establish it here after loading.
     """
-    relative_step = next((s for s in preprocessor.steps if isinstance(s, RelativeActionsProcessorStep)), None)
+    relative_step = preprocessor.get_step(RelativeActionsProcessorStep)
     if relative_step is None:
         return
-    for step in postprocessor.steps:
-        if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
+    for step in postprocessor.get_steps(AbsoluteActionsProcessorStep):
+        if step.relative_step is None:
             step.relative_step = relative_step
 
 

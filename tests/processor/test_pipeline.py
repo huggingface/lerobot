@@ -33,6 +33,7 @@ from lerobot.datasets.pipeline_features import aggregate_pipeline_dataset_featur
 from lerobot.processor import (
     DataProcessorPipeline,
     EnvTransition,
+    IdentityProcessorStep,
     ProcessorStep,
     ProcessorStepRegistry,
     TransitionKey,
@@ -388,6 +389,41 @@ def test_indexing():
     assert isinstance(sub_pipeline, DataProcessorPipeline)
     assert len(sub_pipeline) == 1
     assert sub_pipeline[0] is step1
+
+
+def test_step_lookup_by_type():
+    """get_step / get_steps / has_step match steps by type, including base classes."""
+    step1 = MockStep("step1")
+    step2 = MockStep("step2")
+    registered = RegisteredMockStep()
+    pipeline = DataProcessorPipeline([step1, registered, step2])
+
+    assert pipeline.get_step(MockStep) is step1
+    assert pipeline.get_steps(MockStep) == [step1, step2]
+    assert pipeline.get_step(RegisteredMockStep) is registered
+    assert pipeline.has_step(RegisteredMockStep)
+
+    # Base classes match via isinstance.
+    assert pipeline.get_steps(ProcessorStep) == [step1, registered, step2]
+
+    # Absent types return None / [] / False rather than raising.
+    assert pipeline.get_step(IdentityProcessorStep) is None
+    assert pipeline.get_steps(IdentityProcessorStep) == []
+    assert not pipeline.has_step(IdentityProcessorStep)
+
+
+def test_step_lookup_by_name():
+    """get_step / get_steps / has_step accept a registry name or class name."""
+    step = MockStep("step")
+    registered = RegisteredMockStep()
+    pipeline = DataProcessorPipeline([step, registered])
+
+    assert pipeline.get_step("registered_mock_step") is registered
+    assert pipeline.get_step("RegisteredMockStep") is registered
+    assert pipeline.get_step("MockStep") is step
+    assert pipeline.has_step("registered_mock_step")
+    assert not pipeline.has_step("does_not_exist")
+    assert pipeline.get_steps("does_not_exist") == []
 
 
 def test_hooks():

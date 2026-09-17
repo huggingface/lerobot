@@ -317,16 +317,14 @@ def _refresh_evo1_normalization_steps(
     """
     normalization_features = _evo1_normalization_features(config)
     action_features = _evo1_action_features(config)
-    for step in preprocessor.steps:
-        if isinstance(step, NormalizerProcessorStep):
-            step.features = normalization_features
-            step.stats = _pad_evo1_stats(config, step.stats)
-            step.to(device=step.device, dtype=step.dtype)
-    for step in postprocessor.steps:
-        if isinstance(step, UnnormalizerProcessorStep):
-            step.features = action_features
-            step.stats = _pad_evo1_stats(config, step.stats)
-            step.to(device=step.device, dtype=step.dtype)
+    for step in preprocessor.get_steps(NormalizerProcessorStep):
+        step.features = normalization_features
+        step.stats = _pad_evo1_stats(config, step.stats)
+        step.to(device=step.device, dtype=step.dtype)
+    for step in postprocessor.get_steps(UnnormalizerProcessorStep):
+        step.features = action_features
+        step.stats = _pad_evo1_stats(config, step.stats)
+        step.to(device=step.device, dtype=step.dtype)
 
 
 def reconcile_evo1_processors(
