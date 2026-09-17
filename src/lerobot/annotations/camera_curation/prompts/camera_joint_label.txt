@@ -1,621 +1,80 @@
-You are performing CANONICAL VIEW ASSIGNMENT for {n} camera streams from the SAME
-robot-manipulation episode.
-
-The streams are shown as "Camera 1", "Camera 2", etc. These identifiers are
-ARBITRARY and contain NO information about camera position or mounting.
-
-Each camera includes chronologically sampled frames.
-
-For each camera you are also given the preliminary:
-
-  - mount_type
-  - view_label
-
-from an independent per-camera analysis.
-
-Treat the preliminary result as useful evidence but not absolute ground truth.
-
-Your job is to assign each camera its FINAL mount type and view label using both
-its own visual evidence and the other cameras as additional context.
-
-IMPORTANT: cameras are classified by their ACTUAL physical geometry, not by the
-need to create a diverse or unique set of labels. Multiple cameras may legitimately
-have exactly the same final label.
-
-Cross-camera comparison is evidence only. It must never create a distinction that
-is not visually supported.
-
-Use ONLY this closed view-label vocabulary:
-
-  {vocabulary}
-
-Mount type must be one of:
-
-  - "fixed"
-  - "robot_mounted"
-  - "unknown"
-
-DUPLICATE LABELS ARE NORMAL
-
-Two or more cameras may have the SAME physical role and therefore the SAME final
-view_label.
-
-Examples that are completely valid:
-
-  - two fixed cameras both labeled "side";
-  - two fixed cameras both labeled "top";
-  - two fixed cameras both labeled "left_side";
-  - two robot-mounted cameras both labeled "wrist" when handedness cannot be read.
-
-Do NOT change a label merely because another camera already has that label.
-
-Do NOT interpret a duplicate preliminary label as a problem to solve.
-
-Only change a preliminary label when there is POSITIVE VISUAL EVIDENCE that the
-camera's actual physical geometry corresponds to a different label.
-
-Cross-camera comparison may reveal such evidence, but label diversity itself is
-NEVER evidence.
-
-1. REVIEW MOUNT TYPE
-
-First review the preliminary mount_type for each camera.
-
-Do NOT change mount_type merely because another camera has the same mount type or
-view label.
-
-Change the preliminary mount_type ONLY when visual evidence provides a clear
-contradiction.
-
-Static-environment test
-
-Identify STATIC scene landmarks such as:
-
-  - table/work-surface edges;
-  - walls;
-  - shelves;
-  - fixtures;
-  - stationary containers;
-  - furniture;
-  - background objects;
-  - structural edges and corners.
-
-Ignore the robot, gripper, manipulated objects, and humans for this test.
-
-FIXED
-
-A camera is "fixed" when static environment landmarks remain geometrically stable
-across its frames.
-
-The robot moves THROUGH the image while the static environment remains registered
-to the camera.
-
-A gripper that MOVES THROUGH the frame — entering, crossing, and exiting while the
-background stays put — does not make the camera robot-mounted; that is a fixed
-camera watching the arm pass by. (Contrast: a gripper ANCHORED in the foreground
-that moves WITH the camera is a wrist — see below.)
-
-ROBOT_MOUNTED
-
-Use "robot_mounted" ONLY with POSITIVE evidence of CAMERA motion.
-
-The static environment itself must undergo global viewpoint/parallax changes as
-the robot moves.
-
-Strong evidence includes:
-
-  - static landmarks substantially changing image position;
-  - changes in perspective of static scene geometry;
-  - global background motion correlated with robot-arm motion;
-  - the workspace appearing to move around the camera.
-
-COMMONLY MISSED WRIST: a wrist camera often looks like a close-up, roughly
-top-down view of the workspace and is mistaken for a fixed "top"/"side". The
-giveaway is DRIFT — a STATIONARY object (cup, bin, paper, tape marks, table edge)
-that translates across the frame or grows/shrinks between the first and last
-frame. Fixed objects can't move on their own, so that drift means the CAMERA
-moved -> robot_mounted (wrist), even when the view looks overhead. Also: if the
-WHOLE composition re-frames each shot (the same box/container at a different
-position/scale/angle), the camera is moving -> wrist. BEWARE a blank backdrop
-(green screen, plain wall) — it has no trackable texture and can look "static"
-while the camera swings; track the concrete OBJECTS, not the blank background, and
-do not infer fixed from an unchanging blank backdrop.
-
-A GRIPPER FIXED IN THE FOREGROUND, ALIGNED WITH THE VIEW (decisive wrist cue): the
-wrist signature is the CAMERA'S OWN gripper — belonging to the same arm the camera
-rides on — EMERGING FROM THE NEAR EDGE of the frame (usually the bottom), pointing
-FORWARD along the view and staying in the SAME place in EVERY frame, as if camera
-and gripper are bolted together (Pi-robot: dark jaws at the bottom edge reaching up,
-frame after frame). Decisive on its own: the gripper need NOT open and the
-background need NOT drift.
-
-CRUCIAL — the gripper must BELONG TO THE CAMERA'S ARM, not just be visible. If you
-see a WHOLE, SEPARATE arm as an EXTERNAL object out in the scene — joints, servos,
-links and gripper all seen from the OUTSIDE, positioned in front of you like
-something you look AT (even a large, close one, e.g. a side camera watching an arm
-pour/manipulate) — that is a FIXED camera looking at another arm, NOT this cue. A
-wrist sees only the near, forward-facing END of its OWN gripper connected to the
-viewpoint; a fixed camera sees a complete arm from the side as a separate body.
-Also not this cue: a gripper TRAVELING through the frame (fixed), an overhead
-reaching DOWN onto the workspace (fixed), a base/bracket in a corner (fixed).
-
-EXACT-POSITION TEST (decisive when the view looks static): a fixed camera mounted
-CLOSE to the arm can also show a big, nearly-still foreground gripper, so compare
-the gripper's image position in the FIRST vs LAST sampled frame. WRIST = bolted to
-the camera, so the gripper is pinned to the EXACT same spot the whole episode.
-FIXED = over the episode the arm reaches/grasps/retracts, so its gripper shifts to
-DIFFERENT image positions; any such shift means the arm is moving through a
-stationary camera -> fixed, however prominent the gripper.
-
-Robot motion alone is NOT sufficient.
-
-A LARGE ARM SWINGING IN AND OUT IS FIXED, NOT WRIST. A big arm that sweeps across
-the frame or enters and leaves it (common on an overhead/top view — it swoops in
-to pick, then retracts) is the ARM moving through a stationary scene, however much
-of the frame it covers. Do NOT read dramatic ARM motion as CAMERA motion. The
-decider is the STATIC BACKGROUND: if the table / baseplate grid / corner markers /
-workspace boundary stay REGISTERED across frames, it is FIXED no matter how
-violently the arm moves; only the static landmarks themselves drifting means wrist.
-
-Object motion alone is NOT sufficient (track a STATIONARY object for the drift
-check above).
-
-A close-up alone is not decisive — but a gripper anchored in the foreground leans
-wrist (per the cue above), while a gripper crossing a stable scene is fixed.
-
-A visible gripper alone is NOT sufficient.
-
-GRIPPER-IN-FOREGROUND OVERRIDES A STATIC BACKGROUND. Check first: if the robot's
-own gripper/jaws are anchored in the NEAR FOREGROUND, aligned with the view and
-pinned to roughly the same spot across frames (not sweeping through), the camera is
-robot_mounted (wrist) EVEN IF the background looks static or blank. A green screen
-/ plain wall / empty tabletop hides the camera's motion, so do NOT conclude "fixed"
-from an unchanging backdrop when a gripper is anchored in the foreground.
-
-If static background landmarks remain geometrically stable AND there is no gripper
-anchored in the foreground per the override above, the camera is "fixed".
-
-If there is insufficient evidence to contradict a preliminary "fixed"
-classification, KEEP "fixed".
-
-Do not change "fixed" to "robot_mounted" based only on ambiguity.
-
-2. ROBOT-MOUNTED CAMERAS
-
-If mount_type == "robot_mounted", use "wrist".
-
-When TWO cameras are robot_mounted, they are the robot's TWO HANDS — a LEFT/RIGHT
-MIRROR PAIR: one is the left hand, one is the right. Do NOT leave both as plain
-"wrist"; actively differentiate them from the HAND SHAPE. For a multi-fingered /
-anthropomorphic hand, a left and a right hand are mirror images, so the THUMB sits
-on opposite sides of the fingers: read each hand's palm/back and thumb position
-and assign "left_wrist" / "right_wrist" accordingly. Compare the two hands against
-each other — they should come out as opposite hands.
-
-Fall back to plain "wrist" only for a simple 2-jaw parallel gripper (no thumb) or
-when the hands genuinely cannot be read. Do NOT infer handedness from SUPERFICIAL
-cues — use the hand's OWN anatomy, never apparent image direction, the direction
-the gripper points, mirroring, or which side of the image contains the robot.
-
-When the hand's structure is not clearly readable, use plain "wrist".
-
-3. FIXED CAMERAS
-
-For fixed cameras, classify according to PHYSICAL VIEWING GEOMETRY relative to
-the manipulation workspace. Use the preliminary label as evidence, but revise it
-when direct comparison provides stronger geometric evidence.
-
-top
-
-Use "top" for a camera mounted ABOVE the workspace and aimed DOWN at it.
-
-DECISIVE — WORKSPACE LAID OUT BELOW YOU = TOP. If the table/box/objects lie BELOW
-the camera and you look DOWN at them (into open boxes, the tops of things), it is
-"top" — full stop. A vertical WALL/backdrop behind, a table RECEDING with strong
-perspective, and visible object FRONT faces are NORMAL for an elevated top camera
-and DO NOT make it side. WHEN IN DOUBT between top and side, choose TOP. Reserve
-"side" ONLY for a camera at the workspace's own level looking roughly HORIZONTALLY
-ACROSS it (objects edge-on at the camera's height, arms standing up at eye level).
-
-THE DECIDING QUESTION IS SIMPLE: camera ABOVE the workspace looking DOWN -> "top";
-camera low / at table height, beside it, looking ACROSS -> "side". Decide on that
-alone and LEAN toward "top". An elevated camera aimed down is "top" even at a
-strong DIAGONAL, with perspective, seeing object FRONTS/SIDES (e.g. looking down
-INTO an open box so you also see its front wall and bottle labels), or a bit of
-wall — none of that demotes it. It need NOT be near-nadir. Reserve "side" for a
-low, table-height camera looking ACROSS the workspace from its edge.
-
-Positive evidence for "top":
-
-  - the camera is physically above / over the workspace;
-  - the manipulation area is primarily seen from above;
-  - the work surface is the dominant scene plane;
-  - object TOP faces are prominent;
-  - the camera optical axis points mainly downward toward the manipulation region;
-  - the overall scene reads as overhead or near-overhead, even if some perspective
-    remains.
-
-IMPORTANT: the following do NOT disqualify a true top camera by themselves:
-
-  - moderate perspective;
-  - some visible object side faces;
-  - some visible robot vertical structure;
-  - a small amount of wall/background;
-  - a camera that is slightly offset from the exact workspace center.
-
-Use "side" instead when the camera is clearly positioned around the workspace
-perimeter and views it diagonally / obliquely from the side.
-
-Practical rule:
-
-  - physically over workspace + mainly downward -> top;
-  - physically beside/perimeter + diagonal across workspace -> side.
-
-When uncertain, do NOT decide from a single cue. Combine camera position,
-viewing direction, dominant planes, and perspective.
-
-bottom
-
-Use "bottom" when the camera is physically below the manipulation workspace and
-looks upward.
-
-side
-
-Use a side label for ANY camera physically positioned around / beside the
-workspace rather than directly overhead. This includes elevated cameras looking
-strongly downward from the workspace perimeter.
-
-A side camera may be elevated and tilted downward. The deciding factor is the physical camera role: cameras positioned around or
-beside the workspace are side cameras, including elevated cameras tilted strongly
-downward.
-
-Evidence supporting side includes stronger near/far depth, perspective
-convergence, substantial side/vertical surfaces, and an obvious oblique view
-across the workspace. These are supporting cues, not independent hard rules.
-
-TOP VS SIDE — PRIMARY GEOMETRIC TEST
-
-For every fixed top/side candidate compare:
-
-  A. looking predominantly DOWN ONTO the workspace (need NOT be near-nadir; some
-     obliqueness/perspective is fine) -> top
-  B. clearly looking ACROSS the workspace from BESIDE it / the perimeter -> side
-
-Use physical camera position relative to the workspace as the PRIMARY criterion,
-with viewing direction as supporting evidence.
-
-A visible wall, visible robot column, or visible vertical surfaces do NOT
-automatically mean side. Likewise, an elevated camera or a large visible
-tabletop do NOT automatically mean top.
-
-When borderline, CHOOSE top: if the camera looks DOWN onto the workspace at all
-(work area below the lens, tops of things / into boxes), label it top even with
-strong obliqueness, perspective, a wall behind, or visible object fronts. Reserve
-side ONLY for a camera at the workspace's own level looking roughly HORIZONTALLY
-ACROSS it (objects edge-on at the camera's height, arms standing up at eye level).
-
-SIDE DIRECTION — CAMERA POSITION IN THE ROBOT FRAME
-
-Once a camera is classified as side, directional labels describe the CAMERA'S
-PHYSICAL POSITION relative to the ROBOT'S OWN coordinate frame:
-
-  - front_side: camera physically in front of the robot;
-  - rear_side: camera physically behind the robot;
-  - left_side: camera physically on the robot's left;
-  - right_side: camera physically on the robot's right.
-
-First establish the robot's physical front/back orientation. The front is its
-working direction: where it reaches and where the active manipulation workspace
-lies. Motor backs, mounting structure, and cabling can support identification of
-the back, but object/workspace geometry is generally stronger evidence.
-
-Do NOT derive left/right from image-space direction. In particular, do NOT use:
-
-  - front/workspace points image-left -> left_side;
-  - front/workspace points image-right -> right_side;
-  - robot body appears on one side of the image;
-  - arm enters from one image edge.
-
-Image-space relationships can flip under roll, mirroring, and camera pose.
-
-Assign left_side or right_side ONLY when visible 3D geometry, a known asymmetric
-robot feature, or DIRECT MULTI-CAMERA COMPARISON lets you establish the robot's
-physical left/right orientation and therefore the camera's physical side.
-
-The joint view can provide NEW evidence. For example, two cameras may reveal
-complementary robot geometry that makes their physical positions clear. Use that
-evidence when it is genuinely present.
-
-However, do NOT assign opposite left/right labels merely because two cameras
-look different, because they collide, or because there are two side cameras.
-
-If the camera is clearly lateral/oblique but its physical direction cannot be
-established reliably, use plain "side". Plain side is a valid canonical role and
-is preferable to unsupported specificity.
-
-
-STRICT JOINT TOP RULE
-
-
-TOP REQUIRES POSITIVE OVERHEAD EVIDENCE
-
-Do not infer "top" merely because side evidence is weak. However, positive
-overhead evidence does NOT require a perfect bird's-eye view.
-
-A camera can still be "top" when it is slightly offset, angled, or shows some
-vertical structure, as long as it is physically above the workspace and mainly
-looks down onto the manipulation region.
-
-
-The joint pass MUST NOT turn an oblique/elevated side camera into "top" merely
-because it is the most overhead-looking camera among the available streams.
-
-"top" is an ABSOLUTE geometric role, not a relative winner.
-
-If none of the fixed cameras is genuinely overhead / near-overhead and physically
-over the workspace, it is valid for the episode to have NO "top" camera.
-Conversely, if one camera clearly has that overhead role, preserve it as "top"
-even when it shows moderate perspective or some vertical structure.
-
-Likewise, multiple side cameras are expected. Do not force one of them to become
-top for canonical uniqueness.
-
-
-
-JOINT LEFT / RIGHT INFERENCE FROM ROBOT LAYOUT
-
-For fixed cameras already classified as SIDE views, actively use the robot's
-layout to resolve left_side versus right_side.
-
-Strong heuristic:
-
-  - robot body/base on image RIGHT + arm reaching LEFT -> left_side;
-  - robot body/base on image LEFT  + arm reaching RIGHT -> right_side.
-
-When two side cameras form complementary views of the same robot/workspace, the
-pair may provide extra evidence for left/right direction. Use that evidence only
-when the body/reach geometry is clear. Do not force opposite labels merely because
-there are two cameras.
-
-This is a ROBOT-GEOMETRY heuristic, not a raw image-coordinate rule: consider
-both body/base location and reach direction. If mirroring is suspected or the
-robot geometry is too ambiguous, fall back to plain side.
-
-
-
-JOINT DIRECTIONAL RESOLUTION — DO NOT LEAVE CLEAR PAIRS AS PLAIN SIDE
-
-For each fixed camera already identified as SIDE, explicitly attempt directional
-resolution before returning "side".
-
-Apply:
-
-  robot body/base on image RIGHT + arm reaching LEFT -> left_side
-  robot body/base on image LEFT  + arm reaching RIGHT -> right_side
-
-Judge EACH camera's direction from its OWN body/reach geometry, INDEPENDENTLY. Two
-side cameras are NOT necessarily a left/right pair:
-
-  - DIFFERENT layouts may resolve to opposite sides:
-      camera A: robot on image RIGHT, reaching LEFT -> left_side
-      camera B: robot on image LEFT,  reaching RIGHT -> right_side
-  - the SAME layout gets the SAME label — a legitimate duplicate, NOT a problem:
-      camera A: robot on image RIGHT, reaching LEFT -> left_side
-      camera B: robot on image RIGHT, reaching LEFT -> left_side   (BOTH left_side)
-
-NEVER flip a camera whose OWN geometry shows robot-on-image-RIGHT + reaching-LEFT
-to right_side just to differentiate it from another left_side camera, or to make a
-"complementary pair". Two cameras on the same side of the robot are a valid
-duplicate; the downstream system numbers them (left_side_1, left_side_2).
-
-Duplicate or plain "side" labels remain valid when the directional evidence is not
-strong enough.
-
-Plain "side" is a fallback only when the body/reach geometry is genuinely
-ambiguous, contradictory, or likely mirrored.
-
-The joint comparison is especially useful here: a complementary pair provides
-additional confidence that the two cameras occupy opposite lateral sides of the
-robot/workspace.
-
-
-PAIRED LATERAL CAMERAS — IMPORTANT
-
-When two FIXED cameras observe the same robot/workspace from opposite or
-substantially different lateral directions, treat that pair as strong evidence
-that BOTH cameras are SIDE views.
-
-Do NOT label one camera "top" merely because one member of the pair is mounted
-higher, points downward more strongly, or shows more tabletop.
-
-Before assigning "top" to any fixed camera, compare it against the other fixed
-views and ask:
-
-  1. Is this camera actually physically OVER the workspace?
-  2. Or is it another perimeter / corner / side camera looking diagonally down?
-
-If the camera has the visual character of one member of a left/right lateral
-pair, it should remain a side view UNLESS there is clear independent evidence
-that it is actually physically overhead.
-
-In particular, if two cameras show complementary / opposite views of the robot
-body or workspace from around the table, classify both as SIDE first. Then, only
-if the robot coordinate frame can be established, refine them to left_side and
-right_side.
-
-Correct pattern:
-
-  lateral camera A -> side / left_side / right_side
-  lateral camera B -> side / left_side / right_side
-
-Incorrect pattern:
-
-  lateral camera A -> side
-  lateral camera B -> top
-
-unless camera B is genuinely positioned over the workspace and has clear
-near-bird's-eye geometry independent of camera A.
-
-4. MULTIPLE TOP CANDIDATES
-
-If TWO OR MORE FIXED cameras are preliminary candidates for "top", evaluate EACH
-camera against the absolute top-vs-side geometry.
-
-Do NOT rank them in order to select a single canonical "top".
-
-Do NOT demote one camera merely because another camera is more overhead.
-
-For each camera independently:
-
-  - physically over workspace + mainly looking down -> top;
-  - physically around/beside workspace + diagonal/oblique across it -> side.
-
-Cross-camera comparison may help clarify ambiguous geometry, but the final label
-for one camera must not depend on whether another camera already received the
-same label.
-
-Valid outcomes include:
-
-  Camera A -> top
-  Camera B -> top
-
-when both are genuinely overhead.
-
-Also valid:
-
-  Camera A -> side
-  Camera B -> side
-
-when both are genuinely lateral.
-
-And valid:
-
-  Camera A -> top
-  Camera B -> side
-
-when their actual physical geometry differs.
-
-There is NO preferred number of cameras per label.
-
-5. LABEL-IDENTITY RULE
-
-Final labels describe each camera's physical role, independently of how many
-other cameras share that role.
-
-Never change a label for the purpose of:
-
-  - making labels unique;
-  - increasing diversity;
-  - avoiding a naming collision;
-  - assigning each camera a different semantic role;
-  - ensuring one camera fills each available category.
-
-If two cameras are physically equivalent or sufficiently similar for this
-taxonomy, KEEP THE SAME LABEL.
-
-Only assign different labels when the visual evidence itself supports a
-meaningful geometric difference.
-
-6. PRESERVE MOUNT TYPE DURING CANONICALIZATION
-
-NEVER solve a view-label collision by changing a camera from fixed to
-robot_mounted.
-
-For example, this is INVALID collision resolution:
-
-  Camera A: fixed/top
-  Camera B: fixed/top
-  -> Camera A: fixed/top
-  -> Camera B: robot_mounted/wrist
-
-unless there is independent, positive visual evidence that Camera B actually moves
-with the robot.
-
-If two fixed cameras share the same label, that is not a collision that must be
-resolved. Keep both labels unless the visual evidence independently supports a
-different classification for one of them.
-
-7. TOP VS SIDE DECISION RULE
-
-For every fixed top/side candidate, explicitly choose between:
-
-A. predominantly DOWN ONTO the workspace -> "top"
-
-B. predominantly ACROSS the workspace -> side
-
-Use viewing geometry rather than camera height.
-
-When genuinely uncertain between an elevated across-the-workspace view and a
-looking-down overhead view, lean "side" — but a clear angled-down overhead view is
-"top" even with moderate perspective; do not demote it just for lacking a perfect
-straight-down bird's-eye.
-
-8. UNCERTAINTY AND SPECIFICITY
-
-Use "unknown" instead of guessing when the category cannot be established
-reliably.
-
-Prefer a less-specific valid label over unsupported specificity:
-
-  - "side" instead of guessing front/rear/left/right;
-  - "wrist" instead of guessing left/right wrist.
-
-
-GLOBAL ANTI-DIVERSITY RULE
-
-The set of final labels does NOT need to be diverse, unique, balanced, or
-one-per-role.
-
-Never ask "which camera should get this label?"
-Ask only "what label does THIS camera's geometry support?"
-
-A result such as:
-
-  Camera 1 -> side
-  Camera 2 -> side
-  Camera 3 -> side
-
-is fully valid if all three cameras are genuinely side views.
-
-Likewise:
-
-  Camera 1 -> top
-  Camera 2 -> top
-
-is fully valid if both cameras are genuinely overhead.
-
-Duplicate final labels are expected and must be preserved whenever the physical
-views are duplicated or equivalent.
-
-
-9. CONSISTENCY
-
-Valid combinations include:
-
-  - fixed + top
-  - fixed + bottom
-  - fixed + side
-  - fixed + front_side
-  - fixed + rear_side
-  - fixed + left_side
-  - fixed + right_side
-  - robot_mounted + wrist
-  - robot_mounted + left_wrist
-  - robot_mounted + right_wrist
-  - unknown + unknown
-
-A FIXED camera MUST NOT be labeled wrist.
-
-A ROBOT_MOUNTED camera MUST NOT be labeled top, bottom, or side.
-
-{combo_rule}
-
-Do not invent labels outside the vocabulary.
-
-OUTPUT
-
-Return strictly valid JSON with one entry per camera in exactly the same order as
-the input:
+You perform a JOINT REVIEW of {n} camera streams from the SAME robot-manipulation
+episode, shown as "Camera 1", "Camera 2", ... These names are ARBITRARY — they carry
+no position or mounting information. Each camera also has a preliminary mount_type +
+view_label from an independent per-camera pass.
+
+Assign each camera its FINAL mount_type + view_label from its OWN physical geometry,
+using the other cameras only as extra visual context. This is a CONSERVATIVE
+correction pass: KEEP each preliminary label unless the frames give POSITIVE visual
+evidence for a different one. For any change you must be able to name the concrete
+evidence that contradicts the old label; if you cannot, keep it. Do not reinterpret
+usability here.
+
+Vocabulary: {vocabulary}. Mount type: fixed | robot_mounted | unknown.
+
+DUPLICATES ARE NORMAL. Never change a label just to make the set unique, diverse,
+balanced, complementary, or collision-free. Two cameras with the same geometry get
+the SAME label — top+top, side+side, left_side+left_side, wrist+wrist are all valid
+(the downstream system numbers duplicates). Ask only "what label does THIS camera's
+geometry support?", never "which camera should get this label?".
+
+1. MOUNT TYPE — change only on a clear contradiction.
+
+robot_mounted needs POSITIVE evidence, from EITHER:
+  A. viewpoint motion — the static world (table edges, walls, fixtures) globally
+     re-frames / parallaxes correlated with robot motion (a wrist camera may also be
+     still; on a blank backdrop track CONCRETE objects, not the blank background); OR
+  B. own-gripper geometry — the camera's OWN gripper, belonging to its arm, emerges
+     from the near edge and stays PINNED to the same image spot across frames (you
+     look OUT past it). Need not open or drift; this OVERRIDES a static/blank
+     backdrop.
+
+fixed: static landmarks stay registered while the robot moves through; OR you look
+AT a separate, external arm (joints/servos seen from the outside, even a close one);
+OR a big arm merely SWINGS through a stationary scene. A close/prominent gripper
+ALONE is not enough — a wrist's own gripper is pinned to the EXACT same spot across
+frames, while a fixed camera's gripper travels. If unresolved, KEEP the preliminary
+mount; do not flip on ambiguity, and never resolve a label collision by changing
+fixed <-> robot_mounted.
+
+2. ROBOT_MOUNTED -> "wrist". If TWO cameras are robot_mounted they are the robot's
+two hands: differentiate left_wrist / right_wrist from HAND ANATOMY (palm/back +
+thumb side — a left and right hand are mirror images), never from image side or the
+gripper's pointing direction. Fall back to plain "wrist" for a 2-jaw gripper or when
+the hand cannot be read.
+
+3. FIXED -> top / bottom / side.
+
+TOP vs SIDE: camera ABOVE the workspace looking DOWN onto it (laid out below the
+lens, tops of things / into boxes) -> "top"; camera at table/eye level looking
+ACROSS it (objects edge-on, arms standing up) -> "side". LEAN TOP: an elevated
+downward camera is "top" even at a strong diagonal, with perspective, a wall behind,
+or object fronts; it need not be near-nadir. WHEN IN DOUBT, choose TOP. Do NOT demote
+a genuine overhead just because another camera is more overhead, and do NOT promote a
+clearly across / lateral camera to "top" just because it is the highest one.
+BOTTOM: camera below the workspace looking up.
+
+SIDE DIRECTION (optional — plain "side" is valid). The directions say where the
+CAMERA physically sits relative to the robot. Find the robot's FRONT (working
+direction / where the objects and active workspace are; motor-backs and cabling mark
+the BACK — objects are stronger evidence):
+  - front_side: objects between robot and camera, arm reaching TOWARD you;
+    rear_side: workspace beyond the robot / motor-backs toward you, arm reaching AWAY.
+  - left / right — from robot geometry, using body position AND reach TOGETHER (never
+    the image side alone): body toward image RIGHT + reaching LEFT -> left_side; body
+    toward image LEFT + reaching RIGHT -> right_side. Judge EACH camera independently
+    — two side cameras need NOT be an opposite pair; the SAME layout gives the SAME
+    label. If the base is out of frame, ambiguous, or possibly mirrored -> plain
+    "side".
+
+4. CONSISTENCY. Valid: fixed + top/bottom/side/front_side/rear_side/left_side/
+right_side; robot_mounted + wrist/left_wrist/right_wrist; unknown + unknown. A FIXED
+camera is NEVER wrist; a ROBOT_MOUNTED camera is NEVER top/bottom/side. Prefer
+a less-specific valid label (side over a guessed direction, wrist over a guessed
+handedness) over unsupported specificity. {combo_rule}Do not invent labels outside
+the vocabulary.
+
+OUTPUT — return ONLY valid JSON, one entry per camera in the input order:
 
   {{
     "cameras": [
@@ -625,6 +84,4 @@ the input:
     ]
   }}
 
-"confidence" must be between 0 and 1.
-
-Return JSON only. No prose. No code fences.
+"confidence" is in [0, 1]. No prose, no code fences.
