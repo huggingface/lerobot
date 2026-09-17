@@ -29,7 +29,7 @@ from lerobot.motors.encoding_utils import encode_twos_complement
 try:
     import dynamixel_sdk as dxl
 
-    from tests.mocks.mock_dynamixel import MockMotors, MockPortHandler
+    from tests.mocks.mock_dynamixel import MockMotors, MockPortHandler, _split_into_byte_chunks
 except (ImportError, ModuleNotFoundError):
     pytest.skip("dynamixel_sdk not available", allow_module_level=True)
 
@@ -279,6 +279,45 @@ def test__sync_read_comm(raise_on_error, mock_motors, dummy_motors):
         assert read_comm == dxl.COMM_RX_TIMEOUT
 
     assert mock_motors.stubs[stub].called
+
+
+def test_sync_read_block(mock_motors, dummy_motors):
+    """A block read over the contiguous Present_Current/Velocity/Position registers matches three sync_reads."""
+    names = ["Present_Current", "Present_Velocity", "Present_Position"]
+    currents = {1: -150, 2: 20, 3: 0}
+    velocities = {1: 100, 2: -2000, 3: 5}
+    positions = {1: 1337, 2: 42, 3: -3672}
+    encoded = {
+        "Present_Current": {id_: encode_twos_complement(val, 2) for id_, val in currents.items()},
+        "Present_Velocity": {id_: encode_twos_complement(val, 4) for id_, val in velocities.items()},
+        "Present_Position": {id_: encode_twos_complement(val, 4) for id_, val in positions.items()},
+    }
+    # Present_Current (126-127), Present_Velocity (128-131) and Present_Position (132-135) form one
+    # contiguous 10-byte block on X-series servos.
+    ids_data = {
+        id_: [
+            byte
+            for name in names
+            for byte in _split_into_byte_chunks(encoded[name][id_], X_SERIES_CONTROL_TABLE[name][1])
+        ]
+        for id_ in currents
+    }
+    block_stub = mock_motors.build_sync_read_block_stub(126, 10, ids_data)
+    single_stubs = [
+        mock_motors.build_sync_read_stub(*X_SERIES_CONTROL_TABLE[name], encoded[name]) for name in names
+    ]
+    bus = DynamixelMotorsBus(port=mock_motors.port, motors=dummy_motors)
+    bus.connect(handshake=False)
+
+    block_values = bus.sync_read_block(names, normalize=False)
+    single_values = {name: bus.sync_read(name, normalize=False) for name in names}
+
+    assert block_values == single_values
+    assert block_values["Present_Current"] == {"dummy_1": -150, "dummy_2": 20, "dummy_3": 0}
+    assert block_values["Present_Velocity"] == {"dummy_1": 100, "dummy_2": -2000, "dummy_3": 5}
+    assert block_values["Present_Position"] == {"dummy_1": 1337, "dummy_2": 42, "dummy_3": -3672}
+    assert mock_motors.stubs[block_stub].calls == 1
+    assert all(mock_motors.stubs[stub].calls == 1 for stub in single_stubs)
 
 
 @pytest.mark.parametrize(
