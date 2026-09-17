@@ -57,7 +57,7 @@ from lerobot.utils.constants import (
 from ..common.flow_matching import euler_integrate, sample_noise, sample_time_beta
 from ..common.vla_utils import (
     clone_past_key_values,
-    create_sinusoidal_pos_embedding,
+    fuse_action_time_embedding,
     make_att_2d_masks,
     pad_vector,
     prepare_attention_masks_4d,
@@ -547,31 +547,25 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         pad_masks.append(state_mask)
         att_masks += [1]
 
-        # Embed timestep using sine-cosine positional encoding
-        time_emb = create_sinusoidal_pos_embedding(
-            timestep,
-            self.action_in_proj.out_features,
-            min_period=self.config.min_period,
-            max_period=self.config.max_period,
-            device=timestep.device,
-        )
-        time_emb = time_emb.type(dtype=timestep.dtype)
-
         # Fuse timestep + action information using an MLP
         def action_proj_func(noisy_actions):
             return self.action_in_proj(noisy_actions)
-
-        action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)
-
-        time_emb = time_emb[:, None, :].expand_as(action_emb)
-        action_time_emb = torch.cat([action_emb, time_emb], dim=2)
 
         def mlp_func(action_time_emb):
             x = self.action_time_mlp_in(action_time_emb)
             x = F.silu(x)
             return self.action_time_mlp_out(x)
 
-        action_time_emb = self._apply_checkpoint(mlp_func, action_time_emb)
+        action_time_emb = fuse_action_time_embedding(
+            noisy_actions,
+            timestep,
+            action_proj=action_proj_func,
+            action_time_mlp=mlp_func,
+            embedding_width=self.action_in_proj.out_features,
+            min_period=self.config.min_period,
+            max_period=self.config.max_period,
+            apply_checkpoint=self._apply_checkpoint,
+        )
         adarms_cond = None
 
         embs.append(action_time_emb)

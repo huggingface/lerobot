@@ -33,7 +33,7 @@ from lerobot.utils.import_utils import _transformers_available, require_package
 from lerobot.utils.language import require_single_text_output
 
 from ..common.flow_matching import euler_integrate, sample_noise, sample_time_beta
-from ..common.vla_utils import create_sinusoidal_pos_embedding, pad_vector
+from ..common.vla_utils import fuse_action_time_embedding, pad_vector
 from ..pretrained import PreTrainedPolicy
 from .configuration_eo1 import EO1Config
 from .processor_eo1 import EO1_SPECIAL_TOKENS
@@ -401,18 +401,6 @@ class EO1VisionFlowMatchingModel(nn.Module):
                 noisy_actions = noisy_actions.to(dtype=self.action_in_proj.weight.dtype)
                 return self.action_in_proj(noisy_actions)
 
-        action_embs = self._apply_checkpoint(action_proj_func, noisy_actions)
-        time_embs = create_sinusoidal_pos_embedding(
-            timestep,
-            self.hidden_size,
-            min_period=self.config.min_period,
-            max_period=self.config.max_period,
-            device=action_embs.device,
-        )
-        time_embs = time_embs.to(dtype=action_embs.dtype)
-        time_embs = time_embs[:, None, :].expand_as(action_embs)
-        action_time_embs = torch.cat([action_embs, time_embs], dim=2)
-
         def mlp_func(action_time_embs: torch.Tensor) -> torch.FloatTensor:
             with self.flow_head_autocast_context():
                 action_time_embs = action_time_embs.to(dtype=self.action_time_mlp_in.weight.dtype)
@@ -420,8 +408,16 @@ class EO1VisionFlowMatchingModel(nn.Module):
                 action_time_embs = F.silu(action_time_embs)
                 return self.action_time_mlp_out(action_time_embs)
 
-        action_time_embs = self._apply_checkpoint(mlp_func, action_time_embs)
-        return action_time_embs
+        return fuse_action_time_embedding(
+            noisy_actions,
+            timestep,
+            action_proj=action_proj_func,
+            action_time_mlp=mlp_func,
+            embedding_width=self.hidden_size,
+            min_period=self.config.min_period,
+            max_period=self.config.max_period,
+            apply_checkpoint=self._apply_checkpoint,
+        )
 
     def forward(
         self,
