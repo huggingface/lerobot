@@ -268,7 +268,17 @@ def episodes_factory(tasks_factory, stats_factory):
         video_keys: list[str] | None = None,
         tasks: pd.DataFrame | None = None,
         multi_task: bool = False,
+        episodes_per_video_file: int | None = None,
     ):
+        """Build episode metadata.
+
+        ``episodes_per_video_file`` splits the video keys across several files, as v3.0 does
+        once a video grows past ``DEFAULT_VIDEO_FILE_SIZE_IN_MB``: episode ``i`` lands in
+        ``file_index = i // episodes_per_video_file`` and each file's timeline restarts at 0,
+        so ``from_timestamp`` is relative to the file the episode lives in — not to the
+        dataset. Left ``None``, everything goes to ``file-000`` with a cumulative
+        ``from_timestamp`` (the single-file layout, where the two happen to coincide).
+        """
         if total_episodes <= 0 or total_frames <= 0:
             raise ValueError("num_episodes and total_length must be positive integers.")
         if total_frames < total_episodes:
@@ -310,8 +320,16 @@ def episodes_factory(tasks_factory, stats_factory):
             d[stats_key] = []
 
         num_frames = 0
+        # Frames written to the current video file. Resets on every file rollover, since each
+        # .mp4 carries its own timeline.
+        num_frames_in_video_file = 0
+        video_file_index = 0
         remaining_tasks = list(tasks.index)
         for ep_idx in range(total_episodes):
+            if episodes_per_video_file is not None and ep_idx // episodes_per_video_file != video_file_index:
+                video_file_index = ep_idx // episodes_per_video_file
+                num_frames_in_video_file = 0
+
             num_tasks_in_episode = random.randint(1, min(3, num_tasks_available)) if multi_task else 1
             tasks_to_sample = remaining_tasks if len(remaining_tasks) > 0 else list(tasks.index)
             episode_tasks = random.sample(tasks_to_sample, min(num_tasks_in_episode, len(tasks_to_sample)))
@@ -333,19 +351,42 @@ def episodes_factory(tasks_factory, stats_factory):
             if video_keys is not None:
                 for video_key in video_keys:
                     d[f"videos/{video_key}/chunk_index"].append(0)
-                    d[f"videos/{video_key}/file_index"].append(0)
-                    d[f"videos/{video_key}/from_timestamp"].append(num_frames / fps)
-                    d[f"videos/{video_key}/to_timestamp"].append((num_frames + lengths[ep_idx]) / fps)
+                    d[f"videos/{video_key}/file_index"].append(video_file_index)
+                    d[f"videos/{video_key}/from_timestamp"].append(num_frames_in_video_file / fps)
+                    d[f"videos/{video_key}/to_timestamp"].append(
+                        (num_frames_in_video_file + lengths[ep_idx]) / fps
+                    )
 
             # Add stats columns like "stats/action/max"
             for stats_key, stats in flatten_dict({"stats": stats_factory(features)}).items():
                 d[stats_key].append(stats)
 
             num_frames += lengths[ep_idx]
+            num_frames_in_video_file += lengths[ep_idx]
 
         return Dataset.from_dict(d)
 
     return _create_episodes
+
+
+def video_file_frames(
+    episodes: datasets.Dataset | None, video_key: str, total_frames: int
+) -> dict[int, list[int]]:
+    """Map each of ``video_key``'s files to the global frame indices it holds, in file order.
+
+    ``episodes`` is the source of truth for how a video key is split across files. Without it
+    (or without the videos columns), the whole key is one file — the pre-v3.0 layout.
+    """
+    if episodes is None or f"videos/{video_key}/file_index" not in episodes.column_names:
+        return {0: list(range(total_frames))}
+
+    frames_per_file: dict[int, list[int]] = {}
+    for ep in episodes:
+        file_index = ep[f"videos/{video_key}/file_index"]
+        frames = range(ep["dataset_from_index"], ep["dataset_to_index"])
+        frames_per_file.setdefault(file_index, []).extend(frames)
+
+    return frames_per_file
 
 
 @pytest.fixture(scope="session")
@@ -356,6 +397,7 @@ def create_videos(info_factory, img_array_factory):
         total_episodes: int = 3,
         total_frames: int = 150,
         total_tasks: int = 1,
+        episodes: datasets.Dataset | None = None,
     ):
         if info is None:
             info = info_factory(
@@ -364,21 +406,27 @@ def create_videos(info_factory, img_array_factory):
 
         video_feats = {key: feats for key, feats in info.features.items() if feats["dtype"] == "video"}
         for key, ft in video_feats.items():
-            # create and save images with identifiable content
-            tmp_dir = root / "tmp_images"
-            tmp_dir.mkdir(parents=True, exist_ok=True)
-            for frame_index in range(info.total_frames):
-                content = f"{key}-{frame_index}"
-                img = img_array_factory(height=ft["shape"][0], width=ft["shape"][1], content=content)
-                pil_img = PIL.Image.fromarray(img)
-                path = tmp_dir / f"frame-{frame_index:06d}.png"
-                pil_img.save(path)
+            for file_index, frame_indices in video_file_frames(episodes, key, info.total_frames).items():
+                # create and save images with identifiable content
+                tmp_dir = root / "tmp_images"
+                tmp_dir.mkdir(parents=True, exist_ok=True)
+                for position, frame_index in enumerate(frame_indices):
+                    # Content stays keyed on the *global* frame index so a frame remains
+                    # identifiable across files, but its position in the file is what the
+                    # file's timeline addresses.
+                    content = f"{key}-{frame_index}"
+                    img = img_array_factory(height=ft["shape"][0], width=ft["shape"][1], content=content)
+                    pil_img = PIL.Image.fromarray(img)
+                    path = tmp_dir / f"frame-{position:06d}.png"
+                    pil_img.save(path)
 
-            video_path = root / DEFAULT_VIDEO_PATH.format(video_key=key, chunk_index=0, file_index=0)
-            video_path.parent.mkdir(parents=True, exist_ok=True)
-            # Use the global fps from info, not video-specific fps which might not exist
-            encode_video_frames(tmp_dir, video_path, fps=info.fps)
-            shutil.rmtree(tmp_dir)
+                video_path = root / DEFAULT_VIDEO_PATH.format(
+                    video_key=key, chunk_index=0, file_index=file_index
+                )
+                video_path.parent.mkdir(parents=True, exist_ok=True)
+                # Use the global fps from info, not video-specific fps which might not exist
+                encode_video_frames(tmp_dir, video_path, fps=info.fps)
+                shutil.rmtree(tmp_dir)
 
     return _create_video_directory
 
@@ -520,6 +568,7 @@ def lerobot_dataset_factory(
         data_files_size_in_mb: float = DEFAULT_DATA_FILE_SIZE_IN_MB,
         chunks_size: int = DEFAULT_CHUNK_SIZE,
         camera_features: dict | None = None,
+        episodes_per_video_file: int | None = None,
         **kwargs,
     ) -> LeRobotDataset:
         # Instantiate objects
@@ -557,6 +606,7 @@ def lerobot_dataset_factory(
                 video_keys=video_keys,
                 tasks=tasks,
                 multi_task=multi_task,
+                episodes_per_video_file=episodes_per_video_file,
             )
         if hf_dataset is None:
             hf_dataset = hf_dataset_factory(

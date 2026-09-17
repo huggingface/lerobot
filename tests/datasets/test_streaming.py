@@ -24,10 +24,16 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 import lerobot.datasets.streaming_dataset as streaming_dataset_module
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
-from lerobot.datasets.utils import safe_shard
 from lerobot.utils.constants import ACTION
 from tests.fixtures.constants import DUMMY_REPO_ID
+
+# A dataset whose videos roll over into a second file, as v3.0 does past
+# DEFAULT_VIDEO_FILE_SIZE_IN_MB: episodes 4-7 live in file-001, whose timeline restarts at 0.
+MULTI_FILE_EPISODES = 8
+MULTI_FILE_FRAMES = 200
+MULTI_FILE_EPISODES_PER_VIDEO_FILE = 4
 
 
 def get_frames_expected_order(streaming_ds: StreamingLeRobotDataset) -> list[int]:
@@ -80,14 +86,9 @@ def get_frames_expected_order(streaming_ds: StreamingLeRobotDataset) -> list[int
 @pytest.mark.parametrize("from_local", [False, True])
 def test_streaming_dataset_forwards_hub_token_only_for_remote_data(tmp_path, monkeypatch, token, from_local):
     requested_root = tmp_path / "local" if from_local else None
-    metadata = SimpleNamespace(
+    metadata = _fake_meta(
         root=requested_root or tmp_path / "snapshot",
         revision=streaming_dataset_module.CODEBASE_VERSION,
-        _version=streaming_dataset_module.CODEBASE_VERSION,
-        features={},
-        depth_keys=[],
-        image_keys=[],
-        rescale_depth_stats=Mock(),
     )
     metadata_cls = Mock(return_value=metadata)
     load_dataset = Mock(return_value=SimpleNamespace(num_shards=1))
@@ -111,8 +112,68 @@ def test_streaming_dataset_forwards_hub_token_only_for_remote_data(tmp_path, mon
     assert not hasattr(dataset, "_token")
 
 
+def assert_videos_roll_over(ds: LeRobotDataset) -> None:
+    """Videos spanning several files must decode each frame from its own file (v3.0 rollover)."""
+    for key in ds.meta.video_keys:
+        episodes = [ds.meta.episodes[ep_idx] for ep_idx in range(ds.meta.total_episodes)]
+        file_indices = {ep[f"videos/{key}/file_index"] for ep in episodes}
+        assert len(file_indices) > 1, f"{key} is not split across video files (file_index: {file_indices})"
+
+        # The property under test: a later file's timeline starts back at 0, so an episode's
+        # `from_timestamp` is no longer its global position in the dataset.
+        assert any(
+            ep[f"videos/{key}/file_index"] > 0 and ep[f"videos/{key}/from_timestamp"] == 0.0
+            for ep in episodes
+        ), f"No episode of {key} restarts a video file's timeline at 0"
+
+
+def assert_frame_matches(streaming_frame: dict, target_frame: dict, ds: LeRobotDataset, context: str) -> None:
+    """Assert a streamed frame equals the same frame read by the non-streaming reader."""
+    assert set(streaming_frame.keys()) == set(target_frame.keys()), (
+        f"Keys differ between streaming frame and target one ({context}). "
+        f"Differ at: {set(streaming_frame.keys()) ^ set(target_frame.keys())}"
+    )
+
+    mismatched = []
+    for key in streaming_frame:
+        left, right = streaming_frame[key], target_frame[key]
+
+        if isinstance(left, str):
+            check = left == right
+
+        elif isinstance(left, float):
+            check = left == right.item()  # right is a torch.Tensor
+
+        elif isinstance(left, torch.Tensor):
+            if key not in ds.meta.camera_keys and "is_pad" not in key and f"{key}_is_pad" in streaming_frame:
+                # comparing frames only on non-padded regions. Padding is applied to last-valid broadcasting
+                left = left[~streaming_frame[f"{key}_is_pad"]]
+                right = right[~target_frame[f"{key}_is_pad"]]
+
+            check = left.shape == right.shape and torch.allclose(left, right)
+
+        else:
+            check = left == right
+
+        if not check:
+            mismatched.append(key)
+
+    assert not mismatched, f"Streaming and target frames differ on {mismatched} ({context})"
+
+
+def assert_stream_matches_reference(
+    streaming_ds: StreamingLeRobotDataset, ds: LeRobotDataset, num_frames: int
+) -> None:
+    """Stream ``num_frames`` frames and assert each equals the same frame from the non-streaming reader."""
+    stream = iter(streaming_ds)
+    for i in range(num_frames):
+        streaming_frame = next(stream)
+        frame_idx = streaming_frame["index"]
+        assert_frame_matches(streaming_frame, ds[frame_idx], ds, context=f"i: {i}, frame_idx: {frame_idx}")
+
+
 def test_single_frame_consistency(tmp_path, lerobot_dataset_factory):
-    """Test if are correctly accessed"""
+    """Streaming without deltas returns the same frames as the non-streaming reader."""
     ds_num_frames = 400
     ds_num_episodes = 10
     buffer_size = 100
@@ -127,32 +188,8 @@ def test_single_frame_consistency(tmp_path, lerobot_dataset_factory):
         total_frames=ds_num_frames,
     )
 
-    streaming_ds = iter(StreamingLeRobotDataset(repo_id=repo_id, root=local_path, buffer_size=buffer_size))
-
-    key_checks = []
-    for _ in range(ds_num_frames):
-        streaming_frame = next(streaming_ds)
-        frame_idx = streaming_frame["index"]
-        target_frame = ds[frame_idx]
-
-        for key in streaming_frame:
-            left = streaming_frame[key]
-            right = target_frame[key]
-
-            if isinstance(left, str):
-                check = left == right
-
-            elif isinstance(left, torch.Tensor):
-                check = torch.allclose(left, right) and left.shape == right.shape
-
-            elif isinstance(left, float):
-                check = left == right.item()  # right is a torch.Tensor
-
-            key_checks.append((key, check))
-
-        assert all(t[1] for t in key_checks), (
-            f"Checking {list(filter(lambda t: not t[1], key_checks))[0][0]} left and right were found different (frame_idx: {frame_idx})"
-        )
+    streaming_ds = StreamingLeRobotDataset(repo_id=repo_id, root=local_path, buffer_size=buffer_size)
+    assert_stream_matches_reference(streaming_ds, ds, ds_num_frames)
 
 
 @pytest.mark.parametrize(
@@ -302,87 +339,7 @@ def test_iter_raises_on_nested_generator_error(tmp_path, lerobot_dataset_factory
         next(iter(streaming_ds))
 
 
-@pytest.mark.parametrize(
-    "state_deltas, action_deltas",
-    [
-        ([-1, -0.5, -0.20, 0], [0, 1, 2, 3]),
-        ([-1, -0.5, -0.20, 0], [-1.5, -1, -0.5, -0.20, -0.10, 0]),
-        ([-2, -1, -0.5, 0], [0, 1, 2, 3]),
-        ([-2, -1, -0.5, 0], [-1.5, -1, -0.5, -0.20, -0.10, 0]),
-    ],
-)
-def test_frames_with_delta_consistency(tmp_path, lerobot_dataset_factory, state_deltas, action_deltas):
-    ds_num_frames = 500
-    ds_num_episodes = 10
-    buffer_size = 100
-
-    seed = 42
-
-    local_path = tmp_path / "test"
-    repo_id = f"{DUMMY_REPO_ID}-ciao"
-    camera_key = "phone"
-
-    delta_timestamps = {
-        camera_key: state_deltas,
-        "state": state_deltas,
-        ACTION: action_deltas,
-    }
-
-    ds = lerobot_dataset_factory(
-        root=local_path,
-        repo_id=repo_id,
-        total_episodes=ds_num_episodes,
-        total_frames=ds_num_frames,
-        delta_timestamps=delta_timestamps,
-    )
-
-    streaming_ds = iter(
-        StreamingLeRobotDataset(
-            repo_id=repo_id,
-            root=local_path,
-            buffer_size=buffer_size,
-            seed=seed,
-            shuffle=False,
-            delta_timestamps=delta_timestamps,
-        )
-    )
-
-    for i in range(ds_num_frames):
-        streaming_frame = next(streaming_ds)
-        frame_idx = streaming_frame["index"]
-        target_frame = ds[frame_idx]
-
-        assert set(streaming_frame.keys()) == set(target_frame.keys()), (
-            f"Keys differ between streaming frame and target one. Differ at: {set(streaming_frame.keys()) - set(target_frame.keys())}"
-        )
-
-        key_checks = []
-        for key in streaming_frame:
-            left = streaming_frame[key]
-            right = target_frame[key]
-
-            if isinstance(left, str):
-                check = left == right
-
-            elif isinstance(left, torch.Tensor):
-                if (
-                    key not in ds.meta.camera_keys
-                    and "is_pad" not in key
-                    and f"{key}_is_pad" in streaming_frame
-                ):
-                    # comparing frames only on non-padded regions. Padding is applied to last-valid broadcasting
-                    left = left[~streaming_frame[f"{key}_is_pad"]]
-                    right = right[~target_frame[f"{key}_is_pad"]]
-
-                check = torch.allclose(left, right) and left.shape == right.shape
-
-            key_checks.append((key, check))
-
-        assert all(t[1] for t in key_checks), (
-            f"Checking {list(filter(lambda t: not t[1], key_checks))[0][0]} left and right were found different (i: {i}, frame_idx: {frame_idx})"
-        )
-
-
+@pytest.mark.parametrize("sharded", [False, True])
 @pytest.mark.parametrize(
     "state_deltas, action_deltas",
     [
@@ -392,94 +349,40 @@ def test_frames_with_delta_consistency(tmp_path, lerobot_dataset_factory, state_
         ([-2, -1, -0.5, 0], [-20, -1.5, -1, -0.5, -0.20, -0.10, 0]),
     ],
 )
-def test_frames_with_delta_consistency_with_shards(
-    tmp_path, lerobot_dataset_factory, state_deltas, action_deltas
+def test_frames_with_delta_consistency(
+    tmp_path, lerobot_dataset_factory, sharded, state_deltas, action_deltas
 ):
-    ds_num_frames = 100
-    ds_num_episodes = 10
-    buffer_size = 10
-    data_file_size_mb = 0.001
-    chunks_size = 1
-
-    seed = 42
-
+    """Delta-window frames streamed match the non-streaming reader, with and without sharding."""
     local_path = tmp_path / "test"
     repo_id = f"{DUMMY_REPO_ID}-ciao"
-    camera_key = "phone"
+    delta_timestamps = {"phone": state_deltas, "state": state_deltas, ACTION: action_deltas}
 
-    delta_timestamps = {
-        camera_key: state_deltas,
-        "state": state_deltas,
-        ACTION: action_deltas,
-    }
+    if sharded:
+        num_frames, buffer_size = 100, 10
+        factory_extra = {"data_files_size_in_mb": 0.001, "chunks_size": 1}
+        stream_extra = {"max_num_shards": 4}
+    else:
+        num_frames, buffer_size = 500, 100
+        factory_extra, stream_extra = {}, {}
 
     ds = lerobot_dataset_factory(
         root=local_path,
         repo_id=repo_id,
-        total_episodes=ds_num_episodes,
-        total_frames=ds_num_frames,
+        total_episodes=10,
+        total_frames=num_frames,
         delta_timestamps=delta_timestamps,
-        data_files_size_in_mb=data_file_size_mb,
-        chunks_size=chunks_size,
+        **factory_extra,
     )
     streaming_ds = StreamingLeRobotDataset(
         repo_id=repo_id,
         root=local_path,
         buffer_size=buffer_size,
-        seed=seed,
+        seed=42,
         shuffle=False,
         delta_timestamps=delta_timestamps,
-        max_num_shards=4,
+        **stream_extra,
     )
-
-    iter(streaming_ds)
-
-    num_shards = 4
-    shards_indices = []
-    for shard_idx in range(num_shards):
-        shard = safe_shard(streaming_ds.hf_dataset, shard_idx, num_shards)
-        shard_indices = [item["index"] for item in shard]
-        shards_indices.append(shard_indices)
-
-    streaming_ds = iter(streaming_ds)
-
-    for i in range(ds_num_frames):
-        streaming_frame = next(streaming_ds)
-        frame_idx = streaming_frame["index"]
-        target_frame = ds[frame_idx]
-
-        assert set(streaming_frame.keys()) == set(target_frame.keys()), (
-            f"Keys differ between streaming frame and target one. Differ at: {set(streaming_frame.keys()) - set(target_frame.keys())}"
-        )
-
-        key_checks = []
-        for key in streaming_frame:
-            left = streaming_frame[key]
-            right = target_frame[key]
-
-            if isinstance(left, str):
-                check = left == right
-
-            elif isinstance(left, torch.Tensor):
-                if (
-                    key not in ds.meta.camera_keys
-                    and "is_pad" not in key
-                    and f"{key}_is_pad" in streaming_frame
-                ):
-                    # comparing frames only on non-padded regions. Padding is applied to last-valid broadcasting
-                    left = left[~streaming_frame[f"{key}_is_pad"]]
-                    right = right[~target_frame[f"{key}_is_pad"]]
-
-                check = torch.allclose(left, right) and left.shape == right.shape
-
-            elif isinstance(left, float):
-                check = left == right.item()  # right is a torch.Tensor
-
-            key_checks.append((key, check))
-
-        assert all(t[1] for t in key_checks), (
-            f"Checking {list(filter(lambda t: not t[1], key_checks))[0][0]} left and right were found different (i: {i}, frame_idx: {frame_idx})"
-        )
+    assert_stream_matches_reference(streaming_ds, ds, num_frames)
 
 
 class _StopConstructionError(Exception):
@@ -493,7 +396,9 @@ def _fake_meta(*args, **kwargs):
     revision = kwargs.get("revision", args[2] if len(args) > 2 else None)
     meta.root = root or "/tmp/_streaming_meta"
     meta.revision = revision or "v0"
-    meta._version = "v3.0"
+    meta._version = streaming_dataset_module.CODEBASE_VERSION
+    meta.features = {}
+    meta.video_keys = []
     meta.depth_keys = []
     meta.image_keys = []
     meta.rescale_depth_stats = lambda *_a, **_k: None
@@ -645,3 +550,42 @@ def test_bucket_root_caches_metadata_without_switching_to_local_streaming(tmp_pa
 def test_invalid_repo_type_fails_before_io():
     with pytest.raises(ValueError, match="repo_type must be 'dataset' or 'bucket'"):
         StreamingLeRobotDataset(DUMMY_REPO_ID, repo_type="space")
+
+
+@pytest.mark.parametrize(
+    "state_deltas, action_deltas",
+    [
+        (None, None),
+        ([-1, -0.5, -0.20, 0], [0, 1, 2, 3]),
+        ([-2, -1, -0.5, 0], [-1.5, -1, -0.5, -0.20, -0.10, 0]),
+    ],
+)
+def test_consistency_across_video_files(tmp_path, lerobot_dataset_factory, state_deltas, action_deltas):
+    """Videos spanning several files must decode each frame from its own file (v3.0 rollover)."""
+    local_path = tmp_path / "test"
+    repo_id = f"{DUMMY_REPO_ID}-video-rollover"
+    delta_timestamps = (
+        None
+        if state_deltas is None
+        else {"phone": state_deltas, "state": state_deltas, ACTION: action_deltas}
+    )
+
+    ds = lerobot_dataset_factory(
+        root=local_path,
+        repo_id=repo_id,
+        total_episodes=MULTI_FILE_EPISODES,
+        total_frames=MULTI_FILE_FRAMES,
+        episodes_per_video_file=MULTI_FILE_EPISODES_PER_VIDEO_FILE,
+        delta_timestamps=delta_timestamps,
+    )
+    assert_videos_roll_over(ds)
+
+    streaming_ds = StreamingLeRobotDataset(
+        repo_id=repo_id,
+        root=local_path,
+        buffer_size=100,
+        seed=42,
+        shuffle=False,
+        delta_timestamps=delta_timestamps,
+    )
+    assert_stream_matches_reference(streaming_ds, ds, MULTI_FILE_FRAMES)
