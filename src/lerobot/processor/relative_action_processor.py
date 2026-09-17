@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -32,6 +32,7 @@ __all__ = [
     "MapTensorToDeltaActionDictStep",
     "RelativeActionsProcessorStep",
     "AbsoluteActionsProcessorStep",
+    "bind_relative_anchor",
     "to_relative_actions",
     "to_absolute_actions",
 ]
@@ -116,6 +117,7 @@ class RelativeActionsProcessorStep(ProcessorStep):
     exclude_joints: list[str] = field(default_factory=list)
     action_names: list[str] | None = None
     _last_state: torch.Tensor | None = field(default=None, init=False, repr=False)
+    _count_queued_actions: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
     def _build_mask(self, action_dim: int) -> list[bool]:
         if not self.exclude_joints or self.action_names is None:
@@ -140,8 +142,10 @@ class RelativeActionsProcessorStep(ProcessorStep):
         observation = transition.get(TransitionKey.OBSERVATION, {})
         state = observation.get(OBS_STATE) if observation else None
 
-        # Always cache state for the paired AbsoluteActionsProcessorStep
-        if state is not None:
+        # Cache state for the paired AbsoluteActionsProcessorStep -- but hold it for as long
+        # as the policy is still serving the chunk that was generated against it. A fresh
+        # chunk re-anchors on the tick the queue runs dry.
+        if state is not None and not self._chunk_in_flight():
             self._last_state = state
 
         if not self.enabled:
@@ -158,6 +162,13 @@ class RelativeActionsProcessorStep(ProcessorStep):
 
     def reset(self) -> None:
         self._last_state = None
+
+    def _chunk_in_flight(self) -> bool:
+        """Whether the policy still holds actions generated against the cached anchor."""
+        return self._count_queued_actions is not None and self._count_queued_actions() > 0
+
+    def bind_action_queue(self, count_queued_actions: Callable[[], int] | None) -> None:
+        self._count_queued_actions = count_queued_actions
 
     def get_cached_state(self) -> torch.Tensor | None:
         """Return the cached ``observation.state`` used as the reference point for relative/absolute action conversions."""
@@ -226,3 +237,38 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
+
+
+def bind_relative_anchor(policy: Any, pipeline: Any) -> RelativeActionsProcessorStep | None:
+    """Let ``pipeline``'s relative-action step hold a chunk's anchor until the chunk drains.
+
+    Call this once, wherever a policy and its preprocessor are built together; every caller of
+    that pipeline is then correct, including bare
+    ``preprocess -> select_action -> postprocess`` loops that know nothing about anchoring.
+    Forgetting it is not a new failure mode -- the step falls back to advancing the anchor on
+    every state, which is what it did before this existed.
+
+    ``pipeline`` is a preprocessor pipeline (anything exposing ``steps``); a disabled step is
+    treated as absent, because it neither converts actions nor needs its anchor held.
+
+    ``policy`` is read only once such a step is found, and only for
+    :meth:`~lerobot.policies.pretrained.PreTrainedPolicy.count_queued_actions`: duck-typed, so
+    this module needs no ``lerobot.policies`` import, and never touched by the overwhelming
+    majority of pipelines that convert nothing. Binding that bound method keeps the policy
+    alive for as long as the pipeline is -- fine while the policy does not hold the pipeline
+    back, and a ``weakref.WeakMethod`` away from being fine if it ever does.
+
+    Returns:
+        The step that was bound, or ``None`` if the pipeline has no enabled one.
+    """
+    step = next(
+        (
+            s
+            for s in getattr(pipeline, "steps", ())
+            if isinstance(s, RelativeActionsProcessorStep) and s.enabled
+        ),
+        None,
+    )
+    if step is not None:
+        step.bind_action_queue(policy.count_queued_actions)
+    return step
