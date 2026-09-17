@@ -104,6 +104,32 @@ def decode_video_frames(
         raise ValueError(f"Unsupported video backend: {backend}")
 
 
+# Max packets demuxed when probing keyframe spacing. Sparser videos decode as one cluster.
+_PYAV_KEYFRAME_PROBE_PACKETS: int = 240
+
+
+def _pyav_keyframe_gap_frames(
+    container: av.container.InputContainer | av.container.OutputContainer, stream: av.stream.Stream
+) -> float:
+    """Estimate the keyframe interval (GOP size in frame-index units) of a video.
+
+    Probes the first few keyframes by demuxing packets and returns the smallest
+    observed spacing in frames. Returns ``inf`` when fewer than two keyframes are found within
+    :data:`_PYAV_KEYFRAME_PROBE_PACKETS`, so the caller decodes everything as one cluster.
+    """
+    fps = float(stream.average_rate)
+    keyframe_indices: list[int] = []
+    for i, packet in enumerate(container.demux(stream)):
+        if packet.is_keyframe and packet.pts is not None:
+            keyframe_indices.append(round(float(packet.pts * stream.time_base) * fps))
+            if len(keyframe_indices) >= 3:
+                break
+        if i >= _PYAV_KEYFRAME_PROBE_PACKETS:
+            break
+    gap = min((b - a for a, b in zip(keyframe_indices, keyframe_indices[1:], strict=False)), default=0)
+    return float(gap) if gap >= 1 else float("inf")
+
+
 def decode_video_frames_pyav(
     video_path: Path | str | BinaryIO,
     timestamps: list[float],
@@ -120,8 +146,11 @@ def decode_video_frames_pyav(
     accurate seek.
 
     PyAV doesn't support accurate seek: we seek to the nearest preceding keyframe and decode
-    forward until we have covered the requested timestamp range. The number of key frames in a
-    video can be adjusted at encoding time to trade off decoding speed against file size.
+    forward until we reach the requested frame.
+
+    For batched requests, we split the sorted timestamps into keyframe-local clusters:
+    a fresh seek starts a new cluster whenever the gap to the previous requested frame spans
+    at least one keyframe interval.
 
     Args:
         video_path: Path to the video file, or a seekable binary file-like object
@@ -142,48 +171,62 @@ def decode_video_frames_pyav(
         video_path = str(video_path)
     # else: a file-like object (e.g. a buffered remote source) passes to av.open as-is.
 
-    # set the first and last requested timestamps
-    # Note: previous timestamps are usually loaded, since we need to access the previous key frame
-    first_ts = min(timestamps)
-    last_ts = max(timestamps)
+    # Decode in sorted order so we can seek per keyframe-local cluster.
+    sorted_ts = sorted(timestamps)
 
     loaded_frames: list[torch.Tensor] = []
     loaded_ts: list[float] = []
 
-    # Seek + decode. `container.seek(offset)` with no `stream` argument expects the offset in
-    # av.time_base units (microseconds). `backward=True` lands us on the nearest keyframe at or
-    # before `first_ts`, so we can then decode forward until we cover `last_ts`. See:
+    # Seek + decode. `container.seek(offset, stream=stream)` expects the offset in the stream's
+    # time_base units. `backward=True` lands on the nearest keyframe at or before the target, so
+    # we can then decode forward until we cover the cluster's last timestamp. See:
     # https://pyav.basswood-io.com/docs/stable/api/container.html#av.container.InputContainer.seek
     with av.open(video_path) as container:
         stream = container.streams.video[0]
-        # Seek to the nearest keyframe at or before `first_ts` with a 1 frame margin
-        container.seek(
-            round(first_ts / stream.time_base) - 1,
-            backward=True,
-            any_frame=False,
-            stream=stream,
-        )
+        time_base = stream.time_base
+        fps = float(stream.average_rate)
 
-        for frame in container.decode(stream):
-            if frame.pts is None:
-                continue
-            current_ts = float(frame.pts * stream.time_base)
-            if log_loaded_timestamps:
-                logger.info(f"frame loaded at timestamp={current_ts:.4f}")
-            if is_depth:
-                arr = frame.to_ndarray(format="gray12le")  # (H, W) uint12
-                loaded_frames.append(torch.from_numpy(arr).unsqueeze(0).contiguous())
-            else:
-                arr = frame.to_ndarray(format="rgb24")  # (H, W, 3)
-                # Convert to CHW uint8 to match torchcodec's output layout.
-                loaded_frames.append(torch.from_numpy(arr).permute(2, 0, 1).contiguous())
-            loaded_ts.append(current_ts)
-            if current_ts >= last_ts:
-                break
+        # Skip the split clusters logic when frames are contiguous: they form only one cluster.
+        frame_indices = [round(ts * fps) for ts in sorted_ts]
+        needs_clustering = any(b - a > 1 for a, b in zip(frame_indices, frame_indices[1:], strict=False))
+        gap_frames = _pyav_keyframe_gap_frames(container, stream) if needs_clustering else float("inf")
+
+        cluster_start = 0
+        while cluster_start < len(sorted_ts):
+            cluster_end = cluster_start + 1
+            while (
+                cluster_end < len(sorted_ts)
+                and frame_indices[cluster_end] - frame_indices[cluster_end - 1] <= gap_frames
+            ):
+                cluster_end += 1
+
+            # Seek to the nearest keyframe at or before this cluster's first ts (1-tick margin),
+            # then decode forward only until the cluster's last ts is covered.
+            first_ts = sorted_ts[cluster_start]
+            last_ts = sorted_ts[cluster_end - 1]
+            container.seek(round(first_ts / time_base) - 1, backward=True, any_frame=False, stream=stream)
+            for frame in container.decode(stream):
+                if frame.pts is None:
+                    continue
+                current_ts = float(frame.pts * time_base)
+                if log_loaded_timestamps:
+                    logger.info(f"frame loaded at timestamp={current_ts:.4f}")
+                if is_depth:
+                    arr = frame.to_ndarray(format="gray12le")  # (H, W) uint12
+                    loaded_frames.append(torch.from_numpy(arr).unsqueeze(0).contiguous())
+                else:
+                    arr = frame.to_ndarray(format="rgb24")  # (H, W, 3)
+                    # Convert to CHW uint8 to match torchcodec's output layout.
+                    loaded_frames.append(torch.from_numpy(arr).permute(2, 0, 1).contiguous())
+                loaded_ts.append(current_ts)
+                if current_ts >= last_ts:
+                    break
+            cluster_start = cluster_end
 
     if not loaded_frames:
         raise FrameTimestampError(
-            f"No frames could be decoded from {video_path} in the timestamp range [{first_ts}, {last_ts}]."
+            f"No frames could be decoded from {video_path} in the timestamp range "
+            f"[{min(timestamps)}, {max(timestamps)}]."
         )
 
     # float64: hour-scale timestamps quantize past tolerance_s in float32.

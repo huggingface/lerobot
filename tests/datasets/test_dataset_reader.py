@@ -213,17 +213,16 @@ def test_get_items_batched_matches_single(tmp_path, lerobot_dataset_factory, use
 
 @pytest.mark.parametrize("backend", ["torchcodec", "pyav", "video_reader"])
 @pytest.mark.parametrize(
-    "windows,episodes,expected",
+    "windows,episodes",
     [
-        ([[1.0, 1.0], [4.0]], [1, 0], [[4.0], [31.0, 31.0]]),
-        ([[4.0, 2.0], [1.0, 3.0], [10.0]], [0, 0, 0], [[1.0, 3.0, 4.0, 2.0], [10.0]]),
-        ([[1.0, 5.0], [2.0], [4.0, 6.0]], [0, 0, 0], [[1.0, 5.0, 2.0, 4.0, 6.0]]),
-        ([[1.0, 2.0], [3.0, 4.0], [2.0, 3.0]], [0, 0, 0], [[1.0, 2.0, 2.0, 3.0, 3.0, 4.0]]),
+        ([[1.0, 1.0], [4.0]], [1, 0]),
+        ([[4.0, 2.0], [1.0, 3.0], [10.0]], [0, 0, 0]),
+        ([[1.0, 5.0], [2.0], [4.0, 6.0]], [0, 0, 0]),
+        ([[1.0, 2.0], [3.0, 4.0], [2.0, 3.0]], [0, 0, 0]),
     ],
 )
-def test_video_batch_merges_only_overlapping_pyav_windows(
-    monkeypatch, tmp_path, backend, windows, episodes, expected
-):
+def test_video_batch_decodes_all_timestamps_in_one_call(monkeypatch, tmp_path, backend, windows, episodes):
+    """Every backend decodes all of a file's requested timestamps in a single call and the decoded frames are scattered back to the correct per-item slices."""
     reader = DatasetReader.__new__(DatasetReader)
     reader.root = tmp_path
     reader._video_backend = backend
@@ -249,11 +248,10 @@ def test_video_batch_merges_only_overlapping_pyav_windows(
     queries = [dict.fromkeys(calls, window) for window in windows]
     items = reader._query_videos(queries, episodes)
     shifted = [[ts + ep * 30 for ts in window] for window, ep in zip(windows, episodes, strict=True)]
+    flat = [ts for window in shifted for ts in window]
 
-    assert calls["depth"] == expected
-    assert calls["rgb"] == (
-        [[ts for window in shifted for ts in window]] if backend == "torchcodec" else expected
-    )
+    assert calls["rgb"] == [flat]
+    assert calls["depth"] == [flat]
     for key in calls:
         for item, window in zip(items, shifted, strict=True):
             assert item[key].shape == ((len(window), 1, 1, 1) if len(window) > 1 else (1, 1, 1))
