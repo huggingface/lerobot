@@ -42,10 +42,21 @@ from .configuration_multi_task_dit import MultiTaskDiTConfig
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _transformers_available:
-    from transformers import CLIPTextModel, CLIPVisionModel
+    from transformers import (
+        AutoConfig,
+        AutoModel,
+        CLIPTextModel,
+        CLIPVisionModel,
+        SiglipTextModel,
+        SiglipVisionModel,
+    )
 else:
+    AutoConfig = None
+    AutoModel = None
     CLIPTextModel = None
     CLIPVisionModel = None
+    SiglipTextModel = None
+    SiglipVisionModel = None
 
 if TYPE_CHECKING or _diffusers_available:
     from diffusers.schedulers.scheduling_ddim import DDIMScheduler
@@ -201,39 +212,95 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
 # -- Observation Encoders --
 
 
-class CLIPVisionEncoder(nn.Module):
-    """CLIP vision encoder using the CLS token for global image representation."""
+def _encoder_model_type(model_name: str) -> str:
+    """Return the HuggingFace ``model_type`` for a checkpoint (e.g. ``"clip"``, ``"dinov3"``, ``"siglip"``)."""
+    return AutoConfig.from_pretrained(model_name).model_type
+
+
+class VisionEncoder(nn.Module):
+    """Global-image encoder over a HuggingFace ViT backbone.
+
+    Three encoder families are supported through one AutoModel-based path with small
+    per-family handling (no subclass tree), dispatched on the checkpoint's ``model_type``:
+
+    * **CLIP** (``"clip"``) and **DINOv3** (``"dinov3"``): the global representation is the CLS
+      token, ``last_hidden_state[:, 0]``. DINOv3's register tokens sit at indices
+      ``1 .. 1 + num_register_tokens`` and are skipped automatically since only index 0 is read.
+      (The CLS-token branch is generic and would also accept other DINO ViTs.)
+    * **SigLIP 2** (``"siglip"``): has no CLS token and pools with an attention head, so the global
+      feature is ``pooler_output``. Use a fixed-resolution SigLIP 2 checkpoint (e.g.
+      ``google/siglip2-base-patch16-224``), which uses the standard SigLIP architecture; the
+      variable-resolution NaFlex variants are not supported.
+
+    The CLIP path is unchanged from the original policy.
+    """
 
     def __init__(self, model_name: str):
         super().__init__()
         self.model_name = model_name
-        self.model = CLIPVisionModel.from_pretrained(self.model_name)
+        self.family = _encoder_model_type(model_name)
+
+        if self.family == "siglip":
+            if SiglipVisionModel is None:
+                raise ImportError("SigLIP support requires a `transformers` version with SiglipVisionModel.")
+            self.model = SiglipVisionModel.from_pretrained(self.model_name)
+            self._use_attention_pool = True
+        elif self.family == "clip":
+            self.model = CLIPVisionModel.from_pretrained(self.model_name)
+            self._use_attention_pool = False
+        elif self.family == "siglip2":
+            raise ValueError(
+                "Variable-resolution SigLIP 2 (NaFlex) is not supported; use a fixed-resolution "
+                "SigLIP 2 checkpoint such as 'google/siglip2-base-patch16-224'."
+            )
+        else:  # dinov2 / dinov3 and other CLS-token ViTs loadable via AutoModel
+            self.model = AutoModel.from_pretrained(self.model_name)
+            self._use_attention_pool = False
+
         self.num_non_spatial_tokens = 1
         self.embed_dim = self.model.config.hidden_size
 
     def forward(self, x: Tensor) -> Tensor:
-        """Encode RGB image to CLS token."""
+        """Encode an RGB image batch to one global feature per image, shaped ``(B, embed_dim, 1, 1)``."""
         outputs = self.model(pixel_values=x, output_hidden_states=False)
-        cls_token = outputs.last_hidden_state[:, 0]
-        b, embed_dim = cls_token.shape
-        return cls_token.reshape(b, embed_dim, 1, 1)
+        # SigLIP pools with an attention head (pooler_output); CLIP / DINOv2 / DINOv3 use the CLS token.
+        features = outputs.pooler_output if self._use_attention_pool else outputs.last_hidden_state[:, 0]
+        b, embed_dim = features.shape
+        return features.reshape(b, embed_dim, 1, 1)
 
     def get_output_shape(self) -> tuple:
         return (self.embed_dim, 1, 1)
 
 
-class CLIPTextEncoder(nn.Module):
-    """CLIP text encoder with frozen weights and a learnable projection layer.
+class TextEncoder(nn.Module):
+    """Frozen text encoder (CLIP or SigLIP 2) with a learnable projection layer.
 
-    Accepts pre-tokenized inputs (input_ids and attention_mask) from the processor pipeline. See the processor
-    pipeline to see how the tokenization is handled.
+    Accepts pre-tokenized inputs (``input_ids`` / ``attention_mask``) from the processor
+    pipeline, whose ``TokenizerProcessorStep`` selects the matching tokenizer via
+    ``AutoTokenizer(text_encoder_name)``, so the right tokenizer is chosen automatically.
+    Both families expose a ``pooler_output`` global feature.
+
+    DINOv3 is vision-only and has no text tower; passing one here raises
+    (the config also validates this earlier, at construction time).
     """
 
     def __init__(self, model_name: str = "openai/clip-vit-base-patch16", projection_dim: int = 512):
         super().__init__()
         self.model_name = model_name
         self.projection_dim = projection_dim
-        self.text_encoder = CLIPTextModel.from_pretrained(model_name)
+        self.family = _encoder_model_type(model_name)
+
+        if self.family == "siglip":
+            if SiglipTextModel is None:
+                raise ImportError("SigLIP support requires a `transformers` version with SiglipTextModel.")
+            self.text_encoder = SiglipTextModel.from_pretrained(model_name)
+        elif self.family == "clip":
+            self.text_encoder = CLIPTextModel.from_pretrained(model_name)
+        else:
+            raise ValueError(
+                f"text_encoder_name='{model_name}' (model_type '{self.family}') has no text tower. "
+                "Use a CLIP or SigLIP 2 model for text conditioning."
+            )
 
         for param in self.text_encoder.parameters():
             param.requires_grad = False
@@ -248,11 +315,15 @@ class CLIPTextEncoder(nn.Module):
         input_ids = input_ids.to(device)
         attention_mask = attention_mask.to(device)
 
-        with torch.no_grad():
-            outputs = self.text_encoder(input_ids=input_ids, attention_mask=attention_mask)
-            clip_features = outputs.pooler_output
+        # SigLIP text is trained with full attention over a fixed-length padded sequence and
+        # pools the last position, so it ignores the padding mask; CLIP uses the mask as before.
+        mask = None if self.family == "siglip" else attention_mask
 
-        return self.projection(clip_features)
+        with torch.no_grad():
+            outputs = self.text_encoder(input_ids=input_ids, attention_mask=mask)
+            text_features = outputs.pooler_output
+
+        return self.projection(text_features)
 
 
 class ObservationEncoder(nn.Module):
@@ -269,11 +340,11 @@ class ObservationEncoder(nn.Module):
 
             if config.use_separate_rgb_encoder_per_camera:
                 self.vision_encoders = nn.ModuleList(
-                    [CLIPVisionEncoder(model_name=config.vision_encoder_name) for _ in self.camera_names]
+                    [VisionEncoder(model_name=config.vision_encoder_name) for _ in self.camera_names]
                 )
                 self.vision_encoder = None
             else:
-                self.vision_encoder = CLIPVisionEncoder(model_name=config.vision_encoder_name)
+                self.vision_encoder = VisionEncoder(model_name=config.vision_encoder_name)
                 self.vision_encoders = None
         else:
             self.vision_encoder = None
@@ -287,7 +358,7 @@ class ObservationEncoder(nn.Module):
             self.robot_state_dim = 0
 
         self.text_dim = config.hidden_dim
-        self.text_encoder = CLIPTextEncoder(model_name=config.text_encoder_name, projection_dim=self.text_dim)
+        self.text_encoder = TextEncoder(model_name=config.text_encoder_name, projection_dim=self.text_dim)
 
         self._setup_vector_output()
 
