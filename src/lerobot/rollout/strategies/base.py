@@ -46,7 +46,12 @@ class BaseStrategy(RolloutStrategy):
         robot = ctx.hardware.robot_wrapper
         interpolator = self._interpolator
 
-        timer = CycleTimer(cfg.fps, interpolator.multiplier, records_data=False)
+        timer = CycleTimer(
+            cfg.fps,
+            interpolator.multiplier,
+            records_data=False,
+            report=ctx.runtime.cadence_report,
+        )
 
         start_time = time.perf_counter()
         engine.resume()
@@ -71,6 +76,11 @@ class BaseStrategy(RolloutStrategy):
                 action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
                 with timer.section("telemetry"):
                     self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+
+                # Service the text-query channel (/vqa answers, /autosteer turns) at
+                # the end of the tick; no-op when nothing is queued.
+                with timer.section("query"):
+                    engine.pump_query(obs_processed)
 
                 timer.wait()
         finally:

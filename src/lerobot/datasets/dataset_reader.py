@@ -15,6 +15,7 @@
 # limitations under the License.
 """Private reader component for LeRobotDataset. Handles random-access reading (HF dataset, delta indices, video decoding)."""
 
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -43,8 +44,70 @@ from .utils import resolve_episode_indices
 from .video_utils import decode_video_frames
 
 
-class DatasetReader:
-    """Encapsulates read-side state and methods for LeRobotDataset.
+class BaseDatasetReader(ABC):
+    """Read-side data access contract for :class:`LeRobotDataset`.
+
+    A reader owns row fetching and video decoding for one storage format and
+    returns fully assembled frame dicts — tabular features, delta-timestamp
+    windows, padding masks, decoded video frames — so every format produces
+    the same items. ``LeRobotDataset`` delegates ``__getitem__`` and
+    ``__getitems__`` to it and keeps everything else (metadata, episode
+    selection, the public API). Subclasses define their own constructor
+    (their inputs legitimately differ) and must be picklable so
+    ``DataLoader`` workers can reopen their own connections.
+
+    Subclasses must set :attr:`episodes` (the selected episode indices, or
+    ``None`` for all) during construction.
+    """
+
+    episodes: list[int] | None
+
+    @property
+    @abstractmethod
+    def num_frames(self) -> int:
+        """Number of frames in selected episodes."""
+
+    @property
+    @abstractmethod
+    def num_episodes(self) -> int:
+        """Number of episodes selected."""
+
+    @property
+    @abstractmethod
+    def absolute_to_relative_idx(self) -> dict[int, int] | None:
+        """Mapping from absolute frame indices to relative row positions.
+
+        Non-None only for episode-filtered datasets where absolute indices
+        (from metadata) differ from positions in the filtered view.
+        """
+
+    @abstractmethod
+    def get_item(self, idx: int) -> dict:
+        """Return one fully assembled frame dict for a relative index."""
+
+    def get_items(self, indices: list[int]) -> list[dict]:
+        """Return frame dicts for a batch of relative indices.
+
+        Subclasses may override this with a batched implementation.
+        """
+        return [self.get_item(idx) for idx in indices]
+
+    def __len__(self) -> int:
+        return self.num_frames
+
+    def set_image_transforms(self, image_transforms: Callable | None) -> None:
+        """Replace the transform applied to visual observations."""
+        if image_transforms is not None and not callable(image_transforms):
+            raise TypeError("image_transforms must be callable or None.")
+        self._image_transforms = image_transforms
+
+    def clear_image_transforms(self) -> None:
+        """Remove the transform applied to visual observations."""
+        self._image_transforms = None
+
+
+class DatasetReader(BaseDatasetReader):
+    """Default reader serving the parquet/mp4 storage format.
 
     Owns: hf_dataset, _absolute_to_relative_idx, delta_indices.
     """
@@ -87,14 +150,15 @@ class DatasetReader:
         self.episodes = resolve_episode_indices(episodes, meta.total_episodes)
         self._tolerance_s = tolerance_s
         self._video_backend = video_backend
-        if image_transforms is not None and not callable(image_transforms):
-            raise TypeError("image_transforms must be callable or None.")
-        self._image_transforms = image_transforms
+        self.set_image_transforms(image_transforms)
         self._return_uint8 = return_uint8
         self._depth_output_unit = depth_output_unit
 
         self.hf_dataset: datasets.Dataset | None = None
         self._absolute_to_relative_idx: dict[int, int] | None = None
+        self._column_views: dict[str, datasets.Dataset] = {}
+        self._column_views_source: datasets.Dataset | None = None
+        self._column_views_transform: Callable | None = None
 
         # Setup delta_indices (doesn't depend on hf_dataset)
         self.delta_indices = None
@@ -113,16 +177,6 @@ class DatasetReader:
             for key in self._meta.depth_keys
             if key in self._meta.image_keys
         }
-
-    def set_image_transforms(self, image_transforms: Callable | None) -> None:
-        """Replace the transform applied to visual observations."""
-        if image_transforms is not None and not callable(image_transforms):
-            raise TypeError("image_transforms must be callable or None.")
-        self._image_transforms = image_transforms
-
-    def clear_image_transforms(self) -> None:
-        """Remove the transform applied to visual observations."""
-        self._image_transforms = None
 
     def try_load(self) -> bool:
         """Attempt to load from local cache. Returns True if data is sufficient."""
@@ -160,6 +214,13 @@ class DatasetReader:
     def num_episodes(self) -> int:
         """Number of episodes selected."""
         return len(self.episodes) if self.episodes is not None else self._meta.total_episodes
+
+    @property
+    def absolute_to_relative_idx(self) -> dict[int, int] | None:
+        """Mapping from absolute frame indices to HF dataset row positions."""
+        if self.hf_dataset is None:
+            self.load_and_activate()
+        return self._absolute_to_relative_idx
 
     def _load_hf_dataset(self) -> datasets.Dataset:
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
@@ -266,14 +327,37 @@ class DatasetReader:
             if query_indices is not None and key in query_indices:
                 if self._absolute_to_relative_idx is not None:
                     relative_indices = [self._absolute_to_relative_idx[idx] for idx in query_indices[key]]
-                    timestamps = self.hf_dataset[relative_indices]["timestamp"]
+                    timestamps = self._column_view("timestamp")[relative_indices]["timestamp"]
                 else:
-                    timestamps = self.hf_dataset[query_indices[key]]["timestamp"]
+                    timestamps = self._column_view("timestamp")[query_indices[key]]["timestamp"]
                 query_timestamps[key] = torch.stack(timestamps).tolist()
             else:
                 query_timestamps[key] = [current_ts]
 
         return query_timestamps
+
+    def _column_view(self, key: str) -> datasets.Dataset:
+        """Return a cached single-column view of ``hf_dataset``.
+
+        ``select_columns`` is a zero-copy schema projection: row queries on the
+        view fetch and decode only ``key``. By contrast, ``hf_dataset[indices]``
+        (and, since a custom transform disables the lazy-``Column`` fast path in
+        ``datasets`` >= 4.4, also ``hf_dataset[key][indices]``) fetches and
+        decodes entire rows. On image datasets that decodes every embedded
+        camera image of every queried row just to read a low-dimensional column
+        like ``action`` (#2895). The view keeps the ``hf_transform_to_torch``
+        transform, which is column-wise, so outputs are identical to a plain
+        row query.
+        """
+        transform = self.hf_dataset.format["format_kwargs"].get("transform")
+        if self._column_views_source is not self.hf_dataset or self._column_views_transform is not transform:
+            # hf_dataset was (re)loaded or its transform changed: drop stale views
+            self._column_views = {}
+            self._column_views_source = self.hf_dataset
+            self._column_views_transform = transform
+        if key not in self._column_views:
+            self._column_views[key] = self.hf_dataset.select_columns(key)
+        return self._column_views[key]
 
     def _query_hf_dataset(self, query_indices: dict[str, list[int]]) -> dict:
         """Query dataset for indices across keys, skipping video keys."""
@@ -286,10 +370,7 @@ class DatasetReader:
                 if self._absolute_to_relative_idx is None
                 else [self._absolute_to_relative_idx[idx] for idx in q_idx]
             )
-            try:
-                result[key] = torch.stack(self.hf_dataset[key][relative_indices])
-            except (KeyError, TypeError, IndexError):
-                result[key] = torch.stack(self.hf_dataset[relative_indices][key])
+            result[key] = torch.stack(self._column_view(key)[relative_indices][key])
         return result
 
     def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict[str, torch.Tensor]:
@@ -335,12 +416,15 @@ class DatasetReader:
             return dict(f.result() for f in futures)
 
     def get_item(self, idx) -> dict:
-        """Core __getitem__ logic. Assumes hf_dataset is loaded.
+        """Core __getitem__ logic. Loads hf_dataset on first access.
 
         ``idx`` is a *relative* index into the (possibly episode-filtered)
         HF dataset, **not** the absolute frame index stored in the ``index``
         column.  The absolute index is retrieved from the row itself.
         """
+        if self.hf_dataset is None:
+            # One-shot load after finalize()
+            self.load_and_activate()
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
         abs_idx = item["index"].item()

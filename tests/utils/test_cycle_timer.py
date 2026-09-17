@@ -309,6 +309,26 @@ def test_cycle_timer_episode_summaries_fold_into_the_run_total(caplog, clock):
     assert "pacing headroom: 90.0 ms slept per tick on average (max 90.0 ms)" in messages[3]
 
 
+def test_cycle_timer_report_sink_takes_the_summaries_off_the_log(caplog, clock):
+    """Both summaries go to the sink; per-tick warnings stay on the logger."""
+    reported: list[str] = []
+    timer = CycleTimer(10.0, 1, report=reported.append)  # 100 ms budget per tick
+
+    with caplog.at_level(logging.INFO, logger=_TIMER_LOGGER):
+        _drive(timer, clock, work=0.01, ticks=4)
+        timer.log_episode_summary("episode 1")
+        _drive(timer, clock, work=0.5, ticks=2)  # 500 ms of work: over budget
+        timer.log_run_summary()
+
+    assert not _info_messages(caplog)
+    assert len(reported) == 3
+    assert reported[0].startswith("Cadence (episode 1): 10.00 Hz vs 10 Hz target · 4 ticks")
+    assert reported[1].startswith("Cadence (final episode):")
+    assert reported[2].startswith("Cadence summary — whole run, 2 episodes")
+    assert len(_timer_warnings(caplog)) == 2
+    assert not any("running slower" in message for message in reported)
+
+
 def test_cycle_timer_empty_window_reports_nothing(clock, caplog):
     # Boundaries can fall before any tick completes (a rotation on the very first
     # iteration), and a strategy should not have to guard against that.

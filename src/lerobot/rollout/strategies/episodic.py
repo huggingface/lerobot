@@ -38,6 +38,7 @@ from lerobot.common.control_utils import (
     teleop_smooth_move_to,
     teleop_supports_feedback,
 )
+from lerobot.configs import parser
 from lerobot.datasets import VideoEncodingManager
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
@@ -84,6 +85,20 @@ class EpisodicStrategy(RolloutStrategy):
     def setup(self, ctx: RolloutContext) -> None:
         """Start the inference engine and attach the keyboard listener."""
         self._init_engine(ctx)
+        cfg = ctx.runtime.cfg
+        dataset_cfg = cfg.dataset  # never None: dataset_mode="required"
+        # --duration caps a single episode, not the whole session (the session ends
+        # after --dataset.num_episodes episodes).
+        if cfg.duration > 0:
+            if parser.parse_arg("dataset.episode_time_s") is not None:
+                logger.warning(
+                    "Both --duration and --dataset.episode_time_s are set for the episodic strategy; "
+                    "using --dataset.episode_time_s=%s and ignoring --duration.",
+                    dataset_cfg.episode_time_s,
+                )
+            else:
+                logger.info("Propagating --duration=%s to --dataset.episode_time_s", cfg.duration)
+                dataset_cfg.episode_time_s = cfg.duration
         self._listener, self._events = init_keyboard_listener()
         logger.info("Episodic strategy ready")
 
@@ -176,7 +191,7 @@ class EpisodicStrategy(RolloutStrategy):
 
                         elif self.config.reset_to_initial_position:
                             # No teleop: return the robot to its startup position.
-                            self._return_to_initial_position(hw=ctx.hardware, duration_s=1)
+                            self.return_to_initial_position(hw=ctx.hardware, duration_s=1)
 
                         self._reset_loop(
                             ctx=ctx,
@@ -199,7 +214,7 @@ class EpisodicStrategy(RolloutStrategy):
 
                         # returns to its initial joint positions captured at startup
                         if not teleop and self.config.reset_to_initial_position:
-                            self._return_to_initial_position(hw=ctx.hardware, duration_s=1)
+                            self.return_to_initial_position(hw=ctx.hardware, duration_s=1)
 
                         continue
 

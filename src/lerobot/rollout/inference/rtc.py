@@ -44,7 +44,7 @@ from lerobot.processor import (
 from lerobot.utils.feature_utils import build_dataset_frame
 
 from ..robot_wrapper import ThreadSafeRobot
-from .base import InferenceEngine
+from .base import InferenceEngine, PolicyQuery
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +54,18 @@ _RTC_IDLE_SLEEP_S: float = 0.01
 _RTC_ERROR_RETRY_DELAY_S: float = 0.5
 # Consecutive transient errors tolerated before giving up and propagating shutdown.
 _RTC_MAX_CONSECUTIVE_ERRORS: int = 10
+# Consecutive unusable trained-RTC chunks tolerated before declaring the delay unsupportable.
+_RTC_MAX_CONSECUTIVE_DISCARDS: int = 5
 # Hard timeout for joining the RTC thread on stop().
 _RTC_JOIN_TIMEOUT_S: float = 3.0
+
+
+class _FatalRTCInferenceError(RuntimeError):
+    """Base class for RTC errors that cannot become valid after a retry."""
+
+
+class _TrainedRTCDelayExceededError(_FatalRTCInferenceError):
+    """Raised when measured latency persistently exceeds a trained RTC checkpoint's support."""
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +104,67 @@ def _normalize_prev_actions_length(prev_actions: torch.Tensor, target_steps: int
     return padded
 
 
+def _trained_rtc_chunk_can_merge(
+    *,
+    conditioned_delay: int,
+    measured_delay: int,
+    training_max_delay: int,
+    has_previous_actions: bool,
+) -> bool:
+    """Whether a trained RTC chunk still covers the overlap that actually elapsed.
+
+    A chunk is unusable either because inference outran the prefix it was conditioned on, or
+    because the elapsed delay left the range the checkpoint was trained for. Both are transient
+    by nature (a latency spike), so this reports them the same way and lets the caller retry;
+    only a persistent run of unusable chunks is fatal.
+    """
+    if not has_previous_actions:
+        return True
+    if measured_delay > training_max_delay:
+        return False
+    return measured_delay <= conditioned_delay
+
+
+def _estimate_rtc_delay(
+    *,
+    latency: float,
+    time_per_step: float,
+    mode: str,
+    training_max_delay: int,
+    has_previous_actions: bool,
+) -> int:
+    """Estimate overlap, using the trained capacity to bootstrap the first transition."""
+    if latency:
+        return math.ceil(latency / time_per_step)
+    if mode == "trained" and has_previous_actions:
+        return training_max_delay
+    return 0
+
+
+def _clamp_trained_rtc_delay(*, conditioned_delay: int, available_steps: int, training_max_delay: int) -> int:
+    """Clamp the hard prefix to what both the checkpoint and the queue can back.
+
+    Past ``training_max_delay`` the model has never seen a prefix that long, and past
+    ``available_steps`` ``_normalize_prev_actions_length`` zero-pads the tail, so the extra
+    steps would be inpainted as if zeros were committed actions. Clamping keeps the chunk
+    usable; ``_trained_rtc_chunk_can_merge`` still discards it if the delay that actually
+    elapsed outran this prefix.
+    """
+    clamped = min(conditioned_delay, training_max_delay, available_steps)
+    if clamped < conditioned_delay:
+        logger.warning(
+            "Trained RTC wanted a %d-step prefix but the checkpoint supports %d and the queue "
+            "holds %d committed actions; conditioning on %d. Raise --inference.queue_threshold "
+            "and --inference.rtc.execution_horizon, or retrain with a larger "
+            "--policy.rtc_training_max_delay, to keep the full overlap.",
+            conditioned_delay,
+            training_max_delay,
+            available_steps,
+            clamped,
+        )
+    return clamped
+
+
 # ---------------------------------------------------------------------------
 # RTCInferenceEngine
 # ---------------------------------------------------------------------------
@@ -124,13 +195,13 @@ class RTCInferenceEngine(InferenceEngine):
         rtc_queue_threshold: int = 30,
         shutdown_event: Event | None = None,
     ) -> None:
+        super().__init__(task=task)
         self._policy = policy
         self._preprocessor = preprocessor
         self._postprocessor = postprocessor
         self._robot = robot_wrapper
         self._rtc_config = rtc_config
         self._hw_features = hw_features
-        self._task = task
         self._fps = fps
         self._device = device or "cpu"
         self._use_torch_compile = use_torch_compile
@@ -140,10 +211,14 @@ class RTCInferenceEngine(InferenceEngine):
         self._action_queue: ActionQueue | None = None
         self._obs_holder: dict[str, Any] = {}
         self._obs_lock = Lock()
+        # Bumped by reset() under _obs_lock, so a chunk whose inference started before a
+        # reset is discarded instead of merged into the fresh queue.
+        self._reset_epoch = 0
         self._policy_active = Event()
         self._compile_warmup_done = Event()
         self._shutdown_event = Event()
         self._rtc_error = Event()
+        self._failure_traceback: str | None = None
         self._global_shutdown_event = shutdown_event
         self._rtc_thread: Thread | None = None
 
@@ -191,6 +266,14 @@ class RTCInferenceEngine(InferenceEngine):
         return self._rtc_error.is_set()
 
     @property
+    def failure_traceback(self) -> str | None:
+        """Traceback captured when the RTC thread died (see ``failed``).
+
+        Kept as data, not just logged, so consumers can re-surface it when someone looks.
+        """
+        return self._failure_traceback
+
+    @property
     def action_queue(self) -> ActionQueue | None:
         """The shared action queue between the RTC thread and the main loop."""
         return self._action_queue
@@ -235,13 +318,27 @@ class RTCInferenceEngine(InferenceEngine):
         self._policy_active.set()
 
     def reset(self) -> None:
-        """Reset the policy, processors, and action queue."""
+        """Reset the policy, processors, and action queue.
+
+        Safe to call with the RTC thread paused or running.  Also drops the last published
+        observation — a chunk computed from a stale one would jerk the robot toward an old
+        pose — and bumps the reset epoch so an in-flight chunk is discarded instead of
+        merged into the cleared queue.
+        """
         logger.info("Resetting RTC inference state (policy + processors + queue)")
         self._policy.reset()
         self._preprocessor.reset()
         self._postprocessor.reset()
-        if self._action_queue is not None:
-            self._action_queue.clear()
+        with self._obs_lock:
+            # Clear and bump in one critical section, mirroring _rtc_loop's epoch
+            # check-and-merge, so a reset cannot leak a pre-reset chunk into the fresh
+            # queue.  Lock order is _obs_lock -> queue.lock on both sides.
+            if self._action_queue is not None:
+                self._action_queue.clear()
+            self._obs_holder["obs"] = None
+            self._reset_epoch += 1
+        # The queue is empty, so a pending task change has nothing stale to blend against.
+        self._discard_task_change()
 
     # ------------------------------------------------------------------
     # Action production (called from main thread)
@@ -251,12 +348,52 @@ class RTCInferenceEngine(InferenceEngine):
         """Pop the next action from the RTC queue (ignores ``obs_frame``)."""
         if self._action_queue is None:
             return None
-        return self._action_queue.get()
+        queued = self._action_queue.get_with_task()
+        if queued is None:
+            return None
+        # The queue pairs each action with its chunk's task under the queue lock, so a
+        # concurrent merge cannot cross labels between chunks.
+        action, task = queued
+        if task is None:
+            # Every merge here labels its chunk, so a missing label means a foreign
+            # writer: fail loudly rather than corrupt dispatched_task and frame labels.
+            raise RuntimeError("RTC action queue returned an action without task provenance")
+        self._set_dispatched_task(task)
+        return action
 
     def notify_observation(self, obs: dict) -> None:
         """Publish the latest observation for the RTC thread to consume."""
         with self._obs_lock:
             self._obs_holder["obs"] = obs
+
+    # ------------------------------------------------------------------
+    # Text queries
+    # ------------------------------------------------------------------
+
+    @property
+    def supports_text_queries(self) -> bool:
+        """True when the policy has a text head."""
+        return self._policy.supports_text_generation()
+
+    @property
+    def control_thread_owns_policy(self) -> bool:
+        """The RTC background thread owns the policy; it services queries in ``_rtc_loop``."""
+        return False
+
+    def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
+        """Run the policy's text head.  Called on the RTC thread (see ``_rtc_loop``)."""
+        obs_batch = build_dataset_frame(self._hw_features, obs_processed, prefix="observation")
+        # Live task, read without consuming the task-changed edge: that belongs to the
+        # chunk path.
+        task = self.task
+        obs_batch = prepare_observation_for_inference(
+            obs_batch, torch.device(self._device), task, self._robot.robot_type
+        )
+        obs_batch = self._mark_query(obs_batch, query)
+        preprocessed = self._preprocessor(obs_batch)
+        with torch.inference_mode():
+            # No str() coercion: _service_query validates the return value.
+            return self._policy.generate_text(preprocessed)
 
     # ------------------------------------------------------------------
     # RTC: background inference thread
@@ -272,6 +409,7 @@ class RTCInferenceEngine(InferenceEngine):
             warmup_required = max(1, self._compile_warmup_inferences) if self._use_torch_compile else 0
             inference_count = 0
             consecutive_errors = 0
+            consecutive_discards = 0
 
             while not self._shutdown_event.is_set():
                 if not self._policy_active.is_set():
@@ -281,24 +419,64 @@ class RTCInferenceEngine(InferenceEngine):
                 queue = self._action_queue
                 with self._obs_lock:
                     obs = self._obs_holder.get("obs")
+                    epoch_before = self._reset_epoch
                 if queue is None or obs is None:
                     time.sleep(_RTC_IDLE_SLEEP_S)
                     continue
+
+                # Serve a queued text query here — this is the thread that owns the policy.  Above the
+                # refill branch on purpose: a query issued while the queue is full would otherwise wait
+                # for it to drain.  A next-subtask answer is applied via ``set_task``, so the chunk path
+                # below uses it, and that path re-runs the preprocessor on its own observation, so
+                # stateful steps (relative-action anchoring) are not left holding this query's.
+                if self._service_query(obs):
+                    # The generation took seconds, so the snapshot above is stale: re-read
+                    # the observation, and the epoch so the discard guard below also covers
+                    # a reset that landed during the query.
+                    with self._obs_lock:
+                        obs = self._obs_holder.get("obs")
+                        epoch_before = self._reset_epoch
+                    if obs is None:  # a reset mid-query dropped the observation
+                        continue
 
                 if queue.qsize() <= self._rtc_queue_threshold:
                     try:
                         current_time = time.perf_counter()
                         idx_before = queue.get_action_index()
                         prev_actions = queue.get_left_over()
+                        has_previous_actions = prev_actions is not None and prev_actions.numel() > 0
 
+                        policy_config = getattr(self._policy, "config", None)
+                        training_max_delay = int(getattr(policy_config, "rtc_training_max_delay", 0))
                         latency = latency_tracker.max()
-                        delay = math.ceil(latency / time_per_chunk) if latency else 0
+                        delay = _estimate_rtc_delay(
+                            latency=latency,
+                            time_per_step=time_per_chunk,
+                            mode=self._rtc_config.mode,
+                            training_max_delay=training_max_delay,
+                            has_previous_actions=has_previous_actions,
+                        )
+                        if self._rtc_config.mode == "trained" and delay > 0:
+                            delay = _clamp_trained_rtc_delay(
+                                conditioned_delay=delay,
+                                available_steps=0 if prev_actions is None else prev_actions.shape[0],
+                                training_max_delay=training_max_delay,
+                            )
+
+                        task, task_changed = self._take_task()
+                        if task_changed:
+                            # No queue flush on purpose: dropping queued actions would
+                            # leave the robot uncommanded for a full inference latency.
+                            # With RTC blending on this chunk is merged over the previous
+                            # chunk's leftover prefix, so the switch lands within one
+                            # inference; with blending off the queue drains first.
+                            logger.info("Task changed to '%s' — applied from the next merged chunk", task)
 
                         obs_batch = build_dataset_frame(self._hw_features, obs, prefix="observation")
                         obs_batch = prepare_observation_for_inference(
-                            obs_batch, policy_device, self._task, self._robot.robot_type
+                            obs_batch, policy_device, task, self._robot.robot_type
                         )
-                        obs_batch["task"] = [self._task]
+                        obs_batch["task"] = [task]
 
                         preprocessed = self._preprocessor(obs_batch)
 
@@ -334,12 +512,55 @@ class RTCInferenceEngine(InferenceEngine):
                         inference_count += 1
                         consecutive_errors = 0
                         is_warmup = self._use_torch_compile and inference_count <= warmup_required
-                        if is_warmup:
+                        is_initial_trained_chunk = (
+                            self._rtc_config.mode == "trained" and not has_previous_actions
+                        )
+                        if is_warmup or is_initial_trained_chunk:
                             latency_tracker.reset()
                         else:
                             latency_tracker.add(new_latency)
 
-                        queue.merge(original, processed, new_delay, idx_before)
+                        if (
+                            not is_warmup
+                            and self._rtc_config.mode == "trained"
+                            and not _trained_rtc_chunk_can_merge(
+                                conditioned_delay=delay,
+                                measured_delay=new_delay,
+                                training_max_delay=training_max_delay,
+                                has_previous_actions=has_previous_actions,
+                            )
+                        ):
+                            consecutive_discards += 1
+                            logger.warning(
+                                "Discarding trained RTC chunk (%d/%d): measured delay %d exceeded "
+                                "conditioned delay %d (checkpoint supports %d); retrying with "
+                                "updated latency",
+                                consecutive_discards,
+                                _RTC_MAX_CONSECUTIVE_DISCARDS,
+                                new_delay,
+                                delay,
+                                training_max_delay,
+                            )
+                            if consecutive_discards >= _RTC_MAX_CONSECUTIVE_DISCARDS:
+                                raise _TrainedRTCDelayExceededError(
+                                    f"Measured RTC inference delay ({new_delay}) stayed above the "
+                                    f"usable overlap for {consecutive_discards} consecutive chunks; "
+                                    f"the checkpoint supports rtc_training_max_delay="
+                                    f"{training_max_delay}. Retrain with a larger delay, lower "
+                                    "--fps, or switch to --inference.rtc.mode=guided."
+                                )
+                            continue
+
+                        consecutive_discards = 0
+                        with self._obs_lock:
+                            # Check and merge in one critical section, mirroring reset()'s
+                            # clear-and-bump, so a reset cannot land between them and leak
+                            # a pre-reset chunk.  Lock order: _obs_lock -> queue.lock.
+                            epoch_unchanged = epoch_before == self._reset_epoch
+                            if epoch_unchanged:
+                                queue.merge(original, processed, new_delay, idx_before, task=task)
+                        if not epoch_unchanged:
+                            logger.info("Discarding action chunk computed before an engine reset")
 
                         if (
                             is_warmup
@@ -351,6 +572,8 @@ class RTCInferenceEngine(InferenceEngine):
 
                         logger.debug("RTC inference latency=%.2fs, queue=%d", new_latency, queue.qsize())
 
+                    except _FatalRTCInferenceError:
+                        raise
                     except Exception as e:
                         consecutive_errors += 1
                         logger.error(
@@ -368,8 +591,9 @@ class RTCInferenceEngine(InferenceEngine):
                     time.sleep(_RTC_IDLE_SLEEP_S)
 
         except Exception as e:
+            self._failure_traceback = traceback.format_exc()
             logger.error("Fatal error in RTC thread: %s", e)
-            logger.error(traceback.format_exc())
+            logger.error(self._failure_traceback)
             self._rtc_error.set()
             # Unblock any warmup waiters so the main loop doesn't spin forever
             self._compile_warmup_done.set()
