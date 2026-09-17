@@ -37,6 +37,7 @@ from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
 from lerobot.processor import (  # noqa: E402
     AbsoluteActionsProcessorStep,
     RelativeActionsProcessorStep,
+    bind_relative_anchor,
 )
 from lerobot.utils.feature_utils import (  # noqa: E402
     build_dataset_frame,
@@ -126,13 +127,13 @@ class _StubRelativePolicy:
     def reset(self):
         pass
 
-    # Borrow the real queue accounting rather than restate it: the sync engine keys the
-    # relative-action anchor hold off ``queued_action_count``, so a stub that answered it
-    # by hand could drift from ``PreTrainedPolicy`` and hide a wiring break. This policy
-    # keeps no queue attribute at all, so it reports 0 (fresh prediction every tick).
+    # Borrow the real queue accounting rather than restate it: the relative-action step keys
+    # the anchor hold off ``count_queued_actions``, so a stub that answered it by hand could
+    # drift from ``PreTrainedPolicy`` and hide a wiring break. This policy keeps no queue
+    # attribute at all, so it reports 0 (fresh prediction every tick).
     _action_queue_attrs = PreTrainedPolicy._action_queue_attrs
     drop_queued_actions = PreTrainedPolicy.drop_queued_actions
-    queued_action_count = PreTrainedPolicy.queued_action_count
+    count_queued_actions = PreTrainedPolicy.count_queued_actions
 
     def supports_text_generation(self):
         return False
@@ -416,6 +417,10 @@ def test_sync_anchor_is_pinned_across_a_chunk():
             return self._action_queue.popleft().unsqueeze(0)
 
     policy = _ChunkingPolicy()
+    # The engine knows nothing about anchoring: the hold lives in
+    # ``RelativeActionsProcessorStep`` and is armed where a policy and its preprocessor are
+    # built together. ``build_rollout_context`` does this in production.
+    bind_relative_anchor(policy, preprocessor)
     engine = SyncInferenceEngine(
         policy=policy,
         preprocessor=preprocessor,
