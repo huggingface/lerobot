@@ -288,7 +288,7 @@ class RolloutConfig:
     # or any name registered by a third-party package)
     strategy: RolloutStrategyConfig = field(default_factory=BaseStrategyConfig)
 
-    # Inference backend (polymorphic: --inference.type=sync|rtc)
+    # Inference backend (polymorphic: --inference.type=sync|rtc|chunked_sync)
     inference: InferenceEngineConfig = field(default_factory=SyncInferenceConfig)
 
     # Dataset (required, optional or rejected according to the strategy's ``dataset_mode``)

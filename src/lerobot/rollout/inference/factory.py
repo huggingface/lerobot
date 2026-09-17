@@ -34,6 +34,7 @@ from lerobot.processor import PolicyProcessorPipeline
 
 from ..robot_wrapper import ThreadSafeRobot
 from .base import InferenceEngine
+from .chunked_sync import ChunkedSyncInferenceEngine
 from .rtc import RTCInferenceEngine
 from .sync import SyncInferenceEngine
 
@@ -74,6 +75,19 @@ class RTCInferenceConfig(InferenceEngineConfig):
     queue_threshold: int = 30
 
 
+@InferenceEngineConfig.register_subclass("chunked_sync")
+@dataclass
+class ChunkedSyncInferenceConfig(InferenceEngineConfig):
+    """Synchronous chunk execution: predict a chunk, decode it once, serve it tick by tick.
+
+    Unlike ``sync``, the whole chunk is postprocessed in a single call, so
+    relative actions stay anchored to the observation that produced them.
+    The robot idles while the next chunk is computed.
+    """
+
+    execution_steps: int | None = None
+
+
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
@@ -98,6 +112,18 @@ def create_inference_engine(
 ) -> InferenceEngine:
     """Instantiate the appropriate inference engine from a config object."""
     logger.info("Creating inference engine: %s", config.type)
+    if isinstance(config, ChunkedSyncInferenceConfig):
+        return ChunkedSyncInferenceEngine(
+            policy=policy,
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            dataset_features=dataset_features,
+            ordered_action_keys=ordered_action_keys,
+            task=task,
+            device=device,
+            robot_type=robot_wrapper.robot_type,
+            execution_steps=config.execution_steps,
+        )
     if isinstance(config, SyncInferenceConfig):
         return SyncInferenceEngine(
             policy=policy,
