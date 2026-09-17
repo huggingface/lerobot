@@ -62,3 +62,10 @@ to the `--peft.full_training_modules` parameter:
 
 The learning rate and the scheduled target learning rate can usually be scaled by a factor of 10 compared to the
 learning rate used for full fine-tuning (e.g., 1e-4 normal, so 1e-3 using LoRA).
+
+## Other policies
+
+The same `--peft.*` flags work for any pre-trained policy. Some policies (SmolVLA, π₀, π₀.₅) ship
+built-in default `target_modules`, so `--peft.method_type=LORA` is enough. Others do not, and will
+ask you to pass `--peft.target_modules` explicitly — for example LingBot-VA, whose recommended
+targets are documented in its [dedicated guide](./lingbot_va#training--fine-tuning).

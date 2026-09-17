@@ -42,6 +42,10 @@ def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch)
     monkeypatch.setattr(policy_factory, "dataset_to_policy_features", lambda _: {})
     monkeypatch.setattr(policy_factory, "validate_visual_features_consistency", lambda *args: None)
 
+    # "user/adapter" is a fake repo id: pin the adapter-vs-base-model decision instead of
+    # letting `_has_peft_adapter_config` reach the Hub for an `adapter_config.json`.
+    monkeypatch.setattr(policy_factory, "_has_peft_adapter_config", lambda *args, **kwargs: True)
+
     peft_config = SimpleNamespace(
         base_model_name_or_path="user/base-policy",
         revision="base-sha",
