@@ -92,10 +92,6 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
     def running(self):
         return not self.shutdown_event.is_set()
 
-    @property
-    def policy_image_features(self):
-        return self.policy.config.image_features
-
     def _reset_server(self) -> None:
         """Flushes server state when new client connects."""
         # only running inference on the latest observation received by the server
@@ -342,7 +338,6 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         observation: Observation = raw_observation_to_observation(
             observation_t.get_observation(),
             self.lerobot_features,
-            self.policy_image_features,
         )
         prepare_time = time.perf_counter() - start_prepare
 
