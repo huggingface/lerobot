@@ -253,7 +253,7 @@ class UnitreeG1(Robot):
                 key = f"{motor.name}.q"
                 if key in action:
                     self.msg.motor_cmd[motor.value].q = action[key]
-                    self.msg.motor_cmd[motor.value].qd = 0
+                    self.msg.motor_cmd[motor.value].dq = 0
                     self.msg.motor_cmd[motor.value].kp = (
                         kp[motor.value] if kp is not None else self.kp[motor.value]
                     )
