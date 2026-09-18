@@ -167,6 +167,7 @@ diffusers-dep = ["diffusers>=0.38.0,<0.40.0"]
 qwen-vl-utils-dep = ["qwen-vl-utils>=0.0.11,<0.1.0"]
 matplotlib-dep = ["matplotlib>=3.10.3,<4.0.0", "contourpy>=1.3.0,<2.0.0"] # NOTE: Explicitly listing contourpy helps the resolver converge faster.
 pyserial-dep = ["pyserial>=3.5,<4.0"]
+rustypot-dep = ["rustypot>=1.8.0,<2.0.0"]
 deepdiff-dep = ["deepdiff>=7.0.1,<9.0.0"]
 pynput-dep = ["pynput>=1.7.8,<1.9.0"]
 pyzmq-dep = ["pyzmq>=26.2.1,<28.0.0"]
@@ -175,8 +176,10 @@ motorbridge-smart-servo-dep = ["motorbridge-smart-servo>=0.0.4,<0.1.0"]
 timm-dep = ["timm>=1.0.0,<1.1.0"]
 
 # Motors
-feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0", "lerobot[pyserial-dep]", "lerobot[deepdiff-dep]"]
-dynamixel = ["dynamixel-sdk>=3.7.31,<3.9.0", "lerobot[pyserial-dep]", "lerobot[deepdiff-dep]"]
+# pyserial is no longer used to talk to the motors -- rustypot owns the port -- but
+# `lerobot-find-port`, the first step of every arm setup guide, still needs it.
+feetech = ["lerobot[rustypot-dep]", "lerobot[pyserial-dep]", "lerobot[deepdiff-dep]"]
+dynamixel = ["lerobot[rustypot-dep]", "lerobot[pyserial-dep]", "lerobot[deepdiff-dep]"]
 damiao = ["lerobot[can-dep]"]
 robstride = ["lerobot[can-dep]"]
 
