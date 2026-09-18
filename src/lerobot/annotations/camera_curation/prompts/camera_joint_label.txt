@@ -29,13 +29,16 @@ robot_mounted needs POSITIVE evidence, from EITHER:
      look OUT past it). Need not open or drift; this OVERRIDES a static/blank
      backdrop.
 
-fixed: static landmarks stay registered while the robot moves through; OR you look
-AT a separate, external arm (joints/servos seen from the outside, even a close one);
-OR a big arm merely SWINGS through a stationary scene. A close/prominent gripper
-ALONE is not enough — a wrist's own gripper is pinned to the EXACT same spot across
-frames, while a fixed camera's gripper travels. If unresolved, KEEP the preliminary
-mount; do not flip on ambiguity, and never resolve a label collision by changing
-fixed <-> robot_mounted.
+fixed: static landmarks stay registered while the robot moves through (even if the
+arm looms large in some frames — a background scene that stays put means fixed); OR
+you look AT a separate, external arm (joints/servos/links seen from the outside as a
+limb in the scene, even a close one); OR a big arm merely SWINGS through a stationary
+scene. A close/prominent gripper ALONE is not enough. KEY: a WRIST's own gripper is
+bolted to the lens — SAME position AND SAME size every frame; a FIXED camera's arm
+is separate, so across frames it moves AND changes SIZE/DISTANCE (small/far, then
+large/close as it reaches/pours/retracts) -> fixed. If unresolved, KEEP the
+preliminary mount; do not flip on ambiguity, and never resolve a label collision by
+changing fixed <-> robot_mounted.
 
 2. ROBOT_MOUNTED -> "wrist". If TWO cameras are robot_mounted they are the robot's
 two hands: differentiate left_wrist / right_wrist from HAND ANATOMY (palm/back +

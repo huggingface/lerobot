@@ -57,18 +57,25 @@ robot_mounted needs POSITIVE evidence, from EITHER:
      static/blank backdrop).
 
 fixed evidence:
-  - static landmarks stay registered while the robot moves THROUGH the frame;
-  - you look AT a SEPARATE, whole arm as an external object (joints/servos/links seen
-    from the OUTSIDE), not out along your own — even a large, close one (e.g. a side
-    camera watching an arm pour);
+  - static landmarks stay registered while the robot moves THROUGH the frame — even
+    if the arm looms LARGE and fills the frame in some of them, a background scene
+    (monitor, desk, wall, mat, furniture) that stays put means FIXED;
+  - you look AT a SEPARATE, whole arm as an external object (its joints/servos/links
+    visible from the OUTSIDE as a limb in the scene), not out along your own — even
+    a large, close one (e.g. a side camera watching an arm pour);
   - a big arm SWINGING IN AND OUT / sweeping across the frame is the ARM moving
     through a stationary scene (common on a top view) -> FIXED, however much it
     covers.
 
-KEY DISCRIMINATOR when a gripper is in view: a WRIST's own gripper is pinned to the
-EXACT same image position the whole episode (compare first vs last frame); a FIXED
-camera's gripper TRAVELS to different positions as the arm works, or is a separate
-external arm. A prominent/close gripper ALONE is never enough.
+KEY DISCRIMINATOR when a gripper/arm is in view — a WRIST's OWN gripper is bolted to
+the lens, so it stays at the SAME image POSITION and the SAME SIZE in every frame.
+A FIXED camera's arm is separate, so across the frames it TRAVELS to different
+positions AND changes SIZE / DISTANCE — small/far in some frames, large/close in
+others as it reaches, pours, retracts. So: gripper grows/shrinks or moves across
+the frames -> FIXED (a separate arm before a stationary camera); gripper pinned at
+constant size and position -> wrist. Compare the first vs last frame. A
+prominent/close gripper ALONE is never enough, and seeing the arm's joints/servos
+as an external limb, or a static background scene, confirms FIXED.
 
 Decision order:
   1. Own-gripper anchored in the foreground per (B)? -> robot_mounted (overrides a
