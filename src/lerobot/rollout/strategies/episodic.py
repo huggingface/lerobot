@@ -119,8 +119,8 @@ class EpisodicStrategy(RolloutStrategy):
                     self._engine.reset()
                     self._interpolator.reset()
                     self._engine.resume()
-
-                    log_say(f"Recording episode {dataset.num_episodes}", play_sounds)
+                    playing_sound = ((dataset.num_episodes + 1) % 20 == 0)
+                    log_say(f"Recording episode {dataset.num_episodes}", play_sounds=playing_sound)
                     self._policy_loop(
                         ctx=ctx,
                         robot=robot,
@@ -136,7 +136,7 @@ class EpisodicStrategy(RolloutStrategy):
                     if not events["stop_recording"] and (
                         recorded_episodes < num_episodes - 1 or events["rerecord_episode"]
                     ):
-                        log_say("Reset the environment", play_sounds)
+                        log_say("Reset the environment", play_sounds=playing_sound)
 
                         if teleop:
                             # Smooth handover so the transition to teleop control is jerk-free.

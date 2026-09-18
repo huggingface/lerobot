@@ -8,7 +8,7 @@
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
+# Unless 2required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
@@ -38,27 +38,36 @@ class SO101FollowerDragontactile(SOFollower):
 
     def __init__(self, config: SO101FollowerConfig):
         super().__init__(config)
-        self._tactile_obs_key = "left_tactile_spectrogram"
+        self._tactile_obs_key = "tactile_spectrogram_dgf_passif_10kHz_nfft_512"   
+        # 100kHz_tactile_spectrogram, 10kHz_tactile_spectrogram, 0_1kHz_tactile_spectrogram, 5_6kHz_tactile_spectrogram
+        # tactile_spectrogram_nfft_512, tactile_spectrogram_nfft_4096, tactile_spectrogram_nfft_8192
+        # tactile_spectrogram_10kHz_nfft_512
+        # tactile_spectrogram_channel_1_nfft_512 (dgf_iepe), tactile_spectrogram_channel_2_nfft_512 (pzt_disk), tactile_spectrogram_channel_3_nfft_512 (acc mems)
 
         self._sampling_rate_hz = 20_000 # fs = 20 kHz
+        self._current_channel = 1 # 0 DGF, 1 ACC, 2 LOAD_CELL
 
-        self._crop_data = 10 # crop the data with this factor from 0 Hz to 10/self._crop_data kHz
-        self._begin_crop_freq = 5000 # crop from this frequency (Hz)
-        self._nfft = 1024
+        self._crop_data = 1 # crop the data with this factor from 0 Hz to 10/self._crop_data kHz
+        self._begin_crop_freq = 0 # crop from this frequency (Hz)
+        self._nfft = 512
+        print("Current nfft : ",self._nfft)
         self._width, self._height = 224, 224 # For ResNet
         self._target_size = (self._width, self._height)
 
-        self._df=self._sampling_rate_hz/2/self._height
-        dt=1/(2*self._df) # *2 because of 50% overlap
+        dt = self._nfft/(2*self._sampling_rate_hz) # *2 because of 50% overlap
         self._window_duration = self._width*dt
+        print("We have a window duration of :",self._window_duration," in the spectrogram. ")
         
         # Fixed color scale for stable spectrogram visualization across frames.
-        self._spectrogram_min_db = -70.0
-        self._spectrogram_max_db = 40.0
+        self._spectrogram_min_db = -120.0
+        self._spectrogram_max_db = -50.0
 
         display_buffer_size = int(self._sampling_rate_hz * self._window_duration)
         self._display_buffer = np.zeros(display_buffer_size, dtype=np.float32)
-        self._last_spectrogram_frame: np.ndarray | None = None
+        self._last_spectrogram_frame = np.zeros(
+            (self._target_size[1], self._target_size[0], 3), 
+            dtype=np.uint8
+        )
 
         self._instance = None
         self._reader = None
@@ -90,7 +99,7 @@ class SO101FollowerDragontactile(SOFollower):
             target = next((d for d in available_devices if "IOLITE-X" in d.name), available_devices[0])
             device = self._instance.add_device(target.connection_string)
 
-            channel = device.channels[0]
+            channel = device.channels[self._current_channel]
             signal = channel.signals[0]
             amplifier = channel.get_function_blocks()[0]
             self._configure_iepe_amplifier(amplifier)
@@ -109,10 +118,10 @@ class SO101FollowerDragontactile(SOFollower):
     @staticmethod
     def _configure_iepe_amplifier(amplifier) -> None:
         try:
-            amplifier.set_property_value("Measurement", 1)  # IEPE
+            amplifier.set_property_value("Measurement", 0)  # 1 = IEPE, 0 = Voltage
             amplifier.set_property_value("Range", 0)  # 10V
             amplifier.set_property_value("HPFilter", 0)  # 0.1Hz
-            amplifier.set_property_value("Excitation", 1)  # 4mA
+            # amplifier.set_property_value("Excitation", 1)  # 4mA
         except Exception:
             logger.debug("Could not configure IEPE amplifier with default settings.")
 

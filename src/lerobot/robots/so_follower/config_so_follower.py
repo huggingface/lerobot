@@ -50,10 +50,31 @@ class SOFollowerRobotConfig(RobotConfig, SOFollowerConfig):
     pass
 
 @RobotConfig.register_subclass("so101_follower_dragontactile")
-@RobotConfig.register_subclass("so101_follower_dragon_multitactile")
 @dataclass
 class SO101FollowerDragontactileConfig(SOFollowerRobotConfig):
     pass
+
+@RobotConfig.register_subclass("so101_follower_dragon_multitactile")
+class SO101FollowerDragonMultitactileConfig(SOFollowerRobotConfig):
+    pass
+
+@RobotConfig.register_subclass("so101_follower_dragon_multiduration")
+@dataclass
+class SO101FollowerDragonMultidurationConfig(SOFollowerRobotConfig):
+    pass
+
+
+@RobotConfig.register_subclass("so101_follower_dragon_tactile_bench")
+@dataclass
+class SO101FollowerDragonTactileBenchConfig(SOFollowerRobotConfig):
+    bench_setup: str = "5sensors"
+    tactile_obs_key: str = "all" #"tactile_spectrogram_accelero_10kHz_nfft_512"
+    
+@RobotConfig.register_subclass("so101_follower_teensy_tactile")
+@dataclass
+class SO101FollowerTeensyTactileConfig(SOFollowerRobotConfig):
+    num_channels: str = "1"
+    
 
 SO100FollowerConfig = SOFollowerRobotConfig 
 SO101FollowerConfig = SOFollowerRobotConfig

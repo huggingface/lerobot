@@ -27,9 +27,16 @@ __all__ = [
     "SO100FollowerConfig",
     "SO101Follower",
     "SO101FollowerConfig",
+    "SO101FollowerDragonTactileBench",
     "SOFollower",
     "SOFollowerConfig",
     "SOFollowerRobotConfig",
+    "SO101FollowerDragontactile",
+    "SO101FollowerDragonMultitactile",
+    "SO101FollowerDragonTactileBench",
+    "SO101FollowerTeensyTactile",
 ]
 from .so_follower_dragontactile import SO101FollowerDragontactile
 from .so_follower_dragon_multitactile import SO101FollowerDragonMultitactile
+from .so_follower_dragon_tactile_bench import SO101FollowerDragonTactileBench
+from .so_follower_teensy_tactile import SO101FollowerTeensyTactile

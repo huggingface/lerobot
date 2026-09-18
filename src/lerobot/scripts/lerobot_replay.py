@@ -16,33 +16,11 @@
 Replays the actions of an episode from a dataset on a robot.
 
 Requires: pip install 'lerobot[core_scripts]'  (includes dataset + hardware + viz extras)
-
-Examples:
-
-```shell
-lerobot-replay \
-    --robot.type=so100_follower \
-    --robot.port=/dev/tty.usbmodem58760431541 \
-    --robot.id=black \
-    --dataset.repo_id=<USER>/record-test \
-    --dataset.episode=0
-```
-
-Example replay with bimanual so100:
-```shell
-lerobot-replay \
-  --robot.type=bi_so_follower \
-  --robot.left_arm_port=/dev/tty.usbmodem5A460851411 \
-  --robot.right_arm_port=/dev/tty.usbmodem5A460812391 \
-  --robot.id=bimanual_follower \
-  --dataset.repo_id=${HF_USER}/bimanual-so100-handover-cube \
-  --dataset.episode=0
-```
-
 """
 
 import logging
 import time
+import keyboard  # Import pour la touche Echap
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
@@ -100,6 +78,7 @@ class ReplayConfig:
 
 @parser.wrap()
 def replay(cfg: ReplayConfig):
+    # --- INITIALISATION DU ROBOT ET DU DATASET (Lignes qui manquaient) ---
     init_logging()
     logging.info(pformat(asdict(cfg)))
 
@@ -109,27 +88,49 @@ def replay(cfg: ReplayConfig):
     dataset = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root, episodes=[cfg.dataset.episode])
 
     actions = dataset.select_columns(ACTION)
+    # ---------------------------------------------------------------------
 
     robot.connect()
 
     try:
-        log_say("Replaying episode", cfg.play_sounds, blocking=True)
-        for idx in range(dataset.num_frames):
-            start_episode_t = time.perf_counter()
+        
+        keep_playing = True
+        idpaly=0
 
-            action_array = actions[idx][ACTION]
-            action = {}
-            for i, name in enumerate(dataset.features[ACTION]["names"]):
-                action[name] = action_array[i]
+        while keep_playing:
+            idpaly+=1
+            print(f"\n[INFO] Starting replay iteration {idpaly}...")
+            for idx in range(dataset.num_frames):
+                
+                # --- Vérification de la touche Échap ---
+                if keyboard.is_pressed('esc'):
+                    print("\n[!] Touche Échap pressée. Arrêt du replay.")
+                    keep_playing = False
+                    break  # Sort de la boucle 'for'
+                # ---------------------------------------
 
-            robot_obs = robot.get_observation()
+                start_episode_t = time.perf_counter()
 
-            processed_action = robot_action_processor((action, robot_obs))
+                action_array = actions[idx][ACTION]
+                action = {}
+                for i, name in enumerate(dataset.features[ACTION]["names"]):
+                    action[name] = action_array[i]
 
-            _ = robot.send_action(processed_action)
+                robot_obs = robot.get_observation()
+                processed_action = robot_action_processor((action, robot_obs))
+                
+                _ = robot.send_action(processed_action)
 
-            dt_s = time.perf_counter() - start_episode_t
-            precise_sleep(max(1 / dataset.fps - dt_s, 0.0))
+                dt_s = time.perf_counter() - start_episode_t
+                precise_sleep(max(1 / dataset.fps - dt_s, 0.0))
+            
+            # Si on n'a pas appuyé sur Échap, on attend avant de recommencer
+            if keep_playing:
+                time.sleep(1) 
+
+    except KeyboardInterrupt:
+        # Permet de quitter proprement avec Ctrl+C si Echap ne marche pas
+        print("\n[!] Arrêt forcé via Ctrl+C.")
     finally:
         robot.disconnect()
 

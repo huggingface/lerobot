@@ -44,6 +44,18 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .so_follower import SO101FollowerDragonMultitactile
 
         return SO101FollowerDragonMultitactile(config)
+    elif config.type == "so101_follower_dragon_bench":
+        from .so_follower import SO101FollowerDragonTactileBench
+
+        return SO101FollowerDragonTactileBench(config)
+    elif config.type == "so101_follower_dragon_bench_sensors":
+        from .so_follower import SO101FollowerDragonTactileBenchSensors
+
+        return SO101FollowerDragonTactileBenchSensors(config)
+    elif config.type == "so101_follower_teensy_tactile":
+        from .so_follower import SO101FollowerTeensyTactile
+
+        return SO101FollowerTeensyTactile(config)
     elif config.type == "so101_follower_dragontactile":
         from .so_follower import SO101FollowerDragontactile
 
