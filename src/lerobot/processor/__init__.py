@@ -65,6 +65,7 @@ from .hil_processor import (
     RewardClassifierProcessorStep,
     TimeLimitProcessorStep,
 )
+from .image_augmentation_processor import ImageAugmentationProcessorStep
 from .newline_task_processor import NewLineTaskProcessorStep
 from .normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep, hotswap_stats
 from .observation_processor import VanillaObservationProcessorStep
@@ -105,6 +106,7 @@ __all__ = [
     "AddTeleopActionAsComplimentaryDataStep",
     "AddTeleopEventsAsInfoStep",
     "ComplementaryDataProcessorStep",
+    "ImageAugmentationProcessorStep",
     "batch_to_transition",
     "create_transition",
     "from_tensor_to_numpy",

@@ -114,8 +114,12 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     Returns:
         LeRobotDataset | MultiLeRobotDataset
     """
+    # On the "gpu" backend the workers only decode; lerobot-train augments each batch on the policy device.
+    image_transforms_cfg = cfg.dataset.image_transforms
     image_transforms = (
-        ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
+        ImageTransforms(image_transforms_cfg)
+        if image_transforms_cfg.enable and image_transforms_cfg.backend == "dataloader"
+        else None
     )
 
     if isinstance(cfg.dataset.repo_id, str):
@@ -236,8 +240,12 @@ def make_train_eval_datasets(
 
     delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, full_dataset.meta, cfg.rename_map)
 
+    # On the "gpu" backend the workers only decode; lerobot-train augments each batch on the policy device.
+    image_transforms_cfg = cfg.dataset.image_transforms
     train_image_transforms = (
-        ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
+        ImageTransforms(image_transforms_cfg)
+        if image_transforms_cfg.enable and image_transforms_cfg.backend == "dataloader"
+        else None
     )
 
     train_dataset = LeRobotDataset(

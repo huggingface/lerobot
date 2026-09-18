@@ -12,15 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .transforms import (
+from .deprecated import (
     CoarseDropout,
     GammaCorrection,
     GaussianNoise,
     GaussianPatchBrightness,
-    ImageTransformConfig,
-    ImageTransforms,
-    ImageTransformsConfig,
-    JPEGCompression,
     MotionBlur,
     PlanckianJitter,
     RandomShadow,
@@ -28,10 +24,48 @@ from .transforms import (
     SharpnessJitter,
     make_transform_from_config,
 )
+from .transforms import (
+    BatchedCoarseDropout,
+    BatchedColorJitter,
+    BatchedGammaCorrection,
+    BatchedGaussianNoise,
+    BatchedGaussianPatchBrightness,
+    BatchedIdentity,
+    BatchedImageTransforms,
+    BatchedMotionBlur,
+    BatchedPlanckianJitter,
+    BatchedRandomAffine,
+    BatchedRandomRotation,
+    BatchedRandomShadow,
+    BatchedRandomSubsetApply,
+    BatchedSharpnessJitter,
+    BatchedTransform,
+    ImageTransformConfig,
+    ImageTransforms,
+    ImageTransformsConfig,
+    JPEGCompression,
+    PerSampleTransform,
+    make_batched_transform_from_config,
+)
 
 # An example of transforms effects can be found in: https://github.com/huggingface/lerobot/pull/4210
 
 __all__ = [
+    "BatchedCoarseDropout",
+    "BatchedColorJitter",
+    "BatchedGammaCorrection",
+    "BatchedGaussianNoise",
+    "BatchedGaussianPatchBrightness",
+    "BatchedIdentity",
+    "BatchedImageTransforms",
+    "BatchedMotionBlur",
+    "BatchedPlanckianJitter",
+    "BatchedRandomAffine",
+    "BatchedRandomRotation",
+    "BatchedRandomShadow",
+    "BatchedRandomSubsetApply",
+    "BatchedSharpnessJitter",
+    "BatchedTransform",
     "CoarseDropout",
     "GammaCorrection",
     "GaussianNoise",
@@ -41,9 +75,11 @@ __all__ = [
     "ImageTransformsConfig",
     "JPEGCompression",
     "MotionBlur",
+    "PerSampleTransform",
     "PlanckianJitter",
     "RandomShadow",
     "RandomSubsetApply",
     "SharpnessJitter",
+    "make_batched_transform_from_config",
     "make_transform_from_config",
 ]
