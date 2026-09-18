@@ -1852,7 +1852,7 @@ class FastWAM(torch.nn.Module):
                 )
             video_prefiller = self._compiled_video_prefiller
             action_denoiser = self._compiled_action_denoiser
-            if self.device.type == "cuda":
+            if self.device.type in ("cuda", "npu", "xpu"):
                 torch.compiler.cudagraph_mark_step_begin()
 
         video_kv_cache = video_prefiller(
@@ -1881,7 +1881,7 @@ class FastWAM(torch.nn.Module):
             shift_override=sigma_shift,
         )
         for step_t_action, step_delta_action in zip(infer_timesteps_action, infer_deltas_action, strict=True):
-            if compile_action_infer and self.device.type == "cuda":
+            if compile_action_infer and self.device.type in ("cuda", "npu", "xpu"):
                 torch.compiler.cudagraph_mark_step_begin()
             timestep_action = step_t_action.unsqueeze(0).to(dtype=latents_action.dtype, device=self.device)
 
