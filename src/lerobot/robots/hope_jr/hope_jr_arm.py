@@ -20,11 +20,8 @@ from functools import cached_property
 
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.motors import Motor, MotorNormMode
+from lerobot.motors import Motor, MotorNormMode, SerialMotorsBus
 from lerobot.motors.calibration_gui import RangeFinderGUI
-from lerobot.motors.feetech import (
-    FeetechMotorsBus,
-)
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
@@ -41,7 +38,7 @@ class HopeJrArm(Robot):
     def __init__(self, config: HopeJrArmConfig):
         super().__init__(config)
         self.config = config
-        self.bus = FeetechMotorsBus(
+        self.bus = SerialMotorsBus(
             port=self.config.port,
             motors={
                 "shoulder_pitch": Motor(1, "sm8512bl", MotorNormMode.RANGE_M100_100),

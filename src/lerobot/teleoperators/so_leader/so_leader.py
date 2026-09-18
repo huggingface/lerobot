@@ -17,9 +17,8 @@
 import logging
 import time
 
-from lerobot.motors import Motor, MotorCalibration, MotorNormMode
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
 from lerobot.motors.feetech import (
-    FeetechMotorsBus,
     OperatingMode,
 )
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
@@ -40,7 +39,7 @@ class SOLeader(Teleoperator):
         super().__init__(config)
         self.config = config
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
-        self.bus = FeetechMotorsBus(
+        self.bus = SerialMotorsBus(
             port=self.config.port,
             motors={
                 "shoulder_pan": Motor(1, "sts3215", norm_mode_body),

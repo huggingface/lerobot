@@ -19,9 +19,8 @@ import time
 from typing import Any
 
 from lerobot.lerobot_types import RobotAction
-from lerobot.motors import Motor, MotorCalibration, MotorNormMode
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
 from lerobot.motors.feetech import (
-    FeetechMotorsBus,
     OperatingMode,
 )
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
@@ -72,7 +71,7 @@ class OpenArmMini(Teleoperator):
             "gripper": Motor(8, "sts3215", MotorNormMode.RANGE_0_100),
         }
 
-        self.bus = FeetechMotorsBus(
+        self.bus = SerialMotorsBus(
             port=self.config.port,
             motors=motors,
             calibration=self.calibration,
