@@ -1,6 +1,6 @@
 # Physical agent improvement loop
 
-The physical agent tools extend the interactive language runtime with asynchronous
+The physical agent tools add an agent mode to `lerobot-rollout` with asynchronous
 VLA inference, tool-based intervention, episode recording, and versioned training
 experiments. Start them through the existing rollout entry point:
 
@@ -13,6 +13,13 @@ bimanual ReBot B601 and the dataset
 [`pepijn223/rebot_diverse_picking_100_annotated`](https://huggingface.co/datasets/pepijn223/rebot_diverse_picking_100_annotated).
 The software includes simulated hardware tests; those do not establish physical
 success, timing, or calibration on a particular installation.
+
+Agent mode uses a dedicated command-arbitration loop under `lerobot.rollout.agent`,
+sharing the rollout context builder, hardware wrappers, policy processors, dataset
+writer, and `CycleTimer`. The standard interactive controller and sync/RTC strategies
+retain their existing entry points. This first version requires policies exposing
+tensor action chunks through `predict_action_chunk`; policy switching is between
+sessions, and this agent mode does not use RTC chunk blending.
 
 ## Bootstrap a steerable VLA
 
@@ -54,7 +61,9 @@ recipes with text prediction targets are not supported by this task-string adapt
 policies with native message/text supervision should use their own recipe processors.
 
 The experiment service reads `recipe_path` and embeds the full recipe in the saved
-candidate and training configuration. The original dataset remains unchanged.
+candidate and training configuration. The original dataset remains unchanged. The existing `${task}` binding also rotates
+through `task_aug` paraphrases when those annotations are present. It does not
+generate new paraphrases or assume unannotated command styles.
 
 The example initializes two candidates:
 
@@ -134,7 +143,7 @@ under its output root. `GET /tools` returns provider-neutral function schemas;
 endpoint. The same API is available through a small CLI client:
 
 ```bash
-python -m lerobot.rollout.agent.client \
+uv run python -m lerobot.rollout.agent.client \
   --token-file=outputs/rebot_agent/tool_token \
   --name=get_observation
 ```
@@ -147,16 +156,16 @@ call. Do not retry a motion after a transport timeout; inspect session status fi
 
 Tools include:
 
-| Tool group                | Operations                                                                                             |
-| ------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Observe and steer         | `get_observation`, `get_action`, `set_task`, `steer`, `pause`, `resume_policy`                         |
-| Correct                   | `move_joints`, `offset_joints`, `set_gripper`, `move_ee`                                               |
-| Collect                   | `start_rollout`, `finish_episode`, `stop_rollout`                                                      |
-| Train and choose policies | `create_candidate`, `list_candidates`, `start_training`, `job_status`, `cancel_job`, `register_policy` |
-| Improve                   | `build_dagger_dataset`, `compare_runs`, `create_code_candidate`, `test_code_candidate`                 |
+| Tool group                | Operations                                                                                                           |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Observe and steer         | `get_observation`, `get_action`, `set_task`, `steer`, `pause`, `resume_policy`                                       |
+| Correct                   | `move_joints`, `offset_joints`, `set_gripper`, `move_ee`                                                             |
+| Collect                   | `start_rollout`, `finish_episode`, `stop_rollout`                                                                    |
+| Train and choose policies | `create_candidate`, `list_candidates`, `start_training`, `list_jobs`, `job_status`, `cancel_job`, `register_policy`  |
+| Improve                   | `build_dagger_dataset`, `compare_runs`, `get_run_trace`, `read_code`, `create_code_candidate`, `test_code_candidate` |
 
 `set_task` changes the overall goal; `steer` changes the active subtask while keeping
-that goal. For joint motions an optional `instruction` labels the corrective behavior.
+that goal (`/subtask grasp the tape` at the prompt). For joint motions an optional `instruction` labels the corrective behavior.
 Finish each attempt with an outcome (`success`, `failure`, or `unknown`) and evidence:
 
 ```text

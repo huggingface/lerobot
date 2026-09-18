@@ -288,8 +288,9 @@ def test_build_rollout_context_rejects_missing_policy() -> None:
         ),
     ],
 )
+@pytest.mark.parametrize("build_inference", [True, False])
 def test_build_rollout_context_uses_resolved_device(
-    monkeypatch: pytest.MonkeyPatch, checkpoint_device: str, runtime_device: str | None
+    monkeypatch: pytest.MonkeyPatch, checkpoint_device: str, runtime_device: str | None, build_inference: bool
 ) -> None:
     import lerobot.rollout.context as rollout_context
     from lerobot.policies.act.configuration_act import ACTConfig
@@ -332,7 +333,8 @@ def test_build_rollout_context_uses_resolved_device(
     monkeypatch.setattr(rollout_context, "make_robot_from_config", lambda _: robot)
 
     try:
-        ctx = rollout_context.build_rollout_context(cfg, threading.Event())
+        ctx = rollout_context.build_rollout_context(cfg, threading.Event(), build_inference=build_inference)
+        assert (ctx.policy.inference is not None) == build_inference
         batch = ctx.policy.preprocessor({OBS_STATE: torch.zeros(1, 3)})
         model_device = next(ctx.policy.policy.parameters()).device
         assert model_device == batch[OBS_STATE].device

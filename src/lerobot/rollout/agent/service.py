@@ -69,6 +69,7 @@ class AgentHarness:
                 "runtime": self.runtime.status() if self.runtime else None,
                 "policies": dict(self.policies),
                 "operator_paused": self._operator_paused,
+                "recent_supervisor_tools": list(self._agent_history),
             }
 
     def call(self, name, arguments=None, *, actor="external_agent", revision=None, observed_at=None):
@@ -380,6 +381,10 @@ def run(argv=None):
                     elif line.startswith("/train "):
                         result = harness.call(
                             "start_training", {"candidate_id": line.split(maxsplit=1)[1]}, actor="operator"
+                        )
+                    elif line.startswith("/subtask "):
+                        result = harness.call(
+                            "steer", {"instruction": line.split(maxsplit=1)[1]}, actor="operator"
                         )
                     elif line.startswith("/finish "):
                         _, outcome, evidence = line.split(" ", 2)

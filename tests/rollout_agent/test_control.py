@@ -144,6 +144,30 @@ def test_recording_contains_actual_bounded_command_and_original_proposal(make_ru
     assert executed[0] == records[0][2]
 
 
+def test_new_task_is_recorded_on_the_tick_where_it_changes(make_runtime):
+    runtime, executed, records, _ = make_runtime()
+    until(runtime, lambda: bool(executed))
+    runtime.submit("set_task", {"instruction": "collect blue objects"})
+    runtime.step_once()
+    assert records[-1][0]["task"] == "collect blue objects"
+    assert records[-1][4] == "collect blue objects"
+
+
+def test_shutdown_resolves_pending_commands_even_if_recording_fails(make_runtime):
+    runtime, _, _, _ = make_runtime()
+    runtime.step_once()
+    command = runtime.submit("pause", {})
+
+    def fail(result):
+        raise OSError("disk full")
+
+    runtime._finish = fail
+    with pytest.raises(OSError, match="disk full"):
+        runtime._on_shutdown()
+    assert runtime._predict.closed.is_set()
+    assert command["done"].is_set()
+
+
 def test_observation_failure_pauses_and_flushes_queue(make_runtime):
     runtime, executed, _, _ = make_runtime()
     until(runtime, lambda: bool(executed))

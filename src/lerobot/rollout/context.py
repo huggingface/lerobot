@@ -563,7 +563,11 @@ def build_rollout_context(
         ),
         None,
     )
-    if build_inference and isinstance(cfg.inference, SyncInferenceConfig) and relative_action_step is not None:
+    if (
+        build_inference
+        and isinstance(cfg.inference, SyncInferenceConfig)
+        and relative_action_step is not None
+    ):
         raise NotImplementedError(
             "SyncInferenceEngine does not support policies with relative actions for now."
             "Use --inference.type=rtc or remove relative action processor steps from the policy pipeline."
