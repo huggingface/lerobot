@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The batched image transforms reproduce the per-sample ones and draw independent parameters per sample."""
+"""The batched image transforms reproduce torchvision's kernels and draw independent parameters per sample."""
 
 from collections.abc import Callable
 from typing import Any
@@ -33,6 +33,8 @@ from lerobot.transforms import (
     ImageTransformConfig,
     ImageTransforms,
     ImageTransformsConfig,
+    JPEGCompression,
+    PerSampleTransform,
     make_batched_transform_from_config,
     transforms as tf,
 )
@@ -79,12 +81,13 @@ def test_rotation_rejects_expand():
         BatchedRandomRotation(degrees=5, expand=True)
 
 
-# --- Parity with the per-sample transforms, over the whole registry ---------------------------
+# --- Parity with torchvision, over the registry -----------------------------------------------
 #
-# For every type in `_BATCHED_TRANSFORMS`, draw parameters for a batch of one from the batched
-# transform, hand the same parameters to the per-sample implementation (torchvision's functional
-# kernels or the LeRobot transform's `transform`), and compare. A transform added to the registry
-# without an entry here fails `test_parity_cases_cover_the_registry`.
+# For every type in `_BATCHED_TRANSFORMS` that mirrors a torchvision kernel, draw parameters for
+# a batch of one from the batched transform, hand the same parameters to torchvision's functional
+# kernel, and compare. The LeRobot-only types (`LEROBOT_ONLY`) have no torchvision reference; their
+# behaviour is covered in `tests/datasets/test_image_transforms.py`. A transform added to the
+# registry without an entry in either set fails `test_parity_cases_cover_the_registry`.
 
 Expected = Callable[[Tensor, dict[str, Any], torch.Generator], Tensor]
 
@@ -126,20 +129,8 @@ def _rotation(frame: Tensor, params: dict[str, Any], generator: torch.Generator)
     return F.rotate(frame, angle=_scalar(params["angle"]), interpolation=InterpolationMode.BILINEAR, fill=0)
 
 
-def _custom(reference_cls: type[v2.Transform], lift: Callable[[dict[str, Any]], dict[str, Any]]) -> Expected:
-    """Compare with a LeRobot per-sample transform, whose params are python scalars and lists."""
-
-    def expected(frame: Tensor, params: dict[str, Any], generator: torch.Generator) -> Tensor:
-        return reference_cls(**PARITY_KWARGS[reference_cls.__name__]).transform(frame, lift(params))
-
-    return expected
-
-
-def _gaussian_noise(frame: Tensor, params: dict[str, Any], generator: torch.Generator) -> Tensor:
-    # The batched transform draws its noise first, so `GaussianNoise` seeded like the generator was draws
-    # the very same values.
-    reference = tf.GaussianNoise(**PARITY_KWARGS["GaussianNoise"])
-    return reference.transform(frame, {"std": _scalar(params["std"]), "seed": generator.initial_seed()})
+def _sharpness(frame: Tensor, params: dict[str, Any], generator: torch.Generator) -> Tensor:
+    return F.adjust_sharpness(frame, _scalar(params["sharpness_factor"]))
 
 
 PARITY_KWARGS: dict[str, dict[str, Any]] = {
@@ -155,13 +146,6 @@ PARITY_KWARGS: dict[str, dict[str, Any]] = {
     },
     "RandomRotation": {"degrees": 15, "interpolation": InterpolationMode.BILINEAR},
     "SharpnessJitter": {"sharpness": (0.5, 1.5)},
-    "GaussianNoise": {"std": (5.0, 25.0)},
-    "MotionBlur": {"kernel_size": (3, 11)},
-    "GaussianPatchBrightness": {"num_patches": (1, 3)},
-    "RandomShadow": {},
-    "CoarseDropout": {"max_holes": 3},
-    "GammaCorrection": {},
-    "PlanckianJitter": {},
 }
 
 PARITY_EXPECTED: dict[str, Expected] = {
@@ -169,49 +153,29 @@ PARITY_EXPECTED: dict[str, Expected] = {
     "ColorJitter": _color_jitter,
     "RandomAffine": _affine,
     "RandomRotation": _rotation,
-    "SharpnessJitter": _custom(
-        tf.SharpnessJitter, lambda p: {"sharpness_factor": _scalar(p["sharpness_factor"])}
-    ),
-    "GaussianNoise": _gaussian_noise,
-    "MotionBlur": _custom(
-        tf.MotionBlur, lambda p: {"kernel_size": int(_scalar(p["kernel_size"])), "angle": _scalar(p["angle"])}
-    ),
-    "GaussianPatchBrightness": _custom(
-        tf.GaussianPatchBrightness,
-        lambda p: {
-            "centers": p["centers"][0][p["valid"][0]].tolist(),
-            "sigmas": p["sigmas"][0][p["valid"][0]].tolist(),
-            "factors": p["factors"][0][p["valid"][0]].tolist(),
-        },
-    ),
-    "RandomShadow": _custom(
-        tf.RandomShadow,
-        lambda p: {name: _scalar(p[name]) for name in ("opacity", "start", "width", "direction")},
-    ),
-    "CoarseDropout": _custom(
-        tf.CoarseDropout,
-        lambda p: {
-            "sizes": p["sizes"][0][p["valid"][0]].tolist(),
-            "positions": p["positions"][0][p["valid"][0]].tolist(),
-        },
-    ),
-    "GammaCorrection": _custom(tf.GammaCorrection, lambda p: {"gamma": _scalar(p["gamma"])}),
-    "PlanckianJitter": _custom(tf.PlanckianJitter, lambda p: {"temperature": int(_scalar(p["temperature"]))}),
+    "SharpnessJitter": _sharpness,
+}
+
+LEROBOT_ONLY = {
+    "GaussianNoise",
+    "MotionBlur",
+    "GaussianPatchBrightness",
+    "RandomShadow",
+    "CoarseDropout",
+    "GammaCorrection",
+    "PlanckianJitter",
 }
 
 
 def test_parity_cases_cover_the_registry():
-    assert set(PARITY_EXPECTED) == set(tf._BATCHED_TRANSFORMS) == set(PARITY_KWARGS)  # noqa: SLF001
-
-
-def test_every_batched_type_has_a_per_sample_counterpart():
-    for name in tf._BATCHED_TRANSFORMS:  # noqa: SLF001
-        assert name in tf._CUSTOM_TRANSFORMS or hasattr(v2, name), name  # noqa: SLF001
+    assert set(PARITY_EXPECTED) == set(PARITY_KWARGS)
+    assert set(PARITY_EXPECTED) | LEROBOT_ONLY == set(tf._BATCHED_TRANSFORMS)  # noqa: SLF001
+    assert not set(PARITY_EXPECTED) & LEROBOT_ONLY
 
 
 @pytest.mark.parametrize("type_name", sorted(PARITY_EXPECTED))
 def test_batch_of_one_matches_the_per_sample_transform(frames, type_name):
-    """Over many parameter draws, the batched transform on one sample equals the per-sample transform."""
+    """Over many parameter draws, the batched transform on one sample equals torchvision's kernel."""
     batched = make_batched_transform_from_config(
         ImageTransformConfig(type=type_name, kwargs=PARITY_KWARGS[type_name])
     )
@@ -278,6 +242,11 @@ class _AddOne(tf.BatchedTransform):
         return frames + 1.0
 
 
+class _Double(tf.BatchedTransform):
+    def transform(self, frames, params):
+        return frames * 2.0
+
+
 def test_random_subset_apply_selects_n_subset_per_sample_without_replacement():
     """Each sample gets exactly n_subset distinct transforms, each with probability n_subset / n."""
     n_transforms, n_subset, batch = 7, 4, 4000
@@ -300,6 +269,37 @@ def test_random_subset_apply_respects_weights():
     identity = make_batched_transform_from_config(ImageTransformConfig(type="Identity"))
     out = BatchedRandomSubsetApply([identity, _AddOne()], p=[0.0, 1.0], n_subset=1)(frames, _generator(4))
     assert torch.all(out == 1.0)
+
+
+def test_batch_of_one_runs_only_the_selected_transforms_and_matches_the_masked_path():
+    """A batch of one applies the drawn subset in sequence; the result equals the masked path's."""
+    subset = BatchedRandomSubsetApply([_AddOne(), _Double(), _AddOne()], n_subset=2)
+    frames = torch.full((2, 1, 1, 1, 1), 3.0)
+    params = subset.make_params(frames.shape, CPU, _generator(0))
+    params["selected"] = torch.tensor([[2, 1], [2, 1]])  # unsorted draw: configured order is 1 then 2
+    masked = subset.transform(frames, params)
+    assert torch.equal(masked, torch.full_like(frames, (3.0 * 2.0) + 1.0))
+    single = subset.transform(frames[:1], tf.slice_params(params, 0, 1))
+    assert torch.equal(single, masked[:1])
+
+
+def test_batch_of_one_honours_random_order():
+    subset = BatchedRandomSubsetApply([_AddOne(), _Double()], n_subset=2, random_order=True)
+    frames = torch.full((1, 1, 1, 1, 1), 3.0)
+    params = subset.make_params(frames.shape, CPU, _generator(0))
+    params["selected"] = torch.tensor([[1, 0]])  # double first, then add one
+    assert subset.transform(frames, params).item() == 3.0 * 2.0 + 1.0
+    params["selected"] = torch.tensor([[0, 1]])
+    assert subset.transform(frames, params).item() == (3.0 + 1.0) * 2.0
+
+
+def test_size_changing_transforms_run_on_a_batch_of_one_only():
+    resize = PerSampleTransform(v2.Resize((8, 8)))
+    subset = BatchedRandomSubsetApply([resize, _AddOne()], n_subset=2)
+    out = subset(torch.rand(1, 2, 3, HEIGHT, WIDTH), _generator(0))
+    assert out.shape == (1, 2, 3, 8, 8)
+    with pytest.raises(ValueError, match="changed the frame shape"):
+        subset(torch.rand(2, 2, 3, HEIGHT, WIDTH), _generator(0))
 
 
 def test_random_order_applies_every_selected_transform(frames):
@@ -395,10 +395,39 @@ def test_default_config_transforms_have_batched_counterparts():
         assert isinstance(make_batched_transform_from_config(tf_cfg), tf.BatchedTransform)
 
 
-@pytest.mark.parametrize("type_name", ["JPEGCompression", "RandomResizedCrop", "GaussianBlur"])
-def test_unsupported_transform_types_raise(type_name):
-    with pytest.raises(ValueError, match="no batched implementation"):
-        make_batched_transform_from_config(ImageTransformConfig(type=type_name, kwargs={}))
+@pytest.mark.parametrize(
+    ("type_name", "kwargs"),
+    [
+        ("JPEGCompression", {}),
+        ("RandomResizedCrop", {"size": (HEIGHT, WIDTH)}),
+        ("GaussianBlur", {"kernel_size": 3}),
+        ("Resize", {"size": (16, 16)}),
+    ],
+)
+def test_types_without_a_batched_implementation_go_through_the_per_sample_adapter(type_name, kwargs):
+    transform = make_batched_transform_from_config(ImageTransformConfig(type=type_name, kwargs=kwargs))
+    assert isinstance(transform, PerSampleTransform)
+    out = transform(torch.rand(1, FRAMES, 3, HEIGHT, WIDTH), _generator(0))
+    assert out.shape[:3] == (1, FRAMES, 3)
+
+
+def test_per_sample_adapter_draws_independent_reproducible_parameters(frames):
+    """Each sample gets its own draw of the wrapped transform's parameters, all from the batch generator."""
+    transform = PerSampleTransform(JPEGCompression(quality=(5, 95)))
+    same = frames[:1].expand(3, -1, -1, -1, -1).contiguous()
+    first = transform(same, _generator(0))
+    assert not torch.equal(first[0], first[1]) and not torch.equal(first[1], first[2])
+    assert torch.equal(first, transform(same, _generator(0)))
+    assert not torch.equal(first, transform(same, _generator(1)))
+
+
+def test_per_sample_adapter_leaves_the_default_rng_untouched(frames):
+    with seeded_context(7):
+        control = torch.rand(4)
+    with seeded_context(7):
+        PerSampleTransform(v2.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)))(frames, _generator(0))
+        after = torch.rand(4)
+    assert torch.equal(control, after)
 
 
 def test_backend_is_validated():

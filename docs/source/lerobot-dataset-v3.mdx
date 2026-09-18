@@ -249,9 +249,19 @@ LeRobot provides several transform types:
 
 - **`ColorJitter`**: Adjusts brightness, contrast, saturation, and hue
 - **`SharpnessJitter`**: Randomly adjusts image sharpness
+- **`RandomAffine`**, **`RandomRotation`**: Geometric jitter
+- **`GaussianNoise`**, **`MotionBlur`**, **`JPEGCompression`**, **`GaussianPatchBrightness`**, **`RandomShadow`**, **`CoarseDropout`**, **`GammaCorrection`**, **`PlanckianJitter`**: Camera and lighting effects seen on real robots
 - **`Identity`**: No transformation (useful for testing)
 
-You can also use any `torchvision.transforms.v2` transform by passing it directly to the `image_transforms` parameter.
+Any other `torchvision.transforms.v2` class can be named as a `type` too (for example `RandomResizedCrop` or `GaussianBlur`); it is applied one sample at a time. You can also pass a torchvision transform directly to the `image_transforms` parameter.
+
+Every transform is now batched, and the same batched transforms run on both backends. The per-sample classes (`SharpnessJitter`, `GaussianNoise`, `MotionBlur`, `GaussianPatchBrightness`, `RandomShadow`, `CoarseDropout`, `GammaCorrection`, `PlanckianJitter`, `RandomSubsetApply`) and `make_transform_from_config` remain importable as deprecated front ends over their `Batched*` replacements and warn on use; they will be removed in a future release. `ImageTransforms` is a plain `torch.nn.Module` taking a `(C, H, W)` or `(T, C, H, W)` tensor. Configurations naming a transform by `type` are unaffected.
+
+<Tip warning={true}>
+
+**Behaviour change for existing recipes.** Training reads frames as `uint8`, and the LeRobot transforms other than `ColorJitter`, `RandomAffine` and `RandomRotation` used to return non-float input unchanged. Recipes enabling `GaussianNoise`, `MotionBlur`, `GaussianPatchBrightness`, `RandomShadow`, `CoarseDropout`, `GammaCorrection` or `PlanckianJitter` were therefore training without them. They now apply on both backends, so such a recipe trains differently than it did before: it gets the augmentation it asked for. Transforms that were already applying are unchanged apart from rounding, since the batched path computes in float and rounds once at the end rather than after every transform.
+
+</Tip>
 
 ### Configuration options
 
@@ -282,10 +292,9 @@ The randomization is unchanged: each sample draws its own transforms and paramet
 Things to know:
 
 - Requires an accelerator; `--policy.device=cpu` is refused. A dataset built by hand with its own `image_transforms` callable is refused too, since those run in the workers.
-- Supports every LeRobot transform except `JPEGCompression`, and the torchvision `ColorJitter`, `RandomAffine`, `RandomRotation` and `Identity`. Others raise at startup.
-- The custom transforms (`GaussianNoise`, `MotionBlur`, `RandomShadow`, ...) are silent no-ops on the dataloader backend because it sees `uint8` frames. On the GPU they apply, so recipes using them will train differently.
+- Supports every transform type the dataloader backend does. Types without a batched implementation (`JPEGCompression`, and torchvision classes other than `ColorJitter`, `RandomAffine`, `RandomRotation` and `Identity`) are applied one sample at a time inside the batch, so they do not get the speed-up; `JPEGCompression` also round-trips through the CPU. A transform that changes the frame size is refused on a batch of more than one sample.
 - Reproducible from `--seed`, with each process seeded differently. Augmentation does not consume the policy's random stream, and `gpu_compile` and `gpu_chunk_size` do not change what is applied.
-- Results are not bit-identical to the dataloader backend, which rounds to `uint8` between transforms.
+- Both backends run the same batched transforms in float and round once at the end, so a sample augmented on one equals the same sample augmented on the other given the same parameters.
 - `gpu_compile` costs 15-30 s once per image shape. Peak memory is about two float copies of the batch images plus a few copies of one chunk; lower `gpu_chunk_size` if memory is tight. `random_order=true` multiplies the transform time by `max_num_transforms`.
 
 ## Migrate `v2.1` → `v3.0`

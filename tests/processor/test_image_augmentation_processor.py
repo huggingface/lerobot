@@ -149,13 +149,11 @@ def _dataset(image_transforms=None):
     return SimpleNamespace(meta=meta, image_transforms=image_transforms)
 
 
-def test_trainer_builds_a_one_step_pipeline_for_the_gpu_backend(cpu_generator):
+def test_trainer_builds_the_step_for_the_gpu_backend(cpu_generator):
     pytest.importorskip("datasets")  # the trainer and the dataset factory need the [dataset] extra
     from lerobot.scripts.lerobot_train import _make_image_augmentation
 
-    pipeline = _make_image_augmentation(_train_cfg(), _dataset(), torch.device("cuda"), process_index=2)
-    assert pipeline is not None and len(pipeline.steps) == 1
-    step = pipeline.steps[0]
+    step = _make_image_augmentation(_train_cfg(), _dataset(), torch.device("cuda"), process_index=2)
     assert isinstance(step, ImageAugmentationProcessorStep)
     assert step.image_keys == [CAM_A, CAM_B]  # camera keys, depth left out, no rename applied
     assert step.device == "cuda" and step.chunk_size == 8 and step.compile_model is False
@@ -176,8 +174,8 @@ def test_trainer_leaves_the_seed_unset_when_the_run_is_unseeded(cpu_generator):
     pytest.importorskip("datasets")  # the trainer and the dataset factory need the [dataset] extra
     from lerobot.scripts.lerobot_train import _make_image_augmentation
 
-    pipeline = _make_image_augmentation(_train_cfg(seed=None), _dataset(), torch.device("cuda"), 3)
-    assert pipeline.steps[0].seed is None
+    step = _make_image_augmentation(_train_cfg(seed=None), _dataset(), torch.device("cuda"), 3)
+    assert step.seed is None
 
 
 def test_trainer_refuses_a_dataset_that_already_carries_worker_transforms():
@@ -192,16 +190,63 @@ def test_trainer_refuses_a_dataset_that_already_carries_worker_transforms():
 
 
 def test_only_training_batches_are_augmented():
-    """The augmentation pipeline runs before `_preprocess_dataset_batch` on the training path only."""
+    """The augmentation step runs before `_preprocess_dataset_batch` on the training path only."""
     pytest.importorskip("datasets")  # the trainer and the dataset factory need the [dataset] extra
     from lerobot.scripts.lerobot_train import _preprocess_dataset_batch
 
-    augmentation = _pipeline(ImageAugmentationProcessorStep(config=_config()))
+    augmentation = ImageAugmentationProcessorStep(config=_config())
     identity_preprocessor = lambda batch: batch  # noqa: E731
-    train_batch = _preprocess_dataset_batch(augmentation(_batch()), [CAM_A, CAM_B], {}, identity_preprocessor)
+    train_batch = _preprocess_dataset_batch(
+        augmentation.observation(_batch()), [CAM_A, CAM_B], {}, identity_preprocessor
+    )
     eval_batch = _preprocess_dataset_batch(_batch(), [CAM_A, CAM_B], {}, identity_preprocessor)
     torch.testing.assert_close(train_batch[CAM_A], torch.full_like(train_batch[CAM_A], 0.25))
     torch.testing.assert_close(eval_batch[CAM_A], torch.full_like(eval_batch[CAM_A], 0.5))
+
+
+def test_trainer_path_keeps_unprefixed_camera_keys_and_custom_columns(cpu_generator):
+    """The step is applied to the batch dict directly, so nothing `batch_to_transition` would drop is lost.
+
+    `camera_keys` selects by dtype, so a camera can be named `image` with no `observation.` prefix, and a
+    dataset can carry columns of its own. Going through `PolicyProcessorPipeline` keeps `observation.*`
+    keys and a fixed list of others only, and this runs before `rename_map` could rename them.
+    """
+    pytest.importorskip("datasets")  # the trainer and the dataset factory need the [dataset] extra
+    from lerobot.scripts.lerobot_train import _make_image_augmentation
+
+    meta = SimpleNamespace(camera_keys=["image", CAM_A], depth_keys=[])
+    step = _make_image_augmentation(
+        _train_cfg(), SimpleNamespace(meta=meta, image_transforms=None), torch.device("cuda"), 0
+    )
+    step._device = None  # keep the frames on the CPU runner; the device move is covered elsewhere
+    batch = {
+        "image": torch.full((2, 3, 8, 8), 0.5),
+        CAM_A: torch.full((2, 2, 3, 8, 8), 0.5),
+        OBS_STATE: torch.ones(2, 4),
+        "action": torch.ones(2, 4),
+        "custom.column": torch.arange(2),
+        "task": ["pick", "place"],
+    }
+    out = step.observation(dict(batch))
+    assert set(out) == set(batch)
+    torch.testing.assert_close(out["image"], torch.full_like(batch["image"], 0.25))
+    torch.testing.assert_close(out[CAM_A], torch.full_like(batch[CAM_A], 0.25))
+    for key in (OBS_STATE, "action", "custom.column"):
+        assert torch.equal(out[key], batch[key]), key
+    assert out["task"] == batch["task"]
+
+
+def test_pipeline_wrapper_would_drop_those_keys():
+    """Why the trainer does not wrap the step in a pipeline: the conversion loses un-prefixed keys."""
+    batch = {
+        "image": torch.full((2, 3, 8, 8), 0.5),
+        CAM_A: torch.full((2, 2, 3, 8, 8), 0.5),
+        "custom.column": torch.arange(2),
+        "action": torch.ones(2, 4),
+    }
+    out = _pipeline(ImageAugmentationProcessorStep(config=_config(), image_keys=["image", CAM_A]))(batch)
+    assert CAM_A in out and "action" in out
+    assert "image" not in out and "custom.column" not in out
 
 
 def test_train_config_rejects_gpu_backend_on_cpu_policy(tmp_path):

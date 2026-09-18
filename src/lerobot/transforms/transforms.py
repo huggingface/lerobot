@@ -13,9 +13,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import collections
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -27,213 +27,6 @@ from torchvision.transforms.v2 import (
     Transform,
     functional as F,  # noqa: N812
 )
-
-
-class RandomSubsetApply(Transform):
-    """Apply a random subset of N transformations from a list of transformations.
-
-    Args:
-        transforms: list of transformations.
-        p: represents the multinomial probabilities (with no replacement) used for sampling the transform.
-            If the sum of the weights is not 1, they will be normalized. If ``None`` (default), all transforms
-            have the same probability.
-        n_subset: number of transformations to apply. If ``None``, all transforms are applied.
-            Must be in [1, len(transforms)].
-        random_order: apply transformations in a random order.
-    """
-
-    def __init__(
-        self,
-        transforms: Sequence[Callable[..., Any]],
-        p: list[float] | None = None,
-        n_subset: int | None = None,
-        random_order: bool = False,
-    ) -> None:
-        super().__init__()
-        if not isinstance(transforms, Sequence):
-            raise TypeError("Argument transforms should be a sequence of callables")
-        if p is None:
-            p = [1.0] * len(transforms)
-        elif len(p) != len(transforms):
-            raise ValueError(
-                f"Length of p doesn't match the number of transforms: {len(p)} != {len(transforms)}"
-            )
-
-        if n_subset is None:
-            n_subset = len(transforms)
-        elif not isinstance(n_subset, int):
-            raise TypeError("n_subset should be an int or None")
-        elif not (1 <= n_subset <= len(transforms)):
-            raise ValueError(f"n_subset should be in the interval [1, {len(transforms)}]")
-
-        self.transforms = transforms
-        total = sum(p)
-        self.p = [prob / total for prob in p]
-        self.n_subset = n_subset
-        self.random_order = random_order
-
-        self.selected_transforms: list[Callable[..., Any]] = []
-
-    def forward(self, *inputs: Any) -> Any:
-        needs_unpacking = len(inputs) > 1
-
-        selected_indices = torch.multinomial(torch.tensor(self.p), self.n_subset)
-        if not self.random_order:
-            selected_indices = selected_indices.sort().values
-
-        self.selected_transforms = [self.transforms[i] for i in selected_indices]
-
-        for transform in self.selected_transforms:
-            outputs = transform(*inputs)
-            inputs = outputs if needs_unpacking else (outputs,)
-
-        return outputs
-
-    def extra_repr(self) -> str:
-        return (
-            f"transforms={self.transforms}, "
-            f"p={self.p}, "
-            f"n_subset={self.n_subset}, "
-            f"random_order={self.random_order}"
-        )
-
-
-class SharpnessJitter(Transform):
-    """Randomly change the sharpness of an image or video.
-
-    Similar to a v2.RandomAdjustSharpness with p=1 and a sharpness_factor sampled randomly.
-    While v2.RandomAdjustSharpness applies — with a given probability — a fixed sharpness_factor to an image,
-    SharpnessJitter applies a random sharpness_factor each time. This is to have a more diverse set of
-    augmentations as a result.
-
-    A sharpness_factor of 0 gives a blurred image, 1 gives the original image while 2 increases the sharpness
-    by a factor of 2.
-
-    If the input is a :class:`torch.Tensor`,
-    it is expected to have [..., 1 or 3, H, W] shape, where ... means an arbitrary number of leading dimensions.
-
-    Args:
-        sharpness: How much to jitter sharpness. sharpness_factor is chosen uniformly from
-            [max(0, 1 - sharpness), 1 + sharpness] or the given
-            [min, max]. Should be non negative numbers.
-    """
-
-    def __init__(self, sharpness: float | Sequence[float]) -> None:
-        super().__init__()
-        self.sharpness = self._check_input(sharpness)
-
-    def _check_input(self, sharpness: float | Sequence[float]) -> tuple[float, float]:
-        if isinstance(sharpness, (int | float)):
-            if sharpness < 0:
-                raise ValueError("If sharpness is a single number, it must be non negative.")
-            sharpness = [1.0 - sharpness, 1.0 + sharpness]
-            sharpness[0] = max(sharpness[0], 0.0)
-        elif isinstance(sharpness, collections.abc.Sequence) and len(sharpness) == 2:
-            sharpness = [float(v) for v in sharpness]
-        else:
-            raise TypeError(f"{sharpness=} should be a single number or a sequence with length 2.")
-
-        if not 0.0 <= sharpness[0] <= sharpness[1]:
-            raise ValueError(f"sharpness values should be between (0., inf), but got {sharpness}.")
-
-        return float(sharpness[0]), float(sharpness[1])
-
-    def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
-        sharpness_factor = torch.empty(1).uniform_(self.sharpness[0], self.sharpness[1]).item()
-        return {"sharpness_factor": sharpness_factor}
-
-    def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
-        sharpness_factor = params["sharpness_factor"]
-        return self._call_kernel(F.adjust_sharpness, inpt, sharpness_factor=sharpness_factor)
-
-
-class GaussianNoise(Transform):
-    """Add Gaussian noise to simulate camera sensor noise.
-
-    Models readout noise from ADC quantization, which increases in low-light conditions.
-    Common in real-robot setups where wrist cameras operate in suboptimal lighting.
-
-    Args:
-        std: Range (min, max) for noise standard deviation in pixel-value scale (0-255).
-    """
-
-    def __init__(self, std: float | Sequence[float] = (5.0, 25.0)) -> None:
-        super().__init__()
-        if isinstance(std, (int, float)):
-            self.std = (0.0, float(std))
-        elif isinstance(std, Sequence) and len(std) == 2:
-            self.std = (float(std[0]), float(std[1]))
-        else:
-            raise TypeError("std must be a number or a sequence with length 2.")
-        if not 0.0 <= self.std[0] <= self.std[1]:
-            raise ValueError(f"std must satisfy 0 <= min <= max, but got {self.std}.")
-
-    def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
-        return {
-            "std": torch.empty(1).uniform_(self.std[0], self.std[1]).item(),
-            "seed": torch.randint(0, torch.iinfo(torch.int64).max, ()).item(),
-        }
-
-    def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
-        if isinstance(inpt, torch.Tensor) and inpt.is_floating_point():
-            generator = torch.Generator(device=inpt.device).manual_seed(params["seed"])
-            noise = torch.randn(inpt.shape, device=inpt.device, dtype=inpt.dtype, generator=generator)
-            return (inpt + noise * (params["std"] / 255.0)).clamp(0.0, 1.0)
-        return inpt
-
-
-class MotionBlur(Transform):
-    """Apply directional motion blur to simulate fast robot or object movement.
-
-    Generates a 1D averaging kernel along a random direction, applied via depthwise convolution.
-
-    Args:
-        kernel_size: An odd kernel size or a range containing at least one odd kernel size.
-    """
-
-    def __init__(self, kernel_size: int | Sequence[int] = (3, 11)) -> None:
-        super().__init__()
-        if isinstance(kernel_size, int):
-            self.kernel_size = (kernel_size, kernel_size)
-        elif isinstance(kernel_size, Sequence) and len(kernel_size) == 2:
-            self.kernel_size = (int(kernel_size[0]), int(kernel_size[1]))
-        else:
-            raise TypeError("kernel_size must be an int or a sequence with length 2.")
-        if not 1 <= self.kernel_size[0] <= self.kernel_size[1]:
-            raise ValueError(f"kernel_size must satisfy 1 <= min <= max, but got {self.kernel_size}.")
-        self._first_odd_kernel_size = self.kernel_size[0] + (self.kernel_size[0] + 1) % 2
-        if self._first_odd_kernel_size > self.kernel_size[1]:
-            raise ValueError(f"kernel_size range must contain an odd value, but got {self.kernel_size}.")
-
-    def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
-        num_odd_sizes = (self.kernel_size[1] - self._first_odd_kernel_size) // 2 + 1
-        size_index = int(torch.randint(0, num_odd_sizes, ()).item())
-        ks = self._first_odd_kernel_size + 2 * size_index
-        angle = torch.empty(1).uniform_(0, 360).item()
-        return {"kernel_size": ks, "angle": angle}
-
-    def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
-        if not isinstance(inpt, torch.Tensor) or not inpt.is_floating_point():
-            return inpt
-        if inpt.ndim < 3:
-            raise ValueError(f"MotionBlur expects [..., C, H, W] input, but got shape {inpt.shape}.")
-
-        kernel_size = params["kernel_size"]
-        radius = kernel_size // 2
-        angle = math.radians(params["angle"])
-        positions = torch.linspace(-radius, radius, kernel_size, device=inpt.device)
-        x_coords = (positions * math.cos(angle)).round().to(torch.long) + radius
-        y_coords = (positions * math.sin(angle)).round().to(torch.long) + radius
-        kernel = torch.zeros((kernel_size, kernel_size), device=inpt.device, dtype=inpt.dtype)
-        kernel[y_coords, x_coords] = 1
-        kernel /= kernel.sum()
-
-        channels, height, width = inpt.shape[-3:]
-        flat_input = inpt.reshape(-1, channels, height, width)
-        depthwise_kernel = kernel.expand(channels, 1, kernel_size, kernel_size)
-        padded = torch.nn.functional.pad(flat_input, (radius,) * 4, mode="replicate")
-        output = torch.nn.functional.conv2d(padded, depthwise_kernel, groups=channels)
-        return output.reshape(inpt.shape).clamp(0.0, 1.0)
 
 
 class JPEGCompression(Transform):
@@ -278,222 +71,6 @@ class JPEGCompression(Transform):
         return output.reshape(inpt.shape)
 
 
-class GaussianPatchBrightness(Transform):
-    """Apply spatially-varying brightness with Gaussian patches.
-
-    Simulates uneven overhead lighting, spotlights, and shadow patches commonly
-    encountered in real robot workspaces with multiple light sources.
-
-    Args:
-        num_patches: Range (min, max) for number of brightness patches.
-        sigma_range: Range for Gaussian sigma as fraction of image size.
-        factor_range: Range for brightness factor (< 1 darkens, > 1 brightens).
-    """
-
-    def __init__(
-        self,
-        num_patches: int | Sequence[int] = (1, 4),
-        sigma_range: Sequence[float] = (0.05, 0.25),
-        factor_range: Sequence[float] = (0.4, 1.6),
-    ) -> None:
-        super().__init__()
-        if isinstance(num_patches, int):
-            self.num_patches = (num_patches, num_patches)
-        elif isinstance(num_patches, Sequence) and len(num_patches) == 2:
-            self.num_patches = (int(num_patches[0]), int(num_patches[1]))
-        else:
-            raise TypeError("num_patches must be an int or a sequence with length 2.")
-        if not 1 <= self.num_patches[0] <= self.num_patches[1]:
-            raise ValueError(f"num_patches must satisfy 1 <= min <= max, but got {self.num_patches}.")
-        if not isinstance(sigma_range, Sequence) or len(sigma_range) != 2:
-            raise TypeError("sigma_range must be a sequence with length 2.")
-        self.sigma_range = (float(sigma_range[0]), float(sigma_range[1]))
-        if not 0.0 < self.sigma_range[0] <= self.sigma_range[1]:
-            raise ValueError(f"sigma_range must satisfy 0 < min <= max, but got {self.sigma_range}.")
-        if not isinstance(factor_range, Sequence) or len(factor_range) != 2:
-            raise TypeError("factor_range must be a sequence with length 2.")
-        self.factor_range = (float(factor_range[0]), float(factor_range[1]))
-        if not 0.0 <= self.factor_range[0] <= self.factor_range[1]:
-            raise ValueError(f"factor_range must satisfy 0 <= min <= max, but got {self.factor_range}.")
-
-    def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
-        n = int(torch.randint(self.num_patches[0], self.num_patches[1] + 1, (1,)).item())
-        return {
-            "centers": torch.rand(n, 2).tolist(),
-            "sigmas": torch.empty(n).uniform_(self.sigma_range[0], self.sigma_range[1]).tolist(),
-            "factors": torch.empty(n).uniform_(self.factor_range[0], self.factor_range[1]).tolist(),
-        }
-
-    def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
-        if not isinstance(inpt, torch.Tensor) or not inpt.is_floating_point():
-            return inpt
-        h, w = inpt.shape[-2:]
-        mask = torch.ones(h, w, device=inpt.device, dtype=inpt.dtype)
-        grid_y = torch.linspace(0, 1, h, device=inpt.device, dtype=inpt.dtype)
-        grid_x = torch.linspace(0, 1, w, device=inpt.device, dtype=inpt.dtype)
-        yy, xx = torch.meshgrid(grid_y, grid_x, indexing="ij")
-        for (cy, cx), sigma, factor in zip(
-            params["centers"], params["sigmas"], params["factors"], strict=True
-        ):
-            gauss = torch.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * sigma**2))
-            mask = mask * (1.0 + (factor - 1.0) * gauss)
-        broadcast_shape = (1,) * (inpt.ndim - 2) + (h, w)
-        return (inpt * mask.reshape(broadcast_shape)).clamp(0.0, 1.0)
-
-
-class RandomShadow(Transform):
-    """Add random vertical band shadow with smooth edges.
-
-    Simulates cast shadows from objects or people near the robot workspace.
-    Symmetric: randomly brightens or darkens to prevent BatchNorm stats shift.
-
-    Args:
-        opacity: Range (min, max) for shadow/highlight opacity.
-    """
-
-    def __init__(self, opacity: float | Sequence[float] = (0.3, 0.6)) -> None:
-        super().__init__()
-        if isinstance(opacity, (int, float)):
-            self.opacity = (float(opacity), float(opacity))
-        elif isinstance(opacity, Sequence) and len(opacity) == 2:
-            self.opacity = (float(opacity[0]), float(opacity[1]))
-        else:
-            raise TypeError("opacity must be a number or a sequence with length 2.")
-        if not 0.0 <= self.opacity[0] <= self.opacity[1] <= 1.0:
-            raise ValueError(f"opacity must satisfy 0 <= min <= max <= 1, but got {self.opacity}.")
-
-    def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
-        return {
-            "opacity": torch.empty(1).uniform_(self.opacity[0], self.opacity[1]).item(),
-            "start": torch.rand(1).item(),
-            "width": torch.empty(1).uniform_(1 / 3, 2 / 3).item(),
-            "direction": -1.0 if torch.rand(1).item() < 0.5 else 1.0,
-        }
-
-    def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
-        if not isinstance(inpt, torch.Tensor) or not inpt.is_floating_point():
-            return inpt
-        if inpt.ndim < 3:
-            raise ValueError(f"RandomShadow expects [..., C, H, W] input, but got shape {inpt.shape}.")
-
-        h, w = inpt.shape[-2:]
-        band_width = max(1, min(w, round(params["width"] * w)))
-        x_start = round(params["start"] * (w - band_width))
-        x_end = x_start + band_width
-        mask = torch.ones(h, w, device=inpt.device, dtype=inpt.dtype)
-        mask[:, x_start:x_end] = 1.0 + params["direction"] * params["opacity"]
-
-        smoothing_size = min(8, h, w)
-        if smoothing_size > 1:
-            batched_mask = mask[None, None]
-            small = torch.nn.functional.avg_pool2d(batched_mask, smoothing_size, stride=smoothing_size)
-            mask = torch.nn.functional.interpolate(small, size=(h, w), mode="bilinear", align_corners=False)[
-                0, 0
-            ]
-
-        broadcast_shape = (1,) * (inpt.ndim - 2) + (h, w)
-        return (inpt * mask.reshape(broadcast_shape)).clamp(0.0, 1.0)
-
-
-class CoarseDropout(Transform):
-    """Drop random rectangular patches to simulate partial occlusion.
-
-    Models objects, hands, or cables passing through the camera field of view
-    during robot manipulation.
-
-    Args:
-        max_holes: Maximum number of rectangular patches to drop.
-        max_height_frac: Maximum patch height as fraction of image height.
-        max_width_frac: Maximum patch width as fraction of image width.
-        fill_value: Value to fill dropped regions with.
-    """
-
-    def __init__(
-        self,
-        max_holes: int = 8,
-        max_height_frac: float = 0.07,
-        max_width_frac: float = 0.07,
-        fill_value: float = 0.0,
-    ) -> None:
-        super().__init__()
-        if not isinstance(max_holes, int):
-            raise TypeError("max_holes must be an int.")
-        if max_holes < 1:
-            raise ValueError(f"max_holes must be at least 1, but got {max_holes}.")
-        if not 0.0 < max_height_frac <= 1.0:
-            raise ValueError(f"max_height_frac must be in (0, 1], but got {max_height_frac}.")
-        if not 0.0 < max_width_frac <= 1.0:
-            raise ValueError(f"max_width_frac must be in (0, 1], but got {max_width_frac}.")
-        if not 0.0 <= fill_value <= 1.0:
-            raise ValueError(f"fill_value must be in [0, 1], but got {fill_value}.")
-        self.max_holes = max_holes
-        self.max_height_frac = max_height_frac
-        self.max_width_frac = max_width_frac
-        self.fill_value = fill_value
-
-    def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
-        n = int(torch.randint(1, self.max_holes + 1, (1,)).item())
-        sizes = torch.rand(n, 2)
-        sizes[:, 0] *= self.max_height_frac
-        sizes[:, 1] *= self.max_width_frac
-        return {"sizes": sizes.tolist(), "positions": torch.rand(n, 2).tolist()}
-
-    def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
-        if not isinstance(inpt, torch.Tensor) or not inpt.is_floating_point():
-            return inpt
-        if inpt.ndim < 3:
-            raise ValueError(f"CoarseDropout expects [..., C, H, W] input, but got shape {inpt.shape}.")
-
-        h, w = inpt.shape[-2:]
-        result = inpt.clone()
-        for (height_frac, width_frac), (y_frac, x_frac) in zip(
-            params["sizes"], params["positions"], strict=True
-        ):
-            hole_h = max(1, min(h, round(height_frac * h)))
-            hole_w = max(1, min(w, round(width_frac * w)))
-            y = round(y_frac * (h - hole_h))
-            x = round(x_frac * (w - hole_w))
-            result[..., y : y + hole_h, x : x + hole_w] = self.fill_value
-        return result
-
-
-class GammaCorrection(Transform):
-    """Apply random gamma correction to simulate exposure variation.
-
-    Models different camera auto-exposure settings and sensor response curves.
-    Uses log-symmetric sampling so brightening and darkening are equally likely,
-    preventing BatchNorm statistics shift.
-
-    Args:
-        gamma: Range (min, max) for gamma value. Values < 1 brighten, > 1 darken.
-    """
-
-    def __init__(self, gamma: float | Sequence[float] = (0.5, 2.0)) -> None:
-        super().__init__()
-        if isinstance(gamma, (int, float)):
-            gamma = float(gamma)
-            if gamma <= 0:
-                raise ValueError(f"gamma must be positive, but got {gamma}.")
-            self.gamma = (min(gamma, 1.0 / gamma), max(gamma, 1.0 / gamma))
-        elif isinstance(gamma, Sequence) and len(gamma) == 2:
-            self.gamma = (float(gamma[0]), float(gamma[1]))
-        else:
-            raise TypeError("gamma must be a number or a sequence with length 2.")
-        if not 0.0 < self.gamma[0] <= self.gamma[1]:
-            raise ValueError(f"gamma must satisfy 0 < min <= max, but got {self.gamma}.")
-
-    def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
-        log_lo = math.log(self.gamma[0])
-        log_hi = math.log(self.gamma[1])
-        gamma = math.exp(torch.empty(1).uniform_(log_lo, log_hi).item())
-        return {"gamma": gamma}
-
-    def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
-        if isinstance(inpt, torch.Tensor) and inpt.is_floating_point():
-            return inpt.pow(params["gamma"]).clamp(0.0, 1.0)
-        return inpt
-
-
 # From the paper authors' MIT-licensed reference implementation:
 # https://github.com/TheZino/PlanckianJitter
 _PLANCKIAN_BLACKBODY_COEFFICIENTS = (
@@ -528,89 +105,21 @@ _PLANCKIAN_MAX_TEMPERATURE = 15_000
 _PLANCKIAN_TEMPERATURE_STEP = 500
 
 
-class PlanckianJitter(Transform):
-    """Simulate color temperature shift along the Planckian locus.
-
-    Samples one black-body temperature and applies the corresponding correlated red
-    and blue channel scaling while preserving the green channel. Coefficients between
-    the tabulated 500 K intervals are linearly interpolated.
-
-    Reference: Zini et al., "Planckian Jitter", CVPR 2022 Workshop.
-
-    Args:
-        temperature: A fixed color temperature or range in Kelvin. Supported values
-            are between 3000 K and 15000 K.
-    """
-
-    def __init__(self, temperature: int | Sequence[int] = (3_000, 15_000)) -> None:
-        super().__init__()
-        if isinstance(temperature, int):
-            self.temperature = (temperature, temperature)
-        elif isinstance(temperature, Sequence) and len(temperature) == 2:
-            self.temperature = (int(temperature[0]), int(temperature[1]))
-        else:
-            raise TypeError("temperature must be an int or a sequence with length 2.")
-        if not (
-            _PLANCKIAN_MIN_TEMPERATURE
-            <= self.temperature[0]
-            <= self.temperature[1]
-            <= _PLANCKIAN_MAX_TEMPERATURE
-        ):
-            raise ValueError(
-                "temperature must satisfy "
-                f"{_PLANCKIAN_MIN_TEMPERATURE} <= min <= max <= {_PLANCKIAN_MAX_TEMPERATURE}, "
-                f"but got {self.temperature}."
-            )
-
-    def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
-        temperature = int(torch.randint(self.temperature[0], self.temperature[1] + 1, ()).item())
-        return {"temperature": temperature}
-
-    def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
-        if not isinstance(inpt, torch.Tensor) or not inpt.is_floating_point():
-            return inpt
-        if inpt.ndim < 3 or inpt.shape[-3] != 3:
-            raise ValueError(f"PlanckianJitter expects [..., 3, H, W] input, but got shape {inpt.shape}.")
-
-        table_position = (params["temperature"] - _PLANCKIAN_MIN_TEMPERATURE) / _PLANCKIAN_TEMPERATURE_STEP
-        left_index = math.floor(table_position)
-        right_index = min(left_index + 1, len(_PLANCKIAN_BLACKBODY_COEFFICIENTS) - 1)
-        interpolation_weight = table_position - left_index
-
-        left = torch.tensor(
-            _PLANCKIAN_BLACKBODY_COEFFICIENTS[left_index],
-            device=inpt.device,
-            dtype=inpt.dtype,
-        )
-        right = torch.tensor(
-            _PLANCKIAN_BLACKBODY_COEFFICIENTS[right_index],
-            device=inpt.device,
-            dtype=inpt.dtype,
-        )
-        coefficients = torch.lerp(left, right, interpolation_weight)
-        scale = torch.stack(
-            (
-                coefficients[0] / coefficients[1],
-                coefficients.new_tensor(1.0),
-                coefficients[2] / coefficients[1],
-            )
-        )
-        broadcast_shape = (1,) * (inpt.ndim - 3) + (3, 1, 1)
-        return (inpt * scale.reshape(broadcast_shape)).clamp(0.0, 1.0)
-
-
 # --- Batched, per-sample transforms --------------------------------------------------------
 #
-# The transforms above process one sample at a time inside a DataLoader worker. The classes
-# below apply the same augmentations to a whole batch at once, with independent random
-# parameters for every sample, so the work can run on the training device instead of the
-# worker CPUs. `ImageTransformsConfig.backend` selects between the two paths.
+# Every transform below applies to a whole batch at once, with independent random parameters
+# for every sample. The GPU backend hands it a training batch on the policy device; the
+# dataloader backend hands it one sample at a time, as a batch of one, through `ImageTransforms`
+# in the DataLoader workers. `ImageTransformsConfig.backend` selects between the two, and a
+# sample augmented on one equals the same sample augmented on the other.
 #
 # Every batched transform consumes float frames in [0, 1] of shape (B, N, C, H, W): B samples,
 # each with N frames that share that sample's parameters (the observation history of one
 # camera), C in {1, 3}. Where a torchvision kernel exists, the math below mirrors it so that
-# a batch of one reproduces the per-sample transform up to floating-point rounding; the
-# per-sample uint8 rounding torchvision applies between operations is not reproduced.
+# a batch of one reproduces the torchvision transform up to floating-point rounding; the
+# uint8 rounding torchvision applies between operations on uint8 input is not reproduced.
+# Transform types with no batched implementation (any `torchvision.transforms.v2` class by
+# name, and `JPEGCompression`) run through `PerSampleTransform`, which loops over the batch.
 #
 # Randomness is confined to `make_params`, which draws from an explicit `torch.Generator`, and
 # `transform` is a pure function of the frames and those parameters. That is what lets the
@@ -679,6 +188,25 @@ def _check_fill(fill: Any) -> list[float] | None:
     if isinstance(fill, Sequence) and all(isinstance(v, int | float) for v in fill):
         return [float(v) for v in fill]
     raise TypeError(f"fill must be a number, a sequence of numbers or None, got {fill!r}.")
+
+
+def _check_pair(
+    value: Any, name: str, cast: type, scalar: Callable[[Any], tuple[Any, Any]] | None = None
+) -> tuple[Any, Any]:
+    """Parse an argument given as a single number or a `(min, max)` pair into a pair of `cast`.
+
+    A single number becomes `(value, value)` unless `scalar` maps it to a different pair.
+    """
+    number = int if cast is int else int | float
+    if isinstance(value, number) and not isinstance(value, bool):
+        low, high = (value, value) if scalar is None else scalar(value)
+    elif isinstance(value, Sequence) and len(value) == 2:
+        low, high = value
+    else:
+        raise TypeError(
+            f"{name} must be a{'n int' if cast is int else ' number'} or a sequence with length 2."
+        )
+    return cast(low), cast(high)
 
 
 def _rgb_to_grayscale(frames: Tensor) -> Tensor:
@@ -1088,7 +616,9 @@ class BatchedColorJitter(BatchedTransform):
 
 
 class BatchedSharpnessJitter(BatchedTransform):
-    """Per-sample sharpness jitter, the batched counterpart of `SharpnessJitter`.
+    """Per-sample sharpness jitter, like `torchvision.transforms.v2.RandomAdjustSharpness` with a random factor.
+
+    A factor of 0 blurs, 1 is the identity and 2 sharpens; every call draws a fresh factor.
 
     Args:
         sharpness (`float | Sequence[float]`):
@@ -1097,7 +627,7 @@ class BatchedSharpnessJitter(BatchedTransform):
 
     def __init__(self, sharpness: float | Sequence[float]) -> None:
         super().__init__()
-        self.sharpness = SharpnessJitter(sharpness).sharpness
+        self.sharpness = _check_range(sharpness, "sharpness", 1.0, (0.0, float("inf")))
 
     def make_params(
         self, shape: torch.Size, device: torch.device, generator: torch.Generator | None = None
@@ -1255,32 +785,43 @@ class BatchedRandomRotation(BatchedTransform):
 
 
 class BatchedGaussianNoise(BatchedTransform):
-    """Per-sample Gaussian noise, the batched counterpart of `GaussianNoise`.
+    """Per-sample Gaussian noise, to simulate camera sensor noise.
+
+    Models readout noise from ADC quantization, which increases in low-light conditions and is common in
+    real-robot setups where wrist cameras operate in suboptimal lighting.
 
     Args:
         std (`float | Sequence[float]`, *optional*, defaults to `(5.0, 25.0)`):
-            Range for the noise standard deviation in pixel-value scale (0-255).
+            Range for the noise standard deviation in pixel-value scale (0-255), or a number `s` for `(0, s)`.
     """
 
     def __init__(self, std: float | Sequence[float] = (5.0, 25.0)) -> None:
         super().__init__()
-        self.std = GaussianNoise(std).std
+        self.std = _check_pair(std, "std", float, scalar=lambda s: (0.0, s))
+        if not 0.0 <= self.std[0] <= self.std[1]:
+            raise ValueError(f"std must satisfy 0 <= min <= max, but got {self.std}.")
 
     def make_params(
         self, shape: torch.Size, device: torch.device, generator: torch.Generator | None = None
     ) -> dict[str, Any]:
-        # The noise is a parameter like any other, so it is drawn here rather than inside `transform`. It
-        # is drawn first so that a batch of one reproduces `GaussianNoise` seeded with the same generator.
+        # The noise is a parameter like any other, so it is drawn here rather than inside `transform`.
         noise = torch.randn(shape, device=device, generator=generator)
         std = _uniform(shape[0], *self.std, device, generator)
         return {"std": std, "noise": noise * _per_sample(std / 255.0)}
 
     def transform(self, frames: Tensor, params: dict[str, Any]) -> Tensor:
+        if params["noise"].shape != frames.shape:
+            raise ValueError(
+                f"GaussianNoise drew noise for frames of shape {tuple(params['noise'].shape)} but received "
+                f"{tuple(frames.shape)}. Place it before any transform that changes the frame size."
+            )
         return (frames + params["noise"]).clamp_(0.0, 1.0)
 
 
 class BatchedMotionBlur(BatchedTransform):
-    """Per-sample directional motion blur, the batched counterpart of `MotionBlur`.
+    """Per-sample directional motion blur, to simulate fast robot or object movement.
+
+    A 1D averaging kernel along a random direction, applied as a depthwise convolution.
 
     Args:
         kernel_size (`int | Sequence[int]`, *optional*, defaults to `(3, 11)`):
@@ -1289,9 +830,12 @@ class BatchedMotionBlur(BatchedTransform):
 
     def __init__(self, kernel_size: int | Sequence[int] = (3, 11)) -> None:
         super().__init__()
-        reference = MotionBlur(kernel_size)
-        self.kernel_size = reference.kernel_size
-        self.first_odd_kernel_size = reference._first_odd_kernel_size  # noqa: SLF001
+        self.kernel_size = _check_pair(kernel_size, "kernel_size", int)
+        if not 1 <= self.kernel_size[0] <= self.kernel_size[1]:
+            raise ValueError(f"kernel_size must satisfy 1 <= min <= max, but got {self.kernel_size}.")
+        self.first_odd_kernel_size = self.kernel_size[0] + (self.kernel_size[0] + 1) % 2
+        if self.first_odd_kernel_size > self.kernel_size[1]:
+            raise ValueError(f"kernel_size range must contain an odd value, but got {self.kernel_size}.")
         self.num_odd_sizes = (self.kernel_size[1] - self.first_odd_kernel_size) // 2 + 1
         self.max_kernel_size = self.first_odd_kernel_size + 2 * (self.num_odd_sizes - 1)
 
@@ -1338,7 +882,10 @@ class BatchedMotionBlur(BatchedTransform):
 
 
 class BatchedGaussianPatchBrightness(BatchedTransform):
-    """Per-sample Gaussian brightness patches, the batched counterpart of `GaussianPatchBrightness`.
+    """Per-sample spatially varying brightness with Gaussian patches.
+
+    Simulates uneven overhead lighting, spotlights and shadow patches, as found in robot workspaces with
+    several light sources.
 
     Args:
         num_patches (`int | Sequence[int]`, *optional*, defaults to `(1, 4)`):
@@ -1356,10 +903,19 @@ class BatchedGaussianPatchBrightness(BatchedTransform):
         factor_range: Sequence[float] = (0.4, 1.6),
     ) -> None:
         super().__init__()
-        reference = GaussianPatchBrightness(num_patches, sigma_range, factor_range)
-        self.num_patches = reference.num_patches
-        self.sigma_range = reference.sigma_range
-        self.factor_range = reference.factor_range
+        self.num_patches = _check_pair(num_patches, "num_patches", int)
+        if not 1 <= self.num_patches[0] <= self.num_patches[1]:
+            raise ValueError(f"num_patches must satisfy 1 <= min <= max, but got {self.num_patches}.")
+        if not isinstance(sigma_range, Sequence) or len(sigma_range) != 2:
+            raise TypeError("sigma_range must be a sequence with length 2.")
+        self.sigma_range = (float(sigma_range[0]), float(sigma_range[1]))
+        if not 0.0 < self.sigma_range[0] <= self.sigma_range[1]:
+            raise ValueError(f"sigma_range must satisfy 0 < min <= max, but got {self.sigma_range}.")
+        if not isinstance(factor_range, Sequence) or len(factor_range) != 2:
+            raise TypeError("factor_range must be a sequence with length 2.")
+        self.factor_range = (float(factor_range[0]), float(factor_range[1]))
+        if not 0.0 <= self.factor_range[0] <= self.factor_range[1]:
+            raise ValueError(f"factor_range must satisfy 0 <= min <= max, but got {self.factor_range}.")
 
     def make_params(
         self, shape: torch.Size, device: torch.device, generator: torch.Generator | None = None
@@ -1397,16 +953,21 @@ class BatchedGaussianPatchBrightness(BatchedTransform):
 
 
 class BatchedRandomShadow(BatchedTransform):
-    """Per-sample vertical shadow or highlight band, the batched counterpart of `RandomShadow`.
+    """Per-sample vertical shadow or highlight band with smooth edges.
+
+    Simulates cast shadows from objects or people near the workspace. Symmetric: the band darkens or
+    brightens with equal probability, so BatchNorm statistics do not shift.
 
     Args:
         opacity (`float | Sequence[float]`, *optional*, defaults to `(0.3, 0.6)`):
-            Range for the band opacity.
+            Range for the band opacity, within `[0, 1]`.
     """
 
     def __init__(self, opacity: float | Sequence[float] = (0.3, 0.6)) -> None:
         super().__init__()
-        self.opacity = RandomShadow(opacity).opacity
+        self.opacity = _check_pair(opacity, "opacity", float)
+        if not 0.0 <= self.opacity[0] <= self.opacity[1] <= 1.0:
+            raise ValueError(f"opacity must satisfy 0 <= min <= max <= 1, but got {self.opacity}.")
 
     def make_params(
         self, shape: torch.Size, device: torch.device, generator: torch.Generator | None = None
@@ -1439,7 +1000,9 @@ class BatchedRandomShadow(BatchedTransform):
 
 
 class BatchedCoarseDropout(BatchedTransform):
-    """Per-sample rectangular dropout, the batched counterpart of `CoarseDropout`.
+    """Per-sample rectangular dropout, to simulate partial occlusion.
+
+    Models objects, hands or cables passing through the camera's field of view.
 
     Args:
         max_holes (`int`, *optional*, defaults to `8`):
@@ -1460,11 +1023,20 @@ class BatchedCoarseDropout(BatchedTransform):
         fill_value: float = 0.0,
     ) -> None:
         super().__init__()
-        reference = CoarseDropout(max_holes, max_height_frac, max_width_frac, fill_value)
-        self.max_holes = reference.max_holes
-        self.max_height_frac = reference.max_height_frac
-        self.max_width_frac = reference.max_width_frac
-        self.fill_value = reference.fill_value
+        if not isinstance(max_holes, int):
+            raise TypeError("max_holes must be an int.")
+        if max_holes < 1:
+            raise ValueError(f"max_holes must be at least 1, but got {max_holes}.")
+        if not 0.0 < max_height_frac <= 1.0:
+            raise ValueError(f"max_height_frac must be in (0, 1], but got {max_height_frac}.")
+        if not 0.0 < max_width_frac <= 1.0:
+            raise ValueError(f"max_width_frac must be in (0, 1], but got {max_width_frac}.")
+        if not 0.0 <= fill_value <= 1.0:
+            raise ValueError(f"fill_value must be in [0, 1], but got {fill_value}.")
+        self.max_holes = max_holes
+        self.max_height_frac = max_height_frac
+        self.max_width_frac = max_width_frac
+        self.fill_value = fill_value
 
     def make_params(
         self, shape: torch.Size, device: torch.device, generator: torch.Generator | None = None
@@ -1497,16 +1069,24 @@ class BatchedCoarseDropout(BatchedTransform):
 
 
 class BatchedGammaCorrection(BatchedTransform):
-    """Per-sample gamma correction, the batched counterpart of `GammaCorrection`.
+    """Per-sample gamma correction, to simulate exposure variation.
+
+    Models different auto-exposure settings and sensor response curves. Gamma is sampled log-uniformly,
+    so brightening and darkening are equally likely and BatchNorm statistics do not shift.
 
     Args:
         gamma (`float | Sequence[float]`, *optional*, defaults to `(0.5, 2.0)`):
-            Range for the gamma value, sampled log-uniformly.
+            Range for the gamma value (below 1 brightens, above 1 darkens), or a positive number `g` for
+            the symmetric range `(min(g, 1/g), max(g, 1/g))`.
     """
 
     def __init__(self, gamma: float | Sequence[float] = (0.5, 2.0)) -> None:
         super().__init__()
-        self.gamma = GammaCorrection(gamma).gamma
+        if isinstance(gamma, int | float) and gamma <= 0:
+            raise ValueError(f"gamma must be positive, but got {gamma}.")
+        self.gamma = _check_pair(gamma, "gamma", float, scalar=lambda g: (min(g, 1.0 / g), max(g, 1.0 / g)))
+        if not 0.0 < self.gamma[0] <= self.gamma[1]:
+            raise ValueError(f"gamma must satisfy 0 < min <= max, but got {self.gamma}.")
 
     def make_params(
         self, shape: torch.Size, device: torch.device, generator: torch.Generator | None = None
@@ -1519,7 +1099,12 @@ class BatchedGammaCorrection(BatchedTransform):
 
 
 class BatchedPlanckianJitter(BatchedTransform):
-    """Per-sample color temperature shift, the batched counterpart of `PlanckianJitter`.
+    """Per-sample color temperature shift along the Planckian locus.
+
+    Samples one black-body temperature per sample and applies the correlated red and blue channel scaling
+    while preserving the green channel; coefficients between the tabulated 500 K steps are interpolated.
+
+    Reference: Zini et al., "Planckian Jitter", CVPR 2022 Workshop.
 
     Args:
         temperature (`int | Sequence[int]`, *optional*, defaults to `(3000, 15000)`):
@@ -1528,7 +1113,18 @@ class BatchedPlanckianJitter(BatchedTransform):
 
     def __init__(self, temperature: int | Sequence[int] = (3_000, 15_000)) -> None:
         super().__init__()
-        self.temperature = PlanckianJitter(temperature).temperature
+        self.temperature = _check_pair(temperature, "temperature", int)
+        if not (
+            _PLANCKIAN_MIN_TEMPERATURE
+            <= self.temperature[0]
+            <= self.temperature[1]
+            <= _PLANCKIAN_MAX_TEMPERATURE
+        ):
+            raise ValueError(
+                "temperature must satisfy "
+                f"{_PLANCKIAN_MIN_TEMPERATURE} <= min <= max <= {_PLANCKIAN_MAX_TEMPERATURE}, "
+                f"but got {self.temperature}."
+            )
         self.register_buffer("table", torch.tensor(_PLANCKIAN_BLACKBODY_COEFFICIENTS), persistent=False)
 
     def make_params(
@@ -1565,11 +1161,14 @@ class BatchedPlanckianJitter(BatchedTransform):
 
 
 class BatchedRandomSubsetApply(BatchedTransform):
-    """Apply a random subset of transforms to every sample of a batch, the batched `RandomSubsetApply`.
+    """Apply a random subset of transforms to every sample of a batch.
 
     Each sample draws its own subset (multinomial, without replacement) and, with `random_order`, its own
-    order. Every transform runs on the whole batch and is masked into the samples that selected it, which
-    keeps the work free of host-device synchronization at the cost of computing unselected samples too.
+    order. On a batch of more than one sample, every transform runs on the whole batch and is masked into
+    the samples that selected it, which keeps the work free of host-device synchronization at the cost of
+    computing unselected samples too. On a batch of one (the dataloader backend, one sample per call in a
+    DataLoader worker) only the selected transforms run, in sequence; that path also admits transforms
+    that change the frame size, which the masked path cannot hold.
 
     Args:
         transforms (`Sequence[BatchedTransform]`):
@@ -1577,11 +1176,11 @@ class BatchedRandomSubsetApply(BatchedTransform):
         p (`list[float]`, *optional*):
             Sampling weights, normalized to sum to one. Uniform if `None`.
         n_subset (`int`, *optional*):
-            Number of transforms applied per sample. All of them if `None`.
+            Number of transforms applied per sample, in `[1, len(transforms)]`. All of them if `None`.
         random_order (`bool`, *optional*, defaults to `False`):
             Apply the selected transforms in a random order per sample instead of the configured order.
-            Every transform then runs once per position, so the work and the transient memory grow by a
-            factor of `n_subset`.
+            On the masked path every transform then runs once per position, so the work and the transient
+            memory grow by a factor of `n_subset`.
     """
 
     def __init__(
@@ -1592,10 +1191,24 @@ class BatchedRandomSubsetApply(BatchedTransform):
         random_order: bool = False,
     ) -> None:
         super().__init__()
-        reference = RandomSubsetApply(list(transforms), p=p, n_subset=n_subset, random_order=random_order)
+        if not isinstance(transforms, Sequence):
+            raise TypeError("Argument transforms should be a sequence of transforms")
+        if p is None:
+            p = [1.0] * len(transforms)
+        elif len(p) != len(transforms):
+            raise ValueError(
+                f"Length of p doesn't match the number of transforms: {len(p)} != {len(transforms)}"
+            )
+        if n_subset is None:
+            n_subset = len(transforms)
+        elif not isinstance(n_subset, int):
+            raise TypeError("n_subset should be an int or None")
+        elif not (1 <= n_subset <= len(transforms)):
+            raise ValueError(f"n_subset should be in the interval [1, {len(transforms)}]")
+        total = sum(p)
         self.transforms = nn.ModuleList(transforms)
-        self.register_buffer("p", torch.tensor(reference.p), persistent=False)
-        self.n_subset = reference.n_subset
+        self.register_buffer("p", torch.tensor([prob / total for prob in p]), persistent=False)
+        self.n_subset = n_subset
         self.random_order = random_order
 
     def make_params(
@@ -1610,28 +1223,99 @@ class BatchedRandomSubsetApply(BatchedTransform):
     def transform(self, frames: Tensor, params: dict[str, Any]) -> Tensor:
         selected = params["selected"]
         children = list(zip(self.transforms, params["transforms"], strict=True))
+        if frames.shape[0] == 1 and not torch.compiler.is_compiling():
+            return self._transform_one(frames, selected[0].tolist(), children)
         if not self.random_order:
             for index, (transform, child_params) in enumerate(children):
                 chosen = (selected == index).any(dim=1)
-                frames = torch.where(_per_sample(chosen), transform.transform(frames, child_params), frames)
+                frames = self._masked(frames, chosen, transform, child_params)
             return frames
         for position in range(self.n_subset):
             for index, (transform, child_params) in enumerate(children):
                 chosen = selected[:, position] == index
-                frames = torch.where(_per_sample(chosen), transform.transform(frames, child_params), frames)
+                frames = self._masked(frames, chosen, transform, child_params)
         return frames
 
+    def _transform_one(
+        self, frames: Tensor, indices: list[int], children: list[tuple[BatchedTransform, dict[str, Any]]]
+    ) -> Tensor:
+        """Run only the selected transforms on a batch of one, in configured or drawn order."""
+        for index in indices if self.random_order else sorted(indices):
+            transform, child_params = children[index]
+            frames = transform.transform(frames, child_params)
+        return frames
 
-_CUSTOM_TRANSFORMS: dict[str, type[Transform]] = {
-    "SharpnessJitter": SharpnessJitter,
-    "GaussianNoise": GaussianNoise,
-    "MotionBlur": MotionBlur,
+    @staticmethod
+    def _masked(
+        frames: Tensor, chosen: Tensor, transform: BatchedTransform, child_params: dict[str, Any]
+    ) -> Tensor:
+        """Run `transform` on the whole batch and keep its output for the `chosen` samples only."""
+        out = transform.transform(frames, child_params)
+        if out.shape != frames.shape:
+            raise ValueError(
+                f"{type(transform).__name__} changed the frame shape from {tuple(frames.shape)} to "
+                f"{tuple(out.shape)}. Transforms that change the frame size run one sample at a time only, "
+                "as on the dataloader backend."
+            )
+        return torch.where(_per_sample(chosen), out, frames)
+
+
+@contextmanager
+def _seeded_default_generators(seed: int, device: torch.device) -> Iterator[None]:
+    """Seed the CPU default generator, and the CUDA one of `device`, for the block; restore them after."""
+    if device.type == "cuda":
+        index = device.index if device.index is not None else torch.cuda.current_device()
+        with torch.random.fork_rng(devices=[index]):
+            torch.default_generator.manual_seed(seed)
+            torch.cuda.default_generators[index].manual_seed(seed)
+            yield
+    else:
+        with torch.random.fork_rng(devices=[]):
+            torch.default_generator.manual_seed(seed)
+            yield
+
+
+class PerSampleTransform(BatchedTransform):
+    """Run a per-sample transform on each sample of a batch in turn, seeded from the batch generator.
+
+    The adapter for transform types with no batched implementation: any `torchvision.transforms.v2` class
+    by name, and `JPEGCompression`. `make_params` draws one seed per sample from the generator, and
+    `transform` seeds the default generators with it (under `torch.random.fork_rng`, so they are restored
+    afterwards) before calling the wrapped transform on that sample's `(N, C, H, W)` frames. The
+    augmentation is therefore reproducible from the batch generator, and the frames of one sample share
+    the parameters the wrapped transform draws, as on the dataloader backend.
+
+    The loop is not vectorized: it costs one call per sample, and on an accelerator `JPEGCompression`
+    round-trips through the CPU. The wrapped transform may change the frame size; see
+    `BatchedRandomSubsetApply` for where that is supported.
+
+    Args:
+        transform (`Callable[[Tensor], Tensor]`):
+            The per-sample transform, taking one sample's float `(N, C, H, W)` frames in `[0, 1]`.
+    """
+
+    def __init__(self, transform: Callable[[Tensor], Tensor]) -> None:
+        super().__init__()
+        self.per_sample = transform
+
+    def make_params(
+        self, shape: torch.Size, device: torch.device, generator: torch.Generator | None = None
+    ) -> dict[str, Any]:
+        high = torch.iinfo(torch.int64).max
+        return {"seed": torch.randint(0, high, (shape[0],), device=device, generator=generator)}
+
+    @torch.compiler.disable
+    def transform(self, frames: Tensor, params: dict[str, Any]) -> Tensor:
+        outputs = []
+        for sample, seed in zip(frames.unbind(0), params["seed"].tolist(), strict=True):
+            with _seeded_default_generators(seed, frames.device):
+                outputs.append(self.per_sample(sample))
+        return torch.stack(outputs)
+
+
+# LeRobot transforms with no batched implementation; `PerSampleTransform` wraps them.
+_PER_SAMPLE_TRANSFORMS: dict[str, type[Transform]] = {
     "JPEGCompression": JPEGCompression,
-    "GaussianPatchBrightness": GaussianPatchBrightness,
-    "RandomShadow": RandomShadow,
-    "CoarseDropout": CoarseDropout,
-    "GammaCorrection": GammaCorrection,
-    "PlanckianJitter": PlanckianJitter,
 }
 
 # Batched counterparts, keyed by the same type names as `ImageTransformConfig.type`.
@@ -1675,7 +1359,7 @@ class ImageTransformsConfig:
     These transforms are all using standard torchvision.transforms.v2
     You can find out how these transformations affect images here:
     https://pytorch.org/vision/0.18/auto_examples/transforms/plot_transforms_illustrations.html
-    We use a custom RandomSubsetApply container to sample them.
+    `BatchedRandomSubsetApply` samples them per frame.
     """
 
     # Set this flag to `true` to enable transforms during training
@@ -1748,83 +1432,44 @@ class ImageTransformsConfig:
             )
 
 
-def make_transform_from_config(cfg: ImageTransformConfig) -> Transform:
-    if cfg.type in _CUSTOM_TRANSFORMS:
-        return _CUSTOM_TRANSFORMS[cfg.type](**cfg.kwargs)
-
-    transform_cls = getattr(v2, cfg.type, None)
-    if isinstance(transform_cls, type) and issubclass(transform_cls, Transform):
-        return transform_cls(**cfg.kwargs)
-
-    valid_custom = ", ".join(sorted(_CUSTOM_TRANSFORMS.keys()))
-    raise ValueError(
-        f"Transform '{cfg.type}' is not valid. It must be a class in "
-        f"torchvision.transforms.v2 or one of: {valid_custom}."
-    )
-
-
-class ImageTransforms(Transform):
-    """A class to compose image transforms based on configuration."""
-
-    def __init__(self, cfg: ImageTransformsConfig) -> None:
-        super().__init__()
-        self._cfg = cfg
-
-        self.weights: list[float] = []
-        self.transforms: dict[str, Transform] = {}
-        for tf_name, tf_cfg in cfg.tfs.items():
-            if tf_cfg.weight <= 0.0:
-                continue
-
-            self.transforms[tf_name] = make_transform_from_config(tf_cfg)
-            self.weights.append(tf_cfg.weight)
-
-        n_subset = min(len(self.transforms), cfg.max_num_transforms)
-        if n_subset == 0 or not cfg.enable:
-            self.tf = v2.Identity()
-        else:
-            self.tf = RandomSubsetApply(
-                transforms=list(self.transforms.values()),
-                p=self.weights,
-                n_subset=n_subset,
-                random_order=cfg.random_order,
-            )
-
-    def forward(self, *inputs: Any) -> Any:
-        return self.tf(*inputs)
-
-
 def make_batched_transform_from_config(cfg: ImageTransformConfig) -> BatchedTransform:
-    """Build the batched, per-sample counterpart of a configured transform.
+    """Build the batched transform for a configured type.
+
+    Types with a batched implementation (`_BATCHED_TRANSFORMS`) get it. `JPEGCompression` and any other
+    `torchvision.transforms.v2` class are wrapped in `PerSampleTransform`, which applies them one sample at a
+    time.
 
     Args:
         cfg (`ImageTransformConfig`):
-            The transform's type and keyword arguments, as for `make_transform_from_config`.
+            The transform's type and keyword arguments.
 
     Returns:
         `BatchedTransform`: The batched transform.
 
     Raises:
-        ValueError: If the type has no batched implementation. `JPEGCompression` and torchvision transforms
-            other than `ColorJitter`, `RandomAffine`, `RandomRotation` and `Identity` run on the dataloader
-            backend only.
+        ValueError: If the type is neither a LeRobot transform nor a `torchvision.transforms.v2` class.
     """
     if cfg.type in _BATCHED_TRANSFORMS:
         return _BATCHED_TRANSFORMS[cfg.type](**cfg.kwargs)
-    supported = ", ".join(sorted(_BATCHED_TRANSFORMS))
+    if cfg.type in _PER_SAMPLE_TRANSFORMS:
+        return PerSampleTransform(_PER_SAMPLE_TRANSFORMS[cfg.type](**cfg.kwargs))
+    transform_cls = getattr(v2, cfg.type, None)
+    if isinstance(transform_cls, type) and issubclass(transform_cls, Transform):
+        return PerSampleTransform(transform_cls(**cfg.kwargs))
+    valid = ", ".join(sorted({*_BATCHED_TRANSFORMS, *_PER_SAMPLE_TRANSFORMS}))
     raise ValueError(
-        f"Transform '{cfg.type}' has no batched implementation for image_transforms.backend='gpu'. "
-        f"Supported types: {supported}. Use backend='dataloader' for the others."
+        f"Transform '{cfg.type}' is not valid. It must be a class in torchvision.transforms.v2 or one of: "
+        f"{valid}."
     )
 
 
 class BatchedImageTransforms(nn.Module):
-    """The batched, per-sample counterpart of `ImageTransforms`, for `image_transforms.backend='gpu'`.
+    """Apply the configured image transforms to a batch, with an independent draw for every sample.
 
-    Draws an independent transform subset and parameters for every sample of a batch, so one call replaces
-    the per-sample calls the DataLoader workers would make. The frames of one sample (its observation
-    history) share the sample's parameters, as they do on the dataloader backend, where a camera's
-    `(T, C, H, W)` tensor is transformed in one call.
+    Draws a transform subset and parameters per sample, so one call on the GPU backend replaces the
+    per-sample calls the DataLoader workers make; on the dataloader backend `ImageTransforms` runs the same
+    module on a batch of one. The frames of one sample (its observation history, a camera's `(T, C, H, W)`
+    tensor) share the sample's parameters.
 
     All random draws come from the `generator` passed to `forward` (or the device's default generator when
     none is), and happen before the frames are touched. The math itself is a pure function of frames and
@@ -1867,6 +1512,7 @@ class BatchedImageTransforms(nn.Module):
             transforms[tf_name] = make_batched_transform_from_config(tf_cfg)
             weights.append(tf_cfg.weight)
         self.transforms = nn.ModuleDict(transforms)
+        self.weights = weights
         n_subset = min(len(transforms), cfg.max_num_transforms)
         self.tf: BatchedTransform
         if n_subset == 0 or not cfg.enable:
@@ -1929,3 +1575,65 @@ class BatchedImageTransforms(nn.Module):
             )
         out = (out * 255.0).round_().to(torch.uint8) if frames.dtype == torch.uint8 else out.to(frames.dtype)
         return out.squeeze(1) if images.ndim == 4 else out
+
+
+class ImageTransforms(nn.Module):
+    """The configured image transforms for one sample at a time, as the DataLoader workers apply them.
+
+    A thin wrapper over `BatchedImageTransforms`: the sample is given a batch dimension, transformed, and
+    handed back without it, so both backends run the same code and a sample augmented here equals the same
+    sample augmented in a batch on the GPU backend. `LeRobotDataset(image_transforms=ImageTransforms(cfg))`
+    is the usual way to use it.
+
+    Args:
+        cfg (`ImageTransformsConfig`):
+            Which transforms to sample and how. `backend`, `gpu_compile` and `gpu_chunk_size` are not
+            consulted: this class always runs eagerly, one sample at a time, where it is called.
+
+    Example:
+        ```python
+        >>> import torch
+        >>> from lerobot.transforms import ImageTransforms, ImageTransformsConfig
+        >>> tf = ImageTransforms(ImageTransformsConfig(enable=True))
+        >>> tf(torch.rand(3, 96, 96)).shape  # (C, H, W), float in [0, 1]
+        torch.Size([3, 96, 96])
+        ```
+    """
+
+    def __init__(self, cfg: ImageTransformsConfig) -> None:
+        super().__init__()
+        self.batched = BatchedImageTransforms(cfg)
+
+    @property
+    def transforms(self) -> nn.ModuleDict:
+        """The configured transforms by name, those with a positive weight."""
+        return self.batched.transforms
+
+    @property
+    def weights(self) -> list[float]:
+        """The sampling weights of `transforms`, in the same order."""
+        return self.batched.weights
+
+    @property
+    def tf(self) -> BatchedTransform:
+        """The transform applied to every sample: a `BatchedRandomSubsetApply`, or `BatchedIdentity` when disabled."""
+        return self.batched.tf
+
+    def forward(self, images: Tensor, generator: torch.Generator | None = None) -> Tensor:
+        """Transform one image or one stack of frames.
+
+        Args:
+            images (`torch.Tensor`):
+                `(C, H, W)` or `(T, C, H, W)` with `C` in `{1, 3}`; the `T` frames share one parameter draw.
+                `uint8` in `[0, 255]` or floating point in `[0, 1]`.
+            generator (`torch.Generator`, *optional*):
+                Generator on the images' device to draw the parameters from. The device's default generator
+                if `None`, which in a DataLoader worker is the worker's own.
+
+        Returns:
+            `torch.Tensor`: The transformed images, same dtype as the input and, unless a configured transform
+            changes the frame size, the same shape.
+        """
+        if images.ndim not in (3, 4):
+            raise ValueError(f"Expected (C, H, W) or (T, C, H, W) images, got shape {tuple(images.shape)}.")
+        return self.batched(images.unsqueeze(0), generator=generator).squeeze(0)
