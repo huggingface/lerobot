@@ -151,6 +151,7 @@ def compute_quantile_stats_for_dataset(
     dataset: LeRobotDataset,
     use_sampling: bool = True,
     skip_images: bool = False,
+    quantile_list: list[float] | None = None,
 ) -> dict[str, dict]:
     """Compute whole-dataset statistics with one running histogram per feature.
 
@@ -159,6 +160,8 @@ def compute_quantile_stats_for_dataset(
         use_sampling: If True, sub-sample image/video frames per episode to bound
             memory. If False, use every frame (higher memory).
         skip_images: If True, skip image/video features and leave their stats untouched.
+        quantile_list: Custom quantile levels (e.g. [0.01, 0.02, 0.98, 0.99]).
+            Defaults to DEFAULT_QUANTILES from lerobot.datasets.compute_stats.
 
     Returns:
         Dictionary containing statistics with histogram-based global quantile estimates
@@ -180,7 +183,7 @@ def compute_quantile_stats_for_dataset(
             dataset, episode_idx, use_sampling=use_sampling, skip_images=skip_images
         )
         for key, (array, num_frames) in episode_arrays.items():
-            running_stats.setdefault(key, RunningQuantileStats()).update(array)
+            running_stats.setdefault(key, RunningQuantileStats(quantile_list=quantile_list)).update(array)
             frame_counts[key] = frame_counts.get(key, 0) + num_frames
             row_counts[key] = row_counts.get(key, 0) + len(array)
             if row_counts[key] < 2:
@@ -215,6 +218,7 @@ def augment_dataset_with_quantile_stats(
     overwrite: bool = False,
     use_sampling: bool = True,
     skip_images: bool = False,
+    quantile_list: list[float] | None = None,
 ) -> None:
     """Augment a dataset with quantile statistics if they are missing.
 
@@ -225,6 +229,8 @@ def augment_dataset_with_quantile_stats(
         use_sampling: If True, sub-sample image/video frames per episode to bound
             memory. If False, use every frame (higher memory).
         skip_images: If True, skip image/video features and keep their existing stats
+        quantile_list: Custom quantile levels (e.g. [0.01, 0.02, 0.98, 0.99]).
+            Defaults to DEFAULT_QUANTILES from lerobot.datasets.compute_stats.
     """
     logging.info(f"Loading dataset: {repo_id}")
     dataset = LeRobotDataset(
@@ -240,7 +246,7 @@ def augment_dataset_with_quantile_stats(
     logging.info("Dataset does not contain quantile statistics. Computing them now...")
 
     new_stats = compute_quantile_stats_for_dataset(
-        dataset, use_sampling=use_sampling, skip_images=skip_images
+        dataset, use_sampling=use_sampling, skip_images=skip_images, quantile_list=quantile_list
     )
 
     if skip_images and dataset.meta.stats:
@@ -298,6 +304,16 @@ def main():
         action="store_true",
         help="Skip image/video features and preserve their existing stats",
     )
+    parser.add_argument(
+        "--quantiles",
+        type=float,
+        nargs="+",
+        default=None,
+        help=(
+            "Custom quantile levels to compute (e.g. --quantiles 0.01 0.02 0.98 0.99). "
+            "Defaults to DEFAULT_QUANTILES from lerobot.datasets.compute_stats."
+        ),
+    )
 
     args = parser.parse_args()
     root = Path(args.root) if args.root else None
@@ -310,6 +326,7 @@ def main():
         overwrite=args.overwrite,
         use_sampling=not args.no_sampling,
         skip_images=args.skip_images,
+        quantile_list=args.quantiles,
     )
 
 
