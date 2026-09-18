@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import itertools
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -21,6 +22,8 @@ import pytest
 import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+import pyarrow.parquet as pq
 
 import lerobot.datasets.streaming_dataset as streaming_dataset_module
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
@@ -252,6 +255,107 @@ def test_frames_order_with_shards(tmp_path, lerobot_dataset_factory, shuffle):
             assert not frames_match
         else:
             assert frames_match
+
+
+def test_frames_per_shard_visit_reads_bursts(tmp_path, lerobot_dataset_factory, monkeypatch):
+    """With frames_per_shard_visit=K, each shard should yield K frames in a row
+    (via make_frame) before the shard is switched, instead of one frame per visit."""
+    ds_num_frames = 100
+    ds_num_episodes = 10
+    buffer_size = 10
+    frames_per_shard_visit = 5
+    num_data_files = 4
+
+    local_path = tmp_path / "test"
+    repo_id = f"{DUMMY_REPO_ID}-burst"
+
+    # use_videos=False: this test only cares about shard-visit order, not video decoding
+    # (already covered by test_single_frame_consistency et al.), and skips the slow encoder.
+    lerobot_dataset_factory(
+        root=local_path,
+        repo_id=repo_id,
+        total_episodes=ds_num_episodes,
+        total_frames=ds_num_frames,
+        use_videos=False,
+    )
+
+    # lerobot_dataset_factory always writes one physical data file, so split it into several
+    # to get num_shards > 1 out of datasets.load_dataset (the thing this test needs).
+    single_file = local_path / "data" / "chunk-000" / "file-000.parquet"
+    table = pq.read_table(single_file)
+    single_file.unlink()
+    rows_per_file = -(-table.num_rows // num_data_files)  # ceil division
+    for file_idx in range(num_data_files):
+        start = file_idx * rows_per_file
+        chunk = table.slice(start, rows_per_file)
+        if chunk.num_rows == 0:
+            break
+        pq.write_table(chunk, local_path / "data" / "chunk-000" / f"file-{file_idx:03d}.parquet")
+
+    streaming_ds = StreamingLeRobotDataset(
+        repo_id=repo_id,
+        root=local_path,
+        buffer_size=buffer_size,
+        max_num_shards=num_data_files,
+        frames_per_shard_visit=frames_per_shard_visit,
+    )
+    assert streaming_ds.num_shards > 1, "test setup didn't actually produce multiple shards"
+
+    # Tag each Backtrackable with the shard index it was built from, in creation order
+    # (idx_to_backtrack_dataset iterates range(num_shards) in order).
+    shard_of_backtrackable = {}
+    creation_order = iter(range(streaming_ds.num_shards))
+    original_make_backtrackable = StreamingLeRobotDataset._make_backtrackable_dataset
+
+    def spy_make_backtrackable(self, dataset):
+        backtrackable = original_make_backtrackable(self, dataset)
+        shard_of_backtrackable[id(backtrackable)] = next(creation_order)
+        return backtrackable
+
+    monkeypatch.setattr(StreamingLeRobotDataset, "_make_backtrackable_dataset", spy_make_backtrackable)
+
+    # _infinite_generator_over_elements picks a shard WITH replacement once per outer-loop
+    # visit, so it can legitimately pick the same shard twice in a row by chance. Tag each
+    # visit with its own id so a lucky repeat isn't mistaken for one long burst.
+    visit_id = [-1]
+    original_infinite_gen = StreamingLeRobotDataset._infinite_generator_over_elements
+
+    def spy_infinite_gen(rng, elements):
+        for choice in original_infinite_gen(rng, elements):
+            visit_id[0] += 1
+            yield choice
+
+    monkeypatch.setattr(
+        StreamingLeRobotDataset, "_infinite_generator_over_elements", staticmethod(spy_infinite_gen)
+    )
+
+    # Record (visit_id, shard) for each frame pulled, in pull order (before shuffle-buffer
+    # reordering), so we can see the actual shard-visit pattern make_frame is called with.
+    shard_pull_sequence = []
+    original_make_frame = StreamingLeRobotDataset.make_frame
+
+    def spy_make_frame(self, dataset_iterator):
+        shard_pull_sequence.append((visit_id[0], shard_of_backtrackable[id(dataset_iterator)]))
+        yield from original_make_frame(self, dataset_iterator)
+
+    monkeypatch.setattr(StreamingLeRobotDataset, "make_frame", spy_make_frame)
+
+    list(streaming_ds)  # drain the dataset to populate shard_pull_sequence
+
+    # Group consecutive frames from the same visit into runs, e.g. one burst = one group.
+    run_lengths = [
+        len(list(group)) for _, group in itertools.groupby(shard_pull_sequence, key=lambda x: x[0])
+    ]
+
+    assert max(run_lengths) <= frames_per_shard_visit, (
+        f"No single shard visit should read more than frames_per_shard_visit={frames_per_shard_visit} "
+        f"frames, got runs {run_lengths}"
+    )
+    # A shard should only stop early because it was exhausted, not because we switched
+    # for no reason: with 100 frames over <=4 shards, most runs should hit the full length.
+    assert run_lengths.count(frames_per_shard_visit) >= 1, (
+        f"Expected at least one full-length run of {frames_per_shard_visit}, got runs {run_lengths}"
+    )
 
 
 def test_iter_raises_on_frame_error(tmp_path, lerobot_dataset_factory, monkeypatch):

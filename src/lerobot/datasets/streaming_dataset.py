@@ -256,6 +256,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         streaming: bool = True,
         buffer_size: int = 1000,
         max_num_shards: int = 16,
+        frames_per_shard_visit: int = 1,
         seed: int = 42,
         rng: np.random.Generator | None = None,
         shuffle: bool = True,
@@ -281,6 +282,10 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             streaming (bool, optional): Whether to stream the dataset or load it all. Defaults to True.
             buffer_size (int, optional): Buffer size for shuffling when streaming. Defaults to 1000.
             max_num_shards (int, optional): Number of shards to re-shard the input dataset into. Defaults to 16.
+            frames_per_shard_visit (int, optional): Number of consecutive frames to read from a shard
+                before switching to another random shard. Higher values trade a bit of mixing for more
+                sequential I/O on local disk, since sampling still goes through the shuffle buffer.
+                Defaults to 1 (previous behavior: one frame per shard visit).
             seed (int, optional): Reproducibility random seed.
             rng (np.random.Generator | None, optional): Random number generator.
             shuffle (bool, optional): Whether to shuffle the dataset across exhaustions. Defaults to True.
@@ -312,8 +317,12 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.rng = rng if rng is not None else np.random.default_rng(seed)
         self.shuffle = shuffle
 
+        if frames_per_shard_visit < 1:
+            raise ValueError(f"frames_per_shard_visit must be >= 1, got {frames_per_shard_visit}")
+
         self.streaming = streaming
         self.buffer_size = buffer_size
+        self.frames_per_shard_visit = frames_per_shard_visit
         self._return_uint8 = return_uint8
         self._depth_output_unit = depth_output_unit
 
@@ -438,14 +447,15 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             backtrack_dataset = idx_to_backtrack_dataset[shard_key]  # selects which shard to iterate on
 
             try:
-                for frame in self.make_frame(backtrack_dataset):
+                for _ in range(self.frames_per_shard_visit):
+                    frame = next(self.make_frame(backtrack_dataset))
                     if len(frames_buffer) == self.buffer_size:
                         i = next(buffer_indices_generator)  # samples a element from the buffer
                         yield frames_buffer[i]
                         frames_buffer[i] = frame
                     else:
                         frames_buffer.append(frame)
-                    break  # random shard sampled, switch shard
+                # frames_per_shard_visit frames read from this shard, switch shard
             except _ShardExhaustedError:
                 del idx_to_backtrack_dataset[shard_key]  # Remove exhausted shard, onto another shard
 
