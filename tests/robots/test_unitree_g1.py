@@ -16,8 +16,9 @@
 
 """Tests for the UnitreeG1 robot class.
 
-The Unitree SDK, the cameras and the arm IK are all mocked, so these run without hardware
-or the SDK installed. Pure helper/config tests live in ``test_unitree_g1_utils.py``.
+Hardware dependencies are mocked, so these run without hardware. The serialization
+regression additionally uses real SDK messages and skips when the SDK is unavailable.
+Pure helper/config tests live in ``test_unitree_g1_utils.py``.
 """
 
 import threading
@@ -671,12 +672,45 @@ class TestDisconnect:
 # ---------------------------------------------------------------------------
 
 
-def test_position_command_clears_sdk_velocity(make_robot):
+@pytest.mark.parametrize("override_gains_and_torque", [False, True], ids=["configured", "overrides"])
+def test_position_command_serializes_motor_fields(make_robot, override_gains_and_torque):
+    defaults = pytest.importorskip("unitree_sdk2py.idl.default")
+    messages = pytest.importorskip("unitree_sdk2py.idl.unitree_hg.msg.dds_")
     factory, mocks = make_robot
     robot = arm_for_publish(factory(), mocks)
-    robot.msg.motor_cmd[22].dq = 4.0
-    robot.publish_lowcmd({"kRightShoulderPitch.q": 0.2})
-    assert robot.msg.motor_cmd[22].dq == 0.0
+    robot.msg = defaults.unitree_hg_msg_dds__LowCmd_()
+    joint = G1_29_JointIndex.kRightShoulderPitch
+    untouched_joint = G1_29_JointIndex.kRightShoulderRoll
+    for index in (joint.value, untouched_joint.value):
+        command = robot.msg.motor_cmd[index]
+        command.mode, command.reserve = 1, 3
+        command.q, command.dq, command.kp, command.kd, command.tau = -0.5, 4.0, 12.0, 2.0, 1.5
+    untouched_before = robot.msg.motor_cmd[untouched_joint.value].serialize()
+    expected = {"q": 0.2, "dq": 0.0, "kp": 50.0, "kd": 1.0, "tau": 0.0}
+    overrides = {}
+    if override_gains_and_torque:
+        # Distinct values per joint also catch incorrect DDS-slot indexing.
+        overrides = {
+            "kp": np.arange(NUM_MOTORS, dtype=np.float32) + 10.0,
+            "kd": np.arange(NUM_MOTORS, dtype=np.float32) + 0.5,
+            "tau": np.arange(NUM_MOTORS, dtype=np.float32) - 30.0,
+        }
+        expected.update(kp=32.0, kd=22.5, tau=-8.0)
+    payloads = []
+    # Serialize at the transport boundary; no DDS participant or robot is needed.
+    mocks["publisher_mock"].Write.side_effect = lambda msg: payloads.append(msg.serialize())
+
+    robot.publish_lowcmd({f"{joint.name}.q": 0.2}, **overrides)
+
+    mocks["publisher_mock"].Write.assert_called_once_with(robot.msg)
+    decoded = messages.LowCmd_.deserialize(payloads[0])
+    command = decoded.motor_cmd[joint.value]
+    # A Python-only `qd` attribute is not serialized and would leave dq at 4.0.
+    for field, value in expected.items():
+        assert getattr(command, field) == pytest.approx(value), field
+    assert command.mode == 1
+    assert command.reserve == 3
+    assert decoded.motor_cmd[untouched_joint.value].serialize() == untouched_before
 
 
 class TestControllerInput:
