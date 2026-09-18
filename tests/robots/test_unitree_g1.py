@@ -747,3 +747,149 @@ class TestControllerInput:
 
         assert robot.controller_input["remote.lx"] == 0.25
         assert robot.controller_input["remote.ly"] == -0.5
+
+
+class TestEmbodimentDriver:
+    def test_g1_29_connect_still_uses_existing_backend(self, make_robot):
+        factory, _ = make_robot
+        robot = factory()
+        env = SimpleNamespace(step=MagicMock(), reset=MagicMock(), close=MagicMock())
+        wrapper = {"hub_env": [SimpleNamespace(envs=[env])]}
+        with patch("lerobot.envs.make_env", return_value=wrapper) as make_env:
+            try:
+                robot.connect()
+                assert robot.is_connected
+                assert robot.sim_env is env
+                make_env.assert_called_once_with(robot.config.sim_env, trust_remote_code=True)
+                assert robot.config.sim_env.end_effector == robot.config.end_effector
+                robot._ChannelFactoryInitialize.assert_called_once_with(0, "lo")
+                for joint in robot.joint_index:
+                    command = robot.msg.motor_cmd[joint.value]
+                    assert command.mode == 1
+                    assert command.q == pytest.approx(joint.value * 0.1)
+                    assert command.kp == robot.config.kp[joint.value]
+            finally:
+                robot.disconnect()
+        env.close.assert_called_once()
+        assert not robot.subscribe_thread.is_alive()
+
+    @pytest.mark.parametrize("embodiment", ["g1_29", "g1_23"])
+    def test_position_command_zeros_sdk_velocity_field(self, make_robot, embodiment):
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(embodiment=embodiment), mocks)
+        robot.msg.motor_cmd[22].dq = 4.0
+        robot.publish_lowcmd({"kRightShoulderPitch.q": 0.2})
+        assert robot.msg.motor_cmd[22].dq == 0.0
+
+    @pytest.mark.parametrize("embodiment,count", [("g1_29", 29), ("g1_23", 23)])
+    def test_selected_features_and_factory(self, make_robot, embodiment, count):
+        factory, _ = make_robot
+        robot = factory(embodiment=embodiment)
+        expected = {f"{joint.name}.q" for joint in robot.joint_index}
+        assert len(expected) == count
+        assert set(robot.action_features) == expected
+        assert set(robot.observation_features) == expected
+        from lerobot.robots.utils import make_robot_from_config
+
+        other = make_robot_from_config(robot.config)
+        assert type(other) is type(robot)
+        assert other.embodiment is robot.embodiment
+
+    def test_sparse_feedback_uses_wire_indices(self, make_robot):
+        factory, mocks = make_robot
+        robot = factory(embodiment="g1_23")
+        robot.lowstate_subscriber = mocks["subscriber_mock"]
+
+        def receive_once():
+            robot._shutdown_event.set()
+            return mocks["lowstate_msg"]
+
+        robot.lowstate_subscriber.Read.side_effect = receive_once
+        robot._subscribe_lowstate()
+        obs = robot.get_observation()
+        for joint in robot.joint_index:
+            assert obs[f"{joint.name}.q"] == pytest.approx(joint.value * 0.1)
+            assert obs[f"{joint.name}.dq"] == pytest.approx(joint.value * 0.01)
+            assert obs[f"{joint.name}.tau"] == pytest.approx(joint.value * 0.001)
+        assert len([key for key in obs if key.endswith(".q")]) == 23
+        assert len(robot._lowstate.motor_state) == NUM_MOTORS
+        assert robot._lowstate.motor_state[20].q is None
+
+    def test_sparse_publication_clears_inactive_and_reserved_slots(self, make_robot):
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(embodiment="g1_23"), mocks)
+        for command in robot.msg.motor_cmd:
+            command.mode = 1
+            command.dq = command.kp = command.kd = command.tau = 123.0
+        robot.publish_lowcmd({"kRightShoulderPitch.q": 0.4, "kLeftWristPitch.q": 0.9})
+        active = {joint.value for joint in robot.joint_index}
+        assert robot.msg.motor_cmd[22].q == pytest.approx(0.4)
+        assert robot.msg.motor_cmd[22].dq == 0.0
+        assert robot.msg.motor_cmd[15].q == -1.0  # Partial commands preserve active joints.
+        for index, command in enumerate(robot.msg.motor_cmd):
+            if index not in active:
+                assert (command.mode, command.q, command.dq, command.kp, command.kd, command.tau) == (0,) * 6
+        mocks["crc_mock"].Crc.assert_called_once_with(robot.msg)
+
+    @pytest.mark.parametrize("embodiment", ["g1_29", "g1_23"])
+    def test_gravity_scatter_uses_arm_order_not_contiguous_offsets(self, make_robot, embodiment):
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(embodiment=embodiment), mocks)
+        # Inject a solver contract only. G1-23 solver construction stays unsupported.
+        robot.config.gravity_compensation = True
+        robot.arm_ik = MagicMock()
+        torques = np.arange(len(robot.arm_index), dtype=float) + 0.5
+        robot.arm_ik.solve_tau.return_value = torques
+        action = {f"{joint.name}.q": i / 10 for i, joint in enumerate(robot.arm_index)}
+        robot.send_action(action)
+        np.testing.assert_array_equal(
+            robot.arm_ik.solve_tau.call_args.args[0], np.array(list(action.values()), dtype=np.float32)
+        )
+        for i, joint in enumerate(robot.arm_index):
+            assert robot.msg.motor_cmd[joint.value].tau == torques[i]
+
+    def test_reset_selects_only_active_joints(self, make_robot):
+        factory, mocks = make_robot
+        robot = sim_ready(arm_for_publish(factory(embodiment="g1_23"), mocks))
+        pose = [0.0] * NUM_MOTORS
+        for joint in robot.joint_index:
+            pose[joint.value] = joint.value / 100
+        robot.reset(default_positions=pose)
+        for joint in robot.joint_index:
+            assert robot.msg.motor_cmd[joint.value].q == pose[joint.value]
+        assert robot.msg.motor_cmd[20].q == 0
+        robot.sim_env.reset.assert_called_once()
+
+    @pytest.mark.parametrize("simulation", [True, False])
+    def test_unimplemented_connection_fails_before_transport(self, make_robot, simulation):
+        factory, mocks = make_robot
+        robot = factory(embodiment="g1_23")
+        robot.config.is_simulation = simulation
+        with patch("lerobot.envs.make_env") as make_env, pytest.raises(NotImplementedError):
+            robot.connect()
+        robot._ChannelFactoryInitialize.assert_not_called()
+        robot._ChannelPublisher.assert_not_called()
+        robot._ChannelSubscriber.assert_not_called()
+        make_env.assert_not_called()
+        mocks["publisher_mock"].Write.assert_not_called()
+        assert robot.subscribe_thread is None
+
+    def test_legacy_lowstate_alias_keeps_transport_width(self):
+        from lerobot.robots.unitree_g1.unitree_g1 import G1_29_LowState, G1LowState
+
+        assert G1_29_LowState is G1LowState
+        assert len(G1LowState().motor_state) == NUM_MOTORS
+
+    def test_sparse_zero_torque_command(self, make_robot):
+        from lerobot.robots.unitree_g1.unitree_g1 import G1LowState
+
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(embodiment="g1_23"), mocks)
+        robot._lowstate = G1LowState()
+        for joint in robot.joint_index:
+            robot._lowstate.motor_state[joint.value].q = 0.1
+        robot._send_zero_torque()
+        for joint in robot.joint_index:
+            command = robot.msg.motor_cmd[joint.value]
+            assert command.q == 0.1
+            assert (command.kp, command.kd, command.tau) == (0.0, 0.0, 0.0)

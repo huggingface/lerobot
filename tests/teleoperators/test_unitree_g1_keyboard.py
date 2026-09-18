@@ -146,3 +146,30 @@ def test_cli_rejects_hardware_and_competing_controller():
         with pytest.raises(ValueError, match="simulation without"):
             TeleoperateConfig(robot=config, teleop=module.UnitreeG1KeyboardConfig())
     TeleoperateConfig(robot=UnitreeG1Config(), teleop=module.UnitreeG1KeyboardConfig())
+
+
+@pytest.mark.parametrize("embodiment,size", [("g1_29", 14), ("g1_23", 10)])
+def test_cli_selects_keyboard_layout_from_robot(monkeypatch, tmp_path, embodiment, size):
+    monkeypatch.setattr(module, "create_key_listener", lambda *a, **k: SimpleNamespace(stop=lambda: None))
+    config = module.UnitreeG1KeyboardConfig(calibration_dir=tmp_path)
+    TeleoperateConfig(robot=UnitreeG1Config(embodiment=embodiment), teleop=config)
+    teleop = module.UnitreeG1Keyboard(config)
+    assert config.embodiment == embodiment
+    assert len(teleop.action_features) == size
+    teleop.connect()
+    try:
+        teleop.send_feedback(dict.fromkeys(teleop.action_features, 0.0))
+        teleop._on_key("enter")
+        teleop._on_key("r")
+        teleop._on_key("5")
+        teleop._on_key("+")
+        assert teleop.get_action()["kRightWristRoll.q"] == pytest.approx(0.02)
+        if embodiment == "g1_23":
+            assert all("WristPitch" not in key and "WristYaw" not in key for key in teleop.action_features)
+            before = teleop.get_action()
+            teleop._on_key("6")
+            teleop._jog_at = -100
+            teleop._on_key("+")
+            assert teleop.get_action() == before
+    finally:
+        teleop.disconnect()

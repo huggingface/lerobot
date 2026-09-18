@@ -156,6 +156,8 @@ class TeleoperateConfig:
             self.robot.type != "unitree_g1" or not self.robot.is_simulation or self.robot.controller
         ):
             raise ValueError("G1 keyboard acceptance requires G1 simulation without a body controller")
+        if isinstance(self.teleop, unitree_g1.UnitreeG1KeyboardConfig):
+            self.teleop.embodiment = self.robot.embodiment
 
 
 def teleop_loop(

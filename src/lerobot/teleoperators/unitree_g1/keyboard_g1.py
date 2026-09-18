@@ -14,9 +14,9 @@ import logging
 import math
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex
+from lerobot.robots.unitree_g1.g1_embodiments import get_g1_embodiment
 from lerobot.utils.keyboard_input import create_key_listener
 
 from ..config import TeleoperatorConfig
@@ -46,6 +46,8 @@ def arm_limits(name):
 @dataclass
 class UnitreeG1KeyboardConfig(TeleoperatorConfig):
     step_rad: float = 0.02
+    # Set from robot configuration by the CLI, not a second user selection.
+    embodiment: str = field(default="g1_29", init=False)
 
     def __post_init__(self):
         if not math.isfinite(self.step_rad) or not 0 < self.step_rad <= 0.05:
@@ -66,7 +68,7 @@ class UnitreeG1Keyboard(Teleoperator):
     def __init__(self, config):
         super().__init__(config)
         self.config = config
-        self.joints = tuple(j.name for j in G1_29_JointArmIndex)
+        self.joints = tuple(j.name for j in get_g1_embodiment(config.embodiment).arm_index)
         self.limits = {f"{name}.q": arm_limits(name) for name in self.joints}
         self._lock = threading.Lock()
         self.listener = None

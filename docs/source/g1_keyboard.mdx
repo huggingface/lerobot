@@ -1,5 +1,13 @@
 # G1 Keyboard Arm Control
 
+The embodiment layer takes the keyboard joint layout from `--robot.embodiment`;
+there is no independent keyboard embodiment CLI parameter. G1-23 has only five
+arm joints per side, so keys 6/7 do not jog anything. Its common arm-joint limits
+match the G1-29 values (checked against the pinned native model in simulation).
+This layer alone still rejects G1-23 simulation connections; the subsequent
+simulation branch provides that backend. Repeat the G1-29 command with
+`--robot.embodiment=g1_29` to verify unchanged behavior.
+
 Use `lerobot-teleoperate` without an exoskeleton. This initial acceptance is for
 G1-29 simulation, without a locomotion/whole-body controller. It uses upstream's
 Hub MuJoCo environment and its default torso support; do not release the support
