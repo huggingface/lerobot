@@ -22,9 +22,7 @@ from lerobot.cameras import make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors import Motor, MotorNormMode
 from lerobot.motors.calibration_gui import RangeFinderGUI
-from lerobot.motors.feetech import (
-    FeetechMotorsBus,
-)
+from lerobot.motors.feetech import FeetechMotorsBus
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
@@ -65,6 +63,7 @@ class HopeJrHand(Robot):
     def __init__(self, config: HopeJrHandConfig):
         super().__init__(config)
         self.config = config
+        # Named directly rather than resolved: `protocol_version` is Feetech-only.
         self.bus = FeetechMotorsBus(
             port=self.config.port,
             motors={

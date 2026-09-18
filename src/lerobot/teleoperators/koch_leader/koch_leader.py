@@ -17,10 +17,9 @@
 import logging
 import time
 
-from lerobot.motors import Motor, MotorCalibration, MotorNormMode
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
 from lerobot.motors.dynamixel import (
     DriveMode,
-    DynamixelMotorsBus,
     OperatingMode,
 )
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
@@ -44,7 +43,7 @@ class KochLeader(Teleoperator):
     def __init__(self, config: KochLeaderConfig):
         super().__init__(config)
         self.config = config
-        self.bus = DynamixelMotorsBus(
+        self.bus = SerialMotorsBus(
             port=self.config.port,
             motors={
                 "shoulder_pan": Motor(1, "xl330-m077", MotorNormMode.RANGE_M100_100),

@@ -14,11 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ruff: noqa: N802
-# This noqa is for the Protocols classes: PortHandler, PacketHandler GroupSyncRead/Write
-# TODO(aliberts): Add block noqa when feature below is available
-# https://github.com/astral-sh/ruff/issues/3711
-
 from __future__ import annotations
 
 import abc
@@ -30,16 +25,11 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
 from pprint import pformat
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, cast
 
 from tqdm import tqdm
 
-from lerobot.utils.import_utils import _deepdiff_available, _serial_available, require_package
-
-if TYPE_CHECKING or _serial_available:
-    import serial
-else:
-    serial = None  # type: ignore[assignment]
+from lerobot.utils.import_utils import _deepdiff_available, require_package
 
 if TYPE_CHECKING or _deepdiff_available:
     from deepdiff import DeepDiff
@@ -48,6 +38,17 @@ else:
 
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.utils import enter_pressed, move_cursor_up
+
+from .transport import MotorTransport, RustypotTransport
+
+# What the transport raises when the bus does not answer. A motor that answers but
+# reports a fault is a different thing, carried by the status error byte.
+_TRANSPORT_ERRORS = (RuntimeError, OSError)
+
+# Round-trip budget of a Model_Number read, in bits on the wire, and the floor under
+# the timeout derived from it. Used to size an ID sweep -- see `_scan_timeout`.
+SCAN_PACKET_BITS = 320
+SCAN_TIMEOUT_MS = 5
 
 type NameOrID = str | int
 type Value = int | float
@@ -190,130 +191,43 @@ class Motor:
     recv_id: int | None = None
 
 
-class PortHandler(Protocol):
-    is_open: bool
-    baudrate: int
-    packet_start_time: float
-    packet_timeout: float
-    tx_time_per_byte: float
-    is_using: bool
-    port_name: str
-    ser: serial.Serial
+def _resolve_motor_family(motors: dict[str, Motor] | None) -> type[SerialMotorsBus]:
+    """Pick the bus implementation that knows every requested motor model."""
+    # Imported here because each family module imports this one.
+    from .dynamixel import DynamixelMotorsBus
+    from .feetech import FeetechMotorsBus
 
-    def __init__(self, port_name: str) -> None: ...
+    families: tuple[type[SerialMotorsBus], ...] = (FeetechMotorsBus, DynamixelMotorsBus)
+    models = {motor.model for motor in motors.values()} if motors else set()
+    if not models:
+        raise ValueError(
+            "Cannot tell which motor family to use without any motor. Name the implementation "
+            "directly, e.g. FeetechMotorsBus(port, {}), when the bus starts out empty."
+        )
 
-    def openPort(self): ...
-    def closePort(self): ...
-    def clearPort(self): ...
-    def setPortName(self, port_name): ...
-    def getPortName(self): ...
-    def setBaudRate(self, baudrate): ...
-    def getBaudRate(self): ...
-    def getBytesAvailable(self): ...
-    def readPort(self, length): ...
-    def writePort(self, packet): ...
-    def setPacketTimeout(self, packet_length): ...
-    def setPacketTimeoutMillis(self, msec): ...
-    def isPacketTimeout(self): ...
-    def getCurrentTime(self): ...
-    def getTimeSinceStart(self): ...
-    def setupPort(self, cflag_baud): ...
-    def getCFlagBaud(self, baudrate): ...
+    for family in families:
+        if models <= set(family.model_ctrl_table):
+            return family
 
+    known = set().union(*(set(family.model_ctrl_table) for family in families))
+    if unknown := sorted(models - known):
+        raise ValueError(f"Unknown motor model(s) {unknown}. Known models: {sorted(known)}.")
 
-class PacketHandler(Protocol):
-    def getTxRxResult(self, result): ...
-    def getRxPacketError(self, error): ...
-    def txPacket(self, port, txpacket): ...
-    def rxPacket(self, port): ...
-    def txRxPacket(self, port, txpacket): ...
-    def ping(self, port, id): ...
-    def action(self, port, id): ...
-    def readTx(self, port, id, address, length): ...
-    def readRx(self, port, id, length): ...
-    def readTxRx(self, port, id, address, length): ...
-    def read1ByteTx(self, port, id, address): ...
-    def read1ByteRx(self, port, id): ...
-    def read1ByteTxRx(self, port, id, address): ...
-    def read2ByteTx(self, port, id, address): ...
-    def read2ByteRx(self, port, id): ...
-    def read2ByteTxRx(self, port, id, address): ...
-    def read4ByteTx(self, port, id, address): ...
-    def read4ByteRx(self, port, id): ...
-    def read4ByteTxRx(self, port, id, address): ...
-    def writeTxOnly(self, port, id, address, length, data): ...
-    def writeTxRx(self, port, id, address, length, data): ...
-    def write1ByteTxOnly(self, port, id, address, data): ...
-    def write1ByteTxRx(self, port, id, address, data): ...
-    def write2ByteTxOnly(self, port, id, address, data): ...
-    def write2ByteTxRx(self, port, id, address, data): ...
-    def write4ByteTxOnly(self, port, id, address, data): ...
-    def write4ByteTxRx(self, port, id, address, data): ...
-    def regWriteTxOnly(self, port, id, address, length, data): ...
-    def regWriteTxRx(self, port, id, address, length, data): ...
-    def syncReadTx(self, port, start_address, data_length, param, param_length): ...
-    def syncWriteTxOnly(self, port, start_address, data_length, param, param_length): ...
-    def broadcastPing(self, port): ...
-
-
-class GroupSyncRead(Protocol):
-    port: str
-    ph: PortHandler
-    start_address: int
-    data_length: int
-    last_result: bool
-    is_param_changed: bool
-    param: list
-    data_dict: dict
-
-    def __init__(
-        self, port: PortHandler, ph: PacketHandler, start_address: int, data_length: int
-    ) -> None: ...
-    def makeParam(self): ...
-    def addParam(self, id): ...
-    def removeParam(self, id): ...
-    def clearParam(self): ...
-    def txPacket(self): ...
-    def rxPacket(self): ...
-    def txRxPacket(self): ...
-    def isAvailable(self, id, address, data_length): ...
-    def getData(self, id, address, data_length): ...
-
-
-class GroupSyncWrite(Protocol):
-    port: str
-    ph: PortHandler
-    start_address: int
-    data_length: int
-    is_param_changed: bool
-    param: list
-    data_dict: dict
-
-    def __init__(
-        self, port: PortHandler, ph: PacketHandler, start_address: int, data_length: int
-    ) -> None: ...
-    def makeParam(self): ...
-    def addParam(self, id, data): ...
-    def removeParam(self, id): ...
-    def changeParam(self, id, data): ...
-    def clearParam(self): ...
-    def txPacket(self): ...
+    raise ValueError(f"Motor models {sorted(models)} belong to different families and cannot share one bus.")
 
 
 class SerialMotorsBus(MotorsBusBase):
-    """
-    A SerialMotorsBus allows to efficiently read and write to motors connected via serial communication.
-    It represents several motors daisy-chained together and connected through a serial port.
-    There are currently two implementations of this class:
-        - DynamixelMotorsBus
-        - FeetechMotorsBus
+    """Read and write a chain of motors daisy-chained on one serial port.
 
-    This class is specifically for serial-based motor protocols (Dynamixel, Feetech, etc.).
+    Constructing a `SerialMotorsBus` hands back the bus for the motor family it was
+    given -- a `FeetechMotorsBus` or a `DynamixelMotorsBus` -- the way `pathlib.Path`
+    hands back a `PosixPath`. Naming a family class directly also works, and skips the
+    lookup. A bus carries the control tables, normalisation and calibration; the wire
+    itself belongs to a `MotorTransport`.
 
-    A MotorsBus subclass instance requires a port (e.g. `FeetechMotorsBus(port="/dev/tty.usbmodem575E0031751"`)).
-    To find the port, you can run our utility script:
+    To find the port, run:
     ```bash
-    lerobot-find-port.py
+    lerobot-find-port
     >>> Finding all available ports for the MotorsBus.
     >>> ["/dev/tty.usbmodem575E0032081", "/dev/tty.usbmodem575E0031751"]
     >>> Remove the usb cable from your MotorsBus and press Enter when done.
@@ -321,21 +235,21 @@ class SerialMotorsBus(MotorsBusBase):
     >>> Reconnect the usb cable.
     ```
 
-    Example of usage for 1 Feetech sts3215 motor connected to the bus:
+    Example for a single Feetech sts3215 on the bus:
     ```python
-    bus = FeetechMotorsBus(
+    from lerobot.motors import Motor, MotorNormMode, SerialMotorsBus
+
+    bus = SerialMotorsBus(
         port="/dev/tty.usbmodem575E0031751",
-        motors={"my_motor": (1, "sts3215")},
+        motors={"my_motor": Motor(1, "sts3215", MotorNormMode.RANGE_M100_100)},
     )
     bus.connect()
 
     position = bus.read("Present_Position", "my_motor", normalize=False)
 
-    # Move from a few motor steps as an example
-    few_steps = 30
-    bus.write("Goal_Position", "my_motor", position + few_steps, normalize=False)
+    # Move a few motor steps as an example
+    bus.write("Goal_Position", "my_motor", position + 30, normalize=False)
 
-    # When done, properly disconnect the port using
     bus.disconnect()
     ```
     """
@@ -349,7 +263,17 @@ class SerialMotorsBus(MotorsBusBase):
     model_encoding_table: dict[str, dict]
     model_number_table: dict[str, int]
     model_resolution_table: dict[str, int]
+    model_number_address: tuple[int, int]
+    max_id: int
     normalized_data: list[str]
+    protocol: str
+
+    def __new__(cls, *args, **kwargs) -> SerialMotorsBus:
+        if cls is not SerialMotorsBus:
+            return super().__new__(cls)
+
+        motors = kwargs["motors"] if "motors" in kwargs else (args[1] if len(args) > 1 else None)
+        return super().__new__(_resolve_motor_family(motors))
 
     def __init__(
         self,
@@ -357,16 +281,12 @@ class SerialMotorsBus(MotorsBusBase):
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
     ):
-        require_package("pyserial", extra="pyserial-dep", import_name="serial")
         require_package("deepdiff", extra="deepdiff-dep")
         super().__init__(port, motors, calibration)
 
-        self.port_handler: PortHandler
-        self.packet_handler: PacketHandler
-        self.sync_reader: GroupSyncRead
-        self.sync_writer: GroupSyncWrite
-        self._comm_success: int
-        self._no_error: int
+        self._io: MotorTransport = RustypotTransport(
+            port, self.protocol, self.default_baudrate, self.default_timeout
+        )
 
         self._id_to_model_dict = {m.id: m.model for m in self.motors.values()}
         self._id_to_name_dict = {m.id: motor for motor, m in self.motors.items()}
@@ -456,12 +376,6 @@ class SerialMotorsBus(MotorsBusBase):
         for model in self.models:
             get_ctrl_table(self.model_ctrl_table, model)
 
-    def _is_comm_success(self, comm: int) -> bool:
-        return comm == self._comm_success
-
-    def _is_error(self, error: int) -> bool:
-        return error != self._no_error
-
     def _assert_motors_exist(self) -> None:
         expected_models = {m.id: self.model_number_table[m.model] for m in self.motors.values()}
 
@@ -508,7 +422,7 @@ class SerialMotorsBus(MotorsBusBase):
     @property
     def is_connected(self) -> bool:
         """bool: `True` if the underlying serial port is open."""
-        return self.port_handler.is_open
+        return self._io.is_open
 
     @check_if_already_connected
     def connect(self, handshake: bool = True) -> None:
@@ -520,32 +434,33 @@ class SerialMotorsBus(MotorsBusBase):
 
         Raises:
             DeviceAlreadyConnectedError: The port is already open.
-            ConnectionError: The underlying SDK failed to open the port or the handshake did not succeed.
+            ConnectionError: The port could not be opened, or the handshake did not succeed.
         """
 
         self._connect(handshake)
-        self.set_timeout()
         logger.debug(f"{self.__class__.__name__} connected.")
 
     def _connect(self, handshake: bool = True) -> None:
+        self._io.open()
+        if not handshake:
+            return
         try:
-            if not self.port_handler.openPort():
-                raise OSError(f"Failed to open port '{self.port}'.")
-            elif handshake:
-                self._handshake()
-        except (FileNotFoundError, OSError, serial.SerialException) as e:
-            raise ConnectionError(
-                f"\nCould not connect on port '{self.port}'. Make sure you are using the correct port."
-                "\nTry running `lerobot-find-port`\n"
-            ) from e
+            self._handshake()
+        except Exception:
+            # Never leave the port open behind a failed handshake: the next
+            # connect() would find it already taken.
+            self._io.close()
+            raise
 
     @abc.abstractmethod
     def _handshake(self) -> None:
         pass
 
-    @check_if_not_connected
     def disconnect(self, disable_torque: bool = True) -> None:
         """Close the serial port (optionally disabling torque first).
+
+        Safe to call on a bus that is already disconnected, and the port is released
+        even if disabling torque fails.
 
         Args:
             disable_torque (bool, optional): If `True` (default) torque is disabled on every motor before
@@ -553,12 +468,15 @@ class SerialMotorsBus(MotorsBusBase):
                 after disconnect.
         """
 
-        if disable_torque:
-            self.port_handler.clearPort()
-            self.port_handler.is_using = False
-            self.disable_torque(num_retry=5)
+        if not self._io.is_open:
+            return
 
-        self.port_handler.closePort()
+        try:
+            if disable_torque:
+                self.disable_torque(num_retry=5)
+        finally:
+            self._io.close()
+
         logger.debug(f"{self.__class__.__name__} disconnected.")
 
     @classmethod
@@ -583,7 +501,7 @@ class SerialMotorsBus(MotorsBusBase):
                 tqdm.write(f"Motors found for {baudrate=}: {pformat(ids_models, indent=4)}")
                 baudrate_ids[baudrate] = list(ids_models)
 
-        bus.port_handler.closePort()
+        bus.disconnect(disable_torque=False)
         return baudrate_ids
 
     def setup_motor(
@@ -690,40 +608,15 @@ class SerialMotorsBus(MotorsBusBase):
         finally:
             self.enable_torque(motors)
 
-    def set_timeout(self, timeout_ms: int | None = None):
-        """Change the packet timeout used by the SDK.
-
-        Args:
-            timeout_ms (int | None, optional): Timeout in *milliseconds*. If `None` (default) the method falls
-                back to :pyattr:`default_timeout`.
-        """
-        timeout_ms = timeout_ms if timeout_ms is not None else self.default_timeout
-        self.port_handler.setPacketTimeoutMillis(timeout_ms)
-
-    def get_baudrate(self) -> int:
-        """Return the current baud-rate configured on the port.
-
-        Returns:
-            int: Baud-rate in bits / second.
-        """
-        return self.port_handler.getBaudRate()
-
     def set_baudrate(self, baudrate: int) -> None:
         """Set a new UART baud-rate on the port.
 
         Args:
             baudrate (int): Desired baud-rate in bits / second.
-
-        Raises:
-            RuntimeError: The SDK failed to apply the change.
         """
-        present_bus_baudrate = self.port_handler.getBaudRate()
-        if present_bus_baudrate != baudrate:
-            logger.info(f"Setting bus baud rate to {baudrate}. Previously {present_bus_baudrate}.")
-            self.port_handler.setBaudRate(baudrate)
-
-            if self.port_handler.getBaudRate() != baudrate:
-                raise RuntimeError("Failed to write bus baud rate.")
+        if baudrate != self._io.baudrate:
+            logger.info(f"Setting bus baud rate to {baudrate}. Previously {self._io.baudrate}.")
+        self._io.set_baudrate(baudrate)
 
     @property
     @abc.abstractmethod
@@ -945,8 +838,16 @@ class SerialMotorsBus(MotorsBusBase):
         """Convert an integer into a list of byte-sized integers."""
         pass
 
+    @abc.abstractmethod
+    def _join_byte_chunks(self, data: bytes, length: int) -> int:
+        """Convert register bytes back into an integer, inverse of :pymeth:`_split_into_byte_chunks`."""
+        pass
+
     def ping(self, motor: NameOrID, num_retry: int = 0, raise_on_error: bool = False) -> int | None:
         """Ping a single motor and return its model number.
+
+        Reads Model_Number rather than sending a ping: presence and identity then
+        cost one round trip instead of two.
 
         Args:
             motor (NameOrID): Target motor (name or ID).
@@ -958,38 +859,41 @@ class SerialMotorsBus(MotorsBusBase):
             int | None: Motor model number or `None` on failure.
         """
         id_ = self._get_motor_id(motor)
-        for n_try in range(1 + num_retry):
-            model_number, comm, error = self.packet_handler.ping(self.port_handler, id_)
-            if self._is_comm_success(comm):
-                break
-            logger.debug(f"ping failed for {id_=}: {n_try=} got {comm=} {error=}")
+        addr, length = self.model_number_address
+        return self._read(addr, length, id_, num_retry=num_retry, raise_on_error=raise_on_error)
 
-        if not self._is_comm_success(comm):
-            if raise_on_error:
-                raise ConnectionError(self.packet_handler.getTxRxResult(comm))
-            else:
-                return None
-        if self._is_error(error):
-            if raise_on_error:
-                raise RuntimeError(self.packet_handler.getRxPacketError(error))
-            else:
-                return None
+    def broadcast_ping(self, num_retry: int = 0) -> dict[int, int]:
+        """Ping every ID on the bus and return the ones that answer.
 
-        return model_number
-
-    @abc.abstractmethod
-    def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
-        """Ping every ID on the bus using the broadcast address.
+        The transport exposes no broadcast ping, so this sweeps the ID space one
+        motor at a time. Only bus scanning and motor setup call it, never a control
+        loop.
 
         Args:
-            num_retry (int, optional): Retry attempts.  Defaults to `0`.
-            raise_on_error (bool, optional): When `True` failures raise an exception instead of returning
-                `None`. Defaults to `False`.
+            num_retry (int, optional): Retry attempts per ID. Defaults to `0`.
 
         Returns:
-            dict[int, int] | None: Mapping *id → model number* or `None` if the call failed.
+            dict[int, int]: Mapping *id → model number* for every motor that answered.
         """
-        pass
+        self._assert_protocol_is_compatible("broadcast_ping")
+        with self._scan_timeout():
+            found = {id_: self.ping(id_, num_retry=num_retry) for id_ in range(self.max_id + 1)}
+
+        return {id_: model for id_, model in found.items() if model is not None}
+
+    @contextmanager
+    def _scan_timeout(self):
+        """Shorten the read timeout for the duration of an ID sweep.
+
+        Every absent ID costs one full timeout, so a sweep at `default_timeout` would
+        take minutes. Size it to what the current baud rate needs to shift a request
+        and a status packet, with a floor for USB scheduling.
+        """
+        self._io.set_timeout(max(SCAN_TIMEOUT_MS, round(SCAN_PACKET_BITS * 1000 / self._io.baudrate)))
+        try:
+            yield
+        finally:
+            self._io.set_timeout(self.default_timeout)
 
     @check_if_not_connected
     def read(
@@ -1018,7 +922,10 @@ class SerialMotorsBus(MotorsBusBase):
         addr, length = get_address(self.model_ctrl_table, model, data_name)
 
         err_msg = f"Failed to read '{data_name}' on {id_=} after {num_retry + 1} tries."
-        value, _, _ = self._read(addr, length, id_, num_retry=num_retry, raise_on_error=True, err_msg=err_msg)
+        # raise_on_error=True, so a failure raises rather than returning None.
+        value = cast(
+            int, self._read(addr, length, id_, num_retry=num_retry, raise_on_error=True, err_msg=err_msg)
+        )
 
         decoded = self._decode_sign(data_name, {id_: value})
 
@@ -1030,38 +937,33 @@ class SerialMotorsBus(MotorsBusBase):
 
     def _read(
         self,
-        address: int,
+        addr: int,
         length: int,
         motor_id: int,
         *,
         num_retry: int = 0,
         raise_on_error: bool = True,
         err_msg: str = "",
-    ) -> tuple[int, int, int]:
-        if length == 1:
-            read_fn = self.packet_handler.read1ByteTxRx
-        elif length == 2:
-            read_fn = self.packet_handler.read2ByteTxRx
-        elif length == 4:
-            read_fn = self.packet_handler.read4ByteTxRx
-        else:
-            raise ValueError(length)
-
+    ) -> int | None:
+        """Read one register, or `None` if it failed and *raise_on_error* is `False`."""
         for n_try in range(1 + num_retry):
-            value, comm, error = read_fn(self.port_handler, motor_id, address)
-            if self._is_comm_success(comm):
+            try:
+                data, status = self._io.read(motor_id, addr, length)
                 break
-            logger.debug(
-                f"Failed to read @{address=} ({length=}) on {motor_id=} ({n_try=}): "
-                + self.packet_handler.getTxRxResult(comm)
-            )
+            except _TRANSPORT_ERRORS as e:
+                failure = e
+                logger.debug(f"Failed to read @{addr=} ({length=}) on {motor_id=} ({n_try=}): {e}")
+        else:
+            if raise_on_error:
+                raise ConnectionError(f"{err_msg} {failure}") from failure
+            return None
 
-        if not self._is_comm_success(comm) and raise_on_error:
-            raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
-        elif self._is_error(error) and raise_on_error:
-            raise RuntimeError(f"{err_msg} {self.packet_handler.getRxPacketError(error)}")
+        if status:
+            if raise_on_error:
+                raise RuntimeError(f"{err_msg} Motor {motor_id} returned error status 0x{status:02x}.")
+            return None
 
-        return value, comm, error
+        return self._join_byte_chunks(data, length)
 
     @check_if_not_connected
     def write(
@@ -1106,23 +1008,24 @@ class SerialMotorsBus(MotorsBusBase):
         num_retry: int = 0,
         raise_on_error: bool = True,
         err_msg: str = "",
-    ) -> tuple[int, int]:
-        data = self._serialize_data(value, length)
+    ) -> None:
+        data = bytes(self._serialize_data(value, length))
         for n_try in range(1 + num_retry):
-            comm, error = self.packet_handler.writeTxRx(self.port_handler, motor_id, addr, length, data)
-            if self._is_comm_success(comm):
+            try:
+                status = self._io.write(motor_id, addr, data)
                 break
-            logger.debug(
-                f"Failed to sync write @{addr=} ({length=}) on id={motor_id} with {value=} ({n_try=}): "
-                + self.packet_handler.getTxRxResult(comm)
-            )
+            except _TRANSPORT_ERRORS as e:
+                failure = e
+                logger.debug(
+                    f"Failed to write @{addr=} ({length=}) on id={motor_id} with {value=} ({n_try=}): {e}"
+                )
+        else:
+            if raise_on_error:
+                raise ConnectionError(f"{err_msg} {failure}") from failure
+            return
 
-        if not self._is_comm_success(comm) and raise_on_error:
-            raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
-        elif self._is_error(error) and raise_on_error:
-            raise RuntimeError(f"{err_msg} {self.packet_handler.getRxPacketError(error)}")
-
-        return comm, error
+        if status and raise_on_error:
+            raise RuntimeError(f"{err_msg} Motor {motor_id} returned error status 0x{status:02x}.")
 
     @check_if_not_connected
     def sync_read(
@@ -1158,7 +1061,7 @@ class SerialMotorsBus(MotorsBusBase):
         addr, length = get_address(self.model_ctrl_table, model, data_name)
 
         err_msg = f"Failed to sync read '{data_name}' on {ids=} after {num_retry + 1} tries."
-        raw_ids_values, _ = self._sync_read(
+        raw_ids_values = self._sync_read(
             addr, length, ids, num_retry=num_retry, raise_on_error=True, err_msg=err_msg
         )
 
@@ -1179,43 +1082,22 @@ class SerialMotorsBus(MotorsBusBase):
         num_retry: int = 0,
         raise_on_error: bool = True,
         err_msg: str = "",
-    ) -> tuple[dict[int, int], int]:
-        self._setup_sync_reader(motor_ids, addr, length)
+    ) -> dict[int, int]:
         for n_try in range(1 + num_retry):
-            comm = self.sync_reader.txRxPacket()
-            if self._is_comm_success(comm):
+            try:
+                frames = self._io.sync_read(motor_ids, addr, length)
                 break
-            logger.debug(
-                f"Failed to sync read @{addr=} ({length=}) on {motor_ids=} ({n_try=}): "
-                + self.packet_handler.getTxRxResult(comm)
-            )
+            except _TRANSPORT_ERRORS as e:
+                failure = e
+                logger.debug(f"Failed to sync read @{addr=} ({length=}) on {motor_ids=} ({n_try=}): {e}")
+        else:
+            if raise_on_error:
+                raise ConnectionError(f"{err_msg} {failure}") from failure
+            return {}
 
-        if not self._is_comm_success(comm) and raise_on_error:
-            raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
-
-        values = {id_: self.sync_reader.getData(id_, addr, length) for id_ in motor_ids}
-        return values, comm
-
-    def _setup_sync_reader(self, motor_ids: list[int], addr: int, length: int) -> None:
-        self.sync_reader.clearParam()
-        self.sync_reader.start_address = addr
-        self.sync_reader.data_length = length
-        for id_ in motor_ids:
-            self.sync_reader.addParam(id_)
-
-    # TODO(aliberts, pkooij): Implementing something like this could get even much faster read times if need be.
-    # Would have to handle the logic of checking if a packet has been sent previously though but doable.
-    # This could be at the cost of increase latency between the moment the data is produced by the motors and
-    # the moment it is used by a policy.
-    # def _async_read(self, motor_ids: list[int], address: int, length: int):
-    #     if self.sync_reader.start_address != address or self.sync_reader.data_length != length or ...:
-    #         self._setup_sync_reader(motor_ids, address, length)
-    #     else:
-    #         self.sync_reader.rxPacket()
-    #         self.sync_reader.txPacket()
-
-    #     for id_ in motor_ids:
-    #         value = self.sync_reader.getData(id_, address, length)
+        return {
+            id_: self._join_byte_chunks(frame, length) for id_, frame in zip(motor_ids, frames, strict=True)
+        }
 
     @check_if_not_connected
     def sync_write(
@@ -1267,29 +1149,19 @@ class SerialMotorsBus(MotorsBusBase):
         num_retry: int = 0,
         raise_on_error: bool = True,
         err_msg: str = "",
-    ) -> int:
-        self._setup_sync_writer(ids_values, addr, length)
+    ) -> None:
+        motor_ids = list(ids_values)
+        data = [bytes(self._serialize_data(value, length)) for value in ids_values.values()]
         for n_try in range(1 + num_retry):
-            comm = self.sync_writer.txPacket()
-            if self._is_comm_success(comm):
-                break
-            logger.debug(
-                f"Failed to sync write @{addr=} ({length=}) with {ids_values=} ({n_try=}): "
-                + self.packet_handler.getTxRxResult(comm)
-            )
+            try:
+                self._io.sync_write(motor_ids, addr, data)
+                return
+            except _TRANSPORT_ERRORS as e:
+                failure = e
+                logger.debug(f"Failed to sync write @{addr=} ({length=}) with {ids_values=} ({n_try=}): {e}")
 
-        if not self._is_comm_success(comm) and raise_on_error:
-            raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
-
-        return comm
-
-    def _setup_sync_writer(self, ids_values: dict[int, int], addr: int, length: int) -> None:
-        self.sync_writer.clearParam()
-        self.sync_writer.start_address = addr
-        self.sync_writer.data_length = length
-        for id_, value in ids_values.items():
-            data = self._serialize_data(value, length)
-            self.sync_writer.addParam(id_, data)
+        if raise_on_error:
+            raise ConnectionError(f"{err_msg} {failure}") from failure
 
 
 # Backward compatibility alias

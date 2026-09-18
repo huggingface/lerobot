@@ -16,12 +16,11 @@ import logging
 from copy import deepcopy
 from enum import Enum
 from pprint import pformat
-from typing import TYPE_CHECKING
-
-from lerobot.utils.import_utils import _feetech_sdk_available, require_package
+from typing import Literal
 
 from ..encoding_utils import decode_sign_magnitude, encode_sign_magnitude
 from ..motors_bus import Motor, MotorCalibration, NameOrID, SerialMotorsBus, Value, get_address
+from ..transport import PROTOCOL_V1
 from .tables import (
     FIRMWARE_MAJOR_VERSION,
     FIRMWARE_MINOR_VERSION,
@@ -34,11 +33,6 @@ from .tables import (
     MODEL_RESOLUTION,
     SCAN_BAUDRATES,
 )
-
-if TYPE_CHECKING or _feetech_sdk_available:
-    import scservo_sdk as scs
-else:
-    scs = None
 
 DEFAULT_PROTOCOL_VERSION = 0
 DEFAULT_BAUDRATE = 1_000_000
@@ -73,24 +67,8 @@ class TorqueMode(Enum):
     DISABLED = 0
 
 
-def patch_setPacketTimeout(self, packet_length):  # noqa: N802
-    """
-    HACK: This patches the PortHandler behavior to set the correct packet timeouts.
-
-    It fixes https://gitee.com/ftservo/SCServoSDK/issues/IBY2S6
-    The bug is fixed on the official Feetech SDK repo (https://gitee.com/ftservo/FTServo_Python)
-    but because that version is not published on PyPI, we rely on the (unofficial) on that is, which needs
-    patching.
-    """
-    self.packet_start_time = self.getCurrentTime()
-    self.packet_timeout = (self.tx_time_per_byte * packet_length) + (self.tx_time_per_byte * 3.0) + 50
-
-
 class FeetechMotorsBus(SerialMotorsBus):
-    """
-    The FeetechMotorsBus class allows to efficiently read and write to the attached motors. It relies on the
-    python feetech sdk to communicate with the motors, which is itself based on the dynamixel sdk.
-    """
+    """`SerialMotorsBus` for Feetech servos, which speak protocol v1."""
 
     apply_drive_mode = True
     available_baudrates = deepcopy(SCAN_BAUDRATES)
@@ -101,7 +79,12 @@ class FeetechMotorsBus(SerialMotorsBus):
     model_encoding_table = deepcopy(MODEL_ENCODING_TABLE)
     model_number_table = deepcopy(MODEL_NUMBER_TABLE)
     model_resolution_table = deepcopy(MODEL_RESOLUTION)
+    model_number_address = MODEL_NUMBER
+    max_id = 253
     normalized_data = deepcopy(NORMALIZED_DATA)
+    # Both Feetech flavours speak v1 on the wire; `protocol_version` below is a
+    # different thing, selecting byte order and sync-read support.
+    protocol = PROTOCOL_V1
 
     def __init__(
         self,
@@ -110,20 +93,9 @@ class FeetechMotorsBus(SerialMotorsBus):
         calibration: dict[str, MotorCalibration] | None = None,
         protocol_version: int = DEFAULT_PROTOCOL_VERSION,
     ):
-        require_package("feetech-servo-sdk", extra="feetech", import_name="scservo_sdk")
         super().__init__(port, motors, calibration)
         self.protocol_version = protocol_version
         self._assert_same_protocol()
-        self.port_handler = scs.PortHandler(self.port)
-        # HACK: monkeypatch
-        self.port_handler.setPacketTimeout = patch_setPacketTimeout.__get__(  # type: ignore[method-assign]
-            self.port_handler, scs.PortHandler
-        )
-        self.packet_handler = scs.PacketHandler(protocol_version)
-        self.sync_reader = scs.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
-        self.sync_writer = scs.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
-        self._comm_success = scs.COMM_SUCCESS
-        self._no_error = 0x00
 
         if any(MODEL_PROTOCOL[model] != self.protocol_version for model in self.models):
             raise ValueError(f"Some motors are incompatible with protocol_version={self.protocol_version}")
@@ -193,9 +165,11 @@ class FeetechMotorsBus(SerialMotorsBus):
 
         for baudrate in search_baudrates:
             self.set_baudrate(baudrate)
-            for id_ in range(scs.MAX_ID + 1):
-                found_model = self.ping(id_)
-                if found_model is not None:
+            with self._scan_timeout():
+                for id_ in range(self.max_id + 1):
+                    found_model = self.ping(id_)
+                    if found_model is None:
+                        continue
                     if found_model != expected_model_nb:
                         raise RuntimeError(
                             f"Found one motor on {baudrate=} with id={id_} but it has a "
@@ -324,136 +298,37 @@ class FeetechMotorsBus(SerialMotorsBus):
 
         return ids_values
 
+    @property
+    def _word_order(self) -> Literal["little", "big"]:
+        """Byte order inside each 16-bit register word: STS/SMS little, SCS big.
+
+        A 4-byte SCS value is therefore mixed-endian: bytes swapped inside each
+        word, low word still first.
+        """
+        return "little" if self.protocol_version == 0 else "big"
+
     def _split_into_byte_chunks(self, value: int, length: int) -> list[int]:
         if length == 1:
-            data = [value]
-        elif length == 2:
-            data = [scs.SCS_LOBYTE(value), scs.SCS_HIBYTE(value)]
-        elif length == 4:
-            data = [
-                scs.SCS_LOBYTE(scs.SCS_LOWORD(value)),
-                scs.SCS_HIBYTE(scs.SCS_LOWORD(value)),
-                scs.SCS_LOBYTE(scs.SCS_HIWORD(value)),
-                scs.SCS_HIBYTE(scs.SCS_HIWORD(value)),
-            ]
-        return data
+            return [value]
 
-    def _broadcast_ping(self) -> tuple[dict[int, int], int]:
-        data_list: dict[int, int] = {}
+        words = [value & 0xFFFF] if length == 2 else [value & 0xFFFF, (value >> 16) & 0xFFFF]
+        return [byte for word in words for byte in word.to_bytes(2, self._word_order)]
 
-        status_length = 6
+    def _join_byte_chunks(self, data: bytes, length: int) -> int:
+        if length == 1:
+            return data[0]
 
-        rx_length = 0
-        wait_length = status_length * scs.MAX_ID
-
-        txpacket = [0] * 6
-
-        tx_time_per_byte = (1000.0 / self.port_handler.getBaudRate()) * 10.0
-
-        txpacket[scs.PKT_ID] = scs.BROADCAST_ID
-        txpacket[scs.PKT_LENGTH] = 2
-        txpacket[scs.PKT_INSTRUCTION] = scs.INST_PING
-
-        result = self.packet_handler.txPacket(self.port_handler, txpacket)
-        if result != scs.COMM_SUCCESS:
-            self.port_handler.is_using = False
-            return data_list, result
-
-        # set rx timeout
-        self.port_handler.setPacketTimeoutMillis((wait_length * tx_time_per_byte) + (3.0 * scs.MAX_ID) + 16.0)
-
-        rxpacket = []
-        while not self.port_handler.isPacketTimeout() and rx_length < wait_length:
-            rxpacket += self.port_handler.readPort(wait_length - rx_length)
-            rx_length = len(rxpacket)
-
-        self.port_handler.is_using = False
-
-        if rx_length == 0:
-            return data_list, scs.COMM_RX_TIMEOUT
-
-        while True:
-            if rx_length < status_length:
-                return data_list, scs.COMM_RX_CORRUPT
-
-            # find packet header
-            for idx in range(0, (rx_length - 1)):
-                if (rxpacket[idx] == 0xFF) and (rxpacket[idx + 1] == 0xFF):
-                    break
-
-            if idx == 0:  # found at the beginning of the packet
-                # calculate checksum
-                checksum = 0
-                for idx in range(2, status_length - 1):  # except header & checksum
-                    checksum += rxpacket[idx]
-
-                checksum = ~checksum & 0xFF
-                if rxpacket[status_length - 1] == checksum:
-                    result = scs.COMM_SUCCESS
-                    data_list[rxpacket[scs.PKT_ID]] = rxpacket[scs.PKT_ERROR]
-
-                    del rxpacket[0:status_length]
-                    rx_length = rx_length - status_length
-
-                    if rx_length == 0:
-                        return data_list, result
-                else:
-                    result = scs.COMM_RX_CORRUPT
-                    # remove header (0xFF 0xFF)
-                    del rxpacket[0:2]
-                    rx_length = rx_length - 2
-            else:
-                # remove unnecessary packets
-                del rxpacket[0:idx]
-                rx_length = rx_length - idx
-
-    def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
-        self._assert_protocol_is_compatible("broadcast_ping")
-        for n_try in range(1 + num_retry):
-            ids_status, comm = self._broadcast_ping()
-            if self._is_comm_success(comm):
-                break
-            logger.debug(f"Broadcast ping failed on port '{self.port}' ({n_try=})")
-            logger.debug(self.packet_handler.getTxRxResult(comm))
-
-        if not self._is_comm_success(comm):
-            if raise_on_error:
-                raise ConnectionError(self.packet_handler.getTxRxResult(comm))
-            return None
-
-        ids_errors = {id_: status for id_, status in ids_status.items() if self._is_error(status)}
-        if ids_errors:
-            display_dict = {id_: self.packet_handler.getRxPacketError(err) for id_, err in ids_errors.items()}
-            logger.error(f"Some motors found returned an error status:\n{pformat(display_dict, indent=4)}")
-
-        return self._read_model_number(list(ids_status), raise_on_error)
+        words = [int.from_bytes(data[i : i + 2], self._word_order) for i in range(0, length, 2)]
+        return words[0] if length == 2 else words[0] | (words[1] << 16)
 
     def _read_firmware_version(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, str]:
         firmware_versions = {}
         for id_ in motor_ids:
-            firm_ver_major, comm, error = self._read(
-                *FIRMWARE_MAJOR_VERSION, id_, raise_on_error=raise_on_error
-            )
-            if not self._is_comm_success(comm) or self._is_error(error):
-                continue
-
-            firm_ver_minor, comm, error = self._read(
-                *FIRMWARE_MINOR_VERSION, id_, raise_on_error=raise_on_error
-            )
-            if not self._is_comm_success(comm) or self._is_error(error):
+            firm_ver_major = self._read(*FIRMWARE_MAJOR_VERSION, id_, raise_on_error=raise_on_error)
+            firm_ver_minor = self._read(*FIRMWARE_MINOR_VERSION, id_, raise_on_error=raise_on_error)
+            if firm_ver_major is None or firm_ver_minor is None:
                 continue
 
             firmware_versions[id_] = f"{firm_ver_major}.{firm_ver_minor}"
 
         return firmware_versions
-
-    def _read_model_number(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, int]:
-        model_numbers = {}
-        for id_ in motor_ids:
-            model_nb, comm, error = self._read(*MODEL_NUMBER, id_, raise_on_error=raise_on_error)
-            if not self._is_comm_success(comm) or self._is_error(error):
-                continue
-
-            model_numbers[id_] = model_nb
-
-        return model_numbers

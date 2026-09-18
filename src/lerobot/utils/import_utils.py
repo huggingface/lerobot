@@ -120,8 +120,6 @@ _torchdiffeq_available = is_package_available("torchdiffeq")
 # Hardware SDKs
 _serial_available = is_package_available("pyserial", import_name="serial")
 _deepdiff_available = is_package_available("deepdiff")
-_dynamixel_sdk_available = is_package_available("dynamixel-sdk", import_name="dynamixel_sdk")
-_feetech_sdk_available = is_package_available("feetech-servo-sdk", import_name="scservo_sdk")
 _reachy2_sdk_available = is_package_available("reachy2_sdk")
 _can_available = is_package_available("python-can", "can")
 _motorbridge_available = is_package_available("motorbridge")
