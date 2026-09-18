@@ -322,9 +322,9 @@ lerobot-rollout \
 | Command             | Action                                                                                                                                                                             |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/start`            | Start (or restart) the policy control loop                                                                                                                                         |
-| `/subtask <text>`   | Change the instruction the policy follows, without stopping. No argument prints the current task. Only affects policies that condition on language (SmolVLA, π0/π0.5, and similar) |
-| `/vqa <text>`       | Ask the policy a question about what it currently sees. Only while a run is in progress, and only for policies with a text head                                                    |
-| `/autosteer <goal>` | Hand the policy a high-level goal and let it choose its own subtasks. `/autosteer off` hands control back; no argument reports the current goal                                    |
+| `/subtask <text>`   | Change the instruction the policy follows, without stopping. No argument prints the current task. Only affects policies that condition on language (SmolVLA, π0/π0.5, and similar). With an [external planner](#external-planner) the text is first restated in the checkpoint's trained wording |
+| `/vqa <text>`       | Ask a question about what the robot currently sees. Only while a run is in progress, and only with a text head or an external planner                                                    |
+| `/autosteer <goal>` | Hand over a high-level goal and let the policy's text head or the external planner choose the subtasks. `/autosteer off` hands control back; no argument reports the current goal                                    |
 | `/reset`            | Stop movement, return the robot to its startup position, and restore the `--task` instruction                                                                                      |
 | `/stop`             | End the session and run the normal shutdown routines                                                                                                                               |
 | `/help`             | List the commands                                                                                                                                                                  |
@@ -357,11 +357,31 @@ Lines starting with `>` are what you type; the session renders no prompt of its 
 
 With `--use_torch_compile=true`, an instruction that tokenizes to a different length can trigger a recompilation, pausing inference for as long as the original warm-up took — leave compilation off if you expect to re-instruct often.
 
-`/vqa` and `/autosteer` need a policy with a text head (an implementation of `PreTrainedPolicy.generate_text()`); no built-in LeRobot policy ships one yet, so both commands are refused unless yours does.
+`/vqa` and `/autosteer` need a policy with a text head (`PreTrainedPolicy.generate_text()`) or an external planner (below).
 
-**`/vqa`** answers from the next observation and prints when ready, so you can keep typing meanwhile; only one question is in flight at a time (autosteer's own queries share that slot). Text generation is far slower than a control tick, so the robot drains its queued actions and then holds position until the answer lands, and that time counts against `--duration`. Questions are only accepted while a run is in progress — an idle engine has no current view — and one still unanswered when a segment ends is dropped and reported.
+**`/vqa`** answers from the next observation and prints when ready, so you can keep typing meanwhile; only one question is in flight at a time (autosteer's own queries share that slot). With an on-policy text head, text generation is far slower than a control tick, so the robot drains its queued actions and then holds position until the answer lands, and that time counts against `--duration`. Questions are only accepted while a run is in progress — an idle engine has no current view — and one still unanswered when a segment ends is dropped and reported.
 
 **`/autosteer`** hands the policy a goal and asks it for the next subtask every `--autosteer_interval_s` seconds (default 10), applying each one through the same path as `/subtask` and announcing it in the chat. Every query is a full text generation, so the interval is a cost knob: lower values re-plan sooner but spend more of the loop generating text instead of acting. Plan progress lives in the policy, not the rollout, so the plan dies with the segment; the sequencer also stops on `/reset`, `/subtask`, `/autosteer off`, and the first planning failure.
+
+**External planner.** `--planner.model_id=<name>` routes `/vqa` and `/autosteer` through the annotation pipeline's VLM client (`annotations` extra). Calls run on a worker thread while the robot keeps acting. `/subtask` still applies your instruction directly and cancels automatic planning; late planner replies cannot override it. The planner reuses the loaded processor's subtask recipe when available. Otherwise it requests a short instruction; this does not establish that a checkpoint can follow it. An optional `--planner.instructions='["pick up the cup","open the drawer"]'` explicitly restricts planner output. Training task labels are not automatically treated as an exhaustive vocabulary.
+
+Start an OpenAI-compatible VLM server separately, then connect:
+
+The external planner receives the last `--planner.history=3` observation/command pairs, followed by the current images. Each pair contains the observation used to request an instruction and the instruction subsequently accepted by the engine; acceptance does not imply successful execution. Repeated instructions remain in history so the VLM can assess lack of progress. The history clears on manual takeover, reset, stop, segment end, or a new autosteer goal. Set `--planner.history=0` to disable it. `/vqa` can inspect this history but does not add entries. For a next-subtask request the VLM must first describe the scene and state whether the previous command is completed, in progress or failed, and only then name the next instruction; a reply of `done` keeps the current instruction.
+
+```bash
+transformers serve Qwen/Qwen3-VL-8B-Instruct --port 8000
+# Alternatively: vllm serve Qwen/Qwen3-VL-8B-Instruct --port 8000
+lerobot-rollout ... --task="pick up the cup" --interactive=true \
+    --planner.model_id=Qwen/Qwen3-VL-8B-Instruct \
+    --planner.api_base=http://localhost:8000/v1
+> /start
+> /vqa What is the next short instruction to clear the table?
+> /subtask put the cup in the sink
+> /autosteer clear the table
+```
+
+`/vqa` only reports an answer; `/autosteer` applies instructions. Configure the endpoint with `--planner.api_base` and `--planner.api_key`; `--planner.camera_key` selects one camera. Model serving dependencies belong in the server environment. `--autosteer_interval_s` measures robot-motion time after a reply is applied, in addition to request latency. Multi-level steering and automatic scene inventory are outside this adapter's scope.
 
 **Logs below ERROR are muted while the session runs** so routine output doesn't interleave with what you're typing; errors and fatal inference failures still show, and normal logging resumes when the session ends. The [cadence summaries](#cadence-reporting) are printed in the chat instead, and running without `--interactive` gets you the live log back.
 

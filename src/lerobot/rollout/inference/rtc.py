@@ -346,6 +346,8 @@ class RTCInferenceEngine(InferenceEngine):
 
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
         """Pop the next action from the RTC queue (ignores ``obs_frame``)."""
+        if self.hold_for_planner():
+            return None
         if self._action_queue is None:
             return None
         queued = self._action_queue.get_with_task()
@@ -372,8 +374,8 @@ class RTCInferenceEngine(InferenceEngine):
 
     @property
     def supports_text_queries(self) -> bool:
-        """True when the policy has a text head."""
-        return self._policy.supports_text_generation()
+        """True when an external text backend is attached or the policy has a text head."""
+        return super().supports_text_queries or self._policy.supports_text_generation()
 
     @property
     def control_thread_owns_policy(self) -> bool:
