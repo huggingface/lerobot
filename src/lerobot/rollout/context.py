@@ -62,7 +62,7 @@ from .inference import (
     create_inference_engine,
 )
 from .inference.rtc import supports_rtc_inference
-from .planner import VlmPlanner
+from .planner import VlmPlanner, training_vocabulary
 from .robot_wrapper import ThreadSafeRobot
 
 if TYPE_CHECKING or _peft_available:
@@ -600,6 +600,19 @@ def build_rollout_context(
             ),
             None,
         )
+        if not cfg.planner.instructions:
+            try:
+                cfg.planner.instructions = training_vocabulary(str(cfg.policy.pretrained_path))
+                logger.info(
+                    "Planner vocabulary: %d instructions inferred from the checkpoint's training dataset",
+                    len(cfg.planner.instructions),
+                )
+            except Exception:
+                logger.warning(
+                    "Could not infer the planner vocabulary from the checkpoint's training "
+                    "dataset — planner answers stay free-form",
+                    exc_info=True,
+                )
         inference_strategy.external_text = VlmPlanner(cfg.planner, robot_wrapper.robot_type, runtime_messages)
         inference_strategy.external_history = deque(maxlen=cfg.planner.history)
 

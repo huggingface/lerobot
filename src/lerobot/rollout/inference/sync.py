@@ -102,6 +102,10 @@ class SyncInferenceEngine(InferenceEngine):
         """Run the full inference pipeline on ``obs_frame`` and return an action tensor."""
         if obs_frame is None:
             return None
+        if self.hold_for_planner():
+            # do nothing while external planner says to hold
+            # becaus current action is not done
+            return None
         # Shallow copy is intentional: the caller (`send_next_action`) builds
         # ``obs_frame`` fresh per tick via ``build_dataset_frame``, so the
         # tensor/array values are not shared with any other reader.

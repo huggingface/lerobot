@@ -346,6 +346,8 @@ class RTCInferenceEngine(InferenceEngine):
 
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
         """Pop the next action from the RTC queue (ignores ``obs_frame``)."""
+        if self.hold_for_planner():
+            return None
         if self._action_queue is None:
             return None
         queued = self._action_queue.get_with_task()

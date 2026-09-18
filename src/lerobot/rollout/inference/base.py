@@ -73,6 +73,8 @@ class QueryAnswer:
     answer: str | None = None
     error: str | None = None
     kind: QueryKind = QueryKind.VQA
+    held: bool = False
+    """A NEXT_SUBTASK answer that repeated the current instruction: nothing was sent."""
 
     @property
     def ok(self) -> bool:
@@ -146,6 +148,8 @@ class InferenceEngine(abc.ABC):
         self._autosteer_goal: str | None = None
         self._autosteer_interval_s: float = 0.0
         self._autosteer_due_at: float = 0.0
+        # Set once the planner's first reply for the current goal is accepted.
+        self._planner_started = False
 
     # ------------------------------------------------------------------
     # Task (language instruction)
@@ -250,9 +254,25 @@ class InferenceEngine(abc.ABC):
             self.external_history.clear()
             self._autosteer_goal = goal
             self._autosteer_interval_s = max(0.0, interval_s)
+            self._planner_started = False
             # Due immediately: first subtask requested on the next control tick.
             self._autosteer_due_at = time.perf_counter()
         logger.info("Autosteer started for goal '%s' (every %.1fs)", goal, interval_s)
+
+    def hold_for_planner(self) -> bool:
+        """True while an external planner owns the instruction stream but has not spoken yet.
+
+        With an external text backend and an armed autosteer goal, the policy idles until
+        the planner's first accepted reply: the rollout's ``--task`` goal is context for the
+        planner, not an instruction for the policy to execute.  Backends check this in
+        ``get_action`` and produce no action while it holds.
+        """
+        with self._query_lock:
+            return (
+                self.external_text is not None
+                and self._autosteer_goal is not None
+                and not self._planner_started
+            )
 
     def stop_autosteer(self) -> str | None:
         """Stop the sequencer, returning the goal it was driving (or ``None``)."""
@@ -379,8 +399,13 @@ class InferenceEngine(abc.ABC):
                 self._query_in_flight = False
                 return
             if query.kind is QueryKind.NEXT_SUBTASK:
-                live = self._apply_subtask(query, answer.answer) if answer.ok else self._fail_subtask(query)
-                if not live:
+                if answer.ok:
+                    changed = self._apply_subtask(query, answer.answer)
+                    if changed is None:
+                        return
+                    if not changed:
+                        answer = replace(answer, held=True)
+                elif not self._fail_subtask(query):
                     return
                 if epoch is not None and answer.ok:
                     self.external_history.append((obs_processed, answer.answer))
@@ -409,17 +434,20 @@ class InferenceEngine(abc.ABC):
             )
         return live
 
-    def _apply_subtask(self, query: PolicyQuery, subtask: str) -> bool:
+    def _apply_subtask(self, query: PolicyQuery, subtask: str) -> bool | None:
         """Apply a generated subtask, unless the sequencer stopped meanwhile.
 
         The generation ran lock-free for seconds, so check and apply happen atomically
         under ``_query_lock`` (``_task_lock`` nests inside it, never the reverse) or a
-        stale plan could overwrite a newer instruction.  Returns ``True`` when applied.
+        stale plan could overwrite a newer instruction.  Returns ``None`` when discarded,
+        otherwise whether the instruction actually changed — a repeat holds the policy's
+        current instruction and sends it nothing.
         """
         with self._query_lock:
             live = self._autosteer_goal == query.text
             if live:
-                self.set_task(subtask)
+                changed = self.set_task(subtask)
+                self._planner_started = True  # accepted reply: the planner owns the stream now
                 # Armed only now, so the interval measures motion between subtasks.
                 self._autosteer_due_at = time.perf_counter() + self._autosteer_interval_s
             else:
@@ -429,7 +457,10 @@ class InferenceEngine(abc.ABC):
                 "Discarding autosteer subtask %r — the sequencer stopped while it was being generated",
                 subtask,
             )
-        return live
+            return None
+        if not changed:
+            logger.info("Autosteer holds %r — nothing sent to the policy", subtask)
+        return changed
 
     def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
         """Run the policy's text head on ``obs_processed``.  Backend-specific.
