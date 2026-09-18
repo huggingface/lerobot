@@ -25,7 +25,7 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .io_utils import load_image_as_numpy
 
-DEFAULT_QUANTILES = [0.01, 0.10, 0.50, 0.90, 0.99]
+DEFAULT_QUANTILES = [0.01, 0.02, 0.50, 0.98, 0.99]
 
 
 class RunningQuantileStats:
