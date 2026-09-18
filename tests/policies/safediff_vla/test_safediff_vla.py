@@ -19,6 +19,8 @@ from tests.policies.safediff_vla.testing_utils import NominalCallForbiddenBackbo
 from tests.utils import require_cuda
 
 ACTION_DIM = 7  # SafeDiff-VLA's decomposed loss hard-codes 3 position + 3 orientation + 1 gripper.
+STATE_DIM = 7  # temporal_decoder's sin/cos rotation encoding requires state to share action's layout.
+ENCODED_DIM = 10  # xyz(3) + sin/cos(6) + gripper(1) -- see `rotation_encoding.py`.
 
 # Real checkpoint from a completed temporal_decoder run, used by the checkpoint-load sanity test
 # (section 9.E). Not committed to git (outputs/ is a local, gitignored directory) -- the test
@@ -32,7 +34,7 @@ def make_config(**overrides) -> SafeDiffVLAConfig:
     values = {
         "architecture": "temporal_decoder",
         "device": "cpu",
-        "input_features": {OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(5,))},
+        "input_features": {OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(STATE_DIM,))},
         "output_features": {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(ACTION_DIM,))},
         "action_horizon": 4,
         "execute_horizon": 2,
@@ -49,15 +51,15 @@ def make_config(**overrides) -> SafeDiffVLAConfig:
 
 
 def make_batch(batch_size: int = 2, with_subgoal_label: bool = True) -> dict[str, torch.Tensor]:
-    batch = {OBS_STATE: torch.randn(batch_size, 5), ACTION: torch.randn(batch_size, 4, ACTION_DIM)}
+    batch = {OBS_STATE: torch.randn(batch_size, STATE_DIM), ACTION: torch.randn(batch_size, 4, ACTION_DIM)}
     if with_subgoal_label:
-        batch["observation.subgoal_state"] = torch.randn(batch_size, 5)
+        batch["observation.subgoal_state"] = torch.randn(batch_size, STATE_DIM)
     return batch
 
 
 def make_policy(backbone: torch.nn.Module | None = None, **overrides) -> SafeDiffVLAPolicy:
     config = make_config(**overrides)
-    return SafeDiffVLAPolicy(config, backbone=backbone or TinyBackbone(4, ACTION_DIM))
+    return SafeDiffVLAPolicy(config, backbone=backbone or TinyBackbone(4, ACTION_DIM, state_dim=STATE_DIM))
 
 
 # ---- config -------------------------------------------------------------------------------
@@ -253,7 +255,7 @@ def test_shape_contract_latent_state_actions() -> None:
     latent_tokens, _ = policy._encode_multimodal_latent(batch)
     current_state = policy._current_state(batch)
     assert latent_tokens.shape == (2, policy.backbone.num_latent_tokens, policy.backbone.multimodal_latent_dim)
-    assert current_state.shape == (2, 5)
+    assert current_state.shape == (2, STATE_DIM)
     actions, _ = policy.plan_action_chunk(batch)
     assert actions.shape == (2, policy.config.action_horizon, ACTION_DIM)
 
@@ -294,8 +296,8 @@ def test_current_state_conditioning_changes_output() -> None:
     policy.eval()
     batch = make_batch()
     latent_tokens, latent_pad_mask = policy._encode_multimodal_latent(batch)
-    state_a = policy._current_state(batch)
-    state_b = state_a + 1.0
+    state_a = policy._encode_state(policy._current_state(batch))
+    state_b = policy._encode_state(policy._current_state(batch) + 1.0)
     with torch.no_grad():
         out_a = policy.decoder(latent_tokens, latent_pad_mask, state_a)
         out_b = policy.decoder(latent_tokens, latent_pad_mask, state_b)
@@ -308,7 +310,7 @@ def test_loss_decomposition_matches_weighted_sum() -> None:
     comment for why this isn't a plain unweighted sum of the three component MSEs)."""
     policy = make_policy(architecture="temporal_decoder")
     loss, metrics = policy(make_batch())
-    position_dim, rotation_dim, gripper_dim = 3, 3, 1
+    position_dim, rotation_dim, gripper_dim = 3, 6, 1
     action_dim = position_dim + rotation_dim + gripper_dim
     expected_action = (
         policy.config.lambda_pos * position_dim * metrics["loss_pos"]
@@ -326,19 +328,20 @@ def test_loss_decomposition_matches_weighted_sum() -> None:
 def test_decomposed_loss_equals_old_pooled_mse_at_default_weights() -> None:
     """D. loss decomposition test (part 3), exact-equivalence: at the default weights
     (lambda_pos=lambda_rot=lambda_grip=1.0, lambda_smooth=0.0, and no subgoal contribution for
-    plain `temporal_decoder`), the decomposed loss must be numerically identical to the old
-    single pooled `F.mse_loss(pred_actions, clean)` over all 7 action dims -- this is the whole
-    point of the dim-count normalization, not just "close"."""
+    plain `temporal_decoder`), the decomposed loss must be numerically identical to a single
+    pooled `F.mse_loss(pred_actions, clean)` over all 10 *encoded* action dims -- this is the
+    whole point of the dim-count normalization, not just "close"."""
     policy = make_policy(architecture="temporal_decoder")
     assert (policy.config.lambda_pos, policy.config.lambda_rot, policy.config.lambda_grip) == (1.0, 1.0, 1.0)
     assert policy.config.lambda_smooth == 0.0
     batch = make_batch(with_subgoal_label=False)
 
     latent_tokens, latent_pad_mask = policy._encode_multimodal_latent(batch)
-    current_state = policy._current_state(batch)
+    current_state = policy._encode_state(policy._current_state(batch))
     with torch.no_grad():
         pred_actions = policy.decoder(latent_tokens, latent_pad_mask, current_state)
-    clean = pad_or_crop_horizon(batch[ACTION], policy.config.action_horizon)
+    clean_raw = pad_or_crop_horizon(batch[ACTION], policy.config.action_horizon)
+    clean = policy._encode_action_target(clean_raw)
     expected_pooled_mse = F.mse_loss(pred_actions, clean).item()
 
     with torch.no_grad():
@@ -348,17 +351,18 @@ def test_decomposed_loss_equals_old_pooled_mse_at_default_weights() -> None:
 
 def test_loss_decomposition_slices_are_position_orientation_gripper() -> None:
     """D. loss decomposition test (part 2): loss_pos/loss_rot/loss_grip are computed from exactly
-    the [:3] / [3:6] / [6:7] action slices."""
+    the [:3] / [3:9] / [9:10] *encoded* action slices (xyz / sin-cos rotation / gripper)."""
     policy = make_policy(architecture="temporal_decoder")
     batch = make_batch()
     latent_tokens, latent_pad_mask = policy._encode_multimodal_latent(batch)
-    current_state = policy._current_state(batch)
+    current_state = policy._encode_state(policy._current_state(batch))
     with torch.no_grad():
         pred_actions = policy.decoder(latent_tokens, latent_pad_mask, current_state)
-    clean = pad_or_crop_horizon(batch[ACTION], policy.config.action_horizon)
+    clean_raw = pad_or_crop_horizon(batch[ACTION], policy.config.action_horizon)
+    clean = policy._encode_action_target(clean_raw)
     expected_pos = F.mse_loss(pred_actions[..., :3], clean[..., :3]).item()
-    expected_rot = F.mse_loss(pred_actions[..., 3:6], clean[..., 3:6]).item()
-    expected_grip = F.mse_loss(pred_actions[..., 6:7], clean[..., 6:7]).item()
+    expected_rot = F.mse_loss(pred_actions[..., 3:9], clean[..., 3:9]).item()
+    expected_grip = F.mse_loss(pred_actions[..., 9:10], clean[..., 9:10]).item()
     with torch.no_grad():
         _, metrics = policy(batch)
     assert metrics["loss_pos"] == pytest.approx(expected_pos, abs=1e-6)
@@ -382,7 +386,7 @@ def test_temporal_decoder_never_calls_nominal_action_head(architecture: str) -> 
     backbone's own `predict_action_chunk` (SmolVLA's nominal action head)."""
     subgoal_kwargs = {"subgoal_labels_path": None} if architecture == "temporal_decoder_subgoal" else {}
     config = make_config(architecture=architecture, **subgoal_kwargs)
-    policy = SafeDiffVLAPolicy(config, backbone=NominalCallForbiddenBackbone(4, ACTION_DIM))
+    policy = SafeDiffVLAPolicy(config, backbone=NominalCallForbiddenBackbone(4, ACTION_DIM, state_dim=STATE_DIM))
     policy(make_batch())
     policy.plan_action_chunk(make_batch())
 

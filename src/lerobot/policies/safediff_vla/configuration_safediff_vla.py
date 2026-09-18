@@ -244,6 +244,18 @@ class SafeDiffVLAConfig(PreTrainedConfig):
                 f"a 7-dim action (3 position + 3 orientation + 1 gripper), got shape "
                 f"{self.action_feature.shape}."
             )
+        if self.architecture in ("temporal_decoder", "temporal_decoder_subgoal"):
+            # These architectures sin/cos-encode rotation (see `rotation_encoding.py`) for both
+            # `observation.state` and `action`, assuming the *same* 7-dim [xyz, rx, ry, rz,
+            # gripper] layout for both -- real state/action always share this layout (state is
+            # the current pose, action the next commanded one), so this is a real constraint, not
+            # an arbitrary one.
+            if self.robot_state_feature.shape[0] != 7:
+                raise ValueError(
+                    "temporal_decoder/temporal_decoder_subgoal's sin/cos rotation encoding assumes a "
+                    f"7-dim observation.state matching action's [xyz, rx, ry, rz, gripper] layout, got "
+                    f"shape {self.robot_state_feature.shape}."
+                )
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(lr=self.optimizer_lr, weight_decay=self.optimizer_weight_decay)

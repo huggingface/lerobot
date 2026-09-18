@@ -42,6 +42,9 @@ from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LAN
 from .configuration_safediff_vla import SafeDiffVLAConfig
 from .domain_adapter import LiberoBackboneDomainAdapter, load_processor_normalization_stats
 from .execution import ActionExecutor
+from .rotation_encoding import ENCODED_DIM
+from .rotation_encoding import decode as decode_rotation
+from .rotation_encoding import encode as encode_rotation
 from .state_predictor import SubgoalStatePredictor
 from .temporal_decoder import TemporalActionDecoder
 from .utils import pad_or_crop_horizon
@@ -78,14 +81,18 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
         if config.freeze_backbone:
             self.backbone.requires_grad_(False)
 
-        action_dim = config.action_feature.shape[0]
-        state_dim = config.robot_state_feature.shape[0]
-
         if self.architecture in ("temporal_decoder", "temporal_decoder_subgoal"):
             use_subgoal = self.architecture == "temporal_decoder_subgoal"
+            self._register_rotation_stats(dataset_stats)
+            # `ENCODED_DIM` (10) replaces the raw 7-D [xyz, rx, ry, rz, gripper] layout with
+            # [xyz, sin(rx), cos(rx), sin(ry), cos(ry), sin(rz), cos(rz), gripper] everywhere the
+            # decoder itself sees state/action -- see `rotation_encoding.py`. The *external* 7-D
+            # contract (`config.action_feature`/`config.robot_state_feature`, the dataset/env/
+            # postprocessor) is completely unaffected: `_encode_state` / `_encode_action_target` /
+            # `_decode_action_prediction` convert at this policy's own boundary only.
             self.decoder = TemporalActionDecoder(
-                action_dim,
-                state_dim,
+                ENCODED_DIM,
+                ENCODED_DIM,
                 self._multimodal_latent_dim(),
                 config.decoder_hidden_dim,
                 config.action_horizon,
@@ -98,7 +105,7 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
             if use_subgoal:
                 self.latent_pool_projection = nn.Linear(self._multimodal_latent_dim(), config.latent_dim)
                 self.subgoal_state_predictor = SubgoalStatePredictor(
-                    state_dim, config.latent_dim, config.state_head_hidden_dim
+                    ENCODED_DIM, config.latent_dim, config.state_head_hidden_dim
                 )
         elif self.architecture not in ("smolvla_nominal", "smolvla_finetune"):
             raise ValueError(f"Unknown architecture {self.architecture!r}")
@@ -131,6 +138,47 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
             action_dim=self.config.action_feature.shape[0],
             semantics=self.config.backbone_action_conversion_semantics,
         )
+
+    def _register_rotation_stats(self, dataset_stats: dict[str, dict[str, Any]] | None) -> None:
+        """Per-dimension mean/std for `observation.state[3:6]` / `action[3:6]` (rx, ry, rz),
+        used by `rotation_encoding.encode`/`decode` to recover raw radians from the outer
+        preprocessor's MEAN_STD-normalized values (and back). Same stats source/precedence as
+        `_make_domain_adapter`: live `dataset_stats` during training, else the saved checkpoint's
+        own normalizer stats when loading a pretrained model. Falls back to mean=0/std=1 (an
+        effective no-op un-normalize) when neither is available -- only ever exercised by tests
+        that build a policy from a bare config with synthetic data, where exact recovery of a
+        "raw" angle from meaningless random values has no correct answer anyway.
+        """
+        stats = dataset_stats
+        if stats is None and self.config.pretrained_path:
+            try:
+                stats = load_processor_normalization_stats(self.config.pretrained_path)
+            except Exception:  # noqa: BLE001 - best-effort; fall back below
+                stats = None
+
+        def rot_stat(feature: str, statistic: str) -> Tensor:
+            if stats is not None:
+                try:
+                    value = stats[feature][statistic]
+                    value = value if isinstance(value, Tensor) else torch.as_tensor(value)
+                    return value.reshape(-1)[3:6].float().clone()
+                except (KeyError, TypeError, IndexError):
+                    pass
+            return torch.zeros(3) if statistic == "mean" else torch.ones(3)
+
+        self.register_buffer("state_rot_mean", rot_stat(OBS_STATE, "mean"))
+        self.register_buffer("state_rot_std", rot_stat(OBS_STATE, "std"))
+        self.register_buffer("action_rot_mean", rot_stat(ACTION, "mean"))
+        self.register_buffer("action_rot_std", rot_stat(ACTION, "std"))
+
+    def _encode_state(self, state7: Tensor) -> Tensor:
+        return encode_rotation(state7, self.state_rot_mean, self.state_rot_std)
+
+    def _encode_action_target(self, action7: Tensor) -> Tensor:
+        return encode_rotation(action7, self.action_rot_mean, self.action_rot_std)
+
+    def _decode_action_prediction(self, action10: Tensor) -> Tensor:
+        return decode_rotation(action10, self.action_rot_mean, self.action_rot_std)
 
     def _unfreeze_backbone_vision_encoder(self) -> None:
         """Undo the vision-encoder freeze baked into the loaded SmolVLA checkpoint.
@@ -297,8 +345,9 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
 
     def _forward_temporal_decoder(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, float]]:
         latent_tokens, latent_pad_mask = self._encode_multimodal_latent(batch)
-        current_state = self._current_state(batch)
-        clean = pad_or_crop_horizon(batch[ACTION], self.config.action_horizon)
+        current_state = self._encode_state(self._current_state(batch))
+        clean_raw = pad_or_crop_horizon(batch[ACTION], self.config.action_horizon)
+        clean = self._encode_action_target(clean_raw)
 
         subgoal_state = None
         loss_subgoal = clean.new_zeros(())
@@ -307,13 +356,15 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
             subgoal_state = predicted_subgoal
             subgoal_target = batch.get("observation.subgoal_state")
             if subgoal_target is not None:
-                loss_subgoal = F.mse_loss(predicted_subgoal, subgoal_target)
+                loss_subgoal = F.mse_loss(predicted_subgoal, self._encode_state(subgoal_target))
 
         pred_actions = self.decoder(latent_tokens, latent_pad_mask, current_state, subgoal_state)
 
+        # xyz MSE / rotation sin-cos MSE (6-D now) / gripper MSE, in the encoded 10-D layout --
+        # see `rotation_encoding.py`.
         loss_pos = F.mse_loss(pred_actions[..., :3], clean[..., :3])
-        loss_rot = F.mse_loss(pred_actions[..., 3:6], clean[..., 3:6])
-        loss_grip = F.mse_loss(pred_actions[..., 6:7], clean[..., 6:7])
+        loss_rot = F.mse_loss(pred_actions[..., 3:9], clean[..., 3:9])
+        loss_grip = F.mse_loss(pred_actions[..., 9:10], clean[..., 9:10])
         if self.config.lambda_smooth > 0:
             velocity = pred_actions[:, 1:] - pred_actions[:, :-1]
             acceleration = velocity[:, 1:] - velocity[:, :-1]
@@ -323,14 +374,13 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
 
         # `F.mse_loss` reduces to the mean *within* each slice, so `loss_pos`/`loss_rot`/
         # `loss_grip` alone aren't comparable to each other or to a single pooled
-        # `F.mse_loss(pred_actions, clean)` over all 7 dims -- that pooled mean is itself the
-        # dim-count-weighted average `(3*loss_pos + 3*loss_rot + 1*loss_grip) / 7` (position and
-        # orientation, being 3-wide, each contribute 3x a 1-wide gripper at equal per-dimension
-        # weight). Pre-multiplying by each slice's dim count and dividing by `action_dim` (7)
-        # here reproduces that exactly, so lambda_pos=lambda_rot=lambda_grip=1.0 (the default)
-        # is numerically identical to the old single pooled MSE -- see
-        # `test_decomposed_loss_equals_old_pooled_mse_at_default_weights`.
-        position_dim, rotation_dim, gripper_dim = 3, 3, 1
+        # `F.mse_loss(pred_actions, clean)` over all 10 encoded dims -- that pooled mean is itself
+        # the dim-count-weighted average `(3*loss_pos + 6*loss_rot + 1*loss_grip) / 10` (position
+        # 3-wide, sin/cos rotation 6-wide, gripper 1-wide). Pre-multiplying by each slice's dim
+        # count and dividing by `action_dim` (10) here reproduces that exactly, so
+        # lambda_pos=lambda_rot=lambda_grip=1.0 (the default) is numerically identical to the old
+        # single pooled MSE -- see `test_decomposed_loss_equals_old_pooled_mse_at_default_weights`.
+        position_dim, rotation_dim, gripper_dim = 3, 6, 1
         action_dim = position_dim + rotation_dim + gripper_dim
         loss_action = (
             self.config.lambda_pos * position_dim * loss_pos
@@ -349,21 +399,29 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
             "loss_grip": loss_grip.item(),
             "loss_subgoal": loss_subgoal.item(),
             "loss_smooth": loss_smooth.item(),
-            "action_mean": clean.mean().item(),
-            "action_std": clean.std().item(),
+            "action_mean": clean_raw.mean().item(),
+            "action_std": clean_raw.std().item(),
         }
         return loss, metrics
 
     def _plan_temporal_decoder(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Tensor | float]]:
         started = perf_counter()
         latent_tokens, latent_pad_mask = self._encode_multimodal_latent(batch)
-        current_state = self._current_state(batch)
+        current_state = self._encode_state(self._current_state(batch))
         metrics: dict[str, Tensor | float] = {}
         subgoal_state = None
         if self.architecture == "temporal_decoder_subgoal":
             subgoal_state = self._predict_subgoal(latent_tokens, latent_pad_mask, current_state)
+            # NOTE: encoded (10-D) space, while `execution.ActionExecutor`'s completion gate
+            # compares this against the *raw* 7-D `current_state` it's given -- a pre-existing
+            # dimension mismatch for this (unused by us; not touched per the "don't fix subgoal
+            # architecture" scope of this change) gated path only.
             metrics["predicted_subgoal_state"] = subgoal_state
-        actions = self.decoder(latent_tokens, latent_pad_mask, current_state, subgoal_state)
+        actions_encoded = self.decoder(latent_tokens, latent_pad_mask, current_state, subgoal_state)
+        # Unit-normalize each (sin, cos) pair and `atan2` back to raw Euler, right at this
+        # policy's own output boundary -- everything downstream (`execution.ActionExecutor`, the
+        # postprocessor, the VLABench env) keeps receiving the original 7-D layout unchanged.
+        actions = self._decode_action_prediction(actions_encoded)
         metrics["runtime_ms"] = (perf_counter() - started) * 1000
         if actions.shape[1] > 2:
             velocity = actions[:, 1:] - actions[:, :-1]

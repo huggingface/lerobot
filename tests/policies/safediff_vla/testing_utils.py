@@ -17,7 +17,12 @@ class TinyBackbone(nn.Module):
     a real SmolVLA backbone, without needing one."""
 
     def __init__(
-        self, horizon: int, action_dim: int, feature_dim: int = 12, num_latent_tokens: int = 6
+        self,
+        horizon: int,
+        action_dim: int,
+        feature_dim: int = 12,
+        num_latent_tokens: int = 6,
+        state_dim: int = 5,
     ) -> None:
         super().__init__()
         self.horizon = horizon
@@ -25,9 +30,9 @@ class TinyBackbone(nn.Module):
         self.safediff_latent_dim = feature_dim
         self.multimodal_latent_dim = feature_dim
         self.num_latent_tokens = num_latent_tokens
-        self.projection = nn.Linear(5, feature_dim)
-        self.token_projection = nn.Linear(5, feature_dim)
-        self.nominal_head = nn.Linear(5, action_dim)
+        self.projection = nn.Linear(state_dim, feature_dim)
+        self.token_projection = nn.Linear(state_dim, feature_dim)
+        self.nominal_head = nn.Linear(state_dim, action_dim)
         self.reset_calls = 0
 
     def reset(self) -> None:
