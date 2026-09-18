@@ -230,7 +230,7 @@ def get_delta_indices(delta_timestamps: dict[str, list[float]], fps: int) -> dic
     return delta_indices
 
 
-def validate_frame(frame: dict, features: dict) -> None:
+def validate_frame(frame: dict, features: dict, *, record_language: bool = False) -> None:
     # DEFAULT_FEATURES (timestamp, frame_index, episode_index, index, task_index) are
     # auto-populated by the recording pipeline (add_frame / save_episode) and must not
     # be supplied by the caller. Excluding them here means any frame dict that contains
@@ -249,6 +249,11 @@ def validate_frame(frame: dict, features: dict) -> None:
 
     common_features = actual_features_for_validation & expected_features
     for name in common_features:
+        if record_language and features[name]["dtype"] == "language":
+            from .language import validate_language_rows
+
+            validate_language_rows(name, frame[name])
+            continue
         error_message += validate_feature_dtype_and_shape(name, features[name], frame[name])
 
     if error_message:

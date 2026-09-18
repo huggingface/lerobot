@@ -1,0 +1,257 @@
+# Physical agent improvement loop
+
+The physical agent tools extend the interactive language runtime with asynchronous
+VLA inference, tool-based intervention, episode recording, and versioned training
+experiments. Start them through the existing rollout entry point:
+
+```bash
+lerobot-rollout --agent_config=examples/rebot_agent/session.json
+```
+
+This is an experimental real-robot workflow. The supplied example targets the
+bimanual ReBot B601 and the dataset
+[`pepijn223/rebot_diverse_picking_100_annotated`](https://huggingface.co/datasets/pepijn223/rebot_diverse_picking_100_annotated).
+The software includes simulated hardware tests; those do not establish physical
+success, timing, or calibration on a particular installation.
+
+## Bootstrap a steerable VLA
+
+The pinned dataset revision in the example contains 100 episodes at 30 Hz, 14
+joint/gripper action dimensions, and base/left-wrist/right-wrist cameras. Its task
+table contains one task; the object-specific instructions are timestamped `subtask`
+rows in `language_persistent`. Reading only the task table loses those distinctions.
+
+The example uses the existing `TrainingRecipe` renderer and weighted sampler:
+
+```yaml
+blend:
+  subtask:
+    weight: 0.8
+    messages:
+      - {
+          role: user,
+          content: "${subtask}",
+          stream: low_level,
+          if_present: subtask,
+        }
+  high_level_task:
+    weight: 0.2
+    messages:
+      - { role: user, content: "${task}", stream: low_level }
+```
+
+Both branches train **actions**, conditioned on different instruction abstraction
+levels. This is not an 80/20 split between action loss and language prediction.
+The weights determine the expected sample mixture; they are not exact per-batch
+quotas. The existing sampler selects deterministically by sample index.
+
+`dataset.task_recipe` makes this usable with ordinary task-conditioned policies
+such as SmolVLA and Pi0.5. It renders one low-level user message into the sample's
+`task` input before collation, leaving source annotations and action targets intact.
+Train and held-out datasets use the same recipe. A missing selected instruction
+fails rather than silently substituting the generic task. Streaming datasets and
+recipes with text prediction targets are not supported by this task-string adapter;
+policies with native message/text supervision should use their own recipe processors.
+
+The experiment service reads `recipe_path` and embeds the full recipe in the saved
+candidate and training configuration. The original dataset remains unchanged.
+
+The example initializes two candidates:
+
+- `smolvla_80_20_v1`, based on `lerobot/smolvla_base`.
+- `pi05_80_20_v1`, based on `lerobot/pi05_base`.
+
+Their batch sizes and 20,000-step budgets are starting configurations, not measured
+performance recommendations. Adjust them to the training host. Input features are
+inferred from the ReBot dataset. The example holds out the last 10 episodes using
+`eval_split=0.1`; do not later mix those episodes into correction training. Offline
+held-out loss is distinct from real-world task success.
+
+In the interactive prompt:
+
+```text
+/train smolvla_80_20_v1
+```
+
+This launches `lerobot-train` as a subprocess and returns a job ID. Use `job_status`
+to inspect logs and the output directory. For PEFT, create another candidate with
+LeRobot's `peft` configuration, as described in the [PEFT guide](./peft_training).
+Training jobs run on the host running the service; they do not silently allocate
+cloud machines. Stop its physical rollout before training on that host.
+
+## Connect the real robot
+
+Replace every `REPLACE_*` value in `examples/rebot_agent/session.json` with the
+actual arm ports and camera IDs. Preserve the dataset's camera names and joint
+ordering. Select the inference device through the existing `--policy.device` flag.
+The service can start without a model and does not connect the arms until
+`start_rollout` is called.
+
+Register a completed checkpoint with `register_policy`:
+
+```json
+{
+  "name": "register_policy",
+  "arguments": {
+    "name": "smolvla_rebot_v1",
+    "checkpoint": "/absolute/training/output/checkpoints/last/pretrained_model"
+  }
+}
+```
+
+The checkpoint must declare the configured action dimension; the normal rollout
+pipeline then validates its observation features. Registration alone does not
+prove robot compatibility. Switching models means stopping the current session,
+then loading another registered checkpoint with its own processors.
+
+```text
+/rollout smolvla_rebot_v1 Put the white tape roll into the black bin.
+```
+
+The default controller is the VLA. Network reasoning and policy inference run on
+workers; only the runtime thread reads the robot and dispatches motor commands.
+The runtime discards results from older task/controller revisions or observations
+outside the configured age bound. An operator pause clears pending actions, and
+a delayed decision cannot restart that paused session.
+
+Direct motions and policy actions share configured joint and per-tick displacement
+limits. Driver-side clipping is preserved. A direct motion finishes dispatching its
+trajectory and holds; `resume_policy` explicitly hands control back. Observe the
+robot after a tool motion to verify its physical effect. IK solves a kinematic target;
+it is not a collision planner or a grasp-success detector.
+
+Optional `ik` configuration maps each arm's robot joint names to URDF joint names,
+with `urdf_path`, `target_frame`, and `reference_frame`. `move_ee` takes a 4x4 rigid
+transform whose translation is in metres in that configured frame. Obtain those
+values from the installation's calibration. Do not substitute guessed camera-to-arm
+transforms.
+
+## Use tools from Codex, Claude, or another agent
+
+The service binds to `127.0.0.1` and writes a random bearer token to a mode-0600 file
+under its output root. `GET /tools` returns provider-neutral function schemas;
+`POST /call` executes a named tool. For another host, use an SSH tunnel to the local
+endpoint. The same API is available through a small CLI client:
+
+```bash
+python -m lerobot.rollout.agent.client \
+  --token-file=outputs/rebot_agent/tool_token \
+  --name=get_observation
+```
+
+Observations include named joints, JPEG camera views, task, active instruction,
+control revision, observation ID, timestamp, recent events, and the latest VLA
+proposal. `get_action` inspects that proposal without advancing policy state.
+For motion decisions, pass the observation's `revision` and `observed_at` with the
+call. Do not retry a motion after a transport timeout; inspect session status first.
+
+Tools include:
+
+| Tool group                | Operations                                                                                             |
+| ------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Observe and steer         | `get_observation`, `get_action`, `set_task`, `steer`, `pause`, `resume_policy`                         |
+| Correct                   | `move_joints`, `offset_joints`, `set_gripper`, `move_ee`                                               |
+| Collect                   | `start_rollout`, `finish_episode`, `stop_rollout`                                                      |
+| Train and choose policies | `create_candidate`, `list_candidates`, `start_training`, `job_status`, `cancel_job`, `register_policy` |
+| Improve                   | `build_dagger_dataset`, `compare_runs`, `create_code_candidate`, `test_code_candidate`                 |
+
+`set_task` changes the overall goal; `steer` changes the active subtask while keeping
+that goal. For joint motions an optional `instruction` labels the corrective behavior.
+Finish each attempt with an outcome (`success`, `failure`, or `unknown`) and evidence:
+
+```text
+/finish failure The tape roll remained outside the bin after release.
+```
+
+The session pauses for an operator reset. Enter the next task or `/resume` after
+resetting the scene. The 50-episode cap counts attempts, including failures and
+unknown outcomes; it is not a request to discard attempts until 50 successes remain.
+`/stop` finalizes recording and disconnects the robot. `/quit` closes the tool service.
+
+To use an API-based Astra supervisor, configure an environment API key and add:
+
+```json
+"supervisor": {"model": "gpt-6-astra", "timeout_s": 30}
+```
+
+An optional `prompt_path` supplies a versioned supervisor prompt. The built-in API
+adapter polls during active sessions and can resume after its own recovery motions.
+It respects operator pauses and episode-reset boundaries. The broader experiment
+tools are also available to an external coding agent, including while no robot is
+connected. Other model providers can use the local API; no Anthropic or DeepSeek
+SDK is required for that mode.
+
+The API supervisor uses timestamped views rather than a hard real-time veto on
+every motor action. Measure its latency and intervention quality on the actual
+host. Local limits and pause handling do not depend on a network response.
+
+## Record, correct, and fine-tune again
+
+Each run writes:
+
+- `dataset/`: a standard LeRobot dataset with observations, **actually sent** actions,
+  intervention flags, and live language annotations.
+- `events.jsonl`: proposed action chunks, applied commands, tool calls, controller
+  transitions, instructions, and observation times.
+- `episodes.jsonl`: outcomes, evidence, label source, frame counts and interventions.
+- `session.json`: policy and session configuration.
+
+Hold frames preserve elapsed control ticks during inference gaps. Raw proposals
+remain separate from the action targets. A model-generated success label remains
+a model assessment; use consistent visual criteria or human verification for the
+physical evaluation.
+
+`build_dagger_dataset` accepts a JSON specification with a seed dataset and explicitly
+selected correction episode IDs. It produces a **new** dataset, preserving seed
+training episodes and splitting disjoint executed intervention spans into separate
+correction episodes. It rebases their language timestamps. VLA-only frames and
+rejected VLA proposals are not treated as correction targets. This is intervention
+aggregation, not expert relabeling of every visited state; inspect the quality of
+Astra's corrections before using them as teaching data.
+
+```json
+{
+  "seed": {
+    "repo_id": "pepijn223/rebot_diverse_picking_100_annotated",
+    "revision": "93c97807c46535745d0587d4296416bf2d4aa80d",
+    "episodes": [0, 1, 2]
+  },
+  "corrections": [
+    {
+      "repo_id": "local/RUN_ID",
+      "root": "/absolute/outputs/rebot_agent/runs/RUN_ID/dataset",
+      "episodes": [0, 3]
+    }
+  ],
+  "output_repo_id": "local/rebot_round_1",
+  "output_root": "/absolute/datasets/rebot_round_1"
+}
+```
+
+The short seed list above is illustrative; select the intended seed training split
+and retain a separate fixed holdout. Create a new candidate from the previous
+checkpoint or another base VLA, pointing `training.dataset` at the aggregated data.
+Launch training, register the resulting checkpoint, and evaluate it in a new physical
+session. Recompute a meaningful held-out split rather than blindly using the last
+10% of an aggregation containing correction clips.
+
+## Improve prompts and code
+
+Keep the task set, reset protocol, and success rubric fixed while comparing versions.
+`compare_runs` includes unknown outcomes in the success denominator and reports
+interventions and VLA action counts, without automatically promoting a candidate.
+Evaluate VLA-only and hybrid sessions separately: more Astra takeovers can raise
+hybrid success without improving the VLA's own steerability.
+
+`create_code_candidate` applies a proposed git diff to a separate worktree based
+on the committed service source. `test_code_candidate` runs the relevant tests and
+records its logs. Activate code by stopping the service and starting it from that
+candidate checkout after validation; running robot code is never hot-patched.
+An external Codex agent can use the same worktree, tests, traces, and physical
+results to make and evaluate further changes.
+
+The design is inspired by [Steerable Policies](https://steerable-policies.github.io/).
+Its richer steering styles also include motion and visual commands. The supplied
+80/20 recipe uses the annotations already present here; it does not create missing
+motion, pixel, or trace supervision. Add grounded annotations and additional weighted
+recipe branches when testing those command styles.

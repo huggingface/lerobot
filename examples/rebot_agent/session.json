@@ -1,0 +1,63 @@
+{
+  "root": "outputs/rebot_agent",
+  "port": 8767,
+  "action_dim": 14,
+  "robot_args": [
+    "--robot.type=bi_rebot_b601_follower",
+    "--robot.left_arm_config.port=/dev/serial/by-id/REPLACE_LEFT_ARM",
+    "--robot.right_arm_config.port=/dev/serial/by-id/REPLACE_RIGHT_ARM",
+    "--robot.cameras={base: {type: opencv, index_or_path: REPLACE_BASE_CAMERA, width: 640, height: 480, fps: 30}, left_wrist: {type: opencv, index_or_path: REPLACE_LEFT_CAMERA, width: 640, height: 480, fps: 30}, right_wrist: {type: opencv, index_or_path: REPLACE_RIGHT_CAMERA, width: 640, height: 480, fps: 30}}",
+    "--policy.device=cuda"
+  ],
+  "control": {
+    "fps": 30,
+    "max_episodes": 50,
+    "max_episode_s": 120,
+    "inference_max_age_s": 2,
+    "decision_max_age_s": 5,
+    "joint_speed_deg_s": 15,
+    "max_motion_s": 5
+  },
+  "candidates": [
+    {
+      "name": "smolvla_80_20_v1",
+      "base_model": "lerobot/smolvla_base",
+      "recipe_path": "examples/rebot_agent/steerable_80_20.yaml",
+      "training": {
+        "dataset": {
+          "repo_id": "pepijn223/rebot_diverse_picking_100_annotated",
+          "revision": "93c97807c46535745d0587d4296416bf2d4aa80d",
+          "eval_split": 0.1
+        },
+        "policy": {"device": "cuda", "input_features": {}, "push_to_hub": false},
+        "steps": 20000,
+        "batch_size": 16,
+        "num_workers": 4,
+        "save_freq": 5000,
+        "env_eval_freq": 0,
+        "eval_steps": 1000,
+        "wandb": {"enable": false}
+      }
+    },
+    {
+      "name": "pi05_80_20_v1",
+      "base_model": "lerobot/pi05_base",
+      "recipe_path": "examples/rebot_agent/steerable_80_20.yaml",
+      "training": {
+        "dataset": {
+          "repo_id": "pepijn223/rebot_diverse_picking_100_annotated",
+          "revision": "93c97807c46535745d0587d4296416bf2d4aa80d",
+          "eval_split": 0.1
+        },
+        "policy": {"device": "cuda", "input_features": {}, "push_to_hub": false},
+        "steps": 20000,
+        "batch_size": 4,
+        "num_workers": 4,
+        "save_freq": 5000,
+        "env_eval_freq": 0,
+        "eval_steps": 1000,
+        "wandb": {"enable": false}
+      }
+    }
+  ]
+}

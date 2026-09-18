@@ -15,6 +15,7 @@
 # limitations under the License.
 import logging
 import math
+from functools import partial
 from pprint import pformat
 
 import torch
@@ -26,11 +27,18 @@ from lerobot.transforms import ImageTransforms
 from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_IMAGE, OBS_PREFIX, OBS_STATE, REWARD
 
 from .dataset_metadata import LeRobotDatasetMetadata
+from .language_task import RecipeTaskDataset
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
 from .storage import DEFAULT_STORAGE_FORMAT, load_dataset_metadata
 from .streaming_dataset import StreamingLeRobotDataset
 from .utils import resolve_episode_indices
+
+
+def _training_dataset(cfg: TrainPipelineConfig):
+    if cfg.dataset.task_recipe is not None:
+        return partial(RecipeTaskDataset, task_recipe=cfg.dataset.task_recipe)
+    return LeRobotDataset
 
 
 def resolve_delta_timestamps(
@@ -144,7 +152,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                     f"repo_type='bucket' is streaming-only for the default {DEFAULT_STORAGE_FORMAT!r} "
                     "storage format: set dataset.streaming=true to train from an HF Storage Bucket."
                 )
-            dataset = LeRobotDataset(
+            dataset = _training_dataset(cfg)(
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
                 episodes=episodes,
@@ -240,7 +248,7 @@ def make_train_eval_datasets(
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
     )
 
-    train_dataset = LeRobotDataset(
+    train_dataset = _training_dataset(cfg)(
         cfg.dataset.repo_id,
         root=cfg.dataset.root,
         episodes=train_episodes,
@@ -254,7 +262,7 @@ def make_train_eval_datasets(
         repo_type=cfg.dataset.repo_type,
     )
 
-    eval_dataset = LeRobotDataset(
+    eval_dataset = _training_dataset(cfg)(
         cfg.dataset.repo_id,
         root=cfg.dataset.root,
         episodes=eval_episodes,

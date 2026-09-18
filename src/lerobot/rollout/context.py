@@ -227,7 +227,7 @@ class PolicyContext:
     policy: PreTrainedPolicy
     preprocessor: PolicyProcessorPipeline
     postprocessor: PolicyProcessorPipeline
-    inference: InferenceEngine
+    inference: InferenceEngine | None
 
 
 @dataclass
@@ -303,14 +303,17 @@ def build_rollout_context(
     teleop_action_processor: RobotProcessorPipeline | None = None,
     robot_action_processor: RobotProcessorPipeline | None = None,
     robot_observation_processor: RobotProcessorPipeline | None = None,
+    *,
+    build_inference: bool = True,
 ) -> RolloutContext:
     """Wire up policy, processors, hardware, dataset, and inference engine.
 
+    Set ``build_inference=False`` when a caller owns action-chunk inference (language/agent runtime).
     The order is policy-first / hardware-last so a bad ``--policy.path``
     fails fast without touching the robot. A missing policy configuration raises
     ``ValueError`` before any policy access.
     """
-    is_rtc = isinstance(cfg.inference, RTCInferenceConfig)
+    is_rtc = build_inference and isinstance(cfg.inference, RTCInferenceConfig)
 
     # --- 1. Policy (heavy I/O, but no hardware yet) -------------------
     policy_config = cfg.policy
@@ -560,7 +563,7 @@ def build_rollout_context(
         ),
         None,
     )
-    if isinstance(cfg.inference, SyncInferenceConfig) and relative_action_step is not None:
+    if build_inference and isinstance(cfg.inference, SyncInferenceConfig) and relative_action_step is not None:
         raise NotImplementedError(
             "SyncInferenceEngine does not support policies with relative actions for now."
             "Use --inference.type=rtc or remove relative action processor steps from the policy pipeline."
@@ -572,22 +575,24 @@ def build_rollout_context(
         cfg.inference.type if hasattr(cfg.inference, "type") else "sync",
     )
     task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
-    inference_strategy = create_inference_engine(
-        cfg.inference,
-        policy=policy,
-        preprocessor=preprocessor,
-        postprocessor=postprocessor,
-        robot_wrapper=robot_wrapper,
-        hw_features=hw_features,
-        dataset_features=dataset_features,
-        ordered_action_keys=ordered_action_keys,
-        task=task_str,
-        fps=cfg.fps,
-        device=cfg.device,
-        use_torch_compile=torch_compile_active,
-        compile_warmup_inferences=cfg.compile_warmup_inferences,
-        shutdown_event=shutdown_event,
-    )
+    inference_strategy = None
+    if build_inference:
+        inference_strategy = create_inference_engine(
+            cfg.inference,
+            policy=policy,
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            robot_wrapper=robot_wrapper,
+            hw_features=hw_features,
+            dataset_features=dataset_features,
+            ordered_action_keys=ordered_action_keys,
+            task=task_str,
+            fps=cfg.fps,
+            device=cfg.device,
+            use_torch_compile=torch_compile_active,
+            compile_warmup_inferences=cfg.compile_warmup_inferences,
+            shutdown_event=shutdown_event,
+        )
 
     # --- 8. Assemble ---------------------------------------------------
     logger.info("Rollout context assembled successfully")

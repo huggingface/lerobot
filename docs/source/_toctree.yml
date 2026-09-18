@@ -93,6 +93,8 @@
     title: TOPReward
   title: "Reward Models"
 - sections:
+  - local: physical_agent_loop
+    title: Physical Agent Improvement Loop
   - local: inference
     title: Policy Deployment (lerobot-rollout)
   - local: async

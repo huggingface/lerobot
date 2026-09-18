@@ -1,0 +1,11 @@
+# Both branches train actions. "high_level" here describes instruction abstraction,
+# not a text-prediction target. Branch selection uses the existing recipe sampler.
+blend:
+  subtask:
+    weight: 0.8
+    messages:
+      - {role: user, content: "${subtask}", stream: low_level, if_present: subtask}
+  high_level_task:
+    weight: 0.2
+    messages:
+      - {role: user, content: "${task}", stream: low_level}
