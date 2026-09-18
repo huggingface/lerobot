@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ruff: noqa: N802
-
 from lerobot.motors.motors_bus import (
     Motor,
     MotorsBus,
@@ -79,55 +77,91 @@ DUMMY_MODEL_RESOLUTION_TABLE = {
 }
 
 
-class MockPortHandler:
-    def __init__(self, port_name):
-        self.is_open: bool = False
-        self.baudrate: int
-        self.packet_start_time: float
-        self.packet_timeout: float
-        self.tx_time_per_byte: float
-        self.is_using: bool = False
-        self.port_name: str = port_name
-        self.ser = None
+class MockTransport:
+    """In-memory stand-in for the serial transport.
 
-    def openPort(self):
-        self.is_open = True
-        return self.is_open
+    Holds one byte per (motor id, register address), so a test seeds a value or
+    reads back what the bus wrote without ever building a packet. Framing,
+    checksums and sync instructions are the transport's business and are tested
+    where they are implemented.
+    """
 
-    def closePort(self):
-        self.is_open = False
+    def __init__(self, baudrate: int = 1_000_000, timeout_ms: int = 1000):
+        self.baudrate = baudrate
+        self.timeout_ms = timeout_ms
+        self._open = False
 
-    def clearPort(self): ...
-    def setPortName(self, port_name):
-        self.port_name = port_name
+        self.registers: dict[tuple[int, int], int] = {}
+        self.status: dict[int, int] = {}  # id -> status error byte
+        self.absent: set[int] = set()  # ids that never answer
+        self.fail_times: int = 0  # make the next N calls time out
 
-    def getPortName(self):
-        return self.port_name
+        self.reads: list[tuple[int, int, int]] = []
+        self.writes: list[tuple[int, int, bytes]] = []
+        self.sync_reads: list[tuple[list[int], int, int]] = []
+        self.sync_writes: list[tuple[list[int], int, list[bytes]]] = []
 
-    def setBaudRate(self, baudrate):
-        self.baudrate: baudrate
+    # -- test-side helpers -------------------------------------------------
 
-    def getBaudRate(self):
-        return self.baudrate
+    def seed(self, motor_id: int, addr: int, data: bytes) -> None:
+        for offset, byte in enumerate(data):
+            self.registers[(motor_id, addr + offset)] = byte
 
-    def getBytesAvailable(self): ...
-    def readPort(self, length): ...
-    def writePort(self, packet): ...
-    def setPacketTimeout(self, packet_length): ...
-    def setPacketTimeoutMillis(self, msec): ...
-    def isPacketTimeout(self): ...
-    def getCurrentTime(self): ...
-    def getTimeSinceStart(self): ...
-    def setupPort(self, cflag_baud): ...
-    def getCFlagBaud(self, baudrate): ...
+    def stored(self, motor_id: int, addr: int, length: int) -> bytes:
+        return bytes(self.registers.get((motor_id, addr + i), 0) for i in range(length))
+
+    # -- MotorTransport ----------------------------------------------------
+
+    @property
+    def is_open(self) -> bool:
+        return self._open
+
+    def open(self) -> None:
+        self._open = True
+
+    def close(self) -> None:
+        self._open = False
+
+    def set_baudrate(self, baudrate: int) -> None:
+        self.baudrate = baudrate
+
+    def set_timeout(self, timeout_ms: int) -> None:
+        self.timeout_ms = timeout_ms
+
+    def _answer(self, motor_id: int) -> None:
+        if self.fail_times > 0:
+            self.fail_times -= 1
+            raise RuntimeError("Timeout error")
+        if motor_id in self.absent:
+            raise RuntimeError("Timeout error")
+
+    def read(self, motor_id: int, addr: int, length: int) -> tuple[bytes, int]:
+        self._answer(motor_id)
+        self.reads.append((motor_id, addr, length))
+        return self.stored(motor_id, addr, length), self.status.get(motor_id, 0)
+
+    def write(self, motor_id: int, addr: int, data: bytes) -> int:
+        self._answer(motor_id)
+        self.writes.append((motor_id, addr, data))
+        self.seed(motor_id, addr, data)
+        return self.status.get(motor_id, 0)
+
+    def sync_read(self, motor_ids: list[int], addr: int, length: int) -> list[bytes]:
+        for motor_id in motor_ids:
+            self._answer(motor_id)
+        self.sync_reads.append((list(motor_ids), addr, length))
+        return [self.stored(motor_id, addr, length) for motor_id in motor_ids]
+
+    def sync_write(self, motor_ids: list[int], addr: int, data: list[bytes]) -> None:
+        for motor_id in motor_ids:
+            self._answer(motor_id)
+        self.sync_writes.append((list(motor_ids), addr, list(data)))
+        for motor_id, payload in zip(motor_ids, data, strict=True):
+            self.seed(motor_id, addr, payload)
 
 
 class MockMotorsBus(MotorsBus):
-    """Mock motor bus that bypasses hardware dependency checks.
-
-    Inherits from MotorsBus (alias for SerialMotorsBus) for type compatibility,
-    but calls MotorsBusBase.__init__ directly to skip the pyserial/deepdiff guards.
-    """
+    """Bus wired to a `MockTransport` instead of a serial port."""
 
     available_baudrates = [500_000, 1_000_000]
     default_timeout = 1000
@@ -136,13 +170,14 @@ class MockMotorsBus(MotorsBus):
     model_encoding_table = DUMMY_MODEL_ENCODING_TABLE
     model_number_table = DUMMY_MODEL_NUMBER_TABLE
     model_resolution_table = DUMMY_MODEL_RESOLUTION_TABLE
+    model_number_address = DUMMY_CTRL_TABLE_2["Model_Number"]
+    max_id = 3
     normalized_data = ["Present_Position", "Goal_Position"]
 
     def __init__(self, port: str, motors: dict[str, Motor]):
-        # Skip SerialMotorsBus.__init__ (which guards pyserial/deepdiff)
-        # and call the base class directly — this mock never touches real serial.
+        # Skip SerialMotorsBus.__init__: it guards deepdiff and builds a real transport.
         MotorsBusBase.__init__(self, port, motors)
-        self.port_handler = MockPortHandler(port)
+        self._io = MockTransport()
         self._id_to_model_dict = {m.id: m.model for m in self.motors.values()}
         self._id_to_name_dict = {m.id: name for name, m in self.motors.items()}
         self._model_nb_to_model_dict = {v: k for k, v in self.model_number_table.items()}
@@ -160,5 +195,8 @@ class MockMotorsBus(MotorsBus):
     def _get_half_turn_homings(self, positions): ...
     def _encode_sign(self, data_name, ids_values): ...
     def _decode_sign(self, data_name, ids_values): ...
-    def _split_into_byte_chunks(self, value, length): ...
-    def broadcast_ping(self, num_retry, raise_on_error): ...
+    def _split_into_byte_chunks(self, value, length):
+        return list(value.to_bytes(length, "little"))
+
+    def _join_byte_chunks(self, data, length):
+        return int.from_bytes(data, "little")

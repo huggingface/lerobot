@@ -14,41 +14,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import re
-import sys
-from collections.abc import Generator
+"""Dynamixel-specific behaviour.
+
+Register access itself is family-agnostic and covered once in test_motors_bus.py;
+what is tested here is what Dynamixel does differently -- little-endian registers,
+two's-complement homing offsets, and a drive mode that is a motor register rather
+than a calibration-only field.
+"""
+
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.motors.dynamixel import MODEL_NUMBER_TABLE, DynamixelMotorsBus
+from lerobot.motors.dynamixel import DynamixelMotorsBus
 from lerobot.motors.dynamixel.tables import X_SERIES_CONTROL_TABLE
 from lerobot.motors.encoding_utils import encode_twos_complement
-
-try:
-    import dynamixel_sdk as dxl
-
-    from tests.mocks.mock_dynamixel import MockMotors, MockPortHandler
-except (ImportError, ModuleNotFoundError):
-    pytest.skip("dynamixel_sdk not available", allow_module_level=True)
-
-
-@pytest.fixture(autouse=True)
-def patch_port_handler():
-    if sys.platform == "darwin":
-        with patch.object(dxl, "PortHandler", MockPortHandler):
-            yield
-    else:
-        yield
-
-
-@pytest.fixture
-def mock_motors() -> Generator[MockMotors, None, None]:
-    motors = MockMotors()
-    motors.open()
-    yield motors
-    motors.close()
+from tests.mocks.mock_motors_bus import MockTransport
 
 
 @pytest.fixture
@@ -66,22 +48,33 @@ def dummy_calibration(dummy_motors) -> dict[str, MotorCalibration]:
     homings = [-709, -2006, 1624]
     mins = [43, 27, 145]
     maxes = [1335, 3608, 3999]
-    calibration = {}
-    for motor, m in dummy_motors.items():
-        calibration[motor] = MotorCalibration(
+    return {
+        motor: MotorCalibration(
             id=m.id,
             drive_mode=drive_modes[m.id - 1],
             homing_offset=homings[m.id - 1],
             range_min=mins[m.id - 1],
             range_max=maxes[m.id - 1],
         )
-    return calibration
+        for motor, m in dummy_motors.items()
+    }
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason=f"No patching needed on {sys.platform=}")
-def test_autouse_patch():
-    """Ensures that the autouse fixture correctly patches dxl.PortHandler with MockPortHandler."""
-    assert dxl.PortHandler is MockPortHandler
+def make_bus(motors, calibration=None) -> DynamixelMotorsBus:
+    bus = DynamixelMotorsBus(port="/dev/dummy-port", motors=motors, calibration=calibration)
+    bus._io = MockTransport()
+    bus.connect(handshake=False)
+    return bus
+
+
+def seed(bus, data_name: str, motor_id: int, value: int) -> None:
+    addr, length = X_SERIES_CONTROL_TABLE[data_name]
+    bus._io.seed(motor_id, addr, bytes(bus._split_into_byte_chunks(value, length)))
+
+
+def written(bus, data_name: str, motor_id: int) -> int:
+    addr, length = X_SERIES_CONTROL_TABLE[data_name]
+    return bus._join_byte_chunks(bus._io.stored(motor_id, addr, length), length)
 
 
 @pytest.mark.parametrize(
@@ -100,6 +93,7 @@ def test_autouse_patch():
 def test__split_into_byte_chunks(value, length, expected):
     bus = DynamixelMotorsBus("", {})
     assert bus._split_into_byte_chunks(value, length) == expected
+    assert bus._join_byte_chunks(bytes(expected), length) == value
 
 
 def test_abc_implementation(dummy_motors):
@@ -107,316 +101,62 @@ def test_abc_implementation(dummy_motors):
     DynamixelMotorsBus(port="/dev/dummy-port", motors=dummy_motors)
 
 
-@pytest.mark.parametrize("id_", [1, 2, 3])
-def test_ping(id_, mock_motors, dummy_motors):
-    expected_model_nb = MODEL_NUMBER_TABLE[dummy_motors[f"dummy_{id_}"].model]
-    stub = mock_motors.build_ping_stub(id_, expected_model_nb)
-    bus = DynamixelMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(handshake=False)
+def test_is_calibrated(dummy_motors, dummy_calibration):
+    bus = make_bus(dummy_motors, dummy_calibration)
+    for cal in dummy_calibration.values():
+        seed(bus, "Drive_Mode", cal.id, cal.drive_mode)
+        seed(bus, "Homing_Offset", cal.id, encode_twos_complement(cal.homing_offset, 4))
+        seed(bus, "Min_Position_Limit", cal.id, cal.range_min)
+        seed(bus, "Max_Position_Limit", cal.id, cal.range_max)
 
-    ping_model_nb = bus.ping(id_)
-
-    assert ping_model_nb == expected_model_nb
-    assert mock_motors.stubs[stub].called
+    assert bus.is_calibrated
 
 
-def test_broadcast_ping(mock_motors, dummy_motors):
-    models = {m.id: m.model for m in dummy_motors.values()}
-    expected_model_nbs = {id_: MODEL_NUMBER_TABLE[model] for id_, model in models.items()}
-    stub = mock_motors.build_broadcast_ping_stub(expected_model_nbs)
-    bus = DynamixelMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(handshake=False)
-
-    ping_model_nbs = bus.broadcast_ping()
-
-    assert ping_model_nbs == expected_model_nbs
-    assert mock_motors.stubs[stub].called
-
-
-@pytest.mark.parametrize(
-    "addr, length, id_, value",
-    [
-        (0, 1, 1, 2),
-        (10, 2, 2, 999),
-        (42, 4, 3, 1337),
-    ],
-)
-def test__read(addr, length, id_, value, mock_motors, dummy_motors):
-    stub = mock_motors.build_read_stub(addr, length, id_, value)
-    bus = DynamixelMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(handshake=False)
-
-    read_value, _, _ = bus._read(addr, length, id_)
-
-    assert mock_motors.stubs[stub].called
-    assert read_value == value
-
-
-@pytest.mark.parametrize("raise_on_error", (True, False))
-def test__read_error(raise_on_error, mock_motors, dummy_motors):
-    addr, length, id_, value, error = (10, 4, 1, 1337, dxl.ERRNUM_DATA_LIMIT)
-    stub = mock_motors.build_read_stub(addr, length, id_, value, error=error)
-    bus = DynamixelMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(handshake=False)
-
-    if raise_on_error:
-        with pytest.raises(
-            RuntimeError, match=re.escape("[RxPacketError] The data value exceeds the limit value!")
-        ):
-            bus._read(addr, length, id_, raise_on_error=raise_on_error)
-    else:
-        _, _, read_error = bus._read(addr, length, id_, raise_on_error=raise_on_error)
-        assert read_error == error
-
-    assert mock_motors.stubs[stub].called
-
-
-@pytest.mark.parametrize("raise_on_error", (True, False))
-def test__read_comm(raise_on_error, mock_motors, dummy_motors):
-    addr, length, id_, value = (10, 4, 1, 1337)
-    stub = mock_motors.build_read_stub(addr, length, id_, value, reply=False)
-    bus = DynamixelMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(handshake=False)
-
-    if raise_on_error:
-        with pytest.raises(ConnectionError, match=re.escape("[TxRxResult] There is no status packet!")):
-            bus._read(addr, length, id_, raise_on_error=raise_on_error)
-    else:
-        _, read_comm, _ = bus._read(addr, length, id_, raise_on_error=raise_on_error)
-        assert read_comm == dxl.COMM_RX_TIMEOUT
-
-    assert mock_motors.stubs[stub].called
-
-
-@pytest.mark.parametrize(
-    "addr, length, id_, value",
-    [
-        (0, 1, 1, 2),
-        (10, 2, 2, 999),
-        (42, 4, 3, 1337),
-    ],
-)
-def test__write(addr, length, id_, value, mock_motors, dummy_motors):
-    stub = mock_motors.build_write_stub(addr, length, id_, value)
-    bus = DynamixelMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(handshake=False)
-
-    comm, error = bus._write(addr, length, id_, value)
-
-    assert mock_motors.stubs[stub].called
-    assert comm == dxl.COMM_SUCCESS
-    assert error == 0
-
-
-@pytest.mark.parametrize("raise_on_error", (True, False))
-def test__write_error(raise_on_error, mock_motors, dummy_motors):
-    addr, length, id_, value, error = (10, 4, 1, 1337, dxl.ERRNUM_DATA_LIMIT)
-    stub = mock_motors.build_write_stub(addr, length, id_, value, error=error)
-    bus = DynamixelMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(handshake=False)
-
-    if raise_on_error:
-        with pytest.raises(
-            RuntimeError, match=re.escape("[RxPacketError] The data value exceeds the limit value!")
-        ):
-            bus._write(addr, length, id_, value, raise_on_error=raise_on_error)
-    else:
-        _, write_error = bus._write(addr, length, id_, value, raise_on_error=raise_on_error)
-        assert write_error == error
-
-    assert mock_motors.stubs[stub].called
-
-
-@pytest.mark.parametrize("raise_on_error", (True, False))
-def test__write_comm(raise_on_error, mock_motors, dummy_motors):
-    addr, length, id_, value = (10, 4, 1, 1337)
-    stub = mock_motors.build_write_stub(addr, length, id_, value, reply=False)
-    bus = DynamixelMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(handshake=False)
-
-    if raise_on_error:
-        with pytest.raises(ConnectionError, match=re.escape("[TxRxResult] There is no status packet!")):
-            bus._write(addr, length, id_, value, raise_on_error=raise_on_error)
-    else:
-        write_comm, _ = bus._write(addr, length, id_, value, raise_on_error=raise_on_error)
-        assert write_comm == dxl.COMM_RX_TIMEOUT
-
-    assert mock_motors.stubs[stub].called
-
-
-@pytest.mark.parametrize(
-    "addr, length, ids_values",
-    [
-        (0, 1, {1: 4}),
-        (10, 2, {1: 1337, 2: 42}),
-        (42, 4, {1: 1337, 2: 42, 3: 4016}),
-    ],
-    ids=["1 motor", "2 motors", "3 motors"],
-)
-def test__sync_read(addr, length, ids_values, mock_motors, dummy_motors):
-    stub = mock_motors.build_sync_read_stub(addr, length, ids_values)
-    bus = DynamixelMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(handshake=False)
-
-    read_values, _ = bus._sync_read(addr, length, list(ids_values))
-
-    assert mock_motors.stubs[stub].called
-    assert read_values == ids_values
-
-
-@pytest.mark.parametrize("raise_on_error", (True, False))
-def test__sync_read_comm(raise_on_error, mock_motors, dummy_motors):
-    addr, length, ids_values = (10, 4, {1: 1337})
-    stub = mock_motors.build_sync_read_stub(addr, length, ids_values, reply=False)
-    bus = DynamixelMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(handshake=False)
-
-    if raise_on_error:
-        with pytest.raises(ConnectionError, match=re.escape("[TxRxResult] There is no status packet!")):
-            bus._sync_read(addr, length, list(ids_values), raise_on_error=raise_on_error)
-    else:
-        _, read_comm = bus._sync_read(addr, length, list(ids_values), raise_on_error=raise_on_error)
-        assert read_comm == dxl.COMM_RX_TIMEOUT
-
-    assert mock_motors.stubs[stub].called
-
-
-@pytest.mark.parametrize(
-    "addr, length, ids_values",
-    [
-        (0, 1, {1: 4}),
-        (10, 2, {1: 1337, 2: 42}),
-        (42, 4, {1: 1337, 2: 42, 3: 4016}),
-    ],
-    ids=["1 motor", "2 motors", "3 motors"],
-)
-def test__sync_write(addr, length, ids_values, mock_motors, dummy_motors):
-    stub = mock_motors.build_sync_write_stub(addr, length, ids_values)
-    bus = DynamixelMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(handshake=False)
-
-    comm = bus._sync_write(addr, length, ids_values)
-
-    assert mock_motors.stubs[stub].wait_called()
-    assert comm == dxl.COMM_SUCCESS
-
-
-def test_is_calibrated(mock_motors, dummy_motors, dummy_calibration):
-    drive_modes = {m.id: m.drive_mode for m in dummy_calibration.values()}
-    encoded_homings = {m.id: encode_twos_complement(m.homing_offset, 4) for m in dummy_calibration.values()}
-    mins = {m.id: m.range_min for m in dummy_calibration.values()}
-    maxes = {m.id: m.range_max for m in dummy_calibration.values()}
-    drive_modes_stub = mock_motors.build_sync_read_stub(*X_SERIES_CONTROL_TABLE["Drive_Mode"], drive_modes)
-    offsets_stub = mock_motors.build_sync_read_stub(*X_SERIES_CONTROL_TABLE["Homing_Offset"], encoded_homings)
-    mins_stub = mock_motors.build_sync_read_stub(*X_SERIES_CONTROL_TABLE["Min_Position_Limit"], mins)
-    maxes_stub = mock_motors.build_sync_read_stub(*X_SERIES_CONTROL_TABLE["Max_Position_Limit"], maxes)
-    bus = DynamixelMotorsBus(
-        port=mock_motors.port,
-        motors=dummy_motors,
-        calibration=dummy_calibration,
-    )
-    bus.connect(handshake=False)
-
-    is_calibrated = bus.is_calibrated
-
-    assert is_calibrated
-    assert mock_motors.stubs[drive_modes_stub].called
-    assert mock_motors.stubs[offsets_stub].called
-    assert mock_motors.stubs[mins_stub].called
-    assert mock_motors.stubs[maxes_stub].called
-
-
-def test_reset_calibration(mock_motors, dummy_motors):
-    write_homing_stubs = []
-    write_mins_stubs = []
-    write_maxes_stubs = []
-    for motor in dummy_motors.values():
-        write_homing_stubs.append(
-            mock_motors.build_write_stub(*X_SERIES_CONTROL_TABLE["Homing_Offset"], motor.id, 0)
-        )
-        write_mins_stubs.append(
-            mock_motors.build_write_stub(*X_SERIES_CONTROL_TABLE["Min_Position_Limit"], motor.id, 0)
-        )
-        write_maxes_stubs.append(
-            mock_motors.build_write_stub(*X_SERIES_CONTROL_TABLE["Max_Position_Limit"], motor.id, 4095)
-        )
-
-    bus = DynamixelMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(handshake=False)
+def test_reset_calibration(dummy_motors):
+    bus = make_bus(dummy_motors)
 
     bus.reset_calibration()
 
-    assert all(mock_motors.stubs[stub].called for stub in write_homing_stubs)
-    assert all(mock_motors.stubs[stub].called for stub in write_mins_stubs)
-    assert all(mock_motors.stubs[stub].called for stub in write_maxes_stubs)
+    for motor in dummy_motors.values():
+        assert written(bus, "Homing_Offset", motor.id) == 0
+        assert written(bus, "Min_Position_Limit", motor.id) == 0
+        assert written(bus, "Max_Position_Limit", motor.id) == 4095
 
 
-def test_set_half_turn_homings(mock_motors, dummy_motors):
-    """
-    For this test, we assume that the homing offsets are already 0 such that
-    Present_Position == Actual_Position
-    """
-    current_positions = {
-        1: 1337,
-        2: 42,
-        3: 3672,
-    }
-    expected_homings = {
-        1: 710,  # 2047 - 1337
-        2: 2005,  # 2047 - 42
-        3: -1625,  # 2047 - 3672
-    }
-    read_pos_stub = mock_motors.build_sync_read_stub(
-        *X_SERIES_CONTROL_TABLE["Present_Position"], current_positions
-    )
-    write_homing_stubs = []
-    for id_, homing in expected_homings.items():
-        encoded_homing = encode_twos_complement(homing, 4)
-        stub = mock_motors.build_write_stub(*X_SERIES_CONTROL_TABLE["Homing_Offset"], id_, encoded_homing)
-        write_homing_stubs.append(stub)
+def test_set_half_turn_homings(dummy_motors):
+    """Homing offsets are assumed to start at 0, so Present_Position == Actual_Position."""
+    current_positions = {1: 1337, 2: 42, 3: 3672}
+    expected_homings = {1: 710, 2: 2005, 3: -1625}  # 2047 - position
 
-    bus = DynamixelMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(handshake=False)
+    bus = make_bus(dummy_motors)
+    for id_, position in current_positions.items():
+        seed(bus, "Present_Position", id_, position)
     bus.reset_calibration = MagicMock()
 
     bus.set_half_turn_homings()
 
     bus.reset_calibration.assert_called_once()
-    assert mock_motors.stubs[read_pos_stub].called
-    assert all(mock_motors.stubs[stub].called for stub in write_homing_stubs)
+    for id_, homing in expected_homings.items():
+        assert written(bus, "Homing_Offset", id_) == encode_twos_complement(homing, 4)
 
 
-def test_record_ranges_of_motion(mock_motors, dummy_motors):
-    positions = {
-        1: [351, 42, 1337],
-        2: [28, 3600, 2444],
-        3: [4002, 2999, 146],
-    }
-    expected_mins = {
-        "dummy_1": 42,
-        "dummy_2": 28,
-        "dummy_3": 146,
-    }
-    expected_maxes = {
-        "dummy_1": 1337,
-        "dummy_2": 3600,
-        "dummy_3": 4002,
-    }
-    read_pos_stub = mock_motors.build_sequential_sync_read_stub(
-        *X_SERIES_CONTROL_TABLE["Present_Position"], positions
-    )
-    bus = DynamixelMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(handshake=False)
+def test_record_ranges_of_motion(dummy_motors):
+    sweeps = [
+        {"dummy_1": 351, "dummy_2": 28, "dummy_3": 4002},
+        {"dummy_1": 42, "dummy_2": 3600, "dummy_3": 2999},
+        {"dummy_1": 1337, "dummy_2": 2444, "dummy_3": 146},
+    ]
+    bus = make_bus(dummy_motors)
 
     with (
         patch("lerobot.motors.motors_bus.enter_pressed", side_effect=[False, True]),
         patch("lerobot.motors.motors_bus.time.sleep") as mock_sleep,
-        patch.object(bus, "sync_read", wraps=bus.sync_read) as mock_sync_read,
+        patch.object(bus, "sync_read", side_effect=sweeps) as mock_sync_read,
     ):
         mins, maxes = bus.record_ranges_of_motion(display_values=False)
 
-    assert mock_motors.stubs[read_pos_stub].calls == 3
+    assert mock_sync_read.call_count == 3
     assert all(call.kwargs["num_retry"] == 5 for call in mock_sync_read.call_args_list)
     mock_sleep.assert_called_once_with(0.02)
-    assert mins == expected_mins
-    assert maxes == expected_maxes
+    assert mins == {"dummy_1": 42, "dummy_2": 28, "dummy_3": 146}
+    assert maxes == {"dummy_1": 1337, "dummy_2": 3600, "dummy_3": 4002}
