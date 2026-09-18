@@ -3,6 +3,8 @@
     title: LeRobot
   - local: installation
     title: Installation
+  - local: get_started
+    title: Get Started
   - local: cheat-sheet
     title: Cheat sheet
   title: Get started
