@@ -108,7 +108,7 @@ class SyncInferenceEngine(InferenceEngine):
         observation = copy(obs_frame)
         autocast_ctx = (
             torch.autocast(device_type=self._device.type)
-            if self._device.type == "cuda" and self._policy.config.use_amp
+            if self._device.type in ("cuda", "npu", "xpu") and self._policy.config.use_amp
             else nullcontext()
         )
         task, task_changed = self._take_task()
@@ -152,7 +152,7 @@ class SyncInferenceEngine(InferenceEngine):
         obs_frame = build_dataset_frame(self._dataset_features, obs_processed, prefix=OBS_STR)
         autocast_ctx = (
             torch.autocast(device_type=self._device.type)
-            if self._device.type == "cuda" and self._policy.config.use_amp
+            if self._device.type in ("cuda", "npu", "xpu") and self._policy.config.use_amp
             else nullcontext()
         )
         # Live task, read without consuming the task-changed edge (the action path needs it).
