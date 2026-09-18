@@ -1040,6 +1040,12 @@ class PI05Policy(PreTrainedPolicy):
             if not missing_keys and not unexpected_keys:
                 print("All keys loaded successfully!")
 
+        except FileNotFoundError:
+            # Raised by the checkpoint-resolution handler above, which fires
+            # inside this try. Re-raise as-is so the generic wrapper below does
+            # not re-type it as RuntimeError — callers distinguish "no
+            # checkpoint" from "checkpoint present but broken" by type.
+            raise
         except Exception as e:
             # strict=True mismatches (and any other load error) must surface:
             # swallowing them here handed back an untrained model that looked

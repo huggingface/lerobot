@@ -80,7 +80,9 @@ def test_missing_checkpoint_raises(tmp_path, policy_cls, policy_type, fixers):
     shell = _tiny_shell(policy_cls, fixers[0], fixers[1:])
     checkpoint = _make_checkpoint_dir(tmp_path, policy_type, with_weights=False)
 
-    with pytest.raises(Exception, match="Could not load model.safetensors"):
+    # Exact type: the generic outer handler must not re-type this as RuntimeError,
+    # or callers can't distinguish "no checkpoint" from "checkpoint present but broken".
+    with pytest.raises(FileNotFoundError, match="Could not load model.safetensors"):
         shell.from_pretrained(checkpoint)
 
 
@@ -89,7 +91,7 @@ def test_strict_mismatch_raises(tmp_path, policy_cls, policy_type, fixers):
     shell = _tiny_shell(policy_cls, fixers[0], fixers[1:])
     checkpoint = _make_checkpoint_dir(tmp_path, policy_type, with_weights=True)
 
-    with pytest.raises(Exception, match="Could not load state dict"):
+    with pytest.raises(RuntimeError, match="Could not load state dict"):
         shell.from_pretrained(checkpoint, strict=True)
 
 
