@@ -987,9 +987,12 @@ class PI05Policy(PreTrainedPolicy):
                 original_state_dict = load_file(resolved_file)
                 print("✓ Loaded state dict from model.safetensors")
             except Exception as e:
-                print(f"Could not load state dict from remote files: {e}")
-                print("Returning model without loading pretrained weights")
-                return model
+                # A missing or unreadable checkpoint is never recoverable:
+                # silently returning the freshly initialized model made a failed
+                # load look successful (#4577).
+                raise FileNotFoundError(
+                    f"Could not load model.safetensors from {pretrained_name_or_path}: {e}"
+                ) from e
 
             # First, fix any key differences (see openpi model.py, _fix_pytorch_state_dict_keys)
             fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
@@ -1037,8 +1040,19 @@ class PI05Policy(PreTrainedPolicy):
             if not missing_keys and not unexpected_keys:
                 print("All keys loaded successfully!")
 
+        except FileNotFoundError:
+            # Raised by the checkpoint-resolution handler above, which fires
+            # inside this try. Re-raise as-is so the generic wrapper below does
+            # not re-type it as RuntimeError — callers distinguish "no
+            # checkpoint" from "checkpoint present but broken" by type.
+            raise
         except Exception as e:
-            print(f"Warning: Could not load state dict: {e}")
+            # strict=True mismatches (and any other load error) must surface:
+            # swallowing them here handed back an untrained model that looked
+            # loaded (#4577). Re-raise with context.
+            raise RuntimeError(
+                f"Could not load state dict from {pretrained_name_or_path}: {e}"
+            ) from e
 
         return model
 
