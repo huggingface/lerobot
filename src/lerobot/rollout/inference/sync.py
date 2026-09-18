@@ -139,8 +139,8 @@ class SyncInferenceEngine(InferenceEngine):
 
     @property
     def supports_text_queries(self) -> bool:
-        """True when the policy has a text head."""
-        return self._policy.supports_text_generation()
+        """True when an external text backend is attached or the policy has a text head."""
+        return super().supports_text_queries or self._policy.supports_text_generation()
 
     @property
     def control_thread_owns_policy(self) -> bool:

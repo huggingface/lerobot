@@ -22,6 +22,7 @@ and :class:`DatasetContext` — assembled into :class:`RolloutContext`.
 from __future__ import annotations
 
 import logging
+from collections import deque
 from collections.abc import Callable
 from copy import copy
 from dataclasses import dataclass, field
@@ -40,6 +41,7 @@ from lerobot.policies import get_policy_class, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import (
     PolicyProcessorPipeline,
+    RenderRuntimeMessagesStep,
     RobotAction,
     RobotObservation,
     RobotProcessorPipeline,
@@ -60,6 +62,7 @@ from .inference import (
     create_inference_engine,
 )
 from .inference.rtc import supports_rtc_inference
+from .planner import VlmPlanner
 from .robot_wrapper import ThreadSafeRobot
 
 if TYPE_CHECKING or _peft_available:
@@ -588,6 +591,17 @@ def build_rollout_context(
         compile_warmup_inferences=cfg.compile_warmup_inferences,
         shutdown_event=shutdown_event,
     )
+    if cfg.planner is not None:
+        runtime_messages = next(
+            (
+                step
+                for step in preprocessor.steps
+                if isinstance(step, RenderRuntimeMessagesStep) and step.recipe
+            ),
+            None,
+        )
+        inference_strategy.external_text = VlmPlanner(cfg.planner, robot_wrapper.robot_type, runtime_messages)
+        inference_strategy.external_history = deque(maxlen=cfg.planner.history)
 
     # --- 8. Assemble ---------------------------------------------------
     logger.info("Rollout context assembled successfully")

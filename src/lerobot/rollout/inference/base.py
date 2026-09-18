@@ -26,15 +26,19 @@ import logging
 import time
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from enum import Enum
-from threading import Lock
+from functools import partial
+from threading import Lock, RLock, Thread
 
 import torch
 
 from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT
 
 logger = logging.getLogger(__name__)
+
+EXTERNAL_HISTORY_DEFAULT = 4
 
 
 class QueryKind(Enum):
@@ -53,6 +57,8 @@ class PolicyQuery:
 
     kind: QueryKind
     text: str
+    history: tuple[tuple[dict, str], ...] = field(default=(), repr=False, compare=False)
+    """External planner observations paired with commands accepted by the engine."""
 
 
 @dataclass(frozen=True)
@@ -105,7 +111,8 @@ class InferenceEngine(abc.ABC):
     ``ask`` is callable from any thread and never touches the policy: queries are served
     by :meth:`_service_query` on the thread owning the policy (see
     :attr:`control_thread_owns_policy`), and answers reach observers only from
-    :meth:`pump_query` on the control thread.
+    :meth:`pump_query` on the control thread.  With :attr:`external_text` set, that callable
+    answers on a worker thread instead of the policy.
 
     Optional hooks
     --------------
@@ -122,7 +129,8 @@ class InferenceEngine(abc.ABC):
         self._task_lock = Lock()
 
         # Text-query channel.  Its own lock, never held across a text generation.
-        self._query_lock = Lock()
+        self._query_lock = RLock()
+        self._query_epoch = 0
         self._pending_query: PolicyQuery | None = None
         # Set from the claim (``_take_query``) until the answer is published or the turn
         # is discarded, so the autosteer poll cannot queue a duplicate turn meanwhile.
@@ -130,6 +138,9 @@ class InferenceEngine(abc.ABC):
         # Answers awaiting delivery; a queue so an undelivered one is never overwritten.
         self._ready_answers: deque[QueryAnswer] = deque()
         self._answer_observer: Callable[[QueryAnswer], None] | None = None
+        self.external_text: Callable[[dict, PolicyQuery, str], str] | None = None
+        # this engine fills the pairs, planner.history only sets how many it keeps
+        self.external_history: deque[tuple[dict, str]] = deque(maxlen=EXTERNAL_HISTORY_DEFAULT)
 
         # Autosteer sequencer state (same lock: it writes _pending_query).
         self._autosteer_goal: str | None = None
@@ -198,12 +209,8 @@ class InferenceEngine(abc.ABC):
 
     @property
     def supports_text_queries(self) -> bool:
-        """True when this backend's policy can serve text queries.
-
-        Default False, so a backend without a text path never accepts a query it cannot
-        serve; callers check this before queueing.
-        """
-        return False
+        """True when an external backend is attached; subclasses OR in their policy's text head."""
+        return self.external_text is not None
 
     def set_answer_observer(self, observer: Callable[[QueryAnswer], None] | None) -> None:
         """Register the callback :meth:`pump_query` hands ready answers to."""
@@ -239,6 +246,8 @@ class InferenceEngine(abc.ABC):
         *applied*, so a slow generation cannot starve the robot of motion.
         """
         with self._query_lock:
+            self._query_epoch += 1
+            self.external_history.clear()
             self._autosteer_goal = goal
             self._autosteer_interval_s = max(0.0, interval_s)
             # Due immediately: first subtask requested on the next control tick.
@@ -248,6 +257,8 @@ class InferenceEngine(abc.ABC):
     def stop_autosteer(self) -> str | None:
         """Stop the sequencer, returning the goal it was driving (or ``None``)."""
         with self._query_lock:
+            self._query_epoch += 1
+            self.external_history.clear()
             goal, self._autosteer_goal = self._autosteer_goal, None
         if goal is not None:
             logger.info("Autosteer stopped (goal was '%s')", goal)
@@ -260,6 +271,8 @@ class InferenceEngine(abc.ABC):
         different scene the next time the robot starts.
         """
         with self._query_lock:
+            self._query_epoch += 1
+            self.external_history.clear()
             dropped, self._pending_query = self._pending_query, None
         return dropped
 
@@ -293,7 +306,7 @@ class InferenceEngine(abc.ABC):
 
     def _queue_query(self, query: PolicyQuery) -> bool:
         with self._query_lock:
-            if self._pending_query is not None:
+            if self._pending_query is not None or self._query_in_flight:
                 return False
             self._pending_query = query
         return True
@@ -316,6 +329,8 @@ class InferenceEngine(abc.ABC):
     def _take_query(self) -> PolicyQuery | None:
         """Claim the pending query.  Call from the policy-owning thread."""
         with self._query_lock:
+            if self._query_in_flight:
+                return None
             query, self._pending_query = self._pending_query, None
             if query is not None:
                 self._query_in_flight = True
@@ -329,31 +344,47 @@ class InferenceEngine(abc.ABC):
         """
         if obs_processed is None:
             return False
-        query = self._take_query()
-        if query is None:
-            return False
+        with self._query_lock:
+            query = self._take_query()
+            if query is None:
+                return False
+            if self.external_text is not None:
+                # Pin both task and observation before the control loop advances.
+                query = replace(query, history=tuple(self.external_history))
+                Thread(
+                    target=self._resolve_query,
+                    args=(query, deepcopy(obs_processed), partial(self.external_text, task=self.task)),
+                    kwargs={"epoch": self._query_epoch},
+                    daemon=True,
+                ).start()
+                return True
+        self._resolve_query(query, obs_processed, self._generate_text)
+        return True
+
+    def _resolve_query(
+        self, query: PolicyQuery, obs_processed: dict, generate: Callable, *, epoch: int | None = None
+    ) -> None:
         try:
-            text = self._generate_text(obs_processed, query)
+            text = generate(obs_processed, query)
             if not isinstance(text, str) or not text.strip():
-                # Fail here so garbage becomes an error answer instead of steering the
-                # robot and labeling recorded frames.
-                raise TypeError(
-                    f"generate_text() must return a non-empty str, got {text!r} ({type(text).__name__})"
-                )
+                raise TypeError(f"generate_text() must return a non-empty str, got {text!r}")
+            answer = QueryAnswer(question=query.text, answer=text.strip(), kind=query.kind)
         except Exception as e:
             logger.exception("Policy text query failed (%s) for %r", query.kind.value, query.text)
-            if query.kind is QueryKind.NEXT_SUBTASK and not self._fail_subtask(query):
-                return True  # the sequencer this turn belonged to is gone; discard
-            self._publish_answer(
-                QueryAnswer(question=query.text, error=f"{type(e).__name__}: {e}", kind=query.kind)
-            )
-            return True
-        if query.kind is QueryKind.NEXT_SUBTASK and not self._apply_subtask(query, text):
-            return True  # sequencer stopped meanwhile; the turn was discarded
-        # Published after being applied, so an announcing observer never gets ahead of
-        # the task it describes.
-        self._publish_answer(QueryAnswer(question=query.text, answer=text, kind=query.kind))
-        return True
+            answer = QueryAnswer(question=query.text, error=f"{type(e).__name__}: {e}", kind=query.kind)
+        # Cancellation and application are atomic. A stopped or replaced request cannot
+        # overwrite a newer instruction, including a restart with the identical goal.
+        with self._query_lock:
+            if epoch is not None and epoch != self._query_epoch:
+                self._query_in_flight = False
+                return
+            if query.kind is QueryKind.NEXT_SUBTASK:
+                live = self._apply_subtask(query, answer.answer) if answer.ok else self._fail_subtask(query)
+                if not live:
+                    return
+                if epoch is not None and answer.ok:
+                    self.external_history.append((obs_processed, answer.answer))
+            self._publish_answer(answer)
 
     def _fail_subtask(self, query: PolicyQuery) -> bool:
         """Stop the sequencer after a failed turn — unless it stopped or retargeted meanwhile.
