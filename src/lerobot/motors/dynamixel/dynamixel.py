@@ -21,27 +21,20 @@
 import logging
 from copy import deepcopy
 from enum import Enum
-from typing import TYPE_CHECKING
-
-from lerobot.utils.import_utils import _dynamixel_sdk_available, require_package
 
 from ..encoding_utils import decode_twos_complement, encode_twos_complement
 from ..motors_bus import Motor, MotorCalibration, NameOrID, SerialMotorsBus, Value, get_address
+from ..transport import PROTOCOL_V2
 from .tables import (
     AVAILABLE_BAUDRATES,
     MODEL_BAUDRATE_TABLE,
     MODEL_CONTROL_TABLE,
     MODEL_ENCODING_TABLE,
+    MODEL_NUMBER,
     MODEL_NUMBER_TABLE,
     MODEL_RESOLUTION,
 )
 
-if TYPE_CHECKING or _dynamixel_sdk_available:
-    import dynamixel_sdk as dxl
-else:
-    dxl = None
-
-PROTOCOL_VERSION = 2.0
 DEFAULT_BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT_MS = 1000
 
@@ -91,10 +84,10 @@ class TorqueMode(Enum):
 
 
 class DynamixelMotorsBus(SerialMotorsBus):
-    """
-    The Dynamixel implementation for a MotorsBus. It relies on the python dynamixel sdk to communicate with
-    the motors. For more info, see the Dynamixel SDK Documentation:
-    https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20
+    """`SerialMotorsBus` for Dynamixel servos, which speak protocol v2.
+
+    Control table reference:
+    https://emanual.robotis.com/docs/en/dxl/protocol2/
     """
 
     apply_drive_mode = False
@@ -106,7 +99,10 @@ class DynamixelMotorsBus(SerialMotorsBus):
     model_encoding_table = deepcopy(MODEL_ENCODING_TABLE)
     model_number_table = deepcopy(MODEL_NUMBER_TABLE)
     model_resolution_table = deepcopy(MODEL_RESOLUTION)
+    model_number_address = MODEL_NUMBER
+    max_id = 252
     normalized_data = deepcopy(NORMALIZED_DATA)
+    protocol = PROTOCOL_V2
 
     def __init__(
         self,
@@ -114,14 +110,7 @@ class DynamixelMotorsBus(SerialMotorsBus):
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
     ):
-        require_package("dynamixel-sdk", extra="dynamixel", import_name="dynamixel_sdk")
         super().__init__(port, motors, calibration)
-        self.port_handler = dxl.PortHandler(self.port)
-        self.packet_handler = dxl.PacketHandler(PROTOCOL_VERSION)
-        self.sync_reader = dxl.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
-        self.sync_writer = dxl.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
-        self._comm_success = dxl.COMM_SUCCESS
-        self._no_error = 0x00
 
     def _assert_protocol_is_compatible(self, instruction_name: str) -> None:
         pass
@@ -234,31 +223,7 @@ class DynamixelMotorsBus(SerialMotorsBus):
         return half_turn_homings
 
     def _split_into_byte_chunks(self, value: int, length: int) -> list[int]:
-        if length == 1:
-            data = [value]
-        elif length == 2:
-            data = [dxl.DXL_LOBYTE(value), dxl.DXL_HIBYTE(value)]
-        elif length == 4:
-            data = [
-                dxl.DXL_LOBYTE(dxl.DXL_LOWORD(value)),
-                dxl.DXL_HIBYTE(dxl.DXL_LOWORD(value)),
-                dxl.DXL_LOBYTE(dxl.DXL_HIWORD(value)),
-                dxl.DXL_HIBYTE(dxl.DXL_HIWORD(value)),
-            ]
-        return data
+        return list(value.to_bytes(length, "little"))
 
-    def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
-        for n_try in range(1 + num_retry):
-            data_list, comm = self.packet_handler.broadcastPing(self.port_handler)
-            if self._is_comm_success(comm):
-                break
-            logger.debug(f"Broadcast ping failed on port '{self.port}' ({n_try=})")
-            logger.debug(self.packet_handler.getTxRxResult(comm))
-
-        if not self._is_comm_success(comm):
-            if raise_on_error:
-                raise ConnectionError(self.packet_handler.getTxRxResult(comm))
-
-            return None
-
-        return {id_: data[0] for id_, data in data_list.items()}
+    def _join_byte_chunks(self, data: bytes, length: int) -> int:
+        return int.from_bytes(data, "little")

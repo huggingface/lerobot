@@ -18,6 +18,7 @@ from .motors_bus import (
     Motor,
     MotorCalibration,
     MotorNormMode,
+    SerialMotorsBus,
 )
 
-__all__ = ["Motor", "MotorCalibration", "MotorNormMode"]
+__all__ = ["Motor", "MotorCalibration", "MotorNormMode", "SerialMotorsBus"]
