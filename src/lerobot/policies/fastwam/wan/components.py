@@ -23,6 +23,7 @@ import torch
 from huggingface_hub import snapshot_download
 from safetensors.torch import load_file
 
+from lerobot.utils.device_utils import auto_select_torch_device
 from lerobot.utils.import_utils import _diffusers_available, _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -59,7 +60,7 @@ class WanTextEncoder(torch.nn.Module):
     def __init__(
         self,
         dtype: torch.dtype = torch.bfloat16,
-        device: str | torch.device = "cuda",
+                device: str | torch.device | None = None,
         *,
         pretrained: torch.nn.Module,
     ) -> None:
@@ -67,7 +68,9 @@ class WanTextEncoder(torch.nn.Module):
         # UMT5-XXL is a fixed pretrained encoder — never trained from scratch, so a real
         # `UMT5EncoderModel` (with weights) must always be supplied (loaded from the
         # diffusers repo by `load_pretrained_wan_text_encoder`). No random/offline build.
-        self.model = pretrained.to(device=device, dtype=dtype)
+        self.model = pretrained.to(
+            device=device if device is not None else auto_select_torch_device(), dtype=dtype
+        )
         self.dim = int(self.model.config.d_model)
 
     def forward(self, ids: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
