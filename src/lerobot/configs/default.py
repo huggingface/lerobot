@@ -55,6 +55,9 @@ class DatasetConfig:
     streaming: bool = False
     # Fraction of episodes held out per task for offline evaluation (0.0 = disabled).
     eval_split: float = 0.0
+    # Render an action-conditioning recipe into the task input of ordinary VLA policies.
+    # Serialized in train_config so the instruction mixture is reproducible.
+    task_recipe: dict | None = None
 
     def __post_init__(self) -> None:
         if self.repo_type not in ("dataset", "bucket"):
@@ -63,6 +66,8 @@ class DatasetConfig:
             raise ValueError(
                 "eval_split requires map-style datasets and is not supported with dataset.streaming=true."
             )
+        if self.task_recipe is not None and self.streaming:
+            raise ValueError("task_recipe currently requires a non-streaming dataset")
         if self.depth_output_unit not in (DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT):
             raise ValueError(
                 f"depth_output_unit must be '{DEPTH_METER_UNIT}' or '{DEPTH_MILLIMETER_UNIT}', got {self.depth_output_unit!r}"

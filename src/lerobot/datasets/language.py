@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Literal
 
 import datasets
@@ -240,3 +241,28 @@ def column_for_style(style: str | None) -> LanguageColumn:
     if style in EVENT_ONLY_STYLES:
         return LANGUAGE_EVENTS
     raise ValueError(f"Unknown language style: {style!r}")
+
+
+def validate_language_rows(column: str, rows: list[dict] | None) -> None:
+    """Validate structured annotations supplied during recording, including ragged/empty rows."""
+
+    if column not in (LANGUAGE_PERSISTENT, LANGUAGE_EVENTS):
+        raise ValueError(f"Unknown language column: {column}")
+    if rows is None:
+        return
+    if not isinstance(rows, list):
+        raise ValueError(f"{column} must contain a list of language rows")
+    for row in rows:
+        if not isinstance(row, dict) or row.get("role") not in ("user", "assistant", "system", "tool"):
+            raise ValueError("Language rows require a supported chat role")
+        if column_for_style(row.get("style")) != column:
+            raise ValueError(f"Style {row.get('style')!r} does not belong in {column}")
+        validate_camera_field(row.get("style"), row.get("camera"))
+        if row.get("content") is not None and not isinstance(row["content"], str):
+            raise ValueError("Language content must be text or null")
+        if column == LANGUAGE_PERSISTENT:
+            timestamp = row.get("timestamp")
+            if not isinstance(timestamp, (int, float)) or not math.isfinite(timestamp) or timestamp < 0:
+                raise ValueError("Persistent language rows require finite, nonnegative timestamps")
+        if row.get("tool_calls") is not None and not isinstance(row["tool_calls"], list):
+            raise ValueError("tool_calls must be a list or null")

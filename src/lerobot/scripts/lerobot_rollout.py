@@ -164,6 +164,7 @@ Usage examples
 """
 
 import logging
+import sys
 
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
@@ -272,6 +273,11 @@ def rollout(cfg: RolloutConfig):
 def main():
     """CLI entry point for ``lerobot-rollout``."""
     register_third_party_plugins()
+    if any(arg.split("=", 1)[0] == "--agent_config" for arg in sys.argv[1:]):
+        from lerobot.rollout.agent.service import run
+
+        run(sys.argv[1:])
+        return
     rollout()
 
 
