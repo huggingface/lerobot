@@ -1,0 +1,63 @@
+# G1 Keyboard Arm Control
+
+Use `lerobot-teleoperate` without an exoskeleton. This initial acceptance is for
+G1-29 simulation, without a locomotion/whole-body controller. It uses upstream's
+Hub MuJoCo environment and its default torso support; do not release the support
+to attempt walking. No local URDF backend or Cartesian IK is required.
+
+```bash
+MUJOCO_GL=glfw lerobot-teleoperate \
+  --robot.type=unitree_g1 --robot.is_simulation=true \
+  --robot.sim_publish_images=false --robot.sim_onscreen=true \
+  --robot.cameras='{}' --teleop.type=unitree_g1_keyboard \
+  --display_data=true --display_mode=rerun
+```
+
+With a supported desktop, LeRobot's existing keyboard listener captures keys.
+Over SSH without a supported desktop, it reads the focused interactive terminal.
+For terminal-only review set `MUJOCO_GL=egl`, `sim_onscreen=false` and
+`display_data=false`. A piped/non-interactive invocation fails if there is no
+keyboard backend; it does not silently pretend to control the robot.
+
+| Key | Action |
+|---|---|
+| Enter | Enable jogging, starting from current measured arm positions |
+| L / R | Select left / right arm |
+| 1 / 2 / 3 | Select shoulder pitch / roll / yaw |
+| 4 | Select elbow |
+| 5 / 6 / 7 | Select wrist roll / pitch / yaw |
+| + (or =) / - | Increase / decrease selected joint target by 0.02 rad |
+| Space | Hold current measured pose and disable jogging |
+| Escape or Ctrl+C | End the session |
+
+These are discrete increments, not continuous velocity commands. OS repeat is
+limited to 10 accepted events per second, with no event backlog. Releasing a key
+stops new increments; the last position target remains active. Targets are bounded
+by model joint limits and a 0.15 rad lead over measured positions. Configure
+`--teleop.step_rad=0.01` for smaller increments (maximum 0.05).
+
+Startup is disabled until Enter. Missing/nonfinite/stale feedback and listener
+failure stop the loop. Space is not an emergency stop: joint holds need torque,
+and disconnect follows the robot backend's shutdown behavior. Limits do not
+prevent self-collision. Physical operation through this CLI is deliberately
+rejected pending a separate safety/acceptance review.
+
+## Verification
+
+Install the existing G1 Hub simulator and DDS dependencies. On this workstation
+the native CycloneDDS build selected by `lerobot-dev` is required; an older system
+library can abort inside the SDK before keyboard control starts. Do not run two
+Hub/DDS acceptance sessions concurrently on the same DDS domain.
+
+```bash
+python -m pytest -q tests/teleoperators/test_unitree_g1_keyboard.py
+G1_KEYBOARD_HUB_TESTS=1 MUJOCO_GL=egl python -m pytest -q \
+  tests/integration/test_unitree_g1_keyboard_hub.py \
+  tests/integration/test_unitree_g1_keyboard_cli.py
+```
+
+The Hub test pins model revision `68459ed68f6f68e1f661091dfcb6ebce44681aec`
+and drives both elbows through real DDS/physics and the ordinary teleop loop.
+The PTY test runs the actual CLI and terminal key listener without X. Manual
+review should also exercise each joint and both arms in the viewer, holding,
+re-enabling, limits and exit. Rerun shows joint telemetry, not camera images.

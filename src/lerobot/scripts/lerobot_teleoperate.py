@@ -151,6 +151,12 @@ class TeleoperateConfig:
     # Whether to display compressed (JPEG) images instead of raw frames
     display_compressed_images: bool = False
 
+    def __post_init__(self):
+        if isinstance(self.teleop, unitree_g1.UnitreeG1KeyboardConfig) and (
+            self.robot.type != "unitree_g1" or not self.robot.is_simulation or self.robot.controller
+        ):
+            raise ValueError("G1 keyboard acceptance requires G1 simulation without a body controller")
+
 
 def teleop_loop(
     teleop: Teleoperator,
