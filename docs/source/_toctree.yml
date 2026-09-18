@@ -4,7 +4,7 @@
   - local: installation
     title: Installation
   - local: get_started
-    title: Get Started
+    title: Choose Your Path
   - local: cheat-sheet
     title: Cheat sheet
   title: Get started
