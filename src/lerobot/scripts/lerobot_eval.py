@@ -492,6 +492,7 @@ def eval_policy(
     recording_repo_id: str | None = None,
     recording_private: bool = False,
     save_predicted_video: bool = False,
+    episode_callback: Callable[[int, dict, int, int], None] | None = None,
 ) -> dict:
     """
     Args:
@@ -504,6 +505,13 @@ def eval_policy(
             the "episodes" key of the returned dictionary.
         start_seed: The first seed to use for the first individual rollout. For all subsequent rollouts the
             seed is incremented by 1. If not provided, the environments are not manually seeded.
+        episode_callback: Optional hook invoked once per completed episode, right after its
+            `done_index` is known, as `episode_callback(episode_ix, rollout_data, env_idx, done_index)`
+            -- `rollout_data` is the *whole current batch's* raw `rollout()` output (so
+            `rollout_data[ACTION][env_idx, : done_index + 1]` is that episode's full executed action
+            stream), letting a caller derive extra per-episode metrics (e.g. action smoothness) from
+            data `eval_policy` already computed, without an extra `rollout()` call or opting into the
+            much heavier `return_episode_data=True` (which also captures every observation/frame).
     Returns:
         Dictionary with metrics and data regarding the rollouts.
     """
@@ -625,6 +633,16 @@ def eval_policy(
         # Make a mask with shape (batch, n_steps) to mask out rollout data after the first done
         # (batch-element-wise). Note the `done_indices + 1` to make sure to keep the data from the done step.
         mask = (torch.arange(n_steps) <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)).int()
+
+        if episode_callback is not None:
+            for env_idx in range(env.num_envs):
+                episode_callback(
+                    batch_ix * env.num_envs + env_idx,
+                    rollout_data,
+                    env_idx,
+                    int(done_indices[env_idx].item()),
+                )
+
         # Extend metrics.
         batch_sum_rewards = einops.reduce((rollout_data["reward"] * mask), "b n -> b", "sum")
         sum_rewards.extend(batch_sum_rewards.tolist())

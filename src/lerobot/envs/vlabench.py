@@ -489,20 +489,37 @@ class VLABenchEnv(gym.Env):
     def reset(self, seed=None, **kwargs) -> tuple[RobotObservation, dict[str, Any]]:
         from dm_control.rl.control import PhysicsError  # type: ignore[import-untyped]
 
-        self._ensure_env()
-        assert self._env is not None
         super().reset(seed=seed)
 
         if seed is not None:
-            self._seed_inner_env(int(self.np_random.integers(0, 2**31 - 1)))
+            # Verified against the installed VLABench build (see `_seed_scene_rng`'s docstring):
+            # per-task `ConfigManager`s (e.g. `SelectPokerConfigManager.load_objects()` in
+            # `VLABench/tasks/hierarchical_tasks/primitive/select_poker_series.py`) sample the
+            # scene layout and target object with plain `random.sample`/`random.choice`/
+            # `random.uniform` -- Python's *global* `random` module, not any per-instance RNG
+            # dm_control threads through (`composer.Environment`'s own `_random_state` is never
+            # consulted by these task classes). That sampling runs exactly once, inside the
+            # `Task`'s `__init__` -- which `_ensure_env()` only calls the first time it builds
+            # `self._env` (`if self._env is not None: return`). So `self._env.reset()` alone can
+            # never change the scene: it only re-settles physics on the one layout already fixed
+            # at construction. The only way to get a *different, seed-controlled* scene is to
+            # reseed the global RNGs the sampler actually reads and rebuild the task from
+            # scratch on every seeded reset.
+            self._seed_scene_rng(int(self.np_random.integers(0, 2**31 - 1)))
+            if self._env is not None:
+                with contextlib.suppress(Exception):
+                    self._env.close()
+                self._env = None
 
-        # VLABench's LM4ManipDMEnv.reset() re-samples the task layout and runs
-        # its own settle warm-up, which can hit the same integrator
-        # divergence that _ensure_env() guards against at construction time
-        # (see its docstring) — but this happens on a *later* episode reset
-        # of an already-built env, so that guard doesn't cover it. Retry with
-        # a rebuilt env on a fresh layout rather than crashing the whole
-        # multi-task eval run.
+        self._ensure_env()
+        assert self._env is not None
+
+        # VLABench's LM4ManipDMEnv.reset() runs its own settle warm-up (toggling
+        # gravity/fluids), which can hit the same integrator divergence that
+        # _ensure_env() guards against at construction time (see its docstring) --
+        # but this happens on a *later* episode reset of an already-built env, so
+        # that guard doesn't cover it. Retry with a rebuilt env on a fresh layout
+        # rather than crashing the whole multi-task eval run.
         last_exc: PhysicsError | None = None
         for attempt in range(1, self._ENSURE_ENV_MAX_ATTEMPTS + 1):
             try:
@@ -521,18 +538,20 @@ class VLABenchEnv(gym.Env):
                 with contextlib.suppress(Exception):
                     self._env.close()
                 self._env = None
-                # Reseed both RNGs from OS entropy — VLABench's task config
-                # managers sample layouts with stdlib `random`, not
-                # `np.random` (see `_ensure_env()`'s docstring), so reseeding
-                # only NumPy would leave retries walking the same
-                # deterministic sequence set by `lerobot_eval`'s
-                # `set_seed(cfg.seed)`.
-                np.random.seed(None)
-                random.seed(None)
+                if seed is not None:
+                    # Keep retries deterministic-but-different rather than OS-entropy: draw the
+                    # next attempt's scene seed from the same `self.np_random` stream `seed`
+                    # already fixed, so a failing seed still fails reproducibly across runs
+                    # instead of turning into a silent flake.
+                    self._seed_scene_rng(int(self.np_random.integers(0, 2**31 - 1)))
+                else:
+                    # No seed was requested -- reseed both RNGs from OS entropy so the retry
+                    # explores a fresh layout instead of walking whatever deterministic sequence
+                    # `lerobot_eval`'s `set_seed(cfg.seed)` left the globals on.
+                    np.random.seed(None)
+                    random.seed(None)
                 self._ensure_env()
                 assert self._env is not None
-                if seed is not None:
-                    self._seed_inner_env(int(self.np_random.integers(0, 2**31 - 1)))
         else:
             assert last_exc is not None
             raise RuntimeError(
@@ -547,18 +566,13 @@ class VLABenchEnv(gym.Env):
         info = {"is_success": False}
         return observation, info
 
-    def _seed_inner_env(self, seed: int) -> None:
-        """Propagate `seed` to the inner dm_control env. `Environment.reset()`
-        doesn't accept a seed, so we re-seed the task and environment
-        `RandomState`s directly. Best-effort: silently skipped when the
-        expected attributes are absent on a given VLABench version.
-        """
-        for owner_attr, rng_attr in (("task", "random"), (None, "_random_state")):
-            owner = getattr(self._env, owner_attr) if owner_attr else self._env
-            rng = getattr(owner, rng_attr, None)
-            rng_seed = getattr(rng, "seed", None)
-            if callable(rng_seed):
-                rng_seed(seed)
+    @staticmethod
+    def _seed_scene_rng(seed: int) -> None:
+        """Reseed the global RNGs VLABench's task `ConfigManager`s actually sample scene
+        layouts from (Python's stdlib `random`; `np.random` too, best-effort, since not every
+        task class has been audited)."""
+        random.seed(seed)
+        np.random.seed(seed)
 
     def step(self, action: np.ndarray) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
         from dm_control.rl.control import PhysicsError  # type: ignore[import-untyped]
