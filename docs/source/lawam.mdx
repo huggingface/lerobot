@@ -1,0 +1,142 @@
+# LaWAM
+
+`lawam` is the LeRobot adapter for [LaWAM](https://github.com/RLinf/LaWAM), a latent world action model for dynamics-aware robot policies. It combines a Qwen3-VL backbone, a latent action/world model, and a flow-matching action head while exposing the standard LeRobot policy, training, and evaluation interfaces.
+
+Resources:
+
+| Resource           | Link                                                                                                         | Used for                              |
+| ------------------ | ------------------------------------------------------------------------------------------------------------ | ------------------------------------- |
+| Project page       | [rlinf.github.io/LaWAM](https://rlinf.github.io/LaWAM/)                                                      | Method overview                       |
+| Paper              | [arXiv:2606.15768](https://arxiv.org/abs/2606.15768)                                                         | Citation and method details           |
+| Code               | [RLinf/LaWAM](https://github.com/RLinf/LaWAM)                                                                | Original training and evaluation code |
+| Native pretraining | [lawam-pretrain-lerobot](https://huggingface.co/jialei02/lawam-pretrain-lerobot)                             | LeRobot fine-tuning initialization    |
+| Native LIBERO SFT  | [lawam-libero-sft-lerobot](https://huggingface.co/jialei02/lawam-libero-sft-lerobot)                         | LIBERO evaluation                     |
+| Source checkpoints | [lawam-checkpoints](https://huggingface.co/collections/jialei02/lawam-checkpoints)                           | Original LaWAM release artifacts      |
+| LIBERO dataset     | [jialei02/libero_merged_no_noops_20hz](https://huggingface.co/datasets/jialei02/libero_merged_no_noops_20hz) | LIBERO SFT                            |
+
+## Installation
+
+Install LeRobot with the LaWAM extra:
+
+```bash
+pip install -e ".[lawam]"
+```
+
+Install the LIBERO benchmark dependencies and pin MuJoCo to 3.3.2 when reproducing the released LaWAM LIBERO evaluation:
+
+```bash
+pip install -e ".[lawam,libero]" "mujoco==3.3.2"
+```
+
+LIBERO benchmark success rates are sensitive to the MuJoCo simulator version. Newer MuJoCo releases can materially reduce measured LIBERO success rates, including for policies beyond LaWAM. This is an evaluation-environment compatibility issue rather than a LaWAM adapter issue. Use `mujoco==3.3.2` to reproduce the released LaWAM LIBERO and paper results exactly.
+
+LaWAM checkpoints use LeRobot's native `model.safetensors` format. The complete
+LAM, VLM adapter, and flow-head state is restored through `policy.path`; original
+LaWAM `.pt` files are not loaded by the adapter. The LAM and DINOv3 architectures
+are represented directly by `LaWAMConfig` and do not require separate checkpoint
+downloads.
+
+Keep `policy.base_vlm` set to the portable Hub model ID. Hugging Face's standard cache settings,
+such as `HF_HOME`, control where the Qwen files are stored locally without adding machine-specific
+paths to the policy or processor configuration.
+
+## Fine-Tuning
+
+Fine-tune from the native pretrained LaWAM policy:
+
+```bash
+lerobot-train \
+  --policy.path=jialei02/lawam-pretrain-lerobot \
+  --dataset.repo_id=jialei02/libero_merged_no_noops_20hz \
+  --dataset.image_transforms.enable=false \
+  --rename_map='{"observation.images.wrist_image":"observation.images.image2"}' \
+  --policy.action_horizon=8 \
+  --policy.n_action_steps=8 \
+  --policy.clip_normalized_actions=true \
+  --policy.pre_snap_gripper_action=true \
+  --policy.binarize_gripper_action=true \
+  --policy.repo_id=your_org/lawam_sft
+```
+
+The adapter uses LeRobot dataset statistics for action and state normalization before building LaWAM train batches. Pose actions use min-max normalization, while the LIBERO recipe explicitly snaps the gripper channel to binary `0/1` values to match the native LaWAM training contract. This maps both the `-1/+1` and `0/1` dataset conventions to the same model targets. The pretrained checkpoint retains its pretraining values of `action_horizon=24` and `n_action_steps=24`; the LIBERO SFT recipe overrides both to `8` while preserving `chunk_size=50` as the padded Flow sequence length. Training uses the current dataset FPS for LaWAM's natural-time encoding, and the processor persists that frequency as an evaluation fallback. `policy.num_video_frames` controls the observation frame window.
+
+The released LaWAM pretraining and LIBERO SFT recipes do not use random image augmentation. The policy processor applies only the deterministic resize and ImageNet normalization required by the Qwen and LAM backbones. LeRobot's dataset-level image transforms remain available for separately designed training recipes.
+
+Released LaWAM checkpoints use a 32-dimensional padded action/state space internally. Keep `policy.flow_action_dim=32` and `policy.flow_state_dim=32` unless you trained a checkpoint with different flow dimensions.
+
+## Evaluation
+
+Evaluate the native LIBERO SFT checkpoint through the standard evaluator:
+
+```bash
+lerobot-eval \
+  --policy.path=jialei02/lawam-libero-sft-lerobot \
+  --env.type=libero \
+  --env.task=libero_object \
+  --eval.n_episodes=10
+```
+
+The Hub repository includes the policy config and the complete preprocessor and
+postprocessor pipelines, including normalization tensors and LIBERO gripper
+processing.
+
+For a reproducible LIBERO benchmark run with the released LIBERO SFT checkpoint, evaluate all suites and task IDs in one invocation:
+
+```bash
+lerobot-eval \
+  --policy.path=jialei02/lawam-libero-sft-lerobot \
+  --policy.device=cuda \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --env.task_ids=[0,1,2,3,4,5,6,7,8,9] \
+  --eval.n_episodes=50 \
+  --output_dir=outputs/lawam_libero
+```
+
+Report success rates over all 10 tasks in each suite. Use at least 50 episodes per task when reporting benchmark numbers.
+
+Reference results for the released LIBERO SFT checkpoint with 50 episodes per task. These numbers were produced with MuJoCo 3.3.2. As an environment check, `libero_spatial` task 5 improved from 18/50 successes with MuJoCo 3.8.1 to 47/50 successes with MuJoCo 3.3.2.
+
+| Suite            | Successes | Episodes | Success rate |
+| ---------------- | --------: | -------: | -----------: |
+| `libero_spatial` |       492 |      500 |        98.4% |
+| `libero_object`  |       498 |      500 |        99.6% |
+| `libero_goal`    |       490 |      500 |        98.0% |
+| `libero_10`      |       490 |      500 |        98.0% |
+| `overall`        |      1970 |     2000 |        98.5% |
+
+## Camera Selection
+
+LaWAM checkpoints store primary and wrist camera roles explicitly instead of inferring semantics from names such as `image2`. When constructing a new multi-camera LaWAM policy, configure both roles:
+
+```bash
+--policy.primary_image_features='["observation.images.front"]' \
+--policy.wrist_image_features='["observation.images.wrist"]'
+```
+
+`policy.lam_image_feature` selects the primary camera whose temporal frames are consumed by the latent action model. It defaults to the first configured primary camera and is written explicitly when the policy config is saved.
+
+## Runtime Fields
+
+Common LaWAM-specific policy fields:
+
+| Field             | Description                                                                |
+| ----------------- | -------------------------------------------------------------------------- |
+| `base_vlm`        | Portable Qwen/Qwen3-VL Hub model ID stored in the published policy config. |
+| `action_horizon`  | Number of actions predicted per chunk, up to `chunk_size`.                 |
+| `flow_action_dim` | Internal padded action dimension used by the LaWAM flow head.              |
+| `flow_state_dim`  | Internal padded state dimension used by the LaWAM flow head.               |
+| `embodiment_id`   | LaWAM embodiment ID used when the LeRobot dataset does not provide one.    |
+
+## Citation
+
+```bibtex
+@misc{chen2026lawam,
+  title = {LaWAM: Latent World Action Models for Efficient Dynamics-Aware Robot Policies},
+  author = {Chen, Jialei and Wang, Kai and Chen, Kang and Chen, Shuaihang and Gao, Feng and Tang, Wenhao and Li, Zhiyuan and Liu, Weilin and Yao, Zhuyu and Li, Boxun and Xu, Yuanbo and Yu, Chao},
+  journal = {arXiv preprint arXiv:2606.15768},
+  year = {2026},
+  archiveprefix = {arXiv},
+  primaryclass = {cs.RO},
+}
+```
