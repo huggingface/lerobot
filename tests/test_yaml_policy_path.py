@@ -6,9 +6,11 @@ import tempfile
 from dataclasses import dataclass, field
 from unittest.mock import patch
 
+import pytest
 import yaml
 
 from lerobot.configs import parser
+from lerobot.configs.eval import EvalPipelineConfig
 from lerobot.configs.parser import (
     _config_path_args,
     _config_yaml_overrides,
@@ -17,6 +19,9 @@ from lerobot.configs.parser import (
     get_path_arg,
     get_yaml_overrides,
 )
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.train import TrainPipelineConfig
+from lerobot.policies.act.configuration_act import ACTConfig
 
 
 def test_extract_path_fields_from_yaml():
@@ -215,13 +220,125 @@ def test_flatten_bool_values():
     assert "--name=test" in args
 
 
-def test_flatten_none_values_skipped():
-    """Test that None values are not included in flattened args."""
+def test_flatten_none_values():
+    """Explicit None values must be serialized as JSON null for draccus."""
     d = {"lr": 0.001, "path_override": None, "name": "test"}
     args = _flatten_to_cli_args(d)
     assert any("lr=" in a for a in args)
     assert any("name=" in a for a in args)
-    assert not any("path_override" in a for a in args)
+    assert "--path_override=null" in args
+
+
+@pytest.mark.parametrize("suffix", [".yaml", ".json"])
+@pytest.mark.parametrize(
+    "overrides, cli_args, expected_coeff, expected_steps",
+    [
+        pytest.param({"temporal_ensemble_coeff": None}, [], None, 1, id="clear"),
+        pytest.param({"temporal_ensemble_coeff": None, "n_action_steps": 4}, [], None, 4, id="chunked"),
+        pytest.param({}, [], 0.01, 1, id="omitted"),
+        pytest.param(
+            {"temporal_ensemble_coeff": None},
+            ["--policy.temporal_ensemble_coeff=0.02"],
+            0.02,
+            1,
+            id="cli-value",
+        ),
+        pytest.param(
+            {"temporal_ensemble_coeff": 0.02},
+            ["--policy.temporal_ensemble_coeff=null"],
+            None,
+            1,
+            id="cli-null",
+        ),
+    ],
+)
+def test_null_overrides_pretrained_config(
+    tmp_path, monkeypatch, suffix, overrides, cli_args, expected_coeff, expected_steps
+):
+    monkeypatch.setattr(parser, "_config_path_args", {})
+    monkeypatch.setattr(parser, "_config_yaml_overrides", {})
+    checkpoint = tmp_path / "checkpoint"
+    ACTConfig(temporal_ensemble_coeff=0.01, n_action_steps=1, device="cpu").save_pretrained(checkpoint)
+    config_path = tmp_path / f"config{suffix}"
+    source = {"env": {"type": "pusht"}, "policy": {"path": str(checkpoint), **overrides}}
+    config_path.write_text(json.dumps(source) if suffix == ".json" else yaml.safe_dump(source))
+    monkeypatch.setattr(sys, "argv", ["prog", f"--config_path={config_path}", *cli_args])
+
+    @parser.wrap()
+    def parse_config(cfg: EvalPipelineConfig) -> EvalPipelineConfig:
+        return cfg
+
+    config = parse_config().policy
+    assert config.temporal_ensemble_coeff == expected_coeff
+    assert config.n_action_steps == expected_steps
+
+    saved_config = tmp_path / "resolved"
+    config.save_pretrained(saved_config)
+    reloaded = PreTrainedConfig.from_pretrained(saved_config)
+    assert reloaded.temporal_ensemble_coeff == expected_coeff
+    assert reloaded.n_action_steps == expected_steps
+
+
+@pytest.mark.parametrize("suffix", [".yaml", ".json"])
+def test_training_config_clears_saved_option(tmp_path, monkeypatch, suffix):
+    monkeypatch.setattr(parser, "_config_path_args", {})
+    monkeypatch.setattr(parser, "_config_yaml_overrides", {})
+    checkpoint = tmp_path / "checkpoint"
+    ACTConfig(
+        temporal_ensemble_coeff=0.01, n_action_steps=1, device="cpu", push_to_hub=False
+    ).save_pretrained(checkpoint)
+    source = {
+        "dataset": {"repo_id": "lerobot/pusht"},
+        "policy": {"path": str(checkpoint), "temporal_ensemble_coeff": None},
+        "output_dir": str(tmp_path / "output"),
+    }
+    config_path = tmp_path / f"train{suffix}"
+    config_path.write_text(json.dumps(source) if suffix == ".json" else yaml.safe_dump(source))
+    monkeypatch.setattr(sys, "argv", ["prog", f"--config_path={config_path}", "--policy.n_action_steps=4"])
+
+    @parser.wrap()
+    def parse_config(cfg: TrainPipelineConfig) -> TrainPipelineConfig:
+        cfg.validate()
+        return cfg
+
+    config = parse_config()
+    assert config.policy.temporal_ensemble_coeff is None
+    assert config.policy.n_action_steps == 4
+    assert config.policy.push_to_hub is False
+
+
+@pytest.mark.parametrize("with_config_file", [False, True])
+def test_cli_policy_path_keeps_precedence(tmp_path, monkeypatch, with_config_file):
+    monkeypatch.setattr(parser, "_config_path_args", {})
+    monkeypatch.setattr(parser, "_config_yaml_overrides", {})
+    checkpoint = tmp_path / "cli-checkpoint"
+    ACTConfig(chunk_size=8, temporal_ensemble_coeff=0.01, n_action_steps=1, device="cpu").save_pretrained(
+        checkpoint
+    )
+    cli_args = [
+        "prog",
+        "--env.type=pusht",
+        f"--policy.path={checkpoint}",
+        "--policy.temporal_ensemble_coeff=null",
+        "--policy.n_action_steps=4",
+    ]
+    if with_config_file:
+        file_checkpoint = tmp_path / "file-checkpoint"
+        ACTConfig(chunk_size=4, n_action_steps=1, device="cpu").save_pretrained(file_checkpoint)
+        config_path = tmp_path / "eval.yaml"
+        config_path.write_text(yaml.safe_dump({"policy": {"path": str(file_checkpoint)}}))
+        cli_args.append(f"--config_path={config_path}")
+    monkeypatch.setattr(sys, "argv", cli_args)
+
+    @parser.wrap()
+    def parse_config(cfg: EvalPipelineConfig) -> EvalPipelineConfig:
+        return cfg
+
+    config = parse_config().policy
+    assert config.pretrained_path == checkpoint
+    assert config.chunk_size == 8
+    assert config.temporal_ensemble_coeff is None
+    assert config.n_action_steps == 4
 
 
 def test_flatten_nested_with_bools():
