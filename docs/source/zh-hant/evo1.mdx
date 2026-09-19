@@ -1,0 +1,191 @@
+# EVO1
+
+EVO1 是一個用於機器人控制的視覺-語言-動作策略（Vision-Language-Action policy），圍繞 InternVL3 骨幹網路（backbone）與連續流匹配動作頭（continuous flow-matching action head）建構而成。此 LeRobot 整合將 EVO1 以標準策略類型（standard policy type）公開，讓它能透過一般的 LeRobot 資料集（dataset）、檢查點（checkpoint）與處理器（processor）API 進行訓練與評估（training and evaluation）。
+
+## 模型概覽（model overview）
+
+此策略（policy）以 InternVL3 嵌入（embeds）一或多張攝影機影像（camera images）與語言任務提示詞（language task prompt），將機器人狀態／動作向量（state/action vectors）填補（pad）到固定的最大維度（fixed maximum dimensions），並以流匹配動作頭（flow-matching action head）預測未來的動作塊（predicts future action chunks）。在推論（inference）期間，策略會取樣（samples）一個動作塊（action chunk），並在再次取樣之前，從該塊（chunk）回傳 `n_action_steps` 個動作（actions）。
+
+### LeRobot 整合涵蓋的內容（what the LeRobot integration covers）
+
+- 透過 LeRobot 的標準 `policy.type=evo1` 設定（configuration）
+- 具備可選 FlashAttention 回退（fallback）的 InternVL3 影像／文字嵌入（image/text embedding）
+- 針對僅動作頭（action-head-only）與 VLM 微調執行（finetuning runs）的分階段微調控制（stage-based finetuning controls）
+- 連續流匹配動作預測（continuous flow-matching action prediction）
+- 透過 LeRobot 策略（policy）API 進行檢查點（checkpoint）儲存／載入
+- 以 `lerobot-train` 進行訓練（training），並以標準策略推論（standard policy inference）API 進行評估（evaluation）
+
+更廣泛的 EVO1 專案可能包含額外的訓練腳本（additional training scripts）與資料集工具（dataset tooling）。本頁聚焦於 LeRobot 的機器人控制策略路徑（control policy path）。
+
+## 安裝需求（installation requirements）
+
+1. 按照[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
+2. 安裝 EVO1 的依賴套件（dependencies）：
+
+   ```bash
+   pip install -e ".[evo1]"
+   ```
+
+   若要進行 LIBERO 評估（evaluation），請一併安裝 LIBERO 額外套件（extra）：
+
+   ```bash
+   pip install -e ".[evo1,libero]"
+   ```
+
+3. 只有在 `flash-attn` wheel 與您的 Python、PyTorch、CUDA 和 GPU 堆疊（stack）相容時才安裝它。當 `flash_attn` 無法使用時，EVO1 會回退（fallback）到標準注意力機制（standard attention）。
+
+EVO1 使用原生的 Hugging Face `transformers` InternVL 實作，因此 `policy.vlm_model_name` 必須指向一個原生轉換過的檢查點（natively converted checkpoint），例如 `OpenGVLab/InternVL3-1B-hf`（注意 `-hf` 後綴 suffix）。除非 `policy.vlm_model_name` 指向本機模型目錄（local model directory），否則首次執行可能會下載所設定的 VLM 檢查點（configured VLM checkpoint）。
+
+## 資料需求（data requirements）
+
+EVO1 預期一個具備以下內容的 LeRobot 資料集（dataset）：
+
+- 一到 `policy.max_views` 個視覺觀測（visual observations），例如 `observation.images.image`
+- `observation.state`
+- `action`
+- 位於資料集（dataset）`task` 欄位（field）中的語言任務指令（language task instruction），或以 `policy.task_field` 設定（configured）的其他欄位
+
+狀態與動作向量（state and action vectors）會被填補（padded）到 `policy.max_state_dim` 與 `policy.max_action_dim`。預測結果在回傳（returned）之前，會被裁切回（cropped back）資料集的動作維度（dataset action dimension）。
+
+## 使用方式（usage）
+
+若要在 LeRobot 設定（configuration）中使用 EVO1，請指定：
+
+```python
+policy.type=evo1
+```
+
+預設情況下，新的 EVO1 策略（policy）會從以下位置初始化其 VLM：
+
+```python
+policy.vlm_model_name=OpenGVLab/InternVL3-1B-hf
+```
+
+一旦有了 LeRobot 格式的 EVO1 檢查點（checkpoint），即可用以下方式載入：
+
+```python
+policy.path=your-org/your-evo1-checkpoint
+```
+
+## 訓練（training）
+
+### 階段 1（stage 1）
+
+階段 1 會凍結 VLM 並訓練（train）動作頭（action head）：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your_org/your_dataset \
+  --policy.type=evo1 \
+  --policy.training_stage=stage1 \
+  --policy.vlm_model_name=OpenGVLab/InternVL3-1B-hf \
+  --policy.device=cuda \
+  --policy.chunk_size=50 \
+  --policy.n_action_steps=50 \
+  --policy.max_state_dim=24 \
+  --policy.max_action_dim=24 \
+  --policy.optimizer_lr=1e-5 \
+  --batch_size=4 \
+  --steps=5000 \
+  --output_dir=./outputs/evo1_stage1
+```
+
+### 階段 2（stage 2）
+
+階段 2 會微調（finetunes）VLM 分支與動作頭（branches and action head）。常見的工作流程（common workflow）會從階段 1 的檢查點（checkpoint）開始：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your_org/your_dataset \
+  --policy.path=./outputs/evo1_stage1/checkpoints/005000/pretrained_model \
+  --policy.training_stage=stage2 \
+  --policy.vlm_model_name=OpenGVLab/InternVL3-1B-hf \
+  --policy.device=cuda \
+  --policy.chunk_size=50 \
+  --policy.n_action_steps=50 \
+  --policy.max_state_dim=24 \
+  --policy.max_action_dim=24 \
+  --policy.optimizer_lr=1e-5 \
+  --batch_size=4 \
+  --steps=80000 \
+  --output_dir=./outputs/evo1_stage2
+```
+
+預設情況下，`policy.training_stage` 會重新套用該階段的微調預設值（finetuning defaults）。當從階段 1 的
+檢查點（checkpoint）開始階段 2 時，這一點很重要，因為階段 1 的檢查點設定（checkpoint config）會將 VLM
+微調旗標（finetuning flags）儲存為停用狀態（disabled）。除非設定
+`policy.apply_training_stage_defaults=false`，否則這些階段預設值會優先於已儲存或手動提供的
+`policy.finetune_*` 旗標；因此只有在您要手動控制每一個微調旗標時才設定該旗標。
+
+### 關鍵訓練參數（key training parameters）
+
+| 參數（parameter）                             | 預設（default）             | 描述（description）                                                                             |
+| --------------------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------- |
+| `policy.vlm_model_name`                       | `OpenGVLab/InternVL3-1B-hf` | 原生轉換過的 InternVL3 檢查點（checkpoint）或本機模型目錄（local model directory）              |
+| `policy.training_stage`                       | `stage1`                    | `stage1` 訓練動作頭（trains the action head）；`stage2` 微調 VLM 分支（finetunes VLM branches） |
+| `policy.apply_training_stage_defaults`        | `true`                      | 載入檢查點（checkpoint）後重新套用階段的微調預設值（reapplies stage finetuning defaults）       |
+| `policy.vlm_num_layers`                       | `14`                        | 為此策略保留的 InternVL3 語言層數量（number of InternVL3 language layers kept for the policy）  |
+| `policy.vlm_dtype`                            | `bfloat16`                  | 請求的 VLM dtype                                                                                |
+| `policy.use_flash_attn`                       | `true`                      | 安裝時請求 FlashAttention；否則回退（falls back）                                               |
+| `policy.enable_gradient_checkpointing`        | `true`                      | 在支援的 InternVL3 模組上啟用檢查點（checkpointing）                                            |
+| `policy.gradient_checkpointing_use_reentrant` | `false`                     | 支援時傳給梯度檢查點（gradient checkpointing）的 reentrant 設定（setting）                      |
+| `policy.chunk_size`                           | `50`                        | 每個塊預測的未來動作數量（number of future actions predicted per chunk）                        |
+| `policy.n_action_steps`                       | `50`                        | 從取樣塊中消耗的動作數量（number of actions consumed from a sampled chunk）                     |
+| `policy.max_state_dim`                        | `24`                        | 狀態填補維度（state padding dimension）                                                         |
+| `policy.max_action_dim`                       | `24`                        | 動作填補維度（action padding dimension）                                                        |
+| `policy.postprocess_action_dim`               | `null`                      | EVO1 後處理（postprocessing）後回傳（returned）的可選動作維度（optional action dimension）      |
+| `policy.binarize_gripper`                     | `false`                     | 為 LIBERO 風格評估將後處理的夾爪通道（postprocessed gripper channel）二值化（binarizes）        |
+| `policy.task_field`                           | `task`                      | 用作語言提示詞（language prompt）的批次欄位（batch field）                                      |
+
+## 推論（inference）
+
+用訓練好的 EVO1 檢查點（checkpoint）試試看：
+
+```bash
+lerobot-rollout \
+  --policy.path=your-org/your-evo1-checkpoint \
+  --inference.type=rtc \ # optional
+  ...
+```
+
+## 結果（results）
+
+### LIBERO 評估（LIBERO evaluation）
+
+> [!NOTE]
+> 以此實作訓練、由 `lerobot` 託管的 LIBERO 檢查點（checkpoint）基準測試結果（benchmark results），
+> 將在訓練完成後補上。
+
+官方 EVO1 LIBERO rollout 協定（protocol）使用原始的 LIBERO 攝影機特徵名稱（camera feature names，
+`observation.images.agentview_image` 與 `observation.images.robot0_eye_in_hand_image`），每 14 個動作
+（actions）重新規劃（replan）一次，並在推進模擬器（stepping the simulator）之前將夾爪命令（gripper command）二值化（binarizes）。
+EVO1 策略後處理器（policy postprocessor）可將填補（padded）的 24D 動作裁切（crop）回 7D 的 LIBERO 動作空間（action space），並套用該夾爪二值化（gripper binarization）。
+若要在相同的每個任務一回合設定（one-episode-per-task setting）下評估（evaluate） LIBERO 檢查點（checkpoint），請保留原始攝影機名稱（raw camera names），
+而非預設的 `image`/`image2` 對映（mapping），並設定 LIBERO 動作後處理旗標（action postprocessing flags）：
+
+```bash
+lerobot-eval \
+  --policy.path=your-org/your-evo1-libero-checkpoint \
+  --policy.vlm_model_name=OpenGVLab/InternVL3-1B-hf \
+  --policy.device=cuda \
+  --policy.use_flash_attn=true \
+  --policy.n_action_steps=14 \
+  --policy.postprocess_action_dim=7 \
+  --policy.binarize_gripper=true \
+  --env.type=libero \
+  --env.task=libero_object \
+  --env.camera_name_mapping="{agentview_image: agentview_image, robot0_eye_in_hand_image: robot0_eye_in_hand_image}" \
+  --env.observation_height=448 \
+  --env.observation_width=448 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=1
+```
+
+## 參考資料（references）
+
+- [EVO1 儲存庫](https://github.com/MINT-SJTU/Evo-1)
+- [InternVL3-1B-hf](https://huggingface.co/OpenGVLab/InternVL3-1B-hf)
+
+## 授權條款（license）
+
+此 LeRobot 整合遵循 LeRobot 所使用的 Apache 2.0 授權條款。已發布的檢查點與資料的授權，請查閱上游 EVO1 與 InternVL3 的模型頁面。

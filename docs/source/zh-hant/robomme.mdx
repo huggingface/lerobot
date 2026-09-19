@@ -1,0 +1,130 @@
+# RoboMME
+
+[RoboMME](https://robomme.github.io) 是一個建構於 ManiSkill (SAPIEN) 上的記憶增強操作基準測試（memory-augmented manipulation benchmark）。它評估（evaluates）機器人在一個回合中保留和使用資訊的能力（robot’s ability to retain and use information across an episode）——包括計數（counting）、物體恆存性（object permanence）、參照和模仿（reference and imitation）。
+
+- **16 個任務（tasks）**，橫跨 4 個記憶技能套件（memory-skill suites）
+- **1,600 個訓練示範（training demos）**（每個任務 task 100 個，50 個驗證 val，50 個測試 test）
+- **資料集（dataset）**：[`lerobot/robomme`](https://huggingface.co/datasets/lerobot/robomme) — LeRobot v3.0，768K 影格，10 fps
+- **模擬器（simulator）**：ManiSkill / SAPIEN，Panda 機械臂，僅支援 Linux
+
+![RoboMME 基準測試任務概覽](https://cdn-thumbnails.huggingface.co/social-thumbnails/papers/2603.04639/gradient.png)
+
+## 任務（tasks）
+
+| 套件（suite）                                      | 任務（task）                                                  |
+| -------------------------------------------------- | ------------------------------------------------------------- |
+| **計數**（counting，時間記憶 temporal memory）     | BinFill、PickXtimes、SwingXtimes、StopCube                    |
+| **恆存性**（permanence，空間記憶 spatial memory）  | VideoUnmask、VideoUnmaskSwap、ButtonUnmask、ButtonUnmaskSwap  |
+| **參照**（reference，物體記憶 object memory）      | PickHighlight、VideoRepick、VideoPlaceButton、VideoPlaceOrder |
+| **模仿**（imitation ，程序記憶 procedural memory） | MoveCube、InsertPeg、PatternLock、RouteStick                  |
+
+## 安裝（installation）
+
+> RoboMME 需要 **Linux**（ManiSkill/SAPIEN 使用 Vulkan 渲染）。建議使用 Docker 以隔離依賴衝突（dependency conflicts）。
+
+### 原生安裝（Linux）
+
+```bash
+pip install --override <(printf 'gymnasium==0.29.1\nnumpy==1.26.4\n') \
+  -e '.[smolvla,av-dep]' \
+  'robomme @ git+https://github.com/RoboMME/robomme_benchmark.git@main'
+```
+
+> **依賴注意事項（dependency note）**：`mani-skill`（由 `robomme` 拉取）固定使用 `gymnasium==0.29.1` 和 `numpy<2.0.0`，這與 lerobot 的基礎要求 `numpy>=2.0.0` 衝突。這就是為什麼 `robomme` 不是 pyproject 的額外依賴（extra）——請使用上述覆寫安裝方式，或使用下方的 Docker 方法以完全避免衝突。
+
+### Docker（推薦）
+
+```bash
+# 先建構基礎映像（從倉庫根目錄）
+docker build -f docker/Dockerfile.eval-base -t lerobot-eval-base .
+
+# 建構 RoboMME 評估映像（套用 gymnasium + numpy 固定版本覆寫）
+docker build -f docker/Dockerfile.benchmark.robomme -t lerobot-robomme .
+```
+
+`docker/Dockerfile.benchmark.robomme` 映像在 lerobot 安裝完成後覆寫 `gymnasium==0.29.1` 和 `numpy==1.26.4`。這兩個版本對 lerobot 的實際 API 使用在執行時是安全的。
+
+## 執行評估（running evaluation）
+
+### 預設：單一任務、單一回合（single task, single episode）
+
+```bash
+lerobot-eval \
+    --policy.path=<your_policy_repo> \
+    --env.type=robomme \
+    --env.task=PickXtimes \
+    --env.dataset_split=test \
+    --env.task_ids=[0] \
+    --eval.batch_size=1 \
+    --eval.n_episodes=1
+```
+
+### 多任務評估（multi-task evaluation）
+
+透過逗號分隔任務名稱（comma-separating task names），在一次執行中評估（evaluate）多個任務（multiple tasks）。使用 `task_ids` 控制每個任務要評估哪些回合（episodes）。建議：測試分割（test split）每個任務 50 個回合。
+
+```bash
+lerobot-eval \
+    --policy.path=<your_policy_repo> \
+    --env.type=robomme \
+    --env.task=PickXtimes,BinFill,StopCube,MoveCube,InsertPeg \
+    --env.dataset_split=test \
+    --env.task_ids=[0,1,2,3,4,5,6,7,8,9] \
+    --eval.batch_size=1 \
+    --eval.n_episodes=50
+```
+
+### `env.type=robomme` 的關鍵 CLI 選項（key CLI options for `env.type=robomme`）
+
+| 選項（option）       | 預設值（default） | 描述（description）                                                       |
+| -------------------- | ----------------- | ------------------------------------------------------------------------- |
+| `env.task`           | `PickXtimes`      | 上述 16 個任務名稱（task names）中的任一個（逗號分隔 comma-separated）    |
+| `env.dataset_split`  | `test`            | `train`、`val` 或 `test`                                                  |
+| `env.action_space`   | `joint_angle`     | `joint_angle`（8 維, 8-D）或 `ee_pose`（7 維, 7-D）                       |
+| `env.episode_length` | `300`             | 每個回合的最大步數（max steps per episode）                               |
+| `env.task_ids`       | `null`            | 要評估的回合索引列表（list of episode indices to evaluate, null = `[0]`） |
+
+## 資料集（dataset）
+
+資料集（dataset） [`lerobot/robomme`](https://huggingface.co/datasets/lerobot/robomme) 採用 **LeRobot v3.0 格式**，可直接載入：
+
+```python
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+dataset = LeRobotDataset("lerobot/robomme")
+```
+
+### 資料集特徵（dataset features）
+
+| 特徵（feature）    | 形狀（shape） | 描述（description）                                     |
+| ------------------ | ------------- | ------------------------------------------------------- |
+| `image`            | (256, 256, 3) | 前方攝影機 RGB（front camera RGB）                      |
+| `wrist_image`      | (256, 256, 3) | 腕部攝影機 RGB（wrist camera RGB）                      |
+| `actions`          | (8,)          | 關節角度（joint angles） + 夾爪（gripper）              |
+| `state`            | (8,)          | 關節位置（joint positions） + 夾爪狀態（gripper state） |
+| `simple_subgoal`   | str           | 高階語言標註（high-level language annotation）          |
+| `grounded_subgoal` | str           | 語言錨定標註（grounded language annotation）            |
+| `episode_index`    | int           | 回合 ID（episode ID）                                   |
+| `frame_index`      | int           | 回合內的影格索引（frame within episode）                |
+
+### 訓練用特徵鍵對齊（feature key alignment, training）
+
+環境封裝器（env wrapper）將 `pixels/image` 和 `pixels/wrist_image` 作為觀測鍵（observation keys）公開。`RoboMMEEnv` 中的 `features_map` 將這些映射（maps）到 `observation.images.image` 和 `observation.images.wrist_image` 供策略（policy）使用。狀態（state）以 `agent_pos` 公開並映射到 `observation.state`。
+
+資料集（dataset）中的 `image` 和 `wrist_image` 欄位已與策略輸入鍵（policy input keys）對齊，因此在微調（fine-tune）時無需重新命名（renaming）。
+
+## 動作空間（action spaces）
+
+| 類型（type）  | 維度（dim） | 說明（description）                                                          |
+| ------------- | ----------- | ---------------------------------------------------------------------------- |
+| `joint_angle` | 8           | 7 個關節角度（joint angles） + 1 個夾爪（gripper，−1 閉合，+1 張開，絕對值） |
+| `ee_pose`     | 7           | xyz + 翻滾/俯仰/偏擺（roll/pitch/yaw）+ 夾爪（gripper）                      |
+
+透過 `--env.action_space=joint_angle`（預設）或 `--env.action_space=ee_pose` 設定。
+
+## 平台注意事項（platform notes）
+
+- **僅支援 Linux**：ManiSkill 需要 SAPIEN/Vulkan。不支援 macOS 和 Windows。
+- **建議使用 GPU**：渲染可在 CPU 上執行但速度較慢；CUDA + Vulkan 可達到完整速度。
+- **gymnasium / numpy 衝突**：請參閱上方的安裝注意事項。Docker 映像（image）會自動處理此問題。
+- **ManiSkill 分支**：`robomme` 依賴於特定的 ManiSkill 分支（fork, `YinpeiDai/ManiSkill`），會透過 `robomme` 套件（package）自動拉取（pull）。
