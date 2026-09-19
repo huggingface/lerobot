@@ -57,7 +57,7 @@ All benchmarks are evaluated the same way by `lerobot-eval`:
 2. `eval_policy_all()` iterates over every suite and task.
 3. For each task, it runs `n_episodes` rollouts via `rollout()`.
 4. Results are aggregated hierarchically: episode, task, suite, overall.
-5. Metrics include `pc_success` (success rate), `avg_sum_reward`, and `avg_max_reward`.
+5. Metrics include `pc_success` (success rate), `avg_sum_reward`, and `avg_max_reward`. Every success rate is reported with its counts (`n_success` out of `n_episodes`) and a 95% Wilson interval in percent (`pc_success_ci95`), at task, suite and overall level. The interval covers sampling noise over episodes only; it says nothing about variation between training runs of the same recipe.
 
 The critical piece: your env must return `info["is_success"]` on every `step()` call. This is how the eval loop knows whether a task was completed.
 
