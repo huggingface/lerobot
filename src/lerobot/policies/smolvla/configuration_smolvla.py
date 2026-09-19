@@ -62,7 +62,10 @@ class SmolVLAConfig(PreTrainedConfig):
     # Decoding
     num_steps: int = 10
 
-    # Optional torch.compile for the action expert denoise loop
+    # Optional torch.compile for the action expert denoise loop.
+    # When enabled, torch.compile is applied to the denoise step with dynamic shapes.
+    # For optimal inference latency and zero recompilation, setting `pad_language_to="max_length"`
+    # ensures constant prefix lengths during real-time robot deployment.
     compile_denoise: bool = False
 
     # Attention utils
