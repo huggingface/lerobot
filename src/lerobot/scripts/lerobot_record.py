@@ -319,7 +319,6 @@ def record_loop(
 
                 # Applies a pipeline to the raw teleop action, default is IdentityProcessor
                 act_processed_teleop = teleop_action_processor((act, obs))
-                action_values = act_processed_teleop
                 robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
 
             elif isinstance(teleop, list):
@@ -329,7 +328,6 @@ def record_loop(
                 base_action = robot._from_keyboard_to_base_action(keyboard_action)
                 act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
                 act_processed_teleop = teleop_action_processor((act, obs))
-                action_values = act_processed_teleop
                 robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
             else:
                 robot_action_to_send = None
@@ -351,15 +349,15 @@ def record_loop(
 
         with timer.section("send"):
             # Send action to robot
-            # Action can eventually be clipped using `max_relative_target`,
-            # so action actually sent is saved in the dataset. action = postprocessor.process(action)
-            # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
-            _sent_action = robot.send_action(robot_action_to_send)
+            # Robot implementations may clip or otherwise modify the action at
+            # the hardware boundary. The returned value is the canonical action
+            # that was actually sent and must be used for recording.
+            sent_action = robot.send_action(robot_action_to_send)
 
         # Write to dataset
         if dataset is not None:
             with timer.section("record"):
-                action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
+                action_frame = build_dataset_frame(dataset.features, sent_action, prefix=ACTION)
                 frame = {**observation_frame, **action_frame, "task": single_task}
                 dataset.add_frame(frame)
 
@@ -368,7 +366,7 @@ def record_loop(
                 log_visualization_data(
                     display_mode,
                     observation=obs_processed,
-                    action=action_values,
+                    action=sent_action,
                     compress_images=display_compressed_images,
                 )
 
