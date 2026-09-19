@@ -1102,6 +1102,24 @@ def test_dagger_continuous_records_once_per_interpolation_cycle():
         assert call.args[0]["intervention"].item() is False
 
 
+def test_dagger_continuous_honors_num_episodes():
+    from lerobot.rollout import DAggerStrategyConfig
+    from lerobot.rollout.strategies import DAggerStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    ctx, dataset = _make_loop_ctx(fps=200.0, multiplier=1, num_ticks=10)
+    strategy = DAggerStrategy(DAggerStrategyConfig(record_autonomous=True, num_episodes=2))
+    strategy._engine = ctx.policy.inference
+    strategy._interpolator = ActionInterpolator(multiplier=1)
+    strategy._episode_duration_s = -1.0
+
+    strategy._run_continuous(ctx)
+
+    # A negative duration forces an episode boundary on each tick. The loop
+    # must stop after two saved episodes instead of consuming all ten ticks.
+    assert dataset.add_frame.call_count == 2
+
+
 @pytest.mark.parametrize("correction_ticks", [1, 2, 3])
 def test_dagger_records_policy_actions_after_a_correction_of_any_length(correction_ticks):
     from lerobot.rollout import DAggerStrategyConfig

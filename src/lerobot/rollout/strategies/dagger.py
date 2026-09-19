@@ -27,9 +27,9 @@ the ``input_device`` config field.  Each device exposes three actions:
     ESC (keyboard only) — Stop session.
 
 Recording modes:
-    ``record_autonomous=True``:  Sentry-like continuous recording with
-        time-based episode rotation.  Both autonomous and correction
-        frames are recorded; corrections tagged ``intervention=True``.
+    ``record_autonomous=True``:  Sentry-like recording with time-based
+        episode rotation, bounded by ``num_episodes``.  Both autonomous and
+        correction frames are recorded; corrections tagged ``intervention=True``.
     ``record_autonomous=False``: Only correction windows are recorded.
         Each correction (start to stop) becomes one episode.
 
@@ -235,8 +235,9 @@ class DAggerStrategy(RolloutStrategy):
                                --(key1)--> AUTONOMOUS
 
     Recording modes:
-        ``record_autonomous=True``: Sentry-like continuous recording with
-            time-based episode rotation.  Intervention frames tagged True.
+        ``record_autonomous=True``: Sentry-like recording with time-based
+            episode rotation, bounded by ``num_episodes``. Intervention
+            frames tagged True.
         ``record_autonomous=False``: Only correction windows recorded.
             Each correction = one episode.  Upload on demand via key3.
     """
@@ -365,13 +366,18 @@ class DAggerStrategy(RolloutStrategy):
         correction_tick = 0
         start_time = time.perf_counter()
         episode_start = time.perf_counter()
+        recorded_episodes = 0
         episodes_since_push = 0
         episode_duration_s = self._episode_duration_s
         logger.info("DAgger continuous recording started (episode_duration=%.0fs)", episode_duration_s)
 
         with VideoEncodingManager(dataset):
             try:
-                while not events.stop_recording.is_set() and not ctx.runtime.shutdown_event.is_set():
+                while (
+                    (self.config.num_episodes is None or recorded_episodes < self.config.num_episodes)
+                    and not events.stop_recording.is_set()
+                    and not ctx.runtime.shutdown_event.is_set()
+                ):
                     timer.tick(new_cycle=interpolator.needs_new_action())
 
                     if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
@@ -475,6 +481,7 @@ class DAggerStrategy(RolloutStrategy):
                     if elapsed >= episode_duration_s and phase != DAggerPhase.CORRECTING:
                         with self._episode_lock:
                             dataset.save_episode()
+                        recorded_episodes += 1
                         episodes_since_push += 1
                         self._needs_push.set()
                         logger.info(
