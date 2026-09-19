@@ -96,7 +96,11 @@ class WandBConfig:
     entity: str | None = None
     notes: str | None = None
     run_id: str | None = None
+    resume: str | None = None  # Allowed values: 'allow', 'must', 'never', or 'auto'.
     mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
+    console: str = "wrap"
+    console_multipart: bool = False
+    console_chunk_max_seconds: int = 0
     add_tags: bool = True  # If True, save configuration as tags in the WandB run.
 
 
