@@ -758,13 +758,14 @@ class VLAFlowMatching(nn.Module):
         if past_key_values is not None and hasattr(past_key_values, "layers"):
             past_key_values = tuple((layer.keys, layer.values) for layer in past_key_values.layers)
 
-        step_fn = getattr(self, "_compiled_denoise_step", None)
-        if step_fn is None:
-            if getattr(self.config, "compile_denoise", False) or getattr(self, "_enable_compile", False):
-                self._compiled_denoise_step = torch.compile(self.denoise_step, mode="max-autotune")
-                step_fn = self._compiled_denoise_step
-            else:
-                step_fn = self.denoise_step
+        if getattr(self.config, "compile_denoise", False):
+            if getattr(self, "_compiled_denoise_step", None) is None:
+                self._compiled_denoise_step = torch.compile(
+                    self.denoise_step, mode="max-autotune", dynamic=True
+                )
+            step_fn = self._compiled_denoise_step
+        else:
+            step_fn = self.denoise_step
 
         return euler_integrate(
             lambda input_x_t, current_timestep: step_fn(
