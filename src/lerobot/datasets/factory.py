@@ -127,6 +127,8 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             revision=cfg.dataset.revision,
             repo_type=cfg.dataset.repo_type,
         )
+        if cfg.dataset.camera_keys is not None:
+            ds_meta.keep_cameras(cfg.dataset.camera_keys)
         delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, ds_meta, cfg.rename_map)
         episodes = resolve_episode_indices(
             cfg.dataset.episodes, ds_meta.total_episodes, cfg.dataset.exclude_episodes
@@ -156,6 +158,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 depth_output_unit=cfg.dataset.depth_output_unit,
                 tolerance_s=cfg.tolerance_s,
                 repo_type=cfg.dataset.repo_type,
+                camera_keys=cfg.dataset.camera_keys,
             )
         else:
             dataset = StreamingLeRobotDataset(
@@ -252,6 +255,7 @@ def make_train_eval_datasets(
         return_uint8=True,
         tolerance_s=cfg.tolerance_s,
         repo_type=cfg.dataset.repo_type,
+        camera_keys=cfg.dataset.camera_keys,
     )
 
     eval_dataset = LeRobotDataset(
@@ -266,6 +270,7 @@ def make_train_eval_datasets(
         return_uint8=True,
         tolerance_s=cfg.tolerance_s,
         repo_type=cfg.dataset.repo_type,
+        camera_keys=cfg.dataset.camera_keys,
     )
 
     if cfg.dataset.use_imagenet_stats:

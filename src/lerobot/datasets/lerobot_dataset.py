@@ -56,6 +56,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         root: str | Path | None = None,
         episodes: list[int] | None = None,
         episode_filter: Callable[[dict], bool] | None = None,
+        camera_keys: list[str] | None = None,
         image_transforms: Callable | None = None,
         delta_timestamps: dict[str, list[float]] | None = None,
         tolerance_s: float = 1e-4,
@@ -171,6 +172,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 (e.g.``task_index``, ``episode_index``, ``length``, ``from_timestamp``, ``to_timestamp``).
                 Intersected with ``episodes`` when both are set. Example: ``lambda ep: ep["length"] >= 100``.
                 Defaults to None.
+            camera_keys (list[str] | None, optional): Only load these camera features; the others are
+                dropped from the metadata so they are never decoded. Read-only. Defaults to None (all).
             image_transforms (Callable | None, optional):
                 Transform applied to visual modalities inside `__getitem__` after image decoding / tensor
                 conversion. This works for both image-backed and video-backed observations and can later be
@@ -260,6 +263,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
         )
         self.root = self.meta.root
         self.revision = self.meta.revision
+        if camera_keys is not None:
+            if streaming_encoding or batch_encoding_size != 1:
+                raise ValueError("camera_keys is read-only, not for write-mode parameters.")
+            self.meta.keep_cameras(camera_keys)
+            if delta_timestamps:
+                delta_timestamps = {k: v for k, v in delta_timestamps.items() if k in self.meta.features}
+                self.delta_timestamps = delta_timestamps
         self.meta.rescale_depth_stats(self._depth_output_unit)
 
         if episodes is not None and any(
