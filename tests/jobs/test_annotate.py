@@ -68,6 +68,8 @@ def test_pod_setup_installs_requested_ref():
     # The vLLM image has neither ffmpeg (video decode) nor lerobot's pinned deps.
     assert "ffmpeg" in setup
     assert "'draccus==0.10.0'" in setup
+    # Remote annotation retains its vLLM-specific constraint.
+    assert "'datasets>=4.7.0,<5.0.0'" in setup
 
 
 def _annotate_argv(command):
