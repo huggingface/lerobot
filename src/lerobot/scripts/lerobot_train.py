@@ -331,6 +331,38 @@ def make_dataloaders(
     else:
         shuffle = True
         sampler = None
+        # One DataLoader process owns the rank-level planner/cache; the dataset's bounded
+        # executors provide fetch and decode concurrency without duplicating episode caches.
+        train_num_workers = min(cfg.num_workers, 1)
+        if cfg.num_workers > 1 and is_main_process():
+            logging.info(
+                "Using one streaming DataLoader worker per rank; %d configured workers remain "
+                "available as the dataset's internal fetch concurrency.",
+                cfg.num_workers,
+            )
+        if (
+            dataset.num_frames_for_rank(parallel_dims.dp_rank, parallel_dims.dp_world_size, train_num_workers)
+            == 0
+        ):
+            raise ValueError("This rank owns no streaming episodes. Reduce the data-parallel world size.")
+        if cfg.resume and step > 0:
+            metadata = load_training_metadata(cfg.checkpoint_path / TRAINING_STATE_DIR)
+            saved_dp_world = metadata["dp_world_size"]
+            saved_batch_size = metadata["batch_size"]
+            if saved_dp_world not in (None, parallel_dims.dp_world_size):
+                raise ValueError(
+                    "Sample-exact streaming resume requires the checkpoint data-parallel world size "
+                    f"({saved_dp_world}) to match the current size ({parallel_dims.dp_world_size})."
+                )
+            if saved_batch_size not in (None, cfg.batch_size):
+                raise ValueError(
+                    "Sample-exact streaming resume requires the checkpoint batch size "
+                    f"({saved_batch_size}) to match the current batch size ({cfg.batch_size})."
+                )
+            stream_offset = step * (saved_batch_size or cfg.batch_size)
+            dataset.load_state_dict({"epoch": 0, "offset": stream_offset, "batch_size": cfg.batch_size})
+            if is_main_process():
+                logging.info("Resuming streaming data order at local sample %d", stream_offset)
 
     device_type = parallel_dims.device_type
     # Only swap in the language-aware collate when the dataset actually
@@ -339,16 +371,26 @@ def make_dataloaders(
     collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=cfg.num_workers,
+        num_workers=train_num_workers if cfg.dataset.streaming else cfg.num_workers,
         batch_size=cfg.batch_size,
         shuffle=shuffle and not cfg.dataset.streaming,
         sampler=sampler,
         pin_memory=device_type == "cuda",
         drop_last=False,
         collate_fn=collate_fn,
-        prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
-        persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
-        multiprocessing_context=cfg.dataloader_multiprocessing_context if cfg.num_workers > 0 else None,
+        prefetch_factor=(
+            cfg.prefetch_factor
+            if (train_num_workers if cfg.dataset.streaming else cfg.num_workers) > 0
+            else None
+        ),
+        persistent_workers=(
+            cfg.persistent_workers and (train_num_workers if cfg.dataset.streaming else cfg.num_workers) > 0
+        ),
+        multiprocessing_context=(
+            cfg.dataloader_multiprocessing_context
+            if (train_num_workers if cfg.dataset.streaming else cfg.num_workers) > 0
+            else None
+        ),
     )
 
     # Build eval dataloader if a held-out split exists
@@ -565,7 +607,13 @@ def train(cfg: TrainPipelineConfig):
     # policy's _fsdp_wrap_modules declaration — root-only wrapping is never silently accepted.
     set_fsdp_wrap_modules(accelerator, accelerator.unwrap_model(policy) if peft_model else policy)
     accelerator.wait_for_everyone()
-    if eval_dataloader is not None:
+    if cfg.dataset.streaming and eval_dataloader is not None:
+        policy, optimizer, lr_scheduler, eval_dataloader = accelerator.prepare(
+            policy, optimizer, lr_scheduler, eval_dataloader
+        )
+    elif cfg.dataset.streaming:
+        policy, optimizer, lr_scheduler = accelerator.prepare(policy, optimizer, lr_scheduler)
+    elif eval_dataloader is not None:
         policy, optimizer, dataloader, lr_scheduler, eval_dataloader = accelerator.prepare(
             policy, optimizer, dataloader, lr_scheduler, eval_dataloader
         )
@@ -726,6 +774,10 @@ def train(cfg: TrainPipelineConfig):
     for _ in range(step, cfg.steps):
         step_start = time.perf_counter()
         batch = next(dl_iter)
+        if cfg.dataset.streaming:
+            from accelerate.utils import send_to_device  # noqa: PLC0415
+
+            batch = send_to_device(batch, device, non_blocking=device.type == "cuda")
         preprocessing_start = time.perf_counter()
         train_tracker.dataloading_s = preprocessing_start - step_start
         batch = _preprocess_dataset_batch(batch, dataset.meta.camera_keys, cfg.rename_map, preprocessor)
