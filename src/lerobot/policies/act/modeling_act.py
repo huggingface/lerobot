@@ -384,7 +384,7 @@ class ACT(nn.Module):
 
         `batch` should have the following structure:
         {
-            [robot_state_feature] (optional): (B, state_dim) batch of robot states.
+            [robot_state_feature] (optional): (B, state_dim) or (B, 1, state_dim) batch of robot states.
 
             [image_features]: (B, n_cameras, C, H, W) batch of images.
                 AND/OR
@@ -405,6 +405,12 @@ class ACT(nn.Module):
 
         batch_size = batch[OBS_IMAGES][0].shape[0] if OBS_IMAGES in batch else batch[OBS_ENV_STATE].shape[0]
 
+        if self.config.robot_state_feature:
+            robot_state = batch[OBS_STATE]
+            # Explicit delta_timestamps={"observation.state": [0]} retains a time dimension.
+            if robot_state.ndim == 3:
+                robot_state = robot_state.squeeze(1)
+
         # Prepare the latent for input to the transformer encoder.
         if self.config.use_vae and ACTION in batch and self.training:
             # Prepare the input to the VAE encoder: [cls, *joint_space_configuration, *action_sequence].
@@ -412,7 +418,7 @@ class ACT(nn.Module):
                 self.vae_encoder_cls_embed.weight, "1 d -> b 1 d", b=batch_size
             )  # (B, 1, D)
             if self.config.robot_state_feature:
-                robot_state_embed = self.vae_encoder_robot_state_input_proj(batch[OBS_STATE])
+                robot_state_embed = self.vae_encoder_robot_state_input_proj(robot_state)
                 robot_state_embed = robot_state_embed.unsqueeze(1)  # (B, 1, D)
             action_embed = self.vae_encoder_action_input_proj(batch[ACTION])  # (B, S, D)
 
@@ -464,7 +470,7 @@ class ACT(nn.Module):
         encoder_in_pos_embed = list(self.encoder_1d_feature_pos_embed.weight.unsqueeze(1))
         # Robot state token.
         if self.config.robot_state_feature:
-            encoder_in_tokens.append(self.encoder_robot_state_input_proj(batch[OBS_STATE]))
+            encoder_in_tokens.append(self.encoder_robot_state_input_proj(robot_state))
         # Environment state token.
         if self.config.env_state_feature:
             encoder_in_tokens.append(self.encoder_env_state_input_proj(batch[OBS_ENV_STATE]))
