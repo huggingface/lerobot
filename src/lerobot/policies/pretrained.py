@@ -219,6 +219,66 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """
         raise NotImplementedError
 
+    def get_frozen_modules(self) -> dict[str, nn.Module]:
+        """Submodules that this policy's configuration declares frozen.
+
+        The default is empty. Policies that expose freezing options override this and translate
+        their configuration into the submodules it freezes, so that what is frozen can be
+        inspected and tested instead of being an implementation detail of each `__init__`.
+
+        Returns:
+            `dict[str, nn.Module]`: Frozen submodules, keyed by the dotted path used by
+            `torch.nn.Module.get_submodule`.
+        """
+        return {}
+
+    def apply_freezing(self) -> None:
+        """Enforce the declaration of [`~PreTrainedPolicy.get_frozen_modules`] on this policy.
+
+        Frozen submodules get no gradients and are put in evaluation mode, so their BatchNorm
+        running statistics stop being updated and their dropout stays off. Call this at the end
+        of a subclass `__init__`, once every submodule exists.
+        """
+        for module in self.get_frozen_modules().values():
+            module.requires_grad_(False)
+            module.eval()
+
+    def set_module_trainable(self, path: str, trainable: bool) -> None:
+        """Freeze or unfreeze a single submodule.
+
+        Args:
+            path (`str`):
+                Dotted submodule path, as used by `torch.nn.Module.get_submodule`.
+            trainable (`bool`):
+                Whether the submodule's parameters should require gradients. A submodule made
+                trainable returns to training mode only if the policy itself is in training mode.
+
+        Raises:
+            AttributeError: If `path` does not resolve to a submodule of this policy.
+        """
+        module = self.get_submodule(path)
+        module.requires_grad_(trainable)
+        module.train(self.training and trainable)
+
+    def train(self, mode: bool = True) -> PreTrainedPolicy:
+        """Set training mode, keeping the submodules declared frozen in evaluation mode.
+
+        `torch.nn.Module.train` recurses over every submodule, so without this override a frozen
+        encoder is put back in training mode on every call -- and the training loop calls
+        `policy.train()` again after each evaluation.
+
+        Args:
+            mode (`bool`, *optional*, defaults to `True`):
+                Whether to put the trainable part of the policy in training mode.
+
+        Returns:
+            `PreTrainedPolicy`: This policy.
+        """
+        super().train(mode)
+        for module in self.get_frozen_modules().values():
+            module.eval()
+        return self
+
     @abc.abstractmethod
     def reset(self):
         """To be called whenever the environment is reset.
