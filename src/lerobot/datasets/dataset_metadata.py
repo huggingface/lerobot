@@ -442,6 +442,15 @@ class LeRobotDatasetMetadata:
         """Keys to access visual modalities (regardless of their storage method)."""
         return [key for key, ft in self.features.items() if ft["dtype"] in ["video", "image"]]
 
+    def keep_cameras(self, keys: list[str]) -> None:
+        """Drop every camera feature not in ``keys`` so readers never decode them (read-only use)."""
+        unknown = [key for key in keys if key not in self.camera_keys]
+        if unknown:
+            raise ValueError(f"Unknown camera keys {unknown}. Available cameras: {self.camera_keys}")
+        for key in self.camera_keys:
+            if key not in keys:
+                del self.info.features[key]
+
     @property
     def has_language_columns(self) -> bool:
         """Return ``True`` if the dataset declares any language column.
