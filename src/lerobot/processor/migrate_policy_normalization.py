@@ -48,6 +48,7 @@ with the new PolicyProcessorPipeline architecture.
 """
 
 import argparse
+import dataclasses
 import json
 import os
 from pathlib import Path
@@ -57,7 +58,7 @@ import torch
 from huggingface_hub import HfApi, hf_hub_download
 from safetensors.torch import load_file as load_safetensors
 
-from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.policies import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.utils.constants import ACTION
 
@@ -395,6 +396,30 @@ def convert_features_to_policy_features(features_dict: dict[str, dict]) -> dict[
     return converted_features
 
 
+def drop_unknown_config_fields(policy_type: str, config: dict[str, Any]) -> dict[str, Any]:
+    """
+    Remove fields that the current config class of the policy type does not declare.
+
+    Checkpoints saved by older versions can carry fields that were later removed from the
+    config class (e.g. `mlp_hidden_dim` in `lerobot/vqbet_pusht`), which its constructor rejects.
+
+    Args:
+        policy_type: The registered policy type from `config.json`.
+        config: The config dictionary to filter.
+
+    Returns:
+        The config without the undeclared fields. Unknown policy types are returned unchanged.
+    """
+    try:
+        config_cls = PreTrainedConfig.get_choice_class(policy_type)
+    except Exception:
+        return config
+    declared = {field.name for field in dataclasses.fields(config_cls) if field.init}
+    for name in sorted(set(config) - declared):
+        print(f"Removing '{name}' field from config: not declared by {config_cls.__name__}")
+    return {key: value for key, value in config.items() if key in declared}
+
+
 def display_migration_summary_with_warnings(problematic_missing_keys: list[str]) -> None:
     """
     Display final migration summary with warnings about problematic missing keys.
@@ -582,6 +607,9 @@ def main():
         cleaned_config["output_features"] = convert_features_to_policy_features(
             cleaned_config["output_features"]
         )
+
+    # Drop fields that the config class no longer declares, e.g. from older checkpoints
+    cleaned_config = drop_unknown_config_fields(policy_type, cleaned_config)
 
     # Add normalization mapping to config
     cleaned_config["normalization_mapping"] = norm_map
