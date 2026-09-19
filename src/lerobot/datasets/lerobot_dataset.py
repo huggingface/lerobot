@@ -877,7 +877,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         Loads metadata from an existing dataset (local or Hub) and creates a
         :class:`DatasetWriter` for appending new episodes. The underlying HF
         dataset is not loaded until :meth:`finalize` is called and data is
-        subsequently read.
+        subsequently read. Resuming a dataset whose metadata selects a
+        non-default storage format is rejected because no compatible writer
+        is registered for that format.
 
         Args:
             repo_id: Repository identifier of the existing dataset.
@@ -944,6 +946,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj._encoder_threads = encoder_threads
         obj._storage_root = None
         obj.root = obj.meta.root
+
+        if obj.meta.storage_format != DEFAULT_STORAGE_FORMAT:
+            raise ValueError(
+                f"resume() is not supported for storage_format={obj.meta.storage_format!r}: "
+                "no compatible DatasetWriter is registered for this format."
+            )
 
         # Reader is lazily created on first access (write-only mode)
         obj.reader = None
