@@ -53,6 +53,8 @@ class DatasetConfig:
     # Has no effect on datasets without depth cameras.
     depth_output_unit: str = DEFAULT_DEPTH_UNIT
     streaming: bool = False
+    # Log worker-side batch preparation/video loading time (default parquet/mp4 reader only).
+    profile_loading: bool = True
     # Fraction of episodes held out per task for offline evaluation (0.0 = disabled).
     eval_split: float = 0.0
 
