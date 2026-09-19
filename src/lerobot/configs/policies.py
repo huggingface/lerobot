@@ -227,6 +227,14 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
                 f"Available policy types: {cls.get_known_choices()}"
             ) from e
 
+        # `pretrained_path` is runtime state, so it is intentionally not a reliable
+        # value to recover from a serialized config. Restore the source used for this
+        # load before parsing so callers can pass the config to the processor factory
+        # without silently dropping checkpoint normalization statistics.
+        config["pretrained_path"] = model_id
+        if revision is not None:
+            config["pretrained_revision"] = revision
+
         with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
             json.dump(config, f)
             config_file = f.name
