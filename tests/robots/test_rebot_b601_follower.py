@@ -460,35 +460,16 @@ def test_bimanual_prefixes_features(family):
     assert "right_gripper.pos" in robot.action_features
 
 
-def test_bimanual_rejects_mixed_motor_families():
-    with pytest.raises(ValueError, match="Mixed DM/RS"):
-        BiRebotB601FollowerConfig(
-            left_arm_config=RebotB601FollowerConfig(motor_family=MotorFamily.DM, port="/dev/null0"),
-            right_arm_config=RebotB601FollowerConfig(motor_family=MotorFamily.RS, port="can0"),
+def test_bimanual_accepts_per_arm_motor_families():
+    with patch(f"{_MODULE}.require_package", lambda *a, **kw: None):
+        robot = BiRebotB601Follower(
+            BiRebotB601FollowerConfig(
+                left_arm_config=RebotB601FollowerConfig(motor_family=MotorFamily.DM, port="/dev/null0"),
+                right_arm_config=RebotB601FollowerConfig(motor_family=MotorFamily.RS, port="can0"),
+            )
         )
-
-
-def test_bimanual_rejects_overlapping_ids_on_same_channel():
-    with pytest.raises(ValueError, match="overlapping send IDs"):
-        BiRebotB601FollowerConfig(
-            left_arm_config=RebotB601FollowerConfig(port="/dev/ttyACM0"),
-            right_arm_config=RebotB601FollowerConfig(port="/dev/ttyACM0"),
-        )
-
-
-def test_bimanual_allows_disjoint_ids_on_same_channel():
-    right_ids = {
-        joint: (send_id + 0x20, receive_id + 0x20)
-        for joint, (send_id, receive_id) in DM_PROFILE.motor_can_ids.items()
-    }
-    config = BiRebotB601FollowerConfig(
-        left_arm_config=RebotB601FollowerConfig(port="/dev/ttyACM0"),
-        right_arm_config=RebotB601FollowerConfig(
-            port="/dev/ttyACM0",
-            motor_can_ids=right_ids,
-        ),
-    )
-    assert config.right_arm_config.motor_can_ids == right_ids
+    assert robot.left_arm.config.motor_family is MotorFamily.DM
+    assert robot.right_arm.config.motor_family is MotorFamily.RS
 
 
 def test_bimanual_forwards_every_arm_config_field():

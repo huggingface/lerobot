@@ -30,8 +30,6 @@ class BiRebotB601Follower(BimanualMixin, Robot):
 
     Composes two single-arm :class:`RebotB601Follower` instances. Observation and
     action keys of each arm are namespaced with a ``left_`` / ``right_`` prefix.
-
-    Both arms use the same configured motor family.
     """
 
     config_class = BiRebotB601FollowerConfig
