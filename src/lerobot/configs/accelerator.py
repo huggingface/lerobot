@@ -106,10 +106,13 @@ class DDPConfig:
     # when the policy has no BatchNorm module, because the call blocks every rank until all
     # of them reach the forward; see `disable_buffer_broadcast_if_static`.
     broadcast_buffers: bool = True
-    # Allreduce bucket size. With a compiled backward every gradient is ready at once, so
-    # 25 MB buckets only add one collective launch and one rank-sync per bucket; a bucket
-    # larger than the model gives one allreduce per step.
-    bucket_cap_mb: int = 1024
+    # Allreduce bucket size, accelerate's own default. Which value is faster depends on the
+    # backward: an eager backward produces gradients progressively, so several buckets overlap
+    # their allreduce with the backward still running, while a compiled backward hands every
+    # gradient over at once and each extra bucket is only a launch and a rank sync. Raising this
+    # above the model size gives one allreduce per step, which helps a compiled run and costs an
+    # eager one (measured on ACT, 8 x B200: 29.14 ms per step at 25 MB against 31.39 ms at 1024).
+    bucket_cap_mb: int = 25
 
     def build_kwargs_handler(self) -> "DistributedDataParallelKwargs":
         """Build the DDP kwargs handler for `Accelerator(kwargs_handlers=[...])`.
