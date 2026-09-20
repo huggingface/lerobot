@@ -93,6 +93,9 @@ def _all_cuda_float(params: OptimizerParams) -> bool:
     tensors: list[torch.Tensor] = []
     for p in params:
         if isinstance(p, dict):
+            # In place: a group's "params" may be a generator, and reading it here would leave
+            # the optimizer an exhausted one, i.e. a silently empty group that never updates.
+            p["params"] = list(p["params"])
             tensors.extend(p["params"])
         else:
             tensors.append(p)

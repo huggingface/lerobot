@@ -240,3 +240,20 @@ def test_save_and_load_empty_multi_optimizer_state(base_params_dict, tmp_path):
         torch.testing.assert_close(
             optimizer.state_dict()["param_groups"], loaded_optimizers[name].state_dict()["param_groups"]
         )
+
+
+def test_adamw_keeps_a_param_group_given_as_a_generator():
+    """The fused-AdamW precondition check reads every parameter. torch.optim accepts a generator
+    as a group's "params", and reading it without materialising it first would hand the optimizer
+    an exhausted one: a group with no parameters, which raises nothing and never updates."""
+    model = torch.nn.Linear(4, 4)
+    groups = [{"params": (p for p in model.parameters())}]
+
+    optimizer = AdamWConfig().build(groups)
+
+    assert len(optimizer.param_groups[0]["params"]) == len(list(model.parameters()))
+
+    before = model.weight.detach().clone()
+    model(torch.ones(2, 4)).sum().backward()
+    optimizer.step()
+    assert not torch.equal(before, model.weight.detach())
