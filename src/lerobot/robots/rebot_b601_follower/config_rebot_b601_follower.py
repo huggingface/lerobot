@@ -160,8 +160,6 @@ class RebotB601FollowerConfig:
         """Fill every unset per-joint field from this arm's motor family profile."""
         self.motor_family = MotorFamily(self.motor_family)
         profile = MOTOR_PROFILES[self.motor_family]
-        if not self.port:
-            raise ValueError("`port` must not be empty.")
 
         if self.can_adapter is None:
             self.can_adapter = profile.can_adapter
