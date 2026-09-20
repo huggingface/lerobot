@@ -229,6 +229,24 @@ def test_metrics_tracker_update_metrics_skips_non_numeric():
     assert "enabled" not in tracker.metrics
 
 
+def test_metrics_tracker_update_metrics_reads_back_one_element_tensors():
+    # Policies keep their sub-losses on device now, so a tensor arrives here once per step.
+    tracker = MetricsTracker(batch_size=32, num_frames=1000, num_episodes=50, metrics={})
+    tracker.update_metrics(
+        {
+            "latent_loss": torch.tensor(0.25),
+            "action_loss": torch.tensor([0.5]),
+            "per_sample": torch.tensor([0.1, 0.2]),
+            "converged": torch.tensor(True),
+        }
+    )
+
+    assert tracker.metrics["latent_loss"].avg == pytest.approx(0.25)  # 0-d, read back
+    assert tracker.metrics["action_loss"].avg == pytest.approx(0.5)  # shape (1,) counts too
+    assert "per_sample" not in tracker.metrics  # more than one element: left alone
+    assert "converged" not in tracker.metrics  # .item() gives a bool, which stays ignored
+
+
 def test_metrics_tracker_update_metrics_does_not_override_caller_meter():
     # A policy that echoes "loss" in its output dict must not overwrite the caller-owned,
     # already-aggregated loss meter.
