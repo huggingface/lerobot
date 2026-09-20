@@ -23,7 +23,7 @@ from pathlib import Path
 from lerobot.cameras import CameraConfig
 
 from ..config import RobotConfig
-from .motor_family import ARM_MODE_MIT, GRIPPER_MOTOR, MotorFamily, MotorFamilyProfile, profile_for
+from .motor_family import GRIPPER_MOTOR, MIT_MODE, MotorFamily, MotorFamilyProfile, profile_for
 
 
 def _broadcast_per_joint(
@@ -114,7 +114,7 @@ class RebotB601FollowerConfig:
     motor_can_ids: dict[str, tuple[int, int]] | None = None
 
     # Arm control mode. "mit" everywhere; "pos_vel" on Damiao only.
-    control_mode: str = ARM_MODE_MIT
+    control_mode: str = MIT_MODE
 
     # Gripper control mode. "mit_impedance" (force-limited, RobStride) or
     # "force_pos" (Damiao) or plain "mit" position control on either.

@@ -55,13 +55,12 @@ class MotorFamily(StrEnum):
     RS = "rs"
 
 
-# Arm control modes. Only MIT carries a feedforward torque term, so it is the only
+# Control modes. Only MIT carries a feedforward torque term, so it is the only
 # mode a torque-based feature (gravity compensation, force limiting) can build on.
-ARM_MODE_MIT = "mit"
+MIT_MODE = "mit"
 ARM_MODE_POS_VEL = "pos_vel"
 
 # Gripper control modes.
-GRIPPER_MODE_MIT = "mit"
 GRIPPER_MODE_FORCE_POS = "force_pos"
 GRIPPER_MODE_MIT_IMPEDANCE = "mit_impedance"
 
@@ -112,8 +111,8 @@ class MotorFamilyProfile:
 DM_PROFILE = MotorFamilyProfile(
     family=MotorFamily.DM,
     motor_models=_by_segment("4340P", "4310"),
-    arm_modes={ARM_MODE_MIT, ARM_MODE_POS_VEL},
-    gripper_modes={GRIPPER_MODE_FORCE_POS, GRIPPER_MODE_MIT},
+    arm_modes={MIT_MODE, ARM_MODE_POS_VEL},
+    gripper_modes={GRIPPER_MODE_FORCE_POS, MIT_MODE},
     can_adapters={"damiao", "socketcan"},
     can_adapter="damiao",
     gripper_control_mode=GRIPPER_MODE_FORCE_POS,
@@ -168,7 +167,7 @@ RS_PROFILE = MotorFamilyProfile(
     # RobStride position modes, but Seeed's current B601 integration uses MIT
     # because position-velocity operation was unstable. Supporting position mode
     # here requires a dedicated command path and hardware validation.
-    arm_modes={ARM_MODE_MIT},
+    arm_modes={MIT_MODE},
     gripper_modes={GRIPPER_MODE_MIT_IMPEDANCE},
     can_adapters={"socketcan"},
     # "socketcan" selects MotorBridge's native, platform-specific CAN transport.
