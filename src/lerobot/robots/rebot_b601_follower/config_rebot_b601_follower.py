@@ -167,11 +167,6 @@ class RebotB601FollowerConfig:
     check_position_plausibility: bool = True
     wrap_guard_margin_deg: float = 90.0
 
-    @property
-    def profile(self) -> MotorFamilyProfile:
-        """Hardware profile for this arm's motor family."""
-        return profile_for(self.motor_family)
-
     def _resolve_motor_family_defaults(self) -> None:
         """Fill every unset per-joint field from this arm's motor family profile."""
         profile = profile_for(self.motor_family)
