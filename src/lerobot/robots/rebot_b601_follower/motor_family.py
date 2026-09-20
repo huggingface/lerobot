@@ -65,7 +65,7 @@ GRIPPER_MODE_FORCE_POS = "force_pos"
 GRIPPER_MODE_MIT_IMPEDANCE = "mit_impedance"
 
 
-@dataclass(frozen=True)
+@dataclass
 class MotorFamilyProfile:
     """Hardware facts and default tuning for one motor family."""
 
