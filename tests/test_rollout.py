@@ -1112,12 +1112,15 @@ def test_dagger_continuous_honors_num_episodes():
     strategy._engine = ctx.policy.inference
     strategy._interpolator = ActionInterpolator(multiplier=1)
     strategy._episode_duration_s = -1.0
+    dataset.has_pending_frames.return_value = False
 
     strategy._run_continuous(ctx)
 
     # A negative duration forces an episode boundary on each tick. The loop
     # must stop after two saved episodes instead of consuming all ten ticks.
     assert dataset.add_frame.call_count == 2
+    assert dataset.save_episode.call_count == 2
+    dataset.has_pending_frames.assert_called_once_with()
 
 
 @pytest.mark.parametrize("correction_ticks", [1, 2, 3])
