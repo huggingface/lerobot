@@ -65,17 +65,6 @@ def _require_finite(name: str, value: float) -> float:
     return value
 
 
-def public_joint_limits(
-    raw_limits: Mapping[str, tuple[float, float]],
-    directions: Mapping[str, float],
-) -> dict[str, tuple[float, float]]:
-    """Convert raw motor-frame limits into the public robot coordinate frame."""
-    return {
-        joint: tuple(sorted((lower / directions[joint], upper / directions[joint])))
-        for joint, (lower, upper) in raw_limits.items()
-    }
-
-
 @dataclass
 class RebotB601FollowerConfig:
     """Base configuration for the Seeed Studio reBot B601 follower arm.
@@ -419,5 +408,4 @@ class RebotB601FollowerRobotConfig(RobotConfig, RebotB601FollowerConfig):
 __all__ = [
     "RebotB601FollowerConfig",
     "RebotB601FollowerRobotConfig",
-    "public_joint_limits",
 ]

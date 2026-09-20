@@ -283,12 +283,6 @@ def test_rs_observation_can_be_sent_back_to_hold_position():
         assert math.degrees(motor_position) == pytest.approx(10.0)
 
 
-def test_rs_public_limits_are_derived_from_raw_limits_and_direction():
-    robot = _build(MotorFamily.RS)
-    assert robot._public_joint_limits()["wrist_flex"] == (-90.0, 80.0)
-    assert robot._public_joint_limits()["shoulder_lift"] == (-170.0, 0.0)
-
-
 def test_dm_does_not_flip_joint_direction():
     with _connected(MotorFamily.DM) as robot:
         returned = robot.send_action({"shoulder_pan.pos": 100.0})

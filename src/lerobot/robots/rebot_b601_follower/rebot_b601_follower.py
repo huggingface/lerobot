@@ -29,7 +29,7 @@ from lerobot.utils.import_utils import _motorbridge_available, require_package
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
-from .config_rebot_b601_follower import RebotB601FollowerRobotConfig, public_joint_limits
+from .config_rebot_b601_follower import RebotB601FollowerRobotConfig
 from .motor_family import (
     ARM_MODE_POS_VEL,
     GRIPPER_MODE_FORCE_POS,
@@ -399,9 +399,6 @@ class RebotB601Follower(Robot):
 
     def _motor_to_public_position(self, motor_name: str, position_deg: float) -> float:
         return position_deg / self.config.joint_directions[motor_name]
-
-    def _public_joint_limits(self) -> dict[str, tuple[float, float]]:
-        return public_joint_limits(self.config.joint_limits, self.config.joint_directions)
 
     def _present_pos(self, *, motor_frame: bool = False, strict: bool = False) -> dict[str, float]:
         """Read current positions in either raw motor or public robot coordinates."""
