@@ -509,10 +509,13 @@ class DAggerStrategy(RolloutStrategy):
                 timer.log_run_summary()
                 engine.pause()
                 with contextlib.suppress(Exception):
-                    with self._episode_lock:
-                        dataset.save_episode()
-                    self._needs_push.set()
-                    logger.info("Final in-progress episode saved")
+                    if dataset.has_pending_frames():
+                        with self._episode_lock:
+                            dataset.save_episode()
+                        self._needs_push.set()
+                        logger.info("Final in-progress episode saved")
+                    else:
+                        logger.info("No frames pending at end — nothing to save")
 
     # ------------------------------------------------------------------
     # Corrections-only mode (record_autonomous=False)
