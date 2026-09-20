@@ -23,15 +23,17 @@ on:
   pull_request_review:
     types: [submitted]
 
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
-  id-token: write # Required for OIDC authentication
-  actions: read
+
+permissions: {}
 
 jobs:
   claude:
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      issues: write
+      pull-requests: write
     if: |
       github.repository == 'huggingface/lerobot' &&
       contains(
