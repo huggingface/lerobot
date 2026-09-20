@@ -67,10 +67,6 @@ class BiRebotB601Follower(BimanualMixin, Robot):
         # Only for compatibility with parts of the codebase that expect `robot.cameras`.
         self.cameras = {**self.left_arm.cameras, **self.right_arm.cameras}
 
-    def _disconnect_arm_after_failed_connect(self, arm: RebotB601Follower) -> None:
-        """Force-disable an arm while recovering from a bimanual failure."""
-        arm._disconnect(force_disable=True)
-
     @property
     def _motors_ft(self) -> dict[str, type]:
         return {
@@ -97,34 +93,26 @@ class BiRebotB601Follower(BimanualMixin, Robot):
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
-        try:
-            obs_dict: RobotObservation = {}
-            for k, v in self.left_arm.get_observation().items():
-                obs_dict[k if k in self._top_level_cam_keys else f"left_{k}"] = v
-            for k, v in self.right_arm.get_observation().items():
-                obs_dict[f"right_{k}"] = v
-            return obs_dict
-        except Exception:
-            self._disconnect_arms(after_failed_connect=True)
-            raise
+        obs_dict: RobotObservation = {}
+        for k, v in self.left_arm.get_observation().items():
+            obs_dict[k if k in self._top_level_cam_keys else f"left_{k}"] = v
+        for k, v in self.right_arm.get_observation().items():
+            obs_dict[f"right_{k}"] = v
+        return obs_dict
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        try:
-            left_action = {
-                key.removeprefix("left_"): value for key, value in action.items() if key.startswith("left_")
-            }
-            right_action = {
-                key.removeprefix("right_"): value for key, value in action.items() if key.startswith("right_")
-            }
+        left_action = {
+            key.removeprefix("left_"): value for key, value in action.items() if key.startswith("left_")
+        }
+        right_action = {
+            key.removeprefix("right_"): value for key, value in action.items() if key.startswith("right_")
+        }
 
-            sent_action_left = self.left_arm.send_action(left_action)
-            sent_action_right = self.right_arm.send_action(right_action)
+        sent_action_left = self.left_arm.send_action(left_action)
+        sent_action_right = self.right_arm.send_action(right_action)
 
-            return {
-                **{f"left_{k}": v for k, v in sent_action_left.items()},
-                **{f"right_{k}": v for k, v in sent_action_right.items()},
-            }
-        except Exception:
-            self._disconnect_arms(after_failed_connect=True)
-            raise
+        return {
+            **{f"left_{k}": v for k, v in sent_action_left.items()},
+            **{f"right_{k}": v for k, v in sent_action_right.items()},
+        }
