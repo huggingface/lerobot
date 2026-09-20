@@ -279,18 +279,17 @@ class RebotB601Follower(Robot):
                     f"Motor '{motor_name}' did not provide a valid synchronous startup response."
                 ) from exc
 
-    def _target_mode(self, motor_name: str) -> Any:
-        """motorbridge mode this joint should run in, given the configured modes."""
-        mode = self.config.gripper_control_mode if motor_name == GRIPPER_MOTOR else self.config.control_mode
-        if mode == ARM_MODE_POS_VEL:
-            return MotorBridgeMode.POS_VEL
-        if mode == GRIPPER_MODE_FORCE_POS:
-            return MotorBridgeMode.FORCE_POS
-        return MotorBridgeMode.MIT
-
     def _apply_control_modes(self) -> None:
         for motor_name, motor in self.motors.items():
-            target_mode = self._target_mode(motor_name)
+            mode = (
+                self.config.gripper_control_mode if motor_name == GRIPPER_MOTOR else self.config.control_mode
+            )
+            if mode == ARM_MODE_POS_VEL:
+                target_mode = MotorBridgeMode.POS_VEL
+            elif mode == GRIPPER_MODE_FORCE_POS:
+                target_mode = MotorBridgeMode.FORCE_POS
+            else:
+                target_mode = MotorBridgeMode.MIT
             for attempt in range(_ENSURE_MODE_RETRIES + 1):
                 try:
                     motor.ensure_mode(target_mode)
