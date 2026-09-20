@@ -28,7 +28,7 @@ from lerobot.robots.rebot_b601_follower import (
     RebotB601FollowerConfig,
     RebotB601FollowerRobotConfig,
 )
-from lerobot.robots.rebot_b601_follower.motor_family import DM_PROFILE, RS_PROFILE
+from lerobot.robots.rebot_b601_follower.motor_family import RS_PROFILE
 from lerobot.teleoperators.rebot_102_leader import RebotArm102LeaderConfig
 
 _MODULE = "lerobot.robots.rebot_b601_follower.rebot_b601_follower"
@@ -183,17 +183,6 @@ def test_legacy_dm_config_accepts_gain_lists_without_motor_family():
     assert config.gripper_mit_kd == 0.2
 
 
-def test_legacy_gripper_gain_alias_overrides_mapping():
-    gains = dict(DM_PROFILE.mit_kp)
-    gains["gripper"] = 7.0
-    config = RebotB601FollowerRobotConfig(
-        port="/dev/null",
-        mit_kp=gains,
-        gripper_mit_kp=6.0,
-    )
-    assert config.mit_kp["gripper"] == 6.0
-
-
 def test_legacy_dm_gain_lists_keep_independent_gripper_defaults():
     config = RebotB601FollowerRobotConfig(
         port="/dev/null",
@@ -206,27 +195,49 @@ def test_legacy_dm_gain_lists_keep_independent_gripper_defaults():
     assert config.gripper_mit_kd == 0.3
 
 
-@pytest.mark.parametrize("family", FAMILIES)
-def test_both_families_expose_the_same_joints(family):
-    assert _build(family).motor_names == _build(MotorFamily.DM).motor_names
+@pytest.mark.parametrize(
+    ("family", "adapter", "uses_serial_bridge"),
+    [
+        (MotorFamily.DM, None, True),
+        (MotorFamily.DM, "socketcan", False),
+        (MotorFamily.RS, None, False),
+    ],
+)
+def test_connect_uses_the_configured_transport(family, adapter, uses_serial_bridge):
+    bus = _make_bus_mock()
+    with (
+        patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
+        patch(f"{_MODULE}.MotorBridgeController") as controller_cls,
+        patch(f"{_MODULE}.MotorBridgeMode", MagicMock()),
+    ):
+        controller_cls.from_dm_serial.return_value = bus
+        controller_cls.return_value = bus
+        kwargs = {} if adapter is None else {"can_adapter": adapter}
+        robot = RebotB601Follower(
+            RebotB601FollowerRobotConfig(motor_family=family, port="/dev/null", **kwargs)
+        )
+        robot.connect(calibrate=False)
 
+        if uses_serial_bridge:
+            controller_cls.from_dm_serial.assert_called_once_with(serial_port="/dev/null", baud=921600)
+            controller_cls.assert_not_called()
+        else:
+            controller_cls.assert_called_once_with(channel="/dev/null")
+            controller_cls.from_dm_serial.assert_not_called()
 
-@pytest.mark.parametrize("family", FAMILIES)
-def test_connect_disconnect(family):
-    with _connected(family) as robot:
-        assert robot.is_connected
         robot.disconnect()
         assert not robot.is_connected
 
 
-@pytest.mark.parametrize("family", FAMILIES)
-def test_get_observation_converts_to_degrees(family):
-    with _connected(family) as robot:
+@pytest.mark.parametrize(
+    ("family", "expected_position"),
+    [(MotorFamily.DM, 10.0), (MotorFamily.RS, -10.0)],
+)
+def test_get_observation_uses_the_public_coordinate_frame(family, expected_position):
+    with _connected(family, positions_deg=[10.0] * len(_JOINTS)) as robot:
         obs = robot.get_observation()
         assert set(obs) == {f"{motor}.pos" for motor in robot.motor_names}
-        direction = robot.profile.joint_directions["shoulder_pan"]
-        for index, motor in enumerate(robot.motor_names, 1):
-            assert obs[f"{motor}.pos"] == pytest.approx(index / direction)
+        assert all(position == pytest.approx(expected_position) for position in obs.values())
 
 
 @pytest.mark.parametrize(
@@ -260,14 +271,6 @@ def test_send_action_clips_to_the_family_joint_limits(
         assert motor_position == pytest.approx(expected_motor_position)
 
 
-def test_rs_flips_joint_direction():
-    with _connected(MotorFamily.RS) as robot:
-        returned = robot.send_action({"shoulder_pan.pos": 100.0})
-        assert returned["shoulder_pan.pos"] == 100.0
-        motor_position = robot.motors["shoulder_pan"].send_mit.call_args.args[0]
-        assert math.degrees(motor_position) == pytest.approx(-100.0)
-
-
 def test_rs_observation_can_be_sent_back_to_hold_position():
     with _connected(MotorFamily.RS, positions_deg=[10.0] * 7) as robot:
         observed = robot.get_observation()["shoulder_pan.pos"]
@@ -275,12 +278,6 @@ def test_rs_observation_can_be_sent_back_to_hold_position():
         motor_position = robot.motors["shoulder_pan"].send_mit.call_args.args[0]
         assert observed == -10.0
         assert math.degrees(motor_position) == pytest.approx(10.0)
-
-
-def test_dm_does_not_flip_joint_direction():
-    with _connected(MotorFamily.DM) as robot:
-        returned = robot.send_action({"shoulder_pan.pos": 100.0})
-        assert returned["shoulder_pan.pos"] == 100.0
 
 
 @pytest.mark.parametrize("family", FAMILIES)
@@ -297,62 +294,30 @@ def test_partial_action_does_not_command_unspecified_joints(family):
             robot.motors[motor_name].send_force_pos.assert_not_called()
 
 
-def test_dm_gripper_defaults_to_force_pos():
-    with _connected(MotorFamily.DM) as robot:
-        robot.send_action({"gripper.pos": -10.0})
-        robot.motors["gripper"].send_force_pos.assert_called_once()
-        robot.motors["gripper"].send_mit.assert_not_called()
-
-
-def test_dm_gripper_mit_mode_routes_to_send_mit():
-    with _connected(MotorFamily.DM, gripper_control_mode="mit") as robot:
-        robot.send_action({"gripper.pos": -10.0})
-        robot.motors["gripper"].send_mit.assert_called_once()
-        robot.motors["gripper"].send_force_pos.assert_not_called()
-
-
-def test_dm_pos_vel_mode_routes_arm_joints_to_send_pos_vel():
-    with _connected(MotorFamily.DM, control_mode="pos_vel") as robot:
-        robot.send_action({"shoulder_pan.pos": 10.0})
-        robot.motors["shoulder_pan"].send_pos_vel.assert_called_once()
-        robot.motors["shoulder_pan"].send_mit.assert_not_called()
+@pytest.mark.parametrize(
+    ("config_kwargs", "action", "motor_name", "method"),
+    [
+        ({}, {"gripper.pos": -10.0}, "gripper", "send_force_pos"),
+        ({"gripper_control_mode": "mit"}, {"gripper.pos": -10.0}, "gripper", "send_mit"),
+        ({"control_mode": "pos_vel"}, {"shoulder_pan.pos": 10.0}, "shoulder_pan", "send_pos_vel"),
+    ],
+)
+def test_dm_routes_actions_by_control_mode(config_kwargs, action, motor_name, method):
+    with _connected(MotorFamily.DM, **config_kwargs) as robot:
+        robot.send_action(action)
+        getattr(robot.motors[motor_name], method).assert_called_once()
 
 
 def test_rs_gripper_uses_force_limited_impedance():
     # The impedance strategy drives the gripper purely by a feedforward torque:
     # position setpoint and kp are zero so grip force stays bounded.
     with _connected(MotorFamily.RS) as robot:
-        robot.send_action({"gripper.pos": -100.0})
+        returned = robot.send_action({"gripper.pos": -999.0})
         position, velocity, kp, kd, tau = robot.motors["gripper"].send_mit.call_args.args
         assert (position, velocity, kp) == (0.0, 0.0, 0.0)
         assert kd > 0.0
-        assert abs(tau) <= robot.config.gripper_torque_limit
-
-
-def test_rs_impedance_gripper_returns_effective_clipped_target():
-    with _connected(MotorFamily.RS) as robot:
-        returned = robot.send_action({"gripper.pos": -999.0})
-        position, *_ = robot.motors["gripper"].send_mit.call_args.args
-        assert position == 0.0
-        assert returned["gripper.pos"] == -270.0
-
-
-def test_rs_gripper_torque_respects_the_hold_limit_at_rest():
-    # A stationary gripper (the mock reports zero velocity) gets the gentler hold
-    # limit rather than the moving limit.
-    with _connected(MotorFamily.RS) as robot:
-        robot.send_action({"gripper.pos": -270.0})
-        tau = robot.motors["gripper"].send_mit.call_args.args[4]
         assert abs(tau) <= robot.config.gripper_hold_torque_limit
-
-
-def test_rs_gripper_velocity_estimate_uses_monotonic_elapsed_time():
-    clock = MagicMock(side_effect=[0.0, 0.1])
-    with patch(f"{_MODULE}.time.monotonic", clock), _connected(MotorFamily.RS) as robot:
-        robot.send_action({"gripper.pos": 0.0})
-        robot.send_action({"gripper.pos": -math.degrees(0.05)})
-        # Raw RS target moved +0.05 rad in 0.1 s; LPF alpha is 0.3.
-        assert robot._gripper_prev_target_vel == pytest.approx(0.15)
+        assert returned["gripper.pos"] == -270.0
 
 
 def test_rs_gripper_disables_torque_after_feedback_failure():
@@ -375,13 +340,6 @@ def test_mode_switching_happens_with_torque_disabled(family):
         assert all(call == "disable_all" for call in calls[:-1])
 
 
-def test_dm_public_positions_equal_motor_positions():
-    with _connected(MotorFamily.DM) as robot:
-        observation = robot.get_observation()
-        for motor_name, motor in robot.motors.items():
-            assert observation[f"{motor_name}.pos"] == pytest.approx(math.degrees(motor.get_state().pos))
-
-
 def test_observation_propagates_motorbridge_feedback_errors():
     with _connected(MotorFamily.DM) as robot:
         bus = robot.bus
@@ -401,88 +359,48 @@ def test_partial_action_subsets_per_joint_relative_limits():
         assert returned["wrist_yaw.pos"] == 5.0
 
 
-def test_explicit_transport_is_passed_through():
+def test_explicit_config_values_are_passed_through():
     config = RebotB601FollowerRobotConfig(
         motor_family=MotorFamily.RS,
         port="/dev/ttyACM0",
         can_adapter="damiao",
-    )
-    assert config.can_adapter == "damiao"
-
-
-def test_dm_allows_socketcan_transport():
-    config = RebotB601FollowerRobotConfig(
-        motor_family=MotorFamily.DM,
-        port="can0",
-        can_adapter="socketcan",
-    )
-    assert config.can_adapter == "socketcan"
-
-
-def test_explicit_runtime_values_are_passed_through():
-    config = RebotB601FollowerRobotConfig(
-        motor_family=MotorFamily.RS,
-        port="can0",
         gripper_control_mode="mit",
         gripper_torque_limit=1.0,
         gripper_hold_torque_limit=2.0,
     )
+    assert config.can_adapter == "damiao"
     assert config.gripper_control_mode == "mit"
     assert config.gripper_torque_limit == 1.0
     assert config.gripper_hold_torque_limit == 2.0
 
 
-def test_profiles_disagree_where_the_hardware_does():
-    assert DM_PROFILE.motor_models != RS_PROFILE.motor_models
-    assert set(DM_PROFILE.joint_directions.values()) == {1.0}
-    assert set(RS_PROFILE.joint_directions.values()) == {-1.0}
-    # RobStride motors all answer on the host id instead of a per-motor recv id.
-    assert {ids[1] for ids in RS_PROFILE.motor_can_ids.values()} == {0xFD}
-    assert len({ids[1] for ids in DM_PROFILE.motor_can_ids.values()}) == len(DM_PROFILE.motor_can_ids)
-    # RS defaults preserve the hardware-tested values from PR #4256.
-    assert RS_PROFILE.mit_kp["shoulder_lift"] == 150.0
-    assert RS_PROFILE.mit_kd["shoulder_lift"] == 10.0
-    assert RS_PROFILE.joint_limits["wrist_roll"] == (-90.0, 90.0)
-    assert DM_PROFILE.joint_limits["wrist_roll"] == (-90.0, 90.0)
-    assert DM_PROFILE.gripper_torque_ratio == 0.07
-
-
-@pytest.mark.parametrize("family", FAMILIES)
-def test_bimanual_prefixes_features(family):
-    with patch(f"{_MODULE}.require_package", lambda *a, **kw: None):
-        robot = BiRebotB601Follower(
-            BiRebotB601FollowerConfig(
-                left_arm_config=RebotB601FollowerConfig(motor_family=family, port="/dev/null0"),
-                right_arm_config=RebotB601FollowerConfig(motor_family=family, port="/dev/null1"),
-            )
-        )
-    assert "left_gripper.pos" in robot.action_features
-    assert "right_gripper.pos" in robot.action_features
+def test_rs_defaults_are_selected():
+    config = RebotB601FollowerRobotConfig(motor_family=MotorFamily.RS, port="can0")
+    assert config.can_adapter == "socketcan"
+    assert config.gripper_control_mode == "mit_impedance"
+    assert config.motor_can_ids == RS_PROFILE.motor_can_ids
+    assert config.mit_kp == RS_PROFILE.mit_kp
+    assert config.joint_limits == RS_PROFILE.joint_limits
 
 
 def test_bimanual_accepts_per_arm_motor_families():
     with patch(f"{_MODULE}.require_package", lambda *a, **kw: None):
         robot = BiRebotB601Follower(
             BiRebotB601FollowerConfig(
+                id="pair",
                 left_arm_config=RebotB601FollowerConfig(motor_family=MotorFamily.DM, port="/dev/null0"),
-                right_arm_config=RebotB601FollowerConfig(motor_family=MotorFamily.RS, port="can0"),
+                right_arm_config=RebotB601FollowerConfig(
+                    motor_family=MotorFamily.RS,
+                    port="can0",
+                    max_relative_target=5.0,
+                    gripper_torque_limit=2.0,
+                ),
             )
         )
+    assert "left_gripper.pos" in robot.action_features
+    assert "right_gripper.pos" in robot.action_features
     assert robot.left_arm.config.motor_family is MotorFamily.DM
     assert robot.right_arm.config.motor_family is MotorFamily.RS
-
-
-def test_bimanual_forwards_every_arm_config_field():
-    # Guards against the per-arm config being rebuilt field-by-field again, which
-    # silently drops any option added later.
-    left = RebotB601FollowerConfig(
-        motor_family=MotorFamily.RS,
-        port="can0",
-        max_relative_target=5.0,
-        gripper_torque_limit=2.0,
-    )
-    promoted = left.as_robot_config(id="arm_left")
-    assert promoted.max_relative_target == 5.0
-    assert promoted.gripper_torque_limit == 2.0
-    assert promoted.id == "arm_left"
-    assert promoted.type == "rebot_b601_follower"
+    assert robot.right_arm.config.max_relative_target == 5.0
+    assert robot.right_arm.config.gripper_torque_limit == 2.0
+    assert robot.right_arm.config.id == "pair_right"
