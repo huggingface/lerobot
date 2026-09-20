@@ -168,7 +168,7 @@ class RebotB601Follower(Robot):
 
             self.configure()
         except Exception:
-            self._cleanup_failed_connection()
+            self._disconnect(force_disable=True)
             raise
         logger.info(f"{self} connected.")
 
@@ -278,10 +278,6 @@ class RebotB601Follower(Robot):
                 raise MotorFeedbackError(
                     f"Motor '{motor_name}' did not provide a valid synchronous startup response."
                 ) from exc
-
-    def _cleanup_failed_connection(self) -> None:
-        """Best-effort cleanup that preserves the original connection error."""
-        self._disconnect(force_disable=True)
 
     def _target_mode(self, motor_name: str) -> Any:
         """motorbridge mode this joint should run in, given the configured modes."""
