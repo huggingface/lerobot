@@ -403,9 +403,3 @@ class RebotB601FollowerRobotConfig(RobotConfig, RebotB601FollowerConfig):
         # one on `RebotB601FollowerConfig`. Chain both explicitly.
         RobotConfig.__post_init__(self)
         RebotB601FollowerConfig.__post_init__(self)
-
-
-__all__ = [
-    "RebotB601FollowerConfig",
-    "RebotB601FollowerRobotConfig",
-]
