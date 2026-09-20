@@ -85,7 +85,7 @@ The leader is always a USB serial device; find its port with `lerobot-find-port`
   devices: `sudo chmod 666 /dev/ttyACM* /dev/ttyUSB*`.
 </Tip>
 
-At startup, LeRobot requires a successful current feedback refresh from all seven motors before it enables torque. During operation, a transient refresh failure may reuse the last snapshot for up to `0.1` seconds. Missing or expired feedback raises an error, disables torque and disconnects the robot rather than substituting a fabricated `0°` position.
+Motor communication and hardware validation are handled by MotorBridge. LeRobot propagates its transport and feedback errors directly instead of replacing missing positions with fabricated `0°` values.
 
 ## Calibration
 
@@ -134,15 +134,6 @@ Per-arm calibration files are saved with `_left` / `_right` suffixes on the id.
 
 </hfoption>
 </hfoptions>
-
-<Tip warning={true}>
-  The gripper travels more than one revolution, and a motor's multi-turn count
-  does not survive a power cycle. If the follower reports an implausible joint
-  reading on connect, the encoder woke up wrapped by a full revolution: close
-  the gripper against its stop by hand and re-run calibration. LeRobot refuses
-  to enable torque in that state, because commanding the joint from there would
-  drive it into its mechanical stop.
-</Tip>
 
 ### Leader (reBot Arm 102)
 

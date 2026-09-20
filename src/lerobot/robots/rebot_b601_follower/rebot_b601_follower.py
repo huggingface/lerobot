@@ -42,25 +42,18 @@ from .motor_family import (
 
 if TYPE_CHECKING or _motorbridge_available:
     from motorbridge import (
-        RID_ESC_ID as MOTOR_BRIDGE_DAMIAO_ESC_ID_REGISTER,
         Controller as MotorBridgeController,
         Mode as MotorBridgeMode,
     )
 else:
     MotorBridgeController = None
     MotorBridgeMode = None
-    # Damiao protocol register 8 stores the motor's command CAN ID. Keep tests
-    # importable without the optional MotorBridge package.
-    MOTOR_BRIDGE_DAMIAO_ESC_ID_REGISTER = 8
 
 logger = logging.getLogger(__name__)
 
 _ENSURE_MODE_RETRIES = 9
 _SETTLE_SEC = 0.01
 _ZERO_SETTLE_SEC = 0.1
-_CONNECTIVITY_TIMEOUT_MS = 100
-_FEEDBACK_CACHE_TTL_S = 0.1
-_WRAP_GUARD_MARGIN_DEG = 90.0
 
 # --- Impedance gripper tuning (shared by any family that offers the mode) ---
 # Motor-side velocity damping. The position setpoint and kp are both zero, so the
@@ -71,10 +64,6 @@ _GRIPPER_LPF_ALPHA = 0.3
 _GRIPPER_TARGET_VEL_MAX = 3.0
 # Below this |measured velocity| (rad/s) the gentler hold torque limit applies.
 _GRIPPER_HOLD_VEL_THRESHOLD = 0.25
-
-
-class MotorFeedbackError(RuntimeError):
-    """Raised when current motor feedback is unavailable or expired."""
 
 
 class RebotB601Follower(Robot):
@@ -108,7 +97,6 @@ class RebotB601Follower(Robot):
         self.motors: dict = {}
         self.motor_names = list(config.motor_can_ids)
         self.cameras = make_cameras_from_configs(config.cameras)
-        self._feedback_cache: dict[str, tuple[Any, float]] = {}
         self._reset_gripper_impedance_state()
 
     @property
@@ -136,7 +124,7 @@ class RebotB601Follower(Robot):
 
     @property
     def is_connected(self) -> bool:
-        return self.bus is not None
+        return self.bus is not None and all(cam.is_connected for cam in self.cameras.values())
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
@@ -152,26 +140,20 @@ class RebotB601Follower(Robot):
         else:
             self.bus = MotorBridgeController(channel=self.config.port)
 
-        try:
-            self._register_motors()
-            self.bus.disable_all()
-            self._feedback_cache.clear()
-            self._reset_gripper_impedance_state()
+        self._register_motors()
+        self._reset_gripper_impedance_state()
 
-            if not self.is_calibrated and calibrate:
-                logger.info(
-                    "Mismatch between calibration values in the motor and the calibration file "
-                    "or no calibration file found"
-                )
-                self.calibrate()
+        if not self.is_calibrated and calibrate:
+            logger.info(
+                "Mismatch between calibration values in the motor and the calibration file "
+                "or no calibration file found"
+            )
+            self.calibrate()
 
-            for cam in self.cameras.values():
-                cam.connect()
+        for cam in self.cameras.values():
+            cam.connect()
 
-            self.configure()
-        except Exception:
-            self._disconnect(force_disable=True)
-            raise
+        self.configure()
         logger.info(f"{self} connected.")
 
     def _register_motors(self) -> None:
@@ -231,55 +213,12 @@ class RebotB601Follower(Robot):
         print(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
-        """Validate fresh state and configure every motor while torque is off."""
+        """Configure every motor while torque is off."""
         if self.bus is None:
             raise DeviceNotConnectedError(f"{self} motor bus is not initialized")
         self.bus.disable_all()
-        try:
-            self._assert_motors_reachable()
-            states = self._read_feedback(strict=True)
-            if self.config.check_position_plausibility:
-                self._assert_positions_plausible(states)
-            self._apply_control_modes()
-        except Exception:
-            # Keep torque disabled on every validation/configuration failure.
-            try:
-                self.bus.disable_all()
-            except Exception:
-                logger.exception("Failed to confirm torque-off state after configuration error.")
-            raise
-        else:
-            self.bus.enable_all()
-
-    def _assert_motors_reachable(self) -> None:
-        """Require a synchronous response from every motor before enabling torque.
-
-        ``get_state()`` can retain a previous/default value, so a non-``None``
-        state after polling does not prove that a powered motor answered this
-        startup attempt. Use each vendor's request/response operation instead.
-        """
-        for motor_name, motor in self.motors.items():
-            send_id, _ = self.config.motor_can_ids[motor_name]
-            try:
-                if self.config.motor_family is MotorFamily.DM:
-                    reported_id = motor.damiao_get_param_u32(
-                        MOTOR_BRIDGE_DAMIAO_ESC_ID_REGISTER,
-                        timeout_ms=_CONNECTIVITY_TIMEOUT_MS,
-                    )
-                    if reported_id != send_id:
-                        raise RuntimeError(
-                            f"reported command CAN ID 0x{reported_id:X}, expected 0x{send_id:X}"
-                        )
-                else:
-                    # The second value identifies the ping reply frame (0xFE on
-                    # hardware); it is not the configured host ID (0xFD).
-                    device_id, _responder_id = motor.robstride_ping()
-                    if device_id != send_id:
-                        raise RuntimeError(f"reported device CAN ID 0x{device_id:X}, expected 0x{send_id:X}")
-            except Exception as exc:
-                raise MotorFeedbackError(
-                    f"Motor '{motor_name}' did not provide a valid synchronous startup response."
-                ) from exc
+        self._apply_control_modes()
+        self.bus.enable_all()
 
     def _apply_control_modes(self) -> None:
         for motor_name, motor in self.motors.items():
@@ -302,34 +241,6 @@ class RebotB601Follower(Robot):
                     time.sleep(_SETTLE_SEC)
             logger.debug(f"{motor_name} mode set to {target_mode}")
 
-    def _assert_positions_plausible(self, states: dict[str, Any]) -> None:
-        """Refuse to drive a joint whose reading is a whole-revolution wrap.
-
-        A motor's single-turn zero survives a power cycle but its multi-turn count
-        does not, so a geared joint with more than one turn of travel (the gripper)
-        can wake up reading ``physical + 360*k`` degrees. Commanding it from there
-        would drive it into its mechanical stop, so fail loudly instead.
-        """
-        wrapped = []
-        for motor_name, state in states.items():
-            position = math.degrees(state.pos)
-            limits = self.config.joint_limits.get(motor_name)
-            if limits is None:
-                continue
-            range_min, range_max = limits
-            # Deliberately exclude the margin boundary: for the gripper, the
-            # default 90° margin plus its 270° travel lands exactly on a one-turn
-            # wrap (±360°).
-            if not (range_min - _WRAP_GUARD_MARGIN_DEG < position < range_max + _WRAP_GUARD_MARGIN_DEG):
-                wrapped.append(f"{motor_name}={position:.1f} deg (limits {range_min}..{range_max} deg)")
-        if wrapped:
-            raise RuntimeError(
-                "Implausible joint reading(s), most likely a multi-turn encoder wrap after a "
-                f"power cycle: {', '.join(wrapped)}. Move the joint(s) back into range by hand "
-                "(gripper: close it against the stop) and re-run calibration before enabling "
-                "torque. Set `check_position_plausibility=False` to bypass this check."
-            )
-
     @check_if_not_connected
     def disable_torque(self) -> None:
         """Disable motor torque so the arm can be moved by hand (read-only debugging).
@@ -341,57 +252,18 @@ class RebotB601Follower(Robot):
         self.bus.disable_all()
         logger.info(f"{self} torque disabled.")
 
-    def _read_feedback(self, *, strict: bool = False) -> dict[str, Any]:
-        """Refresh motor states, using only a short-lived cache at runtime.
-
-        MotorBridge's RobStride ``request_feedback`` is a no-op, so freshness is
-        established by a successful controller poll. On a newly opened controller,
-        strict startup additionally requires all seven states to be present.
-        """
-        refresh_error: Exception | None = None
-        refreshed = False
+    def _read_feedback(self) -> dict[str, Any]:
+        """Request and return the latest motor states from MotorBridge."""
         if self.bus is None:
             raise DeviceNotConnectedError(f"{self} motor bus is not initialized")
-        try:
-            for motor in self.motors.values():
-                motor.request_feedback()
-            self.bus.poll_feedback_once()
-            refreshed = True
-        except Exception as exc:
-            refresh_error = exc
+        for motor in self.motors.values():
+            motor.request_feedback()
+        self.bus.poll_feedback_once()
 
-        now = time.monotonic()
-        states: dict[str, Any] = {}
-        unavailable: list[str] = []
-        for motor_name, motor in self.motors.items():
-            try:
-                state = motor.get_state() if refreshed else None
-            except Exception as exc:
-                refresh_error = refresh_error or exc
-                state = None
-            if state is not None:
-                self._feedback_cache[motor_name] = (state, now)
-                states[motor_name] = state
-                continue
-            if not strict:
-                cached = self._feedback_cache.get(motor_name)
-                if cached is not None and now - cached[1] <= _FEEDBACK_CACHE_TTL_S:
-                    states[motor_name] = cached[0]
-                    continue
-            unavailable.append(motor_name)
-
-        if refresh_error is not None and strict:
-            raise MotorFeedbackError(
-                "Failed to refresh motor feedback before enabling torque."
-            ) from refresh_error
+        states = {motor_name: motor.get_state() for motor_name, motor in self.motors.items()}
+        unavailable = [motor_name for motor_name, state in states.items() if state is None]
         if unavailable:
-            reason = "missing from the current refresh" if strict else "missing or expired"
-            raise MotorFeedbackError(
-                f"Motor feedback {reason} for: {', '.join(unavailable)}. "
-                "Refusing to substitute fabricated zero positions."
-            ) from refresh_error
-        if refresh_error is not None:
-            logger.warning("Using cached motor feedback after refresh failure: %s", refresh_error)
+            raise RuntimeError(f"No motor feedback available for: {', '.join(unavailable)}.")
         return states
 
     def _public_to_motor_position(self, motor_name: str, position_deg: float) -> float:
@@ -409,30 +281,25 @@ class RebotB601Follower(Robot):
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
-        try:
-            start = time.perf_counter()
-            obs_dict: RobotObservation = {f"{motor}.pos": pos for motor, pos in self._present_pos().items()}
-            dt_ms = (time.perf_counter() - start) * 1e3
-            logger.debug(f"{self} read state: {dt_ms:.1f}ms")
+        start = time.perf_counter()
+        obs_dict: RobotObservation = {f"{motor}.pos": pos for motor, pos in self._present_pos().items()}
+        dt_ms = (time.perf_counter() - start) * 1e3
+        logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
-            for cam_key, cam in self.cameras.items():
-                if not cam.is_connected:
-                    raise RuntimeError(f"Camera '{cam_key}' disconnected while reading reBot observation.")
-                if getattr(cam, "use_rgb", True):
-                    start = time.perf_counter()
-                    obs_dict[cam_key] = cam.read_latest()
-                    dt_ms = (time.perf_counter() - start) * 1e3
-                    logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+        for cam_key, cam in self.cameras.items():
+            if getattr(cam, "use_rgb", True):
+                start = time.perf_counter()
+                obs_dict[cam_key] = cam.read_latest()
+                dt_ms = (time.perf_counter() - start) * 1e3
+                logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
-                if isinstance(cam, DepthCamera) and cam.use_depth:
-                    start = time.perf_counter()
-                    obs_dict[f"{cam_key}_depth"] = cam.read_latest_depth()
-                    dt_ms = (time.perf_counter() - start) * 1e3
-                    logger.debug(f"{self} read {cam_key} depth: {dt_ms:.1f}ms")
-            return obs_dict
-        except Exception:
-            self._disconnect(force_disable=True)
-            raise
+            if isinstance(cam, DepthCamera) and cam.use_depth:
+                start = time.perf_counter()
+                obs_dict[f"{cam_key}_depth"] = cam.read_latest_depth()
+                dt_ms = (time.perf_counter() - start) * 1e3
+                logger.debug(f"{self} read {cam_key} depth: {dt_ms:.1f}ms")
+
+        return obs_dict
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
@@ -443,25 +310,21 @@ class RebotB601Follower(Robot):
         always returned in the same public robot coordinate frame as observations.
         Joints omitted from a partial action are not sent a new command.
         """
-        try:
-            goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
+        goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
-            if self.config.max_relative_target is not None:
-                present_pos = self._present_pos()
-                goal_present_pos = {key: (goal, present_pos.get(key, goal)) for key, goal in goal_pos.items()}
-                relative_limits = self.config.max_relative_target
-                if isinstance(relative_limits, dict):
-                    relative_limits = {key: relative_limits[key] for key in goal_present_pos}
-                goal_pos = ensure_safe_goal_position(goal_present_pos, relative_limits)
+        if self.config.max_relative_target is not None:
+            present_pos = self._present_pos()
+            goal_present_pos = {key: (goal, present_pos.get(key, goal)) for key, goal in goal_pos.items()}
+            relative_limits = self.config.max_relative_target
+            if isinstance(relative_limits, dict):
+                relative_limits = {key: relative_limits[key] for key in goal_present_pos}
+            goal_pos = ensure_safe_goal_position(goal_present_pos, relative_limits)
 
-            sent_pos = {}
-            for motor_name, position_deg in goal_pos.items():
-                if motor_name in self.motors:
-                    sent_pos[motor_name] = self._send_joint(motor_name, position_deg)
-            return {f"{motor}.pos": val for motor, val in sent_pos.items()}
-        except MotorFeedbackError:
-            self._disconnect(force_disable=True)
-            raise
+        sent_pos = {}
+        for motor_name, position_deg in goal_pos.items():
+            if motor_name in self.motors:
+                sent_pos[motor_name] = self._send_joint(motor_name, position_deg)
+        return {f"{motor}.pos": val for motor, val in sent_pos.items()}
 
     def _send_joint(self, motor_name: str, position_deg: float) -> float:
         """Emit one joint command.
@@ -492,11 +355,16 @@ class RebotB601Follower(Robot):
                 # of force and can overcurrent when closing on an object.
                 try:
                     tau = self._gripper_impedance_torque(position_rad)
-                except MotorFeedbackError:
+                except Exception:
                     try:
                         motor.send_mit(0.0, 0.0, 0.0, _GRIPPER_IMPEDANCE_DAMPING, 0.0)
                     except Exception:
                         logger.exception("Failed to command zero RS gripper torque after feedback loss.")
+                    try:
+                        if self.bus is not None:
+                            self.bus.disable_all()
+                    except Exception:
+                        logger.exception("Failed to disable reBot torque after RS gripper feedback loss.")
                     raise
                 motor.send_mit(0.0, 0.0, 0.0, _GRIPPER_IMPEDANCE_DAMPING, tau)
             elif self.config.gripper_control_mode == GRIPPER_MODE_FORCE_POS:
@@ -538,9 +406,9 @@ class RebotB601Follower(Robot):
 
         Computes ``tau = kp*(x_r - x) + kd*(v_r - v)`` from the target and the
         motor's measured state, then clamps it to the moving or holding torque
-        limit depending on how fast the gripper is actually travelling. Returns 0
-        when no feedback is available, which leaves the gripper limp rather than
-        guessing at a torque.
+        limit depending on how fast the gripper is actually travelling. Feedback
+        errors propagate to the caller, which commands zero torque and disables
+        the bus before re-raising the original error.
         """
         state = self._read_feedback()[GRIPPER_MOTOR]
         now = time.monotonic()
@@ -577,6 +445,7 @@ class RebotB601Follower(Robot):
         )
         return max(-limit, min(limit, torque))
 
+    @check_if_not_connected
     def disconnect(self) -> None:
         """Disconnect from the robot.
 
@@ -584,46 +453,20 @@ class RebotB601Follower(Robot):
         back-drivable and falls under gravity: hold it or park it in a stable rest
         pose first.
         """
-        self._disconnect(force_disable=self.config.disable_torque_on_disconnect)
-        logger.info(f"{self} disconnected.")
+        if self.bus is None:
+            raise DeviceNotConnectedError(f"{self} motor bus is not initialized")
+        for motor in self.motors.values():
+            if self.config.disable_torque_on_disconnect:
+                motor.disable()
+            motor.clear_error()
+            motor.close()
 
-    def _disconnect(self, *, force_disable: bool) -> None:
-        """Release every acquired resource, continuing after individual failures."""
-        bus = self.bus
-        motors = tuple(self.motors.values())
-        try:
-            if bus is not None and force_disable:
-                try:
-                    bus.disable_all()
-                except Exception:
-                    logger.exception("Failed to disable reBot torque during cleanup.")
-            for motor in motors:
-                if force_disable:
-                    try:
-                        motor.disable()
-                    except Exception:
-                        logger.exception("Failed to disable a reBot motor during cleanup.")
-                try:
-                    motor.clear_error()
-                except Exception:
-                    logger.exception("Failed to clear a reBot motor error during cleanup.")
-                try:
-                    motor.close()
-                except Exception:
-                    logger.exception("Failed to close a reBot motor during cleanup.")
-            if bus is not None:
-                try:
-                    bus.close()
-                except Exception:
-                    logger.exception("Failed to close the reBot controller during cleanup.")
-            for camera in self.cameras.values():
-                try:
-                    if camera.is_connected:
-                        camera.disconnect()
-                except Exception:
-                    logger.exception("Failed to disconnect a reBot camera during cleanup.")
-        finally:
-            self.bus = None
-            self.motors = {}
-            self._feedback_cache.clear()
-            self._reset_gripper_impedance_state()
+        self.bus.close()
+        self.bus = None
+        self.motors = {}
+
+        for cam in self.cameras.values():
+            cam.disconnect()
+
+        self._reset_gripper_impedance_state()
+        logger.info(f"{self} disconnected.")

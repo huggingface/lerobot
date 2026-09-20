@@ -16,11 +16,10 @@
 
 from .config_rebot_b601_follower import RebotB601FollowerConfig, RebotB601FollowerRobotConfig
 from .motor_family import MotorFamily
-from .rebot_b601_follower import MotorFeedbackError, RebotB601Follower
+from .rebot_b601_follower import RebotB601Follower
 
 __all__ = [
     "MotorFamily",
-    "MotorFeedbackError",
     "RebotB601Follower",
     "RebotB601FollowerConfig",
     "RebotB601FollowerRobotConfig",

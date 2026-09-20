@@ -24,7 +24,6 @@ import pytest
 from lerobot.robots.bi_rebot_b601_follower import BiRebotB601Follower, BiRebotB601FollowerConfig
 from lerobot.robots.rebot_b601_follower import (
     MotorFamily,
-    MotorFeedbackError,
     RebotB601Follower,
     RebotB601FollowerConfig,
     RebotB601FollowerRobotConfig,
@@ -54,7 +53,6 @@ def _per_joint(value: float | list[float] | Mapping[str, float]) -> dict[str, fl
 
 
 FAMILIES = [MotorFamily.DM, MotorFamily.RS]
-_ROBSTRIDE_PING_RESPONDER_ID = 0xFE
 
 
 def _make_motor_mock(position_rad: float | None = 0.0) -> MagicMock:
@@ -81,8 +79,6 @@ def _make_bus_mock(positions_deg: list[float | None] | None = None) -> MagicMock
         position = index + 1 if positions_deg is None else positions_deg[index]
         motor = _make_motor_mock(position_rad=None if position is None else math.radians(position))
         motor.model = model
-        motor.damiao_get_param_u32.return_value = send_id
-        motor.robstride_ping.return_value = (send_id, _ROBSTRIDE_PING_RESPONDER_ID)
         return motor
 
     bus.add_damiao_motor.side_effect = _add_motor
@@ -91,10 +87,8 @@ def _make_bus_mock(positions_deg: list[float | None] | None = None) -> MagicMock
 
 
 @contextmanager
-def _connected(motor_family, *, positions_deg=None, poll_error: Exception | None = None, **config_kwargs):
+def _connected(motor_family, *, positions_deg=None, **config_kwargs):
     bus_mock = _make_bus_mock(positions_deg)
-    if poll_error is not None:
-        bus_mock.poll_feedback_once.side_effect = poll_error
     with (
         patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
         patch(f"{_MODULE}.MotorBridgeController") as controller_cls,
@@ -353,7 +347,7 @@ def test_rs_gripper_torque_respects_the_hold_limit_at_rest():
 
 
 def test_rs_gripper_velocity_estimate_uses_monotonic_elapsed_time():
-    clock = MagicMock(side_effect=[0.0, 1.0, 1.0, 1.1, 1.1])
+    clock = MagicMock(side_effect=[0.0, 0.1])
     with patch(f"{_MODULE}.time.monotonic", clock), _connected(MotorFamily.RS) as robot:
         robot.send_action({"gripper.pos": 0.0})
         robot.send_action({"gripper.pos": -math.degrees(0.05)})
@@ -361,16 +355,16 @@ def test_rs_gripper_velocity_estimate_uses_monotonic_elapsed_time():
         assert robot._gripper_prev_target_vel == pytest.approx(0.15)
 
 
-def test_rs_gripper_zeroes_torque_before_expired_feedback_failure():
-    clock = MagicMock(side_effect=[0.0, 0.2])
-    with patch(f"{_MODULE}.time.monotonic", clock), _connected(MotorFamily.RS) as robot:
+def test_rs_gripper_disables_torque_after_feedback_failure():
+    with _connected(MotorFamily.RS) as robot:
         gripper = robot.motors["gripper"]
         robot.bus.poll_feedback_once.side_effect = RuntimeError("temporary CAN error")
         gripper.send_mit.side_effect = RuntimeError("CAN transmit failed")
-        with pytest.raises(MotorFeedbackError, match="missing or expired"):
+        with pytest.raises(RuntimeError, match="temporary CAN error"):
             robot.send_action({"gripper.pos": -100.0})
         assert gripper.send_mit.call_args.args[4] == 0.0
-        assert robot.bus is None
+        robot.bus.disable_all.assert_called()
+        assert robot.bus is not None
 
 
 @pytest.mark.parametrize("family", FAMILIES)
@@ -381,31 +375,6 @@ def test_mode_switching_happens_with_torque_disabled(family):
         assert all(call == "disable_all" for call in calls[:-1])
 
 
-@pytest.mark.parametrize("family", FAMILIES)
-def test_wrap_guard_rejects_an_implausible_reading(family):
-    # A whole extra revolution on the gripper, as happens when a multi-turn
-    # encoder wakes wrapped after a power cycle.
-    positions = [0.0] * 6 + [400.0]
-    with (
-        pytest.raises(RuntimeError, match="multi-turn encoder wrap"),
-        _connected(family, positions_deg=positions),
-    ):
-        pass
-
-
-@pytest.mark.parametrize(
-    ("family", "wrapped_position"),
-    [(MotorFamily.DM, -360.0), (MotorFamily.RS, 360.0)],
-)
-def test_wrap_guard_rejects_exactly_one_turn(family, wrapped_position):
-    positions = [0.0] * 6 + [wrapped_position]
-    with (
-        pytest.raises(RuntimeError, match="multi-turn encoder wrap"),
-        _connected(family, positions_deg=positions),
-    ):
-        pass
-
-
 def test_dm_public_positions_equal_motor_positions():
     with _connected(MotorFamily.DM) as robot:
         observation = robot.get_observation()
@@ -413,124 +382,15 @@ def test_dm_public_positions_equal_motor_positions():
             assert observation[f"{motor_name}.pos"] == pytest.approx(math.degrees(motor.get_state().pos))
 
 
-@pytest.mark.parametrize("family", FAMILIES)
-def test_wrap_guard_rejects_missing_feedback(family):
-    positions = [0.0] * 6 + [None]
-    with (
-        pytest.raises(RuntimeError, match="missing from the current refresh"),
-        _connected(family, positions_deg=positions),
-    ):
-        pass
+def test_observation_propagates_motorbridge_feedback_errors():
+    with _connected(MotorFamily.DM) as robot:
+        bus = robot.bus
+        bus.poll_feedback_once.side_effect = RuntimeError("CAN poll failed")
 
+        with pytest.raises(RuntimeError, match="CAN poll failed"):
+            robot.get_observation()
 
-@pytest.mark.parametrize("family", FAMILIES)
-def test_wrap_guard_rejects_failed_feedback_poll(family):
-    with (
-        pytest.raises(RuntimeError, match="Failed to refresh motor feedback"),
-        _connected(family, poll_error=RuntimeError("temporary CAN error")),
-    ):
-        pass
-
-
-@pytest.mark.parametrize("family", FAMILIES)
-def test_startup_requires_feedback_when_wrap_guard_is_disabled(family):
-    positions = [0.0] * 6 + [None]
-    with (
-        pytest.raises(RuntimeError, match="missing from the current refresh"),
-        _connected(family, positions_deg=positions, check_position_plausibility=False),
-    ):
-        pass
-
-
-def test_failed_startup_disables_and_closes_the_bus():
-    bus_mock = _make_bus_mock([0.0] * 6 + [None])
-    with (
-        patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
-        patch(f"{_MODULE}.MotorBridgeController") as controller_cls,
-        patch(f"{_MODULE}.MotorBridgeMode", MagicMock()),
-    ):
-        controller_cls.return_value = bus_mock
-        robot = RebotB601Follower(RebotB601FollowerRobotConfig(motor_family=MotorFamily.RS, port="can0"))
-        with pytest.raises(RuntimeError, match="missing from the current refresh"):
-            robot.connect(calibrate=False)
-
-    assert robot.bus is None
-    assert robot.motors == {}
-    assert bus_mock.disable_all.call_count >= 2
-    bus_mock.close.assert_called_once()
-
-
-@pytest.mark.parametrize("family", FAMILIES)
-def test_startup_requires_a_synchronous_response_from_every_motor(family):
-    bus_mock = _make_bus_mock()
-    add_motor = bus_mock.add_damiao_motor if family is MotorFamily.DM else bus_mock.add_robstride_motor
-    original_add_motor = add_motor.side_effect
-
-    def _add_motor_with_unreachable_gripper(send_id, recv_id, model):
-        motor = original_add_motor(send_id, recv_id, model)
-        if send_id == 0x07:
-            connectivity_method = (
-                motor.damiao_get_param_u32 if family is MotorFamily.DM else motor.robstride_ping
-            )
-            connectivity_method.side_effect = RuntimeError("motor powered off")
-        return motor
-
-    add_motor.side_effect = _add_motor_with_unreachable_gripper
-
-    with (
-        patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
-        patch(f"{_MODULE}.MotorBridgeController") as controller_cls,
-        patch(f"{_MODULE}.MotorBridgeMode", MagicMock()),
-    ):
-        controller_cls.from_dm_serial.return_value = bus_mock
-        controller_cls.return_value = bus_mock
-        config = RebotB601FollowerRobotConfig(motor_family=family, port="/dev/null")
-        if family is MotorFamily.RS:
-            config = RebotB601FollowerRobotConfig(motor_family=family, port="can0")
-        robot = RebotB601Follower(config)
-
-        with pytest.raises(MotorFeedbackError, match="valid synchronous startup response"):
-            robot.connect(calibrate=False)
-
-    assert robot.bus is None
-    assert robot.motors == {}
-    bus_mock.close.assert_called_once()
-
-
-def test_rs_startup_rejects_ping_from_wrong_device_id():
-    bus_mock = _make_bus_mock()
-    original_add_motor = bus_mock.add_robstride_motor.side_effect
-
-    def _add_motor_with_wrong_device_id(send_id, recv_id, model):
-        motor = original_add_motor(send_id, recv_id, model)
-        if send_id == 0x01:
-            motor.robstride_ping.return_value = (0x02, _ROBSTRIDE_PING_RESPONDER_ID)
-        return motor
-
-    bus_mock.add_robstride_motor.side_effect = _add_motor_with_wrong_device_id
-
-    with (
-        patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
-        patch(f"{_MODULE}.MotorBridgeController") as controller_cls,
-        patch(f"{_MODULE}.MotorBridgeMode", MagicMock()),
-    ):
-        controller_cls.return_value = bus_mock
-        robot = RebotB601Follower(RebotB601FollowerRobotConfig(motor_family=MotorFamily.RS, port="can0"))
-
-        with pytest.raises(MotorFeedbackError, match="valid synchronous startup response") as exc_info:
-            robot.connect(calibrate=False)
-
-    assert "reported device CAN ID 0x2, expected 0x1" in str(exc_info.value.__cause__)
-    assert robot.bus is None
-    assert robot.motors == {}
-    bus_mock.close.assert_called_once()
-
-
-@pytest.mark.parametrize("family", FAMILIES)
-def test_wrap_guard_can_be_disabled(family):
-    positions = [0.0] * 6 + [400.0]
-    with _connected(family, positions_deg=positions, check_position_plausibility=False) as robot:
-        assert robot.is_connected
+        assert robot.bus is bus
 
 
 def test_partial_action_subsets_per_joint_relative_limits():
@@ -539,48 +399,6 @@ def test_partial_action_subsets_per_joint_relative_limits():
         returned = robot.send_action({"shoulder_pan.pos": 100.0, "wrist_yaw.pos": 5.0})
         assert returned["shoulder_pan.pos"] == 2.0
         assert returned["wrist_yaw.pos"] == 5.0
-
-
-def test_rs_gripper_uses_cached_feedback_after_transient_poll_failure():
-    with _connected(MotorFamily.RS) as robot:
-        robot.bus.poll_feedback_once.side_effect = RuntimeError("temporary CAN error")
-        robot.send_action({"gripper.pos": -100.0})
-        robot.motors["gripper"].send_mit.assert_called_once()
-
-
-def test_expired_observation_feedback_disconnects_robot():
-    clock = MagicMock(side_effect=[0.0, 0.2])
-    with patch(f"{_MODULE}.time.monotonic", clock), _connected(MotorFamily.RS) as robot:
-        robot.bus.poll_feedback_once.side_effect = RuntimeError("temporary CAN error")
-        with pytest.raises(MotorFeedbackError, match="missing or expired"):
-            robot.get_observation()
-        assert robot.bus is None
-
-
-def test_disconnect_is_idempotent_and_continues_after_cleanup_failure():
-    with _connected(MotorFamily.DM) as robot:
-        motors = list(robot.motors.values())
-        motors[0].disable.side_effect = RuntimeError("disable failed")
-        motors[0].close.side_effect = RuntimeError("close failed")
-        bus = robot.bus
-        bus.close.side_effect = RuntimeError("bus close failed")
-        robot.disconnect()
-        robot.disconnect()
-
-    assert robot.bus is None
-    assert robot.motors == {}
-    motors[-1].close.assert_called_once()
-
-
-def test_disconnect_skips_cameras_that_are_already_disconnected():
-    robot = _build(MotorFamily.DM)
-    camera = MagicMock()
-    camera.is_connected = False
-    robot.cameras = {"base": camera}
-
-    robot.disconnect()
-
-    camera.disconnect.assert_not_called()
 
 
 def test_rs_rejects_damiao_serial_transport():

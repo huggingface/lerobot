@@ -144,11 +144,6 @@ class RebotB601FollowerConfig:
     # `joint_directions` maps the public action into that frame.
     joint_limits: dict[str, tuple[float, float]] | None = None
 
-    # Refuse to enable torque when a joint reads far outside its limits, which
-    # means a multi-turn encoder woke up wrapped by a whole revolution after a
-    # power cycle. Commanding such a joint would drive it into its hard stop.
-    check_position_plausibility: bool = True
-
     def _resolve_motor_family_defaults(self) -> None:
         """Fill every unset per-joint field from this arm's motor family profile."""
         self.motor_family = MotorFamily(self.motor_family)
