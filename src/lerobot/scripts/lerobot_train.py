@@ -567,7 +567,11 @@ def train(cfg: TrainPipelineConfig):
     # in one prepare() call and rebinds the param groups itself.
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
-    policy = apply_torch_compile(policy, cfg.accelerator.compile)
+    # Sharded runs are left uncompiled: `compile.enabled=None` is auto, which the config
+    # documents as on only when the policy declares `_compile_regions` AND the run is not
+    # sharded. `validate` rejects an explicit `enabled=True` here; auto has to decline quietly.
+    if not cfg.parallelism.is_sharded:
+        policy = apply_torch_compile(policy, cfg.accelerator.compile)
 
     # --- resume phase 1 + dataloaders ----------------------------------------------------------
     step = 0  # number of loop steps (= micro-batches consumed per data-parallel worker)

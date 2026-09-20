@@ -203,3 +203,15 @@ class TestApplyTorchCompile:
 
         source = inspect.getsource(lerobot_train.train)
         assert source.index("make_optimizer_and_scheduler(") < source.index("apply_torch_compile(")
+
+    def test_the_train_script_leaves_a_sharded_run_uncompiled(self):
+        """`enabled=None` is auto, which the config documents as off for a sharded run. `validate`
+        only rejects an explicit `enabled=True`, so the call site has to carry the auto half."""
+        import inspect
+
+        from lerobot.scripts import lerobot_train
+
+        source = inspect.getsource(lerobot_train.train)
+        call = source.index("apply_torch_compile(")
+        guard = source.rindex("if not cfg.parallelism.is_sharded:", 0, call)
+        assert source[guard:call].count("\n") == 1, "the guard must be the line before the call"
