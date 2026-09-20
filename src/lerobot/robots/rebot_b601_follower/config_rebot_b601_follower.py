@@ -243,39 +243,17 @@ class RebotB601FollowerConfig:
         self._resolve_mode_scoped_defaults(profile, joints)
 
     def _resolve_mode_scoped_defaults(self, profile: MotorFamilyProfile, joints: tuple[str, ...]) -> None:
-        """Fill in the parameters that only exist for some control modes.
-
-        A parameter the active family cannot use is rejected rather than ignored:
-        silently dropping something like a gripper torque limit would leave the
-        user believing a safety cap is in force when it is not.
-        """
-        uses_velocity_limit = self.control_mode == "pos_vel" or self.gripper_control_mode == "force_pos"
-        if not uses_velocity_limit:
-            if self.pos_vel_velocity is not None:
-                raise ValueError(
-                    "`pos_vel_velocity` has no effect unless the arm uses `pos_vel` "
-                    "or the gripper uses `force_pos`."
-                )
-        else:
-            value = self.pos_vel_velocity
-            default_velocity = profile.pos_vel_velocity
-            if value is None and default_velocity is None:
-                raise ValueError(
-                    f"No default `pos_vel_velocity` is defined for {self.motor_family.value} motors."
-                )
+        """Fill parameters that are available only on some motor families."""
+        velocity = self.pos_vel_velocity if self.pos_vel_velocity is not None else profile.pos_vel_velocity
+        if velocity is not None:
             self.pos_vel_velocity = _broadcast_per_joint(
                 "pos_vel_velocity",
-                value if value is not None else default_velocity,
+                velocity,
                 joints,
             )
 
-        if self.gripper_control_mode == "force_pos":
-            if self.gripper_torque_ratio is None:
-                self.gripper_torque_ratio = profile.gripper_torque_ratio
-            if self.gripper_torque_ratio is None:
-                raise ValueError("`gripper_torque_ratio` is required in `force_pos` mode.")
-        elif self.gripper_torque_ratio is not None:
-            raise ValueError("`gripper_torque_ratio` only applies in `force_pos` mode.")
+        if self.gripper_torque_ratio is None:
+            self.gripper_torque_ratio = profile.gripper_torque_ratio
 
         impedance_fields = ("gripper_torque_limit", "gripper_hold_torque_limit")
         if self.gripper_control_mode == "mit_impedance":
@@ -288,12 +266,6 @@ class RebotB601FollowerConfig:
                     raise ValueError(f"`{name}` must be positive in `mit_impedance` mode.")
             if self.gripper_hold_torque_limit > self.gripper_torque_limit:
                 raise ValueError("`gripper_hold_torque_limit` must not exceed `gripper_torque_limit`.")
-        else:
-            configured = [name for name in impedance_fields if getattr(self, name) is not None]
-            if configured:
-                raise ValueError(
-                    f"{', '.join(f'`{name}`' for name in configured)} only applies in `mit_impedance` mode."
-                )
 
     def __post_init__(self) -> None:
         self._resolve_motor_family_defaults()
