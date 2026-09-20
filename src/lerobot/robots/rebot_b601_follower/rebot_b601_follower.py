@@ -59,6 +59,8 @@ _ENSURE_MODE_RETRIES = 9
 _SETTLE_SEC = 0.01
 _ZERO_SETTLE_SEC = 0.1
 _CONNECTIVITY_TIMEOUT_MS = 100
+_FEEDBACK_CACHE_TTL_S = 0.1
+_WRAP_GUARD_MARGIN_DEG = 90.0
 
 # --- Impedance gripper tuning (shared by any family that offers the mode) ---
 # Motor-side velocity damping. The position setpoint and kp are both zero, so the
@@ -308,7 +310,6 @@ class RebotB601Follower(Robot):
         can wake up reading ``physical + 360*k`` degrees. Commanding it from there
         would drive it into its mechanical stop, so fail loudly instead.
         """
-        margin = self.config.wrap_guard_margin_deg
         wrapped = []
         for motor_name, state in states.items():
             position = math.degrees(state.pos)
@@ -319,7 +320,7 @@ class RebotB601Follower(Robot):
             # Deliberately exclude the margin boundary: for the gripper, the
             # default 90° margin plus its 270° travel lands exactly on a one-turn
             # wrap (±360°).
-            if not (range_min - margin < position < range_max + margin):
+            if not (range_min - _WRAP_GUARD_MARGIN_DEG < position < range_max + _WRAP_GUARD_MARGIN_DEG):
                 wrapped.append(f"{motor_name}={position:.1f} deg (limits {range_min}..{range_max} deg)")
         if wrapped:
             raise RuntimeError(
@@ -374,7 +375,7 @@ class RebotB601Follower(Robot):
                 continue
             if not strict:
                 cached = self._feedback_cache.get(motor_name)
-                if cached is not None and now - cached[1] <= self.config.feedback_cache_ttl_s:
+                if cached is not None and now - cached[1] <= _FEEDBACK_CACHE_TTL_S:
                     states[motor_name] = cached[0]
                     continue
             unavailable.append(motor_name)

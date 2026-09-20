@@ -602,8 +602,6 @@ def test_dm_allows_socketcan_transport():
 
 
 def test_numeric_safety_configuration_is_validated():
-    with pytest.raises(ValueError, match="feedback_cache_ttl_s"):
-        RebotB601FollowerRobotConfig(port="/dev/null", feedback_cache_ttl_s=float("nan"))
     with pytest.raises(ValueError, match="max_relative_target"):
         RebotB601FollowerRobotConfig(port="/dev/null", max_relative_target=0.0)
     with pytest.raises(ValueError, match="gripper_hold_torque_limit"):
@@ -696,11 +694,9 @@ def test_bimanual_forwards_every_arm_config_field():
         port="can0",
         max_relative_target=5.0,
         gripper_torque_limit=2.0,
-        wrap_guard_margin_deg=45.0,
     )
     promoted = left.as_robot_config(id="arm_left")
     assert promoted.max_relative_target == 5.0
     assert promoted.gripper_torque_limit == 2.0
-    assert promoted.wrap_guard_margin_deg == 45.0
     assert promoted.id == "arm_left"
     assert promoted.type == "rebot_b601_follower"

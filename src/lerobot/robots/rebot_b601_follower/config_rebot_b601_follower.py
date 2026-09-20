@@ -104,7 +104,6 @@ class RebotB601FollowerConfig:
     # disables the check entirely — unlike the fields below, `None` is a real value
     # here and is not filled in from the motor family.
     max_relative_target: float | dict[str, float] | None = None
-    feedback_cache_ttl_s: float = 0.1
 
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
@@ -149,7 +148,6 @@ class RebotB601FollowerConfig:
     # means a multi-turn encoder woke up wrapped by a whole revolution after a
     # power cycle. Commanding such a joint would drive it into its hard stop.
     check_position_plausibility: bool = True
-    wrap_guard_margin_deg: float = 90.0
 
     def _resolve_motor_family_defaults(self) -> None:
         """Fill every unset per-joint field from this arm's motor family profile."""
@@ -227,13 +225,6 @@ class RebotB601FollowerConfig:
                 raise ValueError(f"`joint_limits[{joint}]` must satisfy min < max.")
             normalized_limits[joint] = (lower, upper)
         self.joint_limits = normalized_limits
-
-        self.wrap_guard_margin_deg = _require_finite("wrap_guard_margin_deg", self.wrap_guard_margin_deg)
-        if self.wrap_guard_margin_deg < 0.0:
-            raise ValueError("`wrap_guard_margin_deg` must be non-negative.")
-        self.feedback_cache_ttl_s = _require_finite("feedback_cache_ttl_s", self.feedback_cache_ttl_s)
-        if self.feedback_cache_ttl_s <= 0.0:
-            raise ValueError("`feedback_cache_ttl_s` must be positive.")
 
         if self.max_relative_target is not None:
             if isinstance(self.max_relative_target, Mapping):

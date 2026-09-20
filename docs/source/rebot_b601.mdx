@@ -85,7 +85,7 @@ The leader is always a USB serial device; find its port with `lerobot-find-port`
   devices: `sudo chmod 666 /dev/ttyACM* /dev/ttyUSB*`.
 </Tip>
 
-At startup, LeRobot requires a successful current feedback refresh from all seven motors before it enables torque. During operation, a transient refresh failure may reuse the last snapshot for up to `feedback_cache_ttl_s` (default `0.1` seconds). Missing or expired feedback raises an error, disables torque and disconnects the robot rather than substituting a fabricated `0°` position.
+At startup, LeRobot requires a successful current feedback refresh from all seven motors before it enables torque. During operation, a transient refresh failure may reuse the last snapshot for up to `0.1` seconds. Missing or expired feedback raises an error, disables torque and disconnects the robot rather than substituting a fabricated `0°` position.
 
 ## Calibration
 
