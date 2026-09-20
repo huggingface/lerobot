@@ -23,7 +23,7 @@ from pathlib import Path
 from lerobot.cameras import CameraConfig
 
 from ..config import RobotConfig
-from .motor_family import GRIPPER_MOTOR, MIT_MODE, MotorFamily, MotorFamilyProfile, profile_for
+from .motor_family import GRIPPER_MOTOR, MIT_MODE, MOTOR_PROFILES, MotorFamily, MotorFamilyProfile
 
 
 def _broadcast_per_joint(
@@ -159,7 +159,7 @@ class RebotB601FollowerConfig:
     def _resolve_motor_family_defaults(self) -> None:
         """Fill every unset per-joint field from this arm's motor family profile."""
         self.motor_family = MotorFamily(self.motor_family)
-        profile = profile_for(self.motor_family)
+        profile = MOTOR_PROFILES[self.motor_family]
         if not self.port:
             raise ValueError("`port` must not be empty.")
         if not isinstance(self.dm_serial_baud, int) or self.dm_serial_baud <= 0:

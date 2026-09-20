@@ -35,9 +35,9 @@ from .motor_family import (
     GRIPPER_MODE_FORCE_POS,
     GRIPPER_MODE_MIT_IMPEDANCE,
     GRIPPER_MOTOR,
+    MOTOR_PROFILES,
     MotorFamily,
     MotorFamilyProfile,
-    profile_for,
 )
 
 if TYPE_CHECKING or _motorbridge_available:
@@ -101,7 +101,7 @@ class RebotB601Follower(Robot):
         require_package("motorbridge", extra="rebot")
         super().__init__(config)
         self.config = config
-        self.profile: MotorFamilyProfile = profile_for(config.motor_family)
+        self.profile: MotorFamilyProfile = MOTOR_PROFILES[config.motor_family]
         self.bus: MotorBridgeController | None = None
         self.motors: dict = {}
         self.motor_names = list(config.motor_can_ids)

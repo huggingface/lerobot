@@ -208,12 +208,7 @@ RS_PROFILE = MotorFamilyProfile(
     gripper_hold_torque_limit=1.0,
 )
 
-PROFILES: dict[MotorFamily, MotorFamilyProfile] = {
+MOTOR_PROFILES: dict[MotorFamily, MotorFamilyProfile] = {
     MotorFamily.DM: DM_PROFILE,
     MotorFamily.RS: RS_PROFILE,
 }
-
-
-def profile_for(family: MotorFamily) -> MotorFamilyProfile:
-    """Return the hardware profile for a motor family."""
-    return PROFILES[family]
