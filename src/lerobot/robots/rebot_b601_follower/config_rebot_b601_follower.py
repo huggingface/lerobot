@@ -212,7 +212,6 @@ class RebotB601FollowerConfig:
                     values[GRIPPER_MOTOR] = getattr(profile, name)[GRIPPER_MOTOR]
                 setattr(self, alias_name, values[GRIPPER_MOTOR])
                 continue
-            alias = _require_finite(alias_name, alias)
             if isinstance(original, Mapping) and values[GRIPPER_MOTOR] != alias:
                 raise ValueError(
                     f'`{alias_name}` conflicts with `{name}["{GRIPPER_MOTOR}"]`; configure only one value.'
@@ -220,14 +219,8 @@ class RebotB601FollowerConfig:
             values[GRIPPER_MOTOR] = alias
             setattr(self, alias_name, alias)
 
-        for name in ("mit_kp", "mit_kd", "joint_directions"):
-            values = getattr(self, name)
-            for joint, value in values.items():
-                values[joint] = _require_finite(f"{name}[{joint}]", value)
-
-        for name in ("mit_kp", "mit_kd"):
-            if any(value < 0.0 for value in getattr(self, name).values()):
-                raise ValueError(f"`{name}` values must be non-negative.")
+        for joint, direction in self.joint_directions.items():
+            self.joint_directions[joint] = _require_finite(f"joint_directions[{joint}]", direction)
 
         invalid_directions = {
             joint: direction
