@@ -86,7 +86,6 @@ class MotorFamilyProfile:
     # vendor-specific; MotorBridge's native CAN transport can carry both families.
     can_adapters: frozenset[str]
     can_adapter: str
-    control_mode: str
     gripper_control_mode: str
     motor_can_ids: dict[str, tuple[int, int]]
     # MIT gains per joint, including the gripper: the gripper's MIT gains live here
@@ -117,7 +116,6 @@ DM_PROFILE = MotorFamilyProfile(
     gripper_modes=frozenset({GRIPPER_MODE_FORCE_POS, GRIPPER_MODE_MIT}),
     can_adapters=frozenset({"damiao", "socketcan"}),
     can_adapter="damiao",
-    control_mode=ARM_MODE_MIT,
     gripper_control_mode=GRIPPER_MODE_FORCE_POS,
     motor_can_ids={
         "shoulder_pan": (0x01, 0x11),
@@ -175,7 +173,6 @@ RS_PROFILE = MotorFamilyProfile(
     can_adapters=frozenset({"socketcan"}),
     # "socketcan" selects MotorBridge's native, platform-specific CAN transport.
     can_adapter="socketcan",
-    control_mode=ARM_MODE_MIT,
     gripper_control_mode=GRIPPER_MODE_MIT_IMPEDANCE,
     # RobStride motors all reply on the host id rather than a per-motor recv id.
     motor_can_ids={joint: (i, 0xFD) for i, joint in enumerate(JOINT_NAMES, start=1)},
