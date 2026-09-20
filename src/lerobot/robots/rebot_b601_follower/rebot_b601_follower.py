@@ -285,7 +285,11 @@ class RebotB601Follower(Robot):
     def _target_mode(self, motor_name: str) -> Any:
         """motorbridge mode this joint should run in, given the configured modes."""
         mode = self.config.gripper_control_mode if motor_name == GRIPPER_MOTOR else self.config.control_mode
-        return getattr(MotorBridgeMode, self.profile.mode_frames[mode])
+        if mode == ARM_MODE_POS_VEL:
+            return MotorBridgeMode.POS_VEL
+        if mode == GRIPPER_MODE_FORCE_POS:
+            return MotorBridgeMode.FORCE_POS
+        return MotorBridgeMode.MIT
 
     def _apply_control_modes(self) -> None:
         for motor_name, motor in self.motors.items():

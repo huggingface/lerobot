@@ -91,9 +91,6 @@ class MotorFamilyProfile:
     # protocol modes that have not been validated on this arm.
     arm_modes: frozenset[str]
     gripper_modes: frozenset[str]
-    # `motorbridge.Mode` attribute each supported mode maps onto. Kept as strings
-    # so this module stays importable without the optional dependency.
-    mode_frames: Mapping[str, str]
     # --- defaults for the matching config fields ---
 
     # CAN transports supported by this motor family. The Damiao serial bridge is
@@ -129,13 +126,6 @@ DM_PROFILE = MotorFamilyProfile(
     motor_models=_by_segment("4340P", "4310"),
     arm_modes=frozenset({ARM_MODE_MIT, ARM_MODE_POS_VEL}),
     gripper_modes=frozenset({GRIPPER_MODE_FORCE_POS, GRIPPER_MODE_MIT}),
-    mode_frames=_immutable(
-        {
-            ARM_MODE_MIT: "MIT",
-            ARM_MODE_POS_VEL: "POS_VEL",
-            GRIPPER_MODE_FORCE_POS: "FORCE_POS",
-        }
-    ),
     can_adapters=frozenset({"damiao", "socketcan"}),
     can_adapter="damiao",
     control_mode=ARM_MODE_MIT,
@@ -201,12 +191,6 @@ RS_PROFILE = MotorFamilyProfile(
     # here requires a dedicated command path and hardware validation.
     arm_modes=frozenset({ARM_MODE_MIT}),
     gripper_modes=frozenset({GRIPPER_MODE_MIT_IMPEDANCE}),
-    mode_frames=_immutable(
-        {
-            ARM_MODE_MIT: "MIT",
-            GRIPPER_MODE_MIT_IMPEDANCE: "MIT",
-        }
-    ),
     can_adapters=frozenset({"socketcan"}),
     # motorbridge 0.4+ reaches the RS bus through python-can/SocketCAN.
     can_adapter="socketcan",
