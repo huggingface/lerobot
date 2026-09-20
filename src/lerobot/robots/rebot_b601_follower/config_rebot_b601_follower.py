@@ -382,11 +382,6 @@ class RebotB601FollowerConfig:
                     raise ValueError(f"`{name}` must be positive in `mit_impedance` mode.")
             if self.gripper_hold_torque_limit > self.gripper_torque_limit:
                 raise ValueError("`gripper_hold_torque_limit` must not exceed `gripper_torque_limit`.")
-            gripper_ceiling = profile.torque_ceiling[GRIPPER_MOTOR]
-            if self.gripper_torque_limit > gripper_ceiling:
-                raise ValueError(
-                    f"`gripper_torque_limit` must not exceed the motor peak torque {gripper_ceiling}."
-                )
         else:
             configured = [name for name in impedance_fields if getattr(self, name) is not None]
             if configured:

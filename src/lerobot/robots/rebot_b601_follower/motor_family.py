@@ -94,9 +94,6 @@ class MotorFamilyProfile:
     # `motorbridge.Mode` attribute each supported mode maps onto. Kept as strings
     # so this module stays importable without the optional dependency.
     mode_frames: Mapping[str, str]
-    # Peak torque (N.m) per joint from the vendor tables. Bounds any feedforward
-    # torque the robot emits.
-    torque_ceiling: Mapping[str, float]
     # --- defaults for the matching config fields ---
 
     # CAN transports supported by this motor family. The Damiao serial bridge is
@@ -139,8 +136,6 @@ DM_PROFILE = MotorFamilyProfile(
             GRIPPER_MODE_FORCE_POS: "FORCE_POS",
         }
     ),
-    # DM4340: 28 N.m, DM4310: 10 N.m.
-    torque_ceiling=_by_segment(28.0, 10.0),
     can_adapters=frozenset({"damiao", "socketcan"}),
     can_adapter="damiao",
     control_mode=ARM_MODE_MIT,
@@ -212,8 +207,6 @@ RS_PROFILE = MotorFamilyProfile(
             GRIPPER_MODE_MIT_IMPEDANCE: "MIT",
         }
     ),
-    # rs-06: 36 N.m, rs-00: 14 N.m.
-    torque_ceiling=_by_segment(36.0, 14.0),
     can_adapters=frozenset({"socketcan"}),
     # motorbridge 0.4+ reaches the RS bus through python-can/SocketCAN.
     can_adapter="socketcan",

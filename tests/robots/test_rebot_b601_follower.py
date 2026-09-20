@@ -545,15 +545,6 @@ def test_wrap_guard_can_be_disabled(family):
         assert robot.is_connected
 
 
-@pytest.mark.parametrize("family", FAMILIES)
-def test_feedforward_torque_is_clamped_to_the_motor_ceiling(family):
-    with _connected(family) as robot:
-        ceiling = robot.profile.torque_ceiling["shoulder_pan"]
-        robot._send_joint("shoulder_pan", 0.0, tau_ff=10 * ceiling)
-        expected = ceiling * robot.config.joint_directions["shoulder_pan"]
-        assert robot.motors["shoulder_pan"].send_mit.call_args.args[4] == expected
-
-
 def test_partial_action_subsets_per_joint_relative_limits():
     limits = dict.fromkeys(_JOINTS, 1.0)
     with _connected(MotorFamily.DM, max_relative_target=limits) as robot:

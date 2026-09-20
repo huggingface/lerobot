@@ -399,9 +399,6 @@ class RebotB601Follower(Robot):
     def _motor_to_public_position(self, motor_name: str, position_deg: float) -> float:
         return position_deg / self.config.joint_directions[motor_name]
 
-    def _public_to_motor_torque(self, motor_name: str, torque: float) -> float:
-        return torque * self.config.joint_directions[motor_name]
-
     def _public_joint_limits(self) -> dict[str, tuple[float, float]]:
         return public_joint_limits(self.config.joint_limits, self.config.joint_directions)
 
@@ -472,13 +469,12 @@ class RebotB601Follower(Robot):
             self._disconnect(force_disable=True)
             raise
 
-    def _send_joint(self, motor_name: str, position_deg: float, *, tau_ff: float = 0.0) -> float:
+    def _send_joint(self, motor_name: str, position_deg: float) -> float:
         """Emit one joint command.
 
-        Every command reaches the bus through here, so a feedforward torque term
-        (gravity compensation, force limiting) has a single injection point that
-        works for both motor families. Position and torque enter in the public
-        robot frame, then are mapped into the raw motor frame and clamped.
+        Every command reaches the bus through here. The requested position enters
+        in the public robot frame, then is mapped into the raw motor frame and
+        clamped.
 
         Returns:
             The position actually sent, expressed in the public robot frame.
@@ -493,7 +489,6 @@ class RebotB601Follower(Robot):
                 logger.debug(f"Clipped {motor_name} from {motor_position_deg:.2f} to {clipped:.2f}")
             motor_position_deg = clipped
         position_rad = math.radians(motor_position_deg)
-        motor_tau_ff = self._clamp_torque(motor_name, self._public_to_motor_torque(motor_name, tau_ff))
 
         if motor_name == GRIPPER_MOTOR:
             if self.config.gripper_control_mode == GRIPPER_MODE_MIT_IMPEDANCE:
@@ -522,7 +517,7 @@ class RebotB601Follower(Robot):
                     0.0,
                     self.config.mit_kp[motor_name],
                     self.config.mit_kd[motor_name],
-                    motor_tau_ff,
+                    0.0,
                 )
         elif self.config.control_mode == ARM_MODE_POS_VEL:
             motor.send_pos_vel(position_rad, math.radians(self.config.pos_vel_velocity[motor_name]))
@@ -532,18 +527,11 @@ class RebotB601Follower(Robot):
                 0.0,
                 self.config.mit_kp[motor_name],
                 self.config.mit_kd[motor_name],
-                motor_tau_ff,
+                0.0,
             )
         # The impedance gripper sends an internal zero position setpoint, but its
         # effective requested target remains this clipped public position.
         return self._motor_to_public_position(motor_name, motor_position_deg)
-
-    def _clamp_torque(self, motor_name: str, torque: float) -> float:
-        """Bound a feedforward torque to the joint motor's peak rating."""
-        ceiling = self.profile.torque_ceiling.get(motor_name)
-        if ceiling is None:
-            return torque
-        return max(-ceiling, min(ceiling, torque))
 
     def _reset_gripper_impedance_state(self) -> None:
         self._gripper_prev_target_pos: float | None = None
@@ -593,7 +581,7 @@ class RebotB601Follower(Robot):
             if abs(measured_vel) > _GRIPPER_HOLD_VEL_THRESHOLD
             else self.config.gripper_hold_torque_limit
         )
-        return self._clamp_torque(GRIPPER_MOTOR, max(-limit, min(limit, torque)))
+        return max(-limit, min(limit, torque))
 
     def disconnect(self) -> None:
         """Disconnect from the robot.
