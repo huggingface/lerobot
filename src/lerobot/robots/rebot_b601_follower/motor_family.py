@@ -69,8 +69,6 @@ GRIPPER_MODE_MIT_IMPEDANCE = "mit_impedance"
 class MotorFamilyProfile:
     """Hardware facts and default tuning for one motor family."""
 
-    family: MotorFamily
-
     # --- hardware facts (never user-overridable) ---
 
     # Vendor model string per joint, passed to the matching motorbridge factory.
@@ -109,7 +107,6 @@ class MotorFamilyProfile:
 
 
 DM_PROFILE = MotorFamilyProfile(
-    family=MotorFamily.DM,
     motor_models=_by_segment("4340P", "4310"),
     arm_modes={MIT_MODE, ARM_MODE_POS_VEL},
     gripper_modes={GRIPPER_MODE_FORCE_POS, MIT_MODE},
@@ -161,7 +158,6 @@ DM_PROFILE = MotorFamilyProfile(
 )
 
 RS_PROFILE = MotorFamilyProfile(
-    family=MotorFamily.RS,
     motor_models=_by_segment("rs-06", "rs-00"),
     # RobStride motors have no FORCE_POS equivalent. MotorBridge exposes
     # RobStride position modes, but Seeed's current B601 integration uses MIT
@@ -218,14 +214,6 @@ PROFILES: dict[MotorFamily, MotorFamilyProfile] = {
 }
 
 
-def profile_for(family: MotorFamily | str) -> MotorFamilyProfile:
-    """Return the hardware profile for a motor family.
-
-    Raises:
-        ValueError: if `family` is not a known motor family.
-    """
-    try:
-        return PROFILES[MotorFamily(family)]
-    except ValueError:
-        known = ", ".join(f.value for f in MotorFamily)
-        raise ValueError(f"Unknown motor_family '{family}'. Available families: {known}.") from None
+def profile_for(family: MotorFamily) -> MotorFamilyProfile:
+    """Return the hardware profile for a motor family."""
+    return PROFILES[family]
