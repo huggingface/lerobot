@@ -25,8 +25,6 @@ from lerobot.cameras import CameraConfig
 from ..config import RobotConfig
 from .motor_family import GRIPPER_MOTOR, MotorFamily, MotorFamilyProfile, profile_for
 
-CAN_ADAPTERS = ("damiao", "socketcan")
-
 
 def _broadcast_per_joint(
     name: str,
@@ -185,10 +183,6 @@ class RebotB601FollowerConfig:
 
         if self.can_adapter is None:
             self.can_adapter = profile.can_adapter
-        if self.can_adapter not in CAN_ADAPTERS:
-            raise ValueError(
-                f"Unsupported can_adapter '{self.can_adapter}'. Available: {', '.join(CAN_ADAPTERS)}."
-            )
         if self.can_adapter not in profile.can_adapters:
             available = ", ".join(sorted(profile.can_adapters))
             raise ValueError(
@@ -430,7 +424,6 @@ class RebotB601FollowerRobotConfig(RobotConfig, RebotB601FollowerConfig):
 
 
 __all__ = [
-    "CAN_ADAPTERS",
     "RebotB601FollowerConfig",
     "RebotB601FollowerRobotConfig",
     "public_joint_limits",
