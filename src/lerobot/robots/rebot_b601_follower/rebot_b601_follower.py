@@ -400,16 +400,12 @@ class RebotB601Follower(Robot):
     def _motor_to_public_position(self, motor_name: str, position_deg: float) -> float:
         return position_deg / self.config.joint_directions[motor_name]
 
-    def _present_pos(self, *, motor_frame: bool = False, strict: bool = False) -> dict[str, float]:
-        """Read current positions in either raw motor or public robot coordinates."""
-        states = self._read_feedback(strict=strict)
-        positions = {}
-        for motor_name, state in states.items():
-            motor_position = math.degrees(state.pos)
-            positions[motor_name] = (
-                motor_position if motor_frame else self._motor_to_public_position(motor_name, motor_position)
-            )
-        return positions
+    def _present_pos(self) -> dict[str, float]:
+        """Read current positions in the public robot coordinate frame."""
+        return {
+            motor_name: self._motor_to_public_position(motor_name, math.degrees(state.pos))
+            for motor_name, state in self._read_feedback().items()
+        }
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
