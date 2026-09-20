@@ -275,6 +275,10 @@ class RebotB601FollowerConfig:
             for joint, value in values.items():
                 values[joint] = _require_finite(f"{name}[{joint}]", value)
 
+        for name in ("mit_kp", "mit_kd"):
+            if any(value < 0.0 for value in getattr(self, name).values()):
+                raise ValueError(f"`{name}` values must be non-negative.")
+
         invalid_directions = {
             joint: direction
             for joint, direction in self.joint_directions.items()
@@ -300,19 +304,6 @@ class RebotB601FollowerConfig:
                 raise ValueError(f"`joint_limits[{joint}]` must satisfy min < max.")
             normalized_limits[joint] = (lower, upper)
         self.joint_limits = normalized_limits
-
-        for joint in joints:
-            kp_max, kd_max = profile.mit_gain_scale[joint]
-            # Shipped DM configs use kd=12 on the proximal joints even though the
-            # MIT frame saturates at 5. Keep accepting that established input
-            # (and no larger) so upgrading does not invalidate existing configs.
-            kd_config_max = max(kd_max, profile.mit_kd[joint])
-            kp = self.mit_kp[joint]
-            kd = self.mit_kd[joint]
-            if not 0.0 <= kp <= kp_max:
-                raise ValueError(f"`mit_kp[{joint}]` must be in [0, {kp_max}].")
-            if not 0.0 <= kd <= kd_config_max:
-                raise ValueError(f"`mit_kd[{joint}]` must be in [0, {kd_config_max}].")
 
         self.wrap_guard_margin_deg = _require_finite("wrap_guard_margin_deg", self.wrap_guard_margin_deg)
         if self.wrap_guard_margin_deg < 0.0:

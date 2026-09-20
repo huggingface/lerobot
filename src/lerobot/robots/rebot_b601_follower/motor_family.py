@@ -97,14 +97,6 @@ class MotorFamilyProfile:
     # Peak torque (N.m) per joint from the vendor tables. Bounds any feedforward
     # torque the robot emits.
     torque_ceiling: Mapping[str, float]
-    # Protocol-level full scale (kp_max, kd_max) that a MIT frame packs gains
-    # against, per joint. RobStride splits this across a single arm — rs-06 packs
-    # kp over 0..5000 and kd over 0..100 while rs-00 uses 0..500 and 0..5 — so RS
-    # gains are not comparable between joints the way Damiao's are. Recorded here
-    # to document that divergence and for any future native-bus or torque-based
-    # path; `motorbridge` does its own per-model packing from the model string, so
-    # these figures are not the scales currently applied on the wire.
-    mit_gain_scale: Mapping[str, tuple[float, float]]
     # --- defaults for the matching config fields ---
 
     # CAN transports supported by this motor family. The Damiao serial bridge is
@@ -149,7 +141,6 @@ DM_PROFILE = MotorFamilyProfile(
     ),
     # DM4340: 28 N.m, DM4310: 10 N.m.
     torque_ceiling=_by_segment(28.0, 10.0),
-    mit_gain_scale=_by_segment((500.0, 5.0), (500.0, 5.0)),
     can_adapters=frozenset({"damiao", "socketcan"}),
     can_adapter="damiao",
     control_mode=ARM_MODE_MIT,
@@ -223,7 +214,6 @@ RS_PROFILE = MotorFamilyProfile(
     ),
     # rs-06: 36 N.m, rs-00: 14 N.m.
     torque_ceiling=_by_segment(36.0, 14.0),
-    mit_gain_scale=_by_segment((5000.0, 100.0), (500.0, 5.0)),
     can_adapters=frozenset({"socketcan"}),
     # motorbridge 0.4+ reaches the RS bus through python-can/SocketCAN.
     can_adapter="socketcan",
