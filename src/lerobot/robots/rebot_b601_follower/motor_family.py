@@ -38,7 +38,7 @@ JOINT_NAMES: tuple[str, ...] = (
 
 # The three high-torque base joints, which carry a different motor model (and
 # therefore different torque and MIT-gain scaling) than the four distal ones.
-PROXIMAL_JOINTS: frozenset[str] = frozenset({"shoulder_pan", "shoulder_lift", "elbow_flex"})
+PROXIMAL_JOINTS: set[str] = {"shoulder_pan", "shoulder_lift", "elbow_flex"}
 
 GRIPPER_MOTOR = "gripper"
 
@@ -78,13 +78,13 @@ class MotorFamilyProfile:
     motor_models: dict[str, str]
     # Control modes supported by this B601 integration. A vendor may expose more
     # protocol modes that have not been validated on this arm.
-    arm_modes: frozenset[str]
-    gripper_modes: frozenset[str]
+    arm_modes: set[str]
+    gripper_modes: set[str]
     # --- defaults for the matching config fields ---
 
     # CAN transports supported by this motor family. The Damiao serial bridge is
     # vendor-specific; MotorBridge's native CAN transport can carry both families.
-    can_adapters: frozenset[str]
+    can_adapters: set[str]
     can_adapter: str
     gripper_control_mode: str
     motor_can_ids: dict[str, tuple[int, int]]
@@ -112,9 +112,9 @@ class MotorFamilyProfile:
 DM_PROFILE = MotorFamilyProfile(
     family=MotorFamily.DM,
     motor_models=_by_segment("4340P", "4310"),
-    arm_modes=frozenset({ARM_MODE_MIT, ARM_MODE_POS_VEL}),
-    gripper_modes=frozenset({GRIPPER_MODE_FORCE_POS, GRIPPER_MODE_MIT}),
-    can_adapters=frozenset({"damiao", "socketcan"}),
+    arm_modes={ARM_MODE_MIT, ARM_MODE_POS_VEL},
+    gripper_modes={GRIPPER_MODE_FORCE_POS, GRIPPER_MODE_MIT},
+    can_adapters={"damiao", "socketcan"},
     can_adapter="damiao",
     gripper_control_mode=GRIPPER_MODE_FORCE_POS,
     motor_can_ids={
@@ -168,9 +168,9 @@ RS_PROFILE = MotorFamilyProfile(
     # RobStride position modes, but Seeed's current B601 integration uses MIT
     # because position-velocity operation was unstable. Supporting position mode
     # here requires a dedicated command path and hardware validation.
-    arm_modes=frozenset({ARM_MODE_MIT}),
-    gripper_modes=frozenset({GRIPPER_MODE_MIT_IMPEDANCE}),
-    can_adapters=frozenset({"socketcan"}),
+    arm_modes={ARM_MODE_MIT},
+    gripper_modes={GRIPPER_MODE_MIT_IMPEDANCE},
+    can_adapters={"socketcan"},
     # "socketcan" selects MotorBridge's native, platform-specific CAN transport.
     can_adapter="socketcan",
     gripper_control_mode=GRIPPER_MODE_MIT_IMPEDANCE,
