@@ -230,7 +230,7 @@ def test_get_observation_converts_to_degrees(family):
     with _connected(family) as robot:
         obs = robot.get_observation()
         assert set(obs) == {f"{motor}.pos" for motor in robot.motor_names}
-        direction = robot.config.joint_directions["shoulder_pan"]
+        direction = robot.profile.joint_directions["shoulder_pan"]
         for index, motor in enumerate(robot.motor_names, 1):
             assert obs[f"{motor}.pos"] == pytest.approx(index / direction)
 
@@ -621,15 +621,6 @@ def test_mode_scoped_gripper_safety_parameters():
             motor_family=MotorFamily.RS,
             port="can0",
             gripper_control_mode="mit",
-        )
-
-
-def test_direction_scaling_is_rejected():
-    with pytest.raises(ValueError, match="must be \\+1 or -1"):
-        RebotB601FollowerRobotConfig(
-            motor_family=MotorFamily.DM,
-            port="/dev/null",
-            joint_directions={**dict.fromkeys(DM_PROFILE.motor_models, 1.0), "gripper": -6.0},
         )
 
 

@@ -394,10 +394,10 @@ class RebotB601Follower(Robot):
         return states
 
     def _public_to_motor_position(self, motor_name: str, position_deg: float) -> float:
-        return position_deg * self.config.joint_directions[motor_name]
+        return position_deg * self.profile.joint_directions[motor_name]
 
     def _motor_to_public_position(self, motor_name: str, position_deg: float) -> float:
-        return position_deg / self.config.joint_directions[motor_name]
+        return position_deg / self.profile.joint_directions[motor_name]
 
     def _present_pos(self) -> dict[str, float]:
         """Read current positions in the public robot coordinate frame."""

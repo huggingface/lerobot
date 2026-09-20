@@ -145,11 +145,6 @@ class RebotB601FollowerConfig:
     # `joint_directions` maps the public action into that frame.
     joint_limits: dict[str, tuple[float, float]] | None = None
 
-    # Sign converting positions and torques between the public robot frame and the
-    # raw motor frame. Only +1 and -1 are valid; scaling belongs in a processor or
-    # teleoperator config.
-    joint_directions: float | dict[str, float] | None = None
-
     # Refuse to enable torque when a joint reads far outside its limits, which
     # means a multi-turn encoder woke up wrapped by a whole revolution after a
     # power cycle. Commanding such a joint would drive it into its hard stop.
@@ -191,7 +186,7 @@ class RebotB601FollowerConfig:
             )
 
         gain_inputs = {"mit_kp": self.mit_kp, "mit_kd": self.mit_kd}
-        for name in ("mit_kp", "mit_kd", "joint_directions"):
+        for name in ("mit_kp", "mit_kd"):
             value = getattr(self, name)
             default = getattr(profile, name)
             setattr(self, name, _broadcast_per_joint(name, value if value is not None else default, joints))
@@ -218,21 +213,6 @@ class RebotB601FollowerConfig:
                 )
             values[GRIPPER_MOTOR] = alias
             setattr(self, alias_name, alias)
-
-        for joint, direction in self.joint_directions.items():
-            self.joint_directions[joint] = _require_finite(f"joint_directions[{joint}]", direction)
-
-        invalid_directions = {
-            joint: direction
-            for joint, direction in self.joint_directions.items()
-            if direction not in (-1.0, 1.0)
-        }
-        if invalid_directions:
-            raise ValueError(
-                "`joint_directions` values must be +1 or -1. Invalid values: "
-                + ", ".join(f"{joint}={value}" for joint, value in invalid_directions.items())
-                + "."
-            )
 
         if self.joint_limits is None:
             self.joint_limits = dict(profile.joint_limits)

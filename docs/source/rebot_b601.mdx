@@ -326,7 +326,7 @@ lerobot-teleoperate \
     --teleop.joint_directions='{"shoulder_pan":-1,"shoulder_lift":-1,"elbow_flex":1,"wrist_flex":1,"wrist_yaw":1,"wrist_roll":-1,"gripper":-6}'
 ```
 
-The follower has its own `joint_directions` describing how its motors are installed, which already differs between the two builds: RS motors are mounted opposite to the DM build, so its defaults are all `-1`. The follower applies this conversion in both directions, keeping observations and actions in one public robot coordinate frame. Adjust the leader's directions for teleoperation preferences and leave the follower's alone unless you have rebuilt the arm.
+The follower's motor directions are fixed by its internal family profile. RS motors are mounted opposite to the DM build, so the RS profile uses `-1` for every joint. The follower applies this conversion in both directions, keeping observations and actions in one public robot coordinate frame. Adjust the leader's directions for teleoperation preferences.
 
 The shipped leader range remains unchanged for DM compatibility. Its wrist-flex output is `[-80°, 90°]`; after the RS direction conversion, the RS follower's public wrist-flex range is `[-90°, 80°]`. The leader therefore clips the RS positive endpoint and cannot command its final negative `10°`. Family-aware leader remapping belongs in a future processor or teleoperator configuration rather than changing the established leader defaults here.
 

@@ -73,6 +73,10 @@ class MotorFamilyProfile:
 
     # Vendor model string per joint, passed to the matching motorbridge factory.
     motor_models: dict[str, str]
+    # Sign converting between the public robot coordinate frame and the raw motor
+    # frame. It is applied in both directions so observations and actions share
+    # one convention.
+    joint_directions: dict[str, float]
     # Control modes supported by this B601 integration. A vendor may expose more
     # protocol modes that have not been validated on this arm.
     arm_modes: set[str]
@@ -90,10 +94,6 @@ class MotorFamilyProfile:
     mit_kp: dict[str, float]
     mit_kd: dict[str, float]
     joint_limits: dict[str, tuple[float, float]]
-    # Sign converting between the public robot coordinate frame and the raw motor
-    # frame. It is applied in both directions so observations and actions share
-    # one convention.
-    joint_directions: dict[str, float]
     # Speed cap (deg/s) per joint for POS_VEL arm joints and the FORCE_POS gripper.
     # None on families without those modes.
     pos_vel_velocity: dict[str, float] | None
