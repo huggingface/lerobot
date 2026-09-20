@@ -213,11 +213,6 @@ def test_legacy_dm_gain_lists_keep_independent_gripper_defaults():
     assert config.gripper_mit_kd == 0.3
 
 
-def test_family_profiles_are_deeply_immutable():
-    with pytest.raises(TypeError):
-        DM_PROFILE.mit_kp["shoulder_pan"] = 1.0
-
-
 @pytest.mark.parametrize("family", FAMILIES)
 def test_both_families_expose_the_same_joints(family):
     assert _build(family).motor_names == _build(MotorFamily.DM).motor_names

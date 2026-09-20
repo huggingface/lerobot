@@ -21,10 +21,8 @@ differ in actuator models, wiring, mounting directions and validated modes.
 Those integration facts live here; user preferences remain on the robot config.
 """
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from types import MappingProxyType
 
 # Motor order. Per-joint config fields are validated against the joints actually
 # declared in `motor_can_ids`, so this tuple only fixes the default layout.
@@ -45,14 +43,9 @@ PROXIMAL_JOINTS: frozenset[str] = frozenset({"shoulder_pan", "shoulder_lift", "e
 GRIPPER_MOTOR = "gripper"
 
 
-def _immutable[T](values: Mapping[str, T]) -> Mapping[str, T]:
-    """Copy a mapping into a read-only profile value."""
-    return MappingProxyType(dict(values))
-
-
-def _by_segment[T](proximal: T, distal: T) -> Mapping[str, T]:
+def _by_segment[T](proximal: T, distal: T) -> dict[str, T]:
     """Assign one value to the proximal joints and another to the distal ones."""
-    return _immutable({joint: (proximal if joint in PROXIMAL_JOINTS else distal) for joint in JOINT_NAMES})
+    return {joint: (proximal if joint in PROXIMAL_JOINTS else distal) for joint in JOINT_NAMES}
 
 
 class MotorFamily(StrEnum):
@@ -75,18 +68,14 @@ GRIPPER_MODE_MIT_IMPEDANCE = "mit_impedance"
 
 @dataclass(frozen=True)
 class MotorFamilyProfile:
-    """Immutable hardware facts and default tuning for one motor family.
-
-    Mapping fields are mapping proxies, so neither the profile nor its tables can
-    be mutated after construction. Configs copy values they expose to users.
-    """
+    """Hardware facts and default tuning for one motor family."""
 
     family: MotorFamily
 
     # --- hardware facts (never user-overridable) ---
 
     # Vendor model string per joint, passed to the matching motorbridge factory.
-    motor_models: Mapping[str, str]
+    motor_models: dict[str, str]
     # Control modes supported by this B601 integration. A vendor may expose more
     # protocol modes that have not been validated on this arm.
     arm_modes: frozenset[str]
@@ -99,19 +88,19 @@ class MotorFamilyProfile:
     can_adapter: str
     control_mode: str
     gripper_control_mode: str
-    motor_can_ids: Mapping[str, tuple[int, int]]
+    motor_can_ids: dict[str, tuple[int, int]]
     # MIT gains per joint, including the gripper: the gripper's MIT gains live here
     # rather than in dedicated fields so each joint has a single source of truth.
-    mit_kp: Mapping[str, float]
-    mit_kd: Mapping[str, float]
-    joint_limits: Mapping[str, tuple[float, float]]
+    mit_kp: dict[str, float]
+    mit_kd: dict[str, float]
+    joint_limits: dict[str, tuple[float, float]]
     # Sign converting between the public robot coordinate frame and the raw motor
     # frame. It is applied in both directions so observations and actions share
     # one convention.
-    joint_directions: Mapping[str, float]
+    joint_directions: dict[str, float]
     # Speed cap (deg/s) per joint for POS_VEL arm joints and the FORCE_POS gripper.
     # None on families without those modes.
-    pos_vel_velocity: Mapping[str, float] | None
+    pos_vel_velocity: dict[str, float] | None
     # FORCE_POS gripper: grip force as a fraction of peak torque, in [0, 1].
     gripper_torque_ratio: float | None
     # Impedance gripper: max |feedforward torque| (N.m) while moving, and the
@@ -130,53 +119,45 @@ DM_PROFILE = MotorFamilyProfile(
     can_adapter="damiao",
     control_mode=ARM_MODE_MIT,
     gripper_control_mode=GRIPPER_MODE_FORCE_POS,
-    motor_can_ids=_immutable(
-        {
-            "shoulder_pan": (0x01, 0x11),
-            "shoulder_lift": (0x02, 0x12),
-            "elbow_flex": (0x03, 0x13),
-            "wrist_flex": (0x04, 0x14),
-            "wrist_yaw": (0x05, 0x15),
-            "wrist_roll": (0x06, 0x16),
-            "gripper": (0x07, 0x17),
-        }
-    ),
-    mit_kp=_immutable(
-        {
-            "shoulder_pan": 45.0,
-            "shoulder_lift": 45.0,
-            "elbow_flex": 45.0,
-            "wrist_flex": 8.0,
-            "wrist_yaw": 9.0,
-            "wrist_roll": 8.0,
-            "gripper": 8.0,
-        }
-    ),
-    mit_kd=_immutable(
-        {
-            "shoulder_pan": 12.0,
-            "shoulder_lift": 12.0,
-            "elbow_flex": 12.0,
-            "wrist_flex": 1.0,
-            "wrist_yaw": 1.0,
-            "wrist_roll": 1.0,
-            # The gripper is softer than the arm joints when it runs in MIT mode.
-            "gripper": 0.3,
-        }
-    ),
-    joint_limits=_immutable(
-        {
-            "shoulder_pan": (-150.0, 150.0),
-            "shoulder_lift": (-200.0, 1.0),
-            "elbow_flex": (-200.0, 1.0),
-            "wrist_flex": (-80.0, 90.0),
-            "wrist_yaw": (-90.0, 90.0),
-            "wrist_roll": (-90.0, 90.0),
-            "gripper": (-270.0, 0.0),
-        }
-    ),
-    joint_directions=_immutable(dict.fromkeys(JOINT_NAMES, 1.0)),
-    pos_vel_velocity=_immutable({**dict.fromkeys(JOINT_NAMES, 150.0), GRIPPER_MOTOR: 900.0}),
+    motor_can_ids={
+        "shoulder_pan": (0x01, 0x11),
+        "shoulder_lift": (0x02, 0x12),
+        "elbow_flex": (0x03, 0x13),
+        "wrist_flex": (0x04, 0x14),
+        "wrist_yaw": (0x05, 0x15),
+        "wrist_roll": (0x06, 0x16),
+        "gripper": (0x07, 0x17),
+    },
+    mit_kp={
+        "shoulder_pan": 45.0,
+        "shoulder_lift": 45.0,
+        "elbow_flex": 45.0,
+        "wrist_flex": 8.0,
+        "wrist_yaw": 9.0,
+        "wrist_roll": 8.0,
+        "gripper": 8.0,
+    },
+    mit_kd={
+        "shoulder_pan": 12.0,
+        "shoulder_lift": 12.0,
+        "elbow_flex": 12.0,
+        "wrist_flex": 1.0,
+        "wrist_yaw": 1.0,
+        "wrist_roll": 1.0,
+        # The gripper is softer than the arm joints when it runs in MIT mode.
+        "gripper": 0.3,
+    },
+    joint_limits={
+        "shoulder_pan": (-150.0, 150.0),
+        "shoulder_lift": (-200.0, 1.0),
+        "elbow_flex": (-200.0, 1.0),
+        "wrist_flex": (-80.0, 90.0),
+        "wrist_yaw": (-90.0, 90.0),
+        "wrist_roll": (-90.0, 90.0),
+        "gripper": (-270.0, 0.0),
+    },
+    joint_directions=dict.fromkeys(JOINT_NAMES, 1.0),
+    pos_vel_velocity={**dict.fromkeys(JOINT_NAMES, 150.0), GRIPPER_MOTOR: 900.0},
     gripper_torque_ratio=0.07,
     gripper_torque_limit=None,
     gripper_hold_torque_limit=None,
@@ -197,56 +178,48 @@ RS_PROFILE = MotorFamilyProfile(
     control_mode=ARM_MODE_MIT,
     gripper_control_mode=GRIPPER_MODE_MIT_IMPEDANCE,
     # RobStride motors all reply on the host id rather than a per-motor recv id.
-    motor_can_ids=_immutable({joint: (i, 0xFD) for i, joint in enumerate(JOINT_NAMES, start=1)}),
-    mit_kp=_immutable(
-        {
-            "shoulder_pan": 50.0,
-            "shoulder_lift": 150.0,
-            "elbow_flex": 150.0,
-            "wrist_flex": 50.0,
-            "wrist_yaw": 50.0,
-            "wrist_roll": 50.0,
-            "gripper": 12.0,
-        }
-    ),
-    mit_kd=_immutable(
-        {
-            "shoulder_pan": 3.0,
-            "shoulder_lift": 10.0,
-            "elbow_flex": 10.0,
-            "wrist_flex": 5.0,
-            "wrist_yaw": 4.0,
-            "wrist_roll": 4.0,
-            "gripper": 0.05,
-        }
-    ),
+    motor_can_ids={joint: (i, 0xFD) for i, joint in enumerate(JOINT_NAMES, start=1)},
+    mit_kp={
+        "shoulder_pan": 50.0,
+        "shoulder_lift": 150.0,
+        "elbow_flex": 150.0,
+        "wrist_flex": 50.0,
+        "wrist_yaw": 50.0,
+        "wrist_roll": 50.0,
+        "gripper": 12.0,
+    },
+    mit_kd={
+        "shoulder_pan": 3.0,
+        "shoulder_lift": 10.0,
+        "elbow_flex": 10.0,
+        "wrist_flex": 5.0,
+        "wrist_yaw": 4.0,
+        "wrist_roll": 4.0,
+        "gripper": 0.05,
+    },
     # RS motors are installed opposite to the DM build, so these are the
     # positive-physical travel ranges. Incoming targets are mapped into them by
     # `joint_directions` before clipping.
-    joint_limits=_immutable(
-        {
-            "shoulder_pan": (-145.0, 145.0),
-            "shoulder_lift": (0.0, 170.0),
-            "elbow_flex": (0.0, 200.0),
-            "wrist_flex": (-80.0, 90.0),
-            "wrist_yaw": (-90.0, 90.0),
-            "wrist_roll": (-90.0, 90.0),
-            "gripper": (0.0, 270.0),
-        }
-    ),
-    joint_directions=_immutable(dict.fromkeys(JOINT_NAMES, -1.0)),
+    joint_limits={
+        "shoulder_pan": (-145.0, 145.0),
+        "shoulder_lift": (0.0, 170.0),
+        "elbow_flex": (0.0, 200.0),
+        "wrist_flex": (-80.0, 90.0),
+        "wrist_yaw": (-90.0, 90.0),
+        "wrist_roll": (-90.0, 90.0),
+        "gripper": (0.0, 270.0),
+    },
+    joint_directions=dict.fromkeys(JOINT_NAMES, -1.0),
     pos_vel_velocity=None,
     gripper_torque_ratio=None,
     gripper_torque_limit=3.5,
     gripper_hold_torque_limit=1.0,
 )
 
-PROFILES: Mapping[MotorFamily, MotorFamilyProfile] = MappingProxyType(
-    {
-        MotorFamily.DM: DM_PROFILE,
-        MotorFamily.RS: RS_PROFILE,
-    }
-)
+PROFILES: dict[MotorFamily, MotorFamilyProfile] = {
+    MotorFamily.DM: DM_PROFILE,
+    MotorFamily.RS: RS_PROFILE,
+}
 
 
 def profile_for(family: MotorFamily | str) -> MotorFamilyProfile:
