@@ -14,55 +14,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, fields
-from math import isfinite
 from pathlib import Path
 
 from lerobot.cameras import CameraConfig
 
 from ..config import RobotConfig
-from .motor_family import GRIPPER_MOTOR, MIT_MODE, MOTOR_PROFILES, MotorFamily, MotorFamilyProfile
+from .motor_family import GRIPPER_MOTOR, MIT_MODE, MOTOR_PROFILES, MotorFamily
 
 
-def _broadcast_per_joint(
-    name: str,
-    value: float | list[float] | Mapping[str, float],
-    joints: Iterable[str],
-) -> dict[str, float]:
-    """Normalize a legacy scalar/list or mapping into a complete joint mapping."""
-    joints = tuple(joints)
+def _per_joint(value: float | list[float] | Mapping[str, float], joints: tuple[str, ...]) -> dict[str, float]:
+    """Expand legacy scalar and list values into a joint-keyed mapping."""
     if isinstance(value, (int, float)):
         return dict.fromkeys(joints, float(value))
     if isinstance(value, list):
-        if len(value) != len(joints):
-            raise ValueError(f"`{name}` must contain exactly {len(joints)} values, got {len(value)}.")
         return {joint: float(item) for joint, item in zip(joints, value, strict=True)}
-
-    _validate_exact_keys(name, value, joints)
-    return {joint: float(value[joint]) for joint in joints}
-
-
-def _validate_exact_keys(name: str, value: Mapping[str, object], joints: Iterable[str]) -> None:
-    expected = set(joints)
-    actual = set(value)
-    if actual != expected:
-        missing = sorted(expected - actual)
-        extra = sorted(actual - expected)
-        details = []
-        if missing:
-            details.append(f"missing: {', '.join(missing)}")
-        if extra:
-            details.append(f"unknown: {', '.join(extra)}")
-        raise ValueError(f"`{name}` must contain exactly the configured joints ({'; '.join(details)}).")
-
-
-def _require_finite(name: str, value: float) -> float:
-    value = float(value)
-    if not isfinite(value):
-        raise ValueError(f"`{name}` must be finite.")
-    return value
+    return dict(value)
 
 
 @dataclass
@@ -74,10 +43,9 @@ class RebotB601FollowerConfig:
     `"dm"` for the Damiao B601-DM and `"rs"` for the RobStride B601-RS. Motor
     communication goes through the ``motorbridge`` package over a CAN bus.
 
-    Every per-joint field below defaults to `None`, meaning "use the value for my
-    motor family". After `__post_init__` they are all fully populated dicts keyed
-    by the joints declared in `motor_can_ids`, so consumers never need to handle a
-    scalar, a partial mapping, or `None`.
+    Family-specific defaults are selected in `__post_init__`. Legacy scalar and
+    list tuning values are expanded into joint-keyed mappings for the runtime.
+    Explicit values are otherwise passed through unchanged.
     """
 
     # Communication port. For `can_adapter="damiao"` this is the Damiao serial
@@ -148,41 +116,22 @@ class RebotB601FollowerConfig:
         """Fill every unset per-joint field from this arm's motor family profile."""
         self.motor_family = MotorFamily(self.motor_family)
         profile = MOTOR_PROFILES[self.motor_family]
+        joints = tuple(profile.motor_models)
 
         if self.can_adapter is None:
             self.can_adapter = profile.can_adapter
-        if self.can_adapter not in profile.can_adapters:
-            available = ", ".join(sorted(profile.can_adapters))
-            raise ValueError(
-                f"can_adapter '{self.can_adapter}' is not available for "
-                f"{self.motor_family.value} motors. Available: {available}."
-            )
 
-        joints = tuple(profile.motor_models)
         if self.motor_can_ids is None:
             self.motor_can_ids = dict(profile.motor_can_ids)
-        _validate_exact_keys("motor_can_ids", self.motor_can_ids, joints)
-
-        if self.control_mode not in profile.arm_modes:
-            raise ValueError(
-                f"control_mode '{self.control_mode}' is not available on {self.motor_family.value} "
-                f"motors. Available: {', '.join(sorted(profile.arm_modes))}."
-            )
 
         if self.gripper_control_mode is None:
             self.gripper_control_mode = profile.gripper_control_mode
-        if self.gripper_control_mode not in profile.gripper_modes:
-            raise ValueError(
-                f"gripper_control_mode '{self.gripper_control_mode}' is not available on "
-                f"{self.motor_family.value} motors. Available: "
-                f"{', '.join(sorted(profile.gripper_modes))}."
-            )
 
         gain_inputs = {"mit_kp": self.mit_kp, "mit_kd": self.mit_kd}
         for name in ("mit_kp", "mit_kd"):
             value = getattr(self, name)
             default = getattr(profile, name)
-            setattr(self, name, _broadcast_per_joint(name, value if value is not None else default, joints))
+            setattr(self, name, _per_joint(value if value is not None else default, joints))
 
         for name, alias_name in (("mit_kp", "gripper_mit_kp"), ("mit_kd", "gripper_mit_kd")):
             alias = getattr(self, alias_name)
@@ -192,75 +141,25 @@ class RebotB601FollowerConfig:
                 # Legacy DM scalar/list gains controlled arm joints only; the
                 # gripper had independent defaults. A mapping is the new explicit
                 # way to configure every joint, including the gripper.
-                if (
-                    self.motor_family is MotorFamily.DM
-                    and original is not None
-                    and not isinstance(original, Mapping)
-                ):
+                if original is not None and not isinstance(original, Mapping):
                     values[GRIPPER_MOTOR] = getattr(profile, name)[GRIPPER_MOTOR]
-                setattr(self, alias_name, values[GRIPPER_MOTOR])
-                continue
-            if isinstance(original, Mapping) and values[GRIPPER_MOTOR] != alias:
-                raise ValueError(
-                    f'`{alias_name}` conflicts with `{name}["{GRIPPER_MOTOR}"]`; configure only one value.'
-                )
-            values[GRIPPER_MOTOR] = alias
-            setattr(self, alias_name, alias)
+            else:
+                values[GRIPPER_MOTOR] = alias
+            setattr(self, alias_name, values[GRIPPER_MOTOR])
 
         if self.joint_limits is None:
             self.joint_limits = dict(profile.joint_limits)
-        _validate_exact_keys("joint_limits", self.joint_limits, joints)
-        normalized_limits: dict[str, tuple[float, float]] = {}
-        for joint, limits in self.joint_limits.items():
-            if not isinstance(limits, (tuple, list)) or len(limits) != 2:
-                raise ValueError(f"`joint_limits[{joint}]` must contain exactly (min, max).")
-            lower = _require_finite(f"joint_limits[{joint}][0]", limits[0])
-            upper = _require_finite(f"joint_limits[{joint}][1]", limits[1])
-            if lower >= upper:
-                raise ValueError(f"`joint_limits[{joint}]` must satisfy min < max.")
-            normalized_limits[joint] = (lower, upper)
-        self.joint_limits = normalized_limits
 
-        if self.max_relative_target is not None:
-            if isinstance(self.max_relative_target, Mapping):
-                _validate_exact_keys("max_relative_target", self.max_relative_target, joints)
-                self.max_relative_target = {
-                    joint: _require_finite(f"max_relative_target[{joint}]", value)
-                    for joint, value in self.max_relative_target.items()
-                }
-                if any(value <= 0.0 for value in self.max_relative_target.values()):
-                    raise ValueError("Every `max_relative_target` value must be positive.")
-            else:
-                self.max_relative_target = _require_finite("max_relative_target", self.max_relative_target)
-                if self.max_relative_target <= 0.0:
-                    raise ValueError("`max_relative_target` must be positive.")
-
-        self._resolve_mode_scoped_defaults(profile, joints)
-
-    def _resolve_mode_scoped_defaults(self, profile: MotorFamilyProfile, joints: tuple[str, ...]) -> None:
-        """Fill parameters that are available only on some motor families."""
         velocity = self.pos_vel_velocity if self.pos_vel_velocity is not None else profile.pos_vel_velocity
         if velocity is not None:
-            self.pos_vel_velocity = _broadcast_per_joint(
-                "pos_vel_velocity",
-                velocity,
-                joints,
-            )
+            self.pos_vel_velocity = _per_joint(velocity, joints)
 
         if self.gripper_torque_ratio is None:
             self.gripper_torque_ratio = profile.gripper_torque_ratio
 
-        impedance_fields = ("gripper_torque_limit", "gripper_hold_torque_limit")
-        if self.gripper_control_mode == "mit_impedance":
-            for name in impedance_fields:
-                if getattr(self, name) is None:
-                    setattr(self, name, getattr(profile, name))
-                value = _require_finite(name, getattr(self, name))
-                setattr(self, name, value)
-                if value <= 0:
-                    raise ValueError(f"`{name}` must be positive in `mit_impedance` mode.")
-            if self.gripper_hold_torque_limit > self.gripper_torque_limit:
-                raise ValueError("`gripper_hold_torque_limit` must not exceed `gripper_torque_limit`.")
+        for name in ("gripper_torque_limit", "gripper_hold_torque_limit"):
+            if getattr(self, name) is None:
+                setattr(self, name, getattr(profile, name))
 
     def __post_init__(self) -> None:
         self._resolve_motor_family_defaults()

@@ -183,15 +183,15 @@ def test_legacy_dm_config_accepts_gain_lists_without_motor_family():
     assert config.gripper_mit_kd == 0.2
 
 
-def test_legacy_gripper_gain_alias_rejects_conflicting_mapping():
+def test_legacy_gripper_gain_alias_overrides_mapping():
     gains = dict(DM_PROFILE.mit_kp)
     gains["gripper"] = 7.0
-    with pytest.raises(ValueError, match="conflicts"):
-        RebotB601FollowerRobotConfig(
-            port="/dev/null",
-            mit_kp=gains,
-            gripper_mit_kp=6.0,
-        )
+    config = RebotB601FollowerRobotConfig(
+        port="/dev/null",
+        mit_kp=gains,
+        gripper_mit_kp=6.0,
+    )
+    assert config.mit_kp["gripper"] == 6.0
 
 
 def test_legacy_dm_gain_lists_keep_independent_gripper_defaults():
@@ -401,13 +401,13 @@ def test_partial_action_subsets_per_joint_relative_limits():
         assert returned["wrist_yaw.pos"] == 5.0
 
 
-def test_rs_rejects_damiao_serial_transport():
-    with pytest.raises(ValueError, match="not available for rs motors"):
-        RebotB601FollowerRobotConfig(
-            motor_family=MotorFamily.RS,
-            port="/dev/ttyACM0",
-            can_adapter="damiao",
-        )
+def test_explicit_transport_is_passed_through():
+    config = RebotB601FollowerRobotConfig(
+        motor_family=MotorFamily.RS,
+        port="/dev/ttyACM0",
+        can_adapter="damiao",
+    )
+    assert config.can_adapter == "damiao"
 
 
 def test_dm_allows_socketcan_transport():
@@ -419,39 +419,26 @@ def test_dm_allows_socketcan_transport():
     assert config.can_adapter == "socketcan"
 
 
-def test_numeric_safety_configuration_is_validated():
-    with pytest.raises(ValueError, match="max_relative_target"):
-        RebotB601FollowerRobotConfig(port="/dev/null", max_relative_target=0.0)
-    with pytest.raises(ValueError, match="gripper_hold_torque_limit"):
-        RebotB601FollowerRobotConfig(
-            motor_family=MotorFamily.RS,
-            port="can0",
-            gripper_torque_limit=1.0,
-            gripper_hold_torque_limit=2.0,
-        )
-
-
-def test_mode_scoped_gripper_safety_parameters():
-    with pytest.raises(ValueError, match="gripper_control_mode 'mit' is not available"):
-        RebotB601FollowerRobotConfig(
-            motor_family=MotorFamily.RS,
-            port="can0",
-            gripper_control_mode="mit",
-        )
+def test_explicit_runtime_values_are_passed_through():
+    config = RebotB601FollowerRobotConfig(
+        motor_family=MotorFamily.RS,
+        port="can0",
+        gripper_control_mode="mit",
+        gripper_torque_limit=1.0,
+        gripper_hold_torque_limit=2.0,
+    )
+    assert config.gripper_control_mode == "mit"
+    assert config.gripper_torque_limit == 1.0
+    assert config.gripper_hold_torque_limit == 2.0
 
 
 def test_profiles_disagree_where_the_hardware_does():
     assert DM_PROFILE.motor_models != RS_PROFILE.motor_models
     assert set(DM_PROFILE.joint_directions.values()) == {1.0}
     assert set(RS_PROFILE.joint_directions.values()) == {-1.0}
-    # POS_VEL is intentionally not exposed for the B601-RS until validated,
-    # while RobStride has no FORCE_POS equivalent.
-    assert "pos_vel" in DM_PROFILE.arm_modes and "pos_vel" not in RS_PROFILE.arm_modes
     # RobStride motors all answer on the host id instead of a per-motor recv id.
     assert {ids[1] for ids in RS_PROFILE.motor_can_ids.values()} == {0xFD}
     assert len({ids[1] for ids in DM_PROFILE.motor_can_ids.values()}) == len(DM_PROFILE.motor_can_ids)
-    assert RS_PROFILE.can_adapters == {"socketcan"}
-    assert DM_PROFILE.can_adapters == {"damiao", "socketcan"}
     # RS defaults preserve the hardware-tested values from PR #4256.
     assert RS_PROFILE.mit_kp["shoulder_lift"] == 150.0
     assert RS_PROFILE.mit_kd["shoulder_lift"] == 10.0

@@ -24,8 +24,7 @@ Those integration facts live here; user preferences remain on the robot config.
 from dataclasses import dataclass
 from enum import StrEnum
 
-# Motor order. Per-joint config fields are validated against the joints actually
-# declared in `motor_can_ids`, so this tuple only fixes the default layout.
+# Default motor order shared by both builds.
 JOINT_NAMES: tuple[str, ...] = (
     "shoulder_pan",
     "shoulder_lift",
@@ -77,15 +76,8 @@ class MotorFamilyProfile:
     # frame. It is applied in both directions so observations and actions share
     # one convention.
     joint_directions: dict[str, float]
-    # Control modes supported by this B601 integration. A vendor may expose more
-    # protocol modes that have not been validated on this arm.
-    arm_modes: set[str]
-    gripper_modes: set[str]
     # --- defaults for the matching config fields ---
 
-    # CAN transports supported by this motor family. The Damiao serial bridge is
-    # vendor-specific; MotorBridge's native CAN transport can carry both families.
-    can_adapters: set[str]
     can_adapter: str
     gripper_control_mode: str
     motor_can_ids: dict[str, tuple[int, int]]
@@ -108,9 +100,6 @@ class MotorFamilyProfile:
 
 DM_PROFILE = MotorFamilyProfile(
     motor_models=_by_segment("4340P", "4310"),
-    arm_modes={MIT_MODE, ARM_MODE_POS_VEL},
-    gripper_modes={GRIPPER_MODE_FORCE_POS, MIT_MODE},
-    can_adapters={"damiao", "socketcan"},
     can_adapter="damiao",
     gripper_control_mode=GRIPPER_MODE_FORCE_POS,
     motor_can_ids={
@@ -159,13 +148,6 @@ DM_PROFILE = MotorFamilyProfile(
 
 RS_PROFILE = MotorFamilyProfile(
     motor_models=_by_segment("rs-06", "rs-00"),
-    # RobStride motors have no FORCE_POS equivalent. MotorBridge exposes
-    # RobStride position modes, but Seeed's current B601 integration uses MIT
-    # because position-velocity operation was unstable. Supporting position mode
-    # here requires a dedicated command path and hardware validation.
-    arm_modes={MIT_MODE},
-    gripper_modes={GRIPPER_MODE_MIT_IMPEDANCE},
-    can_adapters={"socketcan"},
     # "socketcan" selects MotorBridge's native, platform-specific CAN transport.
     can_adapter="socketcan",
     gripper_control_mode=GRIPPER_MODE_MIT_IMPEDANCE,
