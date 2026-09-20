@@ -297,20 +297,12 @@ class RebotB601FollowerConfig:
                 value if value is not None else default_velocity,
                 joints,
             )
-            for joint, velocity in self.pos_vel_velocity.items():
-                velocity = _require_finite(f"pos_vel_velocity[{joint}]", velocity)
-                if velocity <= 0.0:
-                    raise ValueError(f"`pos_vel_velocity[{joint}]` must be positive.")
-                self.pos_vel_velocity[joint] = velocity
 
         if self.gripper_control_mode == "force_pos":
             if self.gripper_torque_ratio is None:
                 self.gripper_torque_ratio = profile.gripper_torque_ratio
             if self.gripper_torque_ratio is None:
                 raise ValueError("`gripper_torque_ratio` is required in `force_pos` mode.")
-            self.gripper_torque_ratio = _require_finite("gripper_torque_ratio", self.gripper_torque_ratio)
-            if not 0.0 <= self.gripper_torque_ratio <= 1.0:
-                raise ValueError("`gripper_torque_ratio` must be in [0, 1].")
         elif self.gripper_torque_ratio is not None:
             raise ValueError("`gripper_torque_ratio` only applies in `force_pos` mode.")
 
