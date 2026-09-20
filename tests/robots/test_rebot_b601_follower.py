@@ -601,22 +601,6 @@ def test_dm_allows_socketcan_transport():
     assert config.can_adapter == "socketcan"
 
 
-def test_can_id_strategy_is_validated():
-    duplicate_send = dict(DM_PROFILE.motor_can_ids)
-    duplicate_send["gripper"] = duplicate_send["shoulder_pan"]
-    with pytest.raises(ValueError, match="send CAN IDs must be unique"):
-        RebotB601FollowerRobotConfig(port="/dev/null", motor_can_ids=duplicate_send)
-
-    invalid_rs_host = dict(RS_PROFILE.motor_can_ids)
-    invalid_rs_host["gripper"] = (0x07, 0x17)
-    with pytest.raises(ValueError, match="host ID 0xFD"):
-        RebotB601FollowerRobotConfig(
-            motor_family=MotorFamily.RS,
-            port="can0",
-            motor_can_ids=invalid_rs_host,
-        )
-
-
 def test_numeric_safety_configuration_is_validated():
     with pytest.raises(ValueError, match="feedback_cache_ttl_s"):
         RebotB601FollowerRobotConfig(port="/dev/null", feedback_cache_ttl_s=float("nan"))

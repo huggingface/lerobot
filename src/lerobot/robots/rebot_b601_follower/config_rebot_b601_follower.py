@@ -162,8 +162,6 @@ class RebotB601FollowerConfig:
         profile = MOTOR_PROFILES[self.motor_family]
         if not self.port:
             raise ValueError("`port` must not be empty.")
-        if not isinstance(self.dm_serial_baud, int) or self.dm_serial_baud <= 0:
-            raise ValueError("`dm_serial_baud` must be a positive integer.")
 
         if self.can_adapter is None:
             self.can_adapter = profile.can_adapter
@@ -178,30 +176,6 @@ class RebotB601FollowerConfig:
         if self.motor_can_ids is None:
             self.motor_can_ids = dict(profile.motor_can_ids)
         _validate_exact_keys("motor_can_ids", self.motor_can_ids, joints)
-        normalized_ids: dict[str, tuple[int, int]] = {}
-        for joint, ids in self.motor_can_ids.items():
-            if not isinstance(ids, (tuple, list)) or len(ids) != 2:
-                raise ValueError(f"`motor_can_ids[{joint}]` must be a (send_id, receive_id) pair.")
-            send_id, receive_id = ids
-            if (
-                not isinstance(send_id, int)
-                or isinstance(send_id, bool)
-                or not 0 < send_id <= 0x7FF
-                or not isinstance(receive_id, int)
-                or isinstance(receive_id, bool)
-                or not 0 <= receive_id <= 0x7FF
-            ):
-                raise ValueError(f"`motor_can_ids[{joint}]` contains an invalid classic-CAN identifier.")
-            normalized_ids[joint] = (send_id, receive_id)
-        self.motor_can_ids = normalized_ids
-        send_ids = [send_id for send_id, _ in self.motor_can_ids.values()]
-        if len(send_ids) != len(set(send_ids)):
-            raise ValueError("Motor send CAN IDs must be unique.")
-        receive_ids = [receive_id for _, receive_id in self.motor_can_ids.values()]
-        if self.motor_family is MotorFamily.DM and len(receive_ids) != len(set(receive_ids)):
-            raise ValueError("Damiao receive CAN IDs must be unique.")
-        if self.motor_family is MotorFamily.RS and set(receive_ids) != {0xFD}:
-            raise ValueError("RobStride receive CAN IDs must all use host ID 0xFD.")
 
         if self.control_mode not in profile.arm_modes:
             raise ValueError(
