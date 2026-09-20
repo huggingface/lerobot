@@ -101,7 +101,7 @@ def _connected(motor_family, *, positions_deg=None, poll_error: Exception | None
         patch(f"{_MODULE}.MotorBridgeController") as controller_cls,
         patch(f"{_MODULE}.MotorBridgeMode", MagicMock()),
     ):
-        # The Damiao serial bridge and the SocketCAN path build the controller
+        # The Damiao serial bridge and native CAN path build the controller
         # differently; both resolve to the same mock here.
         controller_cls.from_dm_serial.return_value = bus_mock
         controller_cls.return_value = bus_mock

@@ -41,7 +41,7 @@ Follow our [Installation Guide](./installation), then install the reBot support:
 pip install -e ".[rebot]"
 ```
 
-This pulls in `motorbridge` (CAN motor control for both follower builds) and `motorbridge-smart-servo` (FashionStar UART servos for the reBot Arm 102 leader). `motorbridge` reaches the CAN bus through `python-can`.
+This pulls in `motorbridge` (CAN motor control for both follower builds) and `motorbridge-smart-servo` (FashionStar UART servos for the reBot Arm 102 leader). MotorBridge uses the platform CAN runtime: SocketCAN on Linux, MacCAN PCBUSB on macOS, and PCAN-Basic on Windows.
 
 ## Registered device types
 
@@ -62,7 +62,7 @@ DM/RS bimanual configurations are rejected.
 
 ## Connect the follower
 
-The follower talks to its motors over a CAN bus. DM supports either its Damiao serial bridge (`--robot.can_adapter=damiao`) or a SocketCAN adapter (`--robot.can_adapter=socketcan`). RS requires SocketCAN; MotorBridge documents the Damiao serial transport as Damiao-only. The default is `damiao` for `motor_family=dm` and `socketcan` for `motor_family=rs`.
+The follower talks to its motors over a CAN bus. DM supports either its Damiao serial bridge (`--robot.can_adapter=damiao`) or MotorBridge's native CAN transport (`--robot.can_adapter=socketcan`). RS requires the native CAN transport because the Damiao serial transport is Damiao-only. The `socketcan` option name is retained for compatibility; MotorBridge selects the platform backend, so this path is not limited to Linux. The default is `damiao` for `motor_family=dm` and `socketcan` for `motor_family=rs`.
 
 For a serial bridge, find the USB port with:
 
@@ -70,7 +70,7 @@ For a serial bridge, find the USB port with:
 lerobot-find-port
 ```
 
-For SocketCAN, list the available channels and bring the interface up:
+On Linux, list the available SocketCAN channels and bring the interface up:
 
 ```bash
 ip -details link show type can

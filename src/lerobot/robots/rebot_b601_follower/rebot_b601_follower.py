@@ -86,7 +86,8 @@ class RebotB601Follower(Robot):
     :class:`MotorFamilyProfile`.
 
     Motor communication is handled by the ``motorbridge`` package over a CAN bus,
-    reached either through a Damiao serial bridge or a SocketCAN adapter.
+    reached either through a Damiao serial bridge or MotorBridge's native,
+    platform-specific CAN transport.
 
     Observations and actions share one public robot coordinate frame. Family
     profiles convert that frame to and from raw motor coordinates, so a position

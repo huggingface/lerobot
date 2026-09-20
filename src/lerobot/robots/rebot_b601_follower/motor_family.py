@@ -83,7 +83,7 @@ class MotorFamilyProfile:
     # --- defaults for the matching config fields ---
 
     # CAN transports supported by this motor family. The Damiao serial bridge is
-    # vendor-specific; SocketCAN can carry both families.
+    # vendor-specific; MotorBridge's native CAN transport can carry both families.
     can_adapters: frozenset[str]
     can_adapter: str
     control_mode: str
@@ -173,7 +173,7 @@ RS_PROFILE = MotorFamilyProfile(
     arm_modes=frozenset({ARM_MODE_MIT}),
     gripper_modes=frozenset({GRIPPER_MODE_MIT_IMPEDANCE}),
     can_adapters=frozenset({"socketcan"}),
-    # motorbridge 0.4+ reaches the RS bus through python-can/SocketCAN.
+    # "socketcan" selects MotorBridge's native, platform-specific CAN transport.
     can_adapter="socketcan",
     control_mode=ARM_MODE_MIT,
     gripper_control_mode=GRIPPER_MODE_MIT_IMPEDANCE,

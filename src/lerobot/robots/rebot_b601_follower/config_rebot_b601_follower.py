@@ -94,18 +94,20 @@ class RebotB601FollowerConfig:
     """
 
     # Communication port. For `can_adapter="damiao"` this is the Damiao serial
-    # bridge device (e.g. "/dev/ttyACM0"); for `"socketcan"` it is the CAN channel
-    # name (e.g. "can0").
+    # bridge device (e.g. "/dev/ttyACM0"); for `"socketcan"` it is MotorBridge's
+    # platform-specific CAN channel identifier (e.g. "can0").
     port: str
 
     # Omitted by legacy DM configs. RS must be selected explicitly.
     motor_family: MotorFamily = MotorFamily.DM
 
-    # CAN transport: "damiao" for the Damiao-only USB-to-CAN serial bridge,
-    # "socketcan" for SocketCAN adapters. SocketCAN supports both families.
+    # CAN transport: "damiao" for the Damiao-only USB-to-CAN serial bridge;
+    # "socketcan" is the historical name for MotorBridge's native CAN transport,
+    # whose backend is selected for the host platform. Native CAN supports both
+    # motor families.
     can_adapter: str | None = None
 
-    # Baud rate of the Damiao serial bridge. Unused when can_adapter="socketcan".
+    # Baud rate of the Damiao serial bridge. Unused by the native CAN transport.
     dm_serial_baud: int = 921600
 
     disable_torque_on_disconnect: bool = True
