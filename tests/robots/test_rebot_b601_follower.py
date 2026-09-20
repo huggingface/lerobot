@@ -23,14 +23,13 @@ import pytest
 
 from lerobot.robots.bi_rebot_b601_follower import BiRebotB601Follower, BiRebotB601FollowerConfig
 from lerobot.robots.rebot_b601_follower import (
-    DM_PROFILE,
-    RS_PROFILE,
     MotorFamily,
     MotorFeedbackError,
     RebotB601Follower,
     RebotB601FollowerConfig,
     RebotB601FollowerRobotConfig,
 )
+from lerobot.robots.rebot_b601_follower.motor_family import DM_PROFILE, RS_PROFILE
 from lerobot.teleoperators.rebot_102_leader import RebotArm102LeaderConfig
 
 _MODULE = "lerobot.robots.rebot_b601_follower.rebot_b601_follower"

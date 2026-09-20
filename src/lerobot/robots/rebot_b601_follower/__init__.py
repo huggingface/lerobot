@@ -15,17 +15,13 @@
 # limitations under the License.
 
 from .config_rebot_b601_follower import RebotB601FollowerConfig, RebotB601FollowerRobotConfig
-from .motor_family import DM_PROFILE, RS_PROFILE, MotorFamily, MotorFamilyProfile, profile_for
+from .motor_family import MotorFamily
 from .rebot_b601_follower import MotorFeedbackError, RebotB601Follower
 
 __all__ = [
-    "DM_PROFILE",
-    "RS_PROFILE",
     "MotorFamily",
-    "MotorFamilyProfile",
     "MotorFeedbackError",
     "RebotB601Follower",
     "RebotB601FollowerConfig",
     "RebotB601FollowerRobotConfig",
-    "profile_for",
 ]
