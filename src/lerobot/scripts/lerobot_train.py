@@ -260,23 +260,17 @@ def make_dataloaders(
     cfg: TrainPipelineConfig,
     dataset,
     eval_dataset,
-    step: int,
     parallel_dims: ParallelDims,
 ) -> tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader | None]:
-    """Build the train (and optional eval) dataloader, including the sampler resume offset.
-
-    The sampler offset is *derived* from `step` (`resume_before_prepare` loads step + RNG only):
-    each loop step consumes `batch_size` samples on each of the `dp_world_size` distinct
-    data-parallel workers — no grad-accumulation factor, since `step` counts micro-batches.
+    """Build full-epoch train and optional eval dataloaders before Accelerate preparation.
 
     Args:
         cfg (TrainPipelineConfig): The training config (batch size, workers, streaming, resume, seed).
         dataset (LeRobotDataset | MultiLeRobotDataset): The training dataset.
         eval_dataset (LeRobotDataset | None): Optional held-out split; when provided, an eval
             dataloader is built (subsampled per task when `cfg.max_eval_samples > 0`).
-        step (int): The loop step to resume the sampler from (0 for a fresh run).
         parallel_dims (ParallelDims): The resolved parallelism topology; provides the device type
-            and the fallback dp world size for the resume offset.
+            used to decide whether to pin memory.
 
     Returns:
         tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader | None]: The train
@@ -288,7 +282,7 @@ def make_dataloaders(
         # The order is a pure function of (seed, epoch), so every rank independently produces the
         # same permutation. accelerate then shards it disjointly across data-parallel ranks via
         # BatchSamplerShard without needing a `generator` attribute to synchronize an RNG, and
-        # resume is sample-exact.
+        # make_training_iterator restores data order after Accelerate preparation.
         shuffle = False
         sampler = EpisodeAwareSampler(
             dataset.meta.episodes["dataset_from_index"],
@@ -299,35 +293,6 @@ def make_dataloaders(
             seed=cfg.seed if cfg.seed is not None else 0,
             absolute_to_relative_idx=dataset.absolute_to_relative_idx,
         )
-        if cfg.resume and step > 0:
-            # The resume offset depends on the (dp_world_size, batch_size) that produced `step`,
-            # so use the values recorded in the checkpoint (falling back to the current ones for
-            # older checkpoints that did not store them).
-            metadata = load_training_metadata(cfg.checkpoint_path / TRAINING_STATE_DIR)
-            saved_dp_world = metadata["dp_world_size"]
-            saved_batch_size = metadata["batch_size"]
-            ckpt_dp_world = saved_dp_world or parallel_dims.dp_world_size
-            ckpt_batch_size = saved_batch_size or cfg.batch_size
-            if is_main_process() and saved_dp_world not in (None, parallel_dims.dp_world_size):
-                logging.warning(
-                    f"Resuming with dp_world_size={parallel_dims.dp_world_size} but the "
-                    f"checkpoint was written with dp_world_size={saved_dp_world}. The data order "
-                    "resumes at the right epoch/offset, but per-rank sample-exactness requires "
-                    "the same data-parallel world size."
-                )
-            if is_main_process() and saved_batch_size not in (None, cfg.batch_size):
-                logging.warning(
-                    f"Resuming with batch_size={cfg.batch_size} but the checkpoint was written "
-                    f"with batch_size={saved_batch_size}. The data order resumes at the right "
-                    "epoch/offset, but per-rank sample-exactness requires the same batch size."
-                )
-            sampler_state = compute_sampler_state(step, len(sampler), ckpt_batch_size, ckpt_dp_world)
-            sampler.load_state_dict(sampler_state)
-            if is_main_process():
-                logging.info(
-                    f"Resuming data order at epoch {sampler_state['epoch']}, "
-                    f"sample {sampler_state['start_index']}"
-                )
     else:
         shuffle = True
         sampler = None
@@ -379,6 +344,77 @@ def make_dataloaders(
             multiprocessing_context=cfg.dataloader_multiprocessing_context if cfg.num_workers > 0 else None,
         )
     return dataloader, eval_dataloader
+
+
+def make_training_iterator(
+    cfg: TrainPipelineConfig,
+    dataloader: torch.utils.data.DataLoader,
+    sampler: EpisodeAwareSampler | None,
+    step: int,
+    parallel_dims: ParallelDims,
+    accelerator: "Accelerator",
+) -> Iterator:
+    """Resume a prepared loader without changing its epoch's padding samples.
+
+    The saved step counts micro-batches, so no gradient-accumulation factor is applied.
+    For matching batch/world sizes, skip consumed batches *after* sharding: Accelerate
+    must see the original epoch prefix when padding an uneven final batch. Restoring
+    the prepared loader's epoch also prevents its initial iteration from resetting the
+    sampler to epoch zero. Only the first resumed epoch skips batches.
+
+    Args:
+        cfg: Training config, including the checkpoint path and resume flag.
+        dataloader: The training loader returned by ``accelerator.prepare``.
+        sampler: The original, unwrapped sampler, or None for streaming datasets.
+        step: Number of micro-batches consumed per data-parallel worker.
+        parallel_dims: Current data-parallel topology.
+        accelerator: The accelerator that prepared the loader.
+
+    Returns:
+        An infinite iterator starting at the checkpoint's data position. Changed batch
+        or world sizes retain the saved sampler offset, with a warning that per-rank
+        sample-exactness no longer holds. Streaming keeps its existing cycling behavior.
+    """
+    if not cfg.resume or step == 0 or sampler is None:
+        return cycle(dataloader)
+
+    metadata = load_training_metadata(cfg.checkpoint_path / TRAINING_STATE_DIR)
+    ckpt_dp_world = metadata["dp_world_size"] or parallel_dims.dp_world_size
+    ckpt_batch_size = metadata["batch_size"] or cfg.batch_size
+    sampler_state = compute_sampler_state(step, len(sampler), ckpt_batch_size, ckpt_dp_world)
+    epoch = sampler_state["epoch"]
+    dataloader.set_epoch(epoch)
+
+    if is_main_process():
+        logging.info(f"Resuming data order at epoch {epoch}, sample {sampler_state['start_index']}")
+
+    if ckpt_dp_world != parallel_dims.dp_world_size or ckpt_batch_size != cfg.batch_size:
+        if is_main_process():
+            logging.warning(
+                f"Resuming with (dp_world_size, batch_size)="
+                f"({parallel_dims.dp_world_size}, {cfg.batch_size}) instead of "
+                f"({ckpt_dp_world}, {ckpt_batch_size}). Restoring the saved sampler offset; "
+                "per-rank sample-exactness requires the same batch size and data-parallel world size."
+            )
+        # A saved sample offset need not align with batches under a new topology.
+        # Preserve the existing fallback rather than rounding it to a different batch.
+        sampler.load_state_dict(sampler_state)
+        return cycle(dataloader)
+
+    batches_to_skip = sampler_state["start_index"] // (ckpt_batch_size * ckpt_dp_world)
+    if batches_to_skip == 0:
+        return cycle(dataloader)
+
+    first_epoch = accelerator.skip_first_batches(dataloader, num_batches=batches_to_skip)
+    first_epoch.set_epoch(epoch)
+
+    def resumed_iterator():
+        yield from first_epoch
+        # The temporary loader advanced its own iteration counter, not the original's.
+        dataloader.set_epoch(epoch + 1)
+        yield from cycle(dataloader)
+
+    return resumed_iterator()
 
 
 @parser.wrap()
@@ -567,7 +603,8 @@ def train(cfg: TrainPipelineConfig):
     if cfg.resume:
         step = resume_before_prepare(cfg)  # step + RNG only; sharded state loads after prepare
 
-    dataloader, eval_dataloader = make_dataloaders(cfg, dataset, eval_dataset, step, parallel_dims)
+    dataloader, eval_dataloader = make_dataloaders(cfg, dataset, eval_dataset, parallel_dims)
+    sampler = dataloader.sampler if not cfg.dataset.streaming else None
 
     # --- prepare & resume phase 2 ---------------------------------------------------------------
     # The FSDP wrap-unit class names resolve right before prepare: user override, else the
@@ -628,7 +665,7 @@ def train(cfg: TrainPipelineConfig):
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
-    dl_iter = cycle(dataloader)
+    dl_iter = make_training_iterator(cfg, dataloader, sampler, step, parallel_dims, accelerator)
     policy.train()
 
     # EMA shadow of the policy weights (Chi et al. 2023, Diffusion Policy, section V.D). The shadow

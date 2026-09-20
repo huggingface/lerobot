@@ -339,8 +339,8 @@ def save_training_state(
 def resume_before_prepare(cfg: TrainPipelineConfig) -> int:
     """Phase 1 — before `accelerator.prepare()`: restore RNG and return the step counter.
 
-    Pure loaders only. The sampler resume offset is *derived* from the returned step inside the
-    dataloader factory, and everything bound to sharded objects (model DCP shards, optimizer,
+    Pure loaders only. The data resume position is *derived* from the returned step after
+    dataloader preparation, and everything bound to sharded objects (model DCP shards, optimizer,
     scheduler) loads in `resume_after_prepare`.
 
     Args:
@@ -377,7 +377,7 @@ def _guard_resume_changes(cfg: TrainPipelineConfig, metadata: dict[str, Any]) ->
       legal (DCP reshards weights and optimizer state across topologies and the sampler offset
       adapts), but a changed ``grad_accum_steps`` shifts the optimizer-update cadence, so the
       resume says precisely what differs. The sampler-exactness warnings
-      (``dp_world_size``/``batch_size``) live with the sampler math in the dataloader factory.
+      (``dp_world_size``/``batch_size``) live with the training iterator's resume logic.
 
     Args:
         cfg (TrainPipelineConfig): The resumed training config, compared against the settings
