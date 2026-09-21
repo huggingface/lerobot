@@ -7,9 +7,10 @@ Never use a later judgment as evidence for an earlier one.
 
 {task_context}1. QUALITY (usable)
 
-Default usable=true. A view is USABLE if a meaningful fraction of frames shows
-recognizable visual information — any scene, surface, object, gripper, or robot. It
-need NOT show the task or be useful for learning.
+Default usable=true. A view is USABLE if a meaningful fraction of frames shows the
+robot manipulation scene — the robot, its gripper/arm, the work surface, or the
+manipulated objects — clearly enough to be recognizable. It need NOT frame the task
+perfectly or be ideal for learning, but it must actually be AIMED AT the scene.
 
 Set usable=false (with a short "blur_reason") ONLY when ALL / NEARLY ALL frames fail:
   - blur so extreme the frame is unintelligible (not mere soft focus / motion blur);
@@ -19,10 +20,18 @@ Set usable=false (with a short "blur_reason") ONLY when ALL / NEARLY ALL frames 
     force/pressure heatmap) -> reason "tactile sensor, not a camera view";
   - a DEPTH / disparity map (smooth grayscale or false-colour distance map) ->
     reason "depth map, not an RGB camera view";
-  - the lens is blocked so no useful scene is visible in any frame.
+  - the lens is blocked so no useful scene is visible in any frame;
+  - IRRELEVANT / MISAIMED: the camera is pointed AWAY from the scene the WHOLE
+    episode — every frame shows only unrelated surroundings (a ceiling, a plain
+    wall, the floor, a random corner of the room) and NO robot, gripper, work
+    surface, or manipulated object is visible in ANY frame -> reason "camera not
+    aimed at the workspace". (A close-up of the work surface, an object, or the
+    gripper still counts as the scene — do NOT flag those.)
 
 Transient problems are FINE: some blurry frames, a temporary blank wall, a brief
-obstruction, or the robot's own arm/gripper partly blocking the view -> usable.
+obstruction, or the robot's own arm/gripper partly blocking the view -> usable —
+as long as OTHER frames do show the robot/workspace. Only flag when the scene is
+NEVER visible across the whole stream.
 
 WRIST / CLOSE-UP BLUR SLACK: a wrist or extreme close-up (gripper in foreground,
 lens inches from the surface) is often soft, washed-out, low-contrast, or
