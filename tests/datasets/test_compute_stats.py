@@ -424,6 +424,34 @@ def test_running_quantile_stats_get_statistics_basic():
     np.testing.assert_equal(stats["count"], np.array([100]))
 
 
+@pytest.mark.parametrize("dtype, offset", [(np.float32, 1e4), (np.float64, 1e12)])
+@pytest.mark.parametrize("batch_sizes", [(8,), (3, 1, 4), (1,) * 8])
+def test_running_quantile_stats_variance_with_large_offset(dtype, offset, batch_sizes):
+    deviations = np.array([-2, -1, 0, 1, 2, 3, 4, 5], dtype=dtype)
+    data = np.column_stack((offset + deviations, -offset + 2 * deviations, np.full(8, offset)))
+    data = data.astype(dtype)
+    original = data.copy()
+    running_stats = RunningQuantileStats()
+    start = 0
+    for size in batch_sizes:
+        running_stats.update(data[start : start + size])
+        start += size
+
+    stats = running_stats.get_statistics()
+    np.testing.assert_allclose(stats["mean"], data.mean(axis=0, dtype=np.float64))
+    np.testing.assert_allclose(stats["std"], data.std(axis=0, dtype=np.float64), rtol=1e-10)
+    np.testing.assert_array_equal(stats["count"], [len(data)])
+    np.testing.assert_array_equal(stats["min"], data.min(axis=0))
+    np.testing.assert_array_equal(stats["max"], data.max(axis=0))
+    np.testing.assert_array_equal(data, original)
+
+
+def test_get_feature_stats_preserves_small_variations_in_float32():
+    data = np.array([[10000.0], [10001.0], [10002.0]], dtype=np.float32)
+    stats = get_feature_stats(data, axis=0, keepdims=False)
+    np.testing.assert_allclose(stats["std"], data.std(axis=0, dtype=np.float64), rtol=1e-10)
+
+
 def test_running_quantile_stats_get_statistics_with_quantiles():
     """Test getting statistics with quantiles."""
     np.random.seed(42)
