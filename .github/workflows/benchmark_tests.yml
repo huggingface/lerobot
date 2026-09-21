@@ -82,13 +82,13 @@ jobs:
           lfs: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4 # zizmor: ignore[unpinned-uses]
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false
 
       - name: Login to Docker Hub
         if: ${{ env.DOCKERHUB_USERNAME != '' }}
-        uses: docker/login-action@v4.6.0 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
@@ -99,7 +99,7 @@ jobs:
       # from source-copy, so code-only changes skip the slow uv-sync layer
       # when the runner has a warm Docker daemon cache.
       - name: Build Libero benchmark image
-        uses: docker/build-push-action@v7 # zizmor: ignore[unpinned-uses]
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/Dockerfile.benchmark.libero
@@ -155,7 +155,7 @@ jobs:
 
       - name: Upload Libero rollout video
         if: always()
-        uses: actions/upload-artifact@v7 # zizmor: ignore[unpinned-uses]
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: libero-rollout-video
           path: /tmp/libero-artifacts/videos/
@@ -163,7 +163,7 @@ jobs:
 
       - name: Upload Libero eval metrics
         if: always()
-        uses: actions/upload-artifact@v7 # zizmor: ignore[unpinned-uses]
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: libero-metrics
           path: /tmp/libero-artifacts/metrics.json
@@ -218,7 +218,7 @@ jobs:
 
       - name: Upload Libero train-smoke eval video
         if: always()
-        uses: actions/upload-artifact@v7 # zizmor: ignore[unpinned-uses]
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: libero-train-smoke-video
           path: /tmp/libero-train-smoke-artifacts/eval/
@@ -244,13 +244,13 @@ jobs:
           lfs: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4 # zizmor: ignore[unpinned-uses]
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false
 
       - name: Login to Docker Hub
         if: ${{ env.DOCKERHUB_USERNAME != '' }}
-        uses: docker/login-action@v4.6.0 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
@@ -258,7 +258,7 @@ jobs:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
 
       - name: Build MetaWorld benchmark image
-        uses: docker/build-push-action@v7 # zizmor: ignore[unpinned-uses]
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/Dockerfile.benchmark.metaworld
@@ -311,7 +311,7 @@ jobs:
 
       - name: Upload MetaWorld rollout video
         if: always()
-        uses: actions/upload-artifact@v7 # zizmor: ignore[unpinned-uses]
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: metaworld-rollout-video
           path: /tmp/metaworld-artifacts/videos/
@@ -319,7 +319,7 @@ jobs:
 
       - name: Upload MetaWorld eval metrics
         if: always()
-        uses: actions/upload-artifact@v7 # zizmor: ignore[unpinned-uses]
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: metaworld-metrics
           path: /tmp/metaworld-artifacts/metrics.json
@@ -350,13 +350,13 @@ jobs:
           lfs: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4 # zizmor: ignore[unpinned-uses]
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false
 
       - name: Login to Docker Hub
         if: ${{ env.DOCKERHUB_USERNAME != '' }}
-        uses: docker/login-action@v4.6.0 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
@@ -367,7 +367,7 @@ jobs:
       # simulation assets (~4 GB). Layer cache lives in the runner's local
       # Docker daemon — reused across re-runs on the same machine.
       - name: Build RoboTwin 2.0 benchmark image
-        uses: docker/build-push-action@v7 # zizmor: ignore[unpinned-uses]
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/Dockerfile.benchmark.robotwin
@@ -425,7 +425,7 @@ jobs:
 
       - name: Upload RoboTwin rollout video
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: robotwin-rollout-video
           path: /tmp/robotwin-artifacts/videos/
@@ -433,7 +433,7 @@ jobs:
 
       - name: Upload RoboTwin eval metrics
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: robotwin-metrics
           path: /tmp/robotwin-artifacts/metrics.json
@@ -461,13 +461,13 @@ jobs:
           lfs: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4 # zizmor: ignore[unpinned-uses]
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false
 
       - name: Login to Docker Hub
         if: ${{ env.DOCKERHUB_USERNAME != '' }}
-        uses: docker/login-action@v4.6.0 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
@@ -475,7 +475,7 @@ jobs:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
 
       - name: Build RoboCasa365 benchmark image
-        uses: docker/build-push-action@v7 # zizmor: ignore[unpinned-uses]
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/Dockerfile.benchmark.robocasa
@@ -530,7 +530,7 @@ jobs:
 
       - name: Upload RoboCasa365 rollout video
         if: always()
-        uses: actions/upload-artifact@v7 # zizmor: ignore[unpinned-uses]
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: robocasa-rollout-video
           path: /tmp/robocasa-artifacts/videos/
@@ -538,7 +538,7 @@ jobs:
 
       - name: Upload RoboCasa365 eval metrics
         if: always()
-        uses: actions/upload-artifact@v7 # zizmor: ignore[unpinned-uses]
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: robocasa-metrics
           path: /tmp/robocasa-artifacts/metrics.json
@@ -566,13 +566,13 @@ jobs:
           lfs: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4 # zizmor: ignore[unpinned-uses]
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false
 
       - name: Login to Docker Hub
         if: ${{ env.DOCKERHUB_USERNAME != '' }}
-        uses: docker/login-action@v4.6.0 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
@@ -580,7 +580,7 @@ jobs:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
 
       - name: Build RoboCerebra benchmark image
-        uses: docker/build-push-action@v7 # zizmor: ignore[unpinned-uses]
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/Dockerfile.benchmark.robocerebra
@@ -641,7 +641,7 @@ jobs:
 
       - name: Upload RoboCerebra rollout video
         if: always()
-        uses: actions/upload-artifact@v7 # zizmor: ignore[unpinned-uses]
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: robocerebra-rollout-video
           path: /tmp/robocerebra-artifacts/videos/
@@ -649,7 +649,7 @@ jobs:
 
       - name: Upload RoboCerebra eval metrics
         if: always()
-        uses: actions/upload-artifact@v7 # zizmor: ignore[unpinned-uses]
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: robocerebra-metrics
           path: /tmp/robocerebra-artifacts/metrics.json
@@ -678,13 +678,13 @@ jobs:
           lfs: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4 # zizmor: ignore[unpinned-uses]
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false
 
       - name: Login to Docker Hub
         if: ${{ env.DOCKERHUB_USERNAME != '' }}
-        uses: docker/login-action@v4.6.0 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
@@ -692,7 +692,7 @@ jobs:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
 
       - name: Build RoboMME benchmark image
-        uses: docker/build-push-action@v7 # zizmor: ignore[unpinned-uses]
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/Dockerfile.benchmark.robomme
@@ -750,7 +750,7 @@ jobs:
 
       - name: Upload RoboMME rollout video
         if: always()
-        uses: actions/upload-artifact@v7 # zizmor: ignore[unpinned-uses]
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: robomme-rollout-video
           path: /tmp/robomme-artifacts/videos/
@@ -758,7 +758,7 @@ jobs:
 
       - name: Upload RoboMME eval metrics
         if: always()
-        uses: actions/upload-artifact@v7 # zizmor: ignore[unpinned-uses]
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: robomme-metrics
           path: /tmp/robomme-artifacts/metrics.json
@@ -788,13 +788,13 @@ jobs:
           lfs: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4 # zizmor: ignore[unpinned-uses]
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false
 
       - name: Login to Docker Hub
         if: ${{ env.DOCKERHUB_USERNAME != '' }}
-        uses: docker/login-action@v4.6.0 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
@@ -802,7 +802,7 @@ jobs:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
 
       - name: Build LIBERO-plus benchmark image
-        uses: docker/build-push-action@v7 # zizmor: ignore[unpinned-uses]
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/Dockerfile.benchmark.libero_plus
@@ -862,7 +862,7 @@ jobs:
 
       - name: Upload LIBERO-plus rollout video
         if: always()
-        uses: actions/upload-artifact@v7 # zizmor: ignore[unpinned-uses]
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: libero-plus-rollout-video
           path: /tmp/libero-plus-artifacts/videos/
@@ -870,7 +870,7 @@ jobs:
 
       - name: Upload LIBERO-plus eval metrics
         if: always()
-        uses: actions/upload-artifact@v7 # zizmor: ignore[unpinned-uses]
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: libero-plus-metrics
           path: /tmp/libero-plus-artifacts/metrics.json
@@ -896,13 +896,13 @@ jobs:
           lfs: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4 # zizmor: ignore[unpinned-uses]
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false
 
       - name: Login to Docker Hub
         if: ${{ env.DOCKERHUB_USERNAME != '' }}
-        uses: docker/login-action@v4.6.0 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
@@ -910,7 +910,7 @@ jobs:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
 
       - name: Build VLABench benchmark image
-        uses: docker/build-push-action@v7 # zizmor: ignore[unpinned-uses]
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/Dockerfile.benchmark.vlabench
@@ -968,7 +968,7 @@ jobs:
 
       - name: Upload VLABench rollout video
         if: always()
-        uses: actions/upload-artifact@v7 # zizmor: ignore[unpinned-uses]
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: vlabench-rollout-video
           path: /tmp/vlabench-artifacts/videos/
@@ -976,7 +976,7 @@ jobs:
 
       - name: Upload VLABench eval metrics
         if: always()
-        uses: actions/upload-artifact@v7 # zizmor: ignore[unpinned-uses]
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: vlabench-metrics
           path: /tmp/vlabench-artifacts/metrics.json
