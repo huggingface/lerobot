@@ -79,6 +79,8 @@
     title: LingBot-VA
   - local: lingbot_vla_v2
     title: LingBot-VLA 2.0
+  - local: g05
+    title: OpenGalaxea G0.5
   - local: fastwam
     title: FastWAM
   - local: flux3

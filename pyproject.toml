@@ -271,6 +271,7 @@ vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen
 lingbot_va = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[accelerate-dep]"]
 lingbot_vla_v2 = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
 wall_oss_05 = ["lerobot[transformers-dep]"]
+g05 = ["lerobot[transformers-dep]"]
 lawam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
@@ -366,6 +367,7 @@ all = [
     "lerobot[vla_jepa]",
     "lerobot[lingbot_va]",
     "lerobot[lingbot_vla_v2]",
+    "lerobot[g05]",
     "lerobot[lawam]",
     "lerobot[remote]",
     "lerobot[dev]",
