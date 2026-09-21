@@ -16,6 +16,7 @@
 """Contract tests for DatasetReader."""
 
 import json
+import shutil
 import sys
 import types
 
@@ -74,6 +75,29 @@ def test_try_load_returns_false_when_no_data(tmp_path):
     )
     assert reader.try_load() is False
     assert reader.hf_dataset is None
+
+
+def test_try_load_requires_videos_by_default(tmp_path, lerobot_dataset_factory):
+    """A cache whose video files are missing is insufficient by default, but accepted with require_videos=False."""
+    dataset = lerobot_dataset_factory(
+        root=tmp_path / "ds", total_episodes=2, total_frames=20, use_videos=True
+    )
+    assert dataset.meta.video_keys
+    shutil.rmtree(dataset.root / "videos")
+
+    reader = DatasetReader(
+        meta=dataset.meta,
+        root=dataset.root,
+        episodes=None,
+        tolerance_s=1e-4,
+        video_backend=get_safe_default_video_backend(),
+        delta_timestamps=None,
+        image_transforms=None,
+    )
+    assert reader.try_load() is False
+    assert reader.hf_dataset is None
+    assert reader.try_load(require_videos=False) is True
+    assert reader.hf_dataset is not None
 
 
 def test_load_rejects_language_columns_missing_from_metadata(tmp_path, lerobot_dataset_factory):
