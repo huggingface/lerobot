@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import math
-from collections.abc import Mapping
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
@@ -41,15 +40,6 @@ _JOINTS = (
     "wrist_roll",
     "gripper",
 )
-
-
-def _per_joint(value: float | list[float] | Mapping[str, float]) -> dict[str, float]:
-    """Compare legacy scalar/list inputs and normalized mapping values uniformly."""
-    if isinstance(value, Mapping):
-        return {joint: float(value[joint]) for joint in _JOINTS}
-    if isinstance(value, list):
-        return dict(zip(_JOINTS, value, strict=True))
-    return dict.fromkeys(_JOINTS, float(value))
 
 
 FAMILIES = [MotorFamily.DM, MotorFamily.RS]
@@ -131,8 +121,6 @@ def test_shipped_dm_defaults_are_preserved():
     assert config.control_mode == "mit"
     assert config.gripper_control_mode == "force_pos"
     assert config.gripper_torque_ratio == 0.07
-    assert config.gripper_mit_kp == 8.0
-    assert config.gripper_mit_kd == 0.3
     assert config.joint_limits == {
         "shoulder_pan": (-150.0, 150.0),
         "shoulder_lift": (-200.0, 1.0),
@@ -142,12 +130,8 @@ def test_shipped_dm_defaults_are_preserved():
         "wrist_roll": (-90.0, 90.0),
         "gripper": (-270.0, 0.0),
     }
-    assert _per_joint(config.mit_kp) == dict(
-        zip(_JOINTS, [45.0, 45.0, 45.0, 8.0, 9.0, 8.0, 8.0], strict=True)
-    )
-    assert _per_joint(config.mit_kd) == dict(
-        zip(_JOINTS, [12.0, 12.0, 12.0, 1.0, 1.0, 1.0, 0.3], strict=True)
-    )
+    assert config.mit_kp == dict(zip(_JOINTS, [45.0, 45.0, 45.0, 8.0, 9.0, 8.0, 8.0], strict=True))
+    assert config.mit_kd == dict(zip(_JOINTS, [12.0, 12.0, 12.0, 1.0, 1.0, 1.0, 0.3], strict=True))
 
     leader = RebotArm102LeaderConfig(port="/dev/null")
     assert leader.joint_ranges == {
@@ -161,38 +145,35 @@ def test_shipped_dm_defaults_are_preserved():
     }
 
 
-def test_legacy_dm_config_accepts_gain_lists_without_motor_family():
-    kp = [40.0, 41.0, 42.0, 7.0, 8.0, 9.0, 6.0]
-    kd = [10.0, 11.0, 12.0, 0.7, 0.8, 0.9, 0.2]
-    velocity = [100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 800.0]
+def test_scalar_joint_tuning_applies_to_every_joint():
+    config = RebotB601FollowerRobotConfig(
+        port="/dev/null",
+        mit_kp=6.0,
+        mit_kd=0.2,
+        pos_vel_velocity=100.0,
+    )
+
+    assert config.can_adapter == "damiao"
+    assert config.mit_kp == dict.fromkeys(_JOINTS, 6.0)
+    assert config.mit_kd == dict.fromkeys(_JOINTS, 0.2)
+    assert config.pos_vel_velocity == dict.fromkeys(_JOINTS, 100.0)
+
+
+def test_named_joint_tuning_is_preserved():
+    kp = {joint: float(index) for index, joint in enumerate(_JOINTS, start=1)}
+    kd = {joint: index / 10 for index, joint in enumerate(_JOINTS, start=1)}
+    velocity = {joint: float(index * 100) for index, joint in enumerate(_JOINTS, start=1)}
 
     config = RebotB601FollowerRobotConfig(
         port="/dev/null",
         mit_kp=kp,
         mit_kd=kd,
         pos_vel_velocity=velocity,
-        gripper_mit_kp=6.0,
-        gripper_mit_kd=0.2,
     )
 
-    assert config.can_adapter == "damiao"
-    assert _per_joint(config.mit_kp) == dict(zip(_JOINTS, kp, strict=True))
-    assert _per_joint(config.mit_kd) == dict(zip(_JOINTS, kd, strict=True))
-    assert _per_joint(config.pos_vel_velocity) == dict(zip(_JOINTS, velocity, strict=True))
-    assert config.gripper_mit_kp == 6.0
-    assert config.gripper_mit_kd == 0.2
-
-
-def test_legacy_dm_gain_lists_keep_independent_gripper_defaults():
-    config = RebotB601FollowerRobotConfig(
-        port="/dev/null",
-        mit_kp=[40.0, 41.0, 42.0, 7.0, 8.0, 9.0, 6.0],
-        mit_kd=[5.0, 5.0, 5.0, 0.7, 0.8, 0.9, 0.2],
-    )
-    assert config.mit_kp["gripper"] == 8.0
-    assert config.mit_kd["gripper"] == 0.3
-    assert config.gripper_mit_kp == 8.0
-    assert config.gripper_mit_kd == 0.3
+    assert config.mit_kp == kp
+    assert config.mit_kd == kd
+    assert config.pos_vel_velocity == velocity
 
 
 @pytest.mark.parametrize(

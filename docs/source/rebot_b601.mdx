@@ -52,7 +52,7 @@ This pulls in `motorbridge` (CAN motor control for both follower builds) and `mo
 | `rebot_102_leader`       | single-arm reBot Arm 102 leader teleoperator |
 | `bi_rebot_102_leader`    | bimanual (dual-arm) leader teleoperator      |
 
-Both follower builds share the `rebot_b601_follower` type. Existing DM configurations remain compatible because `motor_family` defaults to `dm`; select RS explicitly with `--robot.motor_family=rs`.
+Both follower builds share the `rebot_b601_follower` type. `motor_family` defaults to `dm`; select RS explicitly with `--robot.motor_family=rs`.
 
 The bimanual types compose two single-arm instances and namespace each arm's
 observation/action keys with a `left_` / `right_` prefix. Per-arm settings are
@@ -222,6 +222,7 @@ Both builds expose the same joint names and degree-based public coordinate frame
 
 - DM uses MIT control for the arm and `force_pos` for the gripper by default. `gripper_torque_ratio` defaults to `0.07`; DM also supports `--robot.control_mode=pos_vel`.
 - RS uses MIT control and a force-limited impedance gripper. `gripper_torque_limit` defaults to `3.5` N·m while moving and `gripper_hold_torque_limit` defaults to `1.0` N·m while holding.
+- Joint tuning such as `mit_kp`, `mit_kd` and `pos_vel_velocity` accepts either one scalar for every joint or a mapping keyed by joint name.
 - `max_relative_target` optionally caps each command's change in degrees. For example, `--robot.max_relative_target=5.0` applies a five-degree cap to every joint.
 
 The leader's `joint_directions` remain configurable if a teleoperation joint moves in the wrong direction.
