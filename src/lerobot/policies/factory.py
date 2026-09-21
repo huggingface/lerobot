@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import logging
+from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
 import torch
@@ -372,6 +373,20 @@ def make_policy(
     return policy
 
 
+def _import_sibling_policy_module(config_cls: type[PreTrainedConfig], prefix: str) -> ModuleType | None:
+    """Import a config class' sibling ``{prefix}_*`` module, or None when that module does not exist."""
+    module_path = config_cls.__module__.replace("configuration_", f"{prefix}_")
+    try:
+        return importlib.import_module(module_path)
+    except ModuleNotFoundError as e:
+        if e.name == module_path:
+            # The sibling module itself does not exist for this policy type. A missing optional
+            # dependency inside an existing module propagates unchanged instead, so its
+            # actionable install hint stays visible.
+            return None
+        raise
+
+
 def _get_policy_cls_from_policy_name(name: str) -> type[PreTrainedPolicy]:
     """Get policy class from its registered name using dynamic imports.
 
@@ -399,23 +414,14 @@ def _get_policy_cls_from_policy_name(name: str) -> type[PreTrainedPolicy]:
             f"Make sure it ends with 'Config'!"
         )
     cls_name = model_name + "Policy"  # e.g., DiffusionConfig -> DiffusionPolicy
-    module_path = config_cls.__module__.replace(
-        "configuration_", "modeling_"
-    )  # e.g., configuration_diffusion -> modeling_diffusion
 
-    try:
-        module = importlib.import_module(module_path)
-    except ModuleNotFoundError as e:
-        if e.name == module_path:
-            # The modeling_* module itself does not exist for this policy type. A missing
-            # optional dependency inside an existing module propagates unchanged instead,
-            # so its actionable install hint stays visible.
-            raise ValueError(f"Policy class for '{name}' is not implemented.") from e
-        raise
+    module = _import_sibling_policy_module(config_cls, "modeling")
+    if module is None:
+        raise ValueError(f"Policy class for '{name}' is not implemented.")
     policy_cls = getattr(module, cls_name, None)
     if policy_cls is None:
         raise ValueError(
-            f"Policy class '{cls_name}' not found in '{module_path}'. "
+            f"Policy class '{cls_name}' not found in '{module.__name__}'. "
             f"Policies must expose '<Name>Policy' in the sibling 'modeling_*' module by naming convention."
         )
     return policy_cls
@@ -435,13 +441,9 @@ def _make_pretrained_processors_from_policy_config(
 ) -> tuple[Any, Any] | None:
     """Let a policy rebuild pretrained processors when its current runtime requires it."""
     function_name = f"make_{config.type}_pre_post_processors_from_pretrained"
-    module_path = config.__class__.__module__.replace("configuration_", "processor_")
-    try:
-        module = importlib.import_module(module_path)
-    except ModuleNotFoundError as exc:
-        if exc.name == module_path:
-            return None
-        raise
+    module = _import_sibling_policy_module(config.__class__, "processor")
+    if module is None:
+        return None
     function = getattr(module, function_name, None)
     if function is None:
         return None
@@ -479,21 +481,10 @@ def _make_processors_from_policy_config(
 
     policy_type = config.type
     function_name = f"make_{policy_type}_pre_post_processors"
-    module_path = config.__class__.__module__.replace(
-        "configuration_", "processor_"
-    )  # e.g., configuration_diffusion -> processor_diffusion
-    logging.debug(
-        f"Instantiating pre/post processors using function '{function_name}' from module '{module_path}'"
-    )
-    try:
-        module = importlib.import_module(module_path)
-    except ModuleNotFoundError as e:
-        if e.name == module_path:
-            # The processor_* module itself does not exist for this policy type. A missing
-            # optional dependency inside an existing module propagates unchanged instead,
-            # so its actionable install hint stays visible.
-            raise ValueError(f"Processor for policy type '{policy_type}' is not implemented.") from e
-        raise
+    logging.debug(f"Instantiating pre/post processors using function '{function_name}'")
+    module = _import_sibling_policy_module(config.__class__, "processor")
+    if module is None:
+        raise ValueError(f"Processor for policy type '{policy_type}' is not implemented.")
     function = getattr(module, function_name, None)
     if function is None:
         raise ValueError(f"Processor for policy type '{policy_type}' is not implemented.")
