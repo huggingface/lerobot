@@ -266,20 +266,16 @@ def _derive_left_right(verdict: CameraVerdict, cfg: CameraCurationConfig) -> Non
         return  # not a side view (top/wrist/bottom)
     if any(tok in ("front", "rear") for tok in tokens):
         return  # front/rear axis — the VLM handles this well, leave it
-    # The camera sits on the side the WORKSPACE appears (workspace-on-image-LEFT ->
-    # camera on the robot's LEFT -> left_side); the BASE is the inverse (base-on-
-    # image-LEFT -> camera on the RIGHT -> right_side, because a left camera sees the
-    # body pushed to the far/right edge). Prefer the workspace cue and fall back to
-    # base, one cue at a time — no "conflict" case: if the workspace is clearly on a
-    # side it decides, else base decides, else abstain. (A front/rear camera reads
-    # workspace=center, base=center -> plain side.)
-    ws, base = verdict.workspace_image_side, verdict.base_image_side
-    if ws in ("left", "right"):
-        derived = ws
-    elif base in ("left", "right"):
-        derived = "right" if base == "left" else "left"
-    else:
-        derived = None
+    # Each cue votes for the camera's side: workspace-on-image-LEFT -> camera LEFT
+    # (left_side); base is the inverse (base-on-image-LEFT -> camera on the RIGHT,
+    # since a left camera sees the body pushed to the far/right edge). Fire on a
+    # single clear cue (the other centred/unknown) or when both agree; abstain to
+    # plain "side" when the two DISAGREE or neither is lateral (a front/rear camera
+    # reads workspace=center, base=center).
+    base_vote = {"right": "left", "left": "right"}.get(verdict.base_image_side or "")
+    ws_vote = {"left": "left", "right": "right"}.get(verdict.workspace_image_side or "")
+    votes = [v for v in (base_vote, ws_vote) if v]
+    derived = votes[0] if votes and len(set(votes)) == 1 else None
     new_label = f"{derived}_side" if derived else _SIDE_POSITION
     if new_label != label:
         logger.info(

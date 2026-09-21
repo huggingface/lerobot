@@ -524,11 +524,10 @@ def test_derive_left_right_from_localization():
     v = _run({"usable": True, "mount_type": "fixed", "view_label": "left_side",
               "base_image_side": "left", "workspace_image_side": "right"})
     assert v.view_label == "right_side"
-    # Workspace wins over a disagreeing base: workspace-on-right -> right_side, even
-    # though base-on-right would (inversely) suggest left. No "conflict" abstain.
+    # Cues DISAGREE (base-right -> left, workspace-right -> right) -> plain side.
     v = _run({"usable": True, "mount_type": "fixed", "view_label": "left_side",
               "base_image_side": "right", "workspace_image_side": "right"})
-    assert v.view_label == "right_side"
+    assert v.view_label == "side"
     # ONE clear cue is leveraged (the other centered/missing): base-on-left ->
     # camera on the robot's right -> right_side.
     v = _run({"usable": True, "mount_type": "fixed", "view_label": "side",
