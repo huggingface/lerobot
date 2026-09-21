@@ -14,7 +14,7 @@
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch import Tensor
@@ -24,7 +24,10 @@ from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.utils.constants import OBS_STATE
 
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
-from .pipeline import ProcessorStep, ProcessorStepRegistry
+from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry
+
+if TYPE_CHECKING:  # a runtime import would be circular: ``pretrained`` imports from this package
+    from lerobot.policies.pretrained import PreTrainedPolicy
 
 # Re-export for backward compatibility
 __all__ = [
@@ -239,27 +242,13 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
         return features
 
 
-def bind_relative_anchor(policy: Any, pipeline: Any) -> RelativeActionsProcessorStep | None:
+def bind_relative_anchor(
+    policy: "PreTrainedPolicy", pipeline: PolicyProcessorPipeline[Any, Any]
+) -> RelativeActionsProcessorStep | None:
     """Let ``pipeline``'s relative-action step hold a chunk's anchor until the chunk drains.
 
-    Call this once, wherever a policy and its preprocessor are built together; every caller of
-    that pipeline is then correct, including bare
-    ``preprocess -> select_action -> postprocess`` loops that know nothing about anchoring.
-    Forgetting it is not a new failure mode -- the step falls back to advancing the anchor on
-    every state, which is what it did before this existed.
-
-    ``pipeline`` is a preprocessor pipeline (anything exposing ``steps``); a disabled step is
-    treated as absent, because it neither converts actions nor needs its anchor held.
-
-    ``policy`` is read only once such a step is found, and only for
-    :meth:`~lerobot.policies.pretrained.PreTrainedPolicy.count_queued_actions`: duck-typed, so
-    this module needs no ``lerobot.policies`` import, and never touched by the overwhelming
-    majority of pipelines that convert nothing. Binding that bound method keeps the policy
-    alive for as long as the pipeline is -- fine while the policy does not hold the pipeline
-    back, and a ``weakref.WeakMethod`` away from being fine if it ever does.
-
-    Returns:
-        The step that was bound, or ``None`` if the pipeline has no enabled one.
+    Call once wherever a policy and its preprocessor are built together; a disabled step counts
+    as absent. Returns the step that was bound, or ``None`` if the pipeline has no enabled one.
     """
     step = next(
         (
