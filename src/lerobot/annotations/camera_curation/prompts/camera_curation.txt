@@ -41,49 +41,37 @@ usable. The robot's own arm is table/base-mounted, not hand-held.
 2. MOUNT TYPE (fixed / robot_mounted / unknown)
 
 Judge whether the VIEWPOINT is attached to the robot, from the STATIC ENVIRONMENT
-(table edges, walls, shelves, fixtures, background) — NOT from the robot's motion.
+(table edges, walls, shelves, fixtures, the background scene) — NOT from how large
+or prominent the robot/gripper is.
 
-robot_mounted needs POSITIVE evidence, from EITHER:
-  A. VIEWPOINT MOTION — static world landmarks globally translate/rotate/rescale, or
-     the whole scene re-frames, correlated with robot motion. (A wrist camera may
-     also be nearly STILL — lack of motion does NOT prove fixed. On a blank backdrop
-     — green screen, plain wall — drift is invisible, so track CONCRETE objects, not
-     the blank background.)
-  B. OWN-GRIPPER GEOMETRY — the CAMERA'S OWN gripper, belonging to the arm the camera
-     rides on, EMERGES FROM THE NEAR EDGE (usually the bottom); you see only its
-     forward-facing END pointing into the scene, connected back to your viewpoint,
-     PINNED to the same image spot across frames. Decisive on its own — even if the
-     gripper never opens and the background is blank/static (this OVERRIDES a
-     static/blank backdrop).
+PRIMARY TEST — track the static BACKGROUND across frames:
+  - If concrete static landmarks / a background SCENE (desk, wall, mat, furniture,
+    table edges, monitor, containers) stay REGISTERED in roughly the same place and
+    perspective -> FIXED. This holds EVEN when the arm or gripper looms LARGE in the
+    foreground or hovers nearly still there — the arm is just moving through / toward
+    a stationary camera. A prominent, close, or still gripper does NOT by itself make
+    a wrist.
+  - If those static landmarks globally TRANSLATE / ROTATE / RESCALE, or the whole
+    scene re-frames, correlated with robot motion -> robot_mounted.
 
-fixed evidence:
-  - static landmarks stay registered while the robot moves THROUGH the frame — even
-    if the arm looms LARGE and fills the frame in some of them, a background scene
-    (monitor, desk, wall, mat, furniture) that stays put means FIXED;
-  - you look AT a SEPARATE, whole arm as an external object (its joints/servos/links
-    visible from the OUTSIDE as a limb in the scene), not out along your own — even
-    a large, close one (e.g. a side camera watching an arm pour);
-  - a big arm SWINGING IN AND OUT / sweeping across the frame is the ARM moving
-    through a stationary scene (common on a top view) -> FIXED, however much it
-    covers.
+GRIPPER FALLBACK — use ONLY when the background is BLANK / uninformative (a green
+screen, plain wall, or empty tabletop with no trackable texture, so drift cannot be
+judged). Then, if the CAMERA'S OWN gripper is anchored in the near foreground —
+belonging to the arm the camera rides on, emerging from the near edge, showing only
+its forward-facing END connected to your viewpoint, pinned at constant size and
+position across frames -> robot_mounted (wrist). Do NOT use this fallback when a
+concrete static background scene is present — there the background decides above.
 
-KEY DISCRIMINATOR when a gripper/arm is in view — a WRIST's OWN gripper is bolted to
-the lens, so it stays at the SAME image POSITION and the SAME SIZE in every frame.
-A FIXED camera's arm is separate, so across the frames it TRAVELS to different
-positions AND changes SIZE / DISTANCE — small/far in some frames, large/close in
-others as it reaches, pours, retracts. So: gripper grows/shrinks or moves across
-the frames -> FIXED (a separate arm before a stationary camera); gripper pinned at
-constant size and position -> wrist. Compare the first vs last frame. A
-prominent/close gripper ALONE is never enough, and seeing the arm's joints/servos
-as an external limb, or a static background scene, confirms FIXED.
+NOT a wrist, even with a gripper in view:
+  - you look AT a SEPARATE, whole arm as an external limb (joints/servos/links seen
+    from the OUTSIDE) over a real scene -> fixed (e.g. a side camera watching an arm
+    pour);
+  - the gripper/arm changes SIZE or POSITION across frames (small/far, then
+    large/close as it reaches/pours/retracts) -> a separate arm before a stationary
+    camera -> fixed;
+  - a big arm swinging in and out of a stationary scene -> fixed.
 
-Decision order:
-  1. Own-gripper anchored in the foreground per (B)? -> robot_mounted (overrides a
-     static/blank background).
-  2. Else, static landmarks stay registered across frames? -> fixed.
-  3. Else, clear global viewpoint/parallax motion correlated with the robot? ->
-     robot_mounted.
-  4. Else -> unknown (do not invent motion).
+If neither test resolves -> unknown (do not invent motion).
 
 3. VIEW LABEL — use ONLY this closed vocabulary:
   {vocabulary}
