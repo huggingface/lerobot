@@ -41,7 +41,6 @@ from lerobot.utils.constants import (
 from lerobot.utils.feature_utils import dataset_to_policy_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
-from .evo1.configuration_evo1 import Evo1Config
 from .pretrained import PreTrainedPolicy
 from .utils import validate_visual_features_consistency
 
@@ -184,14 +183,6 @@ def make_pre_post_processors(
                 "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
             ),
         )
-        if isinstance(policy_cfg, Evo1Config):
-            from .evo1.processor_evo1 import reconcile_evo1_processors
-
-            preprocessor, postprocessor = reconcile_evo1_processors(
-                policy_cfg,
-                preprocessor,
-                postprocessor,
-            )
         return preprocessor, postprocessor
 
     # Create new processors from the policy config, resolving the per-policy factory
