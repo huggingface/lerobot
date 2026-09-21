@@ -74,6 +74,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         *,
         repo_type: str = "dataset",
         token: str | bool | None = None,
+        video_decoder_cache_size: int | None = None,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -217,6 +218,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 locally stored token, ``False`` to disable authentication, or
                 ``None`` to use the Hugging Face Hub default. The token is not
                 retained on the dataset instance after initialization.
+            video_decoder_cache_size (int, optional): For non-default storage formats only, the
+                number of open video decoders each DataLoader worker keeps. Larger values cut
+                re-reads under a shuffled sampler at the cost of RAM. Defaults to the reader's own
+                default (256 for ``"lance"``).
 
         Note:
             Write-mode parameters (``streaming_encoding``, ``batch_encoding_size``) passed to
@@ -297,10 +302,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
             "depth_output_unit": depth_output_unit,
         }
         if is_default_format:
+            if video_decoder_cache_size is not None:
+                raise ValueError("video_decoder_cache_size only applies to non-default storage formats.")
             reader_kwargs.update(root=self.root, video_backend=self._video_backend)
         else:
             # non-default formats read the data in place at its root
             reader_kwargs.update(root=self._storage_root or root, revision=revision, token=token)
+            if video_decoder_cache_size is not None:
+                reader_kwargs["video_decoder_cache_size"] = video_decoder_cache_size
         self.reader: BaseDatasetReader | None = make_dataset_reader(self.meta.storage_format, **reader_kwargs)
         self.image_transforms = image_transforms
         if not is_default_format:
