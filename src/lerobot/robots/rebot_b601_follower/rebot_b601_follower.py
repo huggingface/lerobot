@@ -35,6 +35,7 @@ from .motor_family import (
     GRIPPER_MODE_FORCE_POS,
     GRIPPER_MODE_MIT_IMPEDANCE,
     GRIPPER_MOTOR,
+    MIT_MODE,
     MOTOR_PROFILES,
     MotorFamily,
     MotorFamilyProfile,
@@ -51,38 +52,20 @@ else:
 
 logger = logging.getLogger(__name__)
 
-_ENSURE_MODE_RETRIES = 9
-_SETTLE_SEC = 0.01
 _ZERO_SETTLE_SEC = 0.1
 
-# --- Impedance gripper tuning (shared by any family that offers the mode) ---
-# Motor-side velocity damping. The position setpoint and kp are both zero, so the
-# gripper is driven entirely by the feedforward torque.
+# Impedance gripper tuning.
 _GRIPPER_IMPEDANCE_DAMPING = 1.5
-# Low-pass factor and ceiling (rad/s) for the target velocity estimate.
 _GRIPPER_LPF_ALPHA = 0.3
 _GRIPPER_TARGET_VEL_MAX = 3.0
-# Below this |measured velocity| (rad/s) the gentler hold torque limit applies.
 _GRIPPER_HOLD_VEL_THRESHOLD = 0.25
 
 
 class RebotB601Follower(Robot):
     """Seeed Studio reBot B601 follower arm (6-DOF + gripper, CAN motors).
 
-    Supports both builds of the arm through ``config.motor_family``: ``"dm"`` for
-    the Damiao B601-DM and ``"rs"`` for the RobStride B601-RS. The two share
-    joint topology, names and degree units but differ in geometry, motor models,
-    CAN id convention, available control modes, installed joint direction and
-    gripper strategy — all carried by the family's
-    :class:`MotorFamilyProfile`.
-
     Motor communication is handled by the ``motorbridge`` package over a CAN bus,
-    reached either through a Damiao serial bridge or MotorBridge's native,
-    platform-specific CAN transport.
-
-    Observations and actions share one public robot coordinate frame. Family
-    profiles convert that frame to and from raw motor coordinates, so a position
-    read from an observation can be sent back as an action to hold the joint.
+    reached either through a Damiao serial bridge or MotorBridge's native CAN transport.
     """
 
     config_class = RebotB601FollowerRobotConfig
@@ -137,16 +120,26 @@ class RebotB601Follower(Robot):
                 serial_port=self.config.port,
                 baud=self.config.dm_serial_baud,
             )
-        else:
+        elif self.config.can_adapter == "socketcan":
             self.bus = MotorBridgeController(channel=self.config.port)
+        else:
+            raise ValueError(
+                f"Unsupported can_adapter '{self.config.can_adapter}'. Use 'damiao' or 'socketcan'."
+            )
 
-        self._register_motors()
+        add_motor = (
+            self.bus.add_damiao_motor
+            if self.config.motor_family is MotorFamily.DM
+            else self.bus.add_robstride_motor
+        )
+        for motor_name, (send_id, recv_id) in self.config.motor_can_ids.items():
+            self.motors[motor_name] = add_motor(send_id, recv_id, self.profile.motor_models[motor_name])
+
         self._reset_gripper_impedance_state()
 
         if not self.is_calibrated and calibrate:
             logger.info(
-                "Mismatch between calibration values in the motor and the calibration file "
-                "or no calibration file found"
+                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
             )
             self.calibrate()
 
@@ -155,18 +148,6 @@ class RebotB601Follower(Robot):
 
         self.configure()
         logger.info(f"{self} connected.")
-
-    def _register_motors(self) -> None:
-        """Declare every joint on the bus using this family's motorbridge factory."""
-        if self.bus is None:
-            raise DeviceNotConnectedError(f"{self} motor bus is not initialized")
-        add_motor = (
-            self.bus.add_damiao_motor
-            if self.config.motor_family is MotorFamily.DM
-            else self.bus.add_robstride_motor
-        )
-        for motor_name, (send_id, recv_id) in self.config.motor_can_ids.items():
-            self.motors[motor_name] = add_motor(send_id, recv_id, self.profile.motor_models[motor_name])
 
     @property
     def is_calibrated(self) -> bool:
@@ -213,40 +194,30 @@ class RebotB601Follower(Robot):
         print(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
-        """Configure every motor while torque is off."""
+        """Set each motor's control mode before enabling torque."""
         if self.bus is None:
             raise DeviceNotConnectedError(f"{self} motor bus is not initialized")
         self.bus.disable_all()
-        self._apply_control_modes()
-        self.bus.enable_all()
-
-    def _apply_control_modes(self) -> None:
         for motor_name, motor in self.motors.items():
             mode = (
                 self.config.gripper_control_mode if motor_name == GRIPPER_MOTOR else self.config.control_mode
             )
-            if mode == ARM_MODE_POS_VEL:
+            if mode in (MIT_MODE, GRIPPER_MODE_MIT_IMPEDANCE):
+                target_mode = MotorBridgeMode.MIT
+            elif mode == ARM_MODE_POS_VEL:
                 target_mode = MotorBridgeMode.POS_VEL
             elif mode == GRIPPER_MODE_FORCE_POS:
                 target_mode = MotorBridgeMode.FORCE_POS
             else:
-                target_mode = MotorBridgeMode.MIT
-            for attempt in range(_ENSURE_MODE_RETRIES + 1):
-                try:
-                    motor.ensure_mode(target_mode)
-                    break
-                except Exception:
-                    if attempt == _ENSURE_MODE_RETRIES:
-                        raise
-                    time.sleep(_SETTLE_SEC)
+                raise ValueError(f"Unsupported control mode '{mode}'.")
+
+            motor.ensure_mode(target_mode)
             logger.debug(f"{motor_name} mode set to {target_mode}")
+        self.bus.enable_all()
 
     @check_if_not_connected
     def disable_torque(self) -> None:
-        """Disable motor torque so the arm can be moved by hand (read-only debugging).
-
-        The arm becomes back-drivable and will fall under gravity: hold it first.
-        """
+        """Disable motor torque so the arm can be moved by hand (read-only debugging)."""
         if self.bus is None:
             raise DeviceNotConnectedError(f"{self} motor bus is not initialized")
         self.bus.disable_all()
@@ -307,11 +278,11 @@ class RebotB601Follower(Robot):
 
         Positions are expressed in degrees. The relative action magnitude may be
         clipped depending on `max_relative_target`, so the action actually sent is
-        always returned in the same public robot coordinate frame as observations.
-        Joints omitted from a partial action are not sent a new command.
+        always returned.
         """
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
+        # Cap relative target when too far from the present position.
         if self.config.max_relative_target is not None:
             present_pos = self._present_pos()
             goal_present_pos = {key: (goal, present_pos.get(key, goal)) for key, goal in goal_pos.items()}
@@ -327,17 +298,11 @@ class RebotB601Follower(Robot):
         return {f"{motor}.pos": val for motor, val in sent_pos.items()}
 
     def _send_joint(self, motor_name: str, position_deg: float) -> float:
-        """Emit one joint command.
-
-        Every command reaches the bus through here. The requested position enters
-        in the public robot frame, then is mapped into the raw motor frame and
-        clamped.
-
-        Returns:
-            The position actually sent, expressed in the public robot frame.
-        """
+        """Send one joint command and return its clipped public position."""
         motor = self.motors[motor_name]
         motor_position_deg = self._public_to_motor_position(motor_name, position_deg)
+
+        # Clip against soft joint limits.
         limits = self.config.joint_limits.get(motor_name)
         if limits is not None:
             range_min, range_max = limits
@@ -348,39 +313,7 @@ class RebotB601Follower(Robot):
         position_rad = math.radians(motor_position_deg)
 
         if motor_name == GRIPPER_MOTOR:
-            if self.config.gripper_control_mode == GRIPPER_MODE_MIT_IMPEDANCE:
-                # Driven purely by a clamped feedforward torque, with the position
-                # setpoint and kp both zero. This bounds grip force, where a plain
-                # position command would keep pushing toward the target regardless
-                # of force and can overcurrent when closing on an object.
-                try:
-                    tau = self._gripper_impedance_torque(position_rad)
-                except Exception:
-                    try:
-                        motor.send_mit(0.0, 0.0, 0.0, _GRIPPER_IMPEDANCE_DAMPING, 0.0)
-                    except Exception:
-                        logger.exception("Failed to command zero RS gripper torque after feedback loss.")
-                    try:
-                        if self.bus is not None:
-                            self.bus.disable_all()
-                    except Exception:
-                        logger.exception("Failed to disable reBot torque after RS gripper feedback loss.")
-                    raise
-                motor.send_mit(0.0, 0.0, 0.0, _GRIPPER_IMPEDANCE_DAMPING, tau)
-            elif self.config.gripper_control_mode == GRIPPER_MODE_FORCE_POS:
-                motor.send_force_pos(
-                    position_rad,
-                    math.radians(self.config.pos_vel_velocity[motor_name]),
-                    self.config.gripper_torque_ratio,
-                )
-            else:
-                motor.send_mit(
-                    position_rad,
-                    0.0,
-                    self.config.mit_kp[motor_name],
-                    self.config.mit_kd[motor_name],
-                    0.0,
-                )
+            self._send_gripper(position_rad)
         elif self.config.control_mode == ARM_MODE_POS_VEL:
             motor.send_pos_vel(position_rad, math.radians(self.config.pos_vel_velocity[motor_name]))
         else:
@@ -391,9 +324,53 @@ class RebotB601Follower(Robot):
                 self.config.mit_kd[motor_name],
                 0.0,
             )
-        # The impedance gripper sends an internal zero position setpoint, but its
-        # effective requested target remains this clipped public position.
         return self._motor_to_public_position(motor_name, motor_position_deg)
+
+    def _send_gripper(self, position_rad: float) -> None:
+        """Send the gripper command with its configured control mode."""
+        motor = self.motors[GRIPPER_MOTOR]
+        if self.config.gripper_control_mode == GRIPPER_MODE_FORCE_POS:
+            motor.send_force_pos(
+                position_rad,
+                math.radians(self.config.pos_vel_velocity[GRIPPER_MOTOR]),
+                self.config.gripper_torque_ratio,
+            )
+        elif self.config.gripper_control_mode == GRIPPER_MODE_MIT_IMPEDANCE:
+            self._send_gripper_impedance(position_rad)
+        else:
+            motor.send_mit(
+                position_rad,
+                0.0,
+                self.config.mit_kp[GRIPPER_MOTOR],
+                self.config.mit_kd[GRIPPER_MOTOR],
+                0.0,
+            )
+
+    def _send_gripper_impedance(self, target_pos_rad: float) -> None:
+        """Send force-limited MIT control for the RobStride gripper.
+
+        MotorBridge supports FORCE_POS for Damiao but not RobStride, so RS uses
+        a bounded feedforward torque computed from position and velocity error.
+        """
+        motor = self.motors[GRIPPER_MOTOR]
+        try:
+            torque = self._gripper_impedance_torque(target_pos_rad)
+        except Exception:
+            self._stop_after_gripper_feedback_error()
+            raise
+        motor.send_mit(0.0, 0.0, 0.0, _GRIPPER_IMPEDANCE_DAMPING, torque)
+
+    def _stop_after_gripper_feedback_error(self) -> None:
+        motor = self.motors[GRIPPER_MOTOR]
+        try:
+            motor.send_mit(0.0, 0.0, 0.0, _GRIPPER_IMPEDANCE_DAMPING, 0.0)
+        except Exception:
+            logger.exception("Failed to command zero RS gripper torque after feedback loss.")
+        try:
+            if self.bus is not None:
+                self.bus.disable_all()
+        except Exception:
+            logger.exception("Failed to disable reBot torque after RS gripper feedback loss.")
 
     def _reset_gripper_impedance_state(self) -> None:
         self._gripper_prev_target_pos: float | None = None
@@ -402,24 +379,14 @@ class RebotB601Follower(Robot):
         self._gripper_prev_time: float | None = None
 
     def _gripper_impedance_torque(self, target_pos_rad: float) -> float:
-        """Force-limited impedance torque for the gripper.
-
-        Computes ``tau = kp*(x_r - x) + kd*(v_r - v)`` from the target and the
-        motor's measured state, then clamps it to the moving or holding torque
-        limit depending on how fast the gripper is actually travelling. Feedback
-        errors propagate to the caller, which commands zero torque and disables
-        the bus before re-raising the original error.
-        """
+        """Compute a force-limited impedance torque for the gripper."""
         state = self._read_feedback()[GRIPPER_MOTOR]
         now = time.monotonic()
-        previous_time = self._gripper_prev_time
-        dt = None if previous_time is None else now - previous_time
+        dt = 0.0 if self._gripper_prev_time is None else now - self._gripper_prev_time
         self._gripper_prev_time = now
 
         prev_target = self._gripper_prev_target_pos
-        target_vel = (
-            0.0 if prev_target is None or dt is None or dt <= 0.0 else (target_pos_rad - prev_target) / dt
-        )
+        target_vel = 0.0 if prev_target is None or dt <= 0.0 else (target_pos_rad - prev_target) / dt
         self._gripper_prev_target_pos = target_pos_rad
 
         prev_target_vel = self._gripper_prev_target_vel
@@ -429,9 +396,7 @@ class RebotB601Follower(Robot):
         self._gripper_prev_target_vel = target_vel
 
         prev_state_pos = self._gripper_prev_state_pos
-        measured_vel = (
-            0.0 if prev_state_pos is None or dt is None or dt <= 0.0 else (state.pos - prev_state_pos) / dt
-        )
+        measured_vel = 0.0 if prev_state_pos is None or dt <= 0.0 else (state.pos - prev_state_pos) / dt
         self._gripper_prev_state_pos = state.pos
 
         torque = self.config.mit_kp[GRIPPER_MOTOR] * (target_pos_rad - state.pos) + self.config.mit_kd[
@@ -447,12 +412,7 @@ class RebotB601Follower(Robot):
 
     @check_if_not_connected
     def disconnect(self) -> None:
-        """Disconnect from the robot.
-
-        With `disable_torque_on_disconnect=True` (the default) the arm becomes
-        back-drivable and falls under gravity: hold it or park it in a stable rest
-        pose first.
-        """
+        """Disconnect motors and cameras from the robot."""
         if self.bus is None:
             raise DeviceNotConnectedError(f"{self} motor bus is not initialized")
         for motor in self.motors.values():
