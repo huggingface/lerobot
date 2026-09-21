@@ -16,6 +16,7 @@
 
 """Tests for streaming video encoding."""
 
+import logging
 import queue
 import threading
 
@@ -69,12 +70,12 @@ class TestCameraEncoderThread:
         encoder_thread.start()
 
         # Feed frames (HWC uint8)
-        for _ in range(num_frames):
+        for i in range(num_frames):
             frame = np.random.randint(0, 255, (height, width, 3), dtype=np.uint8)
-            frame_queue.put(frame)
+            frame_queue.put((i, frame))
 
         # Send sentinel
-        frame_queue.put(None)
+        frame_queue.put((num_frames, None))
         encoder_thread.join(timeout=60)
         assert not encoder_thread.is_alive()
 
@@ -118,11 +119,11 @@ class TestCameraEncoderThread:
         encoder_thread.start()
 
         # Feed CHW frames
-        for _ in range(num_frames):
+        for i in range(num_frames):
             frame = np.random.randint(0, 255, (3, 64, 96), dtype=np.uint8)
-            frame_queue.put(frame)
+            frame_queue.put((i, frame))
 
-        frame_queue.put(None)
+        frame_queue.put((num_frames, None))
         encoder_thread.join(timeout=60)
 
         status, _ = result_queue.get(timeout=5)
@@ -150,14 +151,88 @@ class TestCameraEncoderThread:
         encoder_thread.start()
 
         # Feed a few frames
-        for _ in range(3):
+        for i in range(3):
             frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
-            frame_queue.put(frame)
+            frame_queue.put((i, frame))
 
         # Signal stop instead of sending sentinel
         stop_event.set()
         encoder_thread.join(timeout=10)
         assert not encoder_thread.is_alive()
+
+    def test_fills_index_gaps_by_repeating_frames(self, tmp_path):
+        """Skipped frame indices (queue back-pressure) are filled so the video stays aligned."""
+        fps = 30
+        video_path = tmp_path / "test_gaps" / "test.mp4"
+
+        frame_queue: queue.Queue = queue.Queue(maxsize=60)
+        result_queue: queue.Queue = queue.Queue(maxsize=1)
+        stop_event = threading.Event()
+
+        # High quality so solid-colour frames decode close to their source value.
+        enc_cfg = RGBEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=10, preset=13)
+        encoder_thread = _CameraEncoderThread(
+            video_path=video_path,
+            fps=fps,
+            video_encoder=enc_cfg,
+            frame_queue=frame_queue,
+            result_queue=result_queue,
+            stop_event=stop_event,
+        )
+        encoder_thread.start()
+
+        # Solid-colour frames make it trivial to identify which source frame filled each slot.
+        def solid(v):
+            return np.full((64, 96, 3), v, dtype=np.uint8)
+
+        # Recorded 8 frames; indices 1, 4, 5 and the trailing 7 never reached the queue.
+        frame_queue.put((0, solid(20)))
+        frame_queue.put((2, solid(80)))
+        frame_queue.put((3, solid(140)))
+        frame_queue.put((6, solid(200)))
+        frame_queue.put((8, None))
+        encoder_thread.join(timeout=60)
+        assert not encoder_thread.is_alive()
+
+        status, stats = result_queue.get(timeout=5)
+        assert status == "ok"
+
+        expected = [20, 20, 80, 140, 140, 140, 200, 200]
+        with av.open(str(video_path)) as container:
+            decoded = [f.to_ndarray(format="rgb24").mean() for f in container.decode(video=0)]
+        assert len(decoded) == len(expected)
+        np.testing.assert_allclose(decoded, expected, atol=8)
+
+    def test_gap_before_first_frame_is_filled_forward(self, tmp_path):
+        """A gap before the first delivered frame is filled with that frame."""
+        fps = 30
+        video_path = tmp_path / "test_leading_gap" / "test.mp4"
+
+        frame_queue: queue.Queue = queue.Queue(maxsize=60)
+        result_queue: queue.Queue = queue.Queue(maxsize=1)
+        stop_event = threading.Event()
+
+        enc_cfg = RGBEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13)
+        encoder_thread = _CameraEncoderThread(
+            video_path=video_path,
+            fps=fps,
+            video_encoder=enc_cfg,
+            frame_queue=frame_queue,
+            result_queue=result_queue,
+            stop_event=stop_event,
+        )
+        encoder_thread.start()
+
+        frame_queue.put((2, np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)))
+        frame_queue.put((3, np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)))
+        frame_queue.put((4, None))
+        encoder_thread.join(timeout=60)
+
+        status, _ = result_queue.get(timeout=5)
+        assert status == "ok"
+        with av.open(str(video_path)) as container:
+            total_frames = sum(1 for _ in container.decode(video=0))
+        assert total_frames == 4
 
 
 # ─── StreamingVideoEncoder tests ───
@@ -412,9 +487,9 @@ class TestStreamingVideoEncoder:
         assert encoder._encoder_threads is None
         encoder.close()
 
-    def test_graceful_frame_dropping(self, tmp_path):
-        """Test that full queue drops frames instead of crashing."""
-        video_keys = [f"{OBS_IMAGES}.cam"]
+    def test_tiny_queue_never_shortens_video(self, tmp_path):
+        """A full queue never crashes and never shortens the video: rejected frames are repeated."""
+        key = f"{OBS_IMAGES}.cam"
         encoder = StreamingVideoEncoder(
             fps=30,
             rgb_encoder=self._make_encoder_config(
@@ -422,25 +497,59 @@ class TestStreamingVideoEncoder:
             ),
             queue_maxsize=1,
         )
-        encoder.start_episode(video_keys, tmp_path)
+        encoder.start_episode([key], tmp_path)
 
-        # Feed many frames quickly - with queue_maxsize=1, some will be dropped
+        # Feed many frames quickly - with queue_maxsize=1, some will be rejected by the queue
         num_frames = 50
         for _ in range(num_frames):
-            frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
-            encoder.feed_frame(f"{OBS_IMAGES}.cam", frame)
+            encoder.feed_frame(key, np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8))
 
-        # Should not raise - frames are dropped gracefully
         results = encoder.finish_episode()
-        assert f"{OBS_IMAGES}.cam" in results
-
-        mp4_path, _ = results[f"{OBS_IMAGES}.cam"]
+        mp4_path, stats = results[key]
         assert mp4_path.exists()
 
-        # Some frames should have been dropped (queue was tiny)
-        dropped = encoder._dropped_frames.get(f"{OBS_IMAGES}.cam", 0)
-        # We can't guarantee drops but can verify no crash occurred
-        assert dropped >= 0
+        # Whether or not any frame was rejected, the video has exactly one frame per fed frame
+        assert encoder._repeated_frames.get(key, 0) >= 0
+        with av.open(str(mp4_path)) as container:
+            total_frames = sum(1 for _ in container.decode(video=0))
+        assert total_frames == num_frames
+
+        encoder.close()
+
+    def test_full_queue_repeats_frame_instead_of_dropping(self, tmp_path, caplog):
+        """When the queue rejects a frame, the video still has one frame per fed frame."""
+        key = f"{OBS_IMAGES}.cam"
+        encoder = StreamingVideoEncoder(
+            fps=30,
+            rgb_encoder=self._make_encoder_config(
+                vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13
+            ),
+        )
+        encoder.start_episode([key], tmp_path)
+
+        num_frames = 12
+        rejected = {4, 5, num_frames - 1}
+        frame_queue = encoder._frame_queues[key]
+        real_put = frame_queue.put
+
+        def flaky_put(item, *args, **kwargs):
+            if item[0] in rejected:
+                raise queue.Full
+            return real_put(item, *args, **kwargs)
+
+        frame_queue.put = flaky_put
+        with caplog.at_level(logging.WARNING):
+            for _ in range(num_frames):
+                encoder.feed_frame(key, np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8))
+        frame_queue.put = real_put
+
+        assert "repeated the previous frame" in caplog.text
+
+        results = encoder.finish_episode()
+        mp4_path, stats = results[key]
+        with av.open(str(mp4_path)) as container:
+            total_frames = sum(1 for _ in container.decode(video=0))
+        assert total_frames == num_frames
 
         encoder.close()
 

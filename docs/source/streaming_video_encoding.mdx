@@ -46,19 +46,22 @@ This parameter controls how many threads each encoder instance uses internally:
 - **Lower values** (e.g., 1-2): Less CPU per camera, freeing cores for capture and visualization. Good for low-res images and capable CPUs.
 - **`None` (default)**: Lets the codec decide. Information available in the codec logs.
 
-### Backpressure and Frame Dropping
+### Backpressure and Repeated Frames
 
 Each camera has a bounded queue (`encoder_queue_maxsize`, default 30 frames). When the encoder can't keep up:
 
 1. The queue fills up (consuming RAM)
-2. New frames are **dropped** (not blocked) — the capture loop continues uninterrupted
-3. A warning is logged: `"Encoder queue full for {camera}, dropped N frame(s)"`
-4. At episode end, total dropped frames per camera are reported
+2. New frames are **not enqueued** (not blocked) — the capture loop continues uninterrupted
+3. The encoder fills each missing slot by **repeating the previous frame**, so the video always has exactly one frame per recorded frame and stays aligned with the tabular data
+4. A warning is logged: `"Encoder queue full for {camera}, repeated the previous frame N time(s)"`
+5. At episode end, total repeated frames per camera are reported
+
+A repeated frame is a brief visual freeze (one frame period) in the video, not a missing sample. Sustained warnings still mean the encoder is a bottleneck and the video quality is degraded; see below.
 
 ### Symptoms of Encoder Falling Behind
 
 - **System feels laggy and freezes**: all CPUs are at 100%
-- **Dropped frame warnings** in the log or lower frames/FPS than expected in the recorded dataset
+- **Repeated frame warnings** in the log
 - **Choppy robot movement**: If CPU is severely overloaded, even the capture loop may be affected
 - **Accumulated rerun lag**: Visualization falls behind real-time
 
@@ -68,7 +71,7 @@ Each camera has a bounded queue (`encoder_queue_maxsize`, default 30 frames). Wh
 
 Use HW encoding when:
 
-- CPU is the bottleneck (dropped frames, choppy robot, rerun lag)
+- CPU is the bottleneck (repeated frames, choppy robot, rerun lag)
 - You have compatible hardware (GPU or dedicated encoder)
 - You're recording at high throughput (high resolution or with many cameras)
 
@@ -103,7 +106,7 @@ Use HW encoding when:
 | Symptom                                                            | Likely Cause                                 | Fix                                                                                                                                                                                                                                                                                              |
 | ------------------------------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | System freezes or choppy robot movement or Rerun visualization lag | CPU starved (100% load usage)                | Close other apps, reduce encoding throughput, lower `encoder_threads`, use `h264`, use `display_data=False`. If the CPU continues to be at 100% then it might be insufficient for your setup, consider `--dataset.streaming_encoding=false` or HW encoding (`--dataset.rgb_encoder.vcodec=auto`) |
-| "Encoder queue full" warnings or dropped frames in dataset         | Encoder can't keep up (Queue overflow)       | If CPU is not at 100%: Increase `encoder_threads`, increase `encoder_queue_maxsize` or use HW encoding (`--dataset.rgb_encoder.vcodec=auto`).                                                                                                                                                    |
+| "Encoder queue full" warnings or repeated frames in dataset        | Encoder can't keep up (Queue overflow)       | If CPU is not at 100%: Increase `encoder_threads`, increase `encoder_queue_maxsize` or use HW encoding (`--dataset.rgb_encoder.vcodec=auto`).                                                                                                                                                    |
 | High RAM usage                                                     | Queue filling faster than encoding           | `encoder_threads` too low or CPU insufficient. Reduce `encoder_queue_maxsize` or use HW encoding                                                                                                                                                                                                 |
 | Large video files                                                  | Using HW encoder or H.264                    | Expected trade-off. Switch to `libsvtav1` if CPU allows                                                                                                                                                                                                                                          |
 | `save_episode()` still slow                                        | `streaming_encoding` is `False`              | Set `--dataset.streaming_encoding=true`                                                                                                                                                                                                                                                          |
