@@ -31,18 +31,43 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.device_utils import auto_select_torch_device, is_amp_available, is_torch_device_available
 from lerobot.utils.hub import HubMixin
 
-from .types import FeatureType, PolicyFeature
+from .types import DtypeConfigMixin, FeatureType, PolicyFeature
 
 T = TypeVar("T", bound="PreTrainedConfig")
 logger = getLogger(__name__)
 
+_warned_deprecated_config_keys: set[tuple[str, str]] = set()
+
+
+def _warn_deprecated_config_key(config_cls: type, old_key: str, new_key: str) -> None:
+    """Warn once per process that a checkpoint carries a config key we no longer write.
+
+    Once per (config class, key), not once per load: a training run that reloads in a loop must not
+    spam. Deliberately does not name a removal version -- the key lives in published artifacts, and
+    a version-pinned removal promise for data you do not own is a promise you cannot keep.
+    """
+    marker = (config_cls.__name__, old_key)
+    if marker in _warned_deprecated_config_keys:
+        return
+    _warned_deprecated_config_keys.add(marker)
+    logger.warning(
+        f"This checkpoint's config.json uses the deprecated key `{old_key}`, which has been read as "
+        f"`{new_key}`. It is still supported, but `{old_key}` is no longer written: re-saving the "
+        f"checkpoint with a current LeRobot removes it."
+    )
+
 
 @dataclass
-class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: ignore[misc,name-defined] #TODO: draccus issue
+class PreTrainedConfig(DtypeConfigMixin, draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: ignore[misc,name-defined] #TODO: draccus issue
     """
     Base configuration class for policy models.
 
     Args:
+        dtype: The parameter storage precision to build the policy with, as a `torch.dtype` or its
+            name (`"bfloat16"`). `None` leaves the policy exactly as its `__init__` builds it.
+            Floating tensors matched by `PreTrainedPolicy._fp32_modules` keep float32 regardless.
+            This is a request, not a record: nothing writes back to it. Read
+            `PreTrainedPolicy.dtype` to see what a built policy actually holds.
         n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
             current step and additional steps going back).
         input_features: A dictionary defining the PolicyFeature of the input data for the policy. The key represents
@@ -162,11 +187,34 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
                 return ft
         return None
 
+    @classmethod
+    def _migrate_config_dict(cls, config_dict: dict[str, Any]) -> dict[str, Any]:
+        """Rewrite a checkpoint's `config.json` payload onto the fields this class declares today.
+
+        Called by `from_pretrained` before parsing. draccus rejects unknown keys, so a field that
+        was ever published under a different name — or has since been removed — makes every
+        checkpoint carrying it unloadable. Override in a policy config to rename or drop the keys
+        that policy used to publish, calling `super()` first, and warn about anything dropped.
+
+        Deprecated keys are read indefinitely and never written back. Do not announce a removal
+        version: the key lives in artifacts we do not all control.
+        """
+        if (legacy := config_dict.pop("torch_dtype", None)) is not None:
+            _warn_deprecated_config_key(cls, "torch_dtype", "dtype")
+            config_dict.setdefault("dtype", legacy)
+        return config_dict
+
     def _save_pretrained(self, save_directory: Path) -> None:
         # Encode against the base class so draccus includes the choice "type" key,
         # which `from_pretrained` needs to resolve the concrete subclass.
+        encoded = draccus.encode(self, PreTrainedConfig)
+        if encoded.get("dtype") is None:
+            # An absent key and `"dtype": null` both decode to "unspecified", so omitting it loses
+            # nothing -- and it keeps checkpoints from policies that express no precision readable
+            # by LeRobot versions that predate the field.
+            encoded.pop("dtype", None)
         with open(save_directory / CONFIG_NAME, "w") as f:
-            json.dump(draccus.encode(self, PreTrainedConfig), f, indent=4)
+            json.dump(encoded, f, indent=4)
 
     @classmethod
     def from_pretrained(
@@ -226,6 +274,11 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
                 f"Policy type '{policy_type}' (from {CONFIG_NAME} of {model_id}) is not registered. "
                 f"Available policy types: {cls.get_known_choices()}"
             ) from e
+
+        # Rewrite keys this policy used to publish onto the fields it declares today. draccus
+        # rejects unknown keys, so without this every renamed or removed field breaks every
+        # checkpoint already on the Hub.
+        config = config_cls._migrate_config_dict(config)
 
         with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
             json.dump(config, f)

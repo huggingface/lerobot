@@ -16,12 +16,17 @@ from __future__ import annotations
 import abc
 import builtins
 import dataclasses
+import functools
+import itertools
 import logging
 import os
+import re
 import warnings
+from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, TypeVar, Unpack
 
+import torch
 from huggingface_hub import hf_hub_download, save_torch_state_dict
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
@@ -54,6 +59,65 @@ T = TypeVar("T", bound="PreTrainedPolicy")
 _SINGLE_FILE_SHARD_SIZE = "1TB"
 
 
+@functools.cache
+def _compile_fp32_paths(paths: tuple[str, ...]) -> re.Pattern[str] | None:
+    """Compile `_fp32_modules` dotted paths into one alternation over full tensor names.
+
+    Matching is anchored at dot-segment boundaries but not at the start of the name, so
+    `"model.norm"` matches `model.norm.weight` and `base_model.model.model.norm.weight` alike,
+    while `"norm"` does not match `post_attention_layernorm.weight`. `*` is exactly one segment.
+    """
+    if not paths:
+        return None
+    branches = []
+    for path in paths:
+        segments = path.split(".")
+        if not all(segments) or any("*" in s and s != "*" for s in segments):
+            raise ValueError(
+                f"Invalid path {path!r} in _fp32_modules: use dot-separated names, with '*' as a "
+                "whole segment to match one level."
+            )
+        body = r"\.".join(r"[^.]+" if s == "*" else re.escape(s) for s in segments)
+        branches.append(rf"(?:(?:^|\.){body}(?:\.|$))")
+    return re.compile("|".join(branches))
+
+
+def _wrap_init_with_post_init(cls: builtins.type) -> None:
+    """Make `post_init()` run once, after the outermost `__init__` of a policy returns.
+
+    `PreTrainedPolicy.__init__` runs before a subclass has built anything, so the base class cannot
+    finalize precision there. transformers solves this by asking every subclass to call
+    `self.post_init()` at the end of its `__init__`; a policy that forgets gets a `config.dtype`
+    its tensors do not honour, silently. Wrapping instead makes the contract an invariant of the
+    base class, including for third-party policies, at no cost to the author.
+
+    The depth counter makes a policy that subclasses another policy finalize exactly once, after
+    the most-derived `__init__` returns. Exceptions propagate unchanged.
+    """
+    # Fall back to the inherited `__init__` so a subclass that defines none is still covered; if it
+    # was inherited from an already-wrapped policy the marker short-circuits here.
+    original = cls.__dict__.get("__init__") or cls.__init__
+    if getattr(original, "_lerobot_runs_post_init", False):
+        return
+
+    @functools.wraps(original)
+    def init_then_post_init(self, *args: Any, **kwargs: Any) -> None:
+        depth = getattr(self, "_lerobot_init_depth", 0)
+        object.__setattr__(self, "_lerobot_init_depth", depth + 1)
+        try:
+            original(self, *args, **kwargs)
+        finally:
+            object.__setattr__(self, "_lerobot_init_depth", depth)
+        if depth == 0:
+            self.post_init()
+            # From here on, a conversion means somebody is changing a built policy's precision,
+            # which desynchronizes anything already derived from its parameters.
+            object.__setattr__(self, "_lerobot_construction_finished", True)
+
+    init_then_post_init._lerobot_runs_post_init = True  # type: ignore[attr-defined]
+    cls.__init__ = init_then_post_init
+
+
 class ActionSelectKwargs(TypedDict, total=False):
     noise: Tensor | None
 
@@ -65,6 +129,23 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     config_class: None
     name: None
+
+    # --- declarative precision surface -------------------------------------------------------
+    # Tensors that must stay in float32 however `config.dtype` is set, because the policy is
+    # numerically unstable without them: action heads, flow-matching time embeddings,
+    # normalization statistics, rotary caches.
+    #
+    # An entry is either a dotted path, matched against full parameter/buffer names at dot-segment
+    # boundaries and at any depth (`*` stands for exactly one segment), or an `nn.Module` subclass,
+    # which protects every floating tensor of every module of that type. Best practice is a
+    # complete path from the policy root, which reads directly against `named_parameters()`;
+    # matching at any depth means a wrapper inserted above the root (PEFT's `base_model.model.`,
+    # `torch.compile`'s `_orig_mod.`, DDP's `module.`) does not silently void the rule.
+    #
+    # Declare these here on the policy class, not on nested modules, so a reader finds the whole
+    # precision layout in one place. If neither form can express what a policy needs, override
+    # `_fp32_tensor_names()`.
+    _fp32_modules: ClassVar[tuple[str | type[nn.Module], ...]] = ()
 
     # --- declarative parallelism/acceleration surface ----------------------------------------
     # Module CLASS names forming the FSDP2 wrap units (and, once wired, the activation-
@@ -96,12 +177,168 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             )
         self.config = config
 
+    # --- parameter precision -----------------------------------------------------------------
+
+    def _fp32_tensor_names(self) -> set[str]:
+        """Full names of the floating tensors `_fp32_modules` protects, resolved against `self`.
+
+        Computed from the live registrations on every call, so it cannot go stale when modules or
+        parameter ties change. If any alias of a shared tensor matches, every alias is protected.
+        Override this to express a layout the declarative forms cannot.
+        """
+        if not self._fp32_modules:
+            return set()
+
+        names: set[str] = set()
+        module_types = tuple(entry for entry in self._fp32_modules if isinstance(entry, type))
+        if module_types:
+            for module_name, module in self.named_modules():
+                if isinstance(module, module_types):
+                    prefix = f"{module_name}." if module_name else ""
+                    for name, _ in itertools.chain(module.named_parameters(), module.named_buffers()):
+                        names.add(prefix + name)
+
+        pattern = _compile_fp32_paths(tuple(e for e in self._fp32_modules if isinstance(e, str)))
+        registrations = list(
+            itertools.chain(
+                self.named_parameters(remove_duplicate=False), self.named_buffers(remove_duplicate=False)
+            )
+        )
+        if pattern is not None:
+            names.update(name for name, _ in registrations if pattern.search(name))
+
+        # Propagate to every alias of a shared tensor, so protecting one name protects the object.
+        aliases: dict[int, list[str]] = defaultdict(list)
+        for name, tensor in registrations:
+            aliases[id(tensor)].append(name)
+        for tensor_names in aliases.values():
+            if not names.isdisjoint(tensor_names):
+                names.update(tensor_names)
+        return names
+
+    def post_init(self) -> None:
+        """Bring the constructed policy onto the precision layout `config.dtype` asks for.
+
+        Runs automatically once the outermost `__init__` returns, so a policy author never has to
+        remember it. Idempotent and re-runnable: an explicit call is allowed and harmless.
+
+        A policy that already builds its submodules at the requested precision — by forwarding
+        `config.dtype` into whatever constructs them — leaves this with nothing to do. It is a
+        guarantee and a fallback, not the primary mechanism.
+        """
+        requested = self.config.dtype
+        if requested is None:
+            # "Unspecified" means the policy is left exactly as its __init__ built it.
+            return
+        protected = self._fp32_tensor_names()
+        converted: list[str] = []
+        views: list[str] = []
+        with torch.no_grad():
+            for name, tensor in itertools.chain(self.named_parameters(), self.named_buffers()):
+                if not tensor.is_floating_point():
+                    continue
+                target = torch.float32 if name in protected else requested
+                if tensor.dtype is target:
+                    continue
+                if tensor._base is not None:
+                    # A tensor that is a view of another one gets its own storage here, so it stops
+                    # tracking its base. Object-identity ties are fine (`.data =` mutates the shared
+                    # object in place); storage-only sharing is not, so say so rather than silently
+                    # decoupling them.
+                    views.append(name)
+                converted.append(name)
+                # Assigning `.data` keeps the nn.Parameter object, and therefore every alias of a
+                # shared tensor, intact. Rewrapping in a fresh Parameter would break ties.
+                tensor.data = tensor.data.to(target)
+        if views:
+            warnings.warn(
+                f"{type(self).__name__}.post_init() converted {', '.join(views)}, which are views of "
+                "other tensors; they now own their storage and no longer track their base. Register "
+                "them as independent tensors, or add them to _fp32_modules alongside their base.",
+                UserWarning,
+                stacklevel=2,
+            )
+        if converted and getattr(self, "_lerobot_construction_finished", False):
+            warnings.warn(
+                f"{type(self).__name__}.post_init() changed parameter dtypes after construction had "
+                "finished. Any optimizer, compiled graph or distributed wrapper built from this "
+                "policy now disagrees with its parameters. Precision is meant to be chosen through "
+                "config.dtype before the policy is built.",
+                UserWarning,
+                stacklevel=2,
+            )
+        if converted:
+            logging.debug(
+                "%s.post_init() converted %d tensor(s) that __init__ left at another precision: %s",
+                type(self).__name__,
+                len(converted),
+                ", ".join(converted[:10]) + (" ..." if len(converted) > 10 else ""),
+            )
+
+    @property
+    def dtype(self) -> torch.dtype:
+        """The dtype holding most of this policy's floating parameter memory.
+
+        Reports what the tensors are, not what `config.dtype` asked for, and is never written back
+        into the config. Weighted by `numel()` so a handful of protected float32 tensors cannot
+        misreport a bfloat16 policy — the failure mode of the "first floating parameter" shortcut.
+        Buffers are excluded: they are derived state, and a large float32 statistics buffer should
+        not outvote the weights.
+
+        Iterates the parameters on each call (single-digit milliseconds for a multi-billion
+        parameter policy), so treat it as a diagnostic, not a per-step accessor. Use
+        `parameter_dtypes()` to see the full breakdown.
+        """
+        counts = self.parameter_dtypes()
+        if not counts:
+            return self.config.dtype or torch.get_default_dtype()
+        most = max(counts.values())
+        candidates = [dtype for dtype, count in counts.items() if count == most]
+        # On a tie, report what was asked for rather than whichever came first.
+        if self.config.dtype in candidates:
+            return self.config.dtype
+        return candidates[0]
+
+    def parameter_dtypes(self) -> dict[torch.dtype, int]:
+        """Number of floating parameter elements held in each dtype."""
+        counts: dict[torch.dtype, int] = defaultdict(int)
+        for parameter in self.parameters():
+            if parameter.is_floating_point():
+                counts[parameter.dtype] += parameter.numel()
+        return dict(counts)
+
+    def _apply(self, *args, **kwargs):
+        """Warn when a post-construction cast would erase the declared float32 exceptions.
+
+        Behaviour is unchanged — `.to()`, `.half()`, `.float()`, `.bfloat16()` all do exactly what
+        PyTorch does. But casting a policy after it is built is not a supported way to choose its
+        precision, and it silently drops the protections the policy declared, so say so. Hooking
+        `_apply` covers every public cast API with one override; the probe is O(1), so the
+        `.to(device)` that every run performs costs two `next()` calls and never warns.
+        """
+        if not self._fp32_modules:
+            return super()._apply(*args, **kwargs)
+        before = next((p.dtype for p in self.parameters() if p.is_floating_point()), None)
+        result = super()._apply(*args, **kwargs)
+        after = next((p.dtype for p in self.parameters() if p.is_floating_point()), None)
+        if before is not None and after is not None and before is not after:
+            declared = ", ".join(e if isinstance(e, str) else e.__name__ for e in self._fp32_modules)
+            warnings.warn(
+                f"Casting {type(self).__name__} after construction also casts the tensors it keeps "
+                f"in float32 ({declared}), which can change its numerics. Set config.dtype and "
+                f"rebuild through make_policy to get a supported precision layout.",
+                UserWarning,
+                stacklevel=3,
+            )
+        return result
+
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         if not getattr(cls, "config_class", None):
             raise TypeError(f"Class {cls.__name__} must define 'config_class'")
         if not getattr(cls, "name", None):
             raise TypeError(f"Class {cls.__name__} must define 'name'")
+        _wrap_init_with_post_init(cls)
         # The rollout stack gates text queries on supports_text_generation(), so a
         # generate_text() override without it is unreachable. Compared through the MRO, so an
         # override inherited from a conforming parent counts.
@@ -140,6 +377,20 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             # Non-sharded multi-rank (DDP): every rank holds a full dict — the explicit rank
             # gate prevents N ranks racing on the same files. Single process: never taken.
             return
+        # `config.dtype` is the request that reproduces this policy, so it is saved as-is. If the
+        # tensors no longer match it, somebody cast the policy after construction: say so rather
+        # than rewriting their request. Reloading rebuilds at config.dtype and casts these weights
+        # into it, which is lossless in the usual (low precision -> float32) direction.
+        if self.config.dtype is not None and (observed := model_to_save.dtype) is not self.config.dtype:
+            logging.warning(
+                "Saving %s whose parameters are mostly %s while config.dtype requests %s (breakdown: %s). "
+                "The config records the request, so reloading rebuilds the policy at %s.",
+                type(model_to_save).__name__,
+                observed,
+                self.config.dtype,
+                model_to_save.parameter_dtypes(),
+                self.config.dtype,
+            )
         self.config._save_pretrained(save_directory)
         save_torch_state_dict(state_dict, str(save_directory), max_shard_size=_SINGLE_FILE_SHARD_SIZE)
 
