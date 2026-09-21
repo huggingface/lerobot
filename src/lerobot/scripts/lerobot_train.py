@@ -61,6 +61,7 @@ from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import JobConfig, parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
+from lerobot.datasets.compute_stats import compute_relative_action_stats
 from lerobot.datasets.factory import make_train_eval_datasets
 from lerobot.distributed import (
     ParallelDims,
@@ -77,7 +78,7 @@ from lerobot.policies.factory import ProcessorConfigKwargs
 from lerobot.processor.rename_processor import rename_batch_keys, rename_stats
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
-from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR
+from lerobot.utils.constants import ACTION, PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR
 from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
@@ -123,6 +124,33 @@ def _make_eval_envs(cfg: TrainPipelineConfig) -> Iterator[dict[str, dict[int, An
         yield envs
     finally:
         close_envs(envs)
+
+
+def _dataset_stats_for_processors(cfg: TrainPipelineConfig, dataset: Any) -> dict[str, dict[str, Any]]:
+    """``dataset.meta.stats``, with action stats matching what the normalizer will see.
+
+    ``RelativeActionsProcessorStep`` runs before it, so the normalizer receives
+    ``action - observation.state``, which the absolute action stats do not describe.
+    """
+    policy_cfg = cfg.trainable_config
+    if not getattr(policy_cfg, "use_relative_actions", False):
+        return dataset.meta.stats
+    if cfg.dataset.streaming:
+        logging.warning(
+            "use_relative_actions=True cannot recompute relative action stats from a streaming "
+            "dataset, so the absolute ones will be used. Precompute them with `lerobot-edit-dataset "
+            "--operation.type recompute_stats --operation.relative_action true`."
+        )
+        return dataset.meta.stats
+    return {
+        **dataset.meta.stats,
+        ACTION: compute_relative_action_stats(
+            hf_dataset=dataset.hf_dataset,
+            features=dataset.meta.features,
+            chunk_size=policy_cfg.chunk_size,
+            exclude_joints=policy_cfg.relative_exclude_joints,
+        ),
+    }
 
 
 def _preprocess_dataset_batch(
@@ -506,7 +534,7 @@ def train(cfg: TrainPipelineConfig):
         processor_pretrained_path = None
 
     processor_kwargs = ProcessorConfigKwargs()
-    processor_dataset_stats = rename_stats(dataset.meta.stats, cfg.rename_map)
+    processor_dataset_stats = rename_stats(_dataset_stats_for_processors(cfg, dataset), cfg.rename_map)
     if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
         processor_kwargs["dataset_stats"] = processor_dataset_stats
     if cfg.is_reward_model_training:
