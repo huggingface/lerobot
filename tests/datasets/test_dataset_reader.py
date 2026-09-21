@@ -263,15 +263,22 @@ def test_register_dataset_reader(tmp_path, lerobot_dataset_factory, monkeypatch)
 # ── Reader registry: entry point discovery ───────────────────────────
 
 
-def _fake_entry_points(monkeypatch, *pairs):
-    """Make discovery see exactly ``pairs`` of ``(name, value)``, on a scratch registry.
+def _fake_entry_points(monkeypatch, *entries):
+    """Make discovery see exactly ``entries``, on a scratch registry.
 
+    Each entry is ``(name, value)`` or ``(name, value, distribution)``; the
+    distribution is what the messages about a contested format have to name.
     Returns the list the fake appends to on every scan, so a test can assert how
     many times the entry points were read.
     """
-    points = [
-        EntryPoint(name=name, value=value, group=DATASET_READER_ENTRY_POINT_GROUP) for name, value in pairs
-    ]
+    points = []
+    for name, value, *dist in entries:
+        point = EntryPoint(name=name, value=value, group=DATASET_READER_ENTRY_POINT_GROUP)
+        if dist:
+            # EntryPoint is immutable; this is how importlib.metadata itself
+            # attaches the distribution (see EntryPoint._for).
+            vars(point).update(dist=types.SimpleNamespace(name=dist[0], version="1.0"))
+        points.append(point)
     scans = []
 
     def fake_entry_points(group=None):
@@ -280,6 +287,7 @@ def _fake_entry_points(monkeypatch, *pairs):
 
     monkeypatch.setattr(storage_module, "entry_points", fake_entry_points)
     monkeypatch.setattr(storage_module, "_DATASET_READER_MODULES", dict(_DATASET_READER_MODULES))
+    monkeypatch.setattr(storage_module, "_AMBIGUOUS_READER_PROVIDERS", {})
     monkeypatch.setattr(storage_module, "_PLUGINS_DISCOVERED", False)
     return scans
 
@@ -328,8 +336,8 @@ def test_broken_entry_point_does_not_block_the_others(monkeypatch):
     _fake_entry_points(
         monkeypatch,
         ("brokenfmt", "not a module path!"),
-        ("dupefmt", "first_reader"),
-        ("dupefmt", "second_reader"),
+        ("contestedfmt", "first_reader", "pkg-a"),
+        ("contestedfmt", "second_reader", "pkg-b"),
         ("goodfmt", "good_reader"),
     )
 
@@ -337,8 +345,102 @@ def test_broken_entry_point_does_not_block_the_others(monkeypatch):
 
     registry = storage_module._DATASET_READER_MODULES
     assert "brokenfmt" not in registry
-    assert registry["dupefmt"] == "first_reader"  # first declaration wins
+    assert "contestedfmt" not in registry
     assert registry["goodfmt"] == "good_reader"
+
+
+def test_contested_format_is_an_error_naming_every_claimant(monkeypatch):
+    """Two packages claiming one format fails loudly instead of picking a winner."""
+    _fake_entry_points(
+        monkeypatch,
+        ("contestedfmt", "a_pkg.reader", "pkg-a"),
+        ("contestedfmt", "b_pkg.reader", "pkg-b"),
+    )
+
+    with pytest.raises(ValueError) as caught:
+        storage_module._reader_module("contestedfmt")
+
+    message = str(caught.value)
+    # Every claimant, by distribution and module, or the user cannot tell what to uninstall.
+    for expected in ("contestedfmt", "pkg-a 1.0", "a_pkg.reader", "pkg-b 1.0", "b_pkg.reader"):
+        assert expected in message
+    assert "register_dataset_reader" in message  # and how to settle it
+
+
+def test_contested_format_does_not_depend_on_scan_order(monkeypatch):
+    """Which package entry_points() lists first must not change the outcome.
+
+    Ordering follows sys.path, so a first-wins rule would read the same install
+    differently on different machines -- the failure this test exists to prevent.
+    """
+    claims = [("contestedfmt", "a_pkg.reader", "pkg-a"), ("contestedfmt", "b_pkg.reader", "pkg-b")]
+    messages = []
+    for ordered in (claims, list(reversed(claims))):
+        _fake_entry_points(monkeypatch, *ordered)
+        with pytest.raises(ValueError) as caught:
+            storage_module._reader_module("contestedfmt")
+        messages.append(str(caught.value))
+
+    assert messages[0] == messages[1]
+
+
+def test_contested_format_does_not_disturb_the_others(monkeypatch):
+    """A conflict over one format leaves every other format loadable."""
+    _fake_entry_points(
+        monkeypatch,
+        ("contestedfmt", "a_pkg.reader", "pkg-a"),
+        ("contestedfmt", "b_pkg.reader", "pkg-b"),
+        ("goodfmt", "good_reader", "pkg-c"),
+    )
+
+    storage_module._discover_plugin_readers()
+
+    assert storage_module._DATASET_READER_MODULES["goodfmt"] == "good_reader"
+    assert storage_module._DATASET_READER_MODULES["lance"] == "lerobot.datasets.lance_backend"
+
+
+def test_two_packages_naming_the_same_module_is_not_a_conflict(monkeypatch):
+    """Nothing is ambiguous when the claims agree -- e.g. a package and its meta-package."""
+    _fake_entry_points(
+        monkeypatch,
+        ("sharedfmt", "shared_reader", "pkg-a"),
+        ("sharedfmt", "shared_reader:DATASET_READER", "pkg-b"),
+    )
+
+    storage_module._discover_plugin_readers()
+
+    assert storage_module._DATASET_READER_MODULES["sharedfmt"] == "shared_reader"
+
+
+@pytest.mark.parametrize("register_first", [True, False])
+def test_explicit_registration_settles_a_contested_format(monkeypatch, register_first):
+    """The documented way out of a conflict works whichever side of discovery it lands on."""
+    _fake_entry_points(
+        monkeypatch,
+        ("contestedfmt", "a_pkg.reader", "pkg-a"),
+        ("contestedfmt", "b_pkg.reader", "pkg-b"),
+    )
+    if not register_first:
+        storage_module._discover_plugin_readers()  # conflict recorded first
+
+    register_dataset_reader("contestedfmt", "a_pkg.reader")
+
+    assert storage_module._DATASET_READER_MODULES["contestedfmt"] == "a_pkg.reader"
+    assert "contestedfmt" not in storage_module._AMBIGUOUS_READER_PROVIDERS
+
+
+def test_contested_format_is_reported_when_localizing_a_remote_root(monkeypatch):
+    """An unresolved conflict shows up in the probe error, not as 'no dataset found'."""
+    _fake_entry_points(
+        monkeypatch,
+        ("contestedfmt", "a_pkg.reader", "pkg-a"),
+        ("contestedfmt", "b_pkg.reader", "pkg-b"),
+    )
+    # No built-in probes, so the error is about the conflict and nothing else.
+    monkeypatch.setattr(storage_module, "_DATASET_READER_MODULES", {})
+
+    with pytest.raises(FileNotFoundError, match="contestedfmt"):
+        localize_remote_root(DUMMY_REPO_ID, "s3://bucket/ds")
 
 
 def test_discovery_does_not_import_plugin_modules(monkeypatch):
@@ -385,6 +487,34 @@ def test_discovery_reads_real_distribution_metadata(tmp_path, monkeypatch):
 
     assert storage_module._DATASET_READER_MODULES["realfmt"] == "lerobot_fake_plugin.reader"
     assert "lerobot_fake_plugin.reader" not in sys.modules
+
+
+def test_real_conflicting_distributions_are_named_in_the_error(tmp_path, monkeypatch):
+    """The conflict message reads real ``.dist-info``, so it names installed packages.
+
+    Companion to the test above: two genuine distributions on ``sys.path``
+    claiming one format, which is the situation a user actually hits.
+    """
+    for dist_name, module in (("lerobot-fake-a", "fake_a.reader"), ("lerobot-fake-b", "fake_b.reader")):
+        dist_info = tmp_path / f"{dist_name.replace('-', '_')}-2.3.4.dist-info"
+        dist_info.mkdir()
+        (dist_info / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {dist_name}\nVersion: 2.3.4\n")
+        (dist_info / "entry_points.txt").write_text(
+            f"[{DATASET_READER_ENTRY_POINT_GROUP}]\nrivalfmt = {module}\n"
+        )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    monkeypatch.setattr(storage_module, "_DATASET_READER_MODULES", dict(_DATASET_READER_MODULES))
+    monkeypatch.setattr(storage_module, "_AMBIGUOUS_READER_PROVIDERS", {})
+    monkeypatch.setattr(storage_module, "_PLUGINS_DISCOVERED", False)
+
+    with pytest.raises(ValueError) as caught:
+        storage_module._reader_module("rivalfmt")
+
+    message = str(caught.value)
+    for expected in ("lerobot-fake-a 2.3.4", "fake_a.reader", "lerobot-fake-b 2.3.4", "fake_b.reader"):
+        assert expected in message
+    assert "rivalfmt" not in storage_module._DATASET_READER_MODULES
 
 
 def test_unknown_storage_format_lists_discovered_plugins(monkeypatch):

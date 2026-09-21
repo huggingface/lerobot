@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import importlib
 import logging
-from importlib.metadata import entry_points
+from importlib.metadata import EntryPoint, entry_points
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -50,6 +50,12 @@ DATASET_READER_ENTRY_POINT_GROUP = "lerobot.dataset_readers"
 # ``depth_output_unit`` and ``token``) and a ``localize_root`` hook for
 # object-store roots.
 _DATASET_READER_MODULES: dict[str, str] = {}
+
+# Formats two or more installed packages disagree over, mapped to a description
+# of each claimant. Such a format is deliberately absent from the registry
+# above: reading it raises rather than picking a winner. See
+# :func:`_discover_plugin_readers`.
+_AMBIGUOUS_READER_PROVIDERS: dict[str, list[str]] = {}
 _PLUGINS_DISCOVERED = False
 
 
@@ -59,9 +65,21 @@ def register_dataset_reader(storage_format: str, module: str) -> None:
     if storage_format == DEFAULT_STORAGE_FORMAT or existing != module:
         raise ValueError(f"storage_format {storage_format!r} is already registered.")
     _DATASET_READER_MODULES[storage_format] = module
+    # An explicit call is how a user settles a format installed plugins disagree
+    # over, so it has to clear the conflict -- whichever order the two happen in.
+    _AMBIGUOUS_READER_PROVIDERS.pop(storage_format, None)
 
 
 register_dataset_reader("lance", "lerobot.datasets.lance_backend")
+
+
+def _plugin_provider(entry_point: EntryPoint) -> str:
+    """Name the installed package behind ``entry_point``, for error messages."""
+    dist = getattr(entry_point, "dist", None)
+    name = getattr(dist, "name", None) or "unknown distribution"
+    version = getattr(dist, "version", None)
+    origin = f"{name} {version}" if version else name
+    return f"{origin} -> {entry_point.value}"
 
 
 def _discover_plugin_readers() -> None:
@@ -70,11 +88,22 @@ def _discover_plugin_readers() -> None:
     Called before every registry lookup rather than at import, so the scan costs
     nothing until a dataset is actually opened.
 
-    Built-in formats win: an entry point may not take a name that is already
-    registered, so installing a package cannot silently change how ``lerobot``
-    or ``lance`` datasets are read. A plugin that fails to register is skipped
-    with a warning -- one broken package must not stop the others, nor stop
-    datasets loading at all.
+    The scan is order-independent by construction: claims are collected per
+    format first, and only a format claimed by exactly one module is registered.
+    Two packages claiming the same format is an error the user has to resolve,
+    not a race the loader settles for them -- which package ``entry_points()``
+    lists first depends on ``sys.path``, so silently taking it would mean the
+    same install reading datasets differently on different machines. The
+    conflict is logged here and raised, naming both packages, if that format is
+    ever asked for.
+
+    Built-in formats win outright: an entry point may not take ``lerobot`` or
+    ``lance``, so installing a package cannot change how they are read. An
+    explicit :func:`register_dataset_reader` call wins the same way, which is
+    what makes it the documented way out of a conflict.
+
+    A plugin that fails to register is skipped with a warning -- one broken
+    package must not stop the others, nor stop datasets loading at all.
     """
     global _PLUGINS_DISCOVERED
     if _PLUGINS_DISCOVERED:
@@ -87,20 +116,56 @@ def _discover_plugin_readers() -> None:
         logger.warning("Could not read %r entry points: %s", DATASET_READER_ENTRY_POINT_GROUP, error)
         return
 
+    # Collect first, register second, so no claim depends on scan order.
+    claims: dict[str, dict[str, list[str]]] = {}  # format -> module -> providers
     for entry_point in discovered:
         try:
-            # Registering through the public function is what keeps built-ins
-            # safe: it rejects DEFAULT_STORAGE_FORMAT and any name already taken,
-            # so an installed package cannot claim "lerobot" or "lance".
             # ``.module`` (not ``.value``) so a "pkg.mod:attr" spelling still
             # resolves to the module the contract is defined on.
-            register_dataset_reader(entry_point.name, entry_point.module)
+            module = entry_point.module
         except Exception as error:
             logger.warning(
-                "Ignoring dataset reader plugin %r (from %r): %s",
+                "Ignoring malformed dataset reader entry point %r (%r): %s",
                 entry_point.name,
                 entry_point.value,
                 error,
+            )
+            continue
+        claims.setdefault(entry_point.name, {}).setdefault(module, []).append(_plugin_provider(entry_point))
+
+    for storage_format, by_module in claims.items():
+        providers = sorted(provider for group in by_module.values() for provider in group)
+        if storage_format == DEFAULT_STORAGE_FORMAT or storage_format in _DATASET_READER_MODULES:
+            incumbent = _DATASET_READER_MODULES.get(storage_format, "lerobot.datasets.dataset_reader")
+            logger.warning(
+                "Ignoring dataset reader plugin(s) for storage_format %r [%s]: that format is "
+                "already served by %r.",
+                storage_format,
+                "; ".join(providers),
+                incumbent,
+            )
+            continue
+        if len(by_module) > 1:
+            # Recorded, not raised: a conflict over one format must not stop
+            # datasets in every other format from loading. _reader_module()
+            # raises when this format is the one actually asked for.
+            _AMBIGUOUS_READER_PROVIDERS[storage_format] = providers
+            logger.warning(
+                "storage_format %r is claimed by %d installed packages [%s]; it will not be "
+                "loaded until one is uninstalled or register_dataset_reader() picks one.",
+                storage_format,
+                len(providers),
+                "; ".join(providers),
+            )
+            continue
+        try:
+            # register_dataset_reader() stays the single gate on the registry;
+            # if it ever grows further validation, a rejection must still leave
+            # the remaining plugins registered.
+            register_dataset_reader(storage_format, next(iter(by_module)))
+        except Exception as error:
+            logger.warning(
+                "Ignoring dataset reader plugin %r [%s]: %s", storage_format, "; ".join(providers), error
             )
 
 
@@ -109,10 +174,24 @@ def is_remote_uri(root: str | Path) -> bool:
     return "://" in str(root)
 
 
+def _ambiguous_format_error(storage_format: str) -> ValueError:
+    """Explain a format two installed packages claim, and how to settle it."""
+    providers = "\n  ".join(_AMBIGUOUS_READER_PROVIDERS[storage_format])
+    return ValueError(
+        f"storage_format {storage_format!r} is claimed by more than one installed package, so "
+        f"which reader serves it is ambiguous:\n  {providers}\n"
+        f"Uninstall all but one, or choose explicitly before opening the dataset:\n"
+        f"  from lerobot.datasets.storage import register_dataset_reader\n"
+        f'  register_dataset_reader("{storage_format}", "<module>")'
+    )
+
+
 def _reader_module(storage_format: str):
     _discover_plugin_readers()
     module_name = _DATASET_READER_MODULES.get(storage_format)
     if module_name is None:
+        if storage_format in _AMBIGUOUS_READER_PROVIDERS:
+            raise _ambiguous_format_error(storage_format)
         raise ValueError(
             f"Unknown storage_format {storage_format!r}. Supported formats: "
             f"{[DEFAULT_STORAGE_FORMAT, *_DATASET_READER_MODULES]}."
@@ -153,6 +232,12 @@ def localize_remote_root(
             # ImportError: this format's optional dependencies are missing, which
             # must not stop the probe from reaching other registered formats.
             errors.append(f"{storage_format}: {error}")
+    if _AMBIGUOUS_READER_PROVIDERS:
+        # A format no backend could be chosen for was never probed; say so here
+        # rather than let it read as "that dataset does not exist".
+        errors.append(
+            f"not probed, claimed by more than one installed package: {sorted(_AMBIGUOUS_READER_PROVIDERS)}"
+        )
     raise FileNotFoundError(
         f"No dataset found at {str(root)!r}. Tried {errors}. "
         f"For {DEFAULT_STORAGE_FORMAT!r} datasets on an HF Storage Bucket, use "
