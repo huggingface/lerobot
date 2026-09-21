@@ -199,6 +199,49 @@ def make_my_policy_pre_post_processors(
 
 **Important — function naming:** LeRobot discovers your processor by name. The function **must** be called `make_{policy_name}_pre_post_processors` (matching the string you passed to `@PreTrainedConfig.register_subclass`).
 
+#### Optional: adjusting processors loaded from a checkpoint
+
+`make_{policy_name}_pre_post_processors` only runs when processors are built from scratch. Whenever a checkpoint is involved (fine-tuning, resuming, or evaluating), LeRobot instead loads the pipelines serialized next to the weights and applies the caller's overrides.
+
+If your policy has to adjust those loaded pipelines, add an optional second function to the same module, named `make_{policy_name}_pre_post_processors_from_pretrained`. LeRobot finds it by the same naming convention and calls it in place of the generic load. Policies that need nothing special just omit it.
+
+```python
+from lerobot.processor import load_pretrained_policy_processors
+from lerobot.utils.constants import (
+    POLICY_POSTPROCESSOR_DEFAULT_NAME,
+    POLICY_PREPROCESSOR_DEFAULT_NAME,
+)
+
+
+def make_my_policy_pre_post_processors_from_pretrained(
+    config,
+    pretrained_path: str,
+    *,
+    revision: str | None = None,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    dataset_meta: Any | None = None,
+    preprocessor_overrides: dict[str, Any] | None = None,
+    postprocessor_overrides: dict[str, Any] | None = None,
+    preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
+    postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
+    preprocessor, postprocessor = load_pretrained_policy_processors(
+        pretrained_path,
+        revision=revision,
+        preprocessor_overrides=preprocessor_overrides,
+        postprocessor_overrides=postprocessor_overrides,
+        preprocessor_config_filename=preprocessor_config_filename,
+        postprocessor_config_filename=postprocessor_config_filename,
+    )
+    ...  # reconcile the loaded pipelines with the current `config`
+    return preprocessor, postprocessor
+```
+
+For working examples, see [`processor_evo1.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/evo1/processor_evo1.py) (re-pads normalization stats), [`processor_groot.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/groot/processor_groot.py) (handles raw upstream checkpoints), and [`processor_molmoact2.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/molmoact2/processor_molmoact2.py) (renames override keys).
+
 ### Text-capable policies
 
 Language policies share recipe rendering between two processor steps:
