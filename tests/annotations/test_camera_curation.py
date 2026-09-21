@@ -491,14 +491,18 @@ def test_derive_left_right_from_localization():
     v = _run({"usable": True, "mount_type": "fixed", "view_label": "left_side",
               "base_image_side": "right", "workspace_image_side": "right"})
     assert v.view_label == "side"
-    # Only ONE cue clear (workspace centered / missing) -> plain side, NOT a forced
-    # left/right. This protects a FRONT camera (workspace in the foreground) from
-    # being turned into a spurious lateral label.
+    # ONE clear cue is now leveraged (the other centered/missing): base-on-left ->
+    # camera on robot right -> right_side.
     v = _run({"usable": True, "mount_type": "fixed", "view_label": "side",
               "base_image_side": "left", "workspace_image_side": "center"})
-    assert v.view_label == "side"
+    assert v.view_label == "right_side"
+    # workspace-only: workspace-on-left -> left_side (base missing).
     v = _run({"usable": True, "mount_type": "fixed", "view_label": "side",
-              "base_image_side": "right"})  # workspace missing
+              "workspace_image_side": "left"})
+    assert v.view_label == "left_side"
+    # Both centered/absent -> plain side (nothing to leverage; front cam stays side).
+    v = _run({"usable": True, "mount_type": "fixed", "view_label": "side",
+              "base_image_side": "center", "workspace_image_side": "center"})
     assert v.view_label == "side"
     # front_side (front/rear axis) is left untouched by the left/right derivation.
     v = _run({"usable": True, "mount_type": "fixed", "view_label": "front_side",
