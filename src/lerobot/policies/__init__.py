@@ -23,6 +23,7 @@ from .factory import get_policy_class, make_policy, make_policy_config, make_pre
 from .fastwam.configuration_fastwam import FastWAMConfig as FastWAMConfig
 from .fineart_vla.configuration_fineart_vla import FineARTVLAConfig as FineARTVLAConfig
 from .flux3.configuration_flux3 import Flux3Config as Flux3Config
+from .g05.configuration_g05 import G05Config as G05Config
 from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig as GaussianActorConfig
 from .groot.configuration_groot import GrootConfig as GrootConfig
 from .lawam.configuration_lawam import LaWAMConfig as LaWAMConfig
@@ -55,6 +56,7 @@ __all__ = [
     "FineARTVLAConfig",
     "Flux3Config",
     "GaussianActorConfig",
+    "G05Config",
     "Evo1Config",
     "GrootConfig",
     "LaWAMConfig",
