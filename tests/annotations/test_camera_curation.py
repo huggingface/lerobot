@@ -472,6 +472,43 @@ def test_promote_direction_candidate_gated():
     )
 
 
+def test_use_keys_mode():
+    # ignore_key_names=False -> USE KEYS: mount from key + direction override, but
+    # top/side stays the VLM's call.
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB, ignore_key_names=False)
+
+    def _run(key, resp):
+        return {x.camera_key: x for x in curate_cameras({key: [_tiny_image()]}, cfg, _queued_vlm([resp]))}[key]
+
+    # key wrist + handedness -> robot_mounted/left_wrist (mount from key, direction override).
+    v = _run("observation.images.left_wrist",
+             {"usable": True, "mount_type": "robot_mounted", "view_label": "wrist"})
+    assert (v.mount_type, v.view_label) == ("robot_mounted", "left_wrist")
+    # key front_side + VLM hedged plain side -> fixed/front_side.
+    v = _run("observation.images.front_side",
+             {"usable": True, "mount_type": "fixed", "view_label": "side"})
+    assert (v.mount_type, v.view_label) == ("fixed", "front_side")
+    # key left_side + VLM WRONG right_side -> overridden to left_side.
+    v = _run("observation.images.left_side",
+             {"usable": True, "mount_type": "fixed", "view_label": "right_side"})
+    assert v.view_label == "left_side"
+    # top/side NOT taken from key: key "top" + VLM says side -> stays side.
+    v = _run("observation.images.top",
+             {"usable": True, "mount_type": "fixed", "view_label": "side"})
+    assert (v.mount_type, v.view_label) == ("fixed", "side")
+
+
+def test_ignore_keys_mode_uses_no_key_info():
+    # ignore_key_names=True -> keys fully ignored: the VLM's label stands, no mount
+    # or direction pulled from the (contradictory) key.
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB, ignore_key_names=True)
+    v = {x.camera_key: x for x in curate_cameras(
+        {"observation.images.left_wrist": [_tiny_image()]}, cfg,
+        _queued_vlm([{"usable": True, "mount_type": "fixed", "view_label": "right_side"}]),
+    )}["observation.images.left_wrist"]
+    assert (v.mount_type, v.view_label) == ("fixed", "right_side")
+
+
 def test_derive_left_right_from_localization():
     cfg = CameraCurationConfig(view_vocabulary=VOCAB, derive_left_right_from_localization=True)
 

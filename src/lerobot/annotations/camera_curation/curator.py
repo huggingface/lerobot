@@ -288,6 +288,61 @@ def _derive_left_right(verdict: CameraVerdict, cfg: CameraCurationConfig) -> Non
         verdict.view_label = new_label
 
 
+def _mount_from_source_name(verdict: CameraVerdict, cfg: CameraCurationConfig) -> None:
+    """USE-KEYS mode: force the mount type from the key's position word.
+
+    Only when the keys are trusted (``not cfg.ignore_key_names``). The key encodes
+    wrist-vs-fixed reliably even though the VLM is noisy on it: a key whose position
+    word is ``wrist`` -> ``robot_mounted``; ``top``/``side``/``bottom`` -> ``fixed``.
+    The view_label is then reconciled against the forced mount (a robot_mounted cam
+    becomes wrist; a wrist label on a now-fixed cam is dropped). Top/side is NOT
+    taken from the key — that stays the VLM's call. Generic keys with no position
+    word are left to the VLM. Mutates ``verdict``.
+    """
+    if cfg.ignore_key_names:
+        return
+    key_positions = [t for t in _extract_vocab_tokens(verdict.camera_key, cfg.view_vocabulary)
+                     if t not in _QUALIFIERS]
+    if not key_positions:
+        return  # generic key -> trust the VLM
+    verdict.mount_type = MOUNT_ROBOT if _WRIST_POSITION in key_positions else MOUNT_FIXED
+    verdict.view_label = _reconcile_label_with_mount(verdict.view_label, verdict.mount_type)
+
+
+def _direction_from_source_name(verdict: CameraVerdict, cfg: CameraCurationConfig) -> None:
+    """USE-KEYS mode: take the direction qualifier from the key, overriding the VLM.
+
+    Only when the keys are trusted (``not cfg.ignore_key_names``). The key's
+    direction (``front``/``rear``/``left``/``right``) REPLACES whatever direction the
+    VLM put on a ``side``/``wrist`` label — correcting the model's noisy/hedged
+    direction (e.g. key ``left_side`` + VLM ``right_side``/``side`` -> ``left_side``;
+    key ``left_wrist`` + VLM ``wrist`` -> ``left_wrist``). ONLY the direction
+    qualifier is taken, never the position word, so a mislabeled position in the key
+    cannot leak in. Mutates ``verdict``.
+    """
+    if cfg.ignore_key_names or not cfg.allow_combos:
+        return
+    label = verdict.view_label
+    if not label:
+        return
+    position = _position_token(label)
+    if position not in (_SIDE_POSITION, _WRIST_POSITION):
+        return
+    qualifier = next(
+        (tok for tok in _extract_vocab_tokens(verdict.camera_key, cfg.view_vocabulary) if tok in _QUALIFIERS),
+        None,
+    )
+    if qualifier is None:
+        return
+    combined = _order_combo([position, qualifier], cfg.view_vocabulary)
+    if is_valid_view_label(combined, cfg.view_vocabulary, allow_combos=True) and combined != label:
+        logger.info(
+            "camera %s: using key direction %r -> %r (was %r)",
+            verdict.camera_key, qualifier, combined, label,
+        )
+        verdict.view_label = combined
+
+
 def _parse_candidates(
     camera_key: str, raw: Any, mount_type: str | None, cfg: CameraCurationConfig
 ) -> list[tuple[str, float]]:
@@ -430,12 +485,15 @@ def curate_cameras(
             for key, (mount_type, label) in relabeled.items():
                 verdicts[key].mount_type = mount_type
                 verdicts[key].view_label = label
-        # Final pass: recover a direction the model hedged out of (plain "side" ->
-        # "front_side" when its candidates carry it). Runs after joint labeling so
-        # it normalizes whichever label ended up on the verdict.
+        # Final pass. USE-KEYS steps (_mount_from_source_name / _direction_from_source_name)
+        # are no-ops under ignore_key_names; the VLM-based steps always run. Order:
+        # force mount from key first, then the VLM refinements, then let the key's
+        # direction win last.
         for key in callable_keys:
+            _mount_from_source_name(verdicts[key], cfg)
             _promote_direction_candidate(verdicts[key], cfg)
             _derive_left_right(verdicts[key], cfg)
+            _direction_from_source_name(verdicts[key], cfg)
 
     return [verdicts[k] for k in ordered_keys]
 
