@@ -26,6 +26,8 @@ from lerobot.utils.random_utils import (
     deserialize_rng_state,
     deserialize_torch_rng_state,
     get_rng_state,
+    load_rng_state,
+    save_rng_state,
     seeded_context,
     serialize_numpy_rng_state,
     serialize_python_rng_state,
@@ -62,6 +64,28 @@ def test_serialize_deserialize_numpy_rng(fixed_seed):
     deserialize_numpy_rng_state(st)
     val3 = np.random.rand()
     assert val2 == val3
+
+
+@pytest.mark.parametrize("draws_before_save", [0, 1, 2, 3])
+def test_numpy_gaussian_checkpoint_continuation(fixed_seed, tmp_path, draws_before_save):
+    np.random.standard_normal(draws_before_save)
+    save_rng_state(tmp_path)
+    expected = np.random.standard_normal(6)
+
+    np.random.seed(999)
+    load_rng_state(tmp_path)
+    np.testing.assert_array_equal(np.random.standard_normal(6), expected)
+
+
+def test_deserialize_numpy_rng_legacy_float32_cache(fixed_seed):
+    np.random.standard_normal()
+    state = serialize_numpy_rng_state()
+    state["np_rng_cached_gaussian"] = state["np_rng_cached_gaussian"].float()
+    expected = state["np_rng_cached_gaussian"].item()
+
+    np.random.seed(999)
+    deserialize_numpy_rng_state(state)
+    assert np.random.standard_normal() == expected
 
 
 def test_serialize_deserialize_torch_rng(fixed_seed):
