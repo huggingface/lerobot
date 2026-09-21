@@ -1,0 +1,118 @@
+# DP3 (3D Diffusion Policy)
+
+DP3 is **Diffusion Policy conditioned on a point cloud instead of, or alongside, RGB images**. It is the first LeRobot policy that consumes depth, and it works with a single RGBD camera.
+
+## Model Overview
+
+3D Diffusion Policy was introduced in [3D Diffusion Policy: Generalizable Visuomotor Policy Learning via Simple 3D Representations](https://arxiv.org/abs/2403.03954) by Ze et al. (RSS 2024). The idea is deliberately small: keep Diffusion Policy exactly as it is, and replace the image encoder with a lightweight point-cloud encoder.
+
+In LeRobot, `DP3Policy` is a subclass of `DiffusionPolicy`. The U-Net, the noise schedule, action chunking and the action queue are all inherited unchanged — the only addition is a point-cloud branch in the global conditioning.
+
+- **Lightweight encoder**: the point encoder is ~76k parameters, against tens of millions for a ResNet
+- **One camera is enough**: depth from a single RealSense, with no extrinsic calibration required
+- **Dependency-free**: plain PyTorch, no PyTorch3D and no CUDA extension
+
+### Two variants
+
+| Variant | Configure it by | What it conditions on |
+| --- | --- | --- |
+| Point cloud only | no `image_features` | state + point cloud |
+| RGB-D | `image_features` present | state + images + point cloud |
+
+The point-cloud-only variant is the one the paper mostly reports, and it is the cheaper of the two.
+
+## Installation Requirements
+
+1. Install LeRobot by following our [Installation Guide](./installation).
+2. DP3 uses the same dependencies as Diffusion Policy, so no additional install is needed.
+
+## Recording depth
+
+Depth recording already works. Enable it on the camera:
+
+```python
+from lerobot.cameras.realsense import RealSenseCameraConfig
+
+config = RealSenseCameraConfig(serial_number_or_name="...", use_depth=True)
+```
+
+`LeRobotDataset` stores the depth stream quantised to TIFF and dequantises it on read, so a recorded dataset keeps metric depth.
+
+You also need the camera's **intrinsics** to turn that depth into 3D points:
+
+```python
+camera.connect()
+fx, fy, cx, cy = camera.get_intrinsics()
+```
+
+Read them once and keep them with the dataset. They are a property of the optics, so the same four numbers stay valid for that camera at that resolution.
+
+## Turning depth into a point cloud
+
+Unprojection happens in a processor step, not inside the policy, so any policy can use it:
+
+```python
+from lerobot.processor.depth_processor import DepthToPointCloudStep
+
+step = DepthToPointCloudStep(
+    num_points=1024,
+    frame="camera",
+    depth_scale=1e-3,                       # LeRobotDataset returns millimetres
+    intrinsics={"top": (fx, fy, cx, cy)},   # only for datasets recorded without them
+    workspace_centre=(0.0, 0.0, 0.7),       # metres, in the chosen frame
+    workspace_extent=0.6,
+)
+```
+
+It reads `observation.images.{camera}_depth` and writes `observation.pointcloud`.
+
+### Depth units
+
+`LeRobotDataset` dequantises depth to **millimetres** by default, set by
+`depth_output_unit`. This step works in metres. So a dataset read with the
+defaults needs `depth_scale=1e-3`, while depth read live from a RealSense
+(already metres) needs `depth_scale=1.0`.
+
+Getting this wrong is a factor of a thousand, which puts every point far
+outside the workspace crop, and a frame with no surviving points is returned as
+zeros so that a dropped depth frame cannot kill a training run. The step raises
+on an implausible depth magnitude rather than letting a policy train on empty
+clouds.
+
+### Set the workspace crop
+
+`workspace_centre` and `workspace_extent` look like tidiness and are not. A uniform subsample of a whole-scene cloud is mostly floor and far tabletop. Measured on a tabletop manipulation scene, a 20 mm block covered 28 of 8256 valid pixels — so 1024 uniform samples contained about 3.5 points of the only object that mattered. Cropping to the workspace first is what DP3 does, and it is the difference between a cloud that shows the scene and one that shows the table.
+
+### Choosing a frame
+
+`frame="camera"` uses intrinsics only. `frame="world"` also needs `observation.extrinsics.{camera}` and is the only way to fuse several cameras.
+
+The trade-off is calibration error. A rotation of ε about a camera displaces every reconstructed point by roughly `d · sin ε`, with `d` the camera-to-workspace distance — about 9 mm per degree at 0.7 m. The camera frame never touches an extrinsic, so it cannot inherit that error; the world frame can.
+
+**Start with `"camera"`.** Move to `"world"` when your cameras move and you recalibrate, or when the object is regularly occluded from any single view.
+
+## Training
+
+```bash
+lerobot-train \
+  --policy.type=dp3 \
+  --policy.pointcloud_num_points=1024 \
+  --dataset.repo_id=${HF_USER}/my-rgbd-dataset
+```
+
+Key configuration:
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| `pointcloud_num_points` | 1024 | DP3 uses 512–1024. The encoder max-pools, so more buys little. |
+| `pointcloud_feature_dim` | 64 | Width appended to the global conditioning per observation step. |
+| `pointcloud_channels` | 3 | 6 with colour, if the processor was built `with_colour=True`. |
+
+Everything else — `horizon`, `n_action_steps`, `n_obs_steps`, the noise scheduler — is inherited from [Diffusion Policy](./bring_your_own_policies) and behaves identically.
+
+## Credit
+
+- 3D Diffusion Policy: Ze, Zhang, Zhang, Hu, Wang, Xu (RSS 2024)
+- Diffusion Policy: Chi, Feng, Du, Xu, Cousineau, Burchfiel, Song (RSS 2023)
+
+The LeRobot implementation is a thin layer over the existing Diffusion Policy code.

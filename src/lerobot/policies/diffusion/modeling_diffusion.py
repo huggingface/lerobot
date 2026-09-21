@@ -82,9 +82,13 @@ class DiffusionPolicy(PreTrainedPolicy):
         # queues are populated during rollout of the policy, they contain the n latest observations and actions
         self._queues = None
 
-        self.diffusion = DiffusionModel(config)
+        self.diffusion = self._make_diffusion_model(config)
 
         self.reset()
+
+    def _make_diffusion_model(self, config: DiffusionConfig) -> "DiffusionModel":
+        """Overridden by subclasses that need a different conditioning branch."""
+        return DiffusionModel(config)
 
     def get_optim_params(self) -> dict:
         return self.diffusion.parameters()
@@ -207,6 +211,11 @@ class DiffusionModel(nn.Module):
         if self.config.env_state_feature:
             global_cond_dim += self.config.env_state_feature.shape[0]
 
+        # Hook for subclasses that condition on more than images and state, so
+        # they can widen the vector before the U-Net is built rather than
+        # rebuilding it afterwards. See `lerobot.policies.dp3`.
+        global_cond_dim += self._extra_global_cond_dim(config)
+
         self.unet = DiffusionConditionalUnet1d(config, global_cond_dim=global_cond_dim * config.n_obs_steps)
 
         if config.compile_model:
@@ -231,6 +240,43 @@ class DiffusionModel(nn.Module):
             self.num_inference_steps = config.num_inference_steps
 
     # ========= inference  ============
+    def _extra_global_cond_dim(self, config: DiffusionConfig) -> int:
+        """Extra width a subclass contributes to the global conditioning vector.
+
+        Called while the U-Net is being sized, so a subclass must be able to
+        answer from `config` alone -- its own modules do not exist yet.
+
+        Returns:
+            Number of features this subclass appends to the per-observation-step
+            conditioning vector, before the `n_obs_steps` multiplication.
+        """
+        return 0
+
+    def _extra_global_cond_feats(self, batch: dict[str, Tensor]) -> Tensor | None:
+        """Extra per-observation-step features a subclass conditions on.
+
+        Appended BEFORE the flatten, so each observation step's features stay
+        contiguous in the conditioning vector, and the width must match what
+        `_extra_global_cond_dim` promised while the U-Net was sized.
+
+        Returns:
+            `(B, n_obs_steps, extra_dim)`, or None to add nothing.
+        """
+        return None
+
+    def _has_conditioning_input(self, batch: dict[str, Tensor]) -> bool:
+        """Whether `batch` carries something to condition on besides the state.
+
+        Diffusion Policy requires images or an environment state. A subclass
+        conditioning on something else -- a point cloud, say -- overrides this
+        so the check tests what it actually needs rather than what the parent
+        happens to use.
+
+        Returns:
+            True when the batch is sufficient for this model to run.
+        """
+        return OBS_IMAGES in batch or OBS_ENV_STATE in batch
+
     def conditional_sample(
         self,
         batch_size: int,
@@ -302,6 +348,10 @@ class DiffusionModel(nn.Module):
         if self.config.env_state_feature:
             global_cond_feats.append(batch[OBS_ENV_STATE])
 
+        extra = self._extra_global_cond_feats(batch)
+        if extra is not None:
+            global_cond_feats.append(extra)
+
         # Concatenate features then flatten to (B, global_cond_dim).
         return torch.cat(global_cond_feats, dim=-1).flatten(start_dim=1)
 
@@ -348,7 +398,11 @@ class DiffusionModel(nn.Module):
         """
         # Input validation.
         assert set(batch).issuperset({OBS_STATE, ACTION, "action_is_pad"})
-        assert OBS_IMAGES in batch or OBS_ENV_STATE in batch
+        if not self._has_conditioning_input(batch):
+            raise ValueError(
+                "Diffusion Policy needs images or an environment state to condition on; "
+                f"batch has {sorted(batch)}"
+            )
         n_obs_steps = batch[OBS_STATE].shape[1]
         horizon = batch[ACTION].shape[1]
         assert horizon == self.config.horizon
