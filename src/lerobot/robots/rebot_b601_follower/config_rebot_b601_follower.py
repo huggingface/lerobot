@@ -14,9 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from copy import deepcopy
-from dataclasses import dataclass, field, fields
-from pathlib import Path
+from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig
 
@@ -27,8 +25,6 @@ from .motor_family import MIT_MODE, MOTOR_PROFILES, MotorFamily
 @dataclass
 class RebotB601FollowerConfig:
     """Configuration shared by the Damiao and RobStride B601 follower arms."""
-
-    # Connection
 
     # Serial device or native CAN channel.
     port: str
@@ -42,32 +38,22 @@ class RebotB601FollowerConfig:
     # Damiao serial bridge baud rate.
     dm_serial_baud: int = 921600
 
-    # Runtime behavior
-
     # Disable motor torque before disconnecting.
     disable_torque_on_disconnect: bool = True
 
     # Maximum position change per command in degrees. None disables the limit.
     max_relative_target: float | dict[str, float] | None = None
 
-    # Cameras
-
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
-
-    # Motor addressing
 
     # Joint name to (send ID, receive ID).
     motor_can_ids: dict[str, tuple[int, int]] | None = None
-
-    # Control modes
 
     # Arm mode: "mit" or "pos_vel".
     control_mode: str = MIT_MODE
 
     # Gripper mode: "mit", "force_pos", or "mit_impedance".
     gripper_control_mode: str | None = None
-
-    # Control tuning
 
     # MIT gains shared by all joints or keyed by joint name.
     mit_kp: float | dict[str, float] | None = None
@@ -83,13 +69,10 @@ class RebotB601FollowerConfig:
     gripper_torque_limit: float | None = None
     gripper_hold_torque_limit: float | None = None
 
-    # Joint limits
-
     # Soft limits in raw motor degrees.
     joint_limits: dict[str, tuple[float, float]] | None = None
 
-    def _resolve_motor_family_defaults(self) -> None:
-        """Fill unset values from the selected motor profile."""
+    def __post_init__(self) -> None:
         self.motor_family = MotorFamily(self.motor_family)
         profile = MOTOR_PROFILES[self.motor_family]
         joints = tuple(profile.motor_models)
@@ -123,23 +106,6 @@ class RebotB601FollowerConfig:
         for name in ("gripper_torque_limit", "gripper_hold_torque_limit"):
             if getattr(self, name) is None:
                 setattr(self, name, getattr(profile, name))
-
-    def __post_init__(self) -> None:
-        self._resolve_motor_family_defaults()
-
-    def as_robot_config(
-        self,
-        *,
-        id: str | None = None,
-        calibration_dir: Path | None = None,
-        cameras: dict[str, CameraConfig] | None = None,
-    ) -> "RebotB601FollowerRobotConfig":
-        """Create the registered config used by a bimanual arm."""
-        values = {f.name: getattr(self, f.name) for f in fields(RebotB601FollowerConfig)}
-        values = deepcopy(values)
-        if cameras is not None:
-            values["cameras"] = deepcopy(cameras)
-        return RebotB601FollowerRobotConfig(id=id, calibration_dir=calibration_dir, **values)
 
 
 @RobotConfig.register_subclass("rebot_b601_follower")
