@@ -246,6 +246,7 @@ evo1 = ["lerobot[transformers-dep]"]
 hilserl = ["lerobot[transformers-dep]", "lerobot[dataset]", "gym-hil>=0.1.14,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen-vl-utils-dep]"]
 lingbot_va = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[accelerate-dep]"]
+g05 = ["lerobot[transformers-dep]"]
 lawam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
@@ -335,6 +336,7 @@ all = [
     "lerobot[hilserl]",
     "lerobot[vla_jepa]",
     "lerobot[lingbot_va]",
+    "lerobot[g05]",
     "lerobot[lawam]",
     "lerobot[async]",
     "lerobot[dev]",
