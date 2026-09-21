@@ -14,17 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Family-specific hardware facts and defaults for the reBot B601.
-
-The B601-DM (Damiao) and B601-RS (RobStride) share one software interface but
-differ in actuator models, wiring, mounting directions and validated modes.
-Those integration facts live here; user preferences remain on the robot config.
-"""
+"""Motor-family hardware facts and defaults for the reBot B601."""
 
 from dataclasses import dataclass
 from enum import StrEnum
 
-# Default motor order shared by both builds.
+# Joint order shared by both builds.
 JOINT_NAMES: tuple[str, ...] = (
     "shoulder_pan",
     "shoulder_lift",
@@ -35,16 +30,7 @@ JOINT_NAMES: tuple[str, ...] = (
     "gripper",
 )
 
-# The three high-torque base joints, which carry a different motor model (and
-# therefore different torque and MIT-gain scaling) than the four distal ones.
-PROXIMAL_JOINTS: set[str] = {"shoulder_pan", "shoulder_lift", "elbow_flex"}
-
 GRIPPER_MOTOR = "gripper"
-
-
-def _by_segment[T](proximal: T, distal: T) -> dict[str, T]:
-    """Assign one value to the proximal joints and another to the distal ones."""
-    return {joint: (proximal if joint in PROXIMAL_JOINTS else distal) for joint in JOINT_NAMES}
 
 
 class MotorFamily(StrEnum):
@@ -54,12 +40,9 @@ class MotorFamily(StrEnum):
     RS = "rs"
 
 
-# Control modes. Only MIT carries a feedforward torque term, so it is the only
-# mode a torque-based feature (gravity compensation, force limiting) can build on.
+# Control modes.
 MIT_MODE = "mit"
 ARM_MODE_POS_VEL = "pos_vel"
-
-# Gripper control modes.
 GRIPPER_MODE_FORCE_POS = "force_pos"
 GRIPPER_MODE_MIT_IMPEDANCE = "mit_impedance"
 
@@ -68,49 +51,36 @@ GRIPPER_MODE_MIT_IMPEDANCE = "mit_impedance"
 class MotorFamilyProfile:
     """Hardware facts and default tuning for one motor family."""
 
-    # --- hardware facts (never user-overridable) ---
-
-    # Vendor model string per joint, passed to the matching motorbridge factory.
     motor_models: dict[str, str]
-    # Sign converting between the public robot coordinate frame and the raw motor
-    # frame. It is applied in both directions so observations and actions share
-    # one convention.
+    # Sign from public joint positions to raw motor positions.
     joint_directions: dict[str, float]
-    # --- defaults for the matching config fields ---
-
     can_adapter: str
     gripper_control_mode: str
     motor_can_ids: dict[str, tuple[int, int]]
-    # MIT gains per joint, including the gripper: the gripper's MIT gains live here
-    # rather than in dedicated fields so each joint has a single source of truth.
     mit_kp: dict[str, float]
     mit_kd: dict[str, float]
     joint_limits: dict[str, tuple[float, float]]
-    # Speed cap (deg/s) per joint for POS_VEL arm joints and the FORCE_POS gripper.
-    # None on families without those modes.
+    # POS_VEL and FORCE_POS speed limits in deg/s.
     pos_vel_velocity: dict[str, float] | None
-    # FORCE_POS gripper: grip force as a fraction of peak torque, in [0, 1].
     gripper_torque_ratio: float | None
-    # Impedance gripper: max |feedforward torque| (N.m) while moving, and the
-    # gentler cap applied at near-zero speed so a grasp neither crushes nor
-    # overcurrents.
+    # Impedance gripper moving and holding torque limits in N.m.
     gripper_torque_limit: float | None
     gripper_hold_torque_limit: float | None
 
 
 DM_PROFILE = MotorFamilyProfile(
-    motor_models=_by_segment("4340P", "4310"),
+    motor_models={
+        "shoulder_pan": "4340P",
+        "shoulder_lift": "4340P",
+        "elbow_flex": "4340P",
+        "wrist_flex": "4310",
+        "wrist_yaw": "4310",
+        "wrist_roll": "4310",
+        "gripper": "4310",
+    },
     can_adapter="damiao",
     gripper_control_mode=GRIPPER_MODE_FORCE_POS,
-    motor_can_ids={
-        "shoulder_pan": (0x01, 0x11),
-        "shoulder_lift": (0x02, 0x12),
-        "elbow_flex": (0x03, 0x13),
-        "wrist_flex": (0x04, 0x14),
-        "wrist_yaw": (0x05, 0x15),
-        "wrist_roll": (0x06, 0x16),
-        "gripper": (0x07, 0x17),
-    },
+    motor_can_ids={joint: (motor_id, motor_id + 0x10) for motor_id, joint in enumerate(JOINT_NAMES, start=1)},
     mit_kp={
         "shoulder_pan": 45.0,
         "shoulder_lift": 45.0,
@@ -127,7 +97,6 @@ DM_PROFILE = MotorFamilyProfile(
         "wrist_flex": 1.0,
         "wrist_yaw": 1.0,
         "wrist_roll": 1.0,
-        # The gripper is softer than the arm joints when it runs in MIT mode.
         "gripper": 0.3,
     },
     joint_limits={
@@ -147,11 +116,19 @@ DM_PROFILE = MotorFamilyProfile(
 )
 
 RS_PROFILE = MotorFamilyProfile(
-    motor_models=_by_segment("rs-06", "rs-00"),
-    # "socketcan" selects MotorBridge's native, platform-specific CAN transport.
+    motor_models={
+        "shoulder_pan": "rs-06",
+        "shoulder_lift": "rs-06",
+        "elbow_flex": "rs-06",
+        "wrist_flex": "rs-00",
+        "wrist_yaw": "rs-00",
+        "wrist_roll": "rs-00",
+        "gripper": "rs-00",
+    },
+    # MotorBridge native CAN transport.
     can_adapter="socketcan",
     gripper_control_mode=GRIPPER_MODE_MIT_IMPEDANCE,
-    # RobStride motors all reply on the host id rather than a per-motor recv id.
+    # All motors reply to host ID 0xFD.
     motor_can_ids={joint: (i, 0xFD) for i, joint in enumerate(JOINT_NAMES, start=1)},
     mit_kp={
         "shoulder_pan": 50.0,
@@ -171,9 +148,7 @@ RS_PROFILE = MotorFamilyProfile(
         "wrist_roll": 4.0,
         "gripper": 0.05,
     },
-    # RS motors are installed opposite to the DM build, so these are the
-    # positive-physical travel ranges. Incoming targets are mapped into them by
-    # `joint_directions` before clipping.
+    # Raw limits reflect the reversed motor mounting.
     joint_limits={
         "shoulder_pan": (-145.0, 145.0),
         "shoulder_lift": (0.0, 170.0),
