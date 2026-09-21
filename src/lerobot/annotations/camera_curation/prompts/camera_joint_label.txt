@@ -48,13 +48,16 @@ the hand cannot be read.
 
 3. FIXED -> top / bottom / side.
 
-TOP vs SIDE: camera ABOVE the workspace looking DOWN onto it (laid out below the
-lens, tops of things / into boxes) -> "top"; camera at table/eye level looking
-ACROSS it (objects edge-on, arms standing up) -> "side". LEAN TOP: an elevated
-downward camera is "top" even at a strong diagonal, with perspective, a wall behind,
-or object fronts; it need not be near-nadir. WHEN IN DOUBT, choose TOP. Do NOT demote
-a genuine overhead just because another camera is more overhead, and do NOT promote a
-clearly across / lateral camera to "top" just because it is the highest one.
+TOP vs SIDE — where is the workspace relative to the lens? Workspace BENEATH the
+lens, looking DOWN INTO it (tops of things / into boxes, laid out below you) ->
+"top" (still top at a diagonal, with perspective/a bit of wall; need not be
+near-nadir). Workspace BESIDE a STANDING robot — the body/base rises as a VERTICAL
+COLUMN with the work area off to its side (arm's length/side seen from an elevated
+corner, often a prominent wall), not laid out beneath the lens -> "side", even when
+elevated and angled down. At table/eye level looking ACROSS -> "side". If after this
+you genuinely cannot tell, lean TOP. Do NOT demote a genuine overhead just because
+another camera is more overhead, and do NOT promote a clearly across / lateral
+camera to "top" just because it is the highest one.
 BOTTOM: camera below the workspace looking up.
 
 SIDE DIRECTION (optional — plain "side" is valid). The directions say where the

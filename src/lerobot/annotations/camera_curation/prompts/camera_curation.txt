@@ -96,14 +96,19 @@ If robot_mounted -> "wrist" (NEVER top/bottom/side).
 
 If fixed -> top / bottom / side (NEVER wrist).
 
-  TOP vs SIDE — the deciding question: is the camera ABOVE the workspace looking
-  DOWN onto it (the workspace laid out BELOW the lens, you see the tops of things /
-  into boxes) -> "top"; or at the workspace's OWN level (near table/eye height)
-  looking ACROSS it (objects edge-on, arms standing up) -> "side". LEAN TOP: an
-  elevated downward camera is "top" even at a strong diagonal, with perspective, a
-  wall behind, or visible object fronts — none of that demotes it, and it need not
-  be near-nadir. WHEN IN DOUBT, choose TOP. Reserve "side" for a clearly across,
-  table-level / perimeter view.
+  TOP vs SIDE — the deciding question is WHERE the workspace sits relative to the
+  lens:
+    - Workspace BENEATH the lens — you look DOWN INTO it (tops of things, into open
+      boxes), the table/objects laid out below you -> "top". Still top at a diagonal,
+      with some perspective, a bit of wall, or object fronts; need not be near-nadir.
+    - Workspace BESIDE a STANDING robot — the robot's body/base clearly rises as a
+      VERTICAL COLUMN and the work area is off to its side (you see the arm's length
+      / side from an elevated corner, often with a prominent wall), the workspace
+      NOT laid out beneath the lens -> "side", even when the camera is elevated and
+      angled down. This is the common elevated-oblique side camera.
+    - At table/eye level looking ACROSS (objects edge-on) -> "side".
+  So: workspace-under-the-lens -> top; robot-standing-up-with-workspace-to-the-side
+  -> side. If, after this test, you genuinely cannot tell -> lean TOP.
 
   BOTTOM: camera below the workspace looking up.
 
