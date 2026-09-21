@@ -1226,6 +1226,8 @@ def make_molmoact2_pre_post_processors_from_pretrained(
     pretrained_path: str,
     *,
     revision: str | None = None,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    dataset_meta: Any | None = None,
     preprocessor_overrides: dict[str, dict[str, Any]] | None = None,
     postprocessor_overrides: dict[str, dict[str, Any]] | None = None,
     preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
@@ -1243,6 +1245,8 @@ def make_molmoact2_pre_post_processors_from_pretrained(
     When no stats are supplied (checkpoint resume), the serialized processor
     stats and clamp masks remain authoritative.
     """
+    # Fine-tuning stats reach MolmoAct2 through the normalizer overrides, not these two.
+    del dataset_stats, dataset_meta
     prepared_preprocessor_overrides, prepared_postprocessor_overrides = (
         _prepare_pretrained_processor_overrides(
             config,
