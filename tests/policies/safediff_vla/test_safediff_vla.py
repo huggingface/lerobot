@@ -13,7 +13,7 @@ from lerobot.policies.factory import get_policy_class, make_policy_config
 from lerobot.policies.safediff_vla.configuration_safediff_vla import SafeDiffVLAConfig
 from lerobot.policies.safediff_vla.modeling_safediff_vla import SafeDiffVLAPolicy
 from lerobot.policies.safediff_vla.temporal_decoder import TemporalActionDecoder
-from lerobot.policies.safediff_vla.utils import pad_or_crop_horizon
+from lerobot.policies.safediff_vla.utils import masked_mse, pad_or_crop_horizon, pad_or_crop_mask
 from lerobot.utils.constants import ACTION, OBS_STATE
 from tests.policies.safediff_vla.testing_utils import NominalCallForbiddenBackbone, TinyBackbone
 from tests.utils import require_cuda
@@ -347,6 +347,120 @@ def test_decomposed_loss_equals_old_pooled_mse_at_default_weights() -> None:
     with torch.no_grad():
         loss, _ = policy(batch)
     assert loss.item() == pytest.approx(expected_pooled_mse, abs=1e-6)
+
+
+# ---- action_is_pad masking (episode-end chunk padding must not leak into the loss) --------
+
+
+def test_masked_mse_matches_f_mse_loss_when_all_valid() -> None:
+    """`masked_mse` with an all-`True` mask must exactly reproduce plain `F.mse_loss` -- the
+    no-padding case must be numerically unaffected by the masking fix."""
+    pred = torch.randn(3, 5, 4)
+    target = torch.randn(3, 5, 4)
+    valid_mask = torch.ones(3, 5, dtype=torch.bool)
+    assert masked_mse(pred, target, valid_mask).item() == pytest.approx(F.mse_loss(pred, target).item(), abs=1e-6)
+
+
+def test_masked_mse_ignores_changes_at_padded_timesteps() -> None:
+    """Changing `pred` only at timesteps marked padded (`valid_mask=False`) must not move the
+    loss at all -- those steps are excluded, not just down-weighted."""
+    pred = torch.randn(2, 4, 3)
+    target = torch.randn(2, 4, 3)
+    valid_mask = torch.tensor([[True, True, False, False], [True, False, False, True]])
+    baseline = masked_mse(pred, target, valid_mask)
+
+    pred_perturbed = pred.clone()
+    pred_perturbed[0, 2:] += 1000.0  # both padded steps for row 0
+    pred_perturbed[1, 1:3] += 1000.0  # both padded steps for row 1
+    perturbed = masked_mse(pred_perturbed, target, valid_mask)
+    assert perturbed.item() == pytest.approx(baseline.item(), abs=1e-6)
+
+
+def test_masked_mse_reacts_to_changes_at_valid_timesteps() -> None:
+    """Changing `pred` at a valid (unmasked) timestep must move the loss."""
+    pred = torch.randn(2, 4, 3)
+    target = torch.randn(2, 4, 3)
+    valid_mask = torch.tensor([[True, True, False, False], [True, False, False, True]])
+    baseline = masked_mse(pred, target, valid_mask)
+
+    pred_perturbed = pred.clone()
+    pred_perturbed[0, 0] += 1000.0  # a valid step for row 0
+    perturbed = masked_mse(pred_perturbed, target, valid_mask)
+    assert perturbed.item() != pytest.approx(baseline.item(), abs=1e-3)
+
+
+def test_masked_mse_all_padded_is_safe_zero_not_nan() -> None:
+    """An all-`False` mask (every timestep padded) must return a finite `0`, not `0/0` NaN or
+    Inf -- this can happen for a very short episode where `action_horizon` exceeds its length."""
+    pred = torch.randn(2, 4, 3)
+    target = torch.randn(2, 4, 3)
+    valid_mask = torch.zeros(2, 4, dtype=torch.bool)
+    loss = masked_mse(pred, target, valid_mask)
+    assert torch.isfinite(loss)
+    assert loss.item() == pytest.approx(0.0, abs=1e-8)
+
+
+def test_pad_or_crop_mask_crops_and_pads_like_pad_or_crop_horizon() -> None:
+    mask = torch.tensor([[True, False, True]])
+    assert pad_or_crop_mask(mask, 2).tolist() == [[True, False]]
+    padded = pad_or_crop_mask(mask, 5)
+    assert padded.tolist() == [[True, False, True, True, True]]  # new steps default to padded/excluded
+
+
+def test_forward_temporal_decoder_no_padding_matches_old_pooled_mse() -> None:
+    """Integration: a batch with `action_is_pad` present but entirely `False` (nothing padded)
+    must give numerically the same loss as before this fix (the pre-existing exact-equivalence
+    test above), proving the masking fix is a no-op for padding-free batches."""
+    policy = make_policy(architecture="temporal_decoder")
+    batch = make_batch(with_subgoal_label=False)
+    batch["action_is_pad"] = torch.zeros(batch[ACTION].shape[0], batch[ACTION].shape[1], dtype=torch.bool)
+
+    latent_tokens, latent_pad_mask = policy._encode_multimodal_latent(batch)
+    current_state = policy._encode_state(policy._current_state(batch))
+    with torch.no_grad():
+        pred_actions = policy.decoder(latent_tokens, latent_pad_mask, current_state)
+    clean_raw = pad_or_crop_horizon(batch[ACTION], policy.config.action_horizon)
+    clean = policy._encode_action_target(clean_raw)
+    expected_pooled_mse = F.mse_loss(pred_actions, clean).item()
+
+    with torch.no_grad():
+        loss, _ = policy(batch)
+    assert loss.item() == pytest.approx(expected_pooled_mse, abs=1e-6)
+
+
+def test_forward_temporal_decoder_excludes_padded_timesteps_from_loss() -> None:
+    """Integration: marking a relative timestep as padded and replacing its GT target with
+    wildly different values must not move the loss -- proves `action_is_pad` actually reaches
+    `_forward_temporal_decoder` and is applied, not just supported by the standalone util."""
+    policy = make_policy(architecture="temporal_decoder")
+    batch = make_batch(with_subgoal_label=False)
+    action_is_pad = torch.zeros(batch[ACTION].shape[0], batch[ACTION].shape[1], dtype=torch.bool)
+    action_is_pad[:, -1] = True  # last relative timestep is a repeated/padded "ghost" target
+    batch["action_is_pad"] = action_is_pad
+
+    with torch.no_grad():
+        baseline_loss, _ = policy(batch)
+
+    batch_perturbed = dict(batch)
+    batch_perturbed[ACTION] = batch[ACTION].clone()
+    batch_perturbed[ACTION][:, -1] += 1000.0  # garbage GT only at the padded step
+    with torch.no_grad():
+        perturbed_loss, _ = policy(batch_perturbed)
+
+    assert perturbed_loss.item() == pytest.approx(baseline_loss.item(), abs=1e-5)
+
+
+def test_forward_temporal_decoder_all_padded_batch_is_finite() -> None:
+    """A batch where every timestep is padded (e.g. an episode shorter than `action_horizon`)
+    must not blow up the training loop with NaN/Inf."""
+    policy = make_policy(architecture="temporal_decoder")
+    batch = make_batch(with_subgoal_label=False)
+    batch["action_is_pad"] = torch.ones(batch[ACTION].shape[0], batch[ACTION].shape[1], dtype=torch.bool)
+    with torch.no_grad():
+        loss, metrics = policy(batch)
+    assert torch.isfinite(loss)
+    for k in ("loss_pos", "loss_rot", "loss_grip"):
+        assert metrics[k] == pytest.approx(0.0, abs=1e-8)
 
 
 def test_loss_decomposition_slices_are_position_orientation_gripper() -> None:

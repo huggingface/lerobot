@@ -42,12 +42,10 @@ from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LAN
 from .configuration_safediff_vla import SafeDiffVLAConfig
 from .domain_adapter import LiberoBackboneDomainAdapter, load_processor_normalization_stats
 from .execution import ActionExecutor
-from .rotation_encoding import ENCODED_DIM
-from .rotation_encoding import decode as decode_rotation
-from .rotation_encoding import encode as encode_rotation
+from .rotation_encoding import ENCODED_DIM, decode as decode_rotation, encode as encode_rotation
 from .state_predictor import SubgoalStatePredictor
 from .temporal_decoder import TemporalActionDecoder
-from .utils import pad_or_crop_horizon
+from .utils import masked_mse, pad_or_crop_horizon, pad_or_crop_mask
 
 
 class SafeDiffVLAPolicy(PreTrainedPolicy):
@@ -360,11 +358,24 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
 
         pred_actions = self.decoder(latent_tokens, latent_pad_mask, current_state, subgoal_state)
 
+        # Episode-end chunks are padded by repeating the last valid frame's action past the
+        # episode boundary (`DatasetReader._get_query_indices`), flagged by `action_is_pad` (`[B,
+        # action_horizon]`, True = padded/repeated -- not a real supervision target). Exclude those
+        # timesteps from the loss entirely rather than teaching the decoder to regress toward a
+        # frozen "ghost" target it was never meant to predict. Falls back to "everything valid"
+        # when the batch has no such key (e.g. synthetic test batches), reproducing the old
+        # unmasked behavior exactly.
+        action_is_pad = batch.get("action_is_pad")
+        if action_is_pad is not None:
+            valid_mask = ~pad_or_crop_mask(action_is_pad, self.config.action_horizon)
+        else:
+            valid_mask = clean.new_ones(clean.shape[:2], dtype=torch.bool)
+
         # xyz MSE / rotation sin-cos MSE (6-D now) / gripper MSE, in the encoded 10-D layout --
         # see `rotation_encoding.py`.
-        loss_pos = F.mse_loss(pred_actions[..., :3], clean[..., :3])
-        loss_rot = F.mse_loss(pred_actions[..., 3:9], clean[..., 3:9])
-        loss_grip = F.mse_loss(pred_actions[..., 9:10], clean[..., 9:10])
+        loss_pos = masked_mse(pred_actions[..., :3], clean[..., :3], valid_mask)
+        loss_rot = masked_mse(pred_actions[..., 3:9], clean[..., 3:9], valid_mask)
+        loss_grip = masked_mse(pred_actions[..., 9:10], clean[..., 9:10], valid_mask)
         if self.config.lambda_smooth > 0:
             velocity = pred_actions[:, 1:] - pred_actions[:, :-1]
             acceleration = velocity[:, 1:] - velocity[:, :-1]
