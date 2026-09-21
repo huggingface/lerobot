@@ -179,6 +179,12 @@ def make_pre_post_processors(
         ValueError: If no processor factory exists for the given policy configuration type.
     """
     if pretrained_path:
+        preprocessor_config_filename = (
+            kwargs.get("preprocessor_config_filename") or f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+        )
+        postprocessor_config_filename = (
+            kwargs.get("postprocessor_config_filename") or f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+        )
         custom_processors = _make_pretrained_processors_from_policy_config(
             config=policy_cfg,
             pretrained_path=pretrained_path,
@@ -187,29 +193,20 @@ def make_pre_post_processors(
             dataset_meta=kwargs.get("dataset_meta"),
             preprocessor_overrides=kwargs.get("preprocessor_overrides"),
             postprocessor_overrides=kwargs.get("postprocessor_overrides"),
-            preprocessor_config_filename=kwargs.get(
-                "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
-            ),
-            postprocessor_config_filename=kwargs.get(
-                "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
-            ),
+            preprocessor_config_filename=preprocessor_config_filename,
+            postprocessor_config_filename=postprocessor_config_filename,
         )
         if custom_processors is not None:
             return custom_processors
 
-        preprocessor, postprocessor = load_pretrained_policy_processors(
+        return load_pretrained_policy_processors(
             pretrained_path,
             revision=pretrained_revision,
-            preprocessor_overrides=kwargs.get("preprocessor_overrides", {}),
-            postprocessor_overrides=kwargs.get("postprocessor_overrides", {}),
-            preprocessor_config_filename=kwargs.get(
-                "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
-            ),
-            postprocessor_config_filename=kwargs.get(
-                "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
-            ),
+            preprocessor_overrides=kwargs.get("preprocessor_overrides"),
+            postprocessor_overrides=kwargs.get("postprocessor_overrides"),
+            preprocessor_config_filename=preprocessor_config_filename,
+            postprocessor_config_filename=postprocessor_config_filename,
         )
-        return preprocessor, postprocessor
 
     # Create new processors from the policy config, resolving the per-policy factory
     # function by naming convention (lazy import keeps optional dependencies optional).
