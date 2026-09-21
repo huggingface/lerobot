@@ -18,7 +18,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+import torch
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
@@ -103,12 +105,15 @@ class EO1Config(PreTrainedConfig):
     supervise_padding_action_dims: bool = True
     supervise_padding_actions: bool = True
 
-    # Policy-level dtype request for the Qwen backbone.
-    # - "auto": follow the backbone config/checkpoint default dtype. For Qwen2.5-VL this resolves to bf16.
-    #           The EO1 flow-matching head still keeps its own parameters in fp32.
-    # - "bfloat16": force the backbone to initialize/load in bf16 regardless of the saved config default.
-    # - "float32": force the backbone to initialize/load in fp32 for maximum numerical conservatism.
-    dtype: str = "auto"  # Options: "auto", "bfloat16", "float32"
+    # Precision for the Qwen backbone. Inherited from PreTrainedConfig; EO-1 keeps the base default
+    # of None, which here means "follow the backbone checkpoint" -- bf16 for Qwen2.5-VL. Setting a
+    # concrete dtype forces the backbone to initialize and load in it. The flow-matching head is
+    # declared in `EO1Policy._fp32_modules` and stays float32 either way.
+    #
+    # Checkpoints released before this field was typed carry the transformers sentinel
+    # `"dtype": "auto"`, which `_migrate_config_dict` maps to None.
+    dtype: torch.dtype | None = None
+    # Orthogonal to `dtype`: whether the flow head runs its own float32 autocast block.
     force_fp32_autocast: bool = True
 
     # Optional attention backend request passed through to the Qwen backbone.
@@ -151,6 +156,18 @@ class EO1Config(PreTrainedConfig):
     scheduler_warmup_steps: int = 900  # 0.03 * 30_000 long-run steps
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 0.0
+
+    @classmethod
+    def _migrate_config_dict(cls, config_dict: dict[str, Any]) -> dict[str, Any]:
+        config_dict = super()._migrate_config_dict(config_dict)
+        # `"auto"` was a transformers sentinel meaning "follow the backbone checkpoint", which is
+        # what None means for this policy now. A sentinel never belonged in a serialized artifact.
+        if config_dict.get("dtype") == "auto":
+            config_dict["dtype"] = None
+        # Dropped in favour of the recipe mechanism; still present in `lerobot/eo1-base`, which
+        # cannot be loaded at all without this.
+        config_dict.pop("use_language_recipe", None)
+        return config_dict
 
     def __post_init__(self):
         super().__post_init__()

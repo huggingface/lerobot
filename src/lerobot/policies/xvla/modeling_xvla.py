@@ -109,21 +109,9 @@ class XVLAModel(nn.Module):
         # Apply freezing based on config
         self._apply_freezing()
 
-        # Apply dtype casting based on config
-        self._apply_dtype()
-
     def _get_target_dtype(self) -> torch.dtype:
-        """Get the target dtype based on config."""
-        if self.config.dtype == "bfloat16":
-            return torch.bfloat16
-        return torch.float32
-
-    def _apply_dtype(self) -> None:
-        """
-        Apply dtype casting to model components based on config.
-        """
-        target_dtype = self._get_target_dtype()
-        self.to(dtype=target_dtype)
+        """The precision this policy builds and runs in, used to align input batches."""
+        return self.config.dtype or torch.get_default_dtype()
 
     def _apply_freezing(self) -> None:
         """
@@ -506,8 +494,10 @@ class XVLAPolicy(PreTrainedPolicy):
         instance.load_state_dict(state_dict, strict=True)
         logging.info("Loaded XVLA checkpoint")
         # step 5: finalize
-        # Reapply dtype after loading state dict
-        instance.model._apply_dtype()
+        # Re-assert the declared precision layout. `load_state_dict` copies into the existing
+        # parameters, so this converts nothing for a checkpoint saved at `config.dtype`; it is kept
+        # as a guard for checkpoints saved at another precision, and it warns if it ever fires.
+        instance.post_init()
         instance.to(config.device)
         instance.eval()
         return instance

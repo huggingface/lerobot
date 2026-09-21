@@ -63,17 +63,20 @@ class EO1Policy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
+        # `config.dtype is None` means "unspecified" for the base class, and for EO-1 that is
+        # exactly transformers' `"auto"`: follow whatever the backbone checkpoint was saved in.
+        backbone_dtype = "auto" if config.dtype is None else config.dtype
         if config.pretrained_path is None:
             # Initialize from pretrained VLM
             vlm_backbone = Qwen2_5_VLForConditionalGeneration.from_pretrained(
                 config.vlm_base,
-                dtype=config.dtype,
+                dtype=backbone_dtype,
                 attn_implementation=config.attn_implementation,
             )
         else:
             vlm_backbone = Qwen2_5_VLForConditionalGeneration._from_config(
                 config.vlm_backbone_config,
-                dtype=config.vlm_backbone_config.dtype if config.dtype == "auto" else config.dtype,
+                dtype=config.vlm_backbone_config.dtype if config.dtype is None else config.dtype,
             )
 
         self.model = EO1VisionFlowMatchingModel(config, vlm_backbone)

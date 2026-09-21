@@ -48,7 +48,6 @@ from .utils import (
     WanTransformer3DModel,
     WanVAEStreamingWrapper,
     _sample_timestep_id,
-    _torch_dtype,
     clean_prompt,
     data_seq_to_patch,
     denormalize_latents,
@@ -72,8 +71,6 @@ class LingBotVAPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
-        self.dtype = _torch_dtype(config.dtype)
-
         # Trainable dual-stream transformer (the only sub-module saved in the LeRobot checkpoint).
         self.transformer = WanTransformer3DModel(
             patch_size=tuple(config.patch_size),
@@ -92,7 +89,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
             attn_mode=config.attn_mode,
         )
         # Run the transformer in config.dtype (bf16); norm/modulation paths upcast to fp32 internally.
-        self.transformer = self.transformer.to(self.dtype)
+        self.transformer = self.transformer.to(self.config.dtype)
 
         # Frozen modules are stored OUTSIDE the nn.Module registry (plain dict) so they are
         # neither saved into model.safetensors nor moved by ``.to()``. They are lazily loaded
@@ -114,12 +111,12 @@ class LingBotVAPolicy(PreTrainedPolicy):
         # sub-folders -- both in the released diffusers-style HF repos and in the local
         # ``--bundle-frozen`` output dir. ``from_pretrained(path, subfolder=...)`` resolves
         # them for either a HF repo id or a local directory.
-        vae = load_vae(path, torch_dtype=self.dtype, torch_device=device, subfolder="vae")
+        vae = load_vae(path, torch_dtype=self.config.dtype, torch_device=device, subfolder="vae")
         # The UMT5-XXL text encoder (~11 GB) runs once per episode; keep it on its own
         # (CPU by default) device so the 5B transformer + VAE fit on a single GPU.
         text_encoder = load_text_encoder(
             path,
-            torch_dtype=self.dtype,
+            torch_dtype=self.config.dtype,
             torch_device=self.config.text_encoder_device,
             subfolder="text_encoder",
         )
@@ -133,7 +130,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         # RoboTwin's T-shape layout encodes the half-resolution wrist cameras through a second
         # streaming VAE (separate causal cache) alongside the full-res head camera.
         if self.config.camera_layout == "robotwin_tshape":
-            vae_half = load_vae(path, torch_dtype=self.dtype, torch_device=device, subfolder="vae")
+            vae_half = load_vae(path, torch_dtype=self.config.dtype, torch_device=device, subfolder="vae")
             self._frozen["streaming_vae_half"] = WanVAEStreamingWrapper(vae_half.eval())
 
     @property
@@ -361,8 +358,8 @@ class LingBotVAPolicy(PreTrainedPolicy):
         full = act.new_zeros(b, cfg.action_dim, fc, apf)
         idx = torch.as_tensor(used, device=device)
         full[:, idx] = act
-        actions = full.unsqueeze(-1).to(self.dtype)  # [B, action_dim, F, apf, 1]
-        mask = torch.zeros(cfg.action_dim, device=device, dtype=self.dtype)
+        actions = full.unsqueeze(-1).to(self.config.dtype)  # [B, action_dim, F, apf, 1]
+        mask = torch.zeros(cfg.action_dim, device=device, dtype=self.config.dtype)
         mask[idx] = 1.0
         actions_mask = mask.view(1, -1, 1, 1, 1).expand_as(actions)
         return latents, actions, actions_mask, text_emb
@@ -383,7 +380,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         def _encode(x, size):
             b, c, t = x.shape[:3]
             x = F.interpolate(x.flatten(0, 1).float(), size=size, mode="bilinear", align_corners=False)
-            x = (x.view(b, c, t, *size) * 2.0 - 1.0).to(self.dtype)
+            x = (x.view(b, c, t, *size) * 2.0 - 1.0).to(self.config.dtype)
             mu = self._vae.encode(x).latent_dist.mode()  # [B, z_dim, F, h, w]
             mean = torch.tensor(self._vae.config.latents_mean).view(1, -1, 1, 1, 1).to(mu.device)
             inv_std = (1.0 / torch.tensor(self._vae.config.latents_std)).view(1, -1, 1, 1, 1).to(mu.device)
@@ -506,7 +503,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
 
         te_device = next(text_encoder.parameters()).device
         prompt_embeds = text_encoder(text_input_ids.to(te_device), mask.to(te_device)).last_hidden_state
-        prompt_embeds = prompt_embeds.to(dtype=self.dtype, device=device)
+        prompt_embeds = prompt_embeds.to(dtype=self.config.dtype, device=device)
         prompt_embeds = [u[:v] for u, v in zip(prompt_embeds, seq_lens, strict=False)]
         prompt_embeds = torch.stack(
             [torch.cat([u, u.new_zeros(max_sequence_length - u.size(0), u.size(1))]) for u in prompt_embeds],
@@ -540,7 +537,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
             size = (self.config.height, self.config.width)
         img = F.interpolate(img, size=size, mode="bilinear", align_corners=False)
         img = img * 2.0 - 1.0
-        return img.unsqueeze(2).to(self.dtype)  # [1, C, F=1, H, W]
+        return img.unsqueeze(2).to(self.config.dtype)  # [1, C, F=1, H, W]
 
     def _normalize_vae_latent(self, enc_out: Tensor) -> Tensor:
         """Take the mean of a VAE encoder output and channel-normalize it (matches upstream)."""
@@ -569,7 +566,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
             frames = [self._camera_frame(fb, k) for fb in raw_frames]
             per_cam_videos.append(torch.cat(frames, dim=2))  # [1, C, F, H, W]
         videos = torch.cat(per_cam_videos, dim=0)  # [num_cam, C, F, H, W]
-        enc_out = self._streaming_vae.encode_chunk(videos.to(vae_device).to(self.dtype))
+        enc_out = self._streaming_vae.encode_chunk(videos.to(vae_device).to(self.config.dtype))
         mu_norm = self._normalize_vae_latent(enc_out)
         # Concatenate the per-camera latents along width.
         video_latent = torch.cat(mu_norm.split(1, dim=0), dim=-1)
@@ -593,8 +590,8 @@ class LingBotVAPolicy(PreTrainedPolicy):
             [self._camera_frame(fb, right_key, size=(h // 2, w // 2)) for fb in raw_frames], dim=2
         )
         wrists = torch.cat([left, right], dim=0)  # [2, C, F, H/2, W/2]
-        enc_high = self._streaming_vae.encode_chunk(head.to(vae_device).to(self.dtype))
-        enc_lr = self._frozen["streaming_vae_half"].encode_chunk(wrists.to(vae_device).to(self.dtype))
+        enc_high = self._streaming_vae.encode_chunk(head.to(vae_device).to(self.config.dtype))
+        enc_lr = self._frozen["streaming_vae_half"].encode_chunk(wrists.to(vae_device).to(self.config.dtype))
         # wrists side-by-side on width, then stacked on top of the head latent on the height axis.
         enc_out = torch.cat([torch.cat(enc_lr.split(1, dim=0), dim=-1), enc_high], dim=-2)
         video_latent = self._normalize_vae_latent(enc_out)
@@ -622,7 +619,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
             latent_token_per_chunk,
             action_token_per_chunk,
             device=self.config.device,
-            dtype=self.dtype,
+            dtype=self.config.dtype,
             batch_size=2 if self._use_cfg else 1,
         )
         self._cache_initialised = True
@@ -632,8 +629,8 @@ class LingBotVAPolicy(PreTrainedPolicy):
             input_dict["noisy_latents"] = input_dict["noisy_latents"].repeat(2, 1, 1, 1, 1)
             input_dict["text_emb"] = torch.cat(
                 [
-                    self._prompt_embeds.to(self.dtype).clone(),
-                    self._negative_prompt_embeds.to(self.dtype).clone(),
+                    self._prompt_embeds.to(self.config.dtype).clone(),
+                    self._negative_prompt_embeds.to(self.config.dtype).clone(),
                 ],
                 dim=0,
             )
@@ -671,7 +668,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
                     1,
                     frame_st_id,
                 ).to(device),
-                "text_emb": self._prompt_embeds.to(self.dtype).clone(),
+                "text_emb": self._prompt_embeds.to(self.config.dtype).clone(),
             }
             if latent_cond is not None:
                 out["latent_res_lst"]["noisy_latents"][:, :, 0:1] = latent_cond[:, :, 0:1]
@@ -690,7 +687,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
                     frame_st_id,
                     action=True,
                 ).to(device),
-                "text_emb": self._prompt_embeds.to(self.dtype).clone(),
+                "text_emb": self._prompt_embeds.to(self.config.dtype).clone(),
             }
             if action_cond is not None:
                 out["action_res_lst"]["noisy_latents"][:, :, 0:1] = action_cond[:, :, 0:1]
@@ -712,7 +709,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         Upstream re-derives the conditioning from the raw executed action via quantile norm; here
         the executed actions are already in the model-normalized space, so we pass them through.
         """
-        return action_norm.to(self.config.device, self.dtype)
+        return action_norm.to(self.config.device, self.config.dtype)
 
     def _compute_kv_cache(self, obs_buffer, executed_actions):
         """Feed real observed keyframes + executed actions back into the KV cache."""
@@ -753,9 +750,17 @@ class LingBotVAPolicy(PreTrainedPolicy):
         latent_h, latent_w = self._latent_hw
         frame_chunk_size = cfg.frame_chunk_size
 
-        latents = torch.randn(1, 48, frame_chunk_size, latent_h, latent_w, device=device, dtype=self.dtype)
+        latents = torch.randn(
+            1, 48, frame_chunk_size, latent_h, latent_w, device=device, dtype=self.config.dtype
+        )
         actions = torch.randn(
-            1, cfg.action_dim, frame_chunk_size, cfg.action_per_frame, 1, device=device, dtype=self.dtype
+            1,
+            cfg.action_dim,
+            frame_chunk_size,
+            cfg.action_per_frame,
+            1,
+            device=device,
+            dtype=self.config.dtype,
         )
 
         self._scheduler.set_timesteps(cfg.num_inference_steps)
@@ -769,7 +774,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         for i, t in enumerate(timesteps):
             last_step = i == len(timesteps) - 1
             latent_cond = (
-                init_latent[:, :, 0:1].to(self.dtype)
+                init_latent[:, :, 0:1].to(self.config.dtype)
                 if frame_st_id == 0 and init_latent is not None
                 else None
             )
@@ -805,7 +810,9 @@ class LingBotVAPolicy(PreTrainedPolicy):
         for i, t in enumerate(action_timesteps):
             last_step = i == len(action_timesteps) - 1
             action_cond = (
-                torch.zeros([1, cfg.action_dim, 1, cfg.action_per_frame, 1], device=device, dtype=self.dtype)
+                torch.zeros(
+                    [1, cfg.action_dim, 1, cfg.action_per_frame, 1], device=device, dtype=self.config.dtype
+                )
                 if frame_st_id == 0
                 else None
             )

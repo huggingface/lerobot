@@ -25,6 +25,8 @@ and the ``transformer/config.json`` of the released checkpoints.
 
 from dataclasses import dataclass, field
 
+import torch
+
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
@@ -58,7 +60,9 @@ class LingBotVAConfig(PreTrainedConfig):
     # ~20 GB of frozen weights, NOT bundled in the checkpoint; lazily pulled from this HF repo /
     # local dir (must hold diffusers-style ``vae/``, ``text_encoder/``, ``tokenizer/`` sub-folders).
     wan_pretrained_path: str = "robbyant/lingbot-va-base"
-    dtype: str = "bfloat16"  # transformer / VAE / text-encoder dtype: "bfloat16", "float16", "float32"
+    # Precision for the transformer, VAE and text encoder. Inherited from PreTrainedConfig; the
+    # default is overridden here because this policy is trained and released in bfloat16.
+    dtype: torch.dtype | None = torch.bfloat16
     # Frozen UMT5-XXL encoder device; "cpu" frees ~11 GB VRAM (it runs once per episode).
     text_encoder_device: str = "cpu"
 
