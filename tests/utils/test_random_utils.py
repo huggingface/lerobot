@@ -134,3 +134,49 @@ def test_seeded_context(fixed_seed):
     assert seeded_val1 == seeded_val2
     assert all(a != b for a, b in zip(val1, seeded_val1, strict=True))  # changed inside the context
     assert all(a != b for a, b in zip(val2, seeded_val2, strict=True))  # changed again after exiting
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt])
+def test_seeded_context_restores_rng_after_exception(fixed_seed, error_type):
+    original = get_rng_state()
+    expected = (random.random(), np.random.rand(), torch.rand(3))
+    set_rng_state(original)
+    error = error_type("context failed")
+
+    with pytest.raises(error_type) as exc_info, seeded_context(1337):
+        random.random()
+        np.random.rand()
+        torch.rand(3)
+        raise error
+
+    assert exc_info.value is error
+    assert random.random() == expected[0]
+    assert np.random.rand() == expected[1]
+    torch.testing.assert_close(torch.rand(3), expected[2], rtol=0, atol=0)
+
+
+def test_seeded_context_restores_rng_after_invalid_seed(fixed_seed):
+    original = get_rng_state()
+    expected = (random.random(), np.random.rand(), torch.rand(3))
+    set_rng_state(original)
+
+    with pytest.raises(ValueError), seeded_context(-1):
+        pytest.fail("An invalid NumPy seed must fail before entering the context")
+
+    assert random.random() == expected[0]
+    assert np.random.rand() == expected[1]
+    torch.testing.assert_close(torch.rand(3), expected[2], rtol=0, atol=0)
+
+
+def test_nested_seeded_context_restores_outer_rng_after_exception(fixed_seed):
+    with seeded_context(123):
+        original = get_rng_state()
+        expected = (random.random(), np.random.rand(), torch.rand(3))
+        set_rng_state(original)
+
+        with pytest.raises(RuntimeError, match="inner context failed"), seeded_context(456):
+            raise RuntimeError("inner context failed")
+
+        assert random.random() == expected[0]
+        assert np.random.rand() == expected[1]
+        torch.testing.assert_close(torch.rand(3), expected[2], rtol=0, atol=0)
