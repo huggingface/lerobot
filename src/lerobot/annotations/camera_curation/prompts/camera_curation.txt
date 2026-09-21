@@ -128,10 +128,10 @@ If fixed -> top / bottom / side (NEVER wrist).
   base_image_side / workspace_image_side: report WHICH IMAGE SIDE (left / right /
   center) the robot's base and the active workspace sit on. This is PLAIN
   LOCALIZATION — just report what you see; do NOT compute left/right from it (done
-  downstream). This drives the left/right label, so for a SIDE view report it
-  CAREFULLY: if the base/workspace leans even moderately to one side of the image,
-  say "left" or "right" — reserve "center" for when it is genuinely centered or you
-  truly cannot tell. (For top/wrist/front/rear views "center" for both is fine.)
+  downstream). Say "left" or "right" only when the thing is clearly toward that side
+  of the image; use "center" when it is roughly centered, in the FOREGROUND between
+  the robot and the camera (a front/rear-facing view), or you cannot tell. For
+  top/wrist views "center" for both is fine.
 
 If unknown -> view_label "unknown" unless the category is independently clear.
 
