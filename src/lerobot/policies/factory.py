@@ -72,7 +72,32 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         ValueError: If the policy name is not registered.
         ImportError: If the policy's optional dependencies are not installed.
     """
-    return _get_policy_cls_from_policy_name(name=name)
+    if name not in PreTrainedConfig.get_known_choices():
+        raise ValueError(
+            f"Unknown policy name '{name}'. Available policies: {PreTrainedConfig.get_known_choices()}"
+        )
+
+    config_cls = PreTrainedConfig.get_choice_class(name)
+    config_cls_name = config_cls.__name__
+
+    model_name = config_cls_name.removesuffix("Config")  # e.g., DiffusionConfig -> Diffusion
+    if model_name == config_cls_name:
+        raise ValueError(
+            f"The config class name '{config_cls_name}' does not follow the expected naming convention."
+            f"Make sure it ends with 'Config'!"
+        )
+    cls_name = model_name + "Policy"  # e.g., DiffusionConfig -> DiffusionPolicy
+
+    module = _import_sibling_policy_module(config_cls, "modeling")
+    if module is None:
+        raise ValueError(f"Policy class for '{name}' is not implemented.")
+    policy_cls = getattr(module, cls_name, None)
+    if policy_cls is None:
+        raise ValueError(
+            f"Policy class '{cls_name}' not found in '{module.__name__}'. "
+            f"Policies must expose '<Name>Policy' in the sibling 'modeling_*' module by naming convention."
+        )
+    return policy_cls
 
 
 def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
@@ -385,46 +410,6 @@ def _import_sibling_policy_module(config_cls: type[PreTrainedConfig], prefix: st
             # actionable install hint stays visible.
             return None
         raise
-
-
-def _get_policy_cls_from_policy_name(name: str) -> type[PreTrainedPolicy]:
-    """Get policy class from its registered name using dynamic imports.
-
-    Works for built-in policies and 3rd party lerobot plugins alike: the config class
-    registered under ``name`` is resolved via the draccus ChoiceRegistry, and the policy
-    class is imported from the sibling ``modeling_*`` module by naming convention.
-
-    Args:
-        name: The name of the policy.
-    Returns:
-        The policy class corresponding to the given name.
-    """
-    if name not in PreTrainedConfig.get_known_choices():
-        raise ValueError(
-            f"Unknown policy name '{name}'. Available policies: {PreTrainedConfig.get_known_choices()}"
-        )
-
-    config_cls = PreTrainedConfig.get_choice_class(name)
-    config_cls_name = config_cls.__name__
-
-    model_name = config_cls_name.removesuffix("Config")  # e.g., DiffusionConfig -> Diffusion
-    if model_name == config_cls_name:
-        raise ValueError(
-            f"The config class name '{config_cls_name}' does not follow the expected naming convention."
-            f"Make sure it ends with 'Config'!"
-        )
-    cls_name = model_name + "Policy"  # e.g., DiffusionConfig -> DiffusionPolicy
-
-    module = _import_sibling_policy_module(config_cls, "modeling")
-    if module is None:
-        raise ValueError(f"Policy class for '{name}' is not implemented.")
-    policy_cls = getattr(module, cls_name, None)
-    if policy_cls is None:
-        raise ValueError(
-            f"Policy class '{cls_name}' not found in '{module.__name__}'. "
-            f"Policies must expose '<Name>Policy' in the sibling 'modeling_*' module by naming convention."
-        )
-    return policy_cls
 
 
 def _make_pretrained_processors_from_policy_config(
