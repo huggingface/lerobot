@@ -794,6 +794,8 @@ def build_report(
                 "usable": v.usable,
                 "blur_reason": v.blur_reason,
                 "confidence": v.confidence,
+                "base_image_side": v.base_image_side,
+                "workspace_image_side": v.workspace_image_side,
                 "proposed_new_key": mapping.get(v.camera_key),
             }
             for v in verdicts

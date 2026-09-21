@@ -442,7 +442,7 @@ def _empty_aggregate() -> dict[str, Any]:
     agg: dict[str, Any] = {k: set() for k in _AGG_SET_KEYS}
     agg["failed"] = {}
     # per-dataset detail, so the summary shows the WHY, not just which:
-    agg["views"] = {}  # subpath -> {camera: {view_label, mount_type, usable}} (always)
+    agg["views"] = {}  # subpath -> {camera: {view_label, mount_type, usable, base/workspace_image_side}}
     agg["unusable_views"] = {}  # subpath -> {camera: reason}
     agg["conflicting_views"] = {}  # subpath -> {label: [cameras]}
     agg["renames"] = {}  # subpath -> {old_key: new_key}
@@ -489,6 +489,8 @@ def _update_aggregate(agg: dict[str, Any], subpath: str, entry: dict[str, Any]) 
             "view_label": (cam or {}).get("view_label"),
             "mount_type": (cam or {}).get("mount_type"),
             "usable": (cam or {}).get("usable"),
+            "base_image_side": (cam or {}).get("base_image_side"),
+            "workspace_image_side": (cam or {}).get("workspace_image_side"),
         }
         for k, cam in cameras.items()
     }
