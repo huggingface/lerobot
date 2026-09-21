@@ -41,7 +41,7 @@ Follow our [Installation Guide](./installation), then install the reBot support:
 pip install -e ".[rebot]"
 ```
 
-This pulls in `motorbridge` (CAN motor control for both follower builds) and `motorbridge-smart-servo` (FashionStar UART servos for the reBot Arm 102 leader). MotorBridge uses the platform CAN runtime: SocketCAN on Linux, MacCAN PCBUSB on macOS, and PCAN-Basic on Windows.
+This installs `motorbridge` for the B601 follower and `motorbridge-smart-servo` for the reBot Arm 102 leader. The Damiao serial bridge does not need a native CAN interface. For native CAN, MotorBridge uses SocketCAN on Linux and PCAN-compatible backends on macOS and Windows; the required adapter and system runtime may need to be installed separately.
 
 ## Registered device types
 
@@ -61,7 +61,7 @@ arm selects its own motor family and transport.
 
 ## Connect the follower
 
-The follower talks to its motors over a CAN bus. DM supports either its Damiao serial bridge (`--robot.can_adapter=damiao`) or MotorBridge's native CAN transport (`--robot.can_adapter=socketcan`). RS requires the native CAN transport because the Damiao serial transport is Damiao-only. The `socketcan` option name is retained for compatibility; MotorBridge selects the platform backend, so this path is not limited to Linux. The default is `damiao` for `motor_family=dm` and `socketcan` for `motor_family=rs`.
+The follower talks to its motors over CAN. DM supports its serial bridge (`--robot.can_adapter=damiao`) or MotorBridge's native CAN transport (`--robot.can_adapter=socketcan`). RS uses native CAN. Although the option is named `socketcan`, MotorBridge selects the platform backend, so it also works on macOS and Windows. The default is `damiao` for DM and `socketcan` for RS.
 
 The `can0` channel used below is a Linux example. On macOS or Windows, pass the channel identifier expected by the installed MotorBridge CAN backend.
 
@@ -221,9 +221,14 @@ lerobot-teleoperate \
 Both builds expose the same joint names and degree-based public coordinate frame. LeRobot applies each build's installed motor directions in both actions and observations, so policies and teleoperators do not need to convert motor signs.
 
 - DM uses MIT control for the arm and `force_pos` for the gripper by default. `gripper_torque_ratio` defaults to `0.07`; DM also supports `--robot.control_mode=pos_vel`.
-- RS uses MIT control and a force-limited impedance gripper. `gripper_torque_limit` defaults to `3.5` N·m while moving and `gripper_hold_torque_limit` defaults to `1.0` N·m while holding.
+- RS uses MIT control and a force-limited impedance gripper. Its torque command is capped at `3.5` N·m while moving and `1.0` N·m while holding by default.
 - Joint tuning such as `mit_kp`, `mit_kd` and `pos_vel_velocity` accepts either one scalar for every joint or a mapping keyed by joint name.
 - `max_relative_target` optionally caps each command's change in degrees. For example, `--robot.max_relative_target=5.0` applies a five-degree cap to every joint.
+
+MotorBridge provides native `force_pos` control for Damiao motors, but not for
+RobStride motors. The RS gripper therefore uses MIT mode to compute a bounded
+torque from its position and velocity error. If gripper feedback fails, LeRobot
+attempts to command zero gripper torque, then disables the arm.
 
 The leader's `joint_directions` remain configurable if a teleoperation joint moves in the wrong direction.
 
