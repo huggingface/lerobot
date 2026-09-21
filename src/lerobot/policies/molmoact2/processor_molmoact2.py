@@ -47,9 +47,8 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
-    batch_to_transition,
+    load_pretrained_policy_processors,
     policy_action_to_transition,
-    transition_to_batch,
     transition_to_policy_action,
 )
 from lerobot.utils.constants import (
@@ -1254,23 +1253,14 @@ def make_molmoact2_pre_post_processors_from_pretrained(
             postprocessor_overrides,
         )
     )
-    preprocessor = PolicyProcessorPipeline.from_pretrained(
-        pretrained_model_name_or_path=pretrained_path,
-        config_filename=preprocessor_config_filename,
-        overrides=prepared_preprocessor_overrides,
-        to_transition=batch_to_transition,
-        to_output=transition_to_batch,
+    return load_pretrained_policy_processors(
+        pretrained_path,
         revision=revision,
+        preprocessor_overrides=prepared_preprocessor_overrides,
+        postprocessor_overrides=prepared_postprocessor_overrides,
+        preprocessor_config_filename=preprocessor_config_filename,
+        postprocessor_config_filename=postprocessor_config_filename,
     )
-    postprocessor = PolicyProcessorPipeline.from_pretrained(
-        pretrained_model_name_or_path=pretrained_path,
-        config_filename=postprocessor_config_filename,
-        overrides=prepared_postprocessor_overrides,
-        to_transition=policy_action_to_transition,
-        to_output=transition_to_policy_action,
-        revision=revision,
-    )
-    return preprocessor, postprocessor
 
 
 def make_molmoact2_pre_post_processors(
