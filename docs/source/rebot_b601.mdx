@@ -4,12 +4,12 @@ The reBot B601 is an open-source, low-cost robot arm from Seeed Studio for embod
 
 The follower ships in two builds with the same joint topology but different geometry and actuators, selected in LeRobot with a single argument, `--robot.motor_family`:
 
-| Build                                                              | `motor_family` | Motors                                   | Supply | Payload |
-| ------------------------------------------------------------------ | -------------- | ---------------------------------------- | ------ | ------- |
-| [B601-DM](https://wiki.seeedstudio.com/rebot_arm_b601_dm_lerobot/) | `dm`           | Damiao (`4340P` base, `4310` wrists)     | 24 V   | 1.5 kg  |
-| [B601-RS](https://wiki.seeedstudio.com/rebot_arm_b601_rs_lerobot/) | `rs`           | RobStride (`rs-06` base, `rs-00` wrists) | 48 V   | 2.5 kg  |
+| Build                                                              | `motor_family` | Motors                                   | Default transport      |
+| ------------------------------------------------------------------ | -------------- | ---------------------------------------- | ---------------------- |
+| [B601-DM](https://wiki.seeedstudio.com/rebot_arm_b601_dm_lerobot/) | `dm`           | Damiao (`4340P` base, `4310` wrists)     | Damiao serial bridge   |
+| [B601-RS](https://wiki.seeedstudio.com/rebot_arm_b601_rs_lerobot/) | `rs`           | RobStride (`rs-06` base, `rs-00` wrists) | MotorBridge native CAN |
 
-The software workflow and joint names are shared. The physical geometry is not identical: Seeed specifies 767 mm maximum reach for DM and 754 mm for RS, and each build has its own motor tuning.
+The software workflow and joint names are shared, while each build keeps its own motor models, limits and tuning.
 
 This page covers **calibration** and **teleoperation** for both single-arm and bimanual (dual-arm) setups.
 
@@ -56,13 +56,14 @@ Both follower builds share the `rebot_b601_follower` type. Existing DM configura
 
 The bimanual types compose two single-arm instances and namespace each arm's
 observation/action keys with a `left_` / `right_` prefix. Per-arm settings are
-passed through nested `left_arm_config.*` / `right_arm_config.*` arguments. Both
-arms must use the same motor family: DM+DM and RS+RS are supported, while mixed
-DM/RS bimanual configurations are rejected.
+passed through nested `left_arm_config.*` / `right_arm_config.*` arguments. Each
+arm selects its own motor family and transport.
 
 ## Connect the follower
 
 The follower talks to its motors over a CAN bus. DM supports either its Damiao serial bridge (`--robot.can_adapter=damiao`) or MotorBridge's native CAN transport (`--robot.can_adapter=socketcan`). RS requires the native CAN transport because the Damiao serial transport is Damiao-only. The `socketcan` option name is retained for compatibility; MotorBridge selects the platform backend, so this path is not limited to Linux. The default is `damiao` for `motor_family=dm` and `socketcan` for `motor_family=rs`.
+
+The `can0` channel used below is a Linux example. On macOS or Windows, pass the channel identifier expected by the installed MotorBridge CAN backend.
 
 For a serial bridge, find the USB port with:
 
@@ -84,8 +85,6 @@ The leader is always a USB serial device; find its port with `lerobot-find-port`
   leader's USB serial port. You may also need to grant access to the serial
   devices: `sudo chmod 666 /dev/ttyACM* /dev/ttyUSB*`.
 </Tip>
-
-Motor communication and hardware validation are handled by MotorBridge. LeRobot propagates its transport and feedback errors directly instead of replacing missing positions with fabricated `0°` values.
 
 ## Calibration
 
@@ -217,119 +216,21 @@ lerobot-teleoperate \
 </hfoption>
 </hfoptions>
 
-<Tip>
-  The leader and follower share the same joint names (`shoulder_pan,
-  shoulder_lift, elbow_flex, wrist_flex, wrist_yaw, wrist_roll, gripper`), so
-  leader actions map directly onto the follower.
-</Tip>
+## Family-specific controls
 
-### Limiting per-step motion (safety)
+Both builds expose the same joint names and degree-based public coordinate frame. LeRobot applies each build's installed motor directions in both actions and observations, so policies and teleoperators do not need to convert motor signs.
 
-`max_relative_target` caps how far a joint may be commanded to move (in **degrees**) in a single control step. If the commanded goal differs from the current position by more than this cap, the target is clipped. This prevents dangerous jumps when the leader is moved abruptly or when a policy outputs an outlier action.
+- DM uses MIT control for the arm and `force_pos` for the gripper by default. `gripper_torque_ratio` defaults to `0.07`; DM also supports `--robot.control_mode=pos_vel`.
+- RS uses MIT control and a force-limited impedance gripper. `gripper_torque_limit` defaults to `3.5` N·m while moving and `gripper_hold_torque_limit` defaults to `1.0` N·m while holding.
+- `max_relative_target` optionally caps each command's change in degrees. For example, `--robot.max_relative_target=5.0` applies a five-degree cap to every joint.
 
-It defaults to `None` (no limit). **Setting a cap such as `5.0` is recommended while teleoperating**, especially on the RS build, whose motors are considerably stronger. Pass a float to cap every joint uniformly, or a dict for per-joint caps:
-
-```bash
-lerobot-teleoperate \
-    --robot.type=rebot_b601_follower \
-    --robot.motor_family=rs \
-    --robot.port=can0 \
-    --robot.max_relative_target=5.0 \
-    --teleop.type=rebot_102_leader \
-    --teleop.port=/dev/ttyUSB0
-```
-
-### Limiting gripper torque
-
-Bounding grip force keeps the gripper from crushing objects or overcurrenting once it has closed. The two builds expose this differently, because RobStride motors have no force-limited position mode:
-
-<hfoptions id="gripper-torque">
-<hfoption id="DM">
-
-The DM gripper runs in `force_pos` mode, where `gripper_torque_ratio` (default `0.07`) sets grip force as a fraction of the motor's peak torque:
-
-```bash
-lerobot-teleoperate \
-    --robot.type=rebot_b601_follower \
-    --robot.motor_family=dm \
-    --robot.port=/dev/ttyACM0 \
-    --robot.gripper_torque_ratio=0.07 \
-    --teleop.type=rebot_102_leader \
-    --teleop.port=/dev/ttyUSB0
-```
-
-</hfoption>
-<hfoption id="RS">
-
-The RS gripper is driven by a force-limited MIT impedance torque rather than a position target, bounded by two limits:
-
-- **`gripper_torque_limit`** (default `3.5` N·m) — max feedforward torque while the gripper is **moving**.
-- **`gripper_hold_torque_limit`** (default `1.0` N·m) — max feedforward torque at **near-zero speed** (grasping or holding). This gentler limit is what prevents crushing and overcurrent once the gripper has reached its target.
-
-```bash
-lerobot-teleoperate \
-    --robot.type=rebot_b601_follower \
-    --robot.motor_family=rs \
-    --robot.port=can0 \
-    --robot.gripper_torque_limit=2.0 \
-    --robot.gripper_hold_torque_limit=0.5 \
-    --teleop.type=rebot_102_leader \
-    --teleop.port=/dev/ttyUSB0
-```
-
-</hfoption>
-</hfoptions>
-
-### Tuning stiffness
-
-Arm joints are driven in MIT mode, whose `mit_kp` (stiffness) and `mit_kd` (damping) gains are set per joint. Raise `mit_kp` if the follower sags behind the leader under load; raise `mit_kd` if it oscillates. Pass a single float for uniform arm gains, or a complete dict to set every joint explicitly. For compatibility, legacy DM scalar/list inputs retain the independent `gripper_mit_kp` and `gripper_mit_kd` gripper defaults:
-
-```bash
-lerobot-teleoperate \
-    --robot.type=rebot_b601_follower \
-    --robot.motor_family=rs \
-    --robot.port=can0 \
-    --robot.mit_kp='{"shoulder_pan":50,"shoulder_lift":150,"elbow_flex":150,"wrist_flex":50,"wrist_yaw":50,"wrist_roll":50,"gripper":12}' \
-    --teleop.type=rebot_102_leader \
-    --teleop.port=/dev/ttyUSB0
-```
+The leader's `joint_directions` remain configurable if a teleoperation joint moves in the wrong direction.
 
 <Tip warning={true}>
-  RS gains are not comparable across joints: the `rs-06` base motors and `rs-00`
-  wrist motors encode gains against different full scales, so the same number
-  means a different stiffness on a base joint than on a wrist joint. Retune per
-  joint rather than scaling all gains together.
+  DM and RS use the same coordinate convention, but their geometry, gains and
+  dynamics differ. Validate policies and datasets before transferring them
+  between builds.
 </Tip>
-
-The DM build additionally supports a `pos_vel` arm mode (`--robot.control_mode=pos_vel`), which follows a position target at a capped speed instead of a torque-based one. MotorBridge also exposes RobStride position control, but this B601-RS integration intentionally exposes only the hardware-tested MIT path for now.
-
-### Reversed joints
-
-If a joint moves the wrong way, flip its sign in the leader's `joint_directions` (the gripper also carries a scale to widen its range to the follower):
-
-```bash
-lerobot-teleoperate \
-    --robot.type=rebot_b601_follower \
-    --robot.motor_family=dm \
-    --robot.port=/dev/ttyACM0 \
-    --teleop.type=rebot_102_leader \
-    --teleop.port=/dev/ttyUSB0 \
-    --teleop.joint_directions='{"shoulder_pan":-1,"shoulder_lift":-1,"elbow_flex":1,"wrist_flex":1,"wrist_yaw":1,"wrist_roll":-1,"gripper":-6}'
-```
-
-The follower's motor directions are fixed by its internal family profile. RS motors are mounted opposite to the DM build, so the RS profile uses `-1` for every joint. The follower applies this conversion in both directions, keeping observations and actions in one public robot coordinate frame. Adjust the leader's directions for teleoperation preferences.
-
-The shipped leader range remains unchanged for DM compatibility. Its wrist-flex output is `[-80°, 90°]`; after the RS direction conversion, the RS follower's public wrist-flex range is `[-90°, 80°]`. The leader therefore clips the RS positive endpoint and cannot command its final negative `10°`. Family-aware leader remapping belongs in a future processor or teleoperator configuration rather than changing the established leader defaults here.
-
-<Tip warning={true}>
-  DM and RS now use the same coordinate convention, but their geometry, payload,
-  gains and dynamics differ. Do not assume a policy or dataset transfers between
-  builds without validation.
-</Tip>
-
-### Gravity compensation
-
-The shared command path accepts a feedforward torque term, but this LeRobot integration does **not** currently calculate gravity compensation. Seeed's ROS2 and Pinocchio integrations provide separate gravity-compensation implementations; enabling it here will require a family-specific robot model and hardware validation.
 
 ## Recording datasets
 
