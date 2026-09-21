@@ -402,6 +402,7 @@ class MolmoAct2Config(PreTrainedConfig):
         # `model_dtype` was renamed to `dtype` without a migration path, which is why
         # `lerobot/MolmoAct2-LIBERO-LeRobot` cannot be loaded on main at all.
         if (legacy := config_dict.pop("model_dtype", None)) is not None:
+            cls._warn_deprecated_key("model_dtype", "dtype")
             config_dict.setdefault("dtype", legacy)
         # Superseded by `lora_target_*`; still present in the published checkpoints.
         for removed in ("enable_lora_vlm", "enable_lora_action_expert", "train_action_expert_only"):

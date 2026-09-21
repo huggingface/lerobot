@@ -226,6 +226,29 @@ def test_legacy_torch_dtype_key_is_migrated(tmp_path: Path):
     assert PreTrainedConfig.from_pretrained(tmp_path).dtype is torch.bfloat16
 
 
+def test_migrating_a_legacy_key_says_so_once(tmp_path: Path, caplog):
+    """Deprecation notices go to the log, not `warnings.warn`.
+
+    They fire on checkpoint data, and turning that into an exception under `-W error` would break
+    loading a file the user may not control. They are also once per process per key: a training run
+    that reloads in a loop must not spam.
+    """
+    from lerobot.configs import policies as policies_module
+
+    policies_module._warned_deprecated_config_keys.clear()
+    make_config("bfloat16")._save_pretrained(tmp_path)
+    payload = json.loads((tmp_path / "config.json").read_text())
+    payload["torch_dtype"] = payload.pop("dtype")
+    (tmp_path / "config.json").write_text(json.dumps(payload))
+
+    with caplog.at_level("WARNING"):
+        PreTrainedConfig.from_pretrained(tmp_path)
+        first = caplog.text.count("deprecated key `torch_dtype`")
+        PreTrainedConfig.from_pretrained(tmp_path)
+        assert caplog.text.count("deprecated key `torch_dtype`") == first == 1
+    assert "removed in" not in caplog.text  # no removal version is promised
+
+
 def test_migration_prefers_the_current_key_when_both_are_present(tmp_path: Path):
     make_config("bfloat16")._save_pretrained(tmp_path)
     payload = json.loads((tmp_path / "config.json").read_text())

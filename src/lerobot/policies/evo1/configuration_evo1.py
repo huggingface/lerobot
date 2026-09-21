@@ -116,6 +116,7 @@ class Evo1Config(PreTrainedConfig):
     def _migrate_config_dict(cls, config_dict: dict[str, Any]) -> dict[str, Any]:
         config_dict = super()._migrate_config_dict(config_dict)
         if (legacy := config_dict.pop("vlm_dtype", None)) is not None:
+            cls._warn_deprecated_key("vlm_dtype", "dtype")
             config_dict.setdefault("dtype", legacy)
         return config_dict
 

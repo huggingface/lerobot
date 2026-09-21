@@ -39,24 +39,6 @@ logger = getLogger(__name__)
 _warned_deprecated_config_keys: set[tuple[str, str]] = set()
 
 
-def _warn_deprecated_config_key(config_cls: type, old_key: str, new_key: str) -> None:
-    """Warn once per process that a checkpoint carries a config key we no longer write.
-
-    Once per (config class, key), not once per load: a training run that reloads in a loop must not
-    spam. Deliberately does not name a removal version -- the key lives in published artifacts, and
-    a version-pinned removal promise for data you do not own is a promise you cannot keep.
-    """
-    marker = (config_cls.__name__, old_key)
-    if marker in _warned_deprecated_config_keys:
-        return
-    _warned_deprecated_config_keys.add(marker)
-    logger.warning(
-        f"This checkpoint's config.json uses the deprecated key `{old_key}`, which has been read as "
-        f"`{new_key}`. It is still supported, but `{old_key}` is no longer written: re-saving the "
-        f"checkpoint with a current LeRobot removes it."
-    )
-
-
 @dataclass
 class PreTrainedConfig(DtypeConfigMixin, draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: ignore[misc,name-defined] #TODO: draccus issue
     """
@@ -188,6 +170,27 @@ class PreTrainedConfig(DtypeConfigMixin, draccus.ChoiceRegistry, HubMixin, abc.A
         return None
 
     @classmethod
+    def _warn_deprecated_key(cls, old_key: str, new_key: str) -> None:
+        """Say once, per process, that a checkpoint carries a config key we no longer write.
+
+        Through the logger rather than `warnings.warn`: this fires on checkpoint data, and under
+        `-W error` a `FutureWarning` would turn "loading a file you may not control" into an
+        exception. Once per (config class, key), not once per load -- a training run that reloads in
+        a loop must not spam. And deliberately no removal version: the key lives in published
+        artifacts, and a version-pinned removal promise for data you do not own is one you cannot
+        keep.
+        """
+        marker = (cls.__name__, old_key)
+        if marker in _warned_deprecated_config_keys:
+            return
+        _warned_deprecated_config_keys.add(marker)
+        logger.warning(
+            f"This checkpoint's config.json uses the deprecated key `{old_key}`, which has been read "
+            f"as `{new_key}`. It is still supported, but `{old_key}` is no longer written: re-saving "
+            f"the checkpoint with a current LeRobot removes it."
+        )
+
+    @classmethod
     def _migrate_config_dict(cls, config_dict: dict[str, Any]) -> dict[str, Any]:
         """Rewrite a checkpoint's `config.json` payload onto the fields this class declares today.
 
@@ -200,7 +203,7 @@ class PreTrainedConfig(DtypeConfigMixin, draccus.ChoiceRegistry, HubMixin, abc.A
         version: the key lives in artifacts we do not all control.
         """
         if (legacy := config_dict.pop("torch_dtype", None)) is not None:
-            _warn_deprecated_config_key(cls, "torch_dtype", "dtype")
+            cls._warn_deprecated_key("torch_dtype", "dtype")
             config_dict.setdefault("dtype", legacy)
         return config_dict
 
