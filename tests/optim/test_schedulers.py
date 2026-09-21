@@ -72,6 +72,28 @@ def test_vqbet_scheduler(optimizer):
     assert scheduler.state_dict() == expected_state_dict
 
 
+@pytest.mark.parametrize("vqvae_steps, warmup_steps", [(20, 10), (0, 10), (20, 0)])
+def test_vqbet_scheduler_decay_finishes_with_training(optimizer, vqvae_steps, warmup_steps):
+    config = VQBeTSchedulerConfig(num_warmup_steps=warmup_steps, num_vqvae_training_steps=vqvae_steps)
+    total_steps = 100
+    scheduler = config.build(optimizer, num_training_steps=total_steps)
+    peak_lr = scheduler.base_lrs[0]
+    rates = [scheduler.get_last_lr()[0]]
+    for _ in range(total_steps):
+        optimizer.step()
+        scheduler.step()
+        rates.append(scheduler.get_last_lr()[0])
+
+    assert rates[:vqvae_steps] == pytest.approx([peak_lr] * vqvae_steps)
+    if warmup_steps:
+        assert rates[vqvae_steps] == pytest.approx(0.0)
+        assert rates[vqvae_steps + warmup_steps // 2] == pytest.approx(peak_lr / 2)
+    decay_start = vqvae_steps + warmup_steps
+    assert rates[decay_start] == pytest.approx(peak_lr)
+    assert rates[(decay_start + total_steps) // 2] == pytest.approx(peak_lr / 2)
+    assert rates[total_steps] == pytest.approx(0.0, abs=1e-12)
+
+
 def test_cosine_decay_with_warmup_scheduler(optimizer):
     config = CosineDecayWithWarmupSchedulerConfig(
         num_warmup_steps=10, num_decay_steps=90, peak_lr=0.01, decay_lr=0.001
