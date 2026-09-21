@@ -51,6 +51,11 @@ FLUX 3 Action (`flux3`) is Black Forest Labs' video-action model: the FLUX.3 vid
 [DM05](https://huggingface.co/Dexmal/DM05) is Dexmal's Vision-Language-Action model for robot control. It conditions on camera observations, robot state, and language instructions to predict continuous action chunks with a flow-matching action expert.
 {% elif model_name == "fineart_vla" %}
 FineART-VLA is a single end-to-end policy from Scale AI and Hugging Face that extends π₀.₅ with a trained language head: it predicts its next subtask in language (System 2) and executes it with a flow-matching action expert (System 1), using knowledge insulation to protect the pretrained VLM. It is mid-trained on the densely subtask-annotated FineART bimanual dataset.
+{% elif model_name == "g05" %}
+[G0.5](https://huggingface.co/OpenGalaxea/G05) is a vision-language-action model from Galaxea that generates chain-of-thought text and robot actions in a single autoregressive stream on a Qwen3.5 backbone.
+
+> [!IMPORTANT]
+> This checkpoint is a derivative work of G0.5 and is licensed under the [G0.5 Community License Agreement](https://huggingface.co/OpenGalaxea/G05/blob/main/licenses/LICENSE-G0.5) (non-commercial use only), not Apache-2.0. Redistributions must include the `LICENSE` and `NOTICE` files of the G0.5 checkpoint it was derived from. It is not endorsed by Galaxea.
 {% else %}
 This is a **{{ model_name }}** policy trained with [LeRobot](https://github.com/huggingface/lerobot).
 {% endif %}
