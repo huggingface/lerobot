@@ -203,6 +203,20 @@ def test_config_dtype_survives_replace_and_deepcopy():
     assert copy.deepcopy(config).dtype is torch.bfloat16
 
 
+def test_the_torch_dtype_alias_warns_but_works():
+    """Warn on code, stay silent on data: reading a checkpoint must not warn (see below)."""
+    config = make_config("bfloat16")
+    with pytest.warns(FutureWarning, match="torch_dtype"):
+        assert config.torch_dtype is torch.bfloat16
+    with pytest.warns(FutureWarning, match="torch_dtype"):
+        config.torch_dtype = "float32"
+    assert config.dtype is torch.float32
+
+
+def test_the_alias_is_not_serialized():
+    assert "torch_dtype" not in draccus.encode(make_config("bfloat16"), PreTrainedConfig)
+
+
 def test_legacy_torch_dtype_key_is_migrated(tmp_path: Path):
     make_config("bfloat16")._save_pretrained(tmp_path)
     payload = json.loads((tmp_path / "config.json").read_text())
@@ -219,6 +233,51 @@ def test_migration_prefers_the_current_key_when_both_are_present(tmp_path: Path)
     (tmp_path / "config.json").write_text(json.dumps(payload))
 
     assert PreTrainedConfig.from_pretrained(tmp_path).dtype is torch.bfloat16
+
+
+@pytest.mark.parametrize("bad", ["bfloat32", "auto", "int8", "bfloat", ""])
+def test_a_bad_dtype_in_a_checkpoint_fails_loudly(bad, tmp_path: Path):
+    """draccus caches union decoders on `typing.Union`, and `Union[A, B] == Union[B, A]`.
+
+    A field typed `str | torch.dtype | None` therefore has a `str` branch whose order is decided by
+    whatever is decoded first in the process, and that branch silently accepts a plausible-looking non-dtype. `torch.dtype |
+    None` has no such branch. Decoding a `str | None` field first, as below, does not change that.
+    """
+    import dataclasses
+
+    @dataclasses.dataclass
+    class StrFirst:
+        x: str | None = None
+
+    draccus.decode(StrFirst, {"x": bad})  # poison the union decoder cache
+
+    make_config("bfloat16")._save_pretrained(tmp_path)
+    payload = json.loads((tmp_path / "config.json").read_text())
+    payload["dtype"] = bad
+    (tmp_path / "config.json").write_text(json.dumps(payload))
+
+    with pytest.raises(Exception, match="dtype"):
+        PreTrainedConfig.from_pretrained(tmp_path)
+
+
+def test_an_explicit_null_dtype_still_loads(tmp_path: Path):
+    make_config("bfloat16")._save_pretrained(tmp_path)
+    payload = json.loads((tmp_path / "config.json").read_text())
+    payload["dtype"] = None
+    (tmp_path / "config.json").write_text(json.dumps(payload))
+    assert PreTrainedConfig.from_pretrained(tmp_path).dtype is None
+
+
+def test_legacy_keys_are_migrated_inside_train_config_too():
+    """A resumed run parses its policy payload as part of `train_config.json`, not on its own."""
+    from lerobot.configs.train import _migrate_nested_policy_config
+
+    migrated = _migrate_nested_policy_config({"type": "act", "torch_dtype": "bfloat16"})
+    assert migrated == {"type": "act", "dtype": "bfloat16"}
+    assert _migrate_nested_policy_config({"type": "act", "dtype": "bfloat16"}) is None
+    assert _migrate_nested_policy_config(None) is None
+    assert _migrate_nested_policy_config({"no": "type"}) is None
+    assert _migrate_nested_policy_config({"type": "not_a_registered_policy"}) is None
 
 
 def test_nested_dtype_keys_are_not_rewritten():

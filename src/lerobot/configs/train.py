@@ -70,6 +70,24 @@ class CheckpointFormat(str, Enum):
         return self in (CheckpointFormat.DCP, CheckpointFormat.SAFETENSORS_AND_DCP)
 
 
+def _migrate_nested_policy_config(policy: Any) -> dict[str, Any] | None:
+    """Apply a policy's own config migration to the payload nested in `train_config.json`.
+
+    Returns the migrated payload, or None when there is nothing to migrate. The policy type tag is
+    kept: draccus needs it to resolve the subclass, and `_migrate_config_dict` never touches it.
+    """
+    if not isinstance(policy, dict) or "type" not in policy:
+        return None
+    try:
+        config_cls = PreTrainedConfig.get_choice_class(policy["type"])
+    except Exception:
+        # An unregistered policy type is reported by draccus with a much better message.
+        return None
+    migrated = config_cls._migrate_config_dict({k: v for k, v in policy.items() if k != "type"})  # noqa: SLF001
+    migrated["type"] = policy["type"]
+    return migrated if migrated != policy else None
+
+
 def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None:
     """Return migrated payload for legacy RA-BC fields, or None when no migration is needed."""
     legacy_fields = (
@@ -447,13 +465,19 @@ class TrainPipelineConfig(HubMixin):
                 )
 
         cli_args = kwargs.pop("cli_args", [])
-        # Legacy RA-BC migration only applies to framework-saved checkpoints (always JSON).
-        # Hand-written YAML/TOML configs are expected to use the current sample_weighting schema.
+        # Legacy migrations only apply to framework-saved checkpoints (always JSON).
+        # Hand-written YAML/TOML configs are expected to use the current schema.
         if config_file is not None and config_file.endswith(".json"):
             with open(config_file) as f:
                 config = json.load(f)
-            migrated_config = _migrate_legacy_rabc_fields(config)
-            if migrated_config is not None:
+            migrated_config = _migrate_legacy_rabc_fields(config) or config
+            # The nested policy payload is parsed as part of this tree, so it never reaches
+            # `PreTrainedConfig.from_pretrained` and would not otherwise be migrated. Without this,
+            # resuming a run whose policy config was written under an older field name fails.
+            migrated_policy = _migrate_nested_policy_config(migrated_config.get("policy"))
+            if migrated_policy is not None:
+                migrated_config = {**migrated_config, "policy": migrated_policy}
+            if migrated_config is not config:
                 with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
                     json.dump(migrated_config, f)
                     config_file = f.name

@@ -447,6 +447,13 @@ class MolmoAct2Config(PreTrainedConfig):
             )
         if self.expected_max_action_dim != 32:
             raise ValueError("MolmoAct2 released checkpoints use expected_max_action_dim=32.")
+        # The base contract accepts any floating dtype; this policy narrows it, because its
+        # optimizer dispatches on the parameter dtype (bfloat16 -> compensated AdamW with bf16
+        # moments, anything else -> native AdamW). float16 would silently take the wrong branch.
+        if self.dtype not in (None, torch.float32, torch.bfloat16):
+            raise ValueError(
+                f"Unsupported dtype={self.dtype}. MolmoAct2 supports float32 and bfloat16 parameters."
+            )
         if not 0 <= self.llm_residual_dropout <= 1:
             raise ValueError(f"llm_residual_dropout must be in [0, 1], got {self.llm_residual_dropout}.")
         if self.lora_rank < 1:

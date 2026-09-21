@@ -100,7 +100,7 @@ def test_molmoact2_policy_registration():
     assert cfg.per_episode_seed is False
     assert cfg.eval_seed is None
     assert cfg.normalize_language is True
-    assert cfg.dtype == "bfloat16"
+    assert cfg.dtype is torch.bfloat16
     assert cfg.llm_residual_dropout == 0.1
     assert not hasattr(cfg, "model_dtype")
     assert cfg.get_scheduler_preset().num_decay_steps == 24_000
@@ -2036,8 +2036,9 @@ def test_train_mode_vlm_rejects_unknown_value():
 
 
 def test_molmoact2_pi05_style_precision_config():
-    assert MolmoAct2Config().dtype == "bfloat16"
-    assert MolmoAct2Config(dtype="float32").dtype == "float32"
+    assert MolmoAct2Config().dtype is torch.bfloat16
+    assert MolmoAct2Config(dtype="float32").dtype is torch.float32
+    assert MolmoAct2Config(dtype=torch.float32).dtype is torch.float32
 
     with pytest.raises(ValueError, match="Unsupported dtype"):
         MolmoAct2Config(dtype="float64")
