@@ -171,6 +171,46 @@ class MyPolicy(PreTrainedPolicy):
 
 With this one declaration, `--parallelism.dp_shard=N` works out of the box for your policy (users can still override it with `--accelerator.fsdp.wrap_modules`). Without any wrap source, sharded runs fail at startup by design.
 
+### Parameter precision
+
+`config.dtype` asks for the precision a policy's parameters are stored in. It is a `torch.dtype`, and it accepts either form on assignment:
+
+```python
+config.dtype = torch.bfloat16
+config.dtype = "bfloat16"     # same thing
+--policy.dtype=bfloat16       # and on the CLI
+```
+
+Read it back and you always get a `torch.dtype`, so a policy never has to parse a precision string. Any floating dtype PyTorch exposes is accepted.
+
+Think of it as `.to(dtype)` applied while the policy is built, with one exception list. Leave it at the default `None` and nothing happens at all: the policy is exactly what your `__init__` made it.
+
+**Build at the requested precision where you can.** If your policy wraps a `transformers` or `diffusers` model, forward the request into its loader. That is the cheapest path — the parameters are never materialised at another precision first:
+
+```python
+self.backbone = SomeModel.from_pretrained(config.backbone_id, dtype=config.dtype)
+```
+
+**Declare what must stay float32.** Action heads, flow-matching time embeddings, normalization statistics and rotary frequency bases usually need it:
+
+```python
+class MyPolicy(PreTrainedPolicy):
+    ...
+    _fp32_modules = (
+        "model.action_head",                    # a full path, read against named_parameters()
+        "model.layers.*.input_layernorm",       # `*` is exactly one path segment
+        nn.LayerNorm,                           # or every module of a given class
+    )
+```
+
+Paths match at dot-segment boundaries anywhere in a tensor's name, so `"model.norm"` keeps matching when PEFT, `torch.compile` or DDP prefixes the tree — and `"norm"` never matches `post_attention_layernorm`. Declare them here on the policy class even when the modules live several levels down: a reader should find the whole precision layout in one place. If neither form fits, override `_fp32_tensor_names()`.
+
+**You do not need to call anything.** `post_init()` runs automatically once your `__init__` returns and brings the policy onto the layout above. It skips tensors that are already correct, so a policy that built itself at the right precision pays nothing. If you need it earlier — before you wrap in LoRA or call `torch.compile` — call `self.post_init()` at that point; it is idempotent, and the automatic call then just confirms the result.
+
+**What not to overload.** `config.dtype` is storage only. Autocast is a separate decision: use `config.use_amp` and `--accelerator.mixed_precision`, or your own flag if your policy manages its own autocast blocks. And `config.dtype` is a request that is never written back to, so it always reproduces the policy it built; `policy.dtype` reports what the built policy actually holds, and `policy.parameter_dtypes()` gives the full breakdown.
+
+Casting a policy after it is built (`policy.to(torch.bfloat16)`) still does exactly what PyTorch does, but it also casts your declared float32 exceptions, so it warns. Set `config.dtype` and rebuild through `make_policy` instead.
+
 ### Processor functions
 
 LeRobot uses `PolicyProcessorPipeline`s to normalize inputs and de-normalize outputs around your policy. For a concrete reference, see [`processor_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/processor_act.py) or [`processor_diffusion.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/diffusion/processor_diffusion.py).

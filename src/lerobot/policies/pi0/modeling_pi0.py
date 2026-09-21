@@ -18,7 +18,7 @@ import builtins
 import logging
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
+from typing import TYPE_CHECKING, TypedDict, Unpack
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -192,7 +192,7 @@ class PaliGemmaWithExpertModel(
         vlm_config,
         action_expert_config,
         use_adarms=None,
-        precision: Literal["bfloat16", "float32"] = "bfloat16",
+        precision: torch.dtype | None = torch.bfloat16,
         image_size: int = DEFAULT_IMAGE_SIZE,
         freeze_vision_encoder: bool = False,
         train_expert_only: bool = False,
@@ -244,14 +244,14 @@ class PaliGemmaWithExpertModel(
         self.to_bfloat16_for_selected_params(precision)
         self._set_requires_grad()
 
-    def to_bfloat16_for_selected_params(self, precision: Literal["bfloat16", "float32"] = "bfloat16"):
-        if precision == "bfloat16":
-            self.to(dtype=torch.bfloat16)
-        elif precision == "float32":
+    def to_bfloat16_for_selected_params(self, precision: torch.dtype | None = torch.bfloat16):
+        # The sub-configs above are built at float32, so "unspecified" and "float32" both leave the
+        # tree exactly as constructed. Any other floating dtype casts everything, then restores the
+        # numerically sensitive modules below.
+        if precision is None or precision is torch.float32:
             self.to(dtype=torch.float32)
             return
-        else:
-            raise ValueError(f"Invalid precision: {precision}")
+        self.to(dtype=precision)
 
         # Keep full vision path in float32 so we never toggle (toggle causes optimizer
         # "same dtype" error). Align with PI05.

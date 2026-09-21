@@ -16,6 +16,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import Any
+
+import torch
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
@@ -63,7 +66,9 @@ class Evo1Config(PreTrainedConfig):
 
     vlm_model_name: str = "OpenGVLab/InternVL3-1B-hf"
     vlm_num_layers: int | None = 14
-    vlm_dtype: str = "bfloat16"
+    # Inherited from PreTrainedConfig (renamed from `vlm_dtype`). Only the InternVL3 backbone
+    # uses it; the flow-matching action head stays float32.
+    dtype: torch.dtype | None = torch.bfloat16
     # Max token length for tokenizing the (image placeholders + instruction) prompt. Prompts longer
     # than this are right-truncated, so raise it for tasks with long language instructions or many views.
     max_text_length: int = 1024
@@ -106,6 +111,13 @@ class Evo1Config(PreTrainedConfig):
     optimizer_grad_clip_norm: float = 1.0
 
     scheduler_warmup_steps: int = 300
+
+    @classmethod
+    def _migrate_config_dict(cls, config_dict: dict[str, Any]) -> dict[str, Any]:
+        config_dict = super()._migrate_config_dict(config_dict)
+        if (legacy := config_dict.pop("vlm_dtype", None)) is not None:
+            config_dict.setdefault("dtype", legacy)
+        return config_dict
 
     def __post_init__(self):
         super().__post_init__()

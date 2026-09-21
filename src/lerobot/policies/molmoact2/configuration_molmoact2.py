@@ -361,7 +361,7 @@ class MolmoAct2Config(PreTrainedConfig):
     # fp32; operator compute follows bf16 autocast plus explicit sensitive fp32
     # math.
     # ``float32`` keeps both the full model and compute in fp32.
-    dtype: str = "bfloat16"
+    dtype: torch.dtype | None = torch.bfloat16
     # Official fine-tuning from the released ``allenai/MolmoAct2`` HF base
     # explicitly applies unmasked residual dropout 0.1 and disables the
     # response-only variant.  The converted HF decoder therefore matches the
@@ -395,6 +395,18 @@ class MolmoAct2Config(PreTrainedConfig):
     input_features: dict[str, PolicyFeature] = field(default_factory=dict)
     output_features: dict[str, PolicyFeature] = field(default_factory=dict)
     dataset_feature_names: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def _migrate_config_dict(cls, config_dict: dict[str, Any]) -> dict[str, Any]:
+        config_dict = super()._migrate_config_dict(config_dict)
+        # `model_dtype` was renamed to `dtype` without a migration path, which is why
+        # `lerobot/MolmoAct2-LIBERO-LeRobot` cannot be loaded on main at all.
+        if (legacy := config_dict.pop("model_dtype", None)) is not None:
+            config_dict.setdefault("dtype", legacy)
+        # Superseded by `lora_target_*`; still present in the published checkpoints.
+        for removed in ("enable_lora_vlm", "enable_lora_action_expert", "train_action_expert_only"):
+            config_dict.pop(removed, None)
+        return config_dict
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -435,8 +447,6 @@ class MolmoAct2Config(PreTrainedConfig):
             )
         if self.expected_max_action_dim != 32:
             raise ValueError("MolmoAct2 released checkpoints use expected_max_action_dim=32.")
-        if self.dtype not in {"float32", "bfloat16"}:
-            raise ValueError(f"Unsupported dtype={self.dtype!r}. Expected 'float32' or 'bfloat16'.")
         if not 0 <= self.llm_residual_dropout <= 1:
             raise ValueError(f"llm_residual_dropout must be in [0, 1], got {self.llm_residual_dropout}.")
         if self.lora_rank < 1:

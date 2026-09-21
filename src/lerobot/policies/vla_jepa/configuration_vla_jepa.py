@@ -18,6 +18,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+import torch
+
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
@@ -123,7 +125,10 @@ class VLAJEPAConfig(PreTrainedConfig):
     # Action-dimension names identifying the gripper. When these match `action_feature_names`,
     # the resolved index wins over `gripper_dim`.
     gripper_joint_names: list[str] = field(default_factory=lambda: ["gripper"])
-    torch_dtype: str = "bfloat16"
+    # Inherited from PreTrainedConfig (renamed from `torch_dtype`; published checkpoints are
+    # migrated by `PreTrainedConfig._migrate_config_dict`). The action model and video
+    # predictor stay float32; only the Qwen and V-JEPA backbones use this.
+    dtype: torch.dtype | None = torch.bfloat16
 
     optimizer_lr: float = 1e-4
     optimizer_betas: tuple[float, float] = (0.9, 0.95)

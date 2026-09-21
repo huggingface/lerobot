@@ -80,6 +80,62 @@ def make_config(dtype=None) -> ACTConfig:
 
 
 # --------------------------------------------------------------------------------------------
+# repo-wide sweeps
+#
+# These iterate the registry, so a new policy is covered the day it is registered. They are the
+# tests that catch "the base class changed and policy X no longer constructs", which is the
+# failure mode a shared precision field is most likely to introduce.
+# --------------------------------------------------------------------------------------------
+
+
+def _registered_policy_types() -> list[str]:
+    import lerobot.policies  # noqa: F401  (populates the draccus registry)
+
+    return sorted(PreTrainedConfig.get_known_choices())
+
+
+@pytest.mark.parametrize("policy_type", _registered_policy_types())
+def test_every_policy_config_constructs_with_its_defaults(policy_type):
+    from lerobot.policies.factory import make_policy_config
+
+    config = make_policy_config(policy_type, device="cpu")
+    assert config.dtype is None or isinstance(config.dtype, torch.dtype)
+
+
+@pytest.mark.parametrize("policy_type", _registered_policy_types())
+def test_no_policy_config_keeps_a_second_precision_field(policy_type):
+    """One concept, one field. `torch_dtype` / `vlm_dtype` / `model_dtype` are migrated, not kept."""
+    import dataclasses
+
+    from lerobot.policies.factory import make_policy_config
+
+    fields = {f.name for f in dataclasses.fields(make_policy_config(policy_type, device="cpu"))}
+    assert fields.isdisjoint({"torch_dtype", "vlm_dtype", "model_dtype", "weight_dtype"})
+
+
+@pytest.mark.parametrize("policy_type", _registered_policy_types())
+def test_every_policy_config_round_trips_its_dtype(policy_type, tmp_path):
+    from lerobot.policies.factory import make_policy_config
+
+    config = make_policy_config(policy_type, device="cpu")
+    target = tmp_path / policy_type
+    target.mkdir()
+    config._save_pretrained(target)
+    assert PreTrainedConfig.from_pretrained(target).dtype is config.dtype
+
+
+def test_no_policy_assigns_to_the_dtype_property():
+    """`self.dtype = ...` in a policy raises at construction; catch it statically, not in CUDA CI."""
+    offenders = [
+        f"{path.relative_to(Path('src'))}:{i + 1}"
+        for path in Path("src/lerobot/policies").rglob("modeling_*.py")
+        for i, line in enumerate(path.read_text().splitlines())
+        if re.match(r"\s*self\.dtype\s*=[^=]", line)
+    ]
+    assert offenders == []
+
+
+# --------------------------------------------------------------------------------------------
 # config layer
 # --------------------------------------------------------------------------------------------
 

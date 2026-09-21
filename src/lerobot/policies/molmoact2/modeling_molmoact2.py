@@ -69,15 +69,6 @@ else:
 logger = logging.getLogger(__name__)
 
 
-def _torch_dtype(dtype: str) -> torch.dtype:
-    """Convert a dtype name string to a torch.dtype."""
-    if dtype == "float32":
-        return torch.float32
-    if dtype == "bfloat16":
-        return torch.bfloat16
-    raise ValueError(f"Unsupported dtype: {dtype}")
-
-
 def _call_module_without_gradient_checkpointing_layer(
     module: torch.nn.Module,
     *args: Any,
@@ -676,7 +667,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             revision=self.config.checkpoint_revision,
             force_download=bool(self.config.checkpoint_force_download),
         )
-        storage_dtype = _torch_dtype(self.config.dtype)
+        storage_dtype = self.config.dtype or torch.get_default_dtype()
         if HFMolmoAct2Config is None or MolmoAct2ForConditionalGeneration is None:
             raise RuntimeError("transformers is required to load MolmoAct2 checkpoints.")
         hf_config = HFMolmoAct2Config.from_pretrained(
@@ -862,7 +853,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         parameters and therefore fp32 Adam state when trainable. Eligible
         action-expert operators still execute in bf16 under autocast.
         """
-        if self.config.dtype != "bfloat16":
+        if self.config.dtype is not torch.bfloat16:
             return
 
         self.model.to(dtype=torch.bfloat16)
@@ -949,13 +940,13 @@ class MolmoAct2Policy(PreTrainedPolicy):
         }
 
     def _autocast_context(self):
-        compute_dtype = _torch_dtype(self.config.dtype)
+        compute_dtype = self.config.dtype or torch.get_default_dtype()
         device_type = next(self.parameters()).device.type
         autocast_available = torch.amp.autocast_mode.is_autocast_available(device_type)
         if compute_dtype == torch.bfloat16:
             if not autocast_available:
                 raise RuntimeError(
-                    f"MolmoAct2 dtype='bfloat16' requires autocast support on device type {device_type!r}."
+                    f"MolmoAct2 dtype=bfloat16 requires autocast support on device type {device_type!r}."
                 )
             return torch.autocast(device_type=device_type, dtype=compute_dtype)
         if autocast_available:

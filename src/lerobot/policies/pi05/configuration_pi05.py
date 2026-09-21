@@ -16,6 +16,8 @@
 
 from dataclasses import dataclass, field
 
+import torch
+
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
@@ -30,7 +32,10 @@ DEFAULT_IMAGE_SIZE = 224
 class PI05Config(PreTrainedConfig):
     paligemma_variant: str = "gemma_2b"
     action_expert_variant: str = "gemma_300m"
-    dtype: str = "float32"  # Options: "bfloat16", "float32"
+    # Inherited from PreTrainedConfig. Kept at float32 because that is what the released
+    # checkpoints were trained and published with; `bfloat16` casts everything except the
+    # vision path and the norms, which stay float32.
+    dtype: torch.dtype | None = torch.float32
 
     n_obs_steps: int = 1
     chunk_size: int = 50  # Number of action steps to predict, in openpi called "action_horizon"
@@ -138,9 +143,6 @@ class PI05Config(PreTrainedConfig):
 
         if self.action_expert_variant not in ["gemma_300m", "gemma_2b"]:
             raise ValueError(f"Invalid action_expert_variant: {self.action_expert_variant}")
-
-        if self.dtype not in ["bfloat16", "float32"]:
-            raise ValueError(f"Invalid dtype: {self.dtype}")
 
         if self.memory_frames < 1:
             raise ValueError("memory_frames must be at least 1")

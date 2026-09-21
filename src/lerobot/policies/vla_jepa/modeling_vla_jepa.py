@@ -88,7 +88,7 @@ class VLAJEPAModel(nn.Module):
         if config.enable_world_model:
             self.video_encoder = AutoModel.from_pretrained(
                 config.jepa_encoder_name,
-                torch_dtype=self.qwen._get_torch_dtype(config.torch_dtype),
+                torch_dtype=config.dtype or torch.get_default_dtype(),
             )
             self.video_processor = AutoVideoProcessor.from_pretrained(config.jepa_encoder_name)
             num_views = config.num_world_model_views

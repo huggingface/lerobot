@@ -43,7 +43,7 @@ class Evo1Model(nn.Module):
             image_size=int(config.image_resolution[0]),
             device=self._device,
             num_language_layers=config.vlm_num_layers,
-            model_dtype=config.vlm_dtype,
+            model_dtype=config.dtype or torch.get_default_dtype(),
             use_flash_attn=config.use_flash_attn,
             max_text_length=config.max_text_length,
             enable_gradient_checkpointing=enable_gradient_checkpointing,

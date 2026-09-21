@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import torch
+
 from lerobot.configs import (
     FeatureType,
     NormalizationMode,
@@ -198,7 +200,10 @@ class FastWAMConfig(PreTrainedConfig):
     tokenizer_max_len: int = 128
     load_text_encoder: bool = True
     mot_checkpoint_mixed_attn: bool = False
-    torch_dtype: str = "bfloat16"
+    # Inherited from PreTrainedConfig (renamed from `torch_dtype`; published checkpoints are
+    # migrated by `PreTrainedConfig._migrate_config_dict`). Applied uniformly to the DiTs and
+    # to the frozen VAE and text encoder as they are loaded.
+    dtype: torch.dtype | None = torch.bfloat16
     prompt_template: str = (
         "A video recorded from a robot's point of view executing the following instruction: {task}"
     )
