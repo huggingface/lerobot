@@ -154,7 +154,7 @@ def test_save_episode_updates_counters(tmp_path):
     )
     for _ in range(5):
         dataset.add_frame(_make_frame(SIMPLE_FEATURES))
-    dataset.save_episode()
+    assert dataset.save_episode() is True
 
     assert dataset.meta.total_episodes == 1
     assert dataset.meta.total_frames == 5

@@ -168,12 +168,15 @@ class HighlightStrategy(RolloutStrategy):
                                     else:
                                         dataset.add_frame(frame)
                                         with self._episode_lock:
-                                            dataset.save_episode()
-                                        logger.info("Episode saved (total: %d)", dataset.num_episodes)
-                                        log_say(
-                                            f"Episode {dataset.num_episodes} saved",
-                                            play_sounds,
-                                        )
+                                            saved = dataset.save_episode()
+                                        if saved:
+                                            logger.info("Episode saved (total: %d)", dataset.num_episodes)
+                                            log_say(
+                                                f"Episode {dataset.num_episodes} saved",
+                                                play_sounds,
+                                            )
+                                        else:
+                                            logger.warning("Episode discarded (failed to save)")
                                         self._recording_live.clear()
                                         frame_consumed = True
 

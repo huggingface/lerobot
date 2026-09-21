@@ -163,20 +163,24 @@ class SentryStrategy(RolloutStrategy):
                 # keeping push_to_hub efficient (uploads complete files).
                 elapsed = time.perf_counter() - episode_start
                 if elapsed >= episode_duration_s:
-                    self._checked_save_episode(dataset)
-                    logger.info(
-                        "Episode saved (total: %d, elapsed: %.1fs)",
-                        dataset.num_episodes,
-                        elapsed,
-                    )
+                    saved = self._checked_save_episode(dataset)
+                    if saved:
+                        logger.info(
+                            "Episode saved (total: %d, elapsed: %.1fs)",
+                            dataset.num_episodes,
+                            elapsed,
+                        )
                     # ``save_episode`` blocks for a good fraction of a second
                     # inside the timed loop body.  That is episode finalisation,
                     # not the steady-state cadence, so report the episode and then
                     # drop the partial group and the gap the save opened.
-                    timer.log_episode_summary(f"episode {dataset.num_episodes}")
+                    timer.log_episode_summary(
+                        f"episode {dataset.num_episodes}" if saved else "discarded episode"
+                    )
                     timer.restart()
 
-                    self._register_saved_episode(dataset, cfg)
+                    if saved:
+                        self._register_saved_episode(dataset, cfg)
 
                     episode_start = time.perf_counter()
 
@@ -194,18 +198,20 @@ class SentryStrategy(RolloutStrategy):
             timer.log_run_summary()
             self._save_tail_episode(dataset, cfg)
 
-    def _checked_save_episode(self, dataset) -> None:
+    def _checked_save_episode(self, dataset) -> bool:
         """``save_episode`` under the push lock; a failure poisons the dataset and re-raises.
 
         A failed ``save_episode`` is *not* recoverable by discarding the buffer:
         rows and counters are committed before the failure-prone steps (video
         encode, metadata commit), so the next segment would reuse the same episode
         index.  Hence the poison latch, which refuses further segments and pushes.
+
+        Returns ``True`` if the episode was committed, ``False`` if it was discarded.
         """
         self._warn_if_push_in_flight()
         try:
             with self._episode_lock:
-                dataset.save_episode()
+                return dataset.save_episode()
         except Exception:
             self._dataset_poisoned = True
             with contextlib.suppress(Exception):
@@ -225,8 +231,8 @@ class SentryStrategy(RolloutStrategy):
             logger.info("No frames pending at segment end — nothing to save")
             return
         logger.info("Saving the segment's final (partial) episode")
-        self._checked_save_episode(dataset)
-        self._register_saved_episode(dataset, cfg)
+        if self._checked_save_episode(dataset):
+            self._register_saved_episode(dataset, cfg)
 
     def _register_saved_episode(self, dataset, cfg) -> None:
         """Post-save bookkeeping, shared by the rotation and tail-save sites.
