@@ -18,6 +18,8 @@
 import importlib
 import json
 import sys
+import threading
+import time
 import types
 from importlib.metadata import EntryPoint
 
@@ -463,6 +465,46 @@ def test_entry_points_are_scanned_once(monkeypatch):
         storage_module._discover_plugin_readers()
 
     assert scans == [DATASET_READER_ENTRY_POINT_GROUP]
+
+
+def test_discovery_is_safe_under_concurrent_first_use(monkeypatch):
+    """Threads opening datasets at once all see a fully built registry.
+
+    Discovery is triggered by first use, so two threads reach it together. The
+    scan has to finish before either reads the registry -- otherwise the thread
+    that did not run it gets "Unknown storage_format" for a format that is in
+    the middle of being registered.
+    """
+    scans = _fake_entry_points(monkeypatch, ("racefmt", "race_reader"))
+    scanning = storage_module.entry_points
+
+    def slow_entry_points(group=None):
+        points = scanning(group=group)
+        time.sleep(0.05)  # widen the window a correct implementation has to close
+        return points
+
+    monkeypatch.setattr(storage_module, "entry_points", slow_entry_points)
+    monkeypatch.setitem(sys.modules, "race_reader", types.ModuleType("race_reader"))
+
+    started = threading.Barrier(8)
+    results = []
+
+    def open_dataset():
+        started.wait()
+        try:
+            results.append(storage_module._reader_module("racefmt"))
+        except Exception as error:  # noqa: BLE001 -- the failure is the assertion
+            results.append(error)
+
+    threads = [threading.Thread(target=open_dataset) for _ in range(started.parties)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert [r for r in results if isinstance(r, Exception)] == []
+    assert len(results) == started.parties
+    assert len(scans) == 1  # and the scan still ran exactly once
 
 
 def test_discovery_reads_real_distribution_metadata(tmp_path, monkeypatch):

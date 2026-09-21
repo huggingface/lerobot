@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import threading
 from importlib.metadata import EntryPoint, entry_points
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -57,6 +58,7 @@ _DATASET_READER_MODULES: dict[str, str] = {}
 # :func:`_discover_plugin_readers`.
 _AMBIGUOUS_READER_PROVIDERS: dict[str, list[str]] = {}
 _PLUGINS_DISCOVERED = False
+_DISCOVERY_LOCK = threading.Lock()
 
 
 def register_dataset_reader(storage_format: str, module: str) -> None:
@@ -104,12 +106,29 @@ def _discover_plugin_readers() -> None:
 
     A plugin that fails to register is skipped with a warning -- one broken
     package must not stop the others, nor stop datasets loading at all.
+
+    Because the trigger is first use, two threads can arrive together; the scan
+    runs once and the second waits for it, rather than reading a registry that
+    is still being built.
     """
     global _PLUGINS_DISCOVERED
     if _PLUGINS_DISCOVERED:
         return
-    # Set before scanning: a failing scan must not be retried on every lookup.
-    _PLUGINS_DISCOVERED = True
+    with _DISCOVERY_LOCK:
+        if _PLUGINS_DISCOVERED:
+            return
+        try:
+            _scan_plugin_readers()
+        finally:
+            # Set after the scan, under the lock, so a thread that arrives while
+            # the scan is running waits for it rather than reading a half-built
+            # registry. The finally is what keeps a failing scan from being
+            # retried on every subsequent lookup.
+            _PLUGINS_DISCOVERED = True
+
+
+def _scan_plugin_readers() -> None:
+    """Read the entry point group and register what it unambiguously advertises."""
     try:
         discovered = list(entry_points(group=DATASET_READER_ENTRY_POINT_GROUP))
     except Exception as error:  # pragma: no cover -- importlib.metadata is robust
