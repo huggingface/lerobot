@@ -30,13 +30,8 @@ from lerobot.configs import FeatureType, PreTrainedConfig
 from lerobot.envs import EnvConfig, env_to_policy_features
 from lerobot.lerobot_types import PolicyAction
 from lerobot.processor import (
-    AbsoluteActionsProcessorStep,
     PolicyProcessorPipeline,
-    RelativeActionsProcessorStep,
-    batch_to_transition,
-    policy_action_to_transition,
-    transition_to_batch,
-    transition_to_policy_action,
+    load_pretrained_policy_processors,
 )
 from lerobot.utils.constants import (
     ACTION,
@@ -57,24 +52,6 @@ if TYPE_CHECKING or _peft_available:
 else:
     PeftConfig = None
     PeftModel = None
-
-
-def _reconnect_relative_absolute_steps(
-    preprocessor: PolicyProcessorPipeline, postprocessor: PolicyProcessorPipeline
-) -> None:
-    """Wire AbsoluteActionsProcessorStep.relative_step to the RelativeActionsProcessorStep after deserialization.
-
-    After a policy is loaded from disk, the preprocessor and postprocessor are reconstructed
-    independently from their configs. AbsoluteActionsProcessorStep needs a live reference to
-    the RelativeActionsProcessorStep so it can read the cached state at inference time.
-    That reference is not serializable, so we re-establish it here after loading.
-    """
-    relative_step = next((s for s in preprocessor.steps if isinstance(s, RelativeActionsProcessorStep)), None)
-    if relative_step is None:
-        return
-    for step in postprocessor.steps:
-        if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
-            step.relative_step = relative_step
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
@@ -235,27 +212,18 @@ def make_pre_post_processors(
         if custom_processors is not None:
             return custom_processors
 
-        preprocessor = PolicyProcessorPipeline.from_pretrained(
-            pretrained_model_name_or_path=pretrained_path,
-            config_filename=kwargs.get(
+        preprocessor, postprocessor = load_pretrained_policy_processors(
+            pretrained_path,
+            revision=pretrained_revision,
+            preprocessor_overrides=kwargs.get("preprocessor_overrides", {}),
+            postprocessor_overrides=kwargs.get("postprocessor_overrides", {}),
+            preprocessor_config_filename=kwargs.get(
                 "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
             ),
-            overrides=kwargs.get("preprocessor_overrides", {}),
-            to_transition=batch_to_transition,
-            to_output=transition_to_batch,
-            revision=pretrained_revision,
-        )
-        postprocessor = PolicyProcessorPipeline.from_pretrained(
-            pretrained_model_name_or_path=pretrained_path,
-            config_filename=kwargs.get(
+            postprocessor_config_filename=kwargs.get(
                 "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
             ),
-            overrides=kwargs.get("postprocessor_overrides", {}),
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
-            revision=pretrained_revision,
         )
-        _reconnect_relative_absolute_steps(preprocessor, postprocessor)
         if isinstance(policy_cfg, Evo1Config):
             from .evo1.processor_evo1 import reconcile_evo1_processors
 
