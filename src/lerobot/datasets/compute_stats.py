@@ -183,13 +183,15 @@ class RunningQuantileStats:
         cumsum = np.cumsum(hist)
         idx = np.searchsorted(cumsum, target_count)
 
-        if idx == 0:
-            return edges[0]
         if idx >= len(cumsum):
             return edges[-1]
 
-        # If not edge case, interpolate within the bin
-        count_before = cumsum[idx - 1]
+        # Interpolate within bin ``idx``, which spans ``[edges[idx], edges[idx + 1]]``.
+        # ``idx == 0`` is not a special case: nothing precedes the first bin, so the
+        # count before it is zero. Returning ``edges[0]`` there instead would yield the
+        # global minimum, which makes low quantiles collapse onto ``min`` whenever the
+        # first bin already holds the target count (e.g. q01 on a short episode).
+        count_before = cumsum[idx - 1] if idx > 0 else 0.0
         count_in_bin = cumsum[idx] - count_before
 
         # If no samples in this bin, use the bin edge

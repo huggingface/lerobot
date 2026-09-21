@@ -937,3 +937,37 @@ def test_aggregate_stats_incremental_resume():
     # Bounds should widen monotonically
     np.testing.assert_allclose(cumulative2["action"]["q01"], np.array([-25.0, -18.0]))
     np.testing.assert_allclose(cumulative2["action"]["q99"], np.array([35.0, 22.0]))
+
+
+def test_low_quantiles_do_not_collapse_onto_the_minimum():
+    """q01 must interpolate inside the first histogram bin, not return the minimum.
+
+    When the first bin already holds the target count -- which is always the case for
+    q01 on an episode of 100 frames or fewer -- returning ``edges[0]`` made q01 exactly
+    equal to ``min``. The upper tail never had this problem, so the estimator was
+    asymmetric.
+    """
+    rng = np.random.default_rng(0)
+    for num_samples in (20, 50, 80, 100):
+        data = rng.normal(0, 1, (num_samples, 1)).astype(np.float32)
+        stats = get_feature_stats(data, axis=0, keepdims=False)
+        assert stats["q01"][0] != stats["min"][0], f"q01 collapsed onto min for {num_samples} samples"
+        assert stats["min"][0] <= stats["q01"][0] <= stats["q10"][0]
+
+
+def test_quantiles_stay_monotonic_and_within_range():
+    rng = np.random.default_rng(1)
+    data = rng.normal(5.0, 2.0, (250, 4)).astype(np.float32)
+    stats = get_feature_stats(data, axis=0, keepdims=False)
+    quantiles = np.stack([stats[k] for k in ("q01", "q10", "q50", "q90", "q99")])
+    assert np.all(np.diff(quantiles, axis=0) >= 0)
+    assert np.all(stats["min"] <= quantiles[0])
+    assert np.all(quantiles[-1] <= stats["max"])
+
+
+def test_quantiles_track_numpy_on_a_large_sample():
+    rng = np.random.default_rng(2)
+    data = rng.normal(0, 1, (20_000, 2)).astype(np.float32)
+    stats = get_feature_stats(data, axis=0, keepdims=False)
+    for key, q in (("q01", 0.01), ("q50", 0.50), ("q99", 0.99)):
+        np.testing.assert_allclose(stats[key], np.quantile(data, q, axis=0), atol=0.02)
