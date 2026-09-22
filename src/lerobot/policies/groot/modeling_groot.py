@@ -31,8 +31,8 @@ from typing import TYPE_CHECKING, TypeVar
 
 import torch
 from huggingface_hub import hf_hub_download
-from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
-from huggingface_hub.errors import HfHubHTTPError
+from huggingface_hub.constants import HF_HUB_OFFLINE, SAFETENSORS_SINGLE_FILE
+from huggingface_hub.errors import EntryNotFoundError, HFValidationError, HfHubHTTPError
 from torch import Tensor
 
 from lerobot.configs import FeatureType, PolicyFeature
@@ -60,6 +60,63 @@ else:
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound="GrootPolicy")
+
+
+def _probe_finetuned_checkpoint(
+    model_id: str,
+    *,
+    revision: str | None,
+    cache_dir: str | Path | None,
+    proxies: dict | None,
+    token: str | bool | None,
+    local_files_only: bool,
+) -> bool:
+    """Return True when `model_id` holds a LeRobot fine-tuned checkpoint
+    (a `model.safetensors` at the repo or directory root).
+
+    "No" is reserved for definitive absence: the file, repo, or revision is
+    missing, or the id is not a repo id at all. Transient hub failures are a
+    different answer — when offline (or asked to be) they degrade to "no" with
+    a warning so cache-based base-model loading keeps working; online they
+    propagate, because silently rerouting a fine-tuned checkpoint down the
+    base-GR00T path hands back the wrong model that looks loaded (#4711, the
+    failure class of #4577).
+    """
+    if os.path.isdir(model_id):
+        return os.path.exists(os.path.join(model_id, SAFETENSORS_SINGLE_FILE))
+
+    offline = local_files_only or HF_HUB_OFFLINE
+    try:
+        # A HEAD-style existence check would be cheaper; hf_hub_download with
+        # force_download=False reuses the cached blob, so repeated probes of the
+        # same repo stay cheap.
+        hf_hub_download(
+            repo_id=model_id,
+            filename=SAFETENSORS_SINGLE_FILE,
+            revision=revision,
+            cache_dir=cache_dir,
+            force_download=False,  # Just check, don't force download
+            proxies=proxies,
+            token=token,
+            local_files_only=local_files_only,
+        )
+        return True
+    except (EntryNotFoundError, HfHubHTTPError, HFValidationError):
+        # Definitive absence: missing file (EntryNotFoundError, including the
+        # local-files-only cache miss), missing repo/revision or gated repo
+        # (HfHubHTTPError), or not a repo id at all (HFValidationError).
+        return False
+    except Exception as e:
+        if offline:
+            logger.warning(
+                "Could not probe %s for a fine-tuned checkpoint (%s); assuming a base GR00T model.",
+                model_id,
+                e,
+            )
+            return False
+        # The hub is reachable in principle: "can't tell" must not silently
+        # select a different model than the one the caller asked for.
+        raise
 
 
 class GrootPolicy(PreTrainedPolicy):
@@ -198,30 +255,16 @@ class GrootPolicy(PreTrainedPolicy):
         )
 
         model_id = str(pretrained_name_or_path)
-        is_finetuned_checkpoint = False
 
         # Check if this is a fine-tuned LeRobot checkpoint (has model.safetensors)
-        try:
-            if os.path.isdir(model_id):
-                is_finetuned_checkpoint = os.path.exists(os.path.join(model_id, SAFETENSORS_SINGLE_FILE))
-            else:
-                # Try to download the safetensors file to check if it exists
-                try:
-                    hf_hub_download(
-                        repo_id=model_id,
-                        filename=SAFETENSORS_SINGLE_FILE,
-                        revision=revision,
-                        cache_dir=cache_dir,
-                        force_download=False,  # Just check, don't force download
-                        proxies=proxies,
-                        token=token,
-                        local_files_only=local_files_only,
-                    )
-                    is_finetuned_checkpoint = True
-                except HfHubHTTPError:
-                    is_finetuned_checkpoint = False
-        except Exception:
-            is_finetuned_checkpoint = False
+        is_finetuned_checkpoint = _probe_finetuned_checkpoint(
+            model_id,
+            revision=revision,
+            cache_dir=cache_dir,
+            proxies=proxies,
+            token=token,
+            local_files_only=local_files_only,
+        )
 
         if is_finetuned_checkpoint:
             # This is a fine-tuned LeRobot checkpoint - use parent class loading
