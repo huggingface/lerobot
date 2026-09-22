@@ -15,9 +15,12 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 import torch
 
 import lerobot.policies.factory as policy_factory
+from lerobot.configs import FeatureType
+from lerobot.utils.constants import ACTION
 
 
 def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch):
@@ -81,3 +84,56 @@ def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch)
         revision="adapter-sha",
         is_trainable=True,
     )
+
+
+@pytest.mark.parametrize("action_key", [ACTION, "actions"])
+@pytest.mark.parametrize(
+    ("raw_names", "expected_names"),
+    [
+        (["shoulder", "elbow", "gripper"], ["shoulder", "elbow", "gripper"]),
+        (("shoulder", "elbow", "gripper"), ["shoulder", "elbow", "gripper"]),
+        ({"motors": ["shoulder", "elbow", "gripper"]}, ["shoulder", "elbow", "gripper"]),
+        ({"right": ["shoulder", "elbow"], "left": ["gripper"]}, ["shoulder", "elbow", "gripper"]),
+        ({"right": ("shoulder", "elbow"), "left": ("gripper",)}, ["shoulder", "elbow", "gripper"]),
+        ({"unused": [], "motors": ["shoulder", "elbow", "gripper"]}, ["shoulder", "elbow", "gripper"]),
+        ({"shoulder": 0, "elbow": 1, "gripper": 2}, ["shoulder", "elbow", "gripper"]),
+        ([], []),
+        ({}, []),
+        (None, None),
+    ],
+)
+def test_make_policy_reads_action_names(monkeypatch, action_key, raw_names, expected_names):
+    cfg = SimpleNamespace(
+        type="mock",
+        device="cpu",
+        pretrained_path=None,
+        use_peft=False,
+        input_features={},
+        output_features={},
+        action_feature_names=None,
+    )
+    dataset_meta = SimpleNamespace(
+        features={
+            action_key: {
+                "dtype": "float32",
+                "shape": (3,),
+                "names": raw_names,
+            }
+        },
+        stats={},
+    )
+
+    policy = torch.nn.Linear(1, 1)
+    policy_class = MagicMock(return_value=policy)
+    monkeypatch.setattr(policy_factory, "get_policy_class", lambda _: policy_class)
+
+    result = policy_factory.make_policy(
+        cfg,
+        ds_meta=dataset_meta,
+        rename_map={action_key: ACTION} if action_key != ACTION else None,
+    )
+
+    assert result is policy
+    assert cfg.action_feature_names == expected_names
+    assert dataset_meta.features[action_key]["names"] == raw_names
+    assert cfg.output_features[ACTION].type is FeatureType.ACTION

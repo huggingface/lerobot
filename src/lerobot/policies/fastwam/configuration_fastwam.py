@@ -172,6 +172,9 @@ class FastWAMConfig(PreTrainedConfig):
         action_dit_config (dict[str, Any] | None): Action expert config.
         use_gradient_checkpointing (bool): Enable activation checkpointing in both DiT
             experts (trades compute for memory; propagated into the DiT configs).
+        compile_action_infer (bool): Compile the cached action-denoising path with
+            ``torch.compile`` in reduce-overhead mode. The first inference call incurs
+            compilation warm-up; subsequent calls with the same shapes reuse the graph.
         freeze_video_expert (bool): Freeze the ~5B Wan video expert
             (`model.video_expert`) so only the action expert + proprio encoder train.
             Cuts the AdamW optimizer footprint substantially; the video expert keeps its
@@ -207,6 +210,7 @@ class FastWAMConfig(PreTrainedConfig):
     sigma_shift: float | None = None
     tiled: bool = False
     fp32_attention: bool = True
+    compile_action_infer: bool = False
     use_gradient_checkpointing: bool = False
     freeze_video_expert: bool = False
     toggle_action_dimensions: list[int] = field(default_factory=list)

@@ -15,7 +15,12 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.datasets.compute_stats import get_feature_stats
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.processor import TransitionKey, batch_to_transition
+from lerobot.processor import (
+    DataProcessorPipeline,
+    TransitionKey,
+    batch_to_transition,
+    create_transition,
+)
 from lerobot.processor.normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep
 from lerobot.processor.relative_action_processor import (
     AbsoluteActionsProcessorStep,
@@ -84,6 +89,17 @@ def test_roundtrip_2d(action_dim):
     mask = [True] * action_dim
     recovered = to_absolute_actions(to_relative_actions(actions, state, mask), state, mask)
     torch.testing.assert_close(recovered, actions)
+
+
+def test_stacked_state_anchors_on_the_current_frame(action_dim):
+    """A (B, T_obs, state_dim) state collapses to frame 0, not to some mix of the stack."""
+    actions = torch.randn(4, CHUNK_SIZE, action_dim)
+    stacked = torch.randn(4, 3, action_dim)
+    mask = [True] * action_dim
+
+    relative = to_relative_actions(actions, stacked, mask)
+    torch.testing.assert_close(relative, to_relative_actions(actions, stacked[:, 0], mask))
+    torch.testing.assert_close(to_absolute_actions(relative, stacked, mask), actions)
 
 
 def test_no_mutation(action_dim):
@@ -216,6 +232,16 @@ def test_processor_step_roundtrip(dataset, action_dim):
     mask = [True] * action_dim
     recovered = to_absolute_actions(relative_transition[TransitionKey.ACTION], state, mask)
     torch.testing.assert_close(recovered, original_actions)
+
+
+def test_reset_clears_the_cached_anchor():
+    """Resetting the pipeline should clear the cached anchor."""
+    step = RelativeActionsProcessorStep(enabled=True, action_names=["a.pos", "b.pos"])
+    step(create_transition(observation={OBS_STATE: torch.tensor([[1.0, 2.0]])}))
+    assert step.get_cached_state() is not None
+
+    DataProcessorPipeline(steps=[step]).reset()
+    assert step.get_cached_state() is None
 
 
 def test_processor_step_disabled_is_noop(dataset, action_dim):

@@ -191,3 +191,25 @@ def test_euler_integrate_debug_tracking_fires_even_when_rtc_disabled():
     assert len(proc.tracked) == 4
     # track() receives the POST-update x_t; the last one is the returned sample.
     assert torch.equal(proc.tracked[-1]["x_t"], out)
+
+
+def test_euler_integrate_clamps_trained_rtc_prefix_and_sets_clean_time():
+    noise = torch.ones(1, 4, 1)
+    hard_prefix = torch.tensor([[[2.0], [3.0], [0.0], [0.0]]])
+    hard_prefix_mask = torch.tensor([[[True], [True], [False], [False]]])
+    seen_times = []
+
+    def denoise_fn(x_t, time_tensor):
+        seen_times.append(time_tensor.clone())
+        return torch.ones_like(x_t)
+
+    out = euler_integrate(
+        denoise_fn,
+        noise,
+        2,
+        hard_prefix=hard_prefix,
+        hard_prefix_mask=hard_prefix_mask,
+    )
+
+    torch.testing.assert_close(out[:, :2], hard_prefix[:, :2])
+    assert all(torch.equal(time[:, :2], torch.zeros(1, 2)) for time in seen_times)
