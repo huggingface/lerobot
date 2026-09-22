@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+import queue
 import re
 from itertools import chain
 from pathlib import Path
@@ -24,6 +25,7 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import av
 import datasets
 from huggingface_hub import HfApi
 from PIL import Image
@@ -354,26 +356,40 @@ def test_save_episode_discards_on_missing_png_frames(image_dataset, caplog):
     with caplog.at_level(logging.WARNING):
         assert dataset.save_episode() is False
 
-    assert "number of stored frames does not match" in caplog.text
+    assert "were not written to disk" in caplog.text
     assert dataset.meta.total_episodes == 0
 
 
-def test_save_episode_discards_on_dropped_streaming_frames(tmp_path, empty_lerobot_dataset_factory, caplog):
-    """Streaming guard: frames dropped by encoder back-pressure discard the episode."""
+def test_save_episode_streaming_full_queue_keeps_episode(tmp_path, empty_lerobot_dataset_factory, caplog):
+    """Streaming: a frame rejected by a full encoder queue is repeated, and the episode is saved intact."""
     vid_key = "video"
     features = {vid_key: {"dtype": "video", "shape": DUMMY_HWC, "names": ["height", "width", "channels"]}}
     dataset = empty_lerobot_dataset_factory(
         root=tmp_path / "streaming", features=features, streaming_encoding=True
     )
-    for _ in range(2):
-        dataset.add_frame({vid_key: np.random.rand(*DUMMY_HWC), "task": "Dummy task"})
-    dataset.writer._streaming_encoder._dropped_frames[vid_key] = 1  # simulate a dropped frame (full queue)
+    num_frames = 6
 
+    dataset.add_frame({vid_key: np.random.rand(*DUMMY_HWC), "task": "Dummy task"})  # starts the encoder
+    frame_queue = dataset.writer._streaming_encoder._frame_queues[vid_key]
+    real_put = frame_queue.put
+
+    def reject_once(item, *args, **kwargs):
+        frame_queue.put = real_put
+        raise queue.Full
+
+    frame_queue.put = reject_once  # simulate encoder back-pressure on the next frame
     with caplog.at_level(logging.WARNING):
-        assert dataset.save_episode() is False
+        for _ in range(num_frames - 1):
+            dataset.add_frame({vid_key: np.random.rand(*DUMMY_HWC), "task": "Dummy task"})
+        assert dataset.save_episode() is True
 
-    assert "number of stored frames does not match" in caplog.text
-    assert dataset.meta.total_episodes == 0
+    assert "repeated the previous frame" in caplog.text
+    assert dataset.meta.total_episodes == 1
+    assert dataset.meta.total_frames == num_frames
+    dataset.finalize()
+    with av.open(str(dataset.root / dataset.meta.get_video_file_path(0, vid_key))) as container:
+        total_frames = sum(1 for _ in container.decode(video=0))
+    assert total_frames == num_frames
 
 
 def test_add_frame_image(image_dataset):

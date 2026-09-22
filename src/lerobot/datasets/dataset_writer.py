@@ -285,28 +285,27 @@ class DatasetWriter:
         # Flush async image writes.
         self._wait_image_writer()
 
-        # A frame shortfall (dropped PNG write or encoder back-pressure) would misalign frames with
-        # the tabular data, so discard the episode.
+        # A missing camera frame on disk (failed PNG write) would misalign frames with the
+        # tabular data, so discard the episode. Each expected path is checked individually
+        # rather than counting files in the directory, so stale files from an earlier run
+        # cannot mask a gap or fail a valid episode. With streaming encoding, video keys never
+        # touch disk (the encoder guarantees one video frame per recorded frame), so only
+        # image keys are left to check.
         episode_index = episode_buffer["episode_index"]
         if isinstance(episode_index, np.ndarray):
             episode_index = int(episode_index.flat[0])
         episode_length = episode_buffer["size"]
-        streaming = self._streaming_encoder is not None
-        mismatched = {}
-        for key in self._meta.camera_keys:
-            if streaming and key in self._meta.video_keys:
-                produced = episode_length - self._streaming_encoder.dropped_frame_count(key)
-            else:
-                frame_path = Path(episode_buffer[key][0])
-                img_dir = frame_path.parent
-                produced = len(list(img_dir.glob(f"*{frame_path.suffix}"))) if img_dir.is_dir() else 0
-            if produced != episode_length:
-                mismatched[key] = produced
-        if mismatched:
-            details = ", ".join(f"{key}: {count} frame(s)" for key, count in mismatched.items())
+        png_keys = self._meta.image_keys if self._streaming_encoder is not None else self._meta.camera_keys
+        missing = {}
+        for key in png_keys:
+            n_missing = sum(1 for fpath in episode_buffer[key] if not Path(fpath).is_file())
+            if n_missing:
+                missing[key] = n_missing
+        if missing:
+            details = ", ".join(f"{key}: {count} missing" for key, count in missing.items())
             logger.warning(
-                "\n" + "!" * 80 + f"\nEpisode {episode_index}: number of stored frames does not match the "
-                f"{episode_length} recorded frames ({details}).\n"
+                "\n" + "!" * 80 + f"\nEpisode {episode_index}: some of the {episode_length} recorded camera "
+                f"frames were not written to disk ({details}).\n"
                 "Discarding this episode and moving on.\n" + "!" * 80
             )
             self.clear_episode_buffer(delete_images=True)

@@ -759,10 +759,15 @@ def concatenate_video_files(
 class _CameraEncoderThread(threading.Thread):
     """A thread that encodes video frames streamed via a queue into an MP4 file.
 
-    One instance is created per camera per episode. Frames are received as numpy arrays
-    from the main thread, encoded in real-time using PyAV (which releases the GIL during
-    encoding), and written to disk. Stats are computed incrementally using
+    One instance is created per camera per episode. Queue items are ``(frame_index, image)``
+    tuples from the main thread; the image is encoded in real-time using PyAV (which releases
+    the GIL during encoding) and written to disk. Stats are computed incrementally using
     RunningQuantileStats and returned via result_queue.
+
+    Frames the producer could not enqueue (encoder back-pressure) show up as gaps in the
+    ``frame_index`` sequence. Each gap is filled by re-encoding the most recent frame so the
+    video always has exactly one frame per recorded frame and stays aligned with the tabular
+    data. The episode-end sentinel is ``(total_frames, None)``, which also fills a trailing gap.
     """
 
     def __init__(
@@ -785,36 +790,87 @@ class _CameraEncoderThread(threading.Thread):
         self.stop_event = stop_event
         self.encoder_threads = encoder_threads
 
+        # Fast-path cache for repeated frames: the converted ``av.VideoFrame`` is reused
+        # whenever the same numpy array is encoded again (encoder back-pressure fills gaps by
+        # repeating the previous frame), skipping the expensive image conversion on every
+        # repeat. Repeated frames are also excluded from the running stats.
+        self._cached_frame_data: np.ndarray | None = None
+        self._cached_video_frame: av.VideoFrame | None = None
+
+    def _encode(self, frame_data: np.ndarray, pts: int, container, output_stream, stats_tracker) -> int:
+        """Encode one HWC frame at ``pts`` and fold it into the running stats. Returns ``pts + 1``.
+
+        When ``frame_data`` is the same array as the previous call (a repeated frame), the
+        cached ``av.VideoFrame`` is reused so only the codec re-encode runs, and the frame is
+        excluded from the running stats (repeats are duplicates that would skew the distribution).
+        """
+        from .compute_stats import auto_downsample_height_width
+
+        is_repeat = frame_data is self._cached_frame_data and self._cached_video_frame is not None
+        if is_repeat:
+            video_frame = self._cached_video_frame
+        else:
+            if not self.is_depth:
+                video_frame = av.VideoFrame.from_image(Image.fromarray(frame_data))
+            else:
+                video_frame = quantize_depth(
+                    frame_data,
+                    depth_min=self.video_encoder.depth_min,
+                    depth_max=self.video_encoder.depth_max,
+                    shift=self.video_encoder.shift,
+                    use_log=self.video_encoder.use_log,
+                    video_backend=self.video_encoder.video_backend,
+                )
+            self._cached_frame_data = frame_data
+            self._cached_video_frame = video_frame
+
+        video_frame.pts = pts
+        video_frame.time_base = Fraction(1, self.fps)
+        packet = output_stream.encode(video_frame)
+        if packet:
+            container.mux(packet)
+
+        # Fold only genuine (non-repeated) frames into the running stats.
+        if not is_repeat:
+            img_downsampled = auto_downsample_height_width(frame_data.transpose(2, 0, 1))  # HWC -> CHW
+            channels = img_downsampled.shape[0]
+            stats_tracker.update(img_downsampled.transpose(1, 2, 0).reshape(-1, channels))
+        return pts + 1
+
     def run(self) -> None:
-        from .compute_stats import RunningQuantileStats, auto_downsample_height_width
+        from .compute_stats import RunningQuantileStats
 
         container = None
         output_stream = None
         stats_tracker = RunningQuantileStats()
         frame_count = 0
+        last_frame_data: np.ndarray | None = None
 
         try:
             logging.getLogger("libav").setLevel(av.logging.WARNING)
 
             while True:
                 try:
-                    frame_data = self.frame_queue.get(timeout=1)
+                    frame_index, frame_data = self.frame_queue.get(timeout=1)
                 except queue.Empty:
                     if self.stop_event.is_set():
                         break
                     continue
 
                 if frame_data is None:
-                    # Sentinel: flush and close
+                    # Sentinel: fill a trailing gap, then flush and close
+                    while last_frame_data is not None and frame_count < frame_index:
+                        frame_count = self._encode(
+                            last_frame_data, frame_count, container, output_stream, stats_tracker
+                        )
                     break
 
                 # Ensure HWC (RGB or depth) uint8 (RGB only) numpy array
-                if isinstance(frame_data, np.ndarray):
-                    if frame_data.ndim == 3 and frame_data.shape[0] in (1, 3):
-                        # CHW -> HWC
-                        frame_data = frame_data.transpose(1, 2, 0)
-                    if not self.is_depth and frame_data.dtype != np.uint8:
-                        frame_data = (frame_data * 255).astype(np.uint8)
+                if frame_data.ndim == 3 and frame_data.shape[0] in (1, 3):
+                    # CHW -> HWC
+                    frame_data = frame_data.transpose(1, 2, 0)
+                if not self.is_depth and frame_data.dtype != np.uint8:
+                    frame_data = (frame_data * 255).astype(np.uint8)
 
                 # Open container on first frame (to get width/height)
                 if container is None:
@@ -831,34 +887,14 @@ class _CameraEncoderThread(threading.Thread):
                     output_stream.height = height
                     output_stream.time_base = Fraction(1, self.fps)
 
-                # Encode frame with explicit timestamps
-                if not self.is_depth:
-                    pil_img = Image.fromarray(frame_data)
-                    video_frame = av.VideoFrame.from_image(pil_img)
-                else:
-                    video_frame = quantize_depth(
-                        frame_data,
-                        depth_min=self.video_encoder.depth_min,
-                        depth_max=self.video_encoder.depth_max,
-                        shift=self.video_encoder.shift,
-                        use_log=self.video_encoder.use_log,
-                        video_backend=self.video_encoder.video_backend,
-                    )
-                video_frame.pts = frame_count
-                video_frame.time_base = Fraction(1, self.fps)
-                packet = output_stream.encode(video_frame)
-                if packet:
-                    container.mux(packet)
+                # Fill any gap left by frames the producer had to skip. A gap before the very
+                # first delivered frame is filled with that frame (hold-forward).
+                fill = last_frame_data if last_frame_data is not None else frame_data
+                while frame_count < frame_index:
+                    frame_count = self._encode(fill, frame_count, container, output_stream, stats_tracker)
 
-                # Update stats with downsampled frame (per-channel stats like compute_episode_stats)
-                img_chw = frame_data.transpose(2, 0, 1)  # HWC -> CHW
-                img_downsampled = auto_downsample_height_width(img_chw)
-                # Reshape CHW to (H*W, C) for per-channel stats
-                channels = img_downsampled.shape[0]
-                img_for_stats = img_downsampled.transpose(1, 2, 0).reshape(-1, channels)
-                stats_tracker.update(img_for_stats)
-
-                frame_count += 1
+                frame_count = self._encode(frame_data, frame_count, container, output_stream, stats_tracker)
+                last_frame_data = frame_data
 
             # Flush encoder
             if output_stream is not None:
@@ -905,6 +941,7 @@ class StreamingVideoEncoder:
         depth_encoder: DepthEncoderConfig | None = None,
         queue_maxsize: int = 30,
         encoder_threads: int | None = None,
+        max_repeated_frames: int | None = None,
     ):
         """
         Args:
@@ -914,23 +951,31 @@ class StreamingVideoEncoder:
             depth_encoder: Video encoder settings applied to all depth cameras,
                 including the depth quantization parameters. When ``None``,
                 :func:`depth_encoder_defaults` is used.
-            queue_maxsize: Max frames to buffer per camera before
-                back-pressure drops frames.
+            queue_maxsize: Max frames to buffer per camera. When the buffer is full the
+                frame is not enqueued and the encoder repeats the previous frame in its
+                place, so the video keeps one frame per recorded frame.
             encoder_threads: Number of encoder threads (global setting).
                 ``None`` lets the codec decide.
+            max_repeated_frames: Maximum number of *consecutive* frames the encoder may
+                repeat (because of back-pressure) before :meth:`feed_frame` raises. The
+                counter resets whenever a frame is successfully enqueued. ``None`` defaults
+                to ``fps`` (one second of frozen video); pass ``0`` to disable the check.
         """
         self.fps = fps
         self._rgb_encoder = rgb_encoder or rgb_encoder_defaults()
         self._depth_encoder = depth_encoder or depth_encoder_defaults()
         self._encoder_threads = encoder_threads
         self.queue_maxsize = queue_maxsize
+        self.max_repeated_frames = fps if max_repeated_frames is None else max_repeated_frames
 
         self._frame_queues: dict[str, queue.Queue] = {}
         self._result_queues: dict[str, queue.Queue] = {}
         self._threads: dict[str, _CameraEncoderThread] = {}
         self._stop_events: dict[str, threading.Event] = {}
         self._video_paths: dict[str, Path] = {}
-        self._dropped_frames: dict[str, int] = {}
+        self._fed_frames: dict[str, int] = {}
+        self._repeated_frames: dict[str, int] = {}
+        self._consecutive_repeats: dict[str, int] = {}
         self._episode_active = False
         self._closed = False
 
@@ -948,7 +993,9 @@ class StreamingVideoEncoder:
         if self._episode_active:
             self.cancel_episode()
 
-        self._dropped_frames.clear()
+        self._fed_frames.clear()
+        self._repeated_frames.clear()
+        self._consecutive_repeats.clear()
 
         if depth_video_keys is None:
             depth_video_keys = []
@@ -986,8 +1033,9 @@ class StreamingVideoEncoder:
 
         A copy of the image is made before enqueueing to prevent race conditions
         with camera drivers that may reuse buffers. If the encoder queue is full
-        (encoder can't keep up), the frame is dropped with a warning instead of
-        crashing the recording session.
+        (encoder can't keep up), the frame is not enqueued; the encoder thread fills
+        its slot by repeating the previous frame, so the video stays aligned with the
+        recorded frames. A warning is logged instead of crashing the recording session.
 
         Args:
             video_key: The video feature key
@@ -1010,28 +1058,33 @@ class StreamingVideoEncoder:
                 pass
             raise RuntimeError(f"Encoder thread for {video_key} is not alive")
 
+        frame_index = self._fed_frames.get(video_key, 0)
+        self._fed_frames[video_key] = frame_index + 1
         try:
-            self._frame_queues[video_key].put(image.copy(), timeout=0.1)
+            # Wait at most one frame period for a free slot: long enough to absorb a
+            # one-frame hiccup, short enough to keep the real-time capture loop on cadence
+            # (and to keep the max_repeated_frames guard's wall-time ~ its "seconds of video").
+            self._frame_queues[video_key].put((frame_index, image.copy()), timeout=1.0 / self.fps)
+            self._consecutive_repeats[video_key] = 0
         except queue.Full:
-            self._dropped_frames[video_key] = self._dropped_frames.get(video_key, 0) + 1
-            count = self._dropped_frames[video_key]
+            self._repeated_frames[video_key] = self._repeated_frames.get(video_key, 0) + 1
+            consecutive = self._consecutive_repeats.get(video_key, 0) + 1
+            self._consecutive_repeats[video_key] = consecutive
+            if self.max_repeated_frames and consecutive >= self.max_repeated_frames:
+                raise RuntimeError(
+                    f"Encoder for {video_key} fell behind: repeated the previous frame "
+                    f"{consecutive} time(s) in a row (>= max_repeated_frames="
+                    f"{self.max_repeated_frames}, ~{self.max_repeated_frames / self.fps:.1f}s of video). "
+                    f"The encoder cannot keep up; use vcodec='auto' for hardware encoding or "
+                    f"increase encoder_queue_maxsize."
+                ) from None
+            count = self._repeated_frames[video_key]
             # Log periodically to avoid spam (1st, then every 10th)
             if count == 1 or count % 10 == 0:
                 logger.warning(
-                    f"Encoder queue full for {video_key}, dropped {count} frame(s). "
+                    f"Encoder queue full for {video_key}, repeated the previous frame {count} time(s). "
                     f"Consider using vcodec='auto' for hardware encoding or increasing encoder_queue_maxsize."
                 )
-
-    def dropped_frame_count(self, video_key: str) -> int:
-        """Return frames dropped for ``video_key`` in the current episode from encoder back-pressure.
-
-        Args:
-            video_key: Video feature key.
-
-        Returns:
-            Dropped frame count; ``recorded_frames - dropped`` equals the frames encoded.
-        """
-        return self._dropped_frames.get(video_key, 0)
 
     def finish_episode(self) -> dict[str, tuple[Path, dict | None]]:
         """Finish encoding the current episode.
@@ -1047,14 +1100,14 @@ class StreamingVideoEncoder:
 
         results = {}
 
-        # Report dropped frames
-        for video_key, count in self._dropped_frames.items():
+        # Report repeated frames
+        for video_key, count in self._repeated_frames.items():
             if count > 0:
-                logger.warning(f"Episode finished with {count} dropped frame(s) for {video_key}.")
+                logger.warning(f"Episode finished with {count} repeated frame(s) for {video_key}.")
 
-        # Send sentinel to all queues
+        # Send sentinel to all queues: the total frame count lets the thread fill a trailing gap
         for video_key in self._frame_queues:
-            self._frame_queues[video_key].put(None)
+            self._frame_queues[video_key].put((self._fed_frames.get(video_key, 0), None))
 
         # Wait for all threads and collect results
         for video_key in self._threads:
