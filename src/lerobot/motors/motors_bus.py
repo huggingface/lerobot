@@ -867,7 +867,7 @@ class SerialMotorsBus(MotorsBusBase):
 
         The transport exposes no broadcast ping, so this sweeps the ID space one
         motor at a time. Only bus scanning and motor setup call it, never a control
-        loop.
+        loop. Being a sweep of ordinary reads, it works on every protocol.
 
         Args:
             num_retry (int, optional): Retry attempts per ID. Defaults to `0`.
@@ -875,7 +875,6 @@ class SerialMotorsBus(MotorsBusBase):
         Returns:
             dict[int, int]: Mapping *id → model number* for every motor that answered.
         """
-        self._assert_protocol_is_compatible("broadcast_ping")
         with self._scan_timeout():
             found = {id_: self.ping(id_, num_retry=num_retry) for id_ in range(self.max_id + 1)}
 

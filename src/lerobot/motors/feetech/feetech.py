@@ -109,10 +109,6 @@ class FeetechMotorsBus(SerialMotorsBus):
             raise NotImplementedError(
                 "'Sync Read' is not available with Feetech motors using Protocol 1. Use 'Read' sequentially instead."
             )
-        if instruction_name == "broadcast_ping" and self.protocol_version == 1:
-            raise NotImplementedError(
-                "'Broadcast Ping' is not available with Feetech motors using Protocol 1. Use 'Ping' sequentially instead."
-            )
 
     def _assert_same_firmware(self) -> None:
         firmware_versions = self._read_firmware_version(self.ids, raise_on_error=True)

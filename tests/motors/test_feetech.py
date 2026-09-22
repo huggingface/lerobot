@@ -212,12 +212,26 @@ def test_record_ranges_of_motion(dummy_motors):
     assert maxes == {"dummy_1": 1337, "dummy_2": 3600, "dummy_3": 4002}
 
 
-@pytest.mark.parametrize(
-    "instruction, message", [("sync_read", "Sync Read"), ("broadcast_ping", "Broadcast Ping")]
-)
-def test_protocol_1_refuses_group_instructions(instruction, message):
-    """SCS firmware knows neither, so the bus must say so rather than time out."""
+def test_protocol_1_refuses_sync_read():
+    """SCS firmware has no Sync Read, so the bus must say so rather than time out."""
     bus = FeetechMotorsBus("", {}, protocol_version=1)
 
-    with pytest.raises(NotImplementedError, match=message):
-        bus._assert_protocol_is_compatible(instruction)
+    with pytest.raises(NotImplementedError, match="Sync Read"):
+        bus._assert_protocol_is_compatible("sync_read")
+
+
+def test_protocol_1_broadcast_ping_sweeps_the_id_space():
+    """Broadcast Ping is not in the same boat as Sync Read: it is a sweep of ordinary
+    reads, which SCS answers. `scan_port(..., protocol_version=1)` depends on it."""
+    bus = FeetechMotorsBus(
+        port="/dev/dummy-port",
+        motors={"dummy": Motor(1, "scs0009", MotorNormMode.RANGE_M100_100)},
+        protocol_version=1,
+    )
+    bus._io = MockTransport()
+    bus.connect(handshake=False)
+    addr, length = bus.model_number_address
+    bus._io.absent = set(range(bus.max_id + 1)) - {1}
+    bus._io.seed(1, addr, bytes(bus._split_into_byte_chunks(1284, length)))
+
+    assert bus.broadcast_ping() == {1: 1284}
