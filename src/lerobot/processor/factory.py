@@ -15,6 +15,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -197,7 +198,7 @@ def _reconnect_relative_absolute_steps(
 
 
 def load_pretrained_policy_processors(
-    pretrained_path: str,
+    pretrained_path: str | Path,
     *,
     revision: str | None = None,
     preprocessor_overrides: dict[str, Any] | None = None,

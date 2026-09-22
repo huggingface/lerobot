@@ -603,6 +603,10 @@ module = "lerobot.optim.*"
 ignore_errors = false
 
 [[tool.mypy.overrides]]
+module = "lerobot.rollout.*"
+ignore_errors = false
+
+[[tool.mypy.overrides]]
 module = "lerobot.model.*"
 ignore_errors = false
 
