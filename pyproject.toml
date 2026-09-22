@@ -576,9 +576,9 @@ disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.utils.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.utils.*"
+ignore_errors = false
 
 [[tool.mypy.overrides]]
 module = "lerobot.configs.*"
