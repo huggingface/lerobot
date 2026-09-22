@@ -1284,3 +1284,153 @@ def test_episodic_run_reports_a_summary_per_episode_and_for_the_run(caplog):
     # Recording still lands once per interpolation cycle over the 8 ticks.
     assert _recorded_actions(dataset) == [1.0, 2.0, 3.0, 4.0]
     assert not _timer_warnings(caplog)
+
+
+# ---------------------------------------------------------------------------
+# Sync engine: relative-action anchoring (drift-free chunk execution)
+# ---------------------------------------------------------------------------
+
+_REL_ACTION_NAMES = ["j0.pos", "j1.pos", "j2.pos", "gripper.pos"]
+_REL_ACTION_DIM = len(_REL_ACTION_NAMES)
+
+
+def _relative_pre_post():
+    """Pre/post processors wrapping the real relative (caches anchor) and absolute
+    (relative + cached state) steps, mirroring what the sync engine feeds them."""
+    from lerobot.processor import (
+        AbsoluteActionsProcessorStep,
+        RelativeActionsProcessorStep,
+        TransitionKey,
+        create_transition,
+    )
+    from lerobot.utils.constants import OBS_STATE
+
+    relative_step = RelativeActionsProcessorStep(enabled=True, action_names=list(_REL_ACTION_NAMES))
+    absolute_step = AbsoluteActionsProcessorStep(enabled=True, relative_step=relative_step)
+
+    class _Pre:
+        steps = [relative_step]
+
+        def __call__(self, observation):
+            # Run the relative step so it caches the anchor, then pass the batch through.
+            transition = create_transition(observation={OBS_STATE: observation[OBS_STATE]})
+            relative_step(transition)
+            return observation
+
+        def reset(self):
+            pass
+
+    class _Post:
+        def __call__(self, action):
+            transition = create_transition(action=action)
+            return absolute_step(transition)[TransitionKey.ACTION]
+
+        def reset(self):
+            pass
+
+    return _Pre(), _Post(), relative_step
+
+
+def _fake_relative_policy(chunk_rel, n_action_steps):
+    """Fake chunking relative-action policy for the sync engine (pi0/fastwam/lingbot/act shape).
+
+    Buffers a chunk and serves it one action per tick, computing a fresh chunk only on refill.
+    ``count_queued_actions()`` mirrors the real ``PreTrainedPolicy`` contract: it reads the same
+    queue ``select_action`` drains, so the bound step sees an accurate depth *before* this
+    tick's call runs.
+    """
+    from collections import deque
+
+    policy = MagicMock()
+    policy.config.use_amp = False
+    policy.config.action_feature_names = list(_REL_ACTION_NAMES)
+    state = {"predict_calls": 0}
+    queue = deque(maxlen=n_action_steps)
+
+    def predict_action_chunk(_batch=None, **_kwargs):
+        state["predict_calls"] += 1
+        return chunk_rel.unsqueeze(0)  # [B=1, n, dim]
+
+    def select_action(_observation):
+        if len(queue) == 0:
+            actions = policy.predict_action_chunk(_observation)
+            queue.extend(actions.transpose(0, 1))  # [n, 1, dim]
+        return queue.popleft()
+
+    policy.predict_action_chunk.side_effect = predict_action_chunk
+    policy.select_action.side_effect = select_action
+    policy.reset.side_effect = queue.clear
+    policy.count_queued_actions.side_effect = lambda: len(queue)
+    policy._predict_state = state
+    return policy
+
+
+def _build_sync_engine(policy, pre, post):
+    """Build the engine the way ``build_rollout_context`` does.
+
+    The engine itself knows nothing about relative actions; the anchor hold lives in
+    ``RelativeActionsProcessorStep`` and is armed once, here, by ``bind_relative_anchor``.
+    """
+    from lerobot.processor import bind_relative_anchor
+    from lerobot.rollout import SyncInferenceEngine
+
+    bind_relative_anchor(policy, pre)
+    return SyncInferenceEngine(
+        policy=policy,
+        preprocessor=pre,
+        postprocessor=post,
+        dataset_features={"action": {"names": list(_REL_ACTION_NAMES)}},
+        ordered_action_keys=list(_REL_ACTION_NAMES),
+        task="test",
+        device="cpu",
+        robot_type="mock",
+    )
+
+
+def _obs_frame(state_values):
+    import numpy as np
+
+    return {"observation.state": np.asarray(state_values, dtype=np.float32)}
+
+
+def test_sync_relative_holds_anchor_across_chunk():
+    """Every action popped within a chunk must anchor to the tick-0 state (no drift)."""
+    n = 4
+    # A distinct relative offset per chunk step so a wrong anchor would be visible.
+    chunk_rel = torch.stack([torch.full((_REL_ACTION_DIM,), 0.1 * (i + 1)) for i in range(n)])
+    pre, post, relative_step = _relative_pre_post()
+    policy = _fake_relative_policy(chunk_rel, n_action_steps=n)
+    engine = _build_sync_engine(policy, pre, post)
+
+    assert relative_step._count_queued_actions == policy.count_queued_actions  # binding wired up
+
+    s0 = [1.0, 2.0, 3.0, 4.0]
+    outputs = []
+    for tick in range(n):
+        # Feed a *different* state each tick; a drifting anchor would use it.
+        state = [v + tick for v in s0]
+        outputs.append(engine.get_action(_obs_frame(state)))
+
+    # Exactly one chunk was predicted across the n ticks.
+    assert policy._predict_state["predict_calls"] == 1
+    for tick in range(n):
+        expected = torch.tensor(s0) + chunk_rel[tick]
+        torch.testing.assert_close(outputs[tick], expected)
+
+    # Next tick empties the queue -> fresh chunk -> anchor advances to the new state.
+    s_next = [10.0, 20.0, 30.0, 40.0]
+    out = engine.get_action(_obs_frame(s_next))
+    assert policy._predict_state["predict_calls"] == 2
+    torch.testing.assert_close(out, torch.tensor(s_next) + chunk_rel[0])
+    # The anchor now reflects the fresh-chunk state, not the held one.
+    torch.testing.assert_close(relative_step.get_cached_state(), torch.tensor([s_next]))
+
+
+def test_sync_engine_without_a_relative_step_binds_nothing():
+    """A pipeline with no enabled relative step has nothing to bind, and the engine still runs."""
+    from lerobot.processor import bind_relative_anchor
+
+    policy = MagicMock()
+    policy.config.use_amp = False
+    assert bind_relative_anchor(policy, MagicMock(steps=[])) is None
+    _build_sync_engine(policy, MagicMock(steps=[]), MagicMock())  # must not raise

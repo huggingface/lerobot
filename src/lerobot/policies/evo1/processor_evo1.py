@@ -34,6 +34,7 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
+    load_pretrained_policy_processors,
 )
 from lerobot.processor.converters import (
     batch_to_transition,
@@ -372,6 +373,35 @@ def reconcile_evo1_processors(
     postprocessor.steps = steps
 
     return preprocessor, postprocessor
+
+
+def make_evo1_pre_post_processors_from_pretrained(
+    config: Evo1Config,
+    pretrained_path: str,
+    *,
+    revision: str | None = None,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    dataset_meta: Any | None = None,
+    preprocessor_overrides: dict[str, Any] | None = None,
+    postprocessor_overrides: dict[str, Any] | None = None,
+    preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
+    postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
+    """Load the serialized EVO1 pipelines and reconcile them with the current config."""
+    # EVO1 stats reach the (un)normalizers through the overrides, then get re-padded by reconcile.
+    del dataset_stats, dataset_meta
+    preprocessor, postprocessor = load_pretrained_policy_processors(
+        pretrained_path,
+        revision=revision,
+        preprocessor_overrides=preprocessor_overrides,
+        postprocessor_overrides=postprocessor_overrides,
+        preprocessor_config_filename=preprocessor_config_filename,
+        postprocessor_config_filename=postprocessor_config_filename,
+    )
+    return reconcile_evo1_processors(config, preprocessor, postprocessor)
 
 
 def make_evo1_pre_post_processors(
