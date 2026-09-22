@@ -115,6 +115,11 @@ def make_default_policy_processor_steps(
         normalizer_device: Device passed to `NormalizerProcessorStep` (some policies pin
             their normalization stats to the policy device; most leave it unset).
     """
+    if config.device is None or config.input_features is None or config.output_features is None:
+        raise ValueError(
+            "PreTrainedConfig.device, input_features and output_features must be resolved before "
+            "building the default policy processor steps."
+        )
     return DefaultPolicyProcessorSteps(
         rename_observations=RenameObservationsProcessorStep(rename_map={}),
         add_batch_dim=AddBatchDimensionProcessorStep(),
