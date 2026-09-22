@@ -145,18 +145,18 @@ def test_create_without_videos_has_no_video_path(tmp_path):
 
 
 def test_create_persists_storage_format(tmp_path):
-    """create() round-trips a non-default storage_format and omits the default one."""
+    """create() always persists storage_format (including the default) and round-trips it."""
     from lerobot.datasets.io_utils import load_info
     from lerobot.datasets.storage import DEFAULT_STORAGE_FORMAT
 
-    # Default: nothing is written and the property falls back to the default format.
+    # Default: the format is written explicitly so the discriminator is unambiguous.
     default_root = tmp_path / "default_fmt"
     default_meta = LeRobotDatasetMetadata.create(
         repo_id="test/default_fmt", fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=default_root
     )
     assert default_meta.storage_format == DEFAULT_STORAGE_FORMAT
     with open(default_root / INFO_PATH) as f:
-        assert "storage_format" not in json.load(f)
+        assert json.load(f)["storage_format"] == DEFAULT_STORAGE_FORMAT
 
     # Non-default: persisted to info.json and preserved across a reload.
     custom_root = tmp_path / "custom_fmt"

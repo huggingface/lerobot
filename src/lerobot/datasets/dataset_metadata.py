@@ -797,7 +797,7 @@ class LeRobotDatasetMetadata:
         chunks_size: int | None = None,
         data_files_size_in_mb: int | None = None,
         video_files_size_in_mb: int | None = None,
-        storage_format: str | None = None,
+        storage_format: str = DEFAULT_STORAGE_FORMAT,
     ) -> "LeRobotDatasetMetadata":
         """Create metadata for a new LeRobot dataset from scratch.
 
@@ -821,10 +821,9 @@ class LeRobotDatasetMetadata:
                 default.
             video_files_size_in_mb: Max video file size in MB. ``None`` uses the
                 default.
-            storage_format: Storage format holding the data files. ``None``
-                (default) keeps the built-in parquet/mp4 layout; any other value
-                (e.g. ``"lance"``) is persisted in ``info.json`` so read/write
-                selection resolves the matching backend.
+            storage_format: Storage format holding the data files. Defaults to
+                the built-in parquet/mp4 layout (``"lerobot"``). Always persisted
+                in ``info.json`` so read/write backend selection can resolve it.
 
         Returns:
             A new :class:`LeRobotDatasetMetadata` instance.
