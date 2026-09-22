@@ -130,13 +130,15 @@ lerobot-train \
     --output_dir=outputs/train/act_so101_test \
     --job_name=act_so101_test \
     --policy.device=cuda \
-    --wandb.enable=true \
+    --tracker.type=wandb \
     --policy.repo_id=${HF_USER}/policy_test \
     --steps=20000
 ```
 
 - Policy Types: `act`, `diffusion`, `smolvla`, `pi05`
 - Devices: `cuda` (NVIDIA), `mps` (Apple Silicon), `cpu`
+- Trackers: `wandb`, or `trackio` for local tracking without an account
+  (`pip install 'lerobot[trackio]'`, then `trackio show --project lerobot` to view the run)
 
 If you want to fine-tune a specific model you can provide the path to the model. In this case path is enough and type can be skipped.
 

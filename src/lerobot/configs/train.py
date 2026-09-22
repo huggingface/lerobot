@@ -14,10 +14,11 @@
 import builtins
 import datetime as dt
 import json
+import logging
 import multiprocessing
 import os
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -35,7 +36,16 @@ from lerobot.utils.hub import HubMixin, find_latest_hub_checkpoint
 from lerobot.utils.sample_weighting import SampleWeightingConfig
 
 from . import parser
-from .default import DatasetConfig, EMAConfig, EvalConfig, JobConfig, PeftConfig, WandBConfig
+from .default import (
+    DatasetConfig,
+    EMAConfig,
+    EvalConfig,
+    JobConfig,
+    PeftConfig,
+    TrackerConfig,
+    WandBConfig,
+    WandBTrackerConfig,
+)
 from .policies import PreTrainedConfig
 from .rewards import RewardModelConfig
 
@@ -165,7 +175,12 @@ class TrainPipelineConfig(HubMixin):
     eval: EvalConfig = field(default_factory=EvalConfig)
     # Maintain an EMA shadow of the policy weights during training (see EMAConfig).
     ema: EMAConfig = field(default_factory=EMAConfig)
+    # The original wandb-only tracking config. `--wandb.enable=true` keeps working and builds
+    # an equivalent wandb tracker in `validate()`; `--tracker.type=wandb` is the same thing
+    # spelled through the tracker registry.
     wandb: WandBConfig = field(default_factory=WandBConfig)
+    # Experiment tracker (`--tracker.type=wandb` or `--tracker.type=trackio`). None = disabled.
+    tracker: TrackerConfig | None = None
     peft: PeftConfig | None = None
 
     # Where to run training (local default, or an HF Jobs flavor). See JobConfig.
@@ -276,6 +291,16 @@ class TrainPipelineConfig(HubMixin):
             )
 
         self._resolve_pretrained_from_cli()
+
+        # `--wandb.enable=true` selects the wandb tracker. `enable` is dropped because the
+        # tracker config pins it (a selected tracker is an enabled one).
+        if self.tracker is None and self.wandb.enable and self.wandb.project:
+            logging.info(
+                "Building a wandb tracker from the `wandb` config "
+                "(`--tracker.type=wandb` is the equivalent tracker flag)."
+            )
+            wandb_fields = {k: v for k, v in asdict(self.wandb).items() if k != "enable"}
+            self.tracker = WandBTrackerConfig(**wandb_fields)
 
         if self.policy is None and self.reward_model is None:
             raise ValueError(

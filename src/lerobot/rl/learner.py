@@ -72,6 +72,7 @@ from torch.multiprocessing import Queue
 from torch.optim.optimizer import Optimizer
 
 from lerobot.cameras import opencv  # noqa: F401
+from lerobot.common.tracker_utils import TrackerLogger, make_tracker
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     load_training_metadata,
@@ -79,7 +80,6 @@ from lerobot.common.train_utils import (
     should_save_checkpoint,
     update_last_checkpoint,
 )
-from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset, make_dataset
 from lerobot.optim import load_optimizer_state
@@ -167,13 +167,9 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
     logging.info(f"Learner logging initialized, writing to {log_file}")
     logging.info(pformat(cfg.to_dict()))
 
-    # Setup WandB logging if enabled
-    if cfg.wandb.enable and cfg.wandb.project:
-        from lerobot.common.wandb_utils import WandBLogger
-
-        wandb_logger = WandBLogger(cfg)
-    else:
-        wandb_logger = None
+    # Setup experiment tracking (wandb/trackio) if enabled
+    wandb_logger = make_tracker(cfg)
+    if wandb_logger is None:
         logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
 
     # Handle resume logic
@@ -196,7 +192,7 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
 
 def start_learner_threads(
     cfg: TrainRLServerPipelineConfig,
-    wandb_logger: WandBLogger | None,
+    wandb_logger: TrackerLogger | None,
     shutdown_event: Any,  # Event
 ) -> None:
     """
@@ -204,7 +200,7 @@ def start_learner_threads(
 
     Args:
         cfg (TrainRLServerPipelineConfig): Training configuration
-        wandb_logger (WandBLogger | None): Logger for metrics
+        wandb_logger (TrackerLogger | None): Logger for metrics
         shutdown_event: Event to signal shutdown
     """
     # Create multiprocessing queues
@@ -270,7 +266,7 @@ def start_learner_threads(
 
 def add_actor_information_and_train(
     cfg: TrainRLServerPipelineConfig,
-    wandb_logger: WandBLogger | None,
+    wandb_logger: TrackerLogger | None,
     shutdown_event: Any,  # Event
     transition_queue: Queue,
     interaction_message_queue: Queue,
@@ -294,7 +290,7 @@ def add_actor_information_and_train(
 
     Args:
         cfg (TrainRLServerPipelineConfig): Configuration object containing hyperparameters.
-        wandb_logger (WandBLogger | None): Logger for tracking training progress.
+        wandb_logger (TrackerLogger | None): Logger for tracking training progress.
         shutdown_event (Event): Event to signal shutdown.
         transition_queue (Queue): Queue for receiving transitions from the actor.
         interaction_message_queue (Queue): Queue for receiving interaction messages from the actor.
@@ -935,7 +931,7 @@ def push_actor_policy_to_queue(parameters_queue: Queue, algorithm: RLAlgorithm) 
 
 
 def process_interaction_message(
-    message, interaction_step_shift: int, wandb_logger: WandBLogger | None = None
+    message, interaction_step_shift: int, wandb_logger: TrackerLogger | None = None
 ):
     """Process a single interaction message with consistent handling."""
     message = bytes_to_python_object(message)
@@ -991,7 +987,7 @@ def process_transitions(
 def process_interaction_messages(
     interaction_message_queue: Queue,
     interaction_step_shift: int,
-    wandb_logger: WandBLogger | None,
+    wandb_logger: TrackerLogger | None,
     shutdown_event: Any,  # Event
 ) -> dict | None:
     """Process all available interaction messages from the queue.

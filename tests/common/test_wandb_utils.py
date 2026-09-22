@@ -19,7 +19,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, sentinel
 
 from lerobot.common.wandb_utils import WandBLogger
-from lerobot.configs.default import WandBConfig
+from lerobot.configs.default import WandBConfig, WandBTrackerConfig
 
 
 def test_wandb_config_console_defaults():
@@ -39,7 +39,8 @@ def test_wandb_logger_forwards_resume_and_console_settings(monkeypatch, tmp_path
     monkeypatch.setitem(sys.modules, "wandb", wandb)
     monkeypatch.setenv("WANDB_SILENT", "False")
 
-    wandb_cfg = WandBConfig(
+    # `TrainPipelineConfig.validate()` resolves `--wandb.*` into this tracker; the logger reads it.
+    tracker_cfg = WandBTrackerConfig(
         run_id="run-id",
         resume="allow",
         console="off",
@@ -47,7 +48,7 @@ def test_wandb_logger_forwards_resume_and_console_settings(monkeypatch, tmp_path
         console_chunk_max_seconds=60,
     )
     cfg = SimpleNamespace(
-        wandb=wandb_cfg,
+        tracker=tracker_cfg,
         output_dir=tmp_path,
         job_name="test-run",
         env=None,
@@ -78,7 +79,7 @@ def test_wandb_logger_resumes_with_checkpoint(monkeypatch, tmp_path):
     monkeypatch.setenv("WANDB_SILENT", "False")
 
     cfg = SimpleNamespace(
-        wandb=WandBConfig(run_id="run-id"),
+        tracker=WandBTrackerConfig(run_id="run-id"),
         output_dir=tmp_path,
         job_name="test-run",
         env=None,
