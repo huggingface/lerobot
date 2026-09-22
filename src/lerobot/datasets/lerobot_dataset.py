@@ -771,6 +771,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         encoder_threads: int | None = None,
         video_files_size_in_mb: int | None = None,
         data_files_size_in_mb: int | None = None,
+        storage_format: str | None = None,
     ) -> "LeRobotDataset":
         """Create a new LeRobotDataset from scratch for recording data.
 
@@ -807,6 +808,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 during capture instead of writing images first.
             encoder_queue_maxsize: Max buffered frames per camera when using
                 streaming encoding.
+            storage_format: Storage format holding the data files. ``None``
+                (default) keeps the built-in parquet/mp4 layout; any other value
+                is persisted in metadata and must have a writer registered via
+                :func:`~lerobot.datasets.storage.register_dataset_writer`.
 
         Returns:
             A new :class:`LeRobotDataset` in write mode.
@@ -822,6 +827,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             metadata_buffer_size=metadata_buffer_size,
             video_files_size_in_mb=video_files_size_in_mb,
             data_files_size_in_mb=data_files_size_in_mb,
+            storage_format=storage_format,
         )
         obj.repo_id = obj.meta.repo_id
         obj._requested_root = obj.meta.root

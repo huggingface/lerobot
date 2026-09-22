@@ -89,6 +89,7 @@ def create_empty_dataset_info(
     chunks_size: int | None = None,
     data_files_size_in_mb: int | None = None,
     video_files_size_in_mb: int | None = None,
+    storage_format: str | None = None,
 ) -> DatasetInfo:
     """Create a template ``DatasetInfo`` object for a new dataset's ``meta/info.json``.
 
@@ -101,6 +102,8 @@ def create_empty_dataset_info(
         chunks_size (int | None): Max files per chunk directory. Defaults to ``DEFAULT_CHUNK_SIZE``.
         data_files_size_in_mb (int | None): Max parquet file size in MB. Defaults to ``DEFAULT_DATA_FILE_SIZE_IN_MB``.
         video_files_size_in_mb (int | None): Max video file size in MB. Defaults to ``DEFAULT_VIDEO_FILE_SIZE_IN_MB``.
+        storage_format (str | None): Storage format holding the data files. ``None`` keeps the
+            default parquet/mp4 layout and is omitted from ``info.json``.
 
     Returns:
         DatasetInfo: A typed dataset information object with initial metadata.
@@ -115,6 +118,7 @@ def create_empty_dataset_info(
         video_files_size_in_mb=video_files_size_in_mb or DEFAULT_VIDEO_FILE_SIZE_IN_MB,
         data_path=DEFAULT_DATA_PATH,
         video_path=DEFAULT_VIDEO_PATH if use_videos else None,
+        storage_format=storage_format,
     )
 
 
