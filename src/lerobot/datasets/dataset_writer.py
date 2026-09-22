@@ -128,28 +128,27 @@ class BaseDatasetWriter(ABC):
         """Discard the current episode buffer and optionally its staged frames."""
 
     @abstractmethod
-    def start_image_writer(self, num_processes: int = 0, num_threads: int = 4) -> None:
-        """Start background image persistence."""
-
-    @abstractmethod
-    def stop_image_writer(self) -> None:
-        """Stop background image persistence."""
-
-    @abstractmethod
     def cleanup_interrupted_episode(self, episode_index: int) -> None:
         """Remove staged data for an episode whose recording was interrupted."""
 
     @abstractmethod
-    def flush_pending_videos(self) -> None:
-        """Flush any deferred video encoding (streaming or batch)."""
-
-    @abstractmethod
-    def cancel_pending_videos(self) -> None:
-        """Cancel any in-progress video encoding without flushing."""
-
-    @abstractmethod
     def finalize(self) -> None:
         """Flush all pending work and release all resources. Must be idempotent."""
+
+    # Optional lifecycle hooks. Formats that stage frames on disk or defer visual
+    # encoding override these; the default is a no-op so a writer only implements
+    # what its storage model actually needs (mirrors BaseDatasetReader's defaults).
+    def start_image_writer(self, num_processes: int = 0, num_threads: int = 4) -> None:
+        """Start background image persistence. No-op unless the format stages frames."""
+
+    def stop_image_writer(self) -> None:
+        """Stop background image persistence. No-op unless the format stages frames."""
+
+    def flush_pending_videos(self) -> None:
+        """Flush any deferred video encoding. No-op unless the format defers encoding."""
+
+    def cancel_pending_videos(self) -> None:
+        """Cancel any in-progress video encoding without flushing. No-op by default."""
 
     @property
     def is_streaming_encoding(self) -> bool:

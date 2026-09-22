@@ -318,7 +318,12 @@ def test_finalize_then_read_roundtrip(tmp_path):
 
 
 class DummyWriter(BaseDatasetWriter):
-    """Minimal in-memory writer used to exercise the registry."""
+    """Minimal in-memory writer used to exercise the registry.
+
+    Implements only the abstract core; the optional staging/encoding hooks
+    (start/stop_image_writer, flush/cancel_pending_videos) inherit the base
+    no-op defaults, verifying they are genuinely optional.
+    """
 
     def __init__(self, **kwargs):
         self.kwargs = kwargs
@@ -333,19 +338,7 @@ class DummyWriter(BaseDatasetWriter):
     def clear_episode_buffer(self, delete_images=True):
         pass
 
-    def start_image_writer(self, num_processes=0, num_threads=4):
-        pass
-
-    def stop_image_writer(self):
-        pass
-
     def cleanup_interrupted_episode(self, episode_index):
-        pass
-
-    def flush_pending_videos(self):
-        pass
-
-    def cancel_pending_videos(self):
         pass
 
     def finalize(self):
