@@ -69,4 +69,6 @@
 - sections:
   - local: writing_docstrings
     title: 编写 docstring
+  - local: backwardcomp
+    title: 向后兼容
   title: "关于"
