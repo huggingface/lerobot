@@ -105,6 +105,14 @@ class DiffusionConfig(PreTrainedConfig):
     horizon: int = 64
     n_action_steps: int = 32
 
+    # Train on `action - observation.state` instead of absolute actions, anchored on the
+    # state at the newest observed frame, as in UMI's relative trajectory representation.
+    use_relative_actions: bool = False
+    # Joint names to keep absolute. Empty list = every dim is converted.
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # Populated at runtime from dataset metadata by `make_policy`.
+    action_feature_names: list[str] | None = None
+
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.MEAN_STD,

@@ -22,8 +22,12 @@ import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
-from lerobot.policies.diffusion.processor_diffusion import make_diffusion_pre_post_processors
+from lerobot.policies.diffusion.processor_diffusion import (
+    DiffusionRelativeActionsProcessorStep,
+    make_diffusion_pre_post_processors,
+)
 from lerobot.processor import (
+    AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
     DataProcessorPipeline,
     DeviceProcessorStep,
@@ -396,3 +400,95 @@ def test_diffusion_processor_bfloat16_device_float32_normalizer():
     for stat_tensor in normalizer_step._tensor_stats[OBS_STATE].values():
         assert stat_tensor.dtype == torch.bfloat16
     # OBS_IMAGE uses IDENTITY normalization, so no stats to check
+
+
+def _relative_config():
+    config = DiffusionConfig(
+        use_relative_actions=True,
+        relative_exclude_joints=["gripper"],
+        horizon=8,
+        n_action_steps=2,
+        n_obs_steps=2,
+        device="cpu",
+    )
+    config.action_feature_names = ["a", "b", "gripper"]
+    config.input_features = {OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(3,))}
+    config.output_features = {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(3,))}
+    stats = {
+        ACTION: {"min": torch.zeros(3), "max": torch.ones(3)},
+        OBS_STATE: {"min": torch.zeros(3), "max": torch.ones(3)},
+    }
+    return config, stats
+
+
+def test_relative_actions_off_by_default():
+    config = DiffusionConfig(device="cpu")
+    assert config.use_relative_actions is False
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, {})
+    assert not any(isinstance(s, DiffusionRelativeActionsProcessorStep) for s in preprocessor.steps)
+    assert not any(isinstance(s, AbsoluteActionsProcessorStep) for s in postprocessor.steps)
+
+
+def test_relative_actions_are_converted_before_normalization():
+    """OpenPI order: raw -> relative -> normalize, and unnormalize -> absolute."""
+    config, stats = _relative_config()
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, stats)
+
+    pre_names = [type(s).__name__ for s in preprocessor.steps]
+    assert pre_names.index("DiffusionRelativeActionsProcessorStep") < pre_names.index(
+        "NormalizerProcessorStep"
+    )
+    post_names = [type(s).__name__ for s in postprocessor.steps]
+    assert post_names.index("UnnormalizerProcessorStep") < post_names.index("AbsoluteActionsProcessorStep")
+
+
+def test_relative_actions_round_trip_and_honour_excluded_joints():
+    config, stats = _relative_config()
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, stats)
+    relative_step = next(
+        s for s in preprocessor.steps if isinstance(s, DiffusionRelativeActionsProcessorStep)
+    )
+    absolute_step = next(s for s in postprocessor.steps if isinstance(s, AbsoluteActionsProcessorStep))
+
+    # Diffusion stacks n_obs_steps frames, so observation.state is (B, T_obs, state_dim).
+    state = torch.tensor([[[10.0, 10.0, 10.0], [12.0, 12.0, 12.0]]])
+    actions = torch.tensor([[[11.0, 12.0, 13.0], [14.0, 15.0, 16.0]]])
+
+    relative = relative_step(create_transition(observation={OBS_STATE: state}, action=actions))[
+        TransitionKey.ACTION
+    ]
+    # "gripper" is excluded, so its column is left untouched.
+    torch.testing.assert_close(relative[..., 2], actions[..., 2])
+    assert not torch.allclose(relative[..., :2], actions[..., :2])
+
+    back = absolute_step(create_transition(action=relative))[TransitionKey.ACTION]
+    torch.testing.assert_close(back, actions)
+
+
+def test_relative_anchor_is_held_while_the_action_queue_drains():
+    """The chunk anchor must survive `bind_action_queue`, which the subclass inherits.
+
+    `DiffusionRelativeActionsProcessorStep` overrides `__call__`, so it is the one path the
+    generic relative-action tests do not exercise. Without the hold, actions popped from the
+    queue on later steps get re-anchored to a state the chunk was never predicted against.
+    """
+    config, stats = _relative_config()
+    preprocessor, _ = make_diffusion_pre_post_processors(config, stats)
+    relative_step = next(
+        s for s in preprocessor.steps if isinstance(s, DiffusionRelativeActionsProcessorStep)
+    )
+    queued = {"n": 0}
+    relative_step.bind_action_queue(lambda: queued["n"])
+
+    actions = torch.tensor([[[1.0, 2.0, 3.0]]])
+
+    def observe(value):
+        state = torch.tensor([[[999.0, 999.0, 999.0], [value, value, value]]])  # [t-1, t]
+        relative_step(create_transition(observation={OBS_STATE: state}, action=actions))
+        return relative_step.get_cached_state().squeeze().tolist()
+
+    assert observe(10.0) == [10.0, 10.0, 10.0]  # queue empty -> fresh chunk, anchor advances
+    queued["n"] = 5
+    assert observe(77.0) == [10.0, 10.0, 10.0]  # chunk in flight -> anchor held
+    queued["n"] = 0
+    assert observe(42.0) == [42.0, 42.0, 42.0]  # queue drained -> anchor advances again
