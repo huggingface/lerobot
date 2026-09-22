@@ -19,7 +19,7 @@ import torch
 
 pytest.importorskip("transformers", reason="g05 requires the `g05` extra (transformers)")
 
-from lerobot.policies.g05.modeling_g05 import G05NativeActionCodec, _BinarySequenceCodec
+from lerobot.policies.g05.action_codec_g05 import G05NativeActionCodec, _BinarySequenceCodec
 
 
 def _tiny_codec_config() -> dict:

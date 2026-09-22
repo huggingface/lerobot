@@ -25,9 +25,6 @@ from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import ConstantWithWarmupSchedulerConfig, LRSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
-G05_SOURCE_REVISION = "b34966f387dd2ae0f003143b81494afd9213e613"
-G05_HUB_REVISION = "e312be81e90c56a55bcb26b57429bd39a335b449"
-
 
 def _g05_default_recipe() -> dict:
     """G0.5's native BBox/Subtask chain-of-thought supervision.
@@ -228,12 +225,9 @@ class G05Config(PreTrainedConfig):
     normalization_mode: str = "checkpoint"
     normalization_clip: tuple[float, float] | None = None
     use_relative_actions: bool = False
-    # Class attribute (not a config field): training overrides target this registered step.
-    relative_actions_step_key = "g05_relative_joint_actions"
     relative_exclude_joints: tuple[str, ...] = ()
     action_feature_names: tuple[str, ...] = ()
     use_stepwise_action_norm: bool = False
-    gripper_indices: tuple[int, ...] = (6,)
     joint_signs: tuple[float, ...] = ()
     joint_offsets: tuple[float, ...] = ()
     libero_gripper_binarize: bool = False
@@ -245,11 +239,8 @@ class G05Config(PreTrainedConfig):
     num_input_images: int = 0
     num_prompt_images: int = 0
 
-    author_source_revision: str = G05_SOURCE_REVISION
-    source_checkpoint_revision: str = G05_HUB_REVISION
     author_model_config: dict[str, Any] = field(default_factory=dict)
     processor_metadata: dict[str, Any] = field(default_factory=dict)
-    action_codec_metadata: dict[str, Any] = field(default_factory=dict)
     prompt_template: str = ""
     use_language_recipe: bool = False
     recipe_path: str | None = None
@@ -273,6 +264,7 @@ class G05Config(PreTrainedConfig):
     scheduler_warmup_steps: int = 500
 
     def __post_init__(self) -> None:
+        """Resolve the recipe override and validate the configured fields."""
         super().__post_init__()
         if self.recipe is not None or self.recipe_path is not None:
             # Import only for recipes: the datasets package requires optional extras.
@@ -396,6 +388,7 @@ class G05Config(PreTrainedConfig):
             raise ValueError("G0.5 image_mean/image_std must be three channels with positive std.")
 
     def validate_features(self) -> None:
+        """Check the state and action features against the configured dimensions."""
         if self.input_features is None:
             self.input_features = {}
         if self.output_features is None:
@@ -426,6 +419,7 @@ class G05Config(PreTrainedConfig):
             )
 
     def get_optimizer_preset(self) -> AdamWConfig:
+        """Return the AdamW preset the checkpoint was trained with."""
         return AdamWConfig(
             lr=self.optimizer_lr,
             betas=self.optimizer_betas,
@@ -434,6 +428,7 @@ class G05Config(PreTrainedConfig):
         )
 
     def get_scheduler_preset(self) -> LRSchedulerConfig | None:
+        """Return the constant-with-warmup schedule preset."""
         return ConstantWithWarmupSchedulerConfig(num_warmup_steps=self.scheduler_warmup_steps)
 
     @property
@@ -448,12 +443,15 @@ class G05Config(PreTrainedConfig):
 
     @property
     def observation_delta_indices(self) -> list[int]:
+        """Frame offsets of the observation history the policy consumes."""
         return list(range(-(self.n_obs_steps - 1), 1))
 
     @property
     def action_delta_indices(self) -> list[int]:
+        """Frame offsets of the action chunk the policy predicts."""
         return list(range(self.chunk_size))
 
     @property
     def reward_delta_indices(self) -> None:
+        """G0.5 does not consume rewards."""
         return None

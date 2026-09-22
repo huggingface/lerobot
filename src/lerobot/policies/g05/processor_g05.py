@@ -19,19 +19,18 @@
 from __future__ import annotations
 
 import logging
-import re
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import torch
 import torchvision.transforms.functional as vision_functional
-from huggingface_hub import snapshot_download
 from torch import Tensor
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
-from lerobot.lerobot_types import EnvTransition, TransitionKey
+from lerobot.lerobot_types import EnvTransition, RobotObservation, TransitionKey
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
@@ -39,6 +38,7 @@ from lerobot.processor import (
     NormalizerProcessorStep,
     ObservationProcessorStep,
     PolicyAction,
+    PolicyActionProcessorStep,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
@@ -47,6 +47,7 @@ from lerobot.processor import (
     RenderRuntimeMessagesStep,
     RenderTrainingMessagesStep,
     UnnormalizerProcessorStep,
+    load_pretrained_policy_processors,
 )
 from lerobot.processor.converters import (
     batch_to_transition,
@@ -62,30 +63,29 @@ from lerobot.utils.constants import (
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
-from lerobot.utils.import_utils import _transformers_available, require_package
 from lerobot.utils.language import last_semantic_message_text, require_single_semantic_conversation
 
-if TYPE_CHECKING or _transformers_available:
-    from transformers import AutoTokenizer
-else:
-    AutoTokenizer = None
-
+from .action_codec_g05 import G05NativeActionCodec
 from .configuration_g05 import (
     G05_EMBODIMENT_MAPPINGS,
     G05_POLICY_PARTS,
     G05Config,
 )
-
-G05_RUNTIME_PREDICT_COT = "g05_runtime_predict_cot"
-G05_INPUT_IDS = "g05.input_ids"
-G05_LABELS = "g05.labels"
-G05_TOKEN_TYPES = "g05.token_types"  # nosec B105
-G05_SPLIT_INDEX = "g05.split_index"
+from .modeling_g05 import prepare_g05_policy_batch
+from .tokenizer_g05 import (
+    G05_INPUT_IDS,
+    G05_LABELS,
+    G05_RUNTIME_PREDICT_COT,
+    G05_SPLIT_INDEX,
+    G05_TOKEN_TYPES,
+    G05Tokenizer,
+)
 
 
 def _copy_feature_tree(
     features: dict[PipelineFeatureType, dict[str, PolicyFeature]],
 ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+    """Shallow-copy a feature tree so a step can edit its own view of the features."""
     return {kind: values.copy() for kind, values in features.items()}
 
 
@@ -98,6 +98,7 @@ class G05BBoxImageSizeStep(ProcessorStep):
     camera_key: str = "observation.images.exterior"
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Record the annotated camera's pixel size before the checkpoint resize discards it."""
         observation = transition.get(TransitionKey.OBSERVATION) or {}
         image = observation.get(self.camera_key)
         if image is None:
@@ -114,9 +115,11 @@ class G05BBoxImageSizeStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Pass the feature contract through unchanged."""
         return features
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {"camera_key": self.camera_key}
 
 
@@ -132,6 +135,7 @@ class _G05JointFrameMixin:
 
     def __post_init__(self) -> None:
         # Pipelines restored from JSON hand these back as lists.
+        """Coerce the sign and offset tables and check they stay invertible."""
         self.joint_signs = tuple(float(value) for value in self.joint_signs)
         self.joint_offsets = tuple(float(value) for value in self.joint_offsets)
         if len(self.joint_signs) != len(self.joint_offsets):
@@ -140,6 +144,7 @@ class _G05JointFrameMixin:
             raise ValueError("joint_signs entries must be non-zero so the transform is invertible.")
 
     def _reframe(self, values: torch.Tensor, *, inverse: bool) -> torch.Tensor:
+        """Apply `sign * value + offset` over the leading joints, or its inverse."""
         width = len(self.joint_signs)
         if values.shape[-1] < width:
             raise ValueError(f"G0.5 joint frame covers {width} joints but the tensor has {values.shape[-1]}.")
@@ -156,9 +161,11 @@ class _G05JointFrameMixin:
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Pass the feature contract through unchanged."""
         return features
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {
             "joint_signs": list(self.joint_signs),
             "joint_offsets": list(self.joint_offsets),
@@ -171,6 +178,7 @@ class G05StateFrameTransformStep(_G05JointFrameMixin, ObservationProcessorStep):
     """Move proprioception into the coordinate frame the checkpoint was trained in."""
 
     def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+        """Reframe `observation.state` into the checkpoint's joint convention."""
         if not self.joint_signs or OBS_STATE not in observation:
             return observation
         state = torch.as_tensor(observation[OBS_STATE])
@@ -195,6 +203,7 @@ class G05ActionFrameTransformStep(_G05JointFrameMixin, ProcessorStep):
     inverse: bool = True
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Reframe the action between the arm and checkpoint joint conventions."""
         action = transition.get(TransitionKey.ACTION)
         if not self.joint_signs or not isinstance(action, torch.Tensor):
             return transition
@@ -203,12 +212,13 @@ class G05ActionFrameTransformStep(_G05JointFrameMixin, ProcessorStep):
         return transition
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {**super().get_config(), "inverse": self.inverse}
 
 
 @dataclass
 @ProcessorStepRegistry.register(name="g05_image_transform")
-class G05ImageTransformStep(ProcessorStep):
+class G05ImageTransformStep(ObservationProcessorStep):
     """Apply the checkpoint's per-camera resize and ``[0,1]`` to ``[-1,1]`` transform."""
 
     camera_order: tuple[str, ...]
@@ -218,22 +228,19 @@ class G05ImageTransformStep(ProcessorStep):
     optional_camera_keys: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        """Freeze the camera tables into tuples."""
         self.camera_order = tuple(self.camera_order)
         self.camera_sizes = {key: tuple(value) for key, value in self.camera_sizes.items()}
         self.mean = tuple(self.mean)
         self.std = tuple(self.std)
         self.optional_camera_keys = tuple(self.optional_camera_keys)
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = transition.get(TransitionKey.OBSERVATION)
-        if observation is None:
-            return transition
+    def observation(self, observation: RobotObservation) -> RobotObservation:
+        """Resize each camera to its checkpoint size and rescale `[0,1]` to `[-1,1]`."""
         missing = [key for key in self.camera_order if key not in observation]
         required_missing = [key for key in missing if key not in self.optional_camera_keys]
         if required_missing:
             raise ValueError(f"G0.5 is missing camera(s) {missing}; required order is {self.camera_order}.")
-        transition = transition.copy()
-        observation = dict(observation)
         if missing:
             reference = next(
                 (torch.as_tensor(observation[key]) for key in self.camera_order if key in observation),
@@ -261,12 +268,12 @@ class G05ImageTransformStep(ProcessorStep):
             mean = flat.new_tensor(self.mean).view(1, 3, 1, 1)
             std = flat.new_tensor(self.std).view(1, 3, 1, 1)
             observation[key] = ((flat - mean) / std).reshape(*image.shape[:-3], 3, *target_size)
-        transition[TransitionKey.OBSERVATION] = observation
-        return transition
+        return observation
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Resize the declared camera features to their checkpoint sizes."""
         result = _copy_feature_tree(features)
         observations = result.setdefault(PipelineFeatureType.OBSERVATION, {})
         for key in self.camera_order:
@@ -275,6 +282,7 @@ class G05ImageTransformStep(ProcessorStep):
         return result
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {
             "camera_order": list(self.camera_order),
             "camera_sizes": {key: list(value) for key, value in self.camera_sizes.items()},
@@ -299,12 +307,14 @@ class G05ActionOperationMaskStep(ProcessorStep):
     _VELOCITY_KEYS = ("torso", "chassis")
 
     def __post_init__(self) -> None:
+        """Coerce the action part widths and per-dimension thresholds."""
         self.action_parts = tuple((key, int(width)) for key, width in self.action_parts)
         self.dim_thresholds = {
             key: tuple(float(value) for value in values) for key, values in self.dim_thresholds.items()
         }
 
     def _threshold(self, key: str, width: int, action: torch.Tensor) -> torch.Tensor:
+        """Resolve the per-dimension motion threshold for one named action part."""
         if key in self.dim_thresholds:
             values = self.dim_thresholds[key]
             if len(values) != width:
@@ -323,6 +333,7 @@ class G05ActionOperationMaskStep(ProcessorStep):
         return action.new_full((width,), float(value or 0.0))
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Flag action parts whose motion over the chunk stays under their threshold."""
         action = transition.get(TransitionKey.ACTION)
         if not isinstance(action, torch.Tensor):
             return transition
@@ -352,9 +363,11 @@ class G05ActionOperationMaskStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Pass the feature contract through unchanged."""
         return features
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {
             "action_parts": [list(part) for part in self.action_parts],
             "joint_threshold": self.joint_threshold,
@@ -376,16 +389,19 @@ class G05EmbodimentProjectionStep(ProcessorStep):
     camera_order: tuple[str, ...]
 
     def __post_init__(self) -> None:
+        """Freeze the camera order and check the embodiment is known."""
         self.camera_order = tuple(self.camera_order)
         if self.embodiment not in G05_EMBODIMENT_MAPPINGS:
             raise ValueError(f"No projection is defined for G0.5 embodiment {self.embodiment!r}.")
 
     @property
     def mapping(self) -> dict[str, tuple[int, ...]]:
+        """Policy-slot indices this embodiment writes its state and action into."""
         return G05_EMBODIMENT_MAPPINGS[self.embodiment]
 
     @staticmethod
     def _project(value: torch.Tensor, indices: tuple[int, ...], width: int) -> torch.Tensor:
+        """Scatter a raw tensor into a zero-filled tensor of the policy's width."""
         if value.shape[-1] != len(indices):
             raise ValueError(f"Raw G0.5 tensor has {value.shape[-1]} dimensions, expected {len(indices)}.")
         projected = value.new_zeros(*value.shape[:-1], width)
@@ -393,6 +409,7 @@ class G05EmbodimentProjectionStep(ProcessorStep):
         return projected
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Project raw state and action into the policy layout and order the cameras."""
         transition = transition.copy()
         observation = dict(transition.get(TransitionKey.OBSERVATION) or {})
         missing_cameras = [key for key in self.camera_order if key not in observation]
@@ -460,6 +477,7 @@ class G05EmbodimentProjectionStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Widen the state and action features to the policy dimensions."""
         result = _copy_feature_tree(features)
         observations = result.setdefault(PipelineFeatureType.OBSERVATION, {})
         if OBS_STATE in observations:
@@ -470,6 +488,7 @@ class G05EmbodimentProjectionStep(ProcessorStep):
         return result
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {
             "embodiment": self.embodiment,
             "policy_state_dim": self.policy_state_dim,
@@ -486,6 +505,7 @@ class G05RelativeJointActionsStep(RelativeActionsProcessorStep):
     num_obs_steps: int = 1
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Cache the latest proprio step, and convert the action to deltas when enabled."""
         observation = transition.get(TransitionKey.OBSERVATION, {})
         state = observation.get(OBS_STATE) if observation else None
         if isinstance(state, torch.Tensor) and state.ndim >= 3:
@@ -510,6 +530,7 @@ class G05RelativeJointActionsStep(RelativeActionsProcessorStep):
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {**super().get_config(), "num_obs_steps": self.num_obs_steps}
 
 
@@ -526,6 +547,7 @@ class G05TailNormalizationStep(ProcessorStep):
     _TAIL_STATS = ("tail_q01", "tail_q99", "tail_mean", "tail_mask")
 
     def __post_init__(self) -> None:
+        """Materialize the configured tail statistics as tensors."""
         self._tensor_stats = {
             key: {
                 name: torch.as_tensor(value)
@@ -536,6 +558,7 @@ class G05TailNormalizationStep(ProcessorStep):
         }
 
     def _transform(self, value: torch.Tensor, key: str) -> torch.Tensor:
+        """Compress values beyond the q01/q99 tails logarithmically, or invert that."""
         if key not in self._tensor_stats:
             return value
         stats = {name: tensor.to(value.device) for name, tensor in self._tensor_stats[key].items()}
@@ -559,6 +582,7 @@ class G05TailNormalizationStep(ProcessorStep):
         return torch.where(mask, transformed, value)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Apply the tail transform to `observation.state` and to the action."""
         transition = transition.copy()
         observation = dict(transition.get(TransitionKey.OBSERVATION) or {})
         if OBS_STATE in observation:
@@ -570,6 +594,7 @@ class G05TailNormalizationStep(ProcessorStep):
         return transition
 
     def state_dict(self) -> dict[str, torch.Tensor]:
+        """Flatten the per-feature tail statistics for serialization."""
         return {
             f"{key}.{name}": tensor.cpu()
             for key, feature_stats in self._tensor_stats.items()
@@ -577,6 +602,7 @@ class G05TailNormalizationStep(ProcessorStep):
         }
 
     def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+        """Restore the per-feature tail statistics from their flattened form."""
         self._tensor_stats = {}
         for flat_key, tensor in state.items():
             key, name = flat_key.rsplit(".", 1)
@@ -585,9 +611,11 @@ class G05TailNormalizationStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Pass the feature contract through unchanged."""
         return features
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {"inverse": self.inverse, "tail_scale": self.tail_scale}
 
 
@@ -600,9 +628,11 @@ class G05NormalizationClampStep(ProcessorStep):
     maximum: float = 5.0
 
     def _clamp(self, value: torch.Tensor) -> torch.Tensor:
+        """Clamp to the configured range and replace any non-finite value with zero."""
         return value.clamp(self.minimum, self.maximum).nan_to_num(nan=0.0, posinf=0.0, neginf=0.0)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Clamp normalized `observation.state` and action to the checkpoint's range."""
         transition = transition.copy()
         observation = dict(transition.get(TransitionKey.OBSERVATION) or {})
         if OBS_STATE in observation:
@@ -616,9 +646,11 @@ class G05NormalizationClampStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Pass the feature contract through unchanged."""
         return features
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {"minimum": self.minimum, "maximum": self.maximum}
 
 
@@ -631,6 +663,7 @@ class G05StepwiseUnnormalizerStep(UnnormalizerProcessorStep):
     _action_index: int = field(default=0, init=False, repr=False)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Unnormalize a queued single action with that timestep's slice of the stats."""
         action = transition.get(TransitionKey.ACTION)
         stats = self._tensor_stats.get(ACTION)
         if not isinstance(action, torch.Tensor) or not stats:
@@ -659,15 +692,17 @@ class G05StepwiseUnnormalizerStep(UnnormalizerProcessorStep):
             self._action_index = (self._action_index + 1) % self.n_action_steps
 
     def reset(self) -> None:
+        """Rewind to the first action of the chunk."""
         self._action_index = 0
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {**super().get_config(), "n_action_steps": self.n_action_steps}
 
 
 @dataclass
 @ProcessorStepRegistry.register(name="g05_inverse_action_projection")
-class G05InverseActionProjectionStep(ProcessorStep):
+class G05InverseActionProjectionStep(PolicyActionProcessorStep):
     """Project policy-layout actions back to the environment's exact raw layout."""
 
     embodiment: str
@@ -675,96 +710,118 @@ class G05InverseActionProjectionStep(ProcessorStep):
 
     @property
     def indices(self) -> tuple[int, ...]:
+        """Policy-slot indices holding this embodiment's action dimensions."""
         return G05_EMBODIMENT_MAPPINGS[self.embodiment]["action"]
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        action = transition.get(TransitionKey.ACTION)
-        if not isinstance(action, torch.Tensor):
-            return transition
+    def action(self, action: PolicyAction) -> PolicyAction:
+        """Gather the embodiment's action dimensions back out of the policy layout."""
         if action.shape[-1] != self.policy_action_dim:
             raise ValueError(
                 f"G0.5 policy action has {action.shape[-1]} dimensions, expected {self.policy_action_dim}."
             )
-        transition = transition.copy()
-        transition[TransitionKey.ACTION] = action[..., list(self.indices)]
-        return transition
+        return action[..., list(self.indices)]
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Narrow the action feature back to the embodiment's width."""
         result = _copy_feature_tree(features)
         actions = result.setdefault(PipelineFeatureType.ACTION, {})
         actions[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(len(self.indices),))
         return result
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {"embodiment": self.embodiment, "policy_action_dim": self.policy_action_dim}
 
 
 @dataclass
 @ProcessorStepRegistry.register(name="g05_libero_gripper")
-class G05LiberoGripperStep(ProcessorStep):
+class G05LiberoGripperStep(PolicyActionProcessorStep):
     """Convert the released checkpoint's gripper value to LIBERO's binary command."""
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        action = transition.get(TransitionKey.ACTION)
-        if not isinstance(action, torch.Tensor):
-            return transition
+    def action(self, action: PolicyAction) -> PolicyAction:
+        """Rewrite the trailing gripper value as LIBERO's binary open/close command."""
         if action.shape[-1] != 7:
             raise ValueError(f"G0.5 LIBERO action must have 7 dimensions, got {action.shape[-1]}.")
         value = action[..., -1]
         in_unit_interval = (value >= 0.0) & (value <= 1.0)
         open_gripper = torch.where(in_unit_interval, value > 0.5, value > 0.0)
-        transition = transition.copy()
         action = action.clone()
         action[..., -1] = torch.where(
             open_gripper,
             value.new_tensor(-1.0),
             value.new_tensor(1.0),
         )
-        transition[TransitionKey.ACTION] = action
-        return transition
+        return action
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Pass the feature contract through unchanged."""
         return features
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {}
 
 
 @dataclass
 @ProcessorStepRegistry.register(name="g05_action_history_crop")
-class G05ActionHistoryCropStep(ProcessorStep):
+class G05ActionHistoryCropStep(PolicyActionProcessorStep):
     """Remove the author model's observation-alignment prefix from action chunks."""
 
     num_obs_steps: int = 1
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        action = transition.get(TransitionKey.ACTION)
-        if not isinstance(action, torch.Tensor) or self.num_obs_steps <= 1:
-            return transition
+    def action(self, action: PolicyAction) -> PolicyAction:
+        """Drop the leading steps that align the chunk with the observation history."""
+        if self.num_obs_steps <= 1:
+            return action
         start = self.num_obs_steps - 1
         if action.ndim < 2 or action.shape[-2] <= start:
             raise ValueError(
                 "G0.5 action history crop requires a full action chunk with at least "
                 f"{self.num_obs_steps} steps, got {tuple(action.shape)}."
             )
-        transition = transition.copy()
-        transition[TransitionKey.ACTION] = action[..., start:, :]
-        return transition
+        return action[..., start:, :]
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Pass the feature contract through unchanged."""
         return features
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {"num_obs_steps": self.num_obs_steps}
 
 
+def _tokenizer_policy_config(config: G05Config) -> dict[str, Any]:
+    """Collect the policy fields `G05TokenizerStep` reads at inference time.
+
+    This is derived from the live config on every load rather than serialized into
+    the step, so the pipeline cannot drift from the checkpoint it is paired with.
+    """
+    return {
+        "author_model_config": config.author_model_config,
+        "embodiment": config.embodiment,
+        "predict_cot": config.predict_cot,
+        "runtime_system": config.runtime_system,
+        "prompt_template": config.prompt_template,
+        "num_prompt_images": config.num_prompt_images,
+        "num_input_images": config.num_input_images,
+        "camera_order": config.camera_order,
+        "camera_sizes": config.camera_sizes,
+        "policy_state_dim": config.policy_state_dim,
+        "policy_action_dim": config.policy_action_dim,
+        "chunk_size": config.chunk_size,
+        "processor_metadata": config.processor_metadata,
+        "cot_bbox_camera": config.cot_bbox_camera,
+    }
+
+
 def _normalization_mode(config: G05Config) -> NormalizationMode:
+    """Map the checkpoint's `normalization_mode` string onto a lerobot `NormalizationMode`."""
     if config.normalization_mode == "q01_q99":
         return NormalizationMode.QUANTILES
     if config.normalization_mode in {"z_score", "z_score_tail_mixed"}:
@@ -776,6 +833,7 @@ def _project_stats(
     config: G05Config,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None,
 ) -> dict[str, dict[str, torch.Tensor]] | None:
+    """Scatter raw per-joint dataset stats into the wider policy embodiment layout."""
     if not dataset_stats:
         return dataset_stats
     result: dict[str, dict[str, torch.Tensor]] = {}
@@ -865,26 +923,15 @@ def reconcile_g05_processors(
     postprocessor: PolicyProcessorPipeline,
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     """Fill bbox camera_key on Hub pipelines that saved an empty step config, and
-    re-apply the live `runtime_system` override to a pipeline loaded from a saved
-    checkpoint, since that pipeline's `G05TokenizerStep` otherwise keeps whatever
-    system mode was active when the checkpoint's pipeline JSON was exported.
-
-    The two pipelines are deserialized independently, so the absolute-action step
-    is also rewired to the live relative-action step it reads cached state from.
+    hand `G05TokenizerStep` the policy fields it reads, which the live config owns
+    rather than the saved pipeline.
     """
     camera_key = config.cot_bbox_camera or (config.camera_order[0] if config.camera_order else None)
-    relative_step = None
     for step in preprocessor.steps:
         if camera_key is not None and isinstance(step, G05BBoxImageSizeStep):
             step.camera_key = camera_key
         if isinstance(step, G05TokenizerStep):
-            step.policy_config["runtime_system"] = config.runtime_system
-        if isinstance(step, RelativeActionsProcessorStep):
-            relative_step = step
-    if relative_step is not None:
-        for step in postprocessor.steps:
-            if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
-                step.relative_step = relative_step
+            step.policy_config = _tokenizer_policy_config(config)
     return preprocessor, postprocessor
 
 
@@ -928,21 +975,13 @@ def make_g05_pre_post_processors_from_pretrained(
     prepared_preprocessor_overrides, prepared_postprocessor_overrides = fix_g05_train_overrides(
         config, preprocessor_overrides, postprocessor_overrides
     )
-    preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]].from_pretrained(
-        pretrained_model_name_or_path=pretrained_path,
-        config_filename=preprocessor_config_filename,
-        overrides=prepared_preprocessor_overrides,
-        to_transition=batch_to_transition,
-        to_output=transition_to_batch,
+    preprocessor, postprocessor = load_pretrained_policy_processors(
+        pretrained_path,
         revision=revision,
-    )
-    postprocessor = PolicyProcessorPipeline[PolicyAction, PolicyAction].from_pretrained(
-        pretrained_model_name_or_path=pretrained_path,
-        config_filename=postprocessor_config_filename,
-        overrides=prepared_postprocessor_overrides,
-        to_transition=policy_action_to_transition,
-        to_output=transition_to_policy_action,
-        revision=revision,
+        preprocessor_overrides=prepared_preprocessor_overrides,
+        postprocessor_overrides=prepared_postprocessor_overrides,
+        preprocessor_config_filename=preprocessor_config_filename,
+        postprocessor_config_filename=postprocessor_config_filename,
     )
     return reconcile_g05_processors(config, preprocessor, postprocessor)
 
@@ -1050,31 +1089,12 @@ def make_g05_pre_post_processors(
             )
         )
     steps.append(DeviceProcessorStep(device=config.device))
-    checkpoint_path = str(config.pretrained_path) if config.pretrained_path is not None else ""
-    if not checkpoint_path:
-        processor_path = Path(str(config.author_model_config.get("hf_processor_path", "")))
-        if processor_path.name == "hf_processor":
-            checkpoint_path = str(processor_path.parent)
+    checkpoint_root = Path(str(config.pretrained_path)) if config.pretrained_path is not None else Path()
     steps.append(
         G05TokenizerStep(
-            checkpoint_path=checkpoint_path,
-            revision=config.pretrained_revision,
-            policy_config={
-                "author_model_config": config.author_model_config,
-                "embodiment": config.embodiment,
-                "predict_cot": config.predict_cot,
-                "runtime_system": config.runtime_system,
-                "prompt_template": config.prompt_template,
-                "num_prompt_images": config.num_prompt_images,
-                "num_input_images": config.num_input_images,
-                "camera_order": config.camera_order,
-                "camera_sizes": config.camera_sizes,
-                "policy_state_dim": config.policy_state_dim,
-                "policy_action_dim": config.policy_action_dim,
-                "chunk_size": config.chunk_size,
-                "processor_metadata": config.processor_metadata,
-                "cot_bbox_camera": config.cot_bbox_camera,
-            },
+            processor_dir=str(checkpoint_root / "hf_processor"),
+            action_tokenizer_path=str(checkpoint_root / "action_tokenizer.safetensors"),
+            policy_config=_tokenizer_policy_config(config),
         )
     )
     preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
@@ -1148,408 +1168,59 @@ def _joint_frame_output_step(config: G05Config) -> ProcessorStep:
     )
 
 
-def insert_g05_joint_frame_steps(
-    config: G05Config,
-    preprocessor: PolicyProcessorPipeline,
-    postprocessor: PolicyProcessorPipeline,
-) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
-    """One-time structural fix for a checkpoint published before the joint frame
-    was identified, run via ``update_checkpoint_joint_frame.py``. Rebuilds any
-    step already present rather than duplicating it, so it's safe to re-run.
-    """
-
-    input_steps = [step for step in preprocessor.steps if not isinstance(step, _G05JointFrameMixin)]
-    anchor = next(
-        (idx for idx, step in enumerate(input_steps) if isinstance(step, RelativeActionsProcessorStep)),
-        None,
-    )
-    if anchor is None:
-        raise ValueError("G0.5 preprocessor has no relative-actions step to anchor the joint frame against.")
-    input_steps[anchor:anchor] = _joint_frame_input_steps(config)
-    preprocessor.steps = input_steps
-
-    output_steps = [step for step in postprocessor.steps if not isinstance(step, _G05JointFrameMixin)]
-    absolute = next(
-        (idx + 1 for idx, step in enumerate(output_steps) if isinstance(step, AbsoluteActionsProcessorStep)),
-        None,
-    )
-    if absolute is None:
-        raise ValueError("G0.5 postprocessor has no absolute-actions step to anchor the joint frame against.")
-    output_steps.insert(absolute, _joint_frame_output_step(config))
-    postprocessor.steps = output_steps
-
-    return preprocessor, postprocessor
-
-
-IGNORE_INDEX = -100
-
-
-class G05TokenType:
-    """Token categories stored in G0.5's attention-mask tensor."""
-
-    PADDING = 0
-    IMAGE = 1
-    PROPRIO = 2
-    ACTION = 3
-    TEXT = 4
-    COT = 5
-    PRED_TEXT = 6
-
-
-@dataclass
-class G05SequenceBatch:
-    input_ids: Tensor
-    labels: Tensor
-    token_types: Tensor
-    split_index: int | None = None
-
-
-@dataclass
-class _Segment:
-    kind: str
-    content: str = ""
-    sample_key: str = ""
-    processor: str = ""
-    masked: bool = False
-    max_tokens: int | None = None
-
-
-class G05Tokenizer:
-    """Checkpoint-compatible G0.5 tokenizer and template serializer.
-
-    G0.5 extends Qwen3.5's tokenizer with ActionCodec codes, per-group
-    residual markers, ``<EOV>``, and ``<state>``. Registration order is model
-    state: changing it changes the rows used by the tied language head.
-    """
-
-    _PLACEHOLDER = re.compile(r"<([^<>|]+)>")
-
-    def __init__(self, processor_path: str | Path, model_config: dict[str, Any]) -> None:
-        require_package("transformers", extra="g05")
-        self.processor_path = Path(processor_path)
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            self.processor_path,
-            trust_remote_code=False,
-            local_files_only=True,
-        )
-        self.model_config = model_config
-        at_config = model_config["AT_CONFIG"]
-        architecture = at_config["model_arch"]
-
-        self.action_tokens = [f"<action{index:04d}>" for index in range(int(architecture["codebook_size"]))]
-        parts = list(at_config["parts_meta"])
-        rule_patterns = tuple(at_config.get("rule_based_key_patterns") or ())
-        self.rule_parts = [name for name in parts if any(pattern in name for pattern in rule_patterns)]
-        self.neural_parts = [name for name in parts if name not in self.rule_parts]
-        self.group_tokens = [
-            f"<{part}_{residual}>"
-            for residual in range(int(architecture["n_codebooks"]))
-            for part in self.neural_parts
-        ] + [f"<{part}>" for part in self.rule_parts]
-        self.tokenizer.add_tokens(self.action_tokens + self.group_tokens + ["<EOV>", "<state>"])
-
-        self.pad_token_id = int(model_config["pad_token_id"])
-        self.eos_token_id = int(model_config["eos_token_id"])
-        self.image_token_id = int(model_config["image_token_index"])
-        self.vision_start_token_id = int(self.tokenizer.convert_tokens_to_ids("<|vision_start|>"))
-        self.vision_end_token_id = int(self.tokenizer.convert_tokens_to_ids("<|vision_end|>"))
-        self.eov_token_id = int(self.tokenizer.convert_tokens_to_ids("<EOV>"))
-        self.state_token_id = int(self.tokenizer.convert_tokens_to_ids("<state>"))
-        self.action_token_begin = int(self.tokenizer.convert_tokens_to_ids(self.action_tokens[0]))
-        self.action_token_end = self.action_token_begin + len(self.action_tokens)
-        self.action_token_end_with_markers = self.action_token_end + len(self.group_tokens)
-
-    def __len__(self) -> int:
-        return len(self.tokenizer)
-
-    def encode_text(self, text: str) -> list[int]:
-        return self.tokenizer(text, add_special_tokens=False)["input_ids"]
-
-    def decode(self, ids: Tensor | list[int]) -> str:
-        if isinstance(ids, Tensor):
-            ids = ids.detach().cpu().tolist()
-        return self.tokenizer.decode(ids, skip_special_tokens=False)
-
-    @staticmethod
-    def _resolve_template(template: str) -> str:
-        replacements = {
-            "<bos>": "",
-            "<eos>": "<|endoftext|>",
-            "<chat_user_prefix>": "",
-            "<chat_user_suffix>": "",
-            "<chat_assistant_prefix>": "",
-        }
-        for placeholder, value in replacements.items():
-            template = template.replace(placeholder, value)
-        return template
-
-    def _parse(self, template: str) -> list[_Segment]:
-        template = self._resolve_template(template)
-        segments: list[_Segment] = []
-        last = 0
-        for match in self._PLACEHOLDER.finditer(template):
-            if match.start() > last:
-                segments.append(_Segment("static", template[last : match.start()]))
-            raw = match.group(1).strip()
-            if raw in {"EOC", "EOV"}:
-                segments.append(_Segment("control", raw))
-                last = match.end()
-                continue
-
-            max_tokens = None
-            limit = re.match(r"^(.+)_(\d+)$", raw)
-            if limit:
-                raw, max_tokens = limit.group(1), int(limit.group(2))
-            masked = raw.endswith("_!")
-            key = raw[:-2] if masked else raw
-            if "_" not in key:
-                token = f"<{raw}>"
-                token_id = self.tokenizer.convert_tokens_to_ids(token)
-                if token_id is None:
-                    raise ValueError(f"Unknown G0.5 template token {token!r}.")
-                segments.append(_Segment("static", token))
-            else:
-                sample_key, processor = key.rsplit("_", 1)
-                segments.append(
-                    _Segment(
-                        "dynamic",
-                        sample_key=sample_key,
-                        processor=processor,
-                        masked=masked,
-                        max_tokens=max_tokens,
-                    )
-                )
-            last = match.end()
-        if last < len(template):
-            segments.append(_Segment("static", template[last:]))
-        return segments
-
-    @staticmethod
-    def _slice_segments(segments: list[_Segment], mode: str | None, *, pred_eov: bool) -> list[_Segment]:
-        eoc = next(
-            (
-                index
-                for index, segment in enumerate(segments)
-                if segment.kind == "control" and segment.content == "EOC"
-            ),
-            None,
-        )
-        eov = next(
-            (
-                index
-                for index, segment in enumerate(segments)
-                if segment.kind == "control" and segment.content == "EOV"
-            ),
-            None,
-        )
-
-        def strip(values: list[_Segment], keep_eov: bool) -> list[_Segment]:
-            output: list[_Segment] = []
-            after_eoc = False
-            for segment in values:
-                if segment.kind == "control":
-                    if segment.content == "EOC":
-                        after_eoc = True
-                    elif segment.content == "EOV" and keep_eov:
-                        output.append(
-                            _Segment(
-                                "dynamic",
-                                content="<EOV>",
-                                processor="text",
-                                masked=not pred_eov,
-                            )
-                        )
-                    continue
-                if after_eoc and segment.kind == "static":
-                    output.append(
-                        _Segment("dynamic", content=segment.content, processor="text", masked=False)
-                    )
-                else:
-                    output.append(segment)
-            return output
-
-        if mode == "context":
-            return strip(segments if eoc is None else segments[:eoc], keep_eov=True)
-        if mode == "prefix":
-            return strip(segments if eov is None else segments[: eov + 1], keep_eov=True)
-        if mode == "suffix":
-            return [] if eov is None else strip(segments[eov + 1 :], keep_eov=False)
-        return strip(segments, keep_eov=True)
-
-    def _serialize_segment(
-        self,
-        segment: _Segment,
-        sample: dict[str, Any],
-        *,
-        action_codec: Any | None,
-    ) -> tuple[list[int], list[int], list[float]]:
-        if segment.kind == "static":
-            ids = self.encode_text(segment.content)
-            return ids, [IGNORE_INDEX] * len(ids), [float(G05TokenType.TEXT)] * len(ids)
-
-        if segment.sample_key:
-            if segment.sample_key not in sample:
-                raise KeyError(f"G0.5 prompt is missing sample field {segment.sample_key!r}.")
-            value = sample[segment.sample_key]
-        else:
-            value = segment.content
-
-        if segment.processor == "text":
-            ids = self.encode_text(value if isinstance(value, str) else str(value))
-            token_type = G05TokenType.TEXT if segment.masked else G05TokenType.PRED_TEXT
-            labels = [IGNORE_INDEX] * len(ids) if segment.masked else ids.copy()
-        elif segment.processor == "image":
-            if not isinstance(value, tuple | list) or len(value) != 2:
-                raise ValueError("G0.5 image placeholders require an (height, width) pair.")
-            height, width = (int(item) for item in value)
-            vision = self.model_config["vision"]
-            count = (height // int(vision["patch_size"]) // int(vision["spatial_merge_size"])) * (
-                width // int(vision["patch_size"]) // int(vision["spatial_merge_size"])
-            )
-            ids = [self.vision_start_token_id] + [self.image_token_id] * count + [self.vision_end_token_id]
-            labels = [IGNORE_INDEX] * len(ids)
-            types = (
-                [float(G05TokenType.TEXT)] + [float(G05TokenType.IMAGE)] * count + [float(G05TokenType.TEXT)]
-            )
-            return ids, labels, types
-        elif segment.processor == "proprio":
-            state = value["value"] if isinstance(value, dict) else value
-            count = 1 if torch.as_tensor(state).ndim <= 1 else int(torch.as_tensor(state).shape[0])
-            ids = [self.state_token_id] * count
-            labels = [IGNORE_INDEX] * count
-            token_type = G05TokenType.PROPRIO
-        elif segment.processor == "action":
-            if action_codec is None:
-                raise RuntimeError(
-                    "This G0.5 training template includes ActionCodec targets, but the "
-                    "checkpoint has no native ActionCodec sidecar loaded."
-                )
-            ids = action_codec.encode_for_language(value)
-            labels = ids.copy()
-            token_type = G05TokenType.ACTION
-        else:
-            ids = self.encode_text(value if isinstance(value, str) else str(value))
-            labels = [IGNORE_INDEX] * len(ids) if segment.masked else ids.copy()
-            token_type = G05TokenType.COT
-
-        if segment.max_tokens is not None:
-            ids = ids[: segment.max_tokens]
-            labels = labels[: segment.max_tokens]
-        return ids, labels, [float(token_type)] * len(ids)
-
-    def _serialize(
-        self,
-        sample: dict[str, Any],
-        *,
-        mode: str | None,
-        action_codec: Any | None,
-    ) -> tuple[list[int], list[int], list[float]]:
-        pred_eov = bool(self.model_config.get("input_preprocessor", {}).get("pred_eov", False))
-        segments = self._slice_segments(self._parse(sample["template"]), mode, pred_eov=pred_eov)
-        ids: list[int] = []
-        labels: list[int] = []
-        types: list[float] = []
-        for segment in segments:
-            segment_ids, segment_labels, segment_types = self._serialize_segment(
-                segment, sample, action_codec=action_codec
-            )
-            ids.extend(segment_ids)
-            labels.extend(segment_labels)
-            types.extend(segment_types)
-        return ids, labels, types
-
-    def _pad(
-        self,
-        rows: list[tuple[list[int], list[int], list[float]]],
-        *,
-        right_align: bool,
-        device: torch.device,
-    ) -> G05SequenceBatch:
-        length = max(len(row[0]) for row in rows)
-        input_ids = torch.full((len(rows), length), self.pad_token_id, dtype=torch.long, device=device)
-        labels = torch.full((len(rows), length), IGNORE_INDEX, dtype=torch.long, device=device)
-        token_types = torch.zeros((len(rows), length), dtype=torch.float32, device=device)
-        for index, (ids, row_labels, types) in enumerate(rows):
-            start = length - len(ids) if right_align else 0
-            stop = start + len(ids)
-            input_ids[index, start:stop] = torch.tensor(ids, dtype=torch.long, device=device)
-            labels[index, start:stop] = torch.tensor(row_labels, dtype=torch.long, device=device)
-            token_types[index, start:stop] = torch.tensor(types, dtype=torch.float32, device=device)
-        return G05SequenceBatch(input_ids, labels, token_types)
-
-    def encode_inference(
-        self,
-        samples: list[dict[str, Any]],
-        *,
-        device: torch.device,
-    ) -> G05SequenceBatch:
-        rows = [self._serialize(sample, mode="context", action_codec=None) for sample in samples]
-        return self._pad(rows, right_align=True, device=device)
-
-    def encode_train(
-        self,
-        samples: list[dict[str, Any]],
-        *,
-        device: torch.device,
-        action_codec: Any | None,
-    ) -> G05SequenceBatch:
-        prefix_rows = [
-            self._serialize(sample, mode="prefix", action_codec=action_codec) for sample in samples
-        ]
-        suffix_rows = [
-            self._serialize(sample, mode="suffix", action_codec=action_codec) for sample in samples
-        ]
-        prefix = self._pad(prefix_rows, right_align=True, device=device)
-        suffix = self._pad(suffix_rows, right_align=False, device=device)
-        return G05SequenceBatch(
-            input_ids=torch.cat((prefix.input_ids, suffix.input_ids), dim=1),
-            labels=torch.cat((prefix.labels, suffix.labels), dim=1),
-            token_types=torch.cat((prefix.token_types, suffix.token_types), dim=1),
-            split_index=prefix.input_ids.shape[1],
-        )
-
-
 @dataclass
 @ProcessorStepRegistry.register(name="g05_tokenizer")
 class G05TokenizerStep(ProcessorStep):
     """Build the checkpoint-native G0.5 token sequence in the input pipeline."""
 
-    checkpoint_path: str
-    policy_config: dict[str, Any]
-    revision: str | None = None
+    # Declared artifacts: saved into the checkpoint by `save_artifacts` and handed
+    # back as resolved absolute paths by the pipeline loader, which downloads them
+    # from the Hub when the pipeline is loaded from a repo id.
+    processor_dir: str
+    action_tokenizer_path: str
+    # Not serialized: the live G05Config owns these fields and re-injects them on
+    # load via `_tokenizer_policy_config`, so a pipeline restored from JSON builds
+    # this step without them and is filled in by `reconcile_g05_processors`.
+    policy_config: dict[str, Any] = field(default_factory=dict)
     _tokenizer: G05Tokenizer | None = field(default=None, init=False, repr=False)
     _action_codec: Any = field(default=None, init=False, repr=False)
     _model_config: dict[str, Any] | None = field(default=None, init=False, repr=False)
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {
-            "checkpoint_path": self.checkpoint_path,
-            "policy_config": self.policy_config,
-            "revision": self.revision,
+            "processor_dir": self.processor_dir,
+            "action_tokenizer_path": self.action_tokenizer_path,
         }
 
-    def _resolve_checkpoint(self) -> Path:
-        if not self.checkpoint_path:
-            raise ValueError(
-                "G0.5 tokenization requires a checkpoint path so the serialized tokenizer and "
-                "ActionCodec can be loaded."
-            )
-        path = Path(self.checkpoint_path)
-        if path.is_dir():
-            return path
-        return Path(
-            snapshot_download(
-                repo_id=self.checkpoint_path,
-                revision=self.revision,
-                allow_patterns=["hf_processor/*", "action_tokenizer.pt"],
-            )
-        )
+    def save_artifacts(self, save_directory: Path) -> dict[str, str]:
+        """Copy the tokenizer bundle and ActionCodec weights into the checkpoint.
+
+        A pipeline built from a config without a packaged checkpoint has nothing to
+        copy; it declares no artifact and keeps the configured paths, so building a
+        pipeline for inspection stays possible without the sidecars on disk.
+        """
+        artifacts: dict[str, str] = {}
+        processor_dir = Path(self.processor_dir)
+        target_processor = save_directory / "hf_processor"
+        if processor_dir.is_dir():
+            if processor_dir.resolve() != target_processor.resolve():
+                shutil.copytree(processor_dir, target_processor, dirs_exist_ok=True)
+            artifacts["processor_dir"] = "hf_processor"
+
+        action_tokenizer_path = Path(self.action_tokenizer_path)
+        target_tokenizer = save_directory / "action_tokenizer.safetensors"
+        if action_tokenizer_path.is_file():
+            if action_tokenizer_path.resolve() != target_tokenizer.resolve():
+                shutil.copy2(action_tokenizer_path, target_tokenizer)
+            artifacts["action_tokenizer_path"] = "action_tokenizer.safetensors"
+        return artifacts
 
     def _get_tokenizer(self) -> G05Tokenizer:
+        """Build the tokenizer on first use and cache it on the step."""
         if self._tokenizer is not None:
             return self._tokenizer
-        root = self._resolve_checkpoint()
-        processor_path = root if root.name == "hf_processor" else root / "hf_processor"
+        processor_path = Path(self.processor_dir)
         model_config = dict(self.policy_config["author_model_config"])
         model_config.update(
             {
@@ -1557,28 +1228,23 @@ class G05TokenizerStep(ProcessorStep):
                 "predict_cot": self.policy_config["predict_cot"],
             }
         )
-        model_config["hf_processor_path"] = str(processor_path)
-        action_config = dict(model_config.get("AT_CONFIG") or {})
-        action_config["ckpt_dir"] = str(root / "action_tokenizer.pt")
-        model_config["AT_CONFIG"] = action_config
         self._model_config = model_config
         self._tokenizer = G05Tokenizer(processor_path, model_config)
         return self._tokenizer
 
     def _get_action_codec(self, device: torch.device):
+        """Build the native action codec on first use, or None when the checkpoint has none."""
         if self._action_codec is None:
             tokenizer = self._get_tokenizer()
             if self._model_config is None:
                 raise RuntimeError("G0.5 tokenizer model config was not initialized.")
             action_config = self._model_config.get("AT_CONFIG")
-            checkpoint = Path(str((action_config or {}).get("ckpt_dir", "")))
-            if not checkpoint.is_file():
+            if not Path(self.action_tokenizer_path).is_file():
                 return None
-            from .modeling_g05 import G05NativeActionCodec
-
             self._action_codec = G05NativeActionCodec.load(
                 action_config,
                 action_token_begin=tokenizer.action_token_begin,
+                ckpt_path=self.action_tokenizer_path,
             )
         move = getattr(self._action_codec, "to", None)
         if callable(move):
@@ -1586,6 +1252,7 @@ class G05TokenizerStep(ProcessorStep):
         return self._action_codec
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Turn the transition into the checkpoint-native token sequence."""
         tokenizer = self._get_tokenizer()
         transition = transition.copy()
         observation = dict(transition.get(TransitionKey.OBSERVATION) or {})
@@ -1606,8 +1273,6 @@ class G05TokenizerStep(ProcessorStep):
         run_predict_cot = bool(messages is not None) or (
             self.policy_config["predict_cot"] and self.policy_config["runtime_system"] == "system2"
         )
-        from .modeling_g05 import prepare_g05_policy_batch
-
         config = SimpleNamespace(**self.policy_config)
         prepared = prepare_g05_policy_batch(
             config,
@@ -1640,4 +1305,5 @@ class G05TokenizerStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Pass the feature contract through unchanged."""
         return features
