@@ -164,8 +164,7 @@ def update_policy(
 
     Args:
         train_metrics (MetricsTracker): A MetricsTracker instance to record training statistics.
-            Under fp16 it also receives the loss scale, but only if it declares a `grad_scale`
-            meter; callers that do not want it simply omit it.
+            callers that do not want one simply omit its meter.
         policy (PreTrainedPolicy): The policy model to be trained (as returned by `accelerator.prepare`).
         batch (Any): A batch of training data.
         optimizer (Optimizer): The optimizer used to update the policy's parameters.
@@ -272,7 +271,7 @@ def update_policy(
         train_metrics.grad_scale = accelerator.scaler.get_scale()
     train_metrics.lr = optimizer.param_groups[0]["lr"]
     train_metrics.update_s = time.perf_counter() - start_time
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and "gpu_mem_gb" in train_metrics.metrics:
         train_metrics.gpu_mem_gb = torch.cuda.max_memory_allocated() / (1024**3)
     # Aggregate the policy's scalar outputs for logging and rank-reduction across the log window.
     if output_dict:

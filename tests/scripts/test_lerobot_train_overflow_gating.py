@@ -89,6 +89,7 @@ def _tracker(*, with_scale: bool) -> MetricsTracker:
         "grad_norm": AverageMeter("grdn", ":.3f"),
         "lr": AverageMeter("lr", ":0.1e"),
         "update_s": AverageMeter("updt_s", ":.3f"),
+        "gpu_mem_gb": AverageMeter("mem_gb", ":.2f", reduction="max"),
     }
     if with_scale:
         metrics["grad_scale"] = AverageMeter("scale", ":.0f")
