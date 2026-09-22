@@ -19,7 +19,8 @@ from unittest.mock import patch
 
 import pytest
 
-pytest.importorskip("serial", reason="pyserial is required (install lerobot[hardware])")
+# The sync paths diff control tables, so even a bus on a fake transport needs deepdiff.
+pytest.importorskip("deepdiff", reason="deepdiff is required (install lerobot[hardware])")
 
 from lerobot.motors.dynamixel import DynamixelMotorsBus
 from lerobot.motors.feetech import FeetechMotorsBus
@@ -499,6 +500,9 @@ def test_scan_timeout_scales_with_baudrate(baudrate, expected_timeout_ms, bus):
     "model, expected", [("sts3215", FeetechMotorsBus), ("xl330-m077", DynamixelMotorsBus)]
 )
 def test_serial_motors_bus_resolves_family(model, expected):
+    # Unlike the tests above, this one builds a real bus, which needs a real transport.
+    pytest.importorskip("rustypot", reason="rustypot is required (install lerobot[feetech])")
+
     bus = SerialMotorsBus("/dev/dummy-port", {"dummy": Motor(1, model, MotorNormMode.RANGE_M100_100)})
 
     assert type(bus) is expected

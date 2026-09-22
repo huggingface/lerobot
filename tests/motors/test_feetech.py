@@ -25,6 +25,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytest.importorskip("rustypot", reason="rustypot is required (install lerobot[feetech])")
+pytest.importorskip("deepdiff", reason="deepdiff is required (install lerobot[feetech])")
+
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.encoding_utils import encode_sign_magnitude
 from lerobot.motors.feetech import FeetechMotorsBus

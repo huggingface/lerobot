@@ -26,6 +26,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytest.importorskip("rustypot", reason="rustypot is required (install lerobot[dynamixel])")
+pytest.importorskip("deepdiff", reason="deepdiff is required (install lerobot[dynamixel])")
+
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.dynamixel import DynamixelMotorsBus
 from lerobot.motors.dynamixel.tables import X_SERIES_CONTROL_TABLE
