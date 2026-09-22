@@ -28,7 +28,7 @@ from PIL import Image
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.configs import VideoEncoderConfig
-from lerobot.datasets.dataset_writer import DatasetWriter, LeRobotDatasetWriter, _encode_video_worker
+from lerobot.datasets.dataset_writer import BaseDatasetWriter, DatasetWriter, _encode_video_worker
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.storage import (
     _DATASET_WRITER_MODULES,
@@ -317,7 +317,7 @@ def test_finalize_then_read_roundtrip(tmp_path):
 # ── Writer registry ──────────────────────────────────────────────────
 
 
-class DummyWriter(DatasetWriter):
+class DummyWriter(BaseDatasetWriter):
     """Minimal in-memory writer used to exercise the registry."""
 
     def __init__(self, **kwargs):
@@ -352,8 +352,8 @@ class DummyWriter(DatasetWriter):
         pass
 
 
-def test_make_dataset_writer_default_returns_lerobot_writer(tmp_path):
-    """The default storage format resolves to the concrete LeRobotDatasetWriter."""
+def test_make_dataset_writer_default_returns_default_writer(tmp_path):
+    """The default storage format resolves to the concrete DatasetWriter."""
     dataset = LeRobotDataset.create(
         repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=tmp_path / "ds"
     )
@@ -366,8 +366,8 @@ def test_make_dataset_writer_default_returns_lerobot_writer(tmp_path):
         encoder_threads=None,
         batch_encoding_size=1,
     )
-    assert isinstance(writer, LeRobotDatasetWriter)
     assert isinstance(writer, DatasetWriter)
+    assert isinstance(writer, BaseDatasetWriter)
 
 
 @pytest.mark.parametrize("storage_format", ["lance", "does-not-exist"])
@@ -383,7 +383,7 @@ def test_create_and_resume_use_registry(tmp_path):
     dataset = LeRobotDataset.create(
         repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=root
     )
-    assert isinstance(dataset.writer, LeRobotDatasetWriter)
+    assert isinstance(dataset.writer, DatasetWriter)
 
     for _ in range(3):
         dataset.add_frame(_make_frame(SIMPLE_FEATURES))
@@ -391,7 +391,7 @@ def test_create_and_resume_use_registry(tmp_path):
     dataset.finalize()
 
     resumed = LeRobotDataset.resume(repo_id=DUMMY_REPO_ID, root=root)
-    assert isinstance(resumed.writer, LeRobotDatasetWriter)
+    assert isinstance(resumed.writer, DatasetWriter)
 
 
 def test_register_dataset_writer_selects_custom_writer(monkeypatch):

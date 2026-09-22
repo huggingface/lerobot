@@ -36,6 +36,7 @@ from .dataset_tools import (
     remove_feature,
     split_dataset,
 )
+from .dataset_writer import BaseDatasetWriter
 from .factory import make_dataset, make_train_eval_datasets, resolve_delta_timestamps
 from .image_writer import safe_stop_image_writer
 from .io_utils import load_episodes, write_stats
@@ -56,6 +57,7 @@ from .video_utils import VideoEncodingManager
 
 __all__ = [
     "BaseDatasetReader",
+    "BaseDatasetWriter",
     "CODEBASE_VERSION",
     "DEFAULT_EPISODES_PATH",
     "DEFAULT_QUANTILES",

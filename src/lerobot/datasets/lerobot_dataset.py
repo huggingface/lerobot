@@ -29,7 +29,7 @@ from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .dataset_reader import BaseDatasetReader, DatasetReader
-from .dataset_writer import DatasetWriter
+from .dataset_writer import BaseDatasetWriter
 from .storage import (
     DEFAULT_STORAGE_FORMAT,
     is_remote_uri,
@@ -315,7 +315,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.image_transforms = image_transforms
         if not is_default_format:
             self.episodes = self.reader.episodes
-            self.writer: DatasetWriter | None = None
+            self.writer: BaseDatasetWriter | None = None
             self._is_finalized = False
             return
 

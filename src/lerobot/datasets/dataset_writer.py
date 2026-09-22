@@ -99,7 +99,7 @@ def _encode_video_worker(
     return temp_path
 
 
-class DatasetWriter(ABC):
+class BaseDatasetWriter(ABC):
     """Write-side data persistence contract for :class:`LeRobotDataset`.
 
     A writer owns the complete episode persistence lifecycle for one storage
@@ -161,7 +161,7 @@ class DatasetWriter(ABC):
         return False
 
 
-class LeRobotDatasetWriter(DatasetWriter):
+class DatasetWriter(BaseDatasetWriter):
     """Default writer serving the parquet/mp4 storage format.
 
     Owns: episode_buffer, image_writer, _pq_writer (ParquetWriter), _latest_episode,
