@@ -87,6 +87,71 @@ def get_task_init_states(task_suite: Any, i: int, is_libero_plus: bool = False) 
     return torch.load(init_states_path, weights_only=False)  # nosec B614
 
 
+#: LIBERO renders through robosuite, whose depth buffer is neither metric nor in
+#: the orientation a pinhole model expects. Both corrections are measured rather
+#: than assumed, by projecting known object positions into the image and reading
+#: the depth back at that pixel (see `depth_to_metres` and `DEPTH_IMAGE_ORIGIN`).
+DEPTH_IMAGE_ORIGIN = "bottom-left"
+
+
+def depth_to_metres(depth: np.ndarray, sim: Any) -> np.ndarray:
+    """Convert robosuite's normalised depth buffer to metres.
+
+    robosuite returns the raw OpenGL depth buffer, which is normalised to
+    [0, 1] and non-linear. Converting needs the near and far planes, which
+    MuJoCo stores as fractions of the model extent.
+
+    The numbers are worth stating because they are surprising: on
+    ``libero_spatial`` the near plane is 0.011 m and the far plane is 530 m, so
+    a tabletop scene occupies roughly the top 1.6% of the buffer (raw values
+    0.984 to 0.997). That looks like it must cost precision and does not:
+    ``dz/dd`` is about ``z**2 / near``, so at 1 m a float32 ULP of ~6e-8 is
+    about 6 micrometres.
+
+    Args:
+        depth: raw ``{camera}_depth`` array from robosuite, normalised.
+        sim: the MuJoCo sim, for the near and far planes.
+
+    Returns:
+        Depth in metres, same shape.
+    """
+    extent = sim.model.stat.extent
+    near = sim.model.vis.map.znear * extent
+    far = sim.model.vis.map.zfar * extent
+    return near / (1.0 - depth * (1.0 - near / far))
+
+
+def orient_depth(depth: np.ndarray) -> np.ndarray:
+    """Put robosuite's depth buffer into standard top-left image origin.
+
+    robosuite's buffers start at the bottom-left, so unprojecting one with
+    ordinary intrinsics mirrors the reconstruction vertically. Nothing
+    downstream reports that: the cloud is still a plausible cloud.
+
+    Established by projecting each object's known world position to a pixel and
+    reading the stored depth there. Only the correct orientation puts the
+    sampled depth just in FRONT of the object centre, which is what a camera
+    sees, and it does so for every object at once:
+
+        flip v (this)          44.4 mm median error, correct sign every object
+        flip both (180 deg)   112.1 mm
+        as stored             234.7 mm
+        flip u                308.1 mm
+
+    The residual is the surface-to-centre offset and is one-sided, which is the
+    signature that distinguishes a correct convention from a merely low score.
+
+    The trailing channel is squeezed first, deliberately. robosuite returns
+    depth as ``(H, W, 1)``, so a spelling like ``depth[..., ::-1, :]`` flips
+    WIDTH rather than height. That was the first version of this function, and
+    it is the "flip u" row of the table above: the end-to-end check measured
+    316 mm against that row's 308 mm, which is how it was found.
+    """
+    if depth.ndim >= 3 and depth.shape[-1] == 1:
+        depth = depth[..., 0]
+    return np.flip(depth, axis=-2)
+
+
 def get_libero_dummy_action():
     """Get dummy/no-op action, used to roll out the simulation while the robot does nothing."""
     return [0, 0, 0, 0, 0, 0, -1]
@@ -129,6 +194,7 @@ class LiberoEnv(gym.Env):
         control_mode: str = "relative",
         is_libero_plus: bool = False,
         hard_reset: bool = True,
+        use_depth: bool = False,
     ):
         super().__init__()
         if control_freq <= 0:
@@ -137,6 +203,7 @@ class LiberoEnv(gym.Env):
             raise ValueError("hard_reset=False requires init_states=True")
         self.task_id = task_id
         self.is_libero_plus = is_libero_plus
+        self.use_depth = use_depth
         self.obs_type = obs_type
         self.render_mode = render_mode
         self.observation_width = observation_width
@@ -200,6 +267,15 @@ class LiberoEnv(gym.Env):
                 shape=(self.observation_height, self.observation_width, 3),
                 dtype=np.uint8,
             )
+
+        if self.use_depth:
+            for cam in self.camera_name:
+                images[f"{self.camera_name_mapping[cam]}_depth"] = spaces.Box(
+                    low=0.0,
+                    high=np.inf,
+                    shape=(self.observation_height, self.observation_width),
+                    dtype=np.float32,
+                )
 
         if self.obs_type == "state":
             raise NotImplementedError(
@@ -268,6 +344,7 @@ class LiberoEnv(gym.Env):
             bddl_file_name=self._task_bddl_file,
             camera_heights=self.observation_height,
             camera_widths=self.observation_width,
+            camera_depths=self.use_depth,
             control_freq=self.control_freq,
             # Soft resets skip LIBERO's model and renderer rebuild. They are opt-in
             # because settle steps can make their observations differ from hard resets.
@@ -284,12 +361,49 @@ class LiberoEnv(gym.Env):
         image = image[::-1, ::-1]  # flip both H and W for visualization
         return image
 
+    def camera_intrinsics(self, camera: str) -> np.ndarray:
+        """3x3 pinhole intrinsics for one camera, at the rendered resolution.
+
+        Depth without intrinsics cannot be unprojected, so a policy that
+        consumes 3D needs these alongside the depth map.
+
+        Args:
+            camera: raw robosuite camera name, e.g. ``"agentview"``.
+
+        Returns:
+            ``(3, 3)`` float32 intrinsic matrix.
+        """
+        from robosuite.utils.camera_utils import get_camera_intrinsic_matrix
+
+        self._ensure_env()
+        return np.asarray(
+            get_camera_intrinsic_matrix(
+                self._env.sim, camera, self.observation_height, self.observation_width
+            ),
+            dtype=np.float32,
+        )
+
     def _format_raw_obs(self, raw_obs: RobotObservation) -> RobotObservation:
         assert self._env is not None, "_format_raw_obs called before _ensure_env()"
         images = {}
         for camera_name in self.camera_name:
             image = raw_obs[camera_name]
             images[self.camera_name_mapping[camera_name]] = image
+
+        depths: dict[str, np.ndarray] = {}
+        intrinsics: dict[str, np.ndarray] = {}
+        if self.use_depth:
+            for camera_name in self.camera_name:
+                # camera_name carries the "_image" suffix; robosuite keys depth
+                # off the bare camera name.
+                bare = camera_name.removesuffix("_image")
+                raw_depth = raw_obs.get(f"{bare}_depth")
+                if raw_depth is None:
+                    continue
+                metric = depth_to_metres(np.asarray(raw_depth, dtype=np.float32), self._env.sim)
+                name = self.camera_name_mapping[camera_name]
+                depths[f"{name}_depth"] = orient_depth(metric)
+                intrinsics[name] = self.camera_intrinsics(bare)
 
         eef_pos = raw_obs.get("robot0_eef_pos")
         eef_quat = raw_obs.get("robot0_eef_quat")
@@ -318,8 +432,17 @@ class LiberoEnv(gym.Env):
                 },
             },
         }
+        if depths:
+            # Depth goes in the same dict as the RGB streams, under
+            # "<name>_depth", which is the convention koch_follower and the
+            # hope_jr arms already use for their depth cameras.
+            obs["pixels"].update(depths)
+            obs["intrinsics"] = intrinsics
+
         if self.obs_type == "pixels":
-            return {"pixels": images.copy()}
+            pixels = images.copy()
+            pixels.update(depths)
+            return {"pixels": pixels, **({"intrinsics": intrinsics} if intrinsics else {})}
 
         if self.obs_type == "pixels_agent_pos":
             # Validate required fields are present
