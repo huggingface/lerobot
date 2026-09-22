@@ -304,3 +304,53 @@ def test_record_loop_records_the_action_returned_by_robot():
 
     assert recorded_frames
     assert all(frame["action"][0] == pytest.approx(0.5) for frame in recorded_frames)
+
+
+
+def test_record_loop_preserves_recording_representation_when_sent_schema_differs():
+    robot = make_robot_from_config(MockRobotConfig(n_motors=1, random_values=False, static_values=[0.0]))
+    teleop = make_teleoperator_from_config(
+        MockTeleopConfig(n_motors=1, random_values=False, static_values=[2.0])
+    )
+    robot.connect()
+    teleop.connect()
+
+    def teleop_action_processor(_):
+        return {"ee.x": 0.2}
+
+    def robot_action_processor(_):
+        return {"elbow.pos": 30.0}
+
+    _, _, robot_observation_processor = make_default_processors()
+    robot.send_action = lambda action: action
+
+    dataset_features = {
+        **hw_to_dataset_features({"ee.x": float}, ACTION, use_video=False),
+        **hw_to_dataset_features(robot.observation_features, OBS_STR, use_video=False),
+    }
+    recorded_frames = []
+    dataset = SimpleNamespace(
+        fps=30,
+        features=dataset_features,
+        add_frame=recorded_frames.append,
+    )
+
+    try:
+        record_loop(
+            robot=robot,
+            events={"exit_early": False},
+            fps=30,
+            teleop_action_processor=teleop_action_processor,
+            robot_action_processor=robot_action_processor,
+            robot_observation_processor=robot_observation_processor,
+            dataset=dataset,
+            teleop=teleop,
+            control_time_s=0.1,
+            single_task="test",
+        )
+    finally:
+        teleop.disconnect()
+        robot.disconnect()
+
+    assert recorded_frames
+    assert all(frame["action"][0] == pytest.approx(0.2) for frame in recorded_frames)
