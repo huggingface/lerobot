@@ -14,22 +14,17 @@ This guide covers hardware setup, calibration, teleoperation, and recording for 
 <div style="display: flex; align-items: center; gap: 10px;">
   <img
     src="https://files.seeedstudio.com/wiki/robotics/projects/lerobot/b601dm_zeroposition.jpg"
-    alt="reBot B601-DM follower arm at its zero position"
-    width="32%"
-  />
-  <img
-    src="https://files.seeedstudio.com/wiki/robotics/projects/rebot_arm/rs_0pos.jpg"
-    alt="reBot B601-RS follower arm at its zero position"
-    width="32%"
+    alt="reBot B601 follower arm"
+    width="48%"
   />
   <img
     src="https://files.seeedstudio.com/wiki/robotics/projects/lerobot/102_zeroposition.jpg"
-    alt="reBot Arm 102 leader arm at its zero position"
-    width="32%"
+    alt="reBot Arm 102 leader arm"
+    width="48%"
   />
 </div>
 
-_Left: B601-DM follower. Middle: B601-RS follower. Right: reBot Arm 102 leader. All arms are shown at their zero position. Images courtesy of Seeed Studio._
+_B601 follower (left) and reBot Arm 102 leader (right). DM and RS followers share the same joint layout and overall appearance but use different motors. Images courtesy of Seeed Studio._
 
 ## Hardware and safety
 
@@ -102,7 +97,22 @@ Replace `can0` with the channel provided by your CAN backend. Bimanual native-CA
 
 ## Calibration
 
-Calibration sets the current physical pose as the motor zero position and saves a LeRobot calibration file. Place each arm in the zero position shown above with the gripper fully closed, then press <kbd>ENTER</kbd> when prompted.
+Calibration sets the current physical pose as the motor zero position and saves a LeRobot calibration file. Place each arm in the zero position shown below with the gripper fully closed, then press <kbd>ENTER</kbd> when prompted.
+
+<div style="display: flex; align-items: center; gap: 10px;">
+  <img
+    src="https://files.seeedstudio.com/wiki/robotics/projects/lerobot/b601dm_zeroposition.jpg"
+    alt="reBot B601 follower arm at its zero position"
+    width="48%"
+  />
+  <img
+    src="https://files.seeedstudio.com/wiki/robotics/projects/lerobot/102_zeroposition.jpg"
+    alt="reBot Arm 102 leader arm at its zero position"
+    width="48%"
+  />
+</div>
+
+_Follower zero position (left) and leader zero position (right). The DM follower is pictured; the RS follower uses the same joint arrangement._
 
 Reuse the same `--robot.id` and `--teleop.id` in later commands so LeRobot loads the saved calibration. If a calibration already exists, the command lets you reuse it or enter `c` to recalibrate.
 
