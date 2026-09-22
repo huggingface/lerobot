@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import logging
+from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
 import torch
@@ -30,13 +31,8 @@ from lerobot.configs import FeatureType, PreTrainedConfig
 from lerobot.envs import EnvConfig, env_to_policy_features
 from lerobot.lerobot_types import PolicyAction
 from lerobot.processor import (
-    AbsoluteActionsProcessorStep,
     PolicyProcessorPipeline,
-    RelativeActionsProcessorStep,
-    batch_to_transition,
-    policy_action_to_transition,
-    transition_to_batch,
-    transition_to_policy_action,
+    load_pretrained_policy_processors,
 )
 from lerobot.utils.constants import (
     ACTION,
@@ -46,8 +42,6 @@ from lerobot.utils.constants import (
 from lerobot.utils.feature_utils import dataset_to_policy_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
-from .evo1.configuration_evo1 import Evo1Config
-from .groot.configuration_groot import GrootConfig
 from .pretrained import PreTrainedPolicy
 from .utils import validate_visual_features_consistency
 
@@ -56,24 +50,6 @@ if TYPE_CHECKING or _peft_available:
 else:
     PeftConfig = None
     PeftModel = None
-
-
-def _reconnect_relative_absolute_steps(
-    preprocessor: PolicyProcessorPipeline, postprocessor: PolicyProcessorPipeline
-) -> None:
-    """Wire AbsoluteActionsProcessorStep.relative_step to the RelativeActionsProcessorStep after deserialization.
-
-    After a policy is loaded from disk, the preprocessor and postprocessor are reconstructed
-    independently from their configs. AbsoluteActionsProcessorStep needs a live reference to
-    the RelativeActionsProcessorStep so it can read the cached state at inference time.
-    That reference is not serializable, so we re-establish it here after loading.
-    """
-    relative_step = next((s for s in preprocessor.steps if isinstance(s, RelativeActionsProcessorStep)), None)
-    if relative_step is None:
-        return
-    for step in postprocessor.steps:
-        if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
-            step.relative_step = relative_step
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
@@ -96,7 +72,32 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         ValueError: If the policy name is not registered.
         ImportError: If the policy's optional dependencies are not installed.
     """
-    return _get_policy_cls_from_policy_name(name=name)
+    if name not in PreTrainedConfig.get_known_choices():
+        raise ValueError(
+            f"Unknown policy name '{name}'. Available policies: {PreTrainedConfig.get_known_choices()}"
+        )
+
+    config_cls = PreTrainedConfig.get_choice_class(name)
+    config_cls_name = config_cls.__name__
+
+    model_name = config_cls_name.removesuffix("Config")  # e.g., DiffusionConfig -> Diffusion
+    if model_name == config_cls_name:
+        raise ValueError(
+            f"The config class name '{config_cls_name}' does not follow the expected naming convention."
+            f"Make sure it ends with 'Config'!"
+        )
+    cls_name = model_name + "Policy"  # e.g., DiffusionConfig -> DiffusionPolicy
+
+    module = _import_sibling_policy_module(config_cls, "modeling")
+    if module is None:
+        raise ValueError(f"Policy class for '{name}' is not implemented.")
+    policy_cls = getattr(module, cls_name, None)
+    if policy_cls is None:
+        raise ValueError(
+            f"Policy class '{cls_name}' not found in '{module.__name__}'. "
+            f"Policies must expose '<Name>Policy' in the sibling 'modeling_*' module by naming convention."
+        )
+    return policy_cls
 
 
 def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
@@ -178,55 +179,34 @@ def make_pre_post_processors(
         ValueError: If no processor factory exists for the given policy configuration type.
     """
     if pretrained_path:
-        if isinstance(policy_cfg, GrootConfig):
-            from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
-
-            return make_groot_pre_post_processors_from_pretrained(
-                config=policy_cfg,
-                pretrained_path=pretrained_path,
-                revision=pretrained_revision,
-                dataset_stats=kwargs.get("dataset_stats"),
-                dataset_meta=kwargs.get("dataset_meta"),
-                preprocessor_overrides=kwargs.get("preprocessor_overrides"),
-                postprocessor_overrides=kwargs.get("postprocessor_overrides"),
-                preprocessor_config_filename=kwargs.get(
-                    "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
-                ),
-                postprocessor_config_filename=kwargs.get(
-                    "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
-                ),
-            )
-
-        preprocessor = PolicyProcessorPipeline.from_pretrained(
-            pretrained_model_name_or_path=pretrained_path,
-            config_filename=kwargs.get(
-                "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
-            ),
-            overrides=kwargs.get("preprocessor_overrides", {}),
-            to_transition=batch_to_transition,
-            to_output=transition_to_batch,
-            revision=pretrained_revision,
+        preprocessor_config_filename = (
+            kwargs.get("preprocessor_config_filename") or f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
         )
-        postprocessor = PolicyProcessorPipeline.from_pretrained(
-            pretrained_model_name_or_path=pretrained_path,
-            config_filename=kwargs.get(
-                "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
-            ),
-            overrides=kwargs.get("postprocessor_overrides", {}),
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
-            revision=pretrained_revision,
+        postprocessor_config_filename = (
+            kwargs.get("postprocessor_config_filename") or f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
         )
-        _reconnect_relative_absolute_steps(preprocessor, postprocessor)
-        if isinstance(policy_cfg, Evo1Config):
-            from .evo1.processor_evo1 import reconcile_evo1_processors
+        custom_processors = _make_pretrained_processors_from_policy_config(
+            config=policy_cfg,
+            pretrained_path=pretrained_path,
+            revision=pretrained_revision,
+            dataset_stats=kwargs.get("dataset_stats"),
+            dataset_meta=kwargs.get("dataset_meta"),
+            preprocessor_overrides=kwargs.get("preprocessor_overrides"),
+            postprocessor_overrides=kwargs.get("postprocessor_overrides"),
+            preprocessor_config_filename=preprocessor_config_filename,
+            postprocessor_config_filename=postprocessor_config_filename,
+        )
+        if custom_processors is not None:
+            return custom_processors
 
-            preprocessor, postprocessor = reconcile_evo1_processors(
-                policy_cfg,
-                preprocessor,
-                postprocessor,
-            )
-        return preprocessor, postprocessor
+        return load_pretrained_policy_processors(
+            pretrained_path,
+            revision=pretrained_revision,
+            preprocessor_overrides=kwargs.get("preprocessor_overrides"),
+            postprocessor_overrides=kwargs.get("postprocessor_overrides"),
+            preprocessor_config_filename=preprocessor_config_filename,
+            postprocessor_config_filename=postprocessor_config_filename,
+        )
 
     # Create new processors from the policy config, resolving the per-policy factory
     # function by naming convention (lazy import keeps optional dependencies optional).
@@ -326,6 +306,11 @@ def make_policy(
         )
         action_names = raw_action_feature.get("names") if raw_action_feature is not None else None
         if action_names is not None:
+            # Grouped metadata stores dimension names in the values, not the group keys.
+            if isinstance(action_names, dict) and all(
+                isinstance(group, (list, tuple)) for group in action_names.values()
+            ):
+                action_names = [name for group in action_names.values() for name in group]
             cfg.action_feature_names = list(action_names)
     if ds_meta is not None:
         set_dataset_feature_metadata = getattr(cfg, "set_dataset_feature_metadata", None)
@@ -410,53 +395,51 @@ def make_policy(
     return policy
 
 
-def _get_policy_cls_from_policy_name(name: str) -> type[PreTrainedPolicy]:
-    """Get policy class from its registered name using dynamic imports.
-
-    Works for built-in policies and 3rd party lerobot plugins alike: the config class
-    registered under ``name`` is resolved via the draccus ChoiceRegistry, and the policy
-    class is imported from the sibling ``modeling_*`` module by naming convention.
-
-    Args:
-        name: The name of the policy.
-    Returns:
-        The policy class corresponding to the given name.
-    """
-    if name not in PreTrainedConfig.get_known_choices():
-        raise ValueError(
-            f"Unknown policy name '{name}'. Available policies: {PreTrainedConfig.get_known_choices()}"
-        )
-
-    config_cls = PreTrainedConfig.get_choice_class(name)
-    config_cls_name = config_cls.__name__
-
-    model_name = config_cls_name.removesuffix("Config")  # e.g., DiffusionConfig -> Diffusion
-    if model_name == config_cls_name:
-        raise ValueError(
-            f"The config class name '{config_cls_name}' does not follow the expected naming convention."
-            f"Make sure it ends with 'Config'!"
-        )
-    cls_name = model_name + "Policy"  # e.g., DiffusionConfig -> DiffusionPolicy
-    module_path = config_cls.__module__.replace(
-        "configuration_", "modeling_"
-    )  # e.g., configuration_diffusion -> modeling_diffusion
-
+def _import_sibling_policy_module(config_cls: type[PreTrainedConfig], prefix: str) -> ModuleType | None:
+    """Import a config class' sibling ``{prefix}_*`` module, or None when that module does not exist."""
+    module_path = config_cls.__module__.replace("configuration_", f"{prefix}_")
     try:
-        module = importlib.import_module(module_path)
+        return importlib.import_module(module_path)
     except ModuleNotFoundError as e:
         if e.name == module_path:
-            # The modeling_* module itself does not exist for this policy type. A missing
-            # optional dependency inside an existing module propagates unchanged instead,
-            # so its actionable install hint stays visible.
-            raise ValueError(f"Policy class for '{name}' is not implemented.") from e
+            # The sibling module itself does not exist for this policy type. A missing optional
+            # dependency inside an existing module propagates unchanged instead, so its
+            # actionable install hint stays visible.
+            return None
         raise
-    policy_cls = getattr(module, cls_name, None)
-    if policy_cls is None:
-        raise ValueError(
-            f"Policy class '{cls_name}' not found in '{module_path}'. "
-            f"Policies must expose '<Name>Policy' in the sibling 'modeling_*' module by naming convention."
-        )
-    return policy_cls
+
+
+def _make_pretrained_processors_from_policy_config(
+    config: PreTrainedConfig,
+    pretrained_path: str,
+    *,
+    revision: str | None,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None,
+    dataset_meta: Any | None,
+    preprocessor_overrides: dict[str, Any] | None,
+    postprocessor_overrides: dict[str, Any] | None,
+    preprocessor_config_filename: str,
+    postprocessor_config_filename: str,
+) -> tuple[Any, Any] | None:
+    """Let a policy rebuild pretrained processors when its current runtime requires it."""
+    function_name = f"make_{config.type}_pre_post_processors_from_pretrained"
+    module = _import_sibling_policy_module(config.__class__, "processor")
+    if module is None:
+        return None
+    function = getattr(module, function_name, None)
+    if function is None:
+        return None
+    return function(
+        config=config,
+        pretrained_path=pretrained_path,
+        revision=revision,
+        dataset_stats=dataset_stats,
+        dataset_meta=dataset_meta,
+        preprocessor_overrides=preprocessor_overrides,
+        postprocessor_overrides=postprocessor_overrides,
+        preprocessor_config_filename=preprocessor_config_filename,
+        postprocessor_config_filename=postprocessor_config_filename,
+    )
 
 
 def _make_processors_from_policy_config(
@@ -480,21 +463,10 @@ def _make_processors_from_policy_config(
 
     policy_type = config.type
     function_name = f"make_{policy_type}_pre_post_processors"
-    module_path = config.__class__.__module__.replace(
-        "configuration_", "processor_"
-    )  # e.g., configuration_diffusion -> processor_diffusion
-    logging.debug(
-        f"Instantiating pre/post processors using function '{function_name}' from module '{module_path}'"
-    )
-    try:
-        module = importlib.import_module(module_path)
-    except ModuleNotFoundError as e:
-        if e.name == module_path:
-            # The processor_* module itself does not exist for this policy type. A missing
-            # optional dependency inside an existing module propagates unchanged instead,
-            # so its actionable install hint stays visible.
-            raise ValueError(f"Processor for policy type '{policy_type}' is not implemented.") from e
-        raise
+    logging.debug(f"Instantiating pre/post processors using function '{function_name}'")
+    module = _import_sibling_policy_module(config.__class__, "processor")
+    if module is None:
+        raise ValueError(f"Processor for policy type '{policy_type}' is not implemented.")
     function = getattr(module, function_name, None)
     if function is None:
         raise ValueError(f"Processor for policy type '{policy_type}' is not implemented.")

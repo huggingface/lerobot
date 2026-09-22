@@ -389,6 +389,21 @@ def test_aggregate_datasets(tmp_path, lerobot_dataset_factory):
     assert_dataset_iteration_works(aggr_ds)
 
 
+def test_aggregate_datasets_rejects_mismatched_roots(tmp_path):
+    with (
+        patch("lerobot.datasets.aggregate.LeRobotDatasetMetadata") as metadata_cls,
+        pytest.raises(ValueError, match="repo_ids and roots must have the same length"),
+    ):
+        aggregate_datasets(
+            repo_ids=["org/dataset-a", "org/dataset-b"],
+            roots=[tmp_path / "dataset-a"],
+            aggr_repo_id="org/aggregated",
+            aggr_root=tmp_path / "aggregated",
+        )
+
+    metadata_cls.assert_not_called()
+
+
 def test_aggregate_datasets_without_concatenation(tmp_path, lerobot_dataset_factory):
     """With concatenation disabled, each source file is kept as its own destination file."""
     ds_0 = lerobot_dataset_factory(

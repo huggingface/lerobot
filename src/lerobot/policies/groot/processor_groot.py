@@ -61,10 +61,9 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
-    batch_to_transition,
+    load_pretrained_policy_processors,
     policy_action_to_transition,
     to_relative_actions,
-    transition_to_batch,
     transition_to_policy_action,
 )
 from lerobot.utils.constants import (
@@ -510,7 +509,10 @@ def make_groot_pre_post_processors_from_pretrained(
         _apply_groot_action_decode_transform(postprocessor, config.action_decode_transform)
         return preprocessor, postprocessor
 
-    preprocessor, postprocessor = _load_groot_processor_pipelines(
+    # Register the GR00T N1.5 rejection stubs before deserializing, so a saved N1.5 pipeline
+    # referencing their registry names fails with the canonical removal guidance.
+    _register_removed_n1_5_step_stubs()
+    preprocessor, postprocessor = load_pretrained_policy_processors(
         pretrained_path,
         revision=revision,
         preprocessor_overrides=preprocessor_overrides,
@@ -518,61 +520,10 @@ def make_groot_pre_post_processors_from_pretrained(
         preprocessor_config_filename=preprocessor_config_filename,
         postprocessor_config_filename=postprocessor_config_filename,
     )
-    _reconnect_groot_relative_absolute_steps(preprocessor, postprocessor)
     _reconnect_groot_n1_7_pack_decode_steps(preprocessor, postprocessor)
     _apply_groot_action_decode_transform(postprocessor, config.action_decode_transform)
     _set_groot_preprocessor_training(preprocessor, training=dataset_meta is not None)
     return preprocessor, postprocessor
-
-
-def _load_groot_processor_pipelines(
-    pretrained_path: str,
-    *,
-    revision: str | None,
-    preprocessor_overrides: dict[str, Any],
-    postprocessor_overrides: dict[str, Any],
-    preprocessor_config_filename: str,
-    postprocessor_config_filename: str,
-) -> tuple[
-    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
-]:
-    # Register the GR00T N1.5 rejection stubs before deserializing, so a saved N1.5 pipeline
-    # referencing their registry names fails with the canonical removal guidance.
-    _register_removed_n1_5_step_stubs()
-    preprocessor = PolicyProcessorPipeline.from_pretrained(
-        pretrained_model_name_or_path=pretrained_path,
-        config_filename=preprocessor_config_filename,
-        revision=revision,
-        overrides=preprocessor_overrides,
-        to_transition=batch_to_transition,
-        to_output=transition_to_batch,
-    )
-    postprocessor = PolicyProcessorPipeline.from_pretrained(
-        pretrained_model_name_or_path=pretrained_path,
-        config_filename=postprocessor_config_filename,
-        revision=revision,
-        overrides=postprocessor_overrides,
-        to_transition=policy_action_to_transition,
-        to_output=transition_to_policy_action,
-    )
-    return preprocessor, postprocessor
-
-
-def _reconnect_groot_relative_absolute_steps(
-    preprocessor: PolicyProcessorPipeline,
-    postprocessor: PolicyProcessorPipeline,
-) -> None:
-    relative_step = next(
-        (step for step in preprocessor.steps if isinstance(step, RelativeActionsProcessorStep)),
-        None,
-    )
-    if relative_step is None:
-        return
-
-    for step in postprocessor.steps:
-        if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
-            step.relative_step = relative_step
 
 
 def _reconnect_groot_n1_7_pack_decode_steps(
@@ -738,8 +689,9 @@ def _compute_horizon_relative_action_stats(
 
 def _iter_action_state_training_samples(dataset: Any):
     ensure_reader = getattr(dataset, "_ensure_reader", None)
-    if callable(ensure_reader):
-        reader = ensure_reader()
+    # Only the default parquet reader exposes hf_dataset; other readers
+    # (e.g. lance) fall through to the generic per-item loop below.
+    if callable(ensure_reader) and hasattr(reader := ensure_reader(), "hf_dataset"):
         if reader.hf_dataset is None:
             reader.load_and_activate()
         delta_indices = getattr(reader, "delta_indices", None)
