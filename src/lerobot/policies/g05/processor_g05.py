@@ -47,6 +47,7 @@ from lerobot.processor import (
     RenderRuntimeMessagesStep,
     RenderTrainingMessagesStep,
     UnnormalizerProcessorStep,
+    load_pretrained_policy_processors,
 )
 from lerobot.processor.converters import (
     batch_to_transition,
@@ -764,6 +765,30 @@ class G05ActionHistoryCropStep(ProcessorStep):
         return {"num_obs_steps": self.num_obs_steps}
 
 
+def _tokenizer_policy_config(config: G05Config) -> dict[str, Any]:
+    """Collect the policy fields `G05TokenizerStep` reads at inference time.
+
+    This is derived from the live config on every load rather than serialized into
+    the step, so the pipeline cannot drift from the checkpoint it is paired with.
+    """
+    return {
+        "author_model_config": config.author_model_config,
+        "embodiment": config.embodiment,
+        "predict_cot": config.predict_cot,
+        "runtime_system": config.runtime_system,
+        "prompt_template": config.prompt_template,
+        "num_prompt_images": config.num_prompt_images,
+        "num_input_images": config.num_input_images,
+        "camera_order": config.camera_order,
+        "camera_sizes": config.camera_sizes,
+        "policy_state_dim": config.policy_state_dim,
+        "policy_action_dim": config.policy_action_dim,
+        "chunk_size": config.chunk_size,
+        "processor_metadata": config.processor_metadata,
+        "cot_bbox_camera": config.cot_bbox_camera,
+    }
+
+
 def _normalization_mode(config: G05Config) -> NormalizationMode:
     if config.normalization_mode == "q01_q99":
         return NormalizationMode.QUANTILES
@@ -865,26 +890,15 @@ def reconcile_g05_processors(
     postprocessor: PolicyProcessorPipeline,
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     """Fill bbox camera_key on Hub pipelines that saved an empty step config, and
-    re-apply the live `runtime_system` override to a pipeline loaded from a saved
-    checkpoint, since that pipeline's `G05TokenizerStep` otherwise keeps whatever
-    system mode was active when the checkpoint's pipeline JSON was exported.
-
-    The two pipelines are deserialized independently, so the absolute-action step
-    is also rewired to the live relative-action step it reads cached state from.
+    hand `G05TokenizerStep` the policy fields it reads, which the live config owns
+    rather than the saved pipeline.
     """
     camera_key = config.cot_bbox_camera or (config.camera_order[0] if config.camera_order else None)
-    relative_step = None
     for step in preprocessor.steps:
         if camera_key is not None and isinstance(step, G05BBoxImageSizeStep):
             step.camera_key = camera_key
         if isinstance(step, G05TokenizerStep):
-            step.policy_config["runtime_system"] = config.runtime_system
-        if isinstance(step, RelativeActionsProcessorStep):
-            relative_step = step
-    if relative_step is not None:
-        for step in postprocessor.steps:
-            if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
-                step.relative_step = relative_step
+            step.policy_config = _tokenizer_policy_config(config)
     return preprocessor, postprocessor
 
 
@@ -928,21 +942,13 @@ def make_g05_pre_post_processors_from_pretrained(
     prepared_preprocessor_overrides, prepared_postprocessor_overrides = fix_g05_train_overrides(
         config, preprocessor_overrides, postprocessor_overrides
     )
-    preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]].from_pretrained(
-        pretrained_model_name_or_path=pretrained_path,
-        config_filename=preprocessor_config_filename,
-        overrides=prepared_preprocessor_overrides,
-        to_transition=batch_to_transition,
-        to_output=transition_to_batch,
+    preprocessor, postprocessor = load_pretrained_policy_processors(
+        pretrained_path,
         revision=revision,
-    )
-    postprocessor = PolicyProcessorPipeline[PolicyAction, PolicyAction].from_pretrained(
-        pretrained_model_name_or_path=pretrained_path,
-        config_filename=postprocessor_config_filename,
-        overrides=prepared_postprocessor_overrides,
-        to_transition=policy_action_to_transition,
-        to_output=transition_to_policy_action,
-        revision=revision,
+        preprocessor_overrides=prepared_preprocessor_overrides,
+        postprocessor_overrides=prepared_postprocessor_overrides,
+        preprocessor_config_filename=preprocessor_config_filename,
+        postprocessor_config_filename=postprocessor_config_filename,
     )
     return reconcile_g05_processors(config, preprocessor, postprocessor)
 
@@ -1059,22 +1065,7 @@ def make_g05_pre_post_processors(
         G05TokenizerStep(
             checkpoint_path=checkpoint_path,
             revision=config.pretrained_revision,
-            policy_config={
-                "author_model_config": config.author_model_config,
-                "embodiment": config.embodiment,
-                "predict_cot": config.predict_cot,
-                "runtime_system": config.runtime_system,
-                "prompt_template": config.prompt_template,
-                "num_prompt_images": config.num_prompt_images,
-                "num_input_images": config.num_input_images,
-                "camera_order": config.camera_order,
-                "camera_sizes": config.camera_sizes,
-                "policy_state_dim": config.policy_state_dim,
-                "policy_action_dim": config.policy_action_dim,
-                "chunk_size": config.chunk_size,
-                "processor_metadata": config.processor_metadata,
-                "cot_bbox_camera": config.cot_bbox_camera,
-            },
+            policy_config=_tokenizer_policy_config(config),
         )
     )
     preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
@@ -1515,7 +1506,10 @@ class G05TokenizerStep(ProcessorStep):
     """Build the checkpoint-native G0.5 token sequence in the input pipeline."""
 
     checkpoint_path: str
-    policy_config: dict[str, Any]
+    # Not serialized: the live G05Config owns these fields and re-injects them on
+    # load via `_tokenizer_policy_config`, so a pipeline restored from JSON builds
+    # this step without them and is filled in by `reconcile_g05_processors`.
+    policy_config: dict[str, Any] = field(default_factory=dict)
     revision: str | None = None
     _tokenizer: G05Tokenizer | None = field(default=None, init=False, repr=False)
     _action_codec: Any = field(default=None, init=False, repr=False)
@@ -1524,7 +1518,6 @@ class G05TokenizerStep(ProcessorStep):
     def get_config(self) -> dict[str, Any]:
         return {
             "checkpoint_path": self.checkpoint_path,
-            "policy_config": self.policy_config,
             "revision": self.revision,
         }
 
