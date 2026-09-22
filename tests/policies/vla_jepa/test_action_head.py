@@ -1,5 +1,19 @@
 #!/usr/bin/env python
 
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 import pytest
@@ -52,13 +66,12 @@ def test_action_head_sample_time_range(action_dim: int, state_dim: int, action_h
 def test_action_head_build_inputs_shape(action_dim: int, state_dim: int, action_horizon: int) -> None:
     config = make_config(action_dim=action_dim, state_dim=state_dim, action_horizon=action_horizon)
     head = VLAJEPAActionHead(config, cross_attention_dim=QWEN_HIDDEN_SIZE)
-    conditioning = torch.randn(2, 4, QWEN_HIDDEN_SIZE)
     actions = torch.randn(2, action_horizon, action_dim)
     timesteps = torch.randint(0, 100, (2,))
 
     state = torch.randn(2, state_dim) if state_dim > 0 else None
-    out_with = head._build_inputs(conditioning, actions, state, timesteps)
-    out_none = head._build_inputs(conditioning, actions, None, timesteps)
+    out_with = head._build_inputs(actions, state, timesteps)
+    out_none = head._build_inputs(actions, None, timesteps)
 
     assert out_with.ndim == 3 and out_none.ndim == 3
     if state_dim > 0:

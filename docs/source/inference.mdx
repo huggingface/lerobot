@@ -18,6 +18,16 @@ lerobot-rollout \
 
 This runs the policy for 30 seconds with no recording.
 
+### Choosing a device
+
+Pass `--device=cpu` or `--device=cuda` to override the checkpoint device on a host where that device is available.
+The resolved device is applied to the policy configuration before loading the policy and constructing its processors.
+For example, add `--device=cpu` to the command above to run a CUDA-trained checkpoint on a CPU-only host, if the policy supports CPU execution.
+Check that CPU inference can meet your required control rate before deploying on a robot.
+
+When `--device` is omitted, rollout uses the policy configuration device if set, otherwise it selects an available device automatically.
+The same behavior applies to `RolloutConfig(device=...)` with `build_rollout_context`.
+
 ---
 
 ## Strategies
@@ -39,11 +49,11 @@ lerobot-rollout \
     --duration=60
 ```
 
-| Flag             | Description                                            |
-| ---------------- | ------------------------------------------------------ |
-| `--duration`     | Run time in seconds (0 = infinite)                     |
-| `--task`         | Task description passed to the policy                  |
-| `--display_data` | Stream observations/actions to Rerun for visualization |
+| Flag             | Description                                            | Default |
+| ---------------- | ------------------------------------------------------ | ------- |
+| `--duration`     | Run time in seconds (0 = infinite)                     | 0       |
+| `--task`         | Task description passed to the policy                  | --      |
+| `--display_data` | Stream observations/actions to Rerun for visualization | false   |
 
 ### Sentry (`--strategy.type=sentry`)
 
@@ -64,12 +74,12 @@ lerobot-rollout \
     --duration=3600
 ```
 
-| Flag                                   | Description                                                 |
-| -------------------------------------- | ----------------------------------------------------------- |
-| `--strategy.upload_every_n_episodes`   | Push to Hub every N episodes (default: 5)                   |
-| `--strategy.target_video_file_size_mb` | Target video file size for episode rotation (default: auto) |
-| `--dataset.repo_id`                    | **Required.** Hub repository for the recorded dataset       |
-| `--dataset.push_to_hub`                | Whether to push to Hub on teardown (default: true)          |
+| Flag                                   | Description                                           | Default |
+| -------------------------------------- | ----------------------------------------------------- | ------- |
+| `--strategy.upload_every_n_episodes`   | Push to Hub every N episodes                          | 5       |
+| `--strategy.target_video_file_size_mb` | Target video file size for episode rotation           | auto    |
+| `--dataset.repo_id`                    | **Required.** Hub repository for the recorded dataset | --      |
+| `--dataset.push_to_hub`                | Whether to push to Hub on teardown                    | true    |
 
 ### Highlight (`--strategy.type=highlight`)
 
@@ -190,12 +200,64 @@ Teleop is optional — if omitted the robot holds its position during the reset 
 | Flag                                            | Description                                                                                                                                                |
 | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--dataset.num_episodes`                        | Number of episodes to record                                                                                                                               |
-| `--dataset.episode_time_s`                      | Duration of each recording episode in seconds                                                                                                              |
+| `--dataset.episode_time_s`                      | Duration of each recording episode in seconds. Defaults to `--duration` when that is set and this one is not                                               |
 | `--dataset.reset_time_s`                        | Duration of the reset phase between episodes in seconds                                                                                                    |
 | `--teleop.type`                                 | Optional. Teleoperator to drive the robot during resets                                                                                                    |
 | `--strategy.reset_to_initial_position`          | Whether to reset the robot to its initial position between episodes                                                                                        |
 | `--strategy.smooth_leader_to_follower_handover` | Whether to turn on or off the leader -> follower smooth handover behavior.                                                                                 |
 | `--strategy.smooth_handover`                    | Smoothly hand control to the teleop at reset start (default: true). Disable for clutch-style teleops that re-reference at the current robot pose on engage |
+
+### Bring your own strategy
+
+`--strategy.type` accepts any strategy registered in the environment, not only the built-ins above. A strategy is two classes in a pip-installable package: a config registered on `RolloutStrategyConfig`, and a `RolloutStrategy` subclass named after it without the `Config` suffix — the same `SomethingConfig`/`Something` convention as [custom hardware](./integrate_hardware#the-4-core-conventions), resolved from the config's module or package.
+
+```python
+from dataclasses import dataclass
+from typing import ClassVar
+
+from lerobot.rollout import RolloutContext, RolloutStrategy, RolloutStrategyConfig
+
+
+@RolloutStrategyConfig.register_subclass("patrol")
+@dataclass
+class PatrolStrategyConfig(RolloutStrategyConfig):
+    dataset_mode: ClassVar[str] = "required"  # the engine creates the dataset for you
+    legs: int = 2  # becomes --strategy.legs
+
+
+class PatrolStrategy(RolloutStrategy):
+    def run(self, ctx: RolloutContext) -> None:
+        ...  # the paced control loop: see the contract on RolloutStrategy.run
+
+    def teardown(self, ctx: RolloutContext) -> None:
+        ctx.data.dataset.finalize()
+        self._teardown_hardware(ctx.hardware, ctx.runtime.cfg.return_to_initial_position)
+```
+
+The config declares what the engine arranges on the strategy's behalf, so nothing in LeRobot needs to know its type:
+
+| Declaration                     | Effect                                                                                                                                     |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `dataset_mode`                  | `"none"` (default) rejects `--dataset.*` flags, `"optional"` records when they are given, `"required"` makes `--dataset.repo_id` mandatory |
+| `requires_teleop`               | Makes `--teleop.type` mandatory                                                                                                            |
+| `supports_interactive`          | Allows `--interactive=true`; `run()` must then honour the restartable contract documented on `RolloutStrategy`                             |
+| `requires_streaming_encoding()` | Return `True` when frames are written from inside the control loop: `--dataset.streaming_encoding` is forced on                            |
+| `extra_dataset_features()`      | Strategy-owned dataset columns (DAgger's `intervention`, for instance); every recorded frame must carry them                               |
+
+Name the distribution `lerobot_strategy_<name>` and `lerobot-rollout` imports the package before parsing the CLI — only its `__init__.py` runs, so import the config there. A package with any other name is loaded, submodules included, with `--strategy.discover_packages_path=<package>`. The strategy's dataclass fields become `--strategy.*` flags:
+
+```bash
+lerobot-rollout \
+    --strategy.type=patrol \
+    --strategy.legs=3 \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --dataset.repo_id=${HF_USER}/rollout_patrol \
+    --dataset.single_task="patrol the aisle"
+```
+
+`SentryStrategy` (recording, interactive-safe) and `BaseStrategy` (no recording) are the reference implementations to copy from; `send_next_action`, `safe_push_to_hub` and `estimate_max_episode_seconds` from `lerobot.rollout.strategies` are the helpers they build on.
 
 ---
 
@@ -230,12 +292,13 @@ lerobot-rollout \
     --device=cuda
 ```
 
-| Flag                                        | Description                                                    |
-| ------------------------------------------- | -------------------------------------------------------------- |
-| `--inference.rtc.execution_horizon`         | Steps to blend with previous chunk (default: varies by policy) |
-| `--inference.rtc.max_guidance_weight`       | Consistency enforcement strength (default: varies by policy)   |
-| `--inference.rtc.prefix_attention_schedule` | Blend schedule: `LINEAR`, `EXP`, `ONES`, `ZEROS`               |
-| `--inference.queue_threshold`               | Max queue size before backpressure (default: 30)               |
+| Flag                                        | Description                                                                    |
+| ------------------------------------------- | ------------------------------------------------------------------------------ |
+| `--inference.rtc.execution_horizon`         | Steps to blend with previous chunk (default: varies by policy)                 |
+| `--inference.rtc.mode`                      | `guided` (default) or trained-prefix `trained` for compatible Pi05 checkpoints |
+| `--inference.rtc.max_guidance_weight`       | Consistency enforcement strength (default: varies by policy)                   |
+| `--inference.rtc.prefix_attention_schedule` | Blend schedule: `LINEAR`, `EXP`, `ONES`, `ZEROS`                               |
+| `--inference.queue_threshold`               | Backpressure threshold; trained RTC requires at least its maximum delay        |
 
 See the [Real-Time Chunking](./rtc) guide for details on tuning RTC parameters.
 

@@ -189,15 +189,20 @@ class DiT(ModelMixin, ConfigMixin):
 
 @dataclass
 class ActionModelPreset:
-    hidden_size: int
+    """Default head geometry per `action_model_type`.
+
+    Only the attention geometry is preset; the DiT's width comes from
+    `config.action_hidden_size`, so there is deliberately no `hidden_size` here.
+    """
+
     attention_head_dim: int
     num_attention_heads: int
 
 
 DIT_PRESETS = {
-    "DiT-B": ActionModelPreset(hidden_size=768, attention_head_dim=64, num_attention_heads=12),
-    "DiT-L": ActionModelPreset(hidden_size=1536, attention_head_dim=48, num_attention_heads=32),
-    "DiT-test": ActionModelPreset(hidden_size=16, attention_head_dim=8, num_attention_heads=2),
+    "DiT-B": ActionModelPreset(attention_head_dim=64, num_attention_heads=12),
+    "DiT-L": ActionModelPreset(attention_head_dim=48, num_attention_heads=32),
+    "DiT-test": ActionModelPreset(attention_head_dim=8, num_attention_heads=2),
 }
 
 
@@ -248,7 +253,10 @@ class VLAJEPAActionHead(nn.Module):
         )
         self.future_tokens = nn.Embedding(config.num_embodied_action_tokens_per_instruction, inner_dim)
         self.position_embedding = nn.Embedding(
-            max(1024, config.chunk_size + config.num_action_tokens_per_timestep + 4),
+            max(
+                config.action_max_seq_len,
+                config.chunk_size + config.num_action_tokens_per_timestep + 4,
+            ),
             inner_dim,
         )
         self.beta_dist = Beta(config.action_noise_beta_alpha, config.action_noise_beta_beta)
@@ -259,11 +267,15 @@ class VLAJEPAActionHead(nn.Module):
 
     def _build_inputs(
         self,
-        conditioning_tokens: torch.Tensor,
         actions: torch.Tensor,
         state: torch.Tensor | None,
         timesteps: torch.Tensor,
     ) -> torch.Tensor:
+        """Build the DiT's own token sequence: [state?, future queries, noisy actions].
+
+        The conditioning tokens are not part of this sequence; they reach the DiT as
+        `encoder_hidden_states` through cross-attention.
+        """
         action_features = self.action_encoder(actions, timesteps)
         pos_ids = torch.arange(action_features.shape[1], device=actions.device)
         action_features = action_features + self.position_embedding(pos_ids)[None]
@@ -282,6 +294,7 @@ class VLAJEPAActionHead(nn.Module):
         actions: torch.Tensor,
         state: torch.Tensor | None = None,
         action_is_pad: torch.Tensor | None = None,
+        reduction: str = "mean",
     ) -> torch.Tensor:
         noise = torch.randn_like(actions)
         t = self.sample_time(actions.shape[0], actions.device, actions.dtype)
@@ -289,7 +302,7 @@ class VLAJEPAActionHead(nn.Module):
         velocity = actions - noise
         t_discretized = (t * self.config.action_num_timestep_buckets).long()
 
-        hidden_states = self._build_inputs(conditioning_tokens, noisy_actions, state, t_discretized)
+        hidden_states = self._build_inputs(noisy_actions, state, t_discretized)
         pred = self.model(
             hidden_states=hidden_states,
             encoder_hidden_states=conditioning_tokens,
@@ -302,6 +315,10 @@ class VLAJEPAActionHead(nn.Module):
 
         loss = F.mse_loss(pred_actions, velocity, reduction="none")  # [B, T, action_dim]
         valid_mask = ~action_is_pad.unsqueeze(-1)  # [B, T, 1]
+        if reduction == "none":
+            # Per-sample loss (B,) for sample weighting (RA-BC): mask-average over T and action_dim.
+            per_sample_valid = valid_mask.sum(dim=(1, 2)) * loss.shape[-1]  # [B]
+            return (loss * valid_mask).sum(dim=(1, 2)) / per_sample_valid.clamp_min(1)
         num_valid = valid_mask.sum() * loss.shape[-1]
         return (loss * valid_mask).sum() / num_valid.clamp_min(1)
 
@@ -326,7 +343,7 @@ class VLAJEPAActionHead(nn.Module):
             timesteps = torch.full(
                 (batch_size,), t_value, device=conditioning_tokens.device, dtype=torch.long
             )
-            hidden_states = self._build_inputs(conditioning_tokens, actions, state, timesteps)
+            hidden_states = self._build_inputs(actions, state, timesteps)
             pred = self.model(
                 hidden_states=hidden_states,
                 encoder_hidden_states=conditioning_tokens,

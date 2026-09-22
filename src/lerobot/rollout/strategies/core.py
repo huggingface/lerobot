@@ -43,7 +43,11 @@ class RolloutStrategy(abc.ABC):
 
     Each concrete strategy implements a self-contained control loop with
     its own recording/interaction semantics.  Strategies are mutually
-    exclusive — only one runs per session.
+    exclusive — only one runs per session.  This is also the extension point
+    for third-party strategies: subclass it next to a registered
+    :class:`RolloutStrategyConfig` and ``lerobot-rollout --strategy.type=<name>``
+    drives it with no edit to LeRobot (see "Bring your own strategy" in
+    ``docs/source/inference.mdx``).
 
     Lifecycle: ``setup()`` once, then ``run()``, then ``teardown()`` once.
     A strategy whose config declares ``supports_interactive = True`` is also
@@ -212,9 +216,13 @@ class RolloutStrategy(abc.ABC):
             compress_images=cfg.display_compressed_images,
         )
 
-    @abc.abstractmethod
     def setup(self, ctx: RolloutContext) -> None:
-        """Strategy-specific initialisation (keyboard listeners, buffers, etc.)."""
+        """Strategy-specific initialisation (keyboard listeners, buffers, etc.).
+
+        The default only attaches and starts the inference engine; an override must
+        call ``self._init_engine(ctx)`` (or ``super().setup(ctx)``) first.
+        """
+        self._init_engine(ctx)
 
     @abc.abstractmethod
     def run(self, ctx: RolloutContext) -> None:

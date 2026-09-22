@@ -15,6 +15,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 import torch
 
 import lerobot.policies.factory as policy_factory
@@ -85,7 +86,23 @@ def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch)
     )
 
 
-def test_make_policy_reads_action_names_through_rename_map(monkeypatch):
+@pytest.mark.parametrize("action_key", [ACTION, "actions"])
+@pytest.mark.parametrize(
+    ("raw_names", "expected_names"),
+    [
+        (["shoulder", "elbow", "gripper"], ["shoulder", "elbow", "gripper"]),
+        (("shoulder", "elbow", "gripper"), ["shoulder", "elbow", "gripper"]),
+        ({"motors": ["shoulder", "elbow", "gripper"]}, ["shoulder", "elbow", "gripper"]),
+        ({"right": ["shoulder", "elbow"], "left": ["gripper"]}, ["shoulder", "elbow", "gripper"]),
+        ({"right": ("shoulder", "elbow"), "left": ("gripper",)}, ["shoulder", "elbow", "gripper"]),
+        ({"unused": [], "motors": ["shoulder", "elbow", "gripper"]}, ["shoulder", "elbow", "gripper"]),
+        ({"shoulder": 0, "elbow": 1, "gripper": 2}, ["shoulder", "elbow", "gripper"]),
+        ([], []),
+        ({}, []),
+        (None, None),
+    ],
+)
+def test_make_policy_reads_action_names(monkeypatch, action_key, raw_names, expected_names):
     cfg = SimpleNamespace(
         type="mock",
         device="cpu",
@@ -95,13 +112,12 @@ def test_make_policy_reads_action_names_through_rename_map(monkeypatch):
         output_features={},
         action_feature_names=None,
     )
-    action_names = ["shoulder", "elbow", "gripper"]
     dataset_meta = SimpleNamespace(
         features={
-            "actions": {
+            action_key: {
                 "dtype": "float32",
-                "shape": (len(action_names),),
-                "names": action_names,
+                "shape": (3,),
+                "names": raw_names,
             }
         },
         stats={},
@@ -114,9 +130,10 @@ def test_make_policy_reads_action_names_through_rename_map(monkeypatch):
     result = policy_factory.make_policy(
         cfg,
         ds_meta=dataset_meta,
-        rename_map={"actions": ACTION},
+        rename_map={action_key: ACTION} if action_key != ACTION else None,
     )
 
     assert result is policy
-    assert cfg.action_feature_names == action_names
+    assert cfg.action_feature_names == expected_names
+    assert dataset_meta.features[action_key]["names"] == raw_names
     assert cfg.output_features[ACTION].type is FeatureType.ACTION

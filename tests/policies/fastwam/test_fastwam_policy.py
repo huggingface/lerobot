@@ -28,6 +28,7 @@ from lerobot.configs import FeatureType, PolicyFeature, PreTrainedConfig
 from lerobot.policies import FastWAMConfig, get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.fastwam.modeling_fastwam import FastWAMPolicy
 from lerobot.policies.fastwam.processor_fastwam import FastWAMActionToggleProcessorStep
+from lerobot.policies.fastwam.wan import ActionDiT, FastWAM, MoT
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
@@ -153,6 +154,7 @@ def test_policy_forward_and_predict_action_adapt_lerobot_batches(monkeypatch):
                     "image_shape": tuple(kwargs["input_image"].shape),
                     "proprio_shape": tuple(kwargs["proprio"].shape),
                     "prompt": kwargs["prompt"],
+                    "compile_action_infer": kwargs["compile_action_infer"],
                 }
             )
             return {"action": torch.full((1, kwargs["action_horizon"], 3), float(len(captured)))}
@@ -166,6 +168,7 @@ def test_policy_forward_and_predict_action_adapt_lerobot_batches(monkeypatch):
         num_video_frames=5,
         action_video_freq_ratio=1,
         image_size=(16, 16),
+        compile_action_infer=True,
         input_features={
             "observation.images.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 16, 16)),
             OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(2,)),
@@ -207,6 +210,84 @@ def test_policy_forward_and_predict_action_adapt_lerobot_batches(monkeypatch):
         cfg.prompt_template.format(task="task 0"),
         cfg.prompt_template.format(task="task 1"),
     ]
+    assert all(item["compile_action_infer"] for item in captured)
+
+
+def test_cached_inference_paths_support_fullgraph_compile():
+    torch.manual_seed(0)
+    expert_kwargs = {
+        "hidden_dim": 8,
+        "action_dim": 3,
+        "ffn_dim": 16,
+        "text_dim": 8,
+        "freq_dim": 8,
+        "eps": 1.0e-6,
+        "num_heads": 2,
+        "attn_head_dim": 4,
+        "num_layers": 1,
+        "fp32_attention": False,
+    }
+    video_expert = ActionDiT(**expert_kwargs)
+    action_expert = ActionDiT(**expert_kwargs)
+    mot = MoT(
+        mixtures={"video": video_expert, "action": action_expert},
+        mot_checkpoint_mixed_attn=False,
+    ).eval()
+    model = FastWAM(
+        video_expert=video_expert,
+        action_expert=action_expert,
+        mot=mot,
+        vae=nn.Identity(),
+        text_dim=8,
+    ).eval()
+    video_tokens = torch.randn(1, 3, 8)
+    video_freqs = video_expert.freqs[:3].view(3, 1, -1)
+    video_t_mod = torch.zeros(1, 6, 8)
+    video_context = torch.randn(1, 2, 8)
+    action_context = torch.randn(1, 2, 8)
+    video_context_mask = torch.ones(1, 3, 2, dtype=torch.bool)
+    action_context_mask = torch.ones(1, 2, 2, dtype=torch.bool)
+    video_attention_mask = torch.ones(3, 3, dtype=torch.bool)
+    attention_mask = torch.ones(5, 5, dtype=torch.bool)
+    action_latents = torch.randn(1, 2, 3)
+
+    compiled_prefill = torch.compile(mot.prefill_video_cache, backend="eager", fullgraph=True)
+    compiled_action = torch.compile(
+        model._predict_action_noise_with_cache,
+        backend="eager",
+        fullgraph=True,
+    )
+
+    with torch.no_grad():
+        video_cache = compiled_prefill(
+            video_tokens=video_tokens,
+            video_freqs=video_freqs,
+            video_t_mod=video_t_mod,
+            video_context_payload={"context": video_context, "mask": video_context_mask},
+            video_attention_mask=video_attention_mask,
+        )
+        expected = model._predict_action_noise_with_cache(
+            latents_action=action_latents,
+            timestep_action=torch.zeros(1),
+            context=action_context,
+            context_mask=action_context_mask[:, 0],
+            video_kv_cache=video_cache,
+            attention_mask=attention_mask,
+            video_seq_len=3,
+        )
+        output = compiled_action(
+            latents_action=action_latents,
+            timestep_action=torch.zeros(1),
+            context=action_context,
+            context_mask=action_context_mask[:, 0],
+            video_kv_cache=video_cache,
+            attention_mask=attention_mask,
+            video_seq_len=3,
+        )
+
+    assert len(video_cache) == 1
+    assert output.shape == (1, 2, 3)
+    torch.testing.assert_close(output, expected)
 
 
 class CoreWithFrozenComponents(FakeFastWAMCore):
