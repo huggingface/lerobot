@@ -273,6 +273,7 @@ class G05Config(PreTrainedConfig):
     scheduler_warmup_steps: int = 500
 
     def __post_init__(self) -> None:
+        """Resolve the recipe override and validate the configured fields."""
         super().__post_init__()
         if self.recipe is not None or self.recipe_path is not None:
             # Import only for recipes: the datasets package requires optional extras.
@@ -396,6 +397,7 @@ class G05Config(PreTrainedConfig):
             raise ValueError("G0.5 image_mean/image_std must be three channels with positive std.")
 
     def validate_features(self) -> None:
+        """Check the state and action features against the configured dimensions."""
         if self.input_features is None:
             self.input_features = {}
         if self.output_features is None:
@@ -426,6 +428,7 @@ class G05Config(PreTrainedConfig):
             )
 
     def get_optimizer_preset(self) -> AdamWConfig:
+        """Return the AdamW preset the checkpoint was trained with."""
         return AdamWConfig(
             lr=self.optimizer_lr,
             betas=self.optimizer_betas,
@@ -434,6 +437,7 @@ class G05Config(PreTrainedConfig):
         )
 
     def get_scheduler_preset(self) -> LRSchedulerConfig | None:
+        """Return the constant-with-warmup schedule preset."""
         return ConstantWithWarmupSchedulerConfig(num_warmup_steps=self.scheduler_warmup_steps)
 
     @property
@@ -448,12 +452,15 @@ class G05Config(PreTrainedConfig):
 
     @property
     def observation_delta_indices(self) -> list[int]:
+        """Frame offsets of the observation history the policy consumes."""
         return list(range(-(self.n_obs_steps - 1), 1))
 
     @property
     def action_delta_indices(self) -> list[int]:
+        """Frame offsets of the action chunk the policy predicts."""
         return list(range(self.chunk_size))
 
     @property
     def reward_delta_indices(self) -> None:
+        """G0.5 does not consume rewards."""
         return None

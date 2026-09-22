@@ -83,6 +83,7 @@ class G05GatedDeltaNet(Qwen3_5GatedDeltaNet):
         cache_params: DynamicCache | None = None,
         attention_mask: Tensor | None = None,
     ) -> Tensor:
+        """Run the gated delta-net mixer over the sequence."""
         if attention_mask is not None and attention_mask.ndim == 2:
             hidden_states = hidden_states * attention_mask[:, :, None]
 
@@ -195,7 +196,10 @@ class G05GatedDeltaNet(Qwen3_5GatedDeltaNet):
 
 
 class _BlockDCT(nn.Module):
+    """Blockwise DCT and its inverse over an action horizon."""
+
     def __init__(self, block_size: int) -> None:
+        """Store the transform block size."""
         super().__init__()
         self.block_size = block_size
         frequency = torch.arange(block_size, dtype=torch.float32)
@@ -206,6 +210,7 @@ class _BlockDCT(nn.Module):
         self.register_buffer("basis", basis, persistent=False)
 
     def dct(self, values: Tensor) -> Tensor:
+        """Apply the blockwise DCT, padding the horizon to a whole block."""
         batch, horizon, dimension = values.shape
         pad = (-horizon) % self.block_size
         if pad:
@@ -216,6 +221,7 @@ class _BlockDCT(nn.Module):
         return transformed.reshape(batch, blocks * self.block_size, dimension)
 
     def idct(self, values: Tensor, horizon: int) -> Tensor:
+        """Invert the blockwise DCT."""
         batch, padded_horizon, dimension = values.shape
         blocks = padded_horizon // self.block_size
         values = values.reshape(batch * blocks, self.block_size, dimension)
@@ -224,12 +230,16 @@ class _BlockDCT(nn.Module):
 
 
 def _rotate_half(values: Tensor) -> Tensor:
+    """Rotate the halves of the last dimension for rotary embeddings."""
     first, second = values.chunk(2, dim=-1)
     return torch.cat((-second, first), dim=-1)
 
 
 class _CodecAttention(nn.Module):
+    """Self-attention with rotary position embeddings for the codec."""
+
     def __init__(self, dimension: int, num_heads: int, head_dim: int, rope_base: int) -> None:
+        """Build the projections and the rotary cache."""
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim
@@ -243,10 +253,12 @@ class _CodecAttention(nn.Module):
         self.register_buffer("_inverse_frequency", inverse, persistent=False)
 
     def forward(self, hidden_states: Tensor) -> Tensor:
+        """Attend over the sequence with rotary positions."""
         batch, sequence_length, _ = hidden_states.shape
         query, key, value = self.to_qkv(hidden_states).chunk(3, dim=-1)
 
         def heads(values: Tensor) -> Tensor:
+            """Split the last dimension into attention heads."""
             return values.view(batch, sequence_length, self.num_heads, self.head_dim).transpose(1, 2)
 
         query, key, value = (heads(values) for values in (query, key, value))
@@ -266,19 +278,26 @@ class _CodecAttention(nn.Module):
 
 
 class _CodecFFN(nn.Module):
+    """Gated GELU feed-forward block for the codec."""
+
     def __init__(self, dimension: int, multiplier: float) -> None:
+        """Build the up and down projections."""
         super().__init__()
         inner_dim = int(dimension * multiplier)
         self.w_up = nn.Linear(dimension, inner_dim * 2, bias=False)
         self.w_down = nn.Linear(inner_dim, dimension, bias=False)
 
     def forward(self, hidden_states: Tensor) -> Tensor:
+        """Apply the gated feed-forward."""
         value, gate = self.w_up(hidden_states).chunk(2, dim=-1)
         return self.w_down(value * functional.gelu(gate))
 
 
 class _CodecTransformerLayer(nn.Module):
+    """Pre-norm transformer layer with learned layer scales."""
+
     def __init__(self, dimension: int, config: Mapping[str, Any]) -> None:
+        """Build the attention, feed-forward and layer scales."""
         super().__init__()
         layer_scale_init = float(config.get("layer_scale_init", 1.0))
         self.ls1 = nn.Parameter(torch.full((dimension,), layer_scale_init))
@@ -294,11 +313,14 @@ class _CodecTransformerLayer(nn.Module):
         self.ffn = _CodecFFN(dimension, float(config["ffn_mult"]))
 
     def forward(self, hidden_states: Tensor) -> Tensor:
+        """Apply attention and feed-forward with residual scaling."""
         hidden_states = hidden_states + self.attn(self.norm1(hidden_states)) * self.ls1
         return hidden_states + self.ffn(self.norm2(hidden_states)) * self.ls2
 
 
 class _CodecDownBlock(nn.Module):
+    """Strided convolution and transformer layers that downsample the grid."""
+
     def __init__(
         self,
         input_channels: int,
@@ -307,6 +329,7 @@ class _CodecDownBlock(nn.Module):
         depth: int,
         config: Mapping[str, Any],
     ) -> None:
+        """Build the strided convolution and the transformer layers."""
         super().__init__()
         stride_h, stride_a = stride
         if stride_h > 1 or input_channels != output_channels:
@@ -325,6 +348,7 @@ class _CodecDownBlock(nn.Module):
         )
 
     def forward(self, hidden_states: Tensor) -> Tensor:
+        """Downsample the grid and mix it with the transformer layers."""
         hidden_states = self.conv(hidden_states)
         batch, channels, height, action_dim = hidden_states.shape
         sequence = hidden_states.permute(0, 2, 3, 1).reshape(batch, height * action_dim, channels)
@@ -334,6 +358,8 @@ class _CodecDownBlock(nn.Module):
 
 
 class _CodecUpBlock(nn.Module):
+    """Transformer layers and a transposed convolution that upsample the grid."""
+
     def __init__(
         self,
         input_channels: int,
@@ -342,6 +368,7 @@ class _CodecUpBlock(nn.Module):
         depth: int,
         config: Mapping[str, Any],
     ) -> None:
+        """Build the transformer layers and the transposed convolution."""
         super().__init__()
         self.transformer_layers = nn.ModuleList(
             [_CodecTransformerLayer(input_channels, config) for _ in range(depth)]
@@ -360,6 +387,7 @@ class _CodecUpBlock(nn.Module):
             self.conv = nn.Identity()
 
     def forward(self, hidden_states: Tensor) -> Tensor:
+        """Mix the grid with the transformer layers and upsample it."""
         batch, channels, height, action_dim = hidden_states.shape
         sequence = hidden_states.permute(0, 2, 3, 1).reshape(batch, height * action_dim, channels)
         for layer in self.transformer_layers:
@@ -369,7 +397,10 @@ class _CodecUpBlock(nn.Module):
 
 
 class _CodecEncoder(nn.Module):
+    """Encode an action grid down to codec latents."""
+
     def __init__(self, config: Mapping[str, Any]) -> None:
+        """Build the downsampling blocks."""
         super().__init__()
         base = int(config["encoder_channels"])
         channel_dims = [base * int(multiplier) for multiplier in config["c_mults"]]
@@ -389,13 +420,17 @@ class _CodecEncoder(nn.Module):
         self.out_proj = nn.Conv2d(dims[-1], int(config["latent_dim"]), kernel_size=1)
 
     def forward(self, hidden_states: Tensor) -> Tensor:
+        """Run the downsampling blocks."""
         for block in self.blocks:
             hidden_states = block(hidden_states)
         return self.out_proj(hidden_states)
 
 
 class _CodecDecoder(nn.Module):
+    """Decode codec latents back to an action grid."""
+
     def __init__(self, config: Mapping[str, Any]) -> None:
+        """Build the input projection and the upsampling blocks."""
         super().__init__()
         base = int(config["encoder_channels"])
         channel_dims = [base * int(multiplier) for multiplier in config["c_mults"]]
@@ -421,6 +456,7 @@ class _CodecDecoder(nn.Module):
         )
 
     def forward(self, hidden_states: Tensor) -> Tensor:
+        """Run the input projection and the upsampling blocks."""
         hidden_states = self.in_proj(hidden_states)
         for block in self.blocks:
             hidden_states = block(hidden_states)
@@ -428,6 +464,7 @@ class _CodecDecoder(nn.Module):
 
 
 def _sample_codec_vectors(samples: Tensor, count: int) -> Tensor:
+    """Sample or resample vectors to seed a codebook."""
     if samples.shape[0] >= count:
         indices = torch.randperm(samples.shape[0], device=samples.device)[:count]
     else:
@@ -436,6 +473,7 @@ def _sample_codec_vectors(samples: Tensor, count: int) -> Tensor:
 
 
 def _codec_kmeans(samples: Tensor, num_clusters: int, num_iterations: int = 10) -> tuple[Tensor, Tensor]:
+    """Fit codebook centroids with k-means."""
     dimension = samples.shape[-1]
     means = _sample_codec_vectors(samples, num_clusters)
     for _ in range(num_iterations):
@@ -461,10 +499,12 @@ def _codec_kmeans(samples: Tensor, num_clusters: int, num_iterations: int = 10) 
 
 
 def _codec_ema_inplace(moving_average: Tensor, value: Tensor, decay: float) -> None:
+    """Update a moving average in place."""
     moving_average.data.mul_(decay).add_(value.float(), alpha=1 - decay)
 
 
 def _codec_rotation_trick(encoded: Tensor, quantized: Tensor) -> Tensor:
+    """Pass gradients through quantization with the rotation trick."""
     encoded_float = encoded.float()
     quantized_float = quantized.float()
     encoded_norm = encoded_float.norm(dim=1, keepdim=True).clamp(min=1e-8)
@@ -474,6 +514,7 @@ def _codec_rotation_trick(encoded: Tensor, quantized: Tensor) -> Tensor:
 
 
 def _time_shift_positive(actions: Tensor) -> Tensor:
+    """Shift actions forward one step, repeating the first."""
     shifted = torch.zeros_like(actions)
     shifted[:, 0] = actions[:, 0]
     shifted[:, 1:] = actions[:, :-1]
@@ -481,7 +522,10 @@ def _time_shift_positive(actions: Tensor) -> Tensor:
 
 
 class _ActionTimeContrastiveLoss(nn.Module):
+    """Contrastive loss between action and time embeddings."""
+
     def __init__(self, mode: str, temperature_init: float, bias_init: float) -> None:
+        """Store the loss mode and the learnable temperature."""
         super().__init__()
         if mode not in {"siglip", "infonce"}:
             raise ValueError(f"unsupported action-time contrastive mode: {mode!r}")
@@ -494,9 +538,11 @@ class _ActionTimeContrastiveLoss(nn.Module):
 
     @staticmethod
     def _flatten(hidden_states: Tensor) -> Tensor:
+        """Flatten and L2-normalize the hidden states."""
         return functional.normalize(hidden_states.flatten(1), dim=-1)
 
     def forward(self, anchor_states: Tensor, positive_states: Tensor) -> tuple[Tensor, dict[str, Tensor]]:
+        """Score anchors against their positives."""
         anchors = self._flatten(anchor_states)
         positives = self._flatten(positive_states)
         batch_size = anchors.shape[0]
@@ -554,6 +600,7 @@ def _codec_consistency_loss(
     original_batch_size: int,
     layer_weights: list[float],
 ) -> tuple[Tensor, dict[str, Tensor]]:
+    """Weighted consistency loss across the residual quantizer levels."""
     if not residuals or len(residuals) != len(level_codes) or len(level_codes) != len(layer_weights):
         raise ValueError("consistency residuals, codes, and layer weights must have equal nonzero lengths")
     device = residuals[0].device
@@ -586,7 +633,10 @@ def _codec_consistency_loss(
 
 
 class _CodecQuantizer(nn.Module):
+    """Single vector-quantizer codebook with EMA updates."""
+
     def __init__(self, config: Mapping[str, Any]) -> None:
+        """Build the projections and the codebook buffers."""
         super().__init__()
         input_dim = int(config["latent_dim"])
         codebook_dim = int(config["codebook_dim"])
@@ -606,6 +656,7 @@ class _CodecQuantizer(nn.Module):
         self.register_buffer("inited", torch.tensor(False))
 
     def _initialize_codebook(self, encodings: Tensor) -> None:
+        """Seed the codebook from the first batch."""
         if self.inited.item():
             return
         if not distributed.is_initialized() or distributed.get_rank() == 0:
@@ -622,6 +673,7 @@ class _CodecQuantizer(nn.Module):
         self.inited.fill_(True)
 
     def _update_codebook(self, encodings: Tensor, one_hot_codes: Tensor) -> None:
+        """Apply the EMA codebook update."""
         cluster_size = one_hot_codes.sum(0)
         embed_sum = encodings.t() @ one_hot_codes
         if distributed.is_initialized():
@@ -634,6 +686,7 @@ class _CodecQuantizer(nn.Module):
         self.codebook.copy_((self.embed_avg / smoothed[:, None]).float())
 
     def _replace_dead_codes(self, encodings: Tensor) -> None:
+        """Resample codebook entries that stopped being used."""
         if self.threshold_ema_dead <= 0:
             return
         dead = self.cluster_size < self.threshold_ema_dead
@@ -649,6 +702,7 @@ class _CodecQuantizer(nn.Module):
         self.codebook[dead] = replacements.to(self.codebook.dtype)
 
     def forward(self, values: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+        """Quantize the input and return its codes and losses."""
         original_dtype = values.dtype
         projected = self.in_proj(values.float().transpose(1, 2)).transpose(1, 2)
         encodings = projected.transpose(1, 2).reshape(-1, self.codebook_dim)
@@ -687,15 +741,20 @@ class _CodecQuantizer(nn.Module):
         return output.to(original_dtype), commitment_loss, codes
 
     def encode(self, values: Tensor) -> tuple[Tensor, Tensor]:
+        """Return the quantized values and their codes."""
         quantized, _, codes = self(values)
         return quantized, codes
 
     def decode_codes(self, codes: Tensor) -> Tensor:
+        """Look codes back up in the codebook."""
         return self.out_proj(functional.embedding(codes, self.codebook.float())).transpose(1, 2)
 
 
 class _ResidualCodecQuantizer(nn.Module):
+    """Stack of codebooks quantizing successive residuals."""
+
     def __init__(self, config: Mapping[str, Any]) -> None:
+        """Build the per-level quantizers."""
         super().__init__()
         self.n_codebooks = int(config["n_codebooks"])
         self.quantizer_dropout = float(config.get("quantizer_dropout", 0.5))
@@ -704,6 +763,7 @@ class _ResidualCodecQuantizer(nn.Module):
     def forward(
         self, values: Tensor, *, return_level_data: bool = False
     ) -> tuple[Tensor, Tensor, Tensor] | tuple[Tensor, Tensor, Tensor, list[Tensor], list[Tensor]]:
+        """Quantize the residual at each level in turn."""
         batch_size = values.shape[0]
         if self.training:
             levels_per_sample = torch.full((batch_size,), float(self.n_codebooks + 1), device=values.device)
@@ -739,10 +799,12 @@ class _ResidualCodecQuantizer(nn.Module):
         return quantized, stacked_codes, commitment_loss
 
     def encode(self, values: Tensor) -> Tensor:
+        """Return the per-level codes."""
         _, codes, _ = self(values)
         return codes
 
     def from_codes(self, codes: Tensor) -> Tensor:
+        """Rebuild values from their per-level codes."""
         if not 1 <= codes.shape[1] <= len(self.quantizers):
             raise ValueError("invalid number of residual codebooks")
         quantized = torch.zeros(
@@ -758,7 +820,10 @@ class _ResidualCodecQuantizer(nn.Module):
 
 
 class _ActionCodecModel(nn.Module):
+    """Encoder, quantizer and decoder for the action codec."""
+
     def __init__(self, config: Mapping[str, Any]) -> None:
+        """Build the encoder, quantizer and decoder."""
         super().__init__()
         self.config = dict(config)
         self.block_dct = (
@@ -793,6 +858,7 @@ class _ActionCodecModel(nn.Module):
 
     @property
     def code_h(self) -> int:
+        """Code grid height after the configured strides."""
         height = int(self.config["horizon"]) // int(self.config["horizon_patch_size"])
         for stride_h, _ in self.config["strides"]:
             height //= int(stride_h)
@@ -800,9 +866,11 @@ class _ActionCodecModel(nn.Module):
 
     @property
     def code_a(self) -> int:
+        """Code grid width along the action dimension."""
         return int(self.config["max_component_dim"]) - int(self.config["conv_in_action_kernel"]) + 1
 
     def _normalize_components(self, components: Mapping[str, Tensor]) -> tuple[list[str], Tensor, int]:
+        """Stack the named action components into one padded tensor."""
         if not components:
             raise ValueError("ActionCodec requires at least one action component")
         names = list(components)
@@ -829,6 +897,7 @@ class _ActionCodecModel(nn.Module):
         return_level_data: bool = False,
         return_encoder_hidden: bool = False,
     ) -> tuple[Any, ...]:
+        """Encode a stacked action tensor to codes."""
         if self.block_dct is not None:
             values = self.block_dct.dct(values)
         patch = int(self.config["horizon_patch_size"])
@@ -840,6 +909,7 @@ class _ActionCodecModel(nn.Module):
         return quantized
 
     def _decode_tensor(self, hidden_states: Tensor) -> Tensor:
+        """Decode latents back to a stacked action tensor."""
         hidden_states = hidden_states.reshape(
             hidden_states.shape[0],
             hidden_states.shape[1],
@@ -853,6 +923,7 @@ class _ActionCodecModel(nn.Module):
         return values[:, : int(self.config["horizon"])]
 
     def encode(self, components: dict[str, Tensor]) -> dict[str, Tensor]:
+        """Encode named action components to codes."""
         names, values, batch_size = self._normalize_components(components)
         _, codes, _ = self._encode_tensor(values)
         return {
@@ -860,6 +931,7 @@ class _ActionCodecModel(nn.Module):
         }
 
     def decode(self, components: dict[str, Tensor], dimensions: Mapping[str, int]) -> dict[str, Tensor]:
+        """Decode codes back to named action components."""
         names = list(components)
         batch_size = next(iter(components.values())).shape[0]
         codes = torch.cat([components[name] for name in names], dim=0)
@@ -1000,12 +1072,16 @@ class _NativeCodecModule(nn.Module):
     """Module hierarchy matching ``action_tokenizer.pt`` exactly."""
 
     def __init__(self, config: Mapping[str, Any]) -> None:
+        """Wrap the action codec model as a module."""
         super().__init__()
         self.model = _ActionCodecModel(config)
 
 
 class _BinarySequenceCodec:
+    """Encode run-length-constrained bit sequences as tokens."""
+
     def __init__(self, sequence_length: int, min_block_length: int, vocab_size: int) -> None:
+        """Store the sequence, block and vocabulary sizes."""
         self.sequence_length = sequence_length
         self.min_block_length = min_block_length
         self.vocab_size = vocab_size
@@ -1014,6 +1090,7 @@ class _BinarySequenceCodec:
         self.num_tokens = max(1, math.ceil(math.log(self.num_sequences, vocab_size)))
 
     def _count(self, remaining: int, last: int, run_length: int, first: bool) -> int:
+        """Count valid completions of a partial sequence, memoized."""
         cache_key = (remaining, last, run_length, first)
         if cache_key in self._count_cache:
             return self._count_cache[cache_key]
@@ -1034,6 +1111,7 @@ class _BinarySequenceCodec:
         return total
 
     def _repair(self, bits: list[int]) -> list[int]:
+        """Fix runs shorter than the minimum block length."""
         bits = bits.copy()
         while True:
             runs = []
@@ -1057,6 +1135,7 @@ class _BinarySequenceCodec:
             bits[start:stop] = [value] * (stop - start)
 
     def _zero_completions(self, remaining: int, last: int, run: int, first: bool) -> int:
+        """Count the completions that start with a zero."""
         if last in (-1, 0):
             return self._count(
                 remaining,
@@ -1067,6 +1146,7 @@ class _BinarySequenceCodec:
         return self._count(remaining, 0, 1, False) if first or run > self.min_block_length else 0
 
     def encode(self, values: Tensor, threshold: float) -> Tensor:
+        """Encode bit rows to tokens."""
         output = []
         for row in values:
             bits = self._repair([int(value >= threshold) for value in row.tolist()])
@@ -1089,6 +1169,7 @@ class _BinarySequenceCodec:
         return torch.tensor(output, dtype=torch.long, device=values.device)
 
     def decode(self, tokens: Tensor) -> Tensor:
+        """Decode tokens back to bit rows."""
         rows = []
         for row in tokens.tolist():
             rank = 0
@@ -1119,6 +1200,7 @@ class G05NativeActionCodec:
     """Non-registered sidecar wrapper for native ActionCodec encode/decode."""
 
     def __init__(self, config: Mapping[str, Any], *, action_token_begin: int) -> None:
+        """Build the codec from its checkpoint configuration."""
         self.config = dict(config)
         architecture = dict(self.config["model_arch"])
         for key in (
@@ -1161,6 +1243,7 @@ class G05NativeActionCodec:
 
     @property
     def action_token_length(self) -> int:
+        """Number of tokens one action chunk occupies."""
         neural = len(self.neural_parts) * self.num_residuals * (self.code_length + 1)
         rules = len(self.rule_parts) * (self.rule_codec.num_tokens + 1)
         return neural + rules
@@ -1172,6 +1255,7 @@ class G05NativeActionCodec:
         *,
         action_token_begin: int,
     ) -> G05NativeActionCodec:
+        """Load the codec weights from the checkpoint."""
         codec = cls(config, action_token_begin=action_token_begin)
         checkpoint = torch.load(
             Path(str(config["ckpt_dir"])),
@@ -1185,14 +1269,17 @@ class G05NativeActionCodec:
         return codec
 
     def to(self, device: torch.device | str) -> G05NativeActionCodec:
+        """Move the codec to a device."""
         self.module.to(device=device, dtype=torch.float32)
         return self
 
     def train(self, mode: bool = True) -> G05NativeActionCodec:
+        """Set training mode."""
         self.module.train(mode)
         return self
 
     def eval(self) -> G05NativeActionCodec:
+        """Set evaluation mode."""
         return self.train(False)
 
     def training_objective(
@@ -1202,6 +1289,7 @@ class G05NativeActionCodec:
         x_pos_dict: dict[str, Tensor] | None = None,
         layer_weights: list[float] | None = None,
     ) -> dict[str, Tensor | dict[str, Tensor]]:
+        """Run the codec's own training objective."""
         return self.model(
             components,
             d_original=d_original,
@@ -1210,11 +1298,13 @@ class G05NativeActionCodec:
         )
 
     def _split(self, actions: Tensor) -> dict[str, Tensor]:
+        """Split a flat action into its named parts."""
         splits = torch.split(actions[..., : sum(self.parts.values())], list(self.parts.values()), dim=-1)
         return dict(zip(self.parts, splits, strict=True))
 
     @torch.no_grad()
     def encode_for_language(self, payload: Mapping[str, Any]) -> list[int]:
+        """Encode an action chunk into language token ids."""
         actions = torch.as_tensor(payload["value"])
         if actions.ndim == 2:
             actions = actions.unsqueeze(0)
@@ -1246,6 +1336,7 @@ class G05NativeActionCodec:
         horizon: int,
         action_dim: int,
     ) -> tuple[Tensor, set[str]]:
+        """Decode language token ids back into an action chunk."""
         indices = (token_ids.long() - self.action_token_begin).tolist()
         marker_to_name = {value: name for name, value in self.marker_indices.items()}
         neural: dict[str, list[list[int] | None]] = {
@@ -1404,6 +1495,7 @@ class G05ProprioEmbedder(nn.Module):
     """Project the padded G0.5 proprioception vector into the VLM hidden size."""
 
     def __init__(self, proprio_dim: int, hidden_size: int) -> None:
+        """Build the proprioception MLP."""
         super().__init__()
         self.mlp = nn.Sequential(
             nn.Linear(proprio_dim, hidden_size),
@@ -1413,6 +1505,7 @@ class G05ProprioEmbedder(nn.Module):
         )
 
     def forward(self, proprio: Tensor) -> Tensor:
+        """Embed proprioception in float32."""
         with torch.autocast(proprio.device.type, enabled=False):
             return self.mlp(proprio.float())
 
@@ -1421,6 +1514,7 @@ class G05QwenTextModel(nn.Module):
     """Qwen3.5 text stack with G0.5's checkpoint-compatible module names."""
 
     def __init__(self, values: Mapping[str, Any], *, vocab_size: int) -> None:
+        """Build the Qwen backbone and its projection."""
         super().__init__()
 
         self.config = _qwen_text_config(values, vocab_size=vocab_size)
@@ -1436,9 +1530,11 @@ class G05QwenTextModel(nn.Module):
         self.rotary_emb = Qwen3_5TextRotaryEmbedding(self.config)
 
     def embed(self, input_ids: Tensor) -> Tensor:
+        """Project input ids to hidden states."""
         return self.input_proj(input_ids)
 
     def logits(self, hidden_states: Tensor) -> Tensor:
+        """Project hidden states back to vocabulary logits."""
         return torch.nn.functional.linear(hidden_states, self.input_proj.weight)
 
     def forward(
@@ -1450,6 +1546,7 @@ class G05QwenTextModel(nn.Module):
         position_ids: Tensor,
         cache=None,
     ) -> tuple[Tensor, Any]:
+        """Run the backbone, creating a cache when none is given."""
         if cache is None:
             cache = DynamicCache(config=self.config)
         position_embeddings = self.rotary_emb(inputs_embeds, position_ids)
@@ -1475,6 +1572,7 @@ class G05ActionDecoderLayer(nn.Module):
     """Qwen3.5 decoder layer with G0.5 adaptive RMSNorm conditioning."""
 
     def __init__(self, config, layer_idx: int) -> None:
+        """Build the time-conditioned decoder layer."""
         super().__init__()
 
         if config.layer_types[layer_idx] != "full_attention":
@@ -1503,6 +1601,7 @@ class G05ActionDecoderLayer(nn.Module):
         cache,
         time_cond: Tensor,
     ) -> Tensor:
+        """Apply time-conditioned attention and feed-forward."""
         residual = hidden_states
         hidden_states, gate = self.input_layernorm(hidden_states, cond=time_cond)
         key_length = cache.layers[self.layer_idx].get_seq_length() + hidden_states.shape[1]
@@ -1529,6 +1628,7 @@ class G05ActionExpert(nn.Module):
     """Continuous G0.5 action expert with checkpoint-compatible parameter names."""
 
     def __init__(self, values: Mapping[str, Any]) -> None:
+        """Build the action expert layers and projections."""
         super().__init__()
 
         self.config = _qwen_text_config(values)
@@ -1553,9 +1653,11 @@ class G05ActionExpert(nn.Module):
         self.rotary_emb = Qwen3_5TextRotaryEmbedding(self.config)
 
     def embed(self, actions: Tensor) -> Tensor:
+        """Project actions to hidden states."""
         return self.input_proj(actions)
 
     def encode_time(self, timesteps: Tensor) -> Tensor:
+        """Embed the flow timesteps."""
         half = self.config.hidden_size // 2
         fraction = torch.linspace(0.0, 1.0, half, device=timesteps.device, dtype=torch.float32)
         periods = 4e-3 * (4.0 / 4e-3) ** fraction
@@ -1575,6 +1677,7 @@ class G05ActionExpert(nn.Module):
         cache,
         time_cond: Tensor,
     ) -> Tensor:
+        """Run the action expert layers."""
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
         for layer in self.layers:
@@ -1590,6 +1693,7 @@ class G05ActionExpert(nn.Module):
         return hidden_states
 
     def decode(self, hidden_states: Tensor) -> Tensor:
+        """Project hidden states back to actions in float32."""
         with torch.autocast(hidden_states.device.type, enabled=False):
             return self.output_proj(hidden_states.float())
 
@@ -1598,6 +1702,7 @@ class G05NativeModel(nn.Module):
     """Weight-owning native G0.5 model assembled from serialized checkpoint config."""
 
     def __init__(self, model_config: Mapping[str, Any], *, vocab_size: int) -> None:
+        """Build the vision-language model, action expert and embedders."""
         super().__init__()
 
         self.vision_tower = Qwen3_5VisionModel(_qwen_vision_config(model_config["vision"]))
@@ -1610,6 +1715,7 @@ class G05NativeModel(nn.Module):
 
 
 def _temporal_embedding(timesteps: Tensor, dimension: int) -> Tensor:
+    """Sinusoidal embedding for a temporal index."""
     half = dimension // 2
     frequencies = torch.exp(
         -math.log(10000.0) * torch.arange(half, device=timesteps.device, dtype=torch.float32) / max(half, 1)
@@ -1632,6 +1738,7 @@ class G05NativeBackend(nn.Module):
         vocab_size: int,
         processor_path: str | Path,
     ) -> None:
+        """Store the model configuration and build the native model."""
         super().__init__()
         self.model_config = dict(model_config)
         self.model = G05NativeModel(self.model_config, vocab_size=vocab_size)
@@ -1712,6 +1819,7 @@ class G05NativeBackend(nn.Module):
         leaf_name: str,
         parameter: nn.Parameter,
     ) -> bool:
+        """Whether a parameter takes weight decay."""
         return leaf_name != "bias" and parameter.ndim > 1 and not isinstance(owner_module, nn.Embedding)
 
     def get_optim_param_groups(
@@ -1784,6 +1892,7 @@ class G05NativeBackend(nn.Module):
 
     @classmethod
     def from_config(cls, model_config: Mapping[str, Any]) -> G05NativeBackend:
+        """Build the backend from the checkpoint's model configuration."""
         processor_path = Path(str(model_config["hf_processor_path"]))
         tokenizer_config = processor_path / "tokenizer_config.json"
         if not tokenizer_config.is_file():
@@ -1806,6 +1915,7 @@ class G05NativeBackend(nn.Module):
 
     @staticmethod
     def _patchify(images: Tensor, patch_size: int, temporal_patch_size: int, merge_size: int) -> Tensor:
+        """Split images into vision patches."""
         batch_frames, channels, height, width = images.shape
         grid_h, grid_w = height // patch_size, width // patch_size
         temporal = images.unsqueeze(2).expand(-1, -1, temporal_patch_size, -1, -1)
@@ -1837,6 +1947,7 @@ class G05NativeBackend(nn.Module):
         temporal_pe: Tensor,
         temporal_mask: Tensor,
     ) -> Tensor:
+        """Run one vision block with attention across frames."""
         total, hidden_size = hidden_states.shape
         num_heads = block.attn.num_heads
         head_dim = block.attn.head_dim
@@ -1851,6 +1962,7 @@ class G05NativeBackend(nn.Module):
         )
 
         def temporal_view(tensor: Tensor) -> Tensor:
+            """Reshape a tensor to attend across frames."""
             return (
                 tensor.view(batch_size, num_frames, patches_per_frame, num_heads, head_dim)
                 .permute(0, 2, 3, 1, 4)
@@ -2020,6 +2132,7 @@ class G05NativeBackend(nn.Module):
         return self._encode_camera_temporal(frames)
 
     def _encode_vision(self, pixel_values: Mapping[str, Tensor]) -> Tensor:
+        """Encode the camera images to vision features."""
         features = []
         grids = []
         for frames in pixel_values.values():
@@ -2035,6 +2148,7 @@ class G05NativeBackend(nn.Module):
         pixel_values: Mapping[str, Tensor],
         proprio: Tensor,
     ) -> Tensor:
+        """Combine the vision, text and proprioception embeddings."""
         image_features = self._encode_vision(pixel_values)
         text_features = self.model.vlm.embed(sequence.input_ids).to(image_features.dtype)
         embeddings = text_features.clone()
@@ -2062,6 +2176,7 @@ class G05NativeBackend(nn.Module):
         return embeddings
 
     def _mrope_positions(self, token_types: Tensor) -> Tensor:
+        """Build multimodal rotary position ids from the token types."""
         batch_size, sequence_length = token_types.shape
         positions = torch.zeros(
             3,
@@ -2123,6 +2238,7 @@ class G05NativeBackend(nn.Module):
 
     @staticmethod
     def _causal_mask(token_types: Tensor, dtype: torch.dtype) -> tuple[Tensor, Tensor]:
+        """Build the causal attention mask from the token types."""
         valid = token_types != G05TokenType.PADDING
         sequence_length = token_types.shape[1]
         causal = torch.ones(
@@ -2145,6 +2261,7 @@ class G05NativeBackend(nn.Module):
 
     @staticmethod
     def _proprio(samples: list[dict[str, Any]], device: torch.device) -> Tensor:
+        """Stack the samples' proprioception rows."""
         rows = []
         for sample in samples:
             value = sample["proprio"]
@@ -2159,6 +2276,7 @@ class G05NativeBackend(nn.Module):
         pixel_values: Mapping[str, Tensor],
         proprio: Tensor,
     ) -> tuple[Tensor, Any, Tensor]:
+        """Run the prefix through the backbone and fill the cache."""
         embeddings = self._embed(sequence, pixel_values, proprio)
         positions = self._mrope_positions(sequence.token_types)
         full_mask, linear_mask = self._causal_mask(sequence.token_types, embeddings.dtype)
@@ -2179,6 +2297,7 @@ class G05NativeBackend(nn.Module):
         cache,
         active_mask: Tensor | None = None,
     ) -> tuple[Tensor, Tensor, Tensor]:
+        """Decode one generated token."""
         embeddings = self.model.vlm.embed(token_ids[:, None])
         batch_size = token_ids.shape[0]
         if active_mask is None:
@@ -2323,6 +2442,7 @@ class G05NativeBackend(nn.Module):
         initial_history_mask: Tensor | None = None,
         forced_first_tokens: Tensor | None = None,
     ) -> tuple[G05TextGeneration, Any, Tensor, Tensor, Tensor]:
+        """Generate the chain-of-thought text tokens."""
         generated = []
         batch_size = last_hidden.shape[0]
         finished = torch.zeros(batch_size, dtype=torch.bool, device=last_hidden.device)
@@ -2390,6 +2510,7 @@ class G05NativeBackend(nn.Module):
         )
 
     def _action_cache(self, vlm_cache, prefix_length: int, *, repeats: int = 1):
+        """Build the action expert's attention cache."""
         cache = DynamicCache(config=self.model.action_expert.config)
         layer_types = self.model.vlm.config.layer_types
         for layer_index, layer_type in enumerate(layer_types):
@@ -2413,6 +2534,7 @@ class G05NativeBackend(nn.Module):
         horizon: int,
         dtype: torch.dtype,
     ) -> tuple[Tensor, Tensor]:
+        """Build the action expert's mask and position ids."""
         batch_size, prefix_length = token_types.shape
         prefix_mask = (token_types == G05TokenType.PADDING).to(dtype) * torch.finfo(dtype).min
         action_mask = torch.zeros(
@@ -2438,6 +2560,7 @@ class G05NativeBackend(nn.Module):
         token_types: Tensor,
         positions: Tensor,
     ) -> Tensor:
+        """Evaluate the flow velocity field at one timestep."""
         action_embeddings = self.model.action_expert.embed(actions)
         time_cond = self.model.action_expert.encode_time(timesteps)
         mask, action_positions = self._action_mask_and_positions(
@@ -2462,6 +2585,7 @@ class G05NativeBackend(nn.Module):
         action_dim_is_pad: Tensor | None,
         dtype: torch.dtype,
     ) -> Tensor:
+        """Integrate the flow to sample an action chunk."""
         fm = self.model_config["fm"]
         batch_size = token_types.shape[0]
         horizon = int(fm["horizon_steps"])
@@ -2510,6 +2634,7 @@ class G05NativeBackend(nn.Module):
         token_types: Tensor,
         positions: Tensor,
     ) -> Tensor:
+        """Flow-matching training loss."""
         fm = self.model_config["fm"]
         samples = int(fm.get("num_flow_samples", 1))
         batch_size = actions.shape[0]
@@ -2569,6 +2694,7 @@ class G05NativeBackend(nn.Module):
         return loss * float(fm["fm_weight"])
 
     def predict_action(self, batch: Mapping[str, Any]) -> dict[str, Any]:
+        """Predict one action chunk, optionally with chain of thought."""
         start = time.monotonic()
         samples = list(batch["samples"])
         pixel_values = batch["pixel_values"]
@@ -2670,6 +2796,7 @@ class G05NativeBackend(nn.Module):
         return result
 
     def forward(self, batch: Mapping[str, Any]) -> tuple[Tensor, dict[str, Tensor]]:
+        """Run the training forward pass."""
         samples = list(batch["samples"])
         pixel_values = batch["pixel_values"]
         first_image = next(iter(pixel_values.values()))
@@ -2735,6 +2862,7 @@ class G05NativeBackend(nn.Module):
 
 
 def _native_backend(config: G05Config) -> nn.Module:
+    """Build the native backend for a policy config."""
     if not config.author_model_config:
         raise ValueError(
             "G0.5 author_model_config is empty. Load a packaged checkpoint, or "
@@ -2772,6 +2900,7 @@ class G05Policy(PreTrainedPolicy):
     name = "g05"
 
     def __init__(self, config: G05Config, backend: nn.Module | None = None, **kwargs):
+        """Build the policy and its native backend."""
         super().__init__(config)
         config.validate_features()
         self.backend = backend if backend is not None else _native_backend(config)
@@ -2780,6 +2909,7 @@ class G05Policy(PreTrainedPolicy):
         self._action_queue: deque[Tensor] = deque()
 
     def supports_text_generation(self) -> bool:
+        """G0.5 can generate text."""
         return True
 
     @torch.no_grad()
@@ -2801,6 +2931,7 @@ class G05Policy(PreTrainedPolicy):
         map_location: str,
         strict: bool,
     ) -> G05Policy:
+        """Load the weights from a safetensors file."""
         device = resolve_safetensors_device(map_location)
         state_dict = load_file(model_file, device=device, backend="pread")
         missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False, assign=True)
@@ -2824,6 +2955,7 @@ class G05Policy(PreTrainedPolicy):
         config: G05Config | None = None,
         **kwargs,
     ) -> G05Policy:
+        """Load a policy, downloading the checkpoint when needed."""
         resolved_path = Path(pretrained_name_or_path)
         if not resolved_path.is_dir():
             resolved_path = Path(
@@ -2868,6 +3000,7 @@ class G05Policy(PreTrainedPolicy):
         return policy
 
     def _save_pretrained(self, save_directory: Path) -> None:
+        """Save the policy and the author's model configuration."""
         super()._save_pretrained(save_directory)
         author_config = dict(self.config.author_model_config)
         processor_value = author_config.get("hf_processor_path")
@@ -2921,6 +3054,7 @@ class G05Policy(PreTrainedPolicy):
             self.config.author_model_config = runtime_config
 
     def reset(self) -> None:
+        """Clear the queued actions and any backend state."""
         self._action_queue.clear()
         reset = getattr(self.backend, "reset", None)
         if callable(reset):
@@ -2964,6 +3098,7 @@ class G05Policy(PreTrainedPolicy):
         return result
 
     def get_optim_params(self) -> OptimizerParams:
+        """Return the optimizer parameter groups."""
         get_param_groups = getattr(self.backend, "get_optim_param_groups", None)
         if callable(get_param_groups):
             return get_param_groups(
@@ -2981,6 +3116,7 @@ class G05Policy(PreTrainedPolicy):
 
     @staticmethod
     def _task_values(batch: Mapping[str, Any], task: str | None, batch_size: int) -> list[str]:
+        """Broadcast the task string across the batch."""
         if task is not None:
             return [task] * batch_size
         value = batch.get("task")
@@ -2995,6 +3131,7 @@ class G05Policy(PreTrainedPolicy):
 
     @staticmethod
     def _batch_item(value: Any, index: int, batch_size: int) -> Any:
+        """Take one sample's value out of a batched field."""
         if isinstance(value, Tensor) and value.ndim > 0 and value.shape[0] == batch_size:
             return value[index]
         if isinstance(value, list | tuple) and len(value) == batch_size:
@@ -3092,12 +3229,14 @@ class G05Policy(PreTrainedPolicy):
             return None
 
         def normalize(coords: list[float]) -> list[float]:
+            """Scale box coordinates to the unit interval."""
             if max(abs(value) for value in coords) <= 1.0:
                 return coords
             x1, y1, x2, y2 = coords
             return [x1 / width, y1 / height, x2 / width, y2 / height]
 
         def location_token(value: float) -> str:
+            """Render a coordinate as a location token."""
             location = max(0, min(1023, round(value * 1024)))
             return f"<loc{location:04d}>"
 
@@ -3160,6 +3299,7 @@ class G05Policy(PreTrainedPolicy):
         *,
         predict_cot: bool | None = None,
     ) -> dict[str, Any]:
+        """Build the author-format sample batch."""
         run_predict_cot = self.config.predict_cot if predict_cot is None else predict_cot
         prepare = getattr(self.backend, "prepare_lerobot_batch", None)
         if callable(prepare):
@@ -3299,6 +3439,7 @@ class G05Policy(PreTrainedPolicy):
         task: str | None = None,
         system_mode: str | None = None,
     ) -> tuple[Tensor, dict[str, Any]]:
+        """Run inference in the requested system mode."""
         if system_mode is None:
             system_mode = self.config.runtime_system
         if system_mode not in {"system1", "system2"}:
@@ -3367,6 +3508,7 @@ class G05Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Any], **kwargs) -> Tensor:
+        """Return the next action, refilling the queue when it empties."""
         if not self._action_queue:
             chunk = self.predict_action_chunk(batch, **kwargs)
             if chunk.ndim != 3:
@@ -3380,6 +3522,7 @@ class G05Policy(PreTrainedPolicy):
         return self._action_queue.popleft().unsqueeze(0)
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Any] | None]:
+        """Run the training forward pass."""
         prepared = batch
         device = next(self.backend.parameters()).device
         with torch.autocast(

@@ -87,6 +87,7 @@ G05_SPLIT_INDEX = "g05.split_index"
 def _copy_feature_tree(
     features: dict[PipelineFeatureType, dict[str, PolicyFeature]],
 ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+    """Shallow-copy a feature tree so a step can edit its own view of the features."""
     return {kind: values.copy() for kind, values in features.items()}
 
 
@@ -99,6 +100,7 @@ class G05BBoxImageSizeStep(ProcessorStep):
     camera_key: str = "observation.images.exterior"
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Record the annotated camera's pixel size before the checkpoint resize discards it."""
         observation = transition.get(TransitionKey.OBSERVATION) or {}
         image = observation.get(self.camera_key)
         if image is None:
@@ -115,9 +117,11 @@ class G05BBoxImageSizeStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Pass the feature contract through unchanged."""
         return features
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {"camera_key": self.camera_key}
 
 
@@ -133,6 +137,7 @@ class _G05JointFrameMixin:
 
     def __post_init__(self) -> None:
         # Pipelines restored from JSON hand these back as lists.
+        """Coerce the sign and offset tables and check they stay invertible."""
         self.joint_signs = tuple(float(value) for value in self.joint_signs)
         self.joint_offsets = tuple(float(value) for value in self.joint_offsets)
         if len(self.joint_signs) != len(self.joint_offsets):
@@ -141,6 +146,7 @@ class _G05JointFrameMixin:
             raise ValueError("joint_signs entries must be non-zero so the transform is invertible.")
 
     def _reframe(self, values: torch.Tensor, *, inverse: bool) -> torch.Tensor:
+        """Apply `sign * value + offset` over the leading joints, or its inverse."""
         width = len(self.joint_signs)
         if values.shape[-1] < width:
             raise ValueError(f"G0.5 joint frame covers {width} joints but the tensor has {values.shape[-1]}.")
@@ -157,9 +163,11 @@ class _G05JointFrameMixin:
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Pass the feature contract through unchanged."""
         return features
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {
             "joint_signs": list(self.joint_signs),
             "joint_offsets": list(self.joint_offsets),
@@ -172,6 +180,7 @@ class G05StateFrameTransformStep(_G05JointFrameMixin, ObservationProcessorStep):
     """Move proprioception into the coordinate frame the checkpoint was trained in."""
 
     def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+        """Reframe `observation.state` into the checkpoint's joint convention."""
         if not self.joint_signs or OBS_STATE not in observation:
             return observation
         state = torch.as_tensor(observation[OBS_STATE])
@@ -196,6 +205,7 @@ class G05ActionFrameTransformStep(_G05JointFrameMixin, ProcessorStep):
     inverse: bool = True
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Reframe the action between the arm and checkpoint joint conventions."""
         action = transition.get(TransitionKey.ACTION)
         if not self.joint_signs or not isinstance(action, torch.Tensor):
             return transition
@@ -204,6 +214,7 @@ class G05ActionFrameTransformStep(_G05JointFrameMixin, ProcessorStep):
         return transition
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {**super().get_config(), "inverse": self.inverse}
 
 
@@ -219,6 +230,7 @@ class G05ImageTransformStep(ProcessorStep):
     optional_camera_keys: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        """Freeze the camera tables into tuples."""
         self.camera_order = tuple(self.camera_order)
         self.camera_sizes = {key: tuple(value) for key, value in self.camera_sizes.items()}
         self.mean = tuple(self.mean)
@@ -226,6 +238,7 @@ class G05ImageTransformStep(ProcessorStep):
         self.optional_camera_keys = tuple(self.optional_camera_keys)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Resize each camera to its checkpoint size and rescale `[0,1]` to `[-1,1]`."""
         observation = transition.get(TransitionKey.OBSERVATION)
         if observation is None:
             return transition
@@ -268,6 +281,7 @@ class G05ImageTransformStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Resize the declared camera features to their checkpoint sizes."""
         result = _copy_feature_tree(features)
         observations = result.setdefault(PipelineFeatureType.OBSERVATION, {})
         for key in self.camera_order:
@@ -276,6 +290,7 @@ class G05ImageTransformStep(ProcessorStep):
         return result
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {
             "camera_order": list(self.camera_order),
             "camera_sizes": {key: list(value) for key, value in self.camera_sizes.items()},
@@ -300,12 +315,14 @@ class G05ActionOperationMaskStep(ProcessorStep):
     _VELOCITY_KEYS = ("torso", "chassis")
 
     def __post_init__(self) -> None:
+        """Coerce the action part widths and per-dimension thresholds."""
         self.action_parts = tuple((key, int(width)) for key, width in self.action_parts)
         self.dim_thresholds = {
             key: tuple(float(value) for value in values) for key, values in self.dim_thresholds.items()
         }
 
     def _threshold(self, key: str, width: int, action: torch.Tensor) -> torch.Tensor:
+        """Resolve the per-dimension motion threshold for one named action part."""
         if key in self.dim_thresholds:
             values = self.dim_thresholds[key]
             if len(values) != width:
@@ -324,6 +341,7 @@ class G05ActionOperationMaskStep(ProcessorStep):
         return action.new_full((width,), float(value or 0.0))
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Flag action parts whose motion over the chunk stays under their threshold."""
         action = transition.get(TransitionKey.ACTION)
         if not isinstance(action, torch.Tensor):
             return transition
@@ -353,9 +371,11 @@ class G05ActionOperationMaskStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Pass the feature contract through unchanged."""
         return features
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {
             "action_parts": [list(part) for part in self.action_parts],
             "joint_threshold": self.joint_threshold,
@@ -377,16 +397,19 @@ class G05EmbodimentProjectionStep(ProcessorStep):
     camera_order: tuple[str, ...]
 
     def __post_init__(self) -> None:
+        """Freeze the camera order and check the embodiment is known."""
         self.camera_order = tuple(self.camera_order)
         if self.embodiment not in G05_EMBODIMENT_MAPPINGS:
             raise ValueError(f"No projection is defined for G0.5 embodiment {self.embodiment!r}.")
 
     @property
     def mapping(self) -> dict[str, tuple[int, ...]]:
+        """Policy-slot indices this embodiment writes its state and action into."""
         return G05_EMBODIMENT_MAPPINGS[self.embodiment]
 
     @staticmethod
     def _project(value: torch.Tensor, indices: tuple[int, ...], width: int) -> torch.Tensor:
+        """Scatter a raw tensor into a zero-filled tensor of the policy's width."""
         if value.shape[-1] != len(indices):
             raise ValueError(f"Raw G0.5 tensor has {value.shape[-1]} dimensions, expected {len(indices)}.")
         projected = value.new_zeros(*value.shape[:-1], width)
@@ -394,6 +417,7 @@ class G05EmbodimentProjectionStep(ProcessorStep):
         return projected
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Project raw state and action into the policy layout and order the cameras."""
         transition = transition.copy()
         observation = dict(transition.get(TransitionKey.OBSERVATION) or {})
         missing_cameras = [key for key in self.camera_order if key not in observation]
@@ -461,6 +485,7 @@ class G05EmbodimentProjectionStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Widen the state and action features to the policy dimensions."""
         result = _copy_feature_tree(features)
         observations = result.setdefault(PipelineFeatureType.OBSERVATION, {})
         if OBS_STATE in observations:
@@ -471,6 +496,7 @@ class G05EmbodimentProjectionStep(ProcessorStep):
         return result
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {
             "embodiment": self.embodiment,
             "policy_state_dim": self.policy_state_dim,
@@ -487,6 +513,7 @@ class G05RelativeJointActionsStep(RelativeActionsProcessorStep):
     num_obs_steps: int = 1
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Cache the latest proprio step, and convert the action to deltas when enabled."""
         observation = transition.get(TransitionKey.OBSERVATION, {})
         state = observation.get(OBS_STATE) if observation else None
         if isinstance(state, torch.Tensor) and state.ndim >= 3:
@@ -511,6 +538,7 @@ class G05RelativeJointActionsStep(RelativeActionsProcessorStep):
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {**super().get_config(), "num_obs_steps": self.num_obs_steps}
 
 
@@ -527,6 +555,7 @@ class G05TailNormalizationStep(ProcessorStep):
     _TAIL_STATS = ("tail_q01", "tail_q99", "tail_mean", "tail_mask")
 
     def __post_init__(self) -> None:
+        """Materialize the configured tail statistics as tensors."""
         self._tensor_stats = {
             key: {
                 name: torch.as_tensor(value)
@@ -537,6 +566,7 @@ class G05TailNormalizationStep(ProcessorStep):
         }
 
     def _transform(self, value: torch.Tensor, key: str) -> torch.Tensor:
+        """Compress values beyond the q01/q99 tails logarithmically, or invert that."""
         if key not in self._tensor_stats:
             return value
         stats = {name: tensor.to(value.device) for name, tensor in self._tensor_stats[key].items()}
@@ -560,6 +590,7 @@ class G05TailNormalizationStep(ProcessorStep):
         return torch.where(mask, transformed, value)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Apply the tail transform to `observation.state` and to the action."""
         transition = transition.copy()
         observation = dict(transition.get(TransitionKey.OBSERVATION) or {})
         if OBS_STATE in observation:
@@ -571,6 +602,7 @@ class G05TailNormalizationStep(ProcessorStep):
         return transition
 
     def state_dict(self) -> dict[str, torch.Tensor]:
+        """Flatten the per-feature tail statistics for serialization."""
         return {
             f"{key}.{name}": tensor.cpu()
             for key, feature_stats in self._tensor_stats.items()
@@ -578,6 +610,7 @@ class G05TailNormalizationStep(ProcessorStep):
         }
 
     def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+        """Restore the per-feature tail statistics from their flattened form."""
         self._tensor_stats = {}
         for flat_key, tensor in state.items():
             key, name = flat_key.rsplit(".", 1)
@@ -586,9 +619,11 @@ class G05TailNormalizationStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Pass the feature contract through unchanged."""
         return features
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {"inverse": self.inverse, "tail_scale": self.tail_scale}
 
 
@@ -601,9 +636,11 @@ class G05NormalizationClampStep(ProcessorStep):
     maximum: float = 5.0
 
     def _clamp(self, value: torch.Tensor) -> torch.Tensor:
+        """Clamp to the configured range and replace any non-finite value with zero."""
         return value.clamp(self.minimum, self.maximum).nan_to_num(nan=0.0, posinf=0.0, neginf=0.0)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Clamp normalized `observation.state` and action to the checkpoint's range."""
         transition = transition.copy()
         observation = dict(transition.get(TransitionKey.OBSERVATION) or {})
         if OBS_STATE in observation:
@@ -617,9 +654,11 @@ class G05NormalizationClampStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Pass the feature contract through unchanged."""
         return features
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {"minimum": self.minimum, "maximum": self.maximum}
 
 
@@ -632,6 +671,7 @@ class G05StepwiseUnnormalizerStep(UnnormalizerProcessorStep):
     _action_index: int = field(default=0, init=False, repr=False)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Unnormalize a queued single action with that timestep's slice of the stats."""
         action = transition.get(TransitionKey.ACTION)
         stats = self._tensor_stats.get(ACTION)
         if not isinstance(action, torch.Tensor) or not stats:
@@ -660,9 +700,11 @@ class G05StepwiseUnnormalizerStep(UnnormalizerProcessorStep):
             self._action_index = (self._action_index + 1) % self.n_action_steps
 
     def reset(self) -> None:
+        """Rewind to the first action of the chunk."""
         self._action_index = 0
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {**super().get_config(), "n_action_steps": self.n_action_steps}
 
 
@@ -676,9 +718,11 @@ class G05InverseActionProjectionStep(ProcessorStep):
 
     @property
     def indices(self) -> tuple[int, ...]:
+        """Policy-slot indices holding this embodiment's action dimensions."""
         return G05_EMBODIMENT_MAPPINGS[self.embodiment]["action"]
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Gather the embodiment's action dimensions back out of the policy layout."""
         action = transition.get(TransitionKey.ACTION)
         if not isinstance(action, torch.Tensor):
             return transition
@@ -693,12 +737,14 @@ class G05InverseActionProjectionStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Narrow the action feature back to the embodiment's width."""
         result = _copy_feature_tree(features)
         actions = result.setdefault(PipelineFeatureType.ACTION, {})
         actions[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(len(self.indices),))
         return result
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {"embodiment": self.embodiment, "policy_action_dim": self.policy_action_dim}
 
 
@@ -708,6 +754,7 @@ class G05LiberoGripperStep(ProcessorStep):
     """Convert the released checkpoint's gripper value to LIBERO's binary command."""
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Rewrite the trailing gripper value as LIBERO's binary open/close command."""
         action = transition.get(TransitionKey.ACTION)
         if not isinstance(action, torch.Tensor):
             return transition
@@ -729,9 +776,11 @@ class G05LiberoGripperStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Pass the feature contract through unchanged."""
         return features
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {}
 
 
@@ -743,6 +792,7 @@ class G05ActionHistoryCropStep(ProcessorStep):
     num_obs_steps: int = 1
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Drop the leading steps that align the chunk with the observation history."""
         action = transition.get(TransitionKey.ACTION)
         if not isinstance(action, torch.Tensor) or self.num_obs_steps <= 1:
             return transition
@@ -759,9 +809,11 @@ class G05ActionHistoryCropStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Pass the feature contract through unchanged."""
         return features
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {"num_obs_steps": self.num_obs_steps}
 
 
@@ -790,6 +842,7 @@ def _tokenizer_policy_config(config: G05Config) -> dict[str, Any]:
 
 
 def _normalization_mode(config: G05Config) -> NormalizationMode:
+    """Map the checkpoint's `normalization_mode` string onto a lerobot `NormalizationMode`."""
     if config.normalization_mode == "q01_q99":
         return NormalizationMode.QUANTILES
     if config.normalization_mode in {"z_score", "z_score_tail_mixed"}:
@@ -801,6 +854,7 @@ def _project_stats(
     config: G05Config,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None,
 ) -> dict[str, dict[str, torch.Tensor]] | None:
+    """Scatter raw per-joint dataset stats into the wider policy embodiment layout."""
     if not dataset_stats:
         return dataset_stats
     result: dict[str, dict[str, torch.Tensor]] = {}
@@ -1189,6 +1243,8 @@ class G05TokenType:
 
 @dataclass
 class G05SequenceBatch:
+    """One padded batch of G0.5 token sequences."""
+
     input_ids: Tensor
     labels: Tensor
     token_types: Tensor
@@ -1197,6 +1253,8 @@ class G05SequenceBatch:
 
 @dataclass
 class _Segment:
+    """One parsed piece of a prompt template."""
+
     kind: str
     content: str = ""
     sample_key: str = ""
@@ -1216,6 +1274,7 @@ class G05Tokenizer:
     _PLACEHOLDER = re.compile(r"<([^<>|]+)>")
 
     def __init__(self, processor_path: str | Path, model_config: dict[str, Any]) -> None:
+        """Load the checkpoint's text tokenizer and action token ranges."""
         require_package("transformers", extra="g05")
         self.processor_path = Path(processor_path)
         self.tokenizer = AutoTokenizer.from_pretrained(
@@ -1251,18 +1310,22 @@ class G05Tokenizer:
         self.action_token_end_with_markers = self.action_token_end + len(self.group_tokens)
 
     def __len__(self) -> int:
+        """Number of tokens in the underlying text tokenizer."""
         return len(self.tokenizer)
 
     def encode_text(self, text: str) -> list[int]:
+        """Encode text to ids without adding special tokens."""
         return self.tokenizer(text, add_special_tokens=False)["input_ids"]
 
     def decode(self, ids: Tensor | list[int]) -> str:
+        """Decode ids back to text, keeping special tokens visible."""
         if isinstance(ids, Tensor):
             ids = ids.detach().cpu().tolist()
         return self.tokenizer.decode(ids, skip_special_tokens=False)
 
     @staticmethod
     def _resolve_template(template: str) -> str:
+        """Substitute the author's chat placeholders with this tokenizer's equivalents."""
         replacements = {
             "<bos>": "",
             "<eos>": "<|endoftext|>",
@@ -1275,6 +1338,7 @@ class G05Tokenizer:
         return template
 
     def _parse(self, template: str) -> list[_Segment]:
+        """Split a prompt template into static text, control and placeholder segments."""
         template = self._resolve_template(template)
         segments: list[_Segment] = []
         last = 0
@@ -1317,6 +1381,7 @@ class G05Tokenizer:
 
     @staticmethod
     def _slice_segments(segments: list[_Segment], mode: str | None, *, pred_eov: bool) -> list[_Segment]:
+        """Keep the segments one encoding mode needs, around the EOC and EOV markers."""
         eoc = next(
             (
                 index
@@ -1335,6 +1400,7 @@ class G05Tokenizer:
         )
 
         def strip(values: list[_Segment], keep_eov: bool) -> list[_Segment]:
+            """Drop segments after EOC, optionally keeping the EOV marker itself."""
             output: list[_Segment] = []
             after_eoc = False
             for segment in values:
@@ -1374,6 +1440,7 @@ class G05Tokenizer:
         *,
         action_codec: Any | None,
     ) -> tuple[list[int], list[int], list[float]]:
+        """Encode one segment into its ids, labels and per-token type codes."""
         if segment.kind == "static":
             ids = self.encode_text(segment.content)
             return ids, [IGNORE_INDEX] * len(ids), [float(G05TokenType.TEXT)] * len(ids)
@@ -1435,6 +1502,7 @@ class G05Tokenizer:
         mode: str | None,
         action_codec: Any | None,
     ) -> tuple[list[int], list[int], list[float]]:
+        """Encode a whole sample into ids, labels and per-token type codes."""
         pred_eov = bool(self.model_config.get("input_preprocessor", {}).get("pred_eov", False))
         segments = self._slice_segments(self._parse(sample["template"]), mode, pred_eov=pred_eov)
         ids: list[int] = []
@@ -1456,6 +1524,7 @@ class G05Tokenizer:
         right_align: bool,
         device: torch.device,
     ) -> G05SequenceBatch:
+        """Pad encoded rows to a common length, left- or right-aligned."""
         length = max(len(row[0]) for row in rows)
         input_ids = torch.full((len(rows), length), self.pad_token_id, dtype=torch.long, device=device)
         labels = torch.full((len(rows), length), IGNORE_INDEX, dtype=torch.long, device=device)
@@ -1474,6 +1543,7 @@ class G05Tokenizer:
         *,
         device: torch.device,
     ) -> G05SequenceBatch:
+        """Encode context-only samples, right-aligned so generation starts at the end."""
         rows = [self._serialize(sample, mode="context", action_codec=None) for sample in samples]
         return self._pad(rows, right_align=True, device=device)
 
@@ -1484,6 +1554,7 @@ class G05Tokenizer:
         device: torch.device,
         action_codec: Any | None,
     ) -> G05SequenceBatch:
+        """Encode prefix and suffix samples for supervised training."""
         prefix_rows = [
             self._serialize(sample, mode="prefix", action_codec=action_codec) for sample in samples
         ]
@@ -1516,12 +1587,14 @@ class G05TokenizerStep(ProcessorStep):
     _model_config: dict[str, Any] | None = field(default=None, init=False, repr=False)
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's serializable configuration."""
         return {
             "checkpoint_path": self.checkpoint_path,
             "revision": self.revision,
         }
 
     def _resolve_checkpoint(self) -> Path:
+        """Return the local checkpoint directory, downloading the tokenizer files if needed."""
         if not self.checkpoint_path:
             raise ValueError(
                 "G0.5 tokenization requires a checkpoint path so the serialized tokenizer and "
@@ -1539,6 +1612,7 @@ class G05TokenizerStep(ProcessorStep):
         )
 
     def _get_tokenizer(self) -> G05Tokenizer:
+        """Build the tokenizer on first use and cache it on the step."""
         if self._tokenizer is not None:
             return self._tokenizer
         root = self._resolve_checkpoint()
@@ -1559,6 +1633,7 @@ class G05TokenizerStep(ProcessorStep):
         return self._tokenizer
 
     def _get_action_codec(self, device: torch.device):
+        """Build the native action codec on first use, or None when the checkpoint has none."""
         if self._action_codec is None:
             tokenizer = self._get_tokenizer()
             if self._model_config is None:
@@ -1579,6 +1654,7 @@ class G05TokenizerStep(ProcessorStep):
         return self._action_codec
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Turn the transition into the checkpoint-native token sequence."""
         tokenizer = self._get_tokenizer()
         transition = transition.copy()
         observation = dict(transition.get(TransitionKey.OBSERVATION) or {})
@@ -1633,4 +1709,5 @@ class G05TokenizerStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Pass the feature contract through unchanged."""
         return features
