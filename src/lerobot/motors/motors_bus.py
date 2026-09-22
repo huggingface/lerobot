@@ -24,6 +24,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
+from math import ceil
 from pprint import pformat
 from typing import TYPE_CHECKING, cast
 
@@ -888,7 +889,7 @@ class SerialMotorsBus(MotorsBusBase):
         take minutes. Size it to what the current baud rate needs to shift a request
         and a status packet, with a floor for USB scheduling.
         """
-        self._io.set_timeout(max(SCAN_TIMEOUT_MS, round(SCAN_PACKET_BITS * 1000 / self._io.baudrate)))
+        self._io.set_timeout(max(SCAN_TIMEOUT_MS, ceil(SCAN_PACKET_BITS * 1000 / self._io.baudrate)))
         try:
             yield
         finally:

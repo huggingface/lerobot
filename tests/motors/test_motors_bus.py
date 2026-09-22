@@ -483,7 +483,7 @@ def test_broadcast_ping(bus):
 
 @pytest.mark.parametrize(
     "baudrate, expected_timeout_ms",
-    [(1_000_000, 5), (115_200, 5), (57_600, 6), (9_600, 33)],
+    [(1_000_000, 5), (115_200, 5), (57_600, 6), (9_600, 34)],
 )
 def test_scan_timeout_scales_with_baudrate(baudrate, expected_timeout_ms, bus):
     """A sweep pays one timeout per absent ID, so it must fit the baud rate:
