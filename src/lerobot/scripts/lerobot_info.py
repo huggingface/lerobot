@@ -73,7 +73,7 @@ def get_sys_info() -> dict[str, str]:
 
     # PyTorch and GPU specific information
     torch_version = "N/A"
-    torch_cuda_available = "N/A"
+    torch_cuda_available: str | bool = "N/A"
     cuda_version = "N/A"
     gpu_model = "N/A"
     try:
@@ -99,7 +99,7 @@ def get_sys_info() -> dict[str, str]:
             "Using GPU in script?": "<fill in>",
         }
     )
-    scripts = "N/A"
+    scripts: str | list[str] = "N/A"
     try:
         dist = distribution(PACKAGE_NAME)
         scripts = [ep.name for ep in dist.entry_points if ep.group == "console_scripts"]

@@ -103,7 +103,7 @@ def resolve_delta_timestamps(
     return delta_timestamps
 
 
-def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDataset:
+def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
 
     Args:
@@ -113,7 +113,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         NotImplementedError: The MultiLeRobotDataset is currently deactivated.
 
     Returns:
-        LeRobotDataset | MultiLeRobotDataset
+        LeRobotDataset | StreamingLeRobotDataset: a StreamingLeRobotDataset when `cfg.dataset.streaming` is set.
     """
     image_transforms = (
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
@@ -199,7 +199,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
 
 def make_train_eval_datasets(
     cfg: TrainPipelineConfig,
-) -> tuple[LeRobotDataset | MultiLeRobotDataset, LeRobotDataset | None]:
+) -> tuple[LeRobotDataset | StreamingLeRobotDataset, LeRobotDataset | None]:
     """Create train and optional eval datasets by splitting episodes based on eval_split.
 
     The last ceil(n_episodes * eval_split) episodes per task are held out for evaluation.

@@ -167,7 +167,7 @@ def convert_checkpoint(cfg: ConvertDcpConfig) -> Path:
 def main() -> None:
     """`lerobot-convert-dcp` console entry point: set up logging and run the conversion."""
     init_logging()
-    convert_checkpoint()
+    convert_checkpoint()  # type: ignore[call-arg]
 
 
 if __name__ == "__main__":

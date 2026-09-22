@@ -36,7 +36,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from lerobot.cameras import ColorMode
+from lerobot.cameras import Camera, ColorMode
 from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 from lerobot.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
 from lerobot.utils.utils import init_logging
@@ -155,9 +155,13 @@ def create_camera_instance(cam_meta: dict[str, Any], *, warmup_s: int = 1) -> di
     """Create and connect to a camera instance based on metadata."""
     cam_type = cam_meta.get("type")
     cam_id = cam_meta.get("id")
-    instance = None
+    instance: Camera | None = None
 
     logger.info(f"Preparing {cam_type} ID {cam_id} with default profile")
+
+    if cam_id is None:
+        logger.warning(f"Camera metadata of type {cam_type} has no 'id'. Skipping.")
+        return None
 
     try:
         if cam_type == "OpenCV":
@@ -187,6 +191,7 @@ def create_camera_instance(cam_meta: dict[str, Any], *, warmup_s: int = 1) -> di
         if instance and instance.is_connected:
             instance.disconnect()
         return None
+    return None
 
 
 def process_camera_image(cam_dict: dict[str, Any], output_dir: Path, current_time: float) -> None:
