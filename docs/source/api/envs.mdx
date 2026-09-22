@@ -1,0 +1,19 @@
+# Environments
+
+Simulation environments are configured through [`EnvConfig`] and built by [`make_env`]. Each subclass
+declares its `gym_kwargs` and how to construct the vectorised environments.
+
+See [Environments from the Hub](../envhub) for using published environments and
+[Adding a New Benchmark](../adding_benchmarks) for contributing one.
+
+## EnvConfig
+
+[[autodoc]] lerobot.envs.EnvConfig
+
+## make_env
+
+[[autodoc]] lerobot.envs.make_env
+
+## make_env_config
+
+[[autodoc]] lerobot.envs.make_env_config

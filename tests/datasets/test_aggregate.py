@@ -16,6 +16,7 @@
 
 import json
 import logging
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -28,12 +29,14 @@ import pandas as pd
 import torch
 
 from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
-from lerobot.datasets.aggregate import aggregate_datasets
+from lerobot.datasets.aggregate import aggregate_datasets, merge_video_feature_info_for_aggregate
 from lerobot.datasets.feature_utils import features_equal_for_merge
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import EPISODES_DIR
 from tests.fixtures.constants import (
     DUMMY_CAMERA_FEATURES_WITH_DEPTH,
+    DUMMY_DEPTH_FEATURES,
+    DUMMY_DEPTH_KEY,
     DUMMY_REPO_ID,
 )
 
@@ -285,6 +288,45 @@ def assert_video_timestamps_within_bounds(aggr_ds):
                 ) from e
 
 
+@pytest.mark.parametrize(
+    "legacy_info, legacy_video_info",
+    [
+        ({"video.is_depth_map": True}, None),  # legacy marker inside info
+        ({}, {"video.is_depth_map": True}),  # legacy marker in separate video_info dict
+    ],
+)
+def test_depth_marker_legacy_names(legacy_info, legacy_video_info):
+    """A recent (canonical) depth dataset stays mergeable with legacy marker forms, and the
+    merged metadata is canonicalized. A genuine non-depth feature stays a mismatch."""
+
+    def _feature(info: dict, video_info: dict | None = None) -> dict:
+        ft = {**DUMMY_DEPTH_FEATURES[DUMMY_DEPTH_KEY], "info": dict(info)}
+        if video_info is not None:
+            ft["video_info"] = dict(video_info)
+        return ft
+
+    key = DUMMY_DEPTH_KEY
+    canonical = _feature({"is_depth_map": True})
+    legacy = _feature(legacy_info, legacy_video_info)
+
+    assert features_equal_for_merge({key: canonical}, {key: legacy})
+    assert not features_equal_for_merge({key: canonical}, {key: _feature({})})
+
+    # Non-depth features must stay mergeable regardless of how "not depth" is spelled:
+    # legacy ``video.is_depth_map: False``, explicit ``is_depth_map: False``, or no marker.
+    assert features_equal_for_merge(
+        {key: _feature({"video.is_depth_map": False})}, {key: _feature({"is_depth_map": False})}
+    )
+    assert features_equal_for_merge({key: _feature({"is_depth_map": False})}, {key: _feature({})})
+
+    meta_legacy = SimpleNamespace(features={key: legacy})
+    meta_recent = SimpleNamespace(features={key: canonical})
+    merged = merge_video_feature_info_for_aggregate([meta_legacy, meta_recent])
+    assert merged[key]["info"]["is_depth_map"] is True
+    assert "video.is_depth_map" not in merged[key]["info"]
+    assert "video_info" not in merged[key]
+
+
 def test_aggregate_datasets(tmp_path, lerobot_dataset_factory):
     """Test basic aggregation functionality with standard parameters.
 
@@ -345,6 +387,21 @@ def test_aggregate_datasets(tmp_path, lerobot_dataset_factory):
     assert_video_timestamps_within_bounds(aggr_ds)
     assert_depth_keys_preserved(aggr_ds, ds_0, ds_1)
     assert_dataset_iteration_works(aggr_ds)
+
+
+def test_aggregate_datasets_rejects_mismatched_roots(tmp_path):
+    with (
+        patch("lerobot.datasets.aggregate.LeRobotDatasetMetadata") as metadata_cls,
+        pytest.raises(ValueError, match="repo_ids and roots must have the same length"),
+    ):
+        aggregate_datasets(
+            repo_ids=["org/dataset-a", "org/dataset-b"],
+            roots=[tmp_path / "dataset-a"],
+            aggr_repo_id="org/aggregated",
+            aggr_root=tmp_path / "aggregated",
+        )
+
+    metadata_cls.assert_not_called()
 
 
 def test_aggregate_datasets_without_concatenation(tmp_path, lerobot_dataset_factory):

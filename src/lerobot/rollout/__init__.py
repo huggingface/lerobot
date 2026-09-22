@@ -12,7 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Policy deployment engine with pluggable rollout strategies."""
+"""Policy deployment engine with pluggable rollout strategies.
+
+An interactive rollout is built from four components: :class:`InferenceEngine` (owns the policy),
+:class:`RolloutStrategy` (the real-time tick loop), :class:`RolloutController` (lifecycle state machine)
+and :class:`InteractiveSession` (text I/O over the controller).  Calls point downward only — session ->
+controller -> {strategy, engine}, strategy -> engine — and nothing under ``strategies/`` or ``inference/``
+references the controller, so strategies stay usable non-interactively.  Controller commands only record
+intent under the controller lock; ``serve()`` is the only place intent becomes motion.
+"""
 
 from lerobot.utils.import_utils import require_package
 
@@ -38,15 +46,24 @@ from .context import (
     RuntimeContext,
     build_rollout_context,
 )
+from .controller import (
+    AskResult,
+    LinkedEvent,
+    RolloutController,
+    RolloutEvent,
+)
 from .inference import (
     InferenceEngine,
     InferenceEngineConfig,
+    QueryAnswer,
+    QueryKind,
     RTCInferenceConfig,
     RTCInferenceEngine,
     SyncInferenceConfig,
     SyncInferenceEngine,
     create_inference_engine,
 )
+from .interactive import InteractiveSession
 from .strategies import (
     BaseStrategy,
     DAggerStrategy,
@@ -58,6 +75,7 @@ from .strategies import (
 )
 
 __all__ = [
+    "AskResult",
     "BaseStrategy",
     "BaseStrategyConfig",
     "DAggerKeyboardConfig",
@@ -65,19 +83,25 @@ __all__ = [
     "DAggerStrategy",
     "DAggerStrategyConfig",
     "DatasetContext",
+    "EpisodicStrategy",
+    "EpisodicStrategyConfig",
     "HardwareContext",
     "HighlightStrategy",
     "HighlightStrategyConfig",
-    "EpisodicStrategy",
-    "EpisodicStrategyConfig",
     "InferenceEngine",
     "InferenceEngineConfig",
+    "InteractiveSession",
+    "LinkedEvent",
     "PolicyContext",
     "ProcessorContext",
+    "QueryAnswer",
+    "QueryKind",
     "RTCInferenceConfig",
     "RTCInferenceEngine",
     "RolloutConfig",
     "RolloutContext",
+    "RolloutController",
+    "RolloutEvent",
     "RolloutStrategy",
     "RolloutStrategyConfig",
     "RuntimeContext",

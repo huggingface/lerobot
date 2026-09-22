@@ -22,12 +22,13 @@ import onnx
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
-from .g1_utils import (
+from ..g1_utils import (
     REMOTE_AXES,
     G1_29_JointArmIndex,
     G1_29_JointIndex,
     get_gravity_orientation,
 )
+from ..unitree_g1 import RobotController
 
 logger = logging.getLogger(__name__)
 
@@ -95,15 +96,16 @@ def load_policy(
     return policy, kp, kd
 
 
-class HolosomaLocomotionController:
+class HolosomaLocomotionController(RobotController):
     """Holosoma lower-body locomotion controller for Unitree G1."""
 
-    control_dt = CONTROL_DT  # Expose for unitree_g1.py
+    control_dt = CONTROL_DT
 
     def __init__(self):
         # Load policy and gains
         self.policy, self.kp, self.kd = load_policy()
 
+        self.default_angles = DEFAULT_ANGLES
         self.cmd = np.zeros(3, dtype=np.float32)
 
         # Robot state
