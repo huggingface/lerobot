@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 from lerobot.robots.unitree_g1.g1_utils import REMOTE_AXES, G1_29_JointArmIndex
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 from lerobot.utils.import_utils import _unitree_sdk_available
+from lerobot.utils.lifecycle import Cleanup, idempotent_connect
 
 if TYPE_CHECKING or _unitree_sdk_available:
     from unitree_sdk2py.utils.joystick import Joystick
@@ -177,6 +178,8 @@ class UnitreeG1Teleoperator(Teleoperator):
                 "Invalid exo config: set both left/right exo ports, or leave both empty for remote-only mode."
             )
         self._arm_control_enabled = left_exo_enabled and right_exo_enabled
+        if not self._arm_control_enabled:
+            logger.warning("Exo ports not fully configured; teleop will send joystick only (no arm actions)")
 
         # Setup calibration directory
         self.calibration_dir = (
@@ -230,13 +233,11 @@ class UnitreeG1Teleoperator(Teleoperator):
             return True
         return self.left_arm.is_calibrated and self.right_arm.is_calibrated
 
+    @idempotent_connect
     def connect(self, calibrate: bool = True) -> None:
-        if not self._arm_control_enabled:
-            logger.warning("Exo ports not fully configured; teleop will send joystick only (no arm actions)")
-            return
-
-        self.left_arm.connect(calibrate)
-        self.right_arm.connect(calibrate)
+        for arm in (self.left_arm, self.right_arm):
+            if not arm.is_connected:
+                arm.connect(calibrate)
 
         frozen_joints = [j.strip() for j in self.config.frozen_joints.split(",") if j.strip()]
         self.ik_helper = ExoskeletonIKHelper(frozen_joints=frozen_joints)
@@ -298,8 +299,10 @@ class UnitreeG1Teleoperator(Teleoperator):
             self.remote_controller.set_from_wireless(wireless_remote)
 
     def disconnect(self) -> None:
-        self.left_arm.disconnect()
-        self.right_arm.disconnect()
+        with Cleanup(self) as cleanup:
+            for side, arm in (("left", self.left_arm), ("right", self.right_arm)):
+                with cleanup.step(f"the {side} arm"):
+                    arm.disconnect()
 
     def run_visualization_loop(self):
         """Run interactive Meshcat visualization loop to verify tracking."""

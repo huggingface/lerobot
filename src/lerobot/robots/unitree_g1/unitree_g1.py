@@ -29,6 +29,7 @@ import numpy as np
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.import_utils import _unitree_sdk_available, require_package
+from lerobot.utils.lifecycle import Cleanup, idempotent_connect
 
 from ..robot import Robot
 from .config_unitree_g1 import UnitreeG1Config
@@ -190,6 +191,8 @@ class UnitreeG1(Robot):
         self._control_lock = threading.Lock()
         self._shutdown_event = threading.Event()
         self.subscribe_thread = None
+        self.lowcmd_publisher = None
+        self.lowstate_subscriber = None
 
         self.arm_ik = G1_29_ArmIK() if config.gravity_compensation else None
 
@@ -354,7 +357,21 @@ class UnitreeG1(Robot):
     def configure(self) -> None:
         pass
 
+    @idempotent_connect
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
+        if (
+            self.subscribe_thread is not None
+            or self._controller_thread is not None
+            or self.sim_env is not None
+            or any(cam.is_connected for cam in self._cameras.values())
+        ):
+            # DDS channels cannot be resumed: release what an earlier attempt left behind first.
+            self.disconnect()
+
+        self._shutdown_event.clear()
+        with self._lowstate_lock:
+            self._lowstate = None
+
         # Initialize DDS channel and simulation environment
         if self.config.is_simulation:
             from lerobot.envs import make_env
@@ -431,64 +448,68 @@ class UnitreeG1(Robot):
 
     def _send_zero_torque(self) -> None:
         """Send a zero-gain command to make joints passive before shutting down."""
-        try:
-            with self._lowstate_lock:
-                lowstate = self._lowstate
-            if lowstate is None:
-                return
-            action = {f"{motor.name}.q": lowstate.motor_state[motor.value].q for motor in G1_29_JointIndex}
-            zero_gains = np.zeros(29, dtype=np.float32)
-            self.publish_lowcmd(action, kp=zero_gains, kd=zero_gains, tau=zero_gains)
-            logger.info("Sent zero-torque command for safe shutdown")
-        except Exception as e:
-            logger.warning(f"Failed to send zero-torque on disconnect: {e}")
+        with self._lowstate_lock:
+            lowstate = self._lowstate
+        if lowstate is None:
+            return
+        action = {f"{motor.name}.q": lowstate.motor_state[motor.value].q for motor in G1_29_JointIndex}
+        zero_gains = np.zeros(29, dtype=np.float32)
+        self.publish_lowcmd(action, kp=zero_gains, kd=zero_gains, tau=zero_gains)
+        logger.info("Sent zero-torque command for safe shutdown")
 
-    def disconnect(self):
-        # Signal threads to stop and unblock any waits
-        self._shutdown_event.set()
+    def disconnect(self) -> None:
+        with Cleanup(self) as cleanup:
+            # Signal threads to stop and unblock any waits
+            self._shutdown_event.set()
 
-        # Wait for controller thread to finish. It has to be stopped before going passive,
-        # otherwise a tick already in flight re-stiffens the joints and zero torque is not the
-        # robot's last command.
-        if self._controller_thread is not None:
-            self._controller_thread.join(timeout=2.0)
-            if self._controller_thread.is_alive():
-                logger.warning("Controller thread did not stop cleanly")
+            # The controller thread has to be stopped before going passive, otherwise a tick already
+            # in flight re-stiffens the joints and zero torque is not the robot's last command.
+            if self._controller_thread is not None:
+                with cleanup.step("the controller thread"):
+                    self._controller_thread.join(timeout=2.0)
+                    if self._controller_thread.is_alive():
+                        raise TimeoutError("Controller thread did not stop within 2 seconds")
+                    self._controller_thread = None
 
-        # Put robot in passive mode
-        if not self.config.is_simulation:
-            self._send_zero_torque()
+            # Put robot in passive mode
+            if not self.config.is_simulation:
+                with cleanup.step("the joint torque"):
+                    self._send_zero_torque()
 
-        # Wait for subscribe thread to finish
-        if self.subscribe_thread is not None:
-            self.subscribe_thread.join(timeout=2.0)
-            if self.subscribe_thread.is_alive():
-                logger.warning("Subscribe thread did not stop cleanly")
+            if self.subscribe_thread is not None:
+                with cleanup.step("the subscriber thread"):
+                    self.subscribe_thread.join(timeout=2.0)
+                    if self.subscribe_thread.is_alive():
+                        raise TimeoutError("Subscribe thread did not stop within 2 seconds")
+                    self.subscribe_thread = None
 
-        # Close simulation environment
-        if self.config.is_simulation and self.sim_env is not None:
-            try:
-                # Force-kill the image publish subprocess first to avoid long waits
-                if hasattr(self.sim_env, "simulator") and hasattr(self.sim_env.simulator, "sim_env"):
-                    sim_env_inner = self.sim_env.simulator.sim_env
-                    if hasattr(sim_env_inner, "image_publish_process"):
-                        proc = sim_env_inner.image_publish_process
-                        if proc.process and proc.process.is_alive():
-                            logger.info("Force-terminating image publish subprocess...")
-                            proc.stop_event.set()
-                            proc.process.terminate()
-                            proc.process.join(timeout=1)
-                            if proc.process.is_alive():
-                                proc.process.kill()
-                self.sim_env.close()
-            except Exception as e:
-                logger.warning(f"Error closing sim_env: {e}")
-            self.sim_env = None
-            self._env_wrapper = None
+            if self.config.is_simulation and self.sim_env is not None:
+                with cleanup.step("the simulation environment"):
+                    # Force-kill the image publish subprocess first to avoid long waits
+                    if hasattr(self.sim_env, "simulator") and hasattr(self.sim_env.simulator, "sim_env"):
+                        sim_env_inner = self.sim_env.simulator.sim_env
+                        if hasattr(sim_env_inner, "image_publish_process"):
+                            proc = sim_env_inner.image_publish_process
+                            if proc.process and proc.process.is_alive():
+                                logger.info("Force-terminating image publish subprocess...")
+                                proc.stop_event.set()
+                                proc.process.terminate()
+                                proc.process.join(timeout=1)
+                                if proc.process.is_alive():
+                                    proc.process.kill()
+                    self.sim_env.close()
+                    self.sim_env = None
+                    self._env_wrapper = None
 
-        # Disconnect cameras
-        for cam in self._cameras.values():
-            cam.disconnect()
+            for name, cam in self._cameras.items():
+                with cleanup.step(f"camera '{name}'"):
+                    cam.disconnect()
+
+            if self.subscribe_thread is None:
+                with self._lowstate_lock:
+                    self._lowstate = None
+                self.lowcmd_publisher = None
+                self.lowstate_subscriber = None
 
     def get_observation(self) -> RobotObservation:
         with self._lowstate_lock:
@@ -601,7 +622,14 @@ class UnitreeG1(Robot):
     @property
     def is_connected(self) -> bool:
         with self._lowstate_lock:
-            return self._lowstate is not None
+            has_state = self._lowstate is not None
+        subscriber_running = self.subscribe_thread is not None and self.subscribe_thread.is_alive()
+        return (
+            has_state
+            and subscriber_running
+            and not self._shutdown_event.is_set()
+            and all(cam.is_connected for cam in self._cameras.values())
+        )
 
     @property
     def _motors_ft(self) -> dict[str, type]:

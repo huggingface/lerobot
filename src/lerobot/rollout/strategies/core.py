@@ -26,6 +26,7 @@ from lerobot.utils.action_interpolator import ActionInterpolator
 from lerobot.utils.constants import OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
+from lerobot.utils.lifecycle import Cleanup
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.visualization_utils import log_visualization_data
 
@@ -154,24 +155,28 @@ class RolloutStrategy(abc.ABC):
 
     def _teardown_hardware(self, hw: HardwareContext, return_to_initial_position: bool = True) -> None:
         """Stop the inference engine, optionally return robot to initial position, and disconnect hardware."""
-        if self._engine is not None:
-            logger.info("Stopping inference engine...")
-            self._engine.stop()
         robot = hw.robot_wrapper.inner
-        if robot.is_connected:
-            if return_to_initial_position and hw.initial_position:
-                logger.info("Returning robot to initial position before shutdown...")
-                self.return_to_initial_position(hw)
-            elif not return_to_initial_position:
-                logger.info(
-                    "Skipping return-to-initial-position (disabled by config); leaving robot in final pose."
-                )
+        with Cleanup("the rollout hardware") as cleanup:
+            if self._engine is not None:
+                logger.info("Stopping inference engine...")
+                with cleanup.step("the inference engine"):
+                    self._engine.stop()
+            if robot.is_connected:
+                if return_to_initial_position and hw.initial_position:
+                    logger.info("Returning robot to initial position before shutdown...")
+                    self.return_to_initial_position(hw)
+                elif not return_to_initial_position:
+                    logger.info(
+                        "Skipping return-to-initial-position (disabled by config); leaving robot in final pose."
+                    )
             logger.info("Disconnecting robot...")
-            robot.disconnect()
-        teleop = hw.teleop
-        if teleop is not None and teleop.is_connected:
-            logger.info("Disconnecting teleoperator...")
-            teleop.disconnect()
+            with cleanup.step(str(robot)):
+                robot.disconnect()
+            teleop = hw.teleop
+            if teleop is not None:
+                logger.info("Disconnecting teleoperator...")
+                with cleanup.step(str(teleop)):
+                    teleop.disconnect()
 
     @staticmethod
     def return_to_initial_position(hw: HardwareContext, duration_s: float = 3.0, fps: int = 50) -> bool:

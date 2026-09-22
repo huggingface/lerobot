@@ -197,8 +197,11 @@ def test_remote_only_connect(teleop_remote_only):
     """Remote-only mode should connect immediately without serial ports."""
     teleop = teleop_remote_only
     teleop.connect()
+    teleop.connect()
     assert teleop.is_connected
     assert not teleop._arm_control_enabled
+    teleop.disconnect()
+    teleop.disconnect()
 
 
 def test_remote_only_action_features(teleop_remote_only):

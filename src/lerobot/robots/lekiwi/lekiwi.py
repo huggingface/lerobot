@@ -29,7 +29,8 @@ from lerobot.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
 )
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_not_connected
+from lerobot.utils.lifecycle import Cleanup, idempotent_connect
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -115,9 +116,10 @@ class LeKiwi(Robot):
     def is_connected(self) -> bool:
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
-    @check_if_already_connected
+    @idempotent_connect
     def connect(self, calibrate: bool = True) -> None:
-        self.bus.connect()
+        if not self.bus.is_connected:
+            self.bus.connect()
         if not self.is_calibrated and calibrate:
             logger.info(
                 "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
@@ -125,10 +127,10 @@ class LeKiwi(Robot):
             self.calibrate()
 
         for cam in self.cameras.values():
-            cam.connect()
+            if not cam.is_connected:
+                cam.connect()
 
         self.configure()
-        logger.info(f"{self} connected.")
 
     @property
     def is_calibrated(self) -> bool:
@@ -422,11 +424,13 @@ class LeKiwi(Robot):
         self.bus.sync_write("Goal_Velocity", dict.fromkeys(self.base_motors, 0), num_retry=5)
         logger.info("Base motors stopped")
 
-    @check_if_not_connected
-    def disconnect(self):
-        self.stop_base()
-        self.bus.disconnect(self.config.disable_torque_on_disconnect)
-        for cam in self.cameras.values():
-            cam.disconnect()
-
-        logger.info(f"{self} disconnected.")
+    def disconnect(self) -> None:
+        with Cleanup(self) as cleanup:
+            if self.bus.is_connected:
+                with cleanup.step("the mobile base"):
+                    self.stop_base()
+            with cleanup.step("the motor bus"):
+                self.bus.disconnect(self.config.disable_torque_on_disconnect)
+            for name, cam in self.cameras.items():
+                with cleanup.step(f"camera '{name}'"):
+                    cam.disconnect()
