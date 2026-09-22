@@ -29,6 +29,7 @@ from lerobot.utils.import_utils import _motorbridge_available, require_package
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
 from .config_rebot_b601_follower import RebotB601FollowerRobotConfig
+from .gravity import B601GravityFeedforward
 
 if TYPE_CHECKING or _motorbridge_available:
     from motorbridge import Controller as MotorBridgeController, Mode as MotorBridgeMode
@@ -72,6 +73,7 @@ class RebotB601Follower(Robot):
         self.bus: MotorBridgeController | None = None
         self.motors: dict = {}
         self.motor_names = list(config.motor_can_ids.keys())
+        self._gravity_feedforward: B601GravityFeedforward | None = None
         self.cameras = make_cameras_from_configs(config.cameras)
 
     @property
@@ -224,6 +226,26 @@ class RebotB601Follower(Robot):
             present_pos[motor_name] = math.degrees(state.pos) if state is not None else 0.0
         return present_pos
 
+    def _read_arm_positions_for_gravity(self) -> dict[str, float]:
+        """Read finite physical positions for the B601-DM gravity model."""
+        arm_motor_names = [name for name in self.motor_names if name != GRIPPER_MOTOR]
+        for motor_name in arm_motor_names:
+            self.motors[motor_name].request_feedback()
+        try:
+            self.bus.poll_feedback_once()
+        except Exception as error:
+            raise RuntimeError("B601-DM gravity feedforward requires current motor feedback") from error
+
+        positions: dict[str, float] = {}
+        for motor_name in arm_motor_names:
+            state = self.motors[motor_name].get_state()
+            if state is None or not math.isfinite(state.pos):
+                raise RuntimeError(
+                    f"B601-DM gravity feedforward received invalid feedback for '{motor_name}'"
+                )
+            positions[motor_name] = math.degrees(state.pos)
+        return positions
+
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
         start = time.perf_counter()
@@ -269,7 +291,8 @@ class RebotB601Follower(Robot):
         # This is intentional: it lets a 6-DOF leader such as the SO-100 / SO-101
         # (so100_leader / so101_leader) teleoperate this 7-DOF follower — the missing
         # wrist_yaw command is simply treated as 0.0 instead of raising.
-        if "wrist_yaw" not in goal_pos:
+        has_arm_goal = any(motor_name != GRIPPER_MOTOR for motor_name in goal_pos)
+        if has_arm_goal and "wrist_yaw" not in goal_pos:
             goal_pos["wrist_yaw"] = 0.0
 
         # Cap relative target when too far from the present position.
@@ -279,6 +302,17 @@ class RebotB601Follower(Robot):
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
         use_mit = self.config.control_mode == "mit"
+        gravity_torque: dict[str, float] = {}
+        if use_mit and any(motor_name != GRIPPER_MOTOR for motor_name in goal_pos):
+            arm_positions = self._read_arm_positions_for_gravity()
+            if self._gravity_feedforward is None:
+                self._gravity_feedforward = B601GravityFeedforward()
+                logger.info(
+                    "Using B601-DM gravity feedforward for MIT control from %s",
+                    self._gravity_feedforward.urdf_path,
+                )
+            gravity_torque = self._gravity_feedforward.torque(arm_positions)
+
         for motor_name, position_deg in goal_pos.items():
             motor = self.motors.get(motor_name)
             if motor is None:
@@ -298,7 +332,7 @@ class RebotB601Follower(Robot):
             elif use_mit:
                 kp = self.config.mit_kp[idx] if isinstance(self.config.mit_kp, list) else self.config.mit_kp
                 kd = self.config.mit_kd[idx] if isinstance(self.config.mit_kd, list) else self.config.mit_kd
-                motor.send_mit(pos_rad, 0.0, kp, kd, 0.0)
+                motor.send_mit(pos_rad, 0.0, kp, kd, gravity_torque[motor_name])
             else:
                 vel_deg_s = (
                     self.config.pos_vel_velocity[idx]

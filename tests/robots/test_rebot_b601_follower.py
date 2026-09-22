@@ -15,7 +15,7 @@
 # limitations under the License.
 
 import math
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -51,7 +51,23 @@ def _make_bus_mock() -> MagicMock:
 
 
 @pytest.fixture
-def follower():
+def gravity_feedforward():
+    feedforward = MagicMock(name="B601GravityFeedforwardMock")
+    feedforward.urdf_path = "/tmp/ReBot_Arm_DM.urdf"
+    feedforward.torque.return_value = {
+        "shoulder_pan": 1.0,
+        "shoulder_lift": 2.0,
+        "elbow_flex": 3.0,
+        "wrist_flex": 4.0,
+        "wrist_yaw": 5.0,
+        "wrist_roll": 6.0,
+    }
+    with patch(f"{_MODULE}.B601GravityFeedforward", return_value=feedforward) as gravity_cls:
+        yield gravity_cls, feedforward
+
+
+@pytest.fixture
+def follower(gravity_feedforward):
     bus_mock = _make_bus_mock()
     with (
         patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
@@ -98,13 +114,60 @@ def test_send_action_clips_to_joint_limits(follower):
     follower.motors["shoulder_pan"].send_mit.assert_called_once()
 
 
+def test_arm_mit_action_uses_current_pose_gravity_feedforward(follower, gravity_feedforward):
+    gravity_cls, feedforward = gravity_feedforward
+
+    follower.send_action({"shoulder_pan.pos": 10.0})
+
+    gravity_cls.assert_called_once_with()
+    feedforward.torque.assert_called_once_with(
+        {
+            "shoulder_pan": pytest.approx(1.0),
+            "shoulder_lift": pytest.approx(2.0),
+            "elbow_flex": pytest.approx(3.0),
+            "wrist_flex": pytest.approx(4.0),
+            "wrist_yaw": pytest.approx(5.0),
+            "wrist_roll": pytest.approx(6.0),
+        }
+    )
+    follower.motors["shoulder_pan"].send_mit.assert_called_with(
+        pytest.approx(math.radians(10.0)), 0.0, ANY, ANY, 1.0
+    )
+
+
+def test_arm_mit_action_rejects_invalid_feedback(follower):
+    follower.motors["shoulder_lift"].get_state.return_value = None
+
+    with pytest.raises(RuntimeError, match="invalid feedback for 'shoulder_lift'"):
+        follower.send_action({"shoulder_pan.pos": 10.0})
+
+    follower.motors["shoulder_pan"].send_mit.assert_not_called()
+
+
+def test_pos_vel_arm_action_does_not_load_gravity_model(gravity_feedforward):
+    bus_mock = _make_bus_mock()
+    with (
+        patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
+        patch(f"{_MODULE}.MotorBridgeController") as controller_cls,
+        patch(f"{_MODULE}.MotorBridgeMode", MagicMock()),
+    ):
+        controller_cls.from_dm_serial.return_value = bus_mock
+        robot = RebotB601Follower(RebotB601FollowerRobotConfig(port="/dev/null", control_mode="pos_vel"))
+        robot.connect(calibrate=False)
+        robot.send_action({"shoulder_pan.pos": 10.0})
+
+        gravity_cls, _feedforward = gravity_feedforward
+        gravity_cls.assert_not_called()
+        robot.motors["shoulder_pan"].send_pos_vel.assert_called_once()
+
+
 def test_send_action_routes_gripper_to_force_pos(follower):
     follower.send_action({"gripper.pos": -10.0})
     follower.motors["gripper"].send_force_pos.assert_called_once()
     follower.motors["gripper"].send_pos_vel.assert_not_called()
 
 
-def test_gripper_mit_mode_routes_to_send_mit():
+def test_gripper_mit_mode_routes_to_send_mit_without_gravity_model(gravity_feedforward):
     bus_mock = _make_bus_mock()
     with (
         patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
@@ -116,6 +179,8 @@ def test_gripper_mit_mode_routes_to_send_mit():
         robot = RebotB601Follower(cfg)
         robot.connect(calibrate=False)
         robot.send_action({"gripper.pos": -10.0})
+        gravity_cls, _feedforward = gravity_feedforward
+        gravity_cls.assert_not_called()
         robot.motors["gripper"].send_mit.assert_called_once()
         robot.motors["gripper"].send_force_pos.assert_not_called()
 
