@@ -559,6 +559,10 @@ module = "lerobot.*"
 ignore_errors = true
 
 [[tool.mypy.overrides]]
+module = "lerobot.common.*"
+ignore_errors = false
+
+[[tool.mypy.overrides]]
 module = "lerobot.envs.*"
 ignore_errors = false
 
