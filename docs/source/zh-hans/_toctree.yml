@@ -55,6 +55,10 @@
     title: Meta-World
   title: "基准测试"
 - sections:
+  - local: third_party_sensors
+    title: 第三方摄像头与传感器
+  title: "传感器"
+- sections:
   - local: notebooks
     title: Notebooks
   - local: feetech
