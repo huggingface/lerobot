@@ -667,9 +667,14 @@ ignore_errors = false
 module = "lerobot.teleoperators.*"
 ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.policies.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.policies.*"
+ignore_errors = false
+
+# Vendored from transformers; not type-checked so upstream syncs stay clean.
+[[tool.mypy.overrides]]
+module = "lerobot.policies.molmoact2.molmoact2_hf_model.*"
+ignore_errors = true
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.rl.*"
