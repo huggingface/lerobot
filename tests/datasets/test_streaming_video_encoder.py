@@ -203,6 +203,57 @@ class TestCameraEncoderThread:
         assert len(decoded) == len(expected)
         np.testing.assert_allclose(decoded, expected, atol=8)
 
+    def test_repeated_frame_reuses_cached_conversion(self, tmp_path, monkeypatch):
+        """Encoding the same array again reuses the cached av.VideoFrame instead of re-converting."""
+        import lerobot.datasets.video_utils as vu
+
+        thread = _CameraEncoderThread(
+            video_path=tmp_path / "x.mp4",
+            fps=30,
+            video_encoder=RGBEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13),
+            frame_queue=queue.Queue(),
+            result_queue=queue.Queue(),
+            stop_event=threading.Event(),
+        )
+
+        conversions = 0
+        real_fromarray = vu.Image.fromarray
+
+        def counting_fromarray(arr, *args, **kwargs):
+            nonlocal conversions
+            conversions += 1
+            return real_fromarray(arr, *args, **kwargs)
+
+        monkeypatch.setattr(vu.Image, "fromarray", counting_fromarray)
+
+        encoded = []
+
+        class FakeStream:
+            def encode(self, frame):
+                encoded.append((frame, frame.pts))
+                return []
+
+        class FakeStats:
+            def __init__(self):
+                self.n = 0
+
+            def update(self, row):
+                self.n += 1
+
+        stream, stats = FakeStream(), FakeStats()
+        frame = np.random.randint(0, 255, (8, 8, 3), dtype=np.uint8)
+        other = np.random.randint(0, 255, (8, 8, 3), dtype=np.uint8)
+
+        pts = thread._encode(frame, 0, None, stream, stats)  # builds + caches
+        pts = thread._encode(frame, pts, None, stream, stats)  # reuse cache
+        pts = thread._encode(frame, pts, None, stream, stats)  # reuse cache
+        thread._encode(other, pts, None, stream, stats)  # different array -> rebuild
+
+        assert conversions == 2  # once for `frame`, once for `other`
+        assert encoded[0][0] is encoded[1][0] is encoded[2][0]  # same cached VideoFrame reused
+        assert [pts for _, pts in encoded] == [0, 1, 2, 3]  # each repeat still gets its own pts
+        assert stats.n == 2  # only the two distinct frames fold into the stats; repeats are excluded
+
     def test_gap_before_first_frame_is_filled_forward(self, tmp_path):
         """A gap before the first delivered frame is filled with that frame."""
         fps = 30
@@ -496,6 +547,7 @@ class TestStreamingVideoEncoder:
                 vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13
             ),
             queue_maxsize=1,
+            max_repeated_frames=0,  # disable the back-pressure guard; this test stresses the queue
         )
         encoder.start_episode([key], tmp_path)
 
@@ -551,6 +603,49 @@ class TestStreamingVideoEncoder:
             total_frames = sum(1 for _ in container.decode(video=0))
         assert total_frames == num_frames
 
+        encoder.close()
+
+    def test_raises_after_max_consecutive_repeats(self, tmp_path):
+        """feed_frame raises once too many frames are repeated back-to-back, and the counter resets on success."""
+        key = f"{OBS_IMAGES}.cam"
+        max_repeated = 5
+        encoder = StreamingVideoEncoder(
+            fps=30,
+            rgb_encoder=self._make_encoder_config(
+                vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13
+            ),
+            max_repeated_frames=max_repeated,
+        )
+        encoder.start_episode([key], tmp_path)
+
+        frame_queue = encoder._frame_queues[key]
+        real_put = frame_queue.put
+        reject = False
+
+        def flaky_put(item, *args, **kwargs):
+            if reject:
+                raise queue.Full
+            return real_put(item, *args, **kwargs)
+
+        frame_queue.put = flaky_put
+        frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
+
+        # A successful frame between two short reject bursts keeps the consecutive counter from tripping.
+        reject = True
+        for _ in range(max_repeated - 1):
+            encoder.feed_frame(key, frame)
+        reject = False
+        encoder.feed_frame(key, frame)  # resets the consecutive counter
+        assert encoder._consecutive_repeats[key] == 0
+
+        # A sustained burst of exactly max_repeated repeats trips the guard.
+        reject = True
+        with pytest.raises(RuntimeError, match="fell behind"):
+            for _ in range(max_repeated):
+                encoder.feed_frame(key, frame)
+
+        frame_queue.put = real_put
+        encoder.cancel_episode()
         encoder.close()
 
 
