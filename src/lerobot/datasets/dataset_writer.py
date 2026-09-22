@@ -117,44 +117,109 @@ class BaseDatasetWriter(ABC):
 
     @abstractmethod
     def add_frame(self, frame: dict) -> None:
-        """Add a single frame to the current episode buffer."""
+        """Append one captured frame to the in-progress episode (:attr:`episode_buffer`).
+
+        Called once per timestep during recording. ``frame`` holds every feature
+        declared in ``meta.features`` plus ``"task"``; the caller must not supply
+        ``"timestamp"`` or ``"frame_index"`` (both are derived from the frame count
+        and ``meta.fps``). Implementations should validate the frame against the
+        feature schema. Nothing is persisted here except, optionally, staging visual
+        frames for later encoding — durable writes happen in :meth:`save_episode`.
+        """
 
     @abstractmethod
     def save_episode(self, episode_data: dict | None = None, parallel_encoding: bool = True) -> None:
-        """Persist the current (or provided) episode to disk."""
+        """Persist one complete episode and commit its metadata.
+
+        Writes the episode's tabular and visual data in the format's own layout,
+        computes per-episode statistics, and records the episode through
+        ``meta.save_episode(...)`` (see the metadata contract). Operates on
+        :attr:`episode_buffer` when ``episode_data`` is ``None``, otherwise on the
+        provided buffer; in the former case the buffer is reset for the next episode.
+
+        Args:
+            episode_data: A ready episode buffer to save instead of the in-progress
+                one. ``None`` saves the current recording.
+            parallel_encoding: Hint permitting concurrent per-camera video encoding.
+                Formats without deferred video encoding may ignore it.
+        """
 
     @abstractmethod
     def clear_episode_buffer(self, delete_images: bool = True) -> None:
-        """Discard the current episode buffer and optionally its staged frames."""
+        """Drop the in-progress episode without persisting it and reset the buffer.
+
+        Used when a recording is rejected (e.g. the operator discards the take), so
+        the next episode starts clean. Unlike :meth:`cleanup_interrupted_episode`,
+        this targets the *current* buffer during normal operation.
+
+        Args:
+            delete_images: Also remove temporary staged frames for the episode. Pass
+                ``False`` to keep already-staged frames (e.g. still needed by a
+                deferred encoder).
+        """
 
     @abstractmethod
     def cleanup_interrupted_episode(self, episode_index: int) -> None:
-        """Remove staged data for an episode whose recording was interrupted."""
+        """Remove partially-staged, unpersisted data left by an interrupted episode.
+
+        Called on error (e.g. an exception mid-recording), after :meth:`finalize`,
+        to delete any staged-but-uncommitted artifacts for ``episode_index`` so the
+        dataset is left consistent. Must be safe when there is nothing to clean up.
+        """
 
     @abstractmethod
     def finalize(self) -> None:
-        """Flush all pending work and release all resources. Must be idempotent."""
+        """Flush all pending work and release resources so the dataset is complete.
+
+        Completes any outstanding writes (background image persistence, deferred or
+        streaming video encoding, open file handles) and releases resources. Invoked
+        at the end of recording and on interruption. Must be **idempotent** — it may
+        be called multiple times (including from ``__del__``).
+        """
 
     # Optional lifecycle hooks. Formats that stage frames on disk or defer visual
     # encoding override these; the default is a no-op so a writer only implements
     # what its storage model actually needs (mirrors BaseDatasetReader's defaults).
     def start_image_writer(self, num_processes: int = 0, num_threads: int = 4) -> None:
-        """Start background image persistence. No-op unless the format stages frames."""
+        """Start a background worker that persists staged visual frames off the hot path.
+
+        Keeps :meth:`add_frame` non-blocking during high-rate capture. Only relevant
+        to formats that stage raw frames on disk before encoding; the base default is
+        a no-op.
+
+        Args:
+            num_processes: Worker subprocesses. ``0`` uses threads only.
+            num_threads: Worker threads (per process).
+        """
 
     def stop_image_writer(self) -> None:
-        """Stop background image persistence. No-op unless the format stages frames."""
+        """Stop the background image writer and wait for outstanding writes to drain.
+
+        Also called before pickling the dataset for ``DataLoader`` workers. No-op
+        unless the format stages frames.
+        """
 
     def flush_pending_videos(self) -> None:
-        """Flush any deferred video encoding. No-op unless the format defers encoding."""
+        """Encode and commit any visual data deferred during recording.
+
+        Covers batched and streaming encoding; invoked from :meth:`finalize`. No-op
+        for formats that persist visual data eagerly in :meth:`save_episode`.
+        """
 
     def cancel_pending_videos(self) -> None:
-        """Cancel any in-progress video encoding without flushing. No-op by default."""
+        """Abort in-progress visual encoding without committing, discarding partial output.
+
+        Called on interruption for streaming writers, before :meth:`finalize`, so a
+        half-encoded episode is not written. No-op by default.
+        """
 
     @property
     def is_streaming_encoding(self) -> bool:
-        """Whether visual data is encoded incrementally during recording.
+        """Whether visual data is encoded incrementally as frames arrive.
 
-        Format-independent hint for interruption handling. Defaults to ``False``;
+        Format-independent hint used by ``VideoEncodingManager`` to sequence
+        interruption cleanup: streaming writers cancel in-flight encoding before
+        finalizing, others clean up staged frames afterwards. Defaults to ``False``;
         writers that stream encode should override it.
         """
         return False
