@@ -17,6 +17,7 @@ import contextlib
 import logging
 from collections.abc import Callable
 from pathlib import Path
+from typing import overload
 
 import datasets
 import torch
@@ -558,6 +559,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def __len__(self):
         """Return the number of frames in the selected episodes."""
         return self.num_frames
+
+    @overload
+    def __getitem__(self, idx: int) -> dict: ...
+
+    @overload
+    def __getitem__(self, idx: slice) -> list[dict]: ...
 
     def __getitem__(self, idx: int | slice) -> dict | list[dict]:
         """Return one frame or a slice of frames, with all transforms applied.
