@@ -44,10 +44,9 @@ else:
 class DM05ClipNormalizedProcessorStep(ProcessorStep):
     """Clamp quantile-normalized state and action into the range DM05 was trained on.
 
-    Runs after `DM05ActionReferenceExtractProcessorStep` so the temporary probes are already
-    consumed; clipping them would corrupt the relative-action reference offset. Whether each
-    field is clipped is decided once, at pipeline construction, from `norm_clip` and the
-    normalization mapping, so a reloaded pipeline cannot silently disagree with the checkpoint.
+    Runs straight after `NormalizerProcessorStep`. Whether each field is clipped is decided
+    once, at pipeline construction, from `norm_clip` and the normalization mapping, so a
+    reloaded pipeline cannot silently disagree with the checkpoint.
     """
 
     clip_state: bool = False

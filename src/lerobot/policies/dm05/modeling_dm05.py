@@ -37,11 +37,10 @@ from lerobot.utils.import_utils import require_package
 from ..common.vla_utils import pad_vector
 from ..pretrained import ActionSelectKwargs, PreTrainedPolicy, T
 from .configuration_dm05 import DM05Config
-from .constants import ACTION_REFERENCE_OFFSET, MODEL_INPUT_PREFIX
+from .constants import MODEL_INPUT_PREFIX
 from .core.adapter import (
     flatten_feature_names,
     import_dm05_core,
-    relative_action_mask,
     resolve_torch_dtype,
 )
 from .core.utils import build_action_prefix_mask, validate_action_prefill_pair
@@ -440,9 +439,8 @@ class DM05Policy(PreTrainedPolicy):
         return policy
 
     def reset(self):
-        """Reset the rollout action queue and relative-action state."""
+        """Reset the rollout action queue."""
         self._queues = {ACTION: deque(maxlen=self.config.n_action_steps)}
-        self._relative_generation_offset: Tensor | None = None
 
     def to(self, *args, **kwargs):
         """Move the policy and keep the config device in sync."""
@@ -622,49 +620,11 @@ class DM05Policy(PreTrainedPolicy):
         )
         return actions[:, :, :action_dim]
 
-    def _action_reference_offset(self, batch: dict[str, Tensor]) -> Tensor:
-        """Extract the cached relative-action offset from the processor output."""
-        offset = batch.get(ACTION_REFERENCE_OFFSET)
-        if offset is None:
-            raise ValueError(
-                "DM05 relative-action inference requires its checkpoint preprocessor and observation.state."
-            )
-        offset = torch.as_tensor(offset, device=self.config.device, dtype=torch.float32)
-        return offset.unsqueeze(0) if offset.ndim == 1 else offset
-
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
         """Return the next queued action slice for online DM05 inference."""
         self.eval()
-        current_offset = self._action_reference_offset(batch) if self.config.use_relative_actions else None
         if len(self._queues[ACTION]) == 0:
             actions = self.predict_action_chunk(batch, **kwargs)[:, : self.config.n_action_steps]
-            if current_offset is not None:
-                if current_offset.shape != (actions.shape[0], actions.shape[-1]):
-                    raise ValueError(
-                        "DM05 action reference shape must match predicted actions, got "
-                        f"{tuple(current_offset.shape)} and {tuple(actions.shape)}."
-                    )
-                self._relative_generation_offset = current_offset.clone()
             self._queues[ACTION].extend(actions.transpose(0, 1))
-        action = self._queues[ACTION].popleft()
-        if current_offset is None:
-            return action
-        if self._relative_generation_offset is None:
-            raise RuntimeError("DM05 relative-action queue has no generation reference.")
-        if current_offset.shape != action.shape:
-            raise ValueError(
-                "DM05 action reference shape must match the queued action, got "
-                f"{tuple(current_offset.shape)} and {tuple(action.shape)}."
-            )
-        mask = torch.tensor(
-            relative_action_mask(
-                action.shape[-1],
-                self.config.action_feature_names,
-                self.config.relative_exclude_joints,
-            ),
-            device=action.device,
-            dtype=torch.float32,
-        )
-        generation_offset = self._relative_generation_offset.to(action.device)
-        return action.float() + (generation_offset - current_offset.to(action.device)) * mask
+        return self._queues[ACTION].popleft()

@@ -31,7 +31,7 @@ pytest.importorskip("transformers")
 from lerobot.common.train_utils import generate_model_card, publish_trained_model
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.policies.dm05.configuration_dm05 import DM05Config
-from lerobot.policies.dm05.constants import ACTION_REFERENCE_OFFSET, MODEL_INPUT_PREFIX, STATE_BINS
+from lerobot.policies.dm05.constants import MODEL_INPUT_PREFIX, STATE_BINS
 from lerobot.policies.dm05.conversion_dm05 import (
     DM05StateBinsProcessorStep,
     DM05TokenizerProcessorStep,
@@ -55,6 +55,7 @@ from lerobot.processor import (
     NormalizerProcessorStep,
     RelativeActionsProcessorStep,
     UnnormalizerProcessorStep,
+    bind_relative_anchor,
 )
 from lerobot.utils.constants import (
     ACTION,
@@ -418,14 +419,13 @@ def test_dm05_processors_roundtrip(tmp_path):
     assert (dcp_only_dir / "dm05_processor" / "chat_template.jinja").is_file()
 
     assert {path.name for path in tmp_path.glob("*normalizer_processor.safetensors")} == {
-        "policy_preprocessor_step_5_normalizer_processor.safetensors",
+        "policy_preprocessor_step_4_normalizer_processor.safetensors",
         "policy_postprocessor_step_1_unnormalizer_processor.safetensors",
     }
     assert not list(tmp_path.glob("*dm05*normalizer*.safetensors"))
     assert (tmp_path / "dm05_processor" / "processor_config.json").exists()
-    assert [type(step).__name__ for step in loaded_preprocessor.steps[5:]] == [
+    assert [type(step).__name__ for step in loaded_preprocessor.steps[4:]] == [
         "NormalizerProcessorStep",
-        "DM05ActionReferenceExtractProcessorStep",
         "DM05ClipNormalizedProcessorStep",
         "DM05StateBinsProcessorStep",
         "DeviceProcessorStep",
@@ -441,7 +441,6 @@ def test_dm05_processors_roundtrip(tmp_path):
     )
 
     assert default_processed["task"] == "Execute the robot action."
-    assert ACTION_REFERENCE_OFFSET in default_processed
     assert default_processed["observation.images.front"].device.type == "cpu"
     assert default_processed[STATE_BINS] == [[140, 153, 165]]
     assert any(isinstance(step, DM05StateBinsProcessorStep) for step in loaded_preprocessor.steps)
@@ -537,7 +536,7 @@ def test_dm05_processors_roundtrip(tmp_path):
             "observation.images.front": torch.zeros(3, 16, 16),
         }
     )
-    assert ACTION_REFERENCE_OFFSET not in asymmetric
+    assert asymmetric[ACTION].shape[-1] == 3
     assert asymmetric["observation.images.front"].shape[-2:] == (16, 16)
 
 
@@ -577,6 +576,10 @@ def test_dm05_relative_actions_use_generation_state_for_training_and_inference(t
         "input_ids": torch.ones(1, 1, dtype=torch.long)
     }
     policy.reset()
+    # The chunk anchor is held by the shared relative-action step for as long as the policy is
+    # still serving the chunk generated against it. Binding is what every rollout entry point
+    # does; without it the anchor would advance on the second observation.
+    assert bind_relative_anchor(policy, preprocessor) is not None
 
     observation = {"observation.images.front": torch.zeros(3, 16, 16)}
     generation_batch = preprocessor({OBS_STATE: torch.tensor([10.0, 20.0, 30.0]), **observation})
@@ -599,9 +602,6 @@ def test_dm05_relative_actions_use_generation_state_for_training_and_inference(t
     torch.testing.assert_close(first, torch.tensor([[11.0, 22.0, 3.0]]), atol=2e-5, rtol=0)
     torch.testing.assert_close(second, torch.tensor([[14.0, 25.0, 6.0]]), atol=2e-5, rtol=0)
     assert policy.model.calls == 2
-
-    with pytest.raises(ValueError, match="checkpoint preprocessor"):
-        policy.select_action({})
 
     processed = preprocessor(
         {
