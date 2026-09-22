@@ -306,7 +306,6 @@ def test_record_loop_records_the_action_returned_by_robot():
     assert all(frame["action"][0] == pytest.approx(0.5) for frame in recorded_frames)
 
 
-
 def test_record_loop_preserves_recording_representation_when_sent_schema_differs():
     robot = make_robot_from_config(MockRobotConfig(n_motors=1, random_values=False, static_values=[0.0]))
     teleop = make_teleoperator_from_config(
