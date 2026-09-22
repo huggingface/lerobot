@@ -418,13 +418,22 @@ class VideoAnnotator:
                     text = self.processor.apply_chat_template(
                         messages, tokenize=False, add_generation_prompt=True
                     )
-                    image_inputs, video_inputs = process_vision_info(messages)
+                    image_inputs, video_inputs, video_kwargs = process_vision_info(
+                        messages, return_video_kwargs=True, return_video_metadata=True
+                    )
+                    # Preserve source FPS and frame indices for Qwen3-VL timestamps. The returned
+                    # kwargs disable re-sampling of frames already sampled by qwen-vl-utils.
+                    video_metadata = None
+                    if video_inputs is not None:
+                        video_inputs, video_metadata = map(list, zip(*video_inputs, strict=True))
                     inputs = self.processor(
                         text=[text],
                         images=image_inputs,
                         videos=video_inputs,
+                        video_metadata=video_metadata,
                         padding=True,
                         return_tensors="pt",
+                        **video_kwargs,
                     ).to(self.device)
 
                     with torch.no_grad():
