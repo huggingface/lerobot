@@ -49,6 +49,13 @@ class RLAlgorithm(HubMixin, abc.ABC):
     config: RLAlgorithmConfig
 
     @abc.abstractmethod
+    def __init__(self, policy: nn.Module, config: RLAlgorithmConfig, **kwargs: Any) -> None:
+        """Build the algorithm around ``policy`` and ``config``.
+
+        Subclasses may narrow ``policy`` / ``config`` and drop ``**kwargs``.
+        """
+
+    @abc.abstractmethod
     def update(self, batch_iterator: Iterator[BatchType]) -> TrainingStats:
         """One complete training step.
 

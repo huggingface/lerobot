@@ -30,7 +30,7 @@ from lerobot.teleoperators import (
 )
 
 from .gym_manipulator import make_robot_env
-from .train_rl import TrainRLServerPipelineConfig
+from .train_rl import TrainRLServerPipelineConfig, get_hilserl_env_config, require_not_none
 
 logging.basicConfig(level=logging.INFO)
 
@@ -53,15 +53,15 @@ def eval_policy(env, policy, n_episodes):
 
 
 @parser.wrap()
-def main(cfg: TrainRLServerPipelineConfig):
-    env_cfg = cfg.env
+def main(cfg: TrainRLServerPipelineConfig) -> None:
+    env_cfg = get_hilserl_env_config(cfg)
     env = make_robot_env(env_cfg)
-    dataset_cfg = cfg.dataset
+    dataset_cfg = require_not_none(cfg.dataset, "cfg.dataset")
     dataset = LeRobotDataset(repo_id=dataset_cfg.repo_id)
     dataset_meta = dataset.meta
 
     policy = make_policy(
-        cfg=cfg.policy,
+        cfg=require_not_none(cfg.policy, "cfg.policy"),
         # env_cfg=cfg.env,
         ds_meta=dataset_meta,
     )
@@ -72,4 +72,4 @@ def main(cfg: TrainRLServerPipelineConfig):
 
 
 if __name__ == "__main__":
-    main()
+    main()  # type: ignore[call-arg]

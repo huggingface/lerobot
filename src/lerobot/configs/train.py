@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import builtins
 import datetime as dt
 import json
 import multiprocessing
@@ -20,7 +19,7 @@ import tempfile
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import draccus
 from huggingface_hub import hf_hub_download
@@ -407,7 +406,7 @@ class TrainPipelineConfig(HubMixin):
 
     @classmethod
     def from_pretrained(
-        cls: builtins.type["TrainPipelineConfig"],
+        cls,
         pretrained_name_or_path: str | Path,
         *,
         force_download: bool = False,
@@ -418,7 +417,7 @@ class TrainPipelineConfig(HubMixin):
         local_files_only: bool = False,
         revision: str | None = None,
         **kwargs: Any,
-    ) -> "TrainPipelineConfig":
+    ) -> Self:
         model_id = str(pretrained_name_or_path)
         config_file: str | None = None
         if Path(model_id).is_dir():

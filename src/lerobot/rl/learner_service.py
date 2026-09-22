@@ -17,27 +17,34 @@
 
 import logging
 import time
-from multiprocessing import Event, Queue
+from collections.abc import Generator, Iterator
+from multiprocessing.queues import Queue
 from typing import TYPE_CHECKING
 
 from lerobot.utils.import_utils import _grpc_available
+from lerobot.utils.process import ShutdownEvent
 
 from .queue import get_last_item_from_queue
 
 if TYPE_CHECKING or _grpc_available:
     import grpc
+    from google.protobuf.message import Message
 
-    from lerobot.transport import services_pb2, services_pb2_grpc
+    from lerobot.transport import services_pb2
+    from lerobot.transport.services_pb2_grpc import LearnerServiceServicer as _ServicerBase
     from lerobot.transport.utils import receive_bytes_in_chunks, send_bytes_in_chunks
 
-    _ServicerBase = services_pb2_grpc.LearnerServiceServicer
+    EmptyMessage = services_pb2.Empty  # type: ignore[attr-defined]
+    ParametersMessage = services_pb2.Parameters  # type: ignore[attr-defined]
 else:
     grpc = None
+    Message = None
     services_pb2 = None
-    services_pb2_grpc = None
     receive_bytes_in_chunks = None
     send_bytes_in_chunks = None
     _ServicerBase = object
+    EmptyMessage = None
+    ParametersMessage = None
 
 MAX_WORKERS = 3  # Stream parameters, send transitions and interactions
 SHUTDOWN_TIMEOUT = 10
@@ -52,13 +59,13 @@ class LearnerService(_ServicerBase):
 
     def __init__(
         self,
-        shutdown_event: Event,  # type: ignore
-        parameters_queue: Queue,
+        shutdown_event: ShutdownEvent,
+        parameters_queue: Queue[bytes],
         seconds_between_pushes: float,
-        transition_queue: Queue,
-        interaction_message_queue: Queue,
+        transition_queue: Queue[bytes],
+        interaction_message_queue: Queue[bytes],
         queue_get_timeout: float = 0.001,
-    ):
+    ) -> None:
         self.shutdown_event = shutdown_event
         self.parameters_queue = parameters_queue
         self.seconds_between_pushes = seconds_between_pushes
@@ -67,12 +74,12 @@ class LearnerService(_ServicerBase):
         self.queue_get_timeout = queue_get_timeout
 
     def StreamParameters(  # noqa: N802
-        self, request: "services_pb2.Empty", context: "grpc.ServicerContext"
-    ):
+        self, request: "Message", context: "grpc.ServicerContext"
+    ) -> "Generator[Message, None, Message]":
         # TODO: authorize the request
         logging.info("[LEARNER] Received request to stream parameters from the Actor")
 
-        last_push_time = 0
+        last_push_time = 0.0
 
         while not self.shutdown_event.is_set():
             time_since_last_push = time.time() - last_push_time
@@ -92,7 +99,7 @@ class LearnerService(_ServicerBase):
 
             yield from send_bytes_in_chunks(
                 buffer,
-                services_pb2.Parameters,
+                ParametersMessage,
                 log_prefix="[LEARNER] Sending parameters",
                 silent=True,
             )
@@ -101,9 +108,11 @@ class LearnerService(_ServicerBase):
             logging.info("[LEARNER] Parameters sent")
 
         logging.info("[LEARNER] Stream parameters finished")
-        return services_pb2.Empty()
+        return EmptyMessage()
 
-    def SendTransitions(self, request_iterator, _context: "grpc.ServicerContext"):  # noqa: N802
+    def SendTransitions(  # noqa: N802
+        self, request_iterator: "Iterator[Message]", _context: "grpc.ServicerContext"
+    ) -> "Message":
         # TODO: authorize the request
         logging.info("[LEARNER] Received request to receive transitions from the Actor")
 
@@ -115,9 +124,11 @@ class LearnerService(_ServicerBase):
         )
 
         logging.debug("[LEARNER] Finished receiving transitions")
-        return services_pb2.Empty()
+        return EmptyMessage()
 
-    def SendInteractions(self, request_iterator, _context: "grpc.ServicerContext"):  # noqa: N802
+    def SendInteractions(  # noqa: N802
+        self, request_iterator: "Iterator[Message]", _context: "grpc.ServicerContext"
+    ) -> "Message":
         # TODO: authorize the request
         logging.info("[LEARNER] Received request to receive interactions from the Actor")
 
@@ -129,7 +140,7 @@ class LearnerService(_ServicerBase):
         )
 
         logging.debug("[LEARNER] Finished receiving interactions")
-        return services_pb2.Empty()
+        return EmptyMessage()
 
-    def Ready(self, request: "services_pb2.Empty", context: "grpc.ServicerContext"):  # noqa: N802
-        return services_pb2.Empty()
+    def Ready(self, request: "Message", context: "grpc.ServicerContext") -> "Message":  # noqa: N802
+        return EmptyMessage()

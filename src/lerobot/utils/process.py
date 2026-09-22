@@ -51,6 +51,9 @@ def ensure_multiprocessing_start_method(start_method: str | None) -> None:
         )
 
 
+ShutdownEvent = threading.Event | MpEvent
+
+
 class ProcessSignalHandler:
     """Utility class to attach graceful shutdown signal handlers.
 

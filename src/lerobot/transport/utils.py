@@ -19,12 +19,14 @@ import io
 import json
 import logging
 import pickle  # nosec B403: Safe usage for internal serialization only
-from multiprocessing.synchronize import Event as MpEvent
-from queue import Queue
+from collections.abc import Iterator
+from multiprocessing.queues import Queue
 from typing import Any
 
 import torch
+from google.protobuf.message import Message
 
+from lerobot.utils.process import ShutdownEvent
 from lerobot.utils.transition import Transition
 
 from . import services_pb2
@@ -71,7 +73,13 @@ def send_bytes_in_chunks(buffer: bytes, message_class: Any, log_prefix: str = ""
     logging_method(f"{log_prefix} Published {sent_bytes / 1024 / 1024} MB")
 
 
-def receive_bytes_in_chunks(iterator, queue: Queue | None, shutdown_event: MpEvent, log_prefix: str = ""):
+def receive_bytes_in_chunks(
+    iterator: Iterator[Message],
+    queue: Queue[bytes] | None,
+    shutdown_event: ShutdownEvent,
+    log_prefix: str = "",
+) -> bytes | None:
+    """Reassemble the chunked stream; enqueue each complete payload, or return the first when ``queue`` is None."""
     bytes_buffer = io.BytesIO()
     step = 0
 
@@ -80,7 +88,7 @@ def receive_bytes_in_chunks(iterator, queue: Queue | None, shutdown_event: MpEve
         logging.debug(f"{log_prefix} Received item")
         if shutdown_event.is_set():
             logging.info(f"{log_prefix} Shutting down receiver")
-            return
+            return None
 
         if item.transfer_state == TransferState.TRANSFER_BEGIN:
             bytes_buffer.seek(0)
@@ -109,6 +117,8 @@ def receive_bytes_in_chunks(iterator, queue: Queue | None, shutdown_event: MpEve
         else:
             logging.warning(f"{log_prefix} Received unknown transfer state {item.transfer_state}")
             raise ValueError(f"Received unknown transfer state {item.transfer_state}")
+
+    return None
 
 
 def state_to_bytes(state_dict: dict[str, torch.Tensor]) -> bytes:

@@ -16,25 +16,30 @@
 
 import logging
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol, cast
 
 import gymnasium as gym
 import numpy as np
 import torch
 
-from lerobot.cameras import opencv  # noqa: F401
+from lerobot.cameras import (
+    Camera,
+    opencv,  # noqa: F401
+)
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset
 from lerobot.envs import HILSerlRobotEnvConfig
+from lerobot.lerobot_types import EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
 from lerobot.model import RobotKinematics
+from lerobot.motors.motors_bus import MotorsBusBase
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     AddTeleopActionAsComplimentaryDataStep,
     AddTeleopEventsAsInfoStep,
     DataProcessorPipeline,
     DeviceProcessorStep,
-    EnvTransition,
     GripperPenaltyProcessorStep,
     GymHILAdapterProcessorStep,
     ImageCropResizeProcessorStep,
@@ -44,20 +49,18 @@ from lerobot.processor import (
     Numpy2TorchActionProcessorStep,
     RewardClassifierProcessorStep,
     RobotActionToPolicyActionProcessorStep,
-    RobotObservation,
     TimeLimitProcessorStep,
     Torch2NumpyActionProcessorStep,
-    TransitionKey,
     VanillaObservationProcessorStep,
     create_transition,
     identity_transition,
 )
+from lerobot.processor.hil_processor import HasTeleopEvents
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
     so_follower,
 )
-from lerobot.robots.robot import Robot
 from lerobot.robots.so_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
     EEReferenceAndDelta,
@@ -105,7 +108,31 @@ class GymManipulatorConfig:
     device: str = "cpu"
 
 
-def reset_follower_position(robot_arm: Robot, target_position: np.ndarray) -> None:
+class MotorBusRobot(Protocol):
+    """The `Robot` surface `RobotEnv` drives: a follower arm exposing its motor bus and cameras."""
+
+    @property
+    def bus(self) -> MotorsBusBase: ...
+
+    @property
+    def cameras(self) -> Mapping[str, Camera]: ...
+
+    @property
+    def is_connected(self) -> bool: ...
+
+    def connect(self, calibrate: bool = True) -> None: ...
+
+    def get_observation(self) -> RobotObservation: ...
+
+    def send_action(self, action: RobotAction) -> RobotAction: ...
+
+    def disconnect(self) -> None: ...
+
+
+EnvInfo = dict[str | TeleopEvents, Any]
+
+
+def reset_follower_position(robot_arm: MotorBusRobot, target_position: np.ndarray) -> None:
     """Reset robot arm to target position using smooth trajectory."""
     current_position_dict = robot_arm.bus.sync_read("Present_Position")
     current_position = np.array(
@@ -125,7 +152,7 @@ class RobotEnv(gym.Env):
 
     def __init__(
         self,
-        robot,
+        robot: MotorBusRobot,
         use_gripper: bool = False,
         display_cameras: bool = False,
         reset_pose: list[float] | None = None,
@@ -162,7 +189,7 @@ class RobotEnv(gym.Env):
         self.use_gripper = use_gripper
 
         self._joint_names = list(self.robot.bus.motors.keys())
-        self._raw_joint_positions = None
+        self._raw_joint_positions: dict[str, float] | None = None
 
         self._setup_spaces()
 
@@ -223,7 +250,7 @@ class RobotEnv(gym.Env):
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
-    ) -> tuple[RobotObservation, dict[str, Any]]:
+    ) -> tuple[RobotObservation, EnvInfo]:
         """Reset environment to initial state.
 
         Args:
@@ -252,7 +279,7 @@ class RobotEnv(gym.Env):
         self._raw_joint_positions = {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names}
         return obs, {TeleopEvents.IS_INTERVENTION: False}
 
-    def step(self, action) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
+    def step(self, action: PolicyAction) -> tuple[RobotObservation, float, bool, bool, EnvInfo]:
         """Execute one environment step with given action."""
         joint_targets_dict = {f"{key}.pos": action[i] for i, key in enumerate(self.robot.bus.motors.keys())}
 
@@ -296,12 +323,12 @@ class RobotEnv(gym.Env):
         if self.robot.is_connected:
             self.robot.disconnect()
 
-    def get_raw_joint_positions(self) -> dict[str, float]:
-        """Get raw joint positions."""
+    def get_raw_joint_positions(self) -> dict[str, float] | None:
+        """Get raw joint positions (`None` until the first `reset`)."""
         return self._raw_joint_positions
 
 
-def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
+def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Teleoperator | None]:
     """Create robot environment from configuration.
 
     Args:
@@ -334,7 +361,7 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
     assert cfg.robot is not None, "Robot config must be provided for real robot environment"
     assert cfg.teleop is not None, "Teleop config must be provided for real robot environment"
 
-    robot = make_robot_from_config(cfg.robot)
+    robot = cast(MotorBusRobot, make_robot_from_config(cfg.robot))
     teleop_device = make_teleoperator_from_config(cfg.teleop)
     teleop_device.connect()
 
@@ -411,11 +438,17 @@ def make_processors(
     motor_names = list(env.robot.bus.motors.keys())
 
     # Set up kinematics solver if inverse kinematics is configured
-    kinematics_solver = None
-    if cfg.processor.inverse_kinematics is not None:
+    kinematics_solver: RobotKinematics | None = None
+    inverse_kinematics = cfg.processor.inverse_kinematics
+    if inverse_kinematics is not None:
+        if inverse_kinematics.urdf_path is None or inverse_kinematics.target_frame_name is None:
+            raise ValueError(
+                "`inverse_kinematics.urdf_path` and `inverse_kinematics.target_frame_name` must be set "
+                "to build the kinematics solver"
+            )
         kinematics_solver = RobotKinematics(
-            urdf_path=cfg.processor.inverse_kinematics.urdf_path,
-            target_frame_name=cfg.processor.inverse_kinematics.target_frame_name,
+            urdf_path=inverse_kinematics.urdf_path,
+            target_frame_name=inverse_kinematics.target_frame_name,
             joint_names=motor_names,
         )
 
@@ -483,6 +516,14 @@ def make_processors(
     env_pipeline_steps.append(AddBatchDimensionProcessorStep())
     env_pipeline_steps.append(DeviceProcessorStep(device=device))
 
+    if teleop_device is None:
+        raise ValueError("A teleoperator is required to build the action processors of the real robot env")
+    if not isinstance(teleop_device, HasTeleopEvents):
+        raise ValueError(
+            f"Teleoperator {type(teleop_device).__name__} does not provide teleop events "
+            "(get_teleop_events), which the real robot env action processors require"
+        )
+
     action_pipeline_steps = [
         AddTeleopActionAsComplimentaryDataStep(teleop_device=teleop_device),
         AddTeleopEventsAsInfoStep(teleop_device=teleop_device),
@@ -493,7 +534,17 @@ def make_processors(
     ]
 
     # Replace InverseKinematicsProcessor with new kinematic processors
-    if cfg.processor.inverse_kinematics is not None and kinematics_solver is not None:
+    if inverse_kinematics is not None and kinematics_solver is not None:
+        if (
+            inverse_kinematics.end_effector_step_sizes is None
+            or inverse_kinematics.end_effector_bounds is None
+        ):
+            raise ValueError(
+                "`inverse_kinematics.end_effector_step_sizes` and `inverse_kinematics.end_effector_bounds` "
+                "must be set to build the end-effector action processors"
+            )
+        if cfg.processor.max_gripper_pos is None:
+            raise ValueError("`max_gripper_pos` must be set when inverse kinematics is configured")
         # Add EE bounds and safety processor
         inverse_kinematics_steps = [
             MapTensorToDeltaActionDictStep(
@@ -502,13 +553,13 @@ def make_processors(
             MapDeltaActionToRobotActionStep(),
             EEReferenceAndDelta(
                 kinematics=kinematics_solver,
-                end_effector_step_sizes=cfg.processor.inverse_kinematics.end_effector_step_sizes,
+                end_effector_step_sizes=inverse_kinematics.end_effector_step_sizes,
                 motor_names=motor_names,
                 use_latched_reference=False,
                 use_ik_solution=True,
             ),
             EEBoundsAndSafety(
-                end_effector_bounds=cfg.processor.inverse_kinematics.end_effector_bounds,
+                end_effector_bounds=inverse_kinematics.end_effector_bounds,
             ),
             GripperVelocityToJoint(
                 clip_max=cfg.processor.max_gripper_pos,
@@ -561,9 +612,9 @@ def step_env_and_process_transition(
     obs, reward, terminated, truncated, info = env.step(processed_action)
 
     reward = reward + processed_action_transition[TransitionKey.REWARD]
-    terminated = terminated or processed_action_transition[TransitionKey.DONE]
-    truncated = truncated or processed_action_transition[TransitionKey.TRUNCATED]
-    complementary_data = processed_action_transition[TransitionKey.COMPLEMENTARY_DATA].copy()
+    terminated = bool(terminated or processed_action_transition[TransitionKey.DONE])
+    truncated = bool(truncated or processed_action_transition[TransitionKey.TRUNCATED])
+    complementary_data = (processed_action_transition[TransitionKey.COMPLEMENTARY_DATA] or {}).copy()
 
     if hasattr(env, "get_raw_joint_positions"):
         raw_joint_positions = env.get_raw_joint_positions()
@@ -572,7 +623,7 @@ def step_env_and_process_transition(
 
     # Merge env and action-processor info: env wins for str keys, action-processor
     # wins for `TeleopEvents` enum keys
-    action_info = processed_action_transition[TransitionKey.INFO]
+    action_info = processed_action_transition[TransitionKey.INFO] or {}
     new_info = info.copy()
     for key, value in action_info.items():
         if isinstance(key, TeleopEvents):
@@ -614,7 +665,7 @@ def control_loop(
     env: gym.Env,
     env_processor: DataProcessorPipeline[EnvTransition, EnvTransition],
     action_processor: DataProcessorPipeline[EnvTransition, EnvTransition],
-    teleop_device: Teleoperator,
+    teleop_device: Teleoperator | None,
     cfg: GymManipulatorConfig,
 ) -> None:
     """Main control loop for robot environment interaction.
@@ -662,7 +713,10 @@ def control_loop(
                 "names": ["discrete_penalty"],
             }
 
-        for key, value in transition[TransitionKey.OBSERVATION].items():
+        first_observation = transition[TransitionKey.OBSERVATION]
+        if first_observation is None:
+            raise ValueError("Expected an observation in the reset transition, got None")
+        for key, value in first_observation.items():
             if key == OBS_STATE:
                 features[key] = {
                     "dtype": "float32",
@@ -700,10 +754,11 @@ def control_loop(
             if use_gripper:
                 neutral_action = torch.cat([neutral_action, torch.tensor([1.0])])  # Gripper stay
 
+            raw_observation = transition[TransitionKey.OBSERVATION]
+            if raw_observation is None:
+                raise ValueError("Expected an observation in the transition, got None")
             observation = {
-                k: v.squeeze(0).cpu()
-                for k, v in transition[TransitionKey.OBSERVATION].items()
-                if isinstance(v, torch.Tensor)
+                k: v.squeeze(0).cpu() for k, v in raw_observation.items() if isinstance(v, torch.Tensor)
             }
 
             transition = step_env_and_process_transition(
@@ -717,9 +772,12 @@ def control_loop(
             truncated = transition.get(TransitionKey.TRUNCATED, False)
 
             if cfg.mode == "record":
-                action_to_record = transition[TransitionKey.COMPLEMENTARY_DATA].get(
-                    "teleop_action", transition[TransitionKey.ACTION]
-                )
+                complementary_data = transition[TransitionKey.COMPLEMENTARY_DATA] or {}
+                action_to_record = complementary_data.get("teleop_action", transition[TransitionKey.ACTION])
+                if not isinstance(action_to_record, torch.Tensor):
+                    raise ValueError(
+                        f"Action to record should be a PolicyAction type got {type(action_to_record)}"
+                    )
                 frame = {
                     **observation,
                     ACTION: action_to_record.cpu(),
@@ -727,9 +785,7 @@ def control_loop(
                     DONE: np.array([terminated or truncated], dtype=bool),
                 }
                 if use_gripper:
-                    discrete_penalty = transition[TransitionKey.COMPLEMENTARY_DATA].get(
-                        "discrete_penalty", 0.0
-                    )
+                    discrete_penalty = complementary_data.get("discrete_penalty", 0.0)
                     frame["complementary_info.discrete_penalty"] = np.array(
                         [discrete_penalty], dtype=np.float32
                     )
@@ -750,7 +806,8 @@ def control_loop(
                 episode_idx += 1
 
                 if dataset is not None:
-                    if transition[TransitionKey.INFO].get(TeleopEvents.RERECORD_EPISODE, False):
+                    info = cast(EnvInfo, transition[TransitionKey.INFO] or {})
+                    if info.get(TeleopEvents.RERECORD_EPISODE, False):
                         logging.info(f"Re-recording episode {episode_idx}")
                         dataset.clear_episode_buffer()
                         episode_idx -= 1
@@ -821,4 +878,4 @@ def main(cfg: GymManipulatorConfig) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main()  # type: ignore[call-arg]

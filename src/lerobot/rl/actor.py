@@ -51,13 +51,16 @@ import os
 import time
 from collections.abc import Generator
 from functools import lru_cache
+from multiprocessing import Process
 from queue import Empty
-from typing import TYPE_CHECKING, Any
+from threading import Thread
+from typing import TYPE_CHECKING, cast
 
 from lerobot.utils.import_utils import _grpc_available, require_package
 
 if TYPE_CHECKING or _grpc_available:
     import grpc
+    from google.protobuf.message import Message
 
     from lerobot.transport import services_pb2, services_pb2_grpc
     from lerobot.transport.utils import (
@@ -68,10 +71,18 @@ if TYPE_CHECKING or _grpc_available:
         send_bytes_in_chunks,
         transitions_to_bytes,
     )
+
+    EmptyMessage = services_pb2.Empty  # type: ignore[attr-defined]
+    InteractionMessage = services_pb2.InteractionMessage  # type: ignore[attr-defined]
+    TransitionMessage = services_pb2.Transition  # type: ignore[attr-defined]
 else:
     grpc = None
+    Message = None
     services_pb2 = None
     services_pb2_grpc = None
+    EmptyMessage = None
+    InteractionMessage = None
+    TransitionMessage = None
     bytes_to_state_dict = None
     grpc_channel_options = None
     python_object_to_bytes = None
@@ -85,13 +96,13 @@ from torch.multiprocessing import Queue
 
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
+from lerobot.lerobot_types import EnvAction, PolicyAction, RobotAction, TransitionKey
 from lerobot.policies import make_policy, make_pre_post_processors
-from lerobot.processor import TransitionKey
 from lerobot.robots import so_follower  # noqa: F401
 from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.device_utils import get_safe_torch_device
-from lerobot.utils.process import ProcessSignalHandler, ensure_multiprocessing_start_method
+from lerobot.utils.process import ProcessSignalHandler, ShutdownEvent, ensure_multiprocessing_start_method
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.transition import (
@@ -106,42 +117,47 @@ from lerobot.utils.utils import (
 from .algorithms.base import RLAlgorithm
 from .algorithms.factory import make_algorithm
 from .gym_manipulator import (
+    EnvInfo,
     make_processors,
     make_robot_env,
     reset_and_build_transition,
     step_env_and_process_transition,
 )
 from .queue import get_last_item_from_queue
-from .train_rl import TrainRLServerPipelineConfig
+from .train_rl import (
+    TrainRLServerPipelineConfig,
+    get_gaussian_actor_config,
+    get_hilserl_env_config,
+    get_log_file,
+    require_not_none,
+)
 
 # Main entry point
 
 
 @parser.wrap()
-def actor_cli(cfg: TrainRLServerPipelineConfig):
+def actor_cli(cfg: TrainRLServerPipelineConfig) -> None:
     # Fail fast with a friendly error if the optional ``hilserl`` extra is missing.
     require_package("grpcio", extra="hilserl", import_name="grpc")
     cfg.validate()
+    policy_cfg = get_gaussian_actor_config(cfg)
     display_pid = False
     if not use_threads(cfg):
-        ensure_multiprocessing_start_method(cfg.policy.concurrency.multiprocessing_context)
+        ensure_multiprocessing_start_method(policy_cfg.concurrency.multiprocessing_context)
         display_pid = True
 
-    # Create logs directory to ensure it exists
-    log_dir = os.path.join(cfg.output_dir, "logs")
-    os.makedirs(log_dir, exist_ok=True)
-    log_file = os.path.join(log_dir, f"actor_{cfg.job_name}.log")
-
     # Initialize logging with explicit log file
+    log_file = get_log_file(cfg, f"actor_{cfg.job_name}")
     init_logging(log_file=log_file, display_pid=display_pid)
     logging.info(f"Actor logging initialized, writing to {log_file}")
 
     is_threaded = use_threads(cfg)
     shutdown_event = ProcessSignalHandler(is_threaded, display_pid=display_pid).shutdown_event
 
+    grpc_channel: grpc.Channel | None
     learner_client, grpc_channel = learner_service_client(
-        host=cfg.policy.actor_learner_config.learner_host,
-        port=cfg.policy.actor_learner_config.learner_port,
+        host=policy_cfg.actor_learner_config.learner_host,
+        port=policy_cfg.actor_learner_config.learner_port,
     )
 
     logging.info("[ACTOR] Establishing connection with Learner")
@@ -160,15 +176,7 @@ def actor_cli(cfg: TrainRLServerPipelineConfig):
     transitions_queue = Queue()
     interactions_queue = Queue()
 
-    concurrency_entity = None
-    if use_threads(cfg):
-        from threading import Thread
-
-        concurrency_entity = Thread
-    else:
-        from multiprocessing import Process
-
-        concurrency_entity = Process
+    concurrency_entity: type[Thread] | type[Process] = Thread if use_threads(cfg) else Process
 
     receive_policy_process = concurrency_entity(
         target=receive_policy,
@@ -229,11 +237,11 @@ def actor_cli(cfg: TrainRLServerPipelineConfig):
 
 def act_with_policy(
     cfg: TrainRLServerPipelineConfig,
-    shutdown_event: Any,  # Event
+    shutdown_event: ShutdownEvent,
     parameters_queue: Queue,
     transitions_queue: Queue,
     interactions_queue: Queue,
-):
+) -> None:
     """
     Executes policy interaction within the environment.
 
@@ -249,19 +257,19 @@ def act_with_policy(
     """
     # Initialize logging for multiprocessing
     if not use_threads(cfg):
-        log_dir = os.path.join(cfg.output_dir, "logs")
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, f"actor_policy_{os.getpid()}.log")
-        init_logging(log_file=log_file, display_pid=True)
+        init_logging(log_file=get_log_file(cfg, f"actor_policy_{os.getpid()}"), display_pid=True)
         logging.info("Actor policy process logging initialized")
+
+    policy_cfg = get_gaussian_actor_config(cfg)
+    env_cfg = get_hilserl_env_config(cfg)
 
     logging.info("make_env online")
 
-    online_env, teleop_device = make_robot_env(cfg=cfg.env)
-    env_processor, action_processor = make_processors(online_env, teleop_device, cfg.env, cfg.policy.device)
+    online_env, teleop_device = make_robot_env(cfg=env_cfg)
+    env_processor, action_processor = make_processors(online_env, teleop_device, env_cfg, policy_cfg.device)
 
     set_seed(cfg.seed)
-    device = get_safe_torch_device(cfg.policy.device, log=True)
+    device = get_safe_torch_device(policy_cfg.device, log=True)
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -272,25 +280,26 @@ def act_with_policy(
     ### To avoid sending a policy object through the port, we create a policy instance
     ### on both sides, the learner sends the updated parameters every n steps to update the actor's parameters
     policy = make_policy(
-        cfg=cfg.policy,
-        env_cfg=cfg.env,
+        cfg=policy_cfg,
+        env_cfg=env_cfg,
     )
     policy = policy.to(device).eval()
     assert isinstance(policy, nn.Module)
 
-    # Build the algorithm
-    algorithm = make_algorithm(cfg=cfg.algorithm, policy=policy)
+    # Build the algorithm (``cfg.validate()`` fills in the default algorithm config)
+    algorithm = make_algorithm(cfg=require_not_none(cfg.algorithm, "algorithm"), policy=policy)
 
     preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=cfg.policy,
-        dataset_stats=cfg.policy.dataset_stats,
+        policy_cfg=policy_cfg,
+        dataset_stats=policy_cfg.dataset_stats,
     )
 
     transition = reset_and_build_transition(online_env, env_processor, action_processor)
+    input_features = require_not_none(policy_cfg.input_features, "policy.input_features")
 
     # NOTE: For the moment we will solely handle the case of a single environment
-    sum_reward_episode = 0
-    list_transition_to_send_to_learner = []
+    sum_reward_episode = 0.0
+    list_transition_to_send_to_learner: list[Transition] = []
     episode_intervention = False
     # Add counters for intervention rate calculation
     episode_intervention_steps = 0
@@ -298,29 +307,30 @@ def act_with_policy(
 
     policy_timer = TimerManager("Policy inference", log=False)
 
-    for interaction_step in range(cfg.policy.online_steps):
+    for interaction_step in range(policy_cfg.online_steps):
         start_time = time.perf_counter()
         if shutdown_event.is_set():
             logging.info("[ACTOR] Shutting down act_with_policy")
             return
 
-        observation = {
-            k: v for k, v in transition[TransitionKey.OBSERVATION].items() if k in cfg.policy.input_features
-        }
+        current_observation = require_not_none(
+            transition[TransitionKey.OBSERVATION], "transition observation"
+        )
+        observation = {k: v for k, v in current_observation.items() if k in input_features}
 
         # Time policy inference and check if it meets FPS requirement
         with policy_timer:
             normalized_observation = preprocessor.process_observation(observation)
             action = policy.select_action(batch=normalized_observation)
             # Unnormalize only the continuous part.
-            if cfg.policy.num_discrete_actions is not None:
-                continuous_action = postprocessor.process_action(action[..., :-1])
+            if policy_cfg.num_discrete_actions is not None:
+                continuous_action = _as_policy_action(postprocessor.process_action(action[..., :-1]))
                 discrete_action = action[..., -1:].to(
                     device=continuous_action.device, dtype=continuous_action.dtype
                 )
                 action = torch.cat([continuous_action, discrete_action], dim=-1)
             else:
-                action = postprocessor.process_action(action)
+                action = _as_policy_action(postprocessor.process_action(action))
         policy_fps = policy_timer.fps_last
 
         log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
@@ -335,34 +345,36 @@ def act_with_policy(
         )
 
         # Extract values from processed transition
-        next_observation = {
-            k: v
-            for k, v in new_transition[TransitionKey.OBSERVATION].items()
-            if k in cfg.policy.input_features
-        }
+        new_observation = require_not_none(
+            new_transition[TransitionKey.OBSERVATION], "transition observation"
+        )
+        next_observation = {k: v for k, v in new_observation.items() if k in input_features}
 
         # Teleop action is the action that was executed in the environment
         # It is either the action from the teleop device or the action from the policy
-        executed_action = new_transition[TransitionKey.COMPLEMENTARY_DATA]["teleop_action"]
+        complementary_data = require_not_none(
+            new_transition[TransitionKey.COMPLEMENTARY_DATA], "transition complementary_data"
+        )
+        executed_action = complementary_data["teleop_action"]
 
-        reward = new_transition[TransitionKey.REWARD]
-        done = new_transition.get(TransitionKey.DONE, False)
-        truncated = new_transition.get(TransitionKey.TRUNCATED, False)
+        reward = float(require_not_none(new_transition[TransitionKey.REWARD], "transition reward"))
+        done = bool(new_transition.get(TransitionKey.DONE, False))
+        truncated = bool(new_transition.get(TransitionKey.TRUNCATED, False))
 
-        sum_reward_episode += float(reward)
+        sum_reward_episode += reward
         episode_total_steps += 1
 
         # Check for intervention from transition info
-        intervention_info = new_transition[TransitionKey.INFO]
+        intervention_info = cast(
+            EnvInfo, require_not_none(new_transition[TransitionKey.INFO], "transition info")
+        )
         is_intervention = bool(intervention_info.get(TeleopEvents.IS_INTERVENTION, False))
         if is_intervention:
             episode_intervention = True
             episode_intervention_steps += 1
 
-        complementary_info = {
-            "discrete_penalty": torch.tensor(
-                [new_transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)]
-            ),
+        complementary_info: dict[str, torch.Tensor | float | int] = {
+            "discrete_penalty": torch.tensor([complementary_data.get("discrete_penalty", 0.0)]),
             TeleopEvents.IS_INTERVENTION.value: is_intervention,
         }
         # Create transition for learner (convert to old format)
@@ -422,9 +434,9 @@ def act_with_policy(
 
             transition = reset_and_build_transition(online_env, env_processor, action_processor)
 
-        if cfg.env.fps is not None:
+        if env_cfg.fps is not None:
             dt_time = time.perf_counter() - start_time
-            precise_sleep(max(1 / cfg.env.fps - dt_time, 0.0))
+            precise_sleep(max(1 / env_cfg.fps - dt_time, 0.0))
 
 
 #  Communication Functions - Group all gRPC/messaging functions
@@ -432,7 +444,7 @@ def act_with_policy(
 
 def establish_learner_connection(
     stub: "services_pb2_grpc.LearnerServiceStub",
-    shutdown_event: Any,  # Event
+    shutdown_event: ShutdownEvent,
     attempts: int = 30,
 ) -> bool:
     """Establish a connection with the learner.
@@ -452,7 +464,7 @@ def establish_learner_connection(
         # Force a connection attempt and check state
         try:
             logging.info("[ACTOR] Send ready message to Learner")
-            if stub.Ready(services_pb2.Empty()) == services_pb2.Empty():
+            if stub.Ready(EmptyMessage()) == EmptyMessage():
                 return True
         except grpc.RpcError as e:
             logging.error(f"[ACTOR] Waiting for Learner to be ready... {e}")
@@ -486,7 +498,7 @@ def learner_service_client(
 def receive_policy(
     cfg: TrainRLServerPipelineConfig,
     parameters_queue: Queue,
-    shutdown_event: Any,  # Event
+    shutdown_event: ShutdownEvent,
     learner_client: "services_pb2_grpc.LearnerServiceStub | None" = None,
     grpc_channel: "grpc.Channel | None" = None,
 ) -> None:
@@ -501,13 +513,8 @@ def receive_policy(
     """
     logging.info("[ACTOR] Start receiving parameters from the Learner")
     if not use_threads(cfg):
-        # Create a process-specific log file
-        log_dir = os.path.join(cfg.output_dir, "logs")
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, f"actor_receive_policy_{os.getpid()}.log")
-
-        # Initialize logging with explicit log file
-        init_logging(log_file=log_file, display_pid=True)
+        # Initialize logging with a process-specific log file
+        init_logging(log_file=get_log_file(cfg, f"actor_receive_policy_{os.getpid()}"), display_pid=True)
         logging.info("Actor receive policy process logging initialized")
 
         # Setup process handlers to handle shutdown signal
@@ -515,13 +522,14 @@ def receive_policy(
         _ = ProcessSignalHandler(use_threads=False, display_pid=True)
 
     if grpc_channel is None or learner_client is None:
+        actor_learner_cfg = get_gaussian_actor_config(cfg).actor_learner_config
         learner_client, grpc_channel = learner_service_client(
-            host=cfg.policy.actor_learner_config.learner_host,
-            port=cfg.policy.actor_learner_config.learner_port,
+            host=actor_learner_cfg.learner_host,
+            port=actor_learner_cfg.learner_port,
         )
 
     try:
-        iterator = learner_client.StreamParameters(services_pb2.Empty())
+        iterator = learner_client.StreamParameters(EmptyMessage())
         receive_bytes_in_chunks(
             iterator,
             parameters_queue,
@@ -540,7 +548,7 @@ def receive_policy(
 def send_transitions(
     cfg: TrainRLServerPipelineConfig,
     transitions_queue: Queue,
-    shutdown_event: Any,  # Event
+    shutdown_event: ShutdownEvent,
     learner_client: "services_pb2_grpc.LearnerServiceStub | None" = None,
     grpc_channel: "grpc.Channel | None" = None,
 ) -> None:
@@ -562,26 +570,20 @@ def send_transitions(
     """
 
     if not use_threads(cfg):
-        # Create a process-specific log file
-        log_dir = os.path.join(cfg.output_dir, "logs")
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, f"actor_transitions_{os.getpid()}.log")
-
-        # Initialize logging with explicit log file
-        init_logging(log_file=log_file, display_pid=True)
+        # Initialize logging with a process-specific log file
+        init_logging(log_file=get_log_file(cfg, f"actor_transitions_{os.getpid()}"), display_pid=True)
         logging.info("Actor transitions process logging initialized")
 
+    actor_learner_cfg = get_gaussian_actor_config(cfg).actor_learner_config
     if grpc_channel is None or learner_client is None:
         learner_client, grpc_channel = learner_service_client(
-            host=cfg.policy.actor_learner_config.learner_host,
-            port=cfg.policy.actor_learner_config.learner_port,
+            host=actor_learner_cfg.learner_host,
+            port=actor_learner_cfg.learner_port,
         )
 
     try:
         learner_client.SendTransitions(
-            transitions_stream(
-                shutdown_event, transitions_queue, cfg.policy.actor_learner_config.queue_get_timeout
-            )
+            transitions_stream(shutdown_event, transitions_queue, actor_learner_cfg.queue_get_timeout)
         )
     except grpc.RpcError as e:
         logging.error(f"[ACTOR] gRPC error: {e}")
@@ -596,7 +598,7 @@ def send_transitions(
 def send_interactions(
     cfg: TrainRLServerPipelineConfig,
     interactions_queue: Queue,
-    shutdown_event: Any,  # Event
+    shutdown_event: ShutdownEvent,
     learner_client: "services_pb2_grpc.LearnerServiceStub | None" = None,
     grpc_channel: "grpc.Channel | None" = None,
 ) -> None:
@@ -617,30 +619,24 @@ def send_interactions(
     """
 
     if not use_threads(cfg):
-        # Create a process-specific log file
-        log_dir = os.path.join(cfg.output_dir, "logs")
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, f"actor_interactions_{os.getpid()}.log")
-
-        # Initialize logging with explicit log file
-        init_logging(log_file=log_file, display_pid=True)
+        # Initialize logging with a process-specific log file
+        init_logging(log_file=get_log_file(cfg, f"actor_interactions_{os.getpid()}"), display_pid=True)
         logging.info("Actor interactions process logging initialized")
 
         # Setup process handlers to handle shutdown signal
         # But use shutdown event from the main process
         _ = ProcessSignalHandler(use_threads=False, display_pid=True)
 
+    actor_learner_cfg = get_gaussian_actor_config(cfg).actor_learner_config
     if grpc_channel is None or learner_client is None:
         learner_client, grpc_channel = learner_service_client(
-            host=cfg.policy.actor_learner_config.learner_host,
-            port=cfg.policy.actor_learner_config.learner_port,
+            host=actor_learner_cfg.learner_host,
+            port=actor_learner_cfg.learner_port,
         )
 
     try:
         learner_client.SendInteractions(
-            interactions_stream(
-                shutdown_event, interactions_queue, cfg.policy.actor_learner_config.queue_get_timeout
-            )
+            interactions_stream(shutdown_event, interactions_queue, actor_learner_cfg.queue_get_timeout)
         )
     except grpc.RpcError as e:
         logging.error(f"[ACTOR] gRPC error: {e}")
@@ -653,10 +649,10 @@ def send_interactions(
 
 
 def transitions_stream(
-    shutdown_event: Any,  # Event
+    shutdown_event: ShutdownEvent,
     transitions_queue: Queue,
     timeout: float,
-) -> "Generator[Any, None, services_pb2.Empty]":
+) -> "Generator[Message, None, Message]":
     while not shutdown_event.is_set():
         try:
             message = transitions_queue.get(block=True, timeout=timeout)
@@ -664,18 +660,16 @@ def transitions_stream(
             logging.debug("[ACTOR] Transition queue is empty")
             continue
 
-        yield from send_bytes_in_chunks(
-            message, services_pb2.Transition, log_prefix="[ACTOR] Send transitions"
-        )
+        yield from send_bytes_in_chunks(message, TransitionMessage, log_prefix="[ACTOR] Send transitions")
 
-    return services_pb2.Empty()
+    return EmptyMessage()
 
 
 def interactions_stream(
-    shutdown_event: Any,  # Event
+    shutdown_event: ShutdownEvent,
     interactions_queue: Queue,
     timeout: float,
-) -> "Generator[Any, None, services_pb2.Empty]":
+) -> "Generator[Message, None, Message]":
     while not shutdown_event.is_set():
         try:
             message = interactions_queue.get(block=True, timeout=timeout)
@@ -683,19 +677,15 @@ def interactions_stream(
             logging.debug("[ACTOR] Interaction queue is empty")
             continue
 
-        yield from send_bytes_in_chunks(
-            message,
-            services_pb2.InteractionMessage,
-            log_prefix="[ACTOR] Send interactions",
-        )
+        yield from send_bytes_in_chunks(message, InteractionMessage, log_prefix="[ACTOR] Send interactions")
 
-    return services_pb2.Empty()
+    return EmptyMessage()
 
 
 #  Policy functions
 
 
-def update_policy_parameters(algorithm: RLAlgorithm, parameters_queue: Queue, device):
+def update_policy_parameters(algorithm: RLAlgorithm, parameters_queue: Queue, device: torch.device) -> None:
     """Drain the latest learner-pushed weights into ``algorithm.policy``."""
     bytes_state_dict = get_last_item_from_queue(parameters_queue, block=False)
     if bytes_state_dict is not None:
@@ -717,7 +707,7 @@ def update_policy_parameters(algorithm: RLAlgorithm, parameters_queue: Queue, de
 #  Utilities functions
 
 
-def push_transitions_to_transport_queue(transitions: list, transitions_queue):
+def push_transitions_to_transport_queue(transitions: list[Transition], transitions_queue: Queue) -> None:
     """Send transitions to learner in smaller chunks to avoid network issues.
 
     Args:
@@ -725,7 +715,7 @@ def push_transitions_to_transport_queue(transitions: list, transitions_queue):
         message_queue: Queue to send messages to learner
         chunk_size: Size of each chunk to send
     """
-    transition_to_send_to_learner = []
+    transition_to_send_to_learner: list[Transition] = []
     for transition in transitions:
         tr = move_transition_to_device(transition=transition, device="cpu")
         for key, value in tr["state"].items():
@@ -759,16 +749,26 @@ def get_frequency_stats(timer: TimerManager) -> dict[str, float]:
     return stats
 
 
-def log_policy_frequency_issue(policy_fps: float, cfg: TrainRLServerPipelineConfig, interaction_step: int):
-    if policy_fps < cfg.env.fps:
+def log_policy_frequency_issue(
+    policy_fps: float, cfg: TrainRLServerPipelineConfig, interaction_step: int
+) -> None:
+    required_fps = require_not_none(cfg.env, "cfg.env").fps
+    if policy_fps < required_fps:
         logging.warning(
-            f"[ACTOR] Policy FPS {policy_fps:.1f} below required {cfg.env.fps} at step {interaction_step}"
+            f"[ACTOR] Policy FPS {policy_fps:.1f} below required {required_fps} at step {interaction_step}"
         )
 
 
 def use_threads(cfg: TrainRLServerPipelineConfig) -> bool:
-    return cfg.policy.concurrency.actor == "threads"
+    return get_gaussian_actor_config(cfg).concurrency.actor == "threads"
+
+
+def _as_policy_action(action: PolicyAction | RobotAction | EnvAction) -> PolicyAction:
+    """Return the post-processed action as a tensor, rejecting any other action type."""
+    if not isinstance(action, torch.Tensor):
+        raise TypeError(f"post-processor must return a tensor action, got {type(action).__name__}")
+    return action
 
 
 if __name__ == "__main__":
-    actor_cli()
+    actor_cli()  # type: ignore[call-arg]

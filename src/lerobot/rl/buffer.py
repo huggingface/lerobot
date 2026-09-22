@@ -16,8 +16,9 @@
 
 import functools
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import suppress
+from pathlib import Path
 from typing import NotRequired, TypedDict
 
 import torch
@@ -82,13 +83,13 @@ class ReplayBuffer:
     def __init__(
         self,
         capacity: int,
-        device: str = "cuda:0",
+        device: str | torch.device = "cuda:0",
         state_keys: Sequence[str] | None = None,
-        image_augmentation_function: Callable | None = None,
+        image_augmentation_function: Callable[[torch.Tensor], torch.Tensor] | None = None,
         use_drq: bool = True,
-        storage_device: str = "cpu",
+        storage_device: str | torch.device = "cpu",
         optimize_memory: bool = False,
-    ):
+    ) -> None:
         """
         Replay buffer for storing transitions.
         It will allocate tensors on the specified device, when the first transition is added.
@@ -96,7 +97,8 @@ class ReplayBuffer:
         and use the `storage_device` flag to store the buffer on a different device.
         Args:
             capacity (int): Maximum number of transitions to store in the buffer.
-            device (str): The device where the tensors will be moved when sampling ("cuda:0" or "cpu").
+            device (str | torch.device): The device where the tensors will be moved when sampling
+                ("cuda:0" or "cpu").
             state_keys (list[str]): The list of keys that appear in `state` and `next_state`.
             image_augmentation_function (Callable | None): A function that takes a batch of images
                 and returns a batch of augmented images. If None, a default augmentation function is used.
@@ -124,19 +126,20 @@ class ReplayBuffer:
         # If no state_keys provided, default to an empty list
         self.state_keys = state_keys if state_keys is not None else []
 
-        self.image_augmentation_function = image_augmentation_function
-
+        self.image_augmentation_function: Callable[[torch.Tensor], torch.Tensor]
         if image_augmentation_function is None:
             base_function = functools.partial(random_shift, pad=4)
             self.image_augmentation_function = torch.compile(base_function)
+        else:
+            self.image_augmentation_function = image_augmentation_function
         self.use_drq = use_drq
 
     def _initialize_storage(
         self,
         state: dict[str, torch.Tensor],
         action: torch.Tensor,
-        complementary_info: dict[str, torch.Tensor] | None = None,
-    ):
+        complementary_info: dict[str, torch.Tensor | float | int] | None = None,
+    ) -> None:
         """Initialize the storage tensors based on the first transition."""
         # Determine shapes from the first transition
         state_shapes = {key: val.squeeze(0).shape for key, val in state.items()}
@@ -166,10 +169,10 @@ class ReplayBuffer:
 
         # Initialize storage for complementary_info
         self.has_complementary_info = complementary_info is not None
-        self.complementary_info_keys = []
-        self.complementary_info = {}
+        self.complementary_info_keys: list[str] = []
+        self.complementary_info: dict[str, torch.Tensor] = {}
 
-        if self.has_complementary_info:
+        if complementary_info is not None:
             self.complementary_info_keys = list(complementary_info.keys())
             # Pre-allocate tensors for each key in complementary_info
             for key, value in complementary_info.items():
@@ -197,8 +200,8 @@ class ReplayBuffer:
         next_state: dict[str, torch.Tensor],
         done: bool,
         truncated: bool,
-        complementary_info: dict[str, torch.Tensor] | None = None,
-    ):
+        complementary_info: dict[str, torch.Tensor | float | int] | None = None,
+    ) -> None:
         """Saves a transition, ensuring tensors are stored on the designated storage device."""
         with self._lock:
             # Initialize storage if this is the first transition
@@ -382,7 +385,7 @@ class ReplayBuffer:
             # Give the producer thread a bit of time to finish.
             producer_thread.join(timeout=1.0)
 
-    def _get_naive_iterator(self, batch_size: int, queue_size: int = 2):
+    def _get_naive_iterator(self, batch_size: int, queue_size: int = 2) -> Iterator[BatchTransition]:
         """
         Creates a simple non-threaded iterator that yields batches.
 
@@ -395,9 +398,9 @@ class ReplayBuffer:
         """
         import collections
 
-        queue = collections.deque()
+        queue: collections.deque[BatchTransition] = collections.deque()
 
-        def enqueue(n):
+        def enqueue(n: int) -> None:
             for _ in range(n):
                 data = self.sample(batch_size)
                 queue.append(data)
@@ -411,12 +414,12 @@ class ReplayBuffer:
     def from_lerobot_dataset(
         cls,
         lerobot_dataset: LeRobotDataset,
-        device: str = "cuda:0",
+        device: str | torch.device = "cuda:0",
         state_keys: Sequence[str] | None = None,
         capacity: int | None = None,
-        image_augmentation_function: Callable | None = None,
+        image_augmentation_function: Callable[[torch.Tensor], torch.Tensor] | None = None,
         use_drq: bool = True,
-        storage_device: str = "cpu",
+        storage_device: str | torch.device = "cpu",
         optimize_memory: bool = False,
     ) -> "ReplayBuffer":
         """
@@ -424,14 +427,14 @@ class ReplayBuffer:
 
         Args:
             lerobot_dataset (LeRobotDataset): The dataset to convert.
-            device (str): The device for sampling tensors. Defaults to "cuda:0".
+            device (str | torch.device): The device for sampling tensors. Defaults to "cuda:0".
             state_keys (Sequence[str] | None): The list of keys that appear in `state` and `next_state`.
             capacity (int | None): Buffer capacity. If None, uses dataset length.
             action_mask (Sequence[int] | None): Indices of action dimensions to keep.
             image_augmentation_function (Callable | None): Function for image augmentation.
                 If None, uses default random shift with pad=4.
             use_drq (bool): Whether to use DrQ image augmentation when sampling.
-            storage_device (str): Device for storing tensor data. Using "cpu" saves GPU memory.
+            storage_device (str | torch.device): Device for storing tensor data. Using "cpu" saves GPU memory.
             optimize_memory (bool): If True, reduces memory usage by not duplicating state data.
 
         Returns:
@@ -466,33 +469,34 @@ class ReplayBuffer:
             first_action = first_transition[ACTION].to(device)
 
             # Get complementary info if available
-            first_complementary_info = None
-            if (
-                "complementary_info" in first_transition
-                and first_transition["complementary_info"] is not None
-            ):
+            first_complementary_info: dict[str, torch.Tensor | float | int] | None = None
+            complementary_info = first_transition.get("complementary_info")
+            if complementary_info is not None:
                 first_complementary_info = {
-                    k: v.to(device) for k, v in first_transition["complementary_info"].items()
+                    k: v.to(device) if isinstance(v, torch.Tensor) else v
+                    for k, v in complementary_info.items()
                 }
 
             replay_buffer._initialize_storage(
                 state=first_state, action=first_action, complementary_info=first_complementary_info
             )
 
-        # Fill the buffer with all transitions
+        # Fill the buffer with all transitions, moving every tensor to the storage device first
         for data in list_transition:
-            for k, v in data.items():
-                if isinstance(v, dict):
-                    for key, tensor in v.items():
-                        v[key] = tensor.to(storage_device)
-                elif isinstance(v, torch.Tensor):
-                    data[k] = v.to(storage_device)
-
-            action = data[ACTION]
+            for key, tensor in data["state"].items():
+                data["state"][key] = tensor.to(storage_device)
+            for key, tensor in data["next_state"].items():
+                data["next_state"][key] = tensor.to(storage_device)
+            data[ACTION] = data[ACTION].to(storage_device)
+            complementary_info = data.get("complementary_info")
+            if complementary_info is not None:
+                for key, value in complementary_info.items():
+                    if isinstance(value, torch.Tensor):
+                        complementary_info[key] = value.to(storage_device)
 
             replay_buffer.add(
                 state=data["state"],
-                action=action,
+                action=data[ACTION],
                 reward=data["reward"],
                 next_state=data["next_state"],
                 done=data["done"],
@@ -505,9 +509,9 @@ class ReplayBuffer:
     def to_lerobot_dataset(
         self,
         repo_id: str,
-        fps=1,
-        root=None,
-        task_name="from_replay_buffer",
+        fps: int = 1,
+        root: str | Path | None = None,
+        task_name: str = "from_replay_buffer",
     ) -> LeRobotDataset:
         """
         Converts all transitions in this ReplayBuffer into a single LeRobotDataset object.
@@ -559,7 +563,10 @@ class ReplayBuffer:
         )
 
         # Start writing images if needed
-        lerobot_dataset.writer.start_image_writer(num_processes=0, num_threads=3)
+        writer = lerobot_dataset.writer
+        if writer is None:
+            raise RuntimeError("LeRobotDataset.create() returned a dataset without a writer.")
+        writer.start_image_writer(num_processes=0, num_threads=3)
 
         # Convert transitions into episodes and frames
 
@@ -602,7 +609,7 @@ class ReplayBuffer:
         if lerobot_dataset.has_pending_frames():
             lerobot_dataset.save_episode()
 
-        lerobot_dataset.writer.stop_image_writer()
+        writer.stop_image_writer()
         lerobot_dataset.finalize()
 
         return lerobot_dataset

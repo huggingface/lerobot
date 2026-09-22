@@ -671,9 +671,9 @@ ignore_errors = false
 # module = "lerobot.policies.*"
 # ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.rl.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.rl.*"
+ignore_errors = false
 
 
 [[tool.mypy.overrides]]

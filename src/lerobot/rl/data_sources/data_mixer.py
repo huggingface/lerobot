@@ -16,16 +16,14 @@ from __future__ import annotations
 
 import abc
 
-from lerobot.lerobot_types import BatchType
-
-from ..buffer import ReplayBuffer, concatenate_batch_transitions
+from ..buffer import BatchTransition, ReplayBuffer, concatenate_batch_transitions
 
 
 class DataMixer(abc.ABC):
     """Abstract interface for all data mixing strategies."""
 
     @abc.abstractmethod
-    def sample(self, batch_size: int) -> BatchType:
+    def sample(self, batch_size: int) -> BatchTransition:
         """Draw one batch of ``batch_size`` transitions."""
         raise NotImplementedError
 
@@ -55,7 +53,7 @@ class OnlineOfflineMixer(DataMixer):
         self.offline_buffer = offline_buffer
         self.online_ratio = online_ratio
 
-    def sample(self, batch_size: int) -> BatchType:
+    def sample(self, batch_size: int) -> BatchTransition:
         if self.offline_buffer is None:
             return self.online_buffer.sample(batch_size)
 

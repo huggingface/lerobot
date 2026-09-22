@@ -21,8 +21,8 @@ from pathlib import Path
 
 import cv2
 import torch
-import torchvision.transforms.functional as F  # type: ignore  # noqa: N812
-from tqdm import tqdm  # type: ignore
+import torchvision.transforms.functional as F  # noqa: N812
+from tqdm import tqdm
 
 from lerobot.datasets import LeRobotDataset
 from lerobot.utils.constants import DONE, REWARD
@@ -148,12 +148,12 @@ def select_square_roi_for_images(images: dict) -> dict:
     return selected_rois
 
 
-def get_image_from_lerobot_dataset(dataset: LeRobotDataset):
+def get_image_from_lerobot_dataset(dataset: LeRobotDataset) -> dict[str, torch.Tensor]:
     """
     Find the first row in the dataset and extract the image in order to be used for the crop.
     """
     row = dataset[0]
-    image_dict = {}
+    image_dict: dict[str, torch.Tensor] = {}
     for k in row:
         if "image" in k:
             image_dict[k] = deepcopy(row[k])

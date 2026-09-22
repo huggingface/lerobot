@@ -82,8 +82,10 @@ from lerobot.common.train_utils import (
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset, make_dataset
+from lerobot.lerobot_types import PolicyAction
 from lerobot.optim import load_optimizer_state
 from lerobot.policies import make_policy, make_pre_post_processors
+from lerobot.processor import PolicyProcessorPipeline
 from lerobot.robots import so_follower  # noqa: F401
 from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
@@ -104,7 +106,7 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.io_utils import load_json, write_json
-from lerobot.utils.process import ProcessSignalHandler, ensure_multiprocessing_start_method
+from lerobot.utils.process import ProcessSignalHandler, ShutdownEvent, ensure_multiprocessing_start_method
 from lerobot.utils.random_utils import load_rng_state, set_seed
 from lerobot.utils.utils import (
     format_big_number,
@@ -116,16 +118,23 @@ from .algorithms.factory import make_algorithm
 from .buffer import ReplayBuffer
 from .data_sources import OnlineOfflineMixer
 from .learner_service import MAX_WORKERS, SHUTDOWN_TIMEOUT, LearnerService
-from .train_rl import TrainRLServerPipelineConfig
+from .train_rl import (
+    TrainRLServerPipelineConfig,
+    get_gaussian_actor_config,
+    get_log_file,
+    require_not_none,
+)
 from .trainer import RLTrainer
 
 
 @parser.wrap()
-def train_cli(cfg: TrainRLServerPipelineConfig):
+def train_cli(cfg: TrainRLServerPipelineConfig) -> None:
     # Fail fast with a friendly error if the optional ``hilserl`` extra is missing.
     require_package("grpcio", extra="hilserl", import_name="grpc")
     if not use_threads(cfg):
-        ensure_multiprocessing_start_method(cfg.policy.concurrency.multiprocessing_context)
+        ensure_multiprocessing_start_method(
+            get_gaussian_actor_config(cfg).concurrency.multiprocessing_context
+        )
 
     # Use the job_name from the config
     train(
@@ -136,7 +145,7 @@ def train_cli(cfg: TrainRLServerPipelineConfig):
     logging.info("[LEARNER] train_cli finished")
 
 
-def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
+def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None) -> None:
     """
     Main training function that initializes and runs the training process.
 
@@ -157,12 +166,8 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
     if not use_threads(cfg):
         display_pid = True
 
-    # Create logs directory to ensure it exists
-    log_dir = os.path.join(cfg.output_dir, "logs")
-    os.makedirs(log_dir, exist_ok=True)
-    log_file = os.path.join(log_dir, f"learner_{job_name}.log")
-
     # Initialize logging with explicit log file
+    log_file = get_log_file(cfg, f"learner_{job_name}")
     init_logging(log_file=log_file, display_pid=display_pid)
     logging.info(f"Learner logging initialized, writing to {log_file}")
     logging.info(pformat(cfg.to_dict()))
@@ -197,7 +202,7 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
 def start_learner_threads(
     cfg: TrainRLServerPipelineConfig,
     wandb_logger: WandBLogger | None,
-    shutdown_event: Any,  # Event
+    shutdown_event: ShutdownEvent,
 ) -> None:
     """
     Start the learner threads for training.
@@ -271,11 +276,11 @@ def start_learner_threads(
 def add_actor_information_and_train(
     cfg: TrainRLServerPipelineConfig,
     wandb_logger: WandBLogger | None,
-    shutdown_event: Any,  # Event
+    shutdown_event: ShutdownEvent,
     transition_queue: Queue,
     interaction_message_queue: Queue,
     parameters_queue: Queue,
-):
+) -> None:
     """
     Handles data transfer from the actor to the learner, manages training updates,
     and logs training progress in an online reinforcement learning setup.
@@ -302,40 +307,40 @@ def add_actor_information_and_train(
     """
     # Extract all configuration variables at the beginning, it improve the speed performance
     # of 7%
-    device = get_safe_torch_device(try_device=cfg.policy.device, log=True)
-    storage_device = get_safe_torch_device(try_device=cfg.policy.storage_device)
-    online_step_before_learning = cfg.policy.online_step_before_learning
-    fps = cfg.env.fps
+    policy_cfg = get_gaussian_actor_config(cfg)
+    env_cfg = require_not_none(cfg.env, "cfg.env")
+    device = get_safe_torch_device(try_device=policy_cfg.device, log=True)
+    storage_device = get_safe_torch_device(try_device=policy_cfg.storage_device)
+    online_step_before_learning = policy_cfg.online_step_before_learning
+    fps = env_cfg.fps
     log_freq = cfg.log_freq
     save_freq = cfg.save_freq
-    policy_parameters_push_frequency = cfg.policy.actor_learner_config.policy_parameters_push_frequency
+    policy_parameters_push_frequency = policy_cfg.actor_learner_config.policy_parameters_push_frequency
     saving_checkpoint = cfg.save_checkpoint
-    online_steps = cfg.policy.online_steps
+    online_steps = policy_cfg.online_steps
 
     # Initialize logging for multiprocessing
     if not use_threads(cfg):
-        log_dir = os.path.join(cfg.output_dir, "logs")
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, f"learner_train_process_{os.getpid()}.log")
-        init_logging(log_file=log_file, display_pid=True)
+        init_logging(log_file=get_log_file(cfg, f"learner_train_process_{os.getpid()}"), display_pid=True)
         logging.info("Initialized logging for actor information and training process")
 
     logging.info("Initializing policy")
 
     policy = make_policy(
-        cfg=cfg.policy,
-        env_cfg=cfg.env,
+        cfg=policy_cfg,
+        env_cfg=env_cfg,
     )
 
     assert isinstance(policy, nn.Module)
 
     policy.train()
 
-    algorithm = make_algorithm(cfg=cfg.algorithm, policy=policy)
+    # ``cfg.validate()`` fills in the default algorithm config.
+    algorithm = make_algorithm(cfg=require_not_none(cfg.algorithm, "cfg.algorithm"), policy=policy)
 
     preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=cfg.policy,
-        dataset_stats=cfg.policy.dataset_stats,
+        policy_cfg=policy_cfg,
+        dataset_stats=policy_cfg.dataset_stats,
     )
 
     # Push initial policy weights to actors
@@ -480,9 +485,9 @@ def start_learner(
     parameters_queue: Queue,
     transition_queue: Queue,
     interaction_message_queue: Queue,
-    shutdown_event: Any,  # Event
+    shutdown_event: ShutdownEvent,
     cfg: TrainRLServerPipelineConfig,
-):
+) -> None:
     """
     Start the learner server for training.
     It will receive transitions and interaction messages from the actor server,
@@ -496,13 +501,8 @@ def start_learner(
         cfg: Training configuration
     """
     if not use_threads(cfg):
-        # Create a process-specific log file
-        log_dir = os.path.join(cfg.output_dir, "logs")
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, f"learner_process_{os.getpid()}.log")
-
-        # Initialize logging with explicit log file
-        init_logging(log_file=log_file, display_pid=True)
+        # Initialize logging with a process-specific log file
+        init_logging(log_file=get_log_file(cfg, f"learner_process_{os.getpid()}"), display_pid=True)
         logging.info("Learner server process logging initialized")
 
         # Setup process handlers to handle shutdown signal
@@ -511,13 +511,14 @@ def start_learner(
         # TODO: Check if its useful
         _ = ProcessSignalHandler(False, display_pid=True)
 
+    actor_learner_cfg = get_gaussian_actor_config(cfg).actor_learner_config
     service = LearnerService(
         shutdown_event=shutdown_event,
         parameters_queue=parameters_queue,
-        seconds_between_pushes=cfg.policy.actor_learner_config.policy_parameters_push_frequency,
+        seconds_between_pushes=actor_learner_cfg.policy_parameters_push_frequency,
         transition_queue=transition_queue,
         interaction_message_queue=interaction_message_queue,
-        queue_get_timeout=cfg.policy.actor_learner_config.queue_get_timeout,
+        queue_get_timeout=actor_learner_cfg.queue_get_timeout,
     )
 
     server = grpc.server(
@@ -533,8 +534,8 @@ def start_learner(
         server,
     )
 
-    host = cfg.policy.actor_learner_config.learner_host
-    port = cfg.policy.actor_learner_config.learner_port
+    host = actor_learner_cfg.learner_host
+    port = actor_learner_cfg.learner_port
 
     server.add_insecure_port(f"{host}:{port}")
     server.start()
@@ -558,8 +559,8 @@ def save_training_checkpoint(
     offline_replay_buffer: ReplayBuffer | None = None,
     dataset_repo_id: str | None = None,
     fps: int = 30,
-    preprocessor=None,
-    postprocessor=None,
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None,
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None,
 ) -> None:
     """
     Save training checkpoint and associated data.
@@ -591,7 +592,8 @@ def save_training_checkpoint(
     interaction_step = interaction_message["Interaction step"] if interaction_message is not None else 0
 
     # Create checkpoint directory
-    checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, online_steps, optimization_step)
+    output_dir = require_not_none(cfg.output_dir, "cfg.output_dir")
+    checkpoint_dir = get_step_checkpoint_dir(output_dir, online_steps, optimization_step)
 
     # Save policy artifacts (pretrained_model/) + Trainer scaffolding (training_state/).
     save_checkpoint(
@@ -623,23 +625,29 @@ def save_training_checkpoint(
 
     # TODO : temporary save replay buffer here, remove later when on the robot
     # We want to control this with the keyboard inputs
-    dataset_dir = os.path.join(cfg.output_dir, "dataset")
+    dataset_dir = os.path.join(output_dir, "dataset")
     if os.path.exists(dataset_dir) and os.path.isdir(dataset_dir):
         shutil.rmtree(dataset_dir)
 
     # Save dataset
     # NOTE: Handle the case where the dataset repo id is not specified in the config
     # eg. RL training without demonstrations data
-    repo_id_buffer_save = cfg.env.task if dataset_repo_id is None else dataset_repo_id
-    replay_buffer.to_lerobot_dataset(repo_id=repo_id_buffer_save, fps=fps, root=dataset_dir)
+    repo_id_buffer_save = (
+        require_not_none(cfg.env, "cfg.env").task if dataset_repo_id is None else dataset_repo_id
+    )
+    replay_buffer.to_lerobot_dataset(
+        repo_id=repo_id_buffer_save,  # type: ignore[arg-type]  # EnvConfig.task is Optional
+        fps=fps,
+        root=dataset_dir,
+    )
 
     if offline_replay_buffer is not None:
-        dataset_offline_dir = os.path.join(cfg.output_dir, "dataset_offline")
+        dataset_offline_dir = os.path.join(output_dir, "dataset_offline")
         if os.path.exists(dataset_offline_dir) and os.path.isdir(dataset_offline_dir):
             shutil.rmtree(dataset_offline_dir)
 
         offline_replay_buffer.to_lerobot_dataset(
-            cfg.dataset.repo_id,
+            require_not_none(cfg.dataset, "cfg.dataset").repo_id,
             fps=fps,
             root=dataset_offline_dir,
         )
@@ -673,7 +681,7 @@ def handle_resume_logic(cfg: TrainRLServerPipelineConfig) -> TrainRLServerPipeli
     Raises:
         RuntimeError: If resume is True but no checkpoint found, or if resume is False but directory exists
     """
-    out_dir = cfg.output_dir
+    out_dir = require_not_none(cfg.output_dir, "cfg.output_dir")
 
     # Case 1: Not resuming, but need to check if directory exists to prevent overwrites
     if not cfg.resume:
@@ -712,7 +720,7 @@ def load_training_state(
     optimizers: Optimizer | dict[str, Optimizer],
     algorithm: RLAlgorithm | None = None,
     device: str | torch.device = "cpu",
-):
+) -> tuple[int | None, int | None]:
     """
     Loads the training state (optimizers, RNG, step + interaction step, and
     algorithm-owned tensors) from the most recent checkpoint.
@@ -735,7 +743,9 @@ def load_training_state(
         return None, None
 
     # Construct path to the last checkpoint directory
-    checkpoint_dir = Path(cfg.output_dir) / CHECKPOINTS_DIR / LAST_CHECKPOINT_LINK
+    checkpoint_dir = (
+        Path(require_not_none(cfg.output_dir, "cfg.output_dir")) / CHECKPOINTS_DIR / LAST_CHECKPOINT_LINK
+    )
 
     logging.info(f"Loading training state from {checkpoint_dir}")
 
@@ -783,80 +793,87 @@ def log_training_info(cfg: TrainRLServerPipelineConfig, policy: nn.Module) -> No
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
 
+    env_cfg = require_not_none(cfg.env, "cfg.env")
+    policy_cfg = get_gaussian_actor_config(cfg)
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
-    logging.info(f"{cfg.env.task=}")
-    logging.info(f"{cfg.policy.online_steps=}")
+    logging.info(f"cfg.env.task={env_cfg.task!r}")
+    logging.info(f"cfg.policy.online_steps={policy_cfg.online_steps!r}")
     logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
     logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
 
 def initialize_replay_buffer(
-    cfg: TrainRLServerPipelineConfig, device: str, storage_device: str
+    cfg: TrainRLServerPipelineConfig, device: str | torch.device, storage_device: str | torch.device
 ) -> ReplayBuffer:
     """
     Initialize a replay buffer, either empty or from a dataset if resuming.
 
     Args:
         cfg (TrainRLServerPipelineConfig): Training configuration
-        device (str): Device to store tensors on
-        storage_device (str): Device for storage optimization
+        device (str | torch.device): Device to store tensors on
+        storage_device (str | torch.device): Device for storage optimization
 
     Returns:
         ReplayBuffer: Initialized replay buffer
     """
+    policy_cfg = get_gaussian_actor_config(cfg)
+    state_keys = list(require_not_none(policy_cfg.input_features, "policy.input_features"))
     if not cfg.resume:
         return ReplayBuffer(
-            capacity=cfg.policy.online_buffer_capacity,
+            capacity=policy_cfg.online_buffer_capacity,
             device=device,
-            state_keys=cfg.policy.input_features.keys(),
+            state_keys=state_keys,
             storage_device=storage_device,
             optimize_memory=True,
         )
 
     logging.info("Resume training load the online dataset")
-    dataset_path = os.path.join(cfg.output_dir, "dataset")
+    dataset_path = os.path.join(require_not_none(cfg.output_dir, "cfg.output_dir"), "dataset")
 
     # NOTE: In RL is possible to not have a dataset.
     repo_id = None
     if cfg.dataset is not None:
         repo_id = cfg.dataset.repo_id
     dataset = LeRobotDataset(
-        repo_id=repo_id,
+        repo_id=repo_id,  # type: ignore[arg-type]
         root=dataset_path,
     )
     return ReplayBuffer.from_lerobot_dataset(
         lerobot_dataset=dataset,
-        capacity=cfg.policy.online_buffer_capacity,
+        capacity=policy_cfg.online_buffer_capacity,
         device=device,
-        state_keys=cfg.policy.input_features.keys(),
+        state_keys=state_keys,
         optimize_memory=True,
     )
 
 
 def initialize_offline_replay_buffer(
     cfg: TrainRLServerPipelineConfig,
-    device: str,
-    storage_device: str,
+    device: str | torch.device,
+    storage_device: str | torch.device,
 ) -> ReplayBuffer:
     """
     Initialize an offline replay buffer from a dataset.
 
     Args:
         cfg (TrainRLServerPipelineConfig): Training configuration
-        device (str): Device to store tensors on
-        storage_device (str): Device for storage optimization
+        device (str | torch.device): Device to store tensors on
+        storage_device (str | torch.device): Device for storage optimization
 
     Returns:
         ReplayBuffer: Initialized offline replay buffer
     """
+    policy_cfg = get_gaussian_actor_config(cfg)
     if not cfg.resume:
         logging.info("make_dataset offline buffer")
         offline_dataset = make_dataset(cfg)
     else:
         logging.info("load offline dataset")
-        dataset_offline_path = os.path.join(cfg.output_dir, "dataset_offline")
+        dataset_offline_path = os.path.join(
+            require_not_none(cfg.output_dir, "cfg.output_dir"), "dataset_offline"
+        )
         offline_dataset = LeRobotDataset(
-            repo_id=cfg.dataset.repo_id,
+            repo_id=require_not_none(cfg.dataset, "cfg.dataset").repo_id,
             root=dataset_offline_path,
         )
 
@@ -864,10 +881,10 @@ def initialize_offline_replay_buffer(
     offline_replay_buffer = ReplayBuffer.from_lerobot_dataset(
         offline_dataset,
         device=device,
-        state_keys=cfg.policy.input_features.keys(),
+        state_keys=list(require_not_none(policy_cfg.input_features, "policy.input_features")),
         storage_device=storage_device,
         optimize_memory=True,
-        capacity=cfg.policy.offline_buffer_capacity,
+        capacity=policy_cfg.offline_buffer_capacity,
     )
     return offline_replay_buffer
 
@@ -876,13 +893,13 @@ def initialize_offline_replay_buffer(
 
 
 def use_threads(cfg: TrainRLServerPipelineConfig) -> bool:
-    return cfg.policy.concurrency.learner == "threads"
+    return get_gaussian_actor_config(cfg).concurrency.learner == "threads"
 
 
 def check_nan_in_transition(
-    observations: torch.Tensor,
+    observations: dict[str, torch.Tensor],
     actions: torch.Tensor,
-    next_state: torch.Tensor,
+    next_state: dict[str, torch.Tensor],
     raise_error: bool = False,
 ) -> bool:
     """
@@ -952,16 +969,16 @@ def process_interaction_message(
 def process_transitions(
     transition_queue: Queue,
     replay_buffer: ReplayBuffer,
-    offline_replay_buffer: ReplayBuffer,
+    offline_replay_buffer: ReplayBuffer | None,
     dataset_repo_id: str | None,
-    shutdown_event: Any,  # Event
-):
+    shutdown_event: ShutdownEvent,
+) -> None:
     """Process all available transitions from the queue.
 
     Args:
         transition_queue: Queue for receiving transitions from the actor
         replay_buffer: Replay buffer to add transitions to
-        offline_replay_buffer: Offline replay buffer to add transitions to
+        offline_replay_buffer: Offline replay buffer to add intervention transitions to, if any
         dataset_repo_id: Repository ID for dataset
         shutdown_event: Event to signal shutdown
     """
@@ -982,8 +999,12 @@ def process_transitions(
             replay_buffer.add(**transition)
 
             # Add to offline buffer if it's an intervention
-            if dataset_repo_id is not None and transition.get("complementary_info", {}).get(
-                TeleopEvents.IS_INTERVENTION.value
+            complementary_info = transition.get("complementary_info")
+            if (
+                dataset_repo_id is not None
+                and offline_replay_buffer is not None
+                and complementary_info is not None
+                and complementary_info.get(TeleopEvents.IS_INTERVENTION.value)
             ):
                 offline_replay_buffer.add(**transition)
 
@@ -992,7 +1013,7 @@ def process_interaction_messages(
     interaction_message_queue: Queue,
     interaction_step_shift: int,
     wandb_logger: WandBLogger | None,
-    shutdown_event: Any,  # Event
+    shutdown_event: ShutdownEvent,
 ) -> dict | None:
     """Process all available interaction messages from the queue.
 
@@ -1018,5 +1039,5 @@ def process_interaction_messages(
 
 
 if __name__ == "__main__":
-    train_cli()
+    train_cli()  # type: ignore[call-arg]
     logging.info("[LEARNER] main finished")
