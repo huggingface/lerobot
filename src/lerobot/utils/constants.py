@@ -26,6 +26,7 @@ OBS_IMAGES = OBS_IMAGE + "s"
 OBS_LANGUAGE = OBS_STR + ".language"
 OBS_LANGUAGE_TOKENS = OBS_LANGUAGE + ".tokens"
 OBS_LANGUAGE_ATTENTION_MASK = OBS_LANGUAGE + ".attention_mask"
+OBS_LANGUAGE_CAUSAL_MARKS = OBS_LANGUAGE + ".causal_marks"
 OBS_LANGUAGE_SUBTASK = OBS_STR + ".subtask"
 OBS_LANGUAGE_SUBTASK_TOKENS = OBS_LANGUAGE_SUBTASK + ".tokens"
 OBS_LANGUAGE_SUBTASK_ATTENTION_MASK = OBS_LANGUAGE_SUBTASK + ".attention_mask"
@@ -34,11 +35,25 @@ ACTION = "action"
 ACTION_PREFIX = ACTION + "."
 ACTION_TOKENS = ACTION + ".tokens"
 ACTION_TOKEN_MASK = ACTION + ".token_mask"
+ACTION_CODE_TOKEN_MASK = ACTION + ".code_token_mask"
 REWARD = "next.reward"
 TRUNCATED = "next.truncated"
 DONE = "next.done"
 SUCCESS = "next.success"
 INFO = "info"
+
+# Complementary-data keys describing a text-generation request, set by the rollout
+# inference engines before the preprocessor runs so a processor step can format the
+# prompt: QUERY_KIND is what is being asked for ("vqa", "next_subtask", ...) and
+# QUERY_TEXT the request itself.  Absent on ordinary action inference.
+QUERY_KIND = "query_kind"
+QUERY_TEXT = "query_text"
+
+# Raw semantic-language dataset columns. These live here so lightweight policy
+# processors do not need to import the optional datasets/pyarrow stack.
+LANGUAGE_PERSISTENT = "language_persistent"
+LANGUAGE_EVENTS = "language_events"
+MESSAGES_RENDERED = "messages_rendered"
 
 ROBOTS = "robots"
 TELEOPERATORS = "teleoperators"
@@ -54,6 +69,7 @@ TRAINING_STEP = "training_step.json"
 OPTIMIZER_STATE = "optimizer_state.safetensors"
 OPTIMIZER_PARAM_GROUPS = "optimizer_param_groups.json"
 SCHEDULER_STATE = "scheduler_state.json"
+SCALER_STATE = "scaler_state.json"
 
 POLICY_PREPROCESSOR_DEFAULT_NAME = "policy_preprocessor"
 POLICY_POSTPROCESSOR_DEFAULT_NAME = "policy_postprocessor"

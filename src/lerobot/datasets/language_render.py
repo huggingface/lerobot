@@ -16,16 +16,16 @@
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import re
 from collections.abc import Sequence
 from typing import Any
 
-from lerobot.configs.recipe import DEFAULT_BINDINGS, PLACEHOLDER_RE, TrainingRecipe
+from lerobot.utils.constants import LANGUAGE_PERSISTENT, MESSAGES_RENDERED
 from lerobot.utils.utils import unwrap_scalar
 
-from .language import LANGUAGE_PERSISTENT, column_for_style
+from .language import column_for_style
+from .recipe import DEFAULT_BINDINGS, TrainingRecipe, render_message_turns
 
 LanguageRow = dict[str, Any]
 RenderedMessages = dict[str, list[Any]]
@@ -162,15 +162,35 @@ def render_sample(
     task: str | None = None,
     dataset_ctx: Any | None = None,
 ) -> RenderedMessages | None:
-    """Render the chat-style messages for a single dataset sample.
+    """Render recipe-defined messages and supervision for one dataset sample.
 
-    Resolves the recipe's bindings against ``persistent`` and ``events`` rows
-    at frame timestamp ``t``, then expands the recipe's message templates.
-    Returns ``None`` if the resolved sample contains no target message.
+    Resolves bindings against ``persistent`` and ``events`` at frame timestamp
+    ``t``. Blend recipes first route matching sparse VQA annotations, then use
+    deterministic weighted selection for the remaining samples. Returns
+    ``None`` when the selected recipe provides no text or low-level action
+    supervision for this sample.
     """
     persistent_rows = _normalize_rows(persistent or [])
     event_rows = _normalize_rows(events or [])
+
+    # Route sparse VQA frames to a matching view-specific component before weighted selection.
+    # This avoids dropping annotated frames or selecting VQA without annotations.
+    if recipe.blend is not None:
+        vqa_rendered = _render_vqa_if_present(
+            recipe,
+            persistent=persistent_rows,
+            events=event_rows,
+            t=t,
+            sample_idx=sample_idx,
+            task=task,
+            dataset_ctx=dataset_ctx,
+        )
+        if vqa_rendered is not None:
+            return vqa_rendered
+
     selected_recipe = _select_recipe(recipe, sample_idx)
+    if selected_recipe is None:
+        return None
     bindings = _resolve_bindings(
         selected_recipe,
         persistent=persistent_rows,
@@ -183,25 +203,79 @@ def render_sample(
     return _render_message_recipe(selected_recipe, bindings)
 
 
-def _select_recipe(recipe: TrainingRecipe, sample_idx: int) -> TrainingRecipe:
-    """Pick a deterministic blend component for ``sample_idx`` (or return ``recipe``)."""
+def _render_vqa_if_present(
+    recipe: TrainingRecipe,
+    *,
+    persistent: Sequence[LanguageRow],
+    events: Sequence[LanguageRow],
+    t: float,
+    sample_idx: int,
+    task: str | None,
+    dataset_ctx: Any | None,
+) -> RenderedMessages | None:
+    """Render a matching VQA component, or return ``None`` for normal selection.
+
+    Multiple matching views are selected deterministically by relative weight.
+    """
+    if recipe.blend is None:
+        return None
+    renderable: list[tuple[float, RenderedMessages]] = []
+    for component in recipe.blend.values():
+        if component.route != "vqa":
+            continue
+        bindings = _resolve_bindings(
+            component,
+            persistent=persistent,
+            events=events,
+            t=t,
+            sample_idx=sample_idx,
+            task=task,
+            dataset_ctx=dataset_ctx,
+        )
+        rendered = _render_message_recipe(component, bindings)
+        if rendered is not None:
+            if component.weight is None:
+                raise ValueError("Routed VQA blend components must define a weight.")
+            renderable.append((component.weight, rendered))
+
+    if not renderable:
+        return None
+    if len(renderable) == 1:
+        return renderable[0][1]
+
+    # Choose among matching cameras by their validated positive relative weights.
+    total = sum(weight for weight, _ in renderable)
+    digest = hashlib.blake2b(f"vqa:{sample_idx}".encode(), digest_size=8).digest()
+    draw = int.from_bytes(digest, "big") / 2**64 * total
+    cumulative = 0.0
+    for weight, rendered in renderable:
+        cumulative += weight
+        if draw < cumulative:
+            return rendered
+    return renderable[-1][1]
+
+
+def _select_recipe(recipe: TrainingRecipe, sample_idx: int) -> TrainingRecipe | None:
+    """Pick a deterministic non-routed component for an ordinary sample."""
     if recipe.blend is None:
         return recipe
 
-    total_weight = sum(component.weight or 0.0 for component in recipe.blend.values())
+    components = [component for component in recipe.blend.values() if component.route is None]
+    total_weight = sum(component.weight or 0.0 for component in components)
     if total_weight <= 0:
-        raise ValueError("Blend weights must sum to a positive value.")
+        return None
 
     digest = hashlib.blake2b(str(sample_idx).encode(), digest_size=8).digest()
     draw = int.from_bytes(digest, "big") / 2**64 * total_weight
     cumulative = 0.0
     last_component: TrainingRecipe | None = None
-    for component in recipe.blend.values():
+    for component in components:
         last_component = component
         cumulative += component.weight or 0.0
         if draw < cumulative:
             return component
-    assert last_component is not None
+    if last_component is None:
+        return None
     return last_component
 
 
@@ -219,8 +293,14 @@ def _resolve_bindings(
     bindings: dict[str, LanguageRow | str | None] = {
         "task": _resolve_task(task, dataset_ctx, persistent=persistent, sample_idx=sample_idx),
     }
-    specs = {**DEFAULT_BINDINGS, **(recipe.bindings or {})}
+    declared = recipe.bindings or {}
+    specs = {**DEFAULT_BINDINGS, **declared}
+    # Only resolve bindings the recipe consumes: an unreferenced default may be
+    # unresolvable, e.g. the camera-less ``vqa`` default on multi-camera frames.
+    needed = recipe.referenced_binding_names() | set(declared)
     for name, spec in specs.items():
+        if name not in needed:
+            continue
         bindings[name] = _resolve_spec(spec, persistent=persistent, events=events, t=t)
     return bindings
 
@@ -321,96 +401,33 @@ def _render_message_recipe(
     bindings: dict[str, LanguageRow | str | None],
 ) -> RenderedMessages | None:
     """Expand ``recipe.messages`` into rendered chat messages using ``bindings``."""
-    assert recipe.messages is not None
-    messages: list[dict[str, Any]] = []
-    streams: list[str | None] = []
-    target_indices: list[int] = []
+    if recipe.messages is None:
+        raise ValueError("Cannot render a blend recipe as a message recipe.")
+    rendered = render_message_turns(recipe.messages, bindings)
 
-    for turn in recipe.messages:
-        if turn.if_present is not None and bindings.get(turn.if_present) is None:
-            continue
-
-        message = {"role": turn.role}
-        if turn.content is not None:
-            message["content"] = _render_content(turn.content, bindings)
-
-        if turn.tool_calls_from is not None:
-            row = bindings.get(turn.tool_calls_from)
-            tool_calls = row.get("tool_calls") if isinstance(row, dict) else None
-            if tool_calls:
-                message["tool_calls"] = copy.deepcopy(tool_calls)
-
-        message_idx = len(messages)
-        messages.append(message)
-        streams.append(turn.stream)
-        if turn.target:
-            target_indices.append(message_idx)
-
-    if not target_indices:
+    # Keep samples with either text targets or low-level action supervision.
+    has_low_level = any(stream == "low_level" for stream in rendered["message_streams"])
+    if not rendered["target_message_indices"] and not has_low_level:
         return None
 
-    rendered = {
-        "messages": messages,
-        "message_streams": streams,
-        "target_message_indices": target_indices,
-    }
     _validate_rendered(rendered)
     return rendered
 
 
-def _render_content(
-    content: str | list[dict[str, Any]],
-    bindings: dict[str, LanguageRow | str | None],
-) -> str | list[dict[str, Any]]:
-    """Substitute bindings into a string or each string field of multimodal blocks."""
-    if isinstance(content, str):
-        return _substitute(content, bindings)
-
-    rendered_blocks = []
-    for block in content:
-        rendered_block = copy.deepcopy(block)
-        for key, value in rendered_block.items():
-            if isinstance(value, str):
-                rendered_block[key] = _substitute(value, bindings)
-        rendered_blocks.append(rendered_block)
-    return rendered_blocks
-
-
-def _substitute(template: str, bindings: dict[str, LanguageRow | str | None]) -> str:
-    """Replace ``${name}`` placeholders in ``template`` with their bound values."""
-
-    def replace(match: re.Match[str]) -> str:
-        """Resolve a single ``${name}`` match to its bound string value."""
-        name = match.group(1)
-        if name not in bindings:
-            raise ValueError(f"Unknown template binding: {name!r}")
-        value = bindings[name]
-        if value is None:
-            return ""
-        if isinstance(value, dict):
-            content = value.get("content")
-            return "" if content is None else str(content)
-        return str(value)
-
-    return PLACEHOLDER_RE.sub(replace, template)
-
-
 def _validate_rendered(rendered: RenderedMessages) -> None:
     """Sanity-check the rendered output for stream/target alignment."""
-    messages = rendered["messages"]
+    messages = rendered[MESSAGES_RENDERED]
     streams = rendered["message_streams"]
     target_indices = rendered["target_message_indices"]
 
     if len(streams) != len(messages):
         raise ValueError("message_streams must be aligned with messages.")
-    if not target_indices:
-        raise ValueError("Rendered samples must contain at least one target message.")
+    # Require text or low-level action supervision.
+    if not target_indices and not any(s == "low_level" for s in streams):
+        raise ValueError("Rendered samples must contain a target message or a low_level-stream message.")
     for idx in target_indices:
         if idx < 0 or idx >= len(messages):
             raise ValueError(f"Target message index {idx} is out of bounds.")
-    # ``stream`` is enforced non-None at MessageTurn construction time
-    # (see ``MessageTurn.__post_init__``), so a missing stream here would
-    # mean the dataclass invariant was bypassed; no need to re-check.
 
 
 def _nth_relative(

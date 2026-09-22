@@ -14,10 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from collections import defaultdict
-from collections.abc import Callable
 from typing import Any
 
 import torch
+import torch.distributed as dist
 
 from .utils import format_big_number
 
@@ -69,12 +69,31 @@ class MetricsTracker:
     """
     A helper class to track and log metrics over time.
 
+    Args:
+        batch_size (int): Per-process batch size (samples per micro-batch on each
+            data-parallel worker).
+        num_frames (int): Total number of frames in the training dataset.
+        num_episodes (int): Total number of episodes in the training dataset.
+        metrics (dict[str, AverageMeter]): The meters to track, keyed by metric name.
+        initial_step (int): Step counter to start from (non-zero when resuming a run).
+            Defaults to 0.
+        dp_world_size (int): Number of distinct data-parallel workers
+            (`dp_replicate * dp_shard`), used to scale sample accounting; context-parallel
+            peers consume the same batch and must not be double counted. Defaults to 1.
+
     Usage pattern:
 
     ```python
     # initialize, potentially with non-zero initial step (e.g. if resuming run)
     metrics = {"loss": AverageMeter("loss", ":.3f")}
-    train_metrics = MetricsTracker(cfg, dataset, metrics, initial_step=step)
+    train_metrics = MetricsTracker(
+        batch_size,
+        dataset.num_frames,
+        dataset.num_episodes,
+        metrics,
+        initial_step=step,
+        dp_world_size=dp_world,
+    )
 
     # update metrics derived from step (samples, episodes, epochs) at each training step
     train_metrics.step()
@@ -98,12 +117,12 @@ class MetricsTracker:
         "_batch_size",
         "_num_frames",
         "_avg_samples_per_ep",
+        "_dp_world_size",
         "metrics",
         "steps",
         "samples",
         "episodes",
         "epochs",
-        "accelerator",
         "_caller_metrics",
     ]
 
@@ -114,22 +133,25 @@ class MetricsTracker:
         num_episodes: int,
         metrics: dict[str, AverageMeter],
         initial_step: int = 0,
-        accelerator: Callable | None = None,
+        dp_world_size: int = 1,
     ):
         self.__dict__.update(dict.fromkeys(self.__keys__))
         self._batch_size = batch_size
         self._num_frames = num_frames
         self._avg_samples_per_ep = num_frames / num_episodes
+        # Sample accounting scales by the number of DISTINCT data-parallel workers, which is
+        # dp_replicate * dp_shard — not the world size: context-parallel peers consume the same
+        # batch and must not be double counted. `step` counts micro-batches, so no
+        # grad-accumulation factor belongs here either.
+        self._dp_world_size = dp_world_size
         self.metrics = metrics
 
         self.steps = initial_step
-        world_size = accelerator.num_processes if accelerator else 1
         # A sample is an (observation,action) pair, where observation and action
         # can be on multiple timestamps. In a batch, we have `batch_size` number of samples.
-        self.samples = self.steps * self._batch_size * world_size
+        self.samples = self.steps * self._batch_size * self._dp_world_size
         self.episodes = self.samples / self._avg_samples_per_ep
         self.epochs = self.samples / self._num_frames
-        self.accelerator = accelerator
         # Meter names the caller registered up front. update_metrics() leaves these untouched, so a
         # policy that echoes e.g. "loss" in its output dict can't clobber the aggregated meter.
         self._caller_metrics: set[str] = set(self.metrics)
@@ -155,8 +177,7 @@ class MetricsTracker:
         Updates metrics that depend on 'step' for one step.
         """
         self.steps += 1
-        world_size = self.accelerator.num_processes if self.accelerator else 1
-        self.samples += self._batch_size * world_size
+        self.samples += self._batch_size * self._dp_world_size
         self.episodes = self.samples / self._avg_samples_per_ep
         self.epochs = self.samples / self._num_frames
 
@@ -181,11 +202,16 @@ class MetricsTracker:
         across all distributed processes (in-place).
 
         This is a collective operation and MUST be invoked on every rank — typically just before
-        logging. With no accelerator or in single-process runs it is a no-op. Without it, metrics
-        reported by the main process only reflect rank 0; for bottleneck-style timings
-        (``dataloading_s``, ``update_s``, ...) that means the slowest worker's stall is invisible.
+        logging. Outside distributed runs it is a no-op. Without it, metrics reported by the
+        main process only reflect rank 0; for bottleneck-style timings (``dataloading_s``,
+        ``update_s``, ...) that means the slowest worker's stall is invisible.
+
+        Torch-native on purpose: metrics code carries no Accelerator dependency.
+        Note the reduction spans the WORLD group — correct for count-free averages (loss values
+        are identical within a context-parallel group, so including CP peers is a weighted
+        no-op).
         """
-        if self.accelerator is None or self.accelerator.num_processes <= 1:
+        if not dist.is_initialized() or dist.get_world_size() <= 1:
             return
 
         buckets: dict[str, list[str]] = defaultdict(list)
@@ -195,11 +221,20 @@ class MetricsTracker:
         if not buckets:
             return
 
-        device = self.accelerator.device
+        device = (
+            torch.device("cuda", torch.cuda.current_device())
+            if torch.cuda.is_available()
+            else torch.device("cpu")
+        )
+        reduce_ops = {
+            "mean": dist.ReduceOp.AVG,
+            "sum": dist.ReduceOp.SUM,
+            "max": dist.ReduceOp.MAX,
+        }
         for reduction, names in buckets.items():
             tensor = torch.tensor([self.metrics[n].avg for n in names], dtype=torch.float32, device=device)
-            reduced = self.accelerator.reduce(tensor, reduction=reduction)
-            for name, value in zip(names, reduced.tolist(), strict=True):
+            dist.all_reduce(tensor, op=reduce_ops[reduction])
+            for name, value in zip(names, tensor.tolist(), strict=True):
                 meter = self.metrics[name]
                 # Preserve avg == sum / count so a later .update() on this meter accumulates
                 # against the cluster view, not the stale per-rank history.

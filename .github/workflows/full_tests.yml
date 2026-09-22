@@ -89,6 +89,9 @@ jobs:
       - name: Install lerobot with all extras
         run: uv sync --locked --extra all # TODO(Steven): Make flash-attn optional
 
+      - name: Install lerobot-lancedb (converts fixtures for the lance backend tests)
+        run: uv sync --locked --extra all --extra lancedb-convert
+
       - name: Login to Hugging Face
         if: env.HF_USER_TOKEN != ''
         run: |
@@ -209,8 +212,8 @@ jobs:
           DOCKERHUB_LEROBOT_PASSWORD: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
           IMAGE_FULL: ${{ needs.build-and-push-docker.outputs.image_tag }}
         run: |
-          IMAGE_NAME=$(echo "$IMAGE_FULL" | cut -d':' -f1)
-          IMAGE_TAG=$(echo "$IMAGE_FULL" | cut -d':' -f2-)
+          IMAGE_NAME=$(echo "${IMAGE_FULL}" | cut -d':' -f1)
+          IMAGE_TAG=$(echo "${IMAGE_FULL}" | cut -d':' -f2-)
           echo "Attempting to delete image: $IMAGE_NAME:$IMAGE_TAG"
 
           TOKEN=$(curl -s -H "Content-Type: application/json" \

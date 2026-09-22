@@ -5,7 +5,16 @@ from textwrap import dedent
 
 import pytest
 
-from lerobot.configs.recipe import MessageTurn, TrainingRecipe, load_recipe
+pytest.importorskip("datasets", reason="recipes require lerobot[dataset]")
+pytest.importorskip("av", reason="recipes require lerobot[dataset]")
+
+from lerobot.datasets.recipe import (  # noqa: E402
+    MessageTurn,
+    TrainingRecipe,
+    load_recipe,
+    render_message_turns,
+    resolve_recipe_override,
+)
 
 
 def _minimal_message_turn(content: str = "${task}") -> MessageTurn:
@@ -27,6 +36,13 @@ def test_message_recipe_validates_unknown_binding():
                 _minimal_target_turn(),
             ]
         )
+
+
+def test_canonical_recipe_loads():
+    """The canonical PI052 blend YAML loads + validates."""
+    recipe = TrainingRecipe.from_yaml(Path("src/lerobot/configs/recipes/subtask_mem_vqa_speech.yaml"))
+    assert recipe.blend is not None
+    assert sum(c.weight for c in recipe.blend.values()) == pytest.approx(1.0)
 
 
 def test_message_turn_requires_a_stream():
@@ -79,6 +95,19 @@ def test_blend_component_must_define_weight():
 def test_blend_component_weight_must_be_positive():
     with pytest.raises(ValueError, match="positive weight"):
         TrainingRecipe(blend={"a": TrainingRecipe(weight=0.0, messages=[_minimal_target_turn()])})
+
+
+def test_recipe_route_must_be_supported():
+    with pytest.raises(ValueError, match="Unsupported recipe route"):
+        TrainingRecipe(weight=1.0, route="other", messages=[_minimal_target_turn()])
+
+
+def test_route_cannot_be_set_on_blend_recipe():
+    with pytest.raises(ValueError, match="only be set on a message recipe"):
+        TrainingRecipe(
+            route="vqa",
+            blend={"a": TrainingRecipe(weight=1.0, messages=[_minimal_target_turn()])},
+        )
 
 
 def test_blend_component_must_define_messages():
@@ -166,3 +195,83 @@ def test_from_yaml_rejects_non_mapping(tmp_path: Path):
     path.write_text("- just\n- a\n- list\n")
     with pytest.raises(ValueError, match="mapping at the top level"):
         TrainingRecipe.from_yaml(path)
+
+
+def test_prompt_turns_returns_prefix_before_matching_assistant_target():
+    recipe = TrainingRecipe(
+        messages=[
+            _minimal_message_turn("Goal: ${task}"),
+            MessageTurn(
+                role="assistant",
+                content="${subtask}",
+                stream="high_level",
+                target=True,
+                if_present="subtask",
+            ),
+        ]
+    )
+
+    assert [turn.content for turn in recipe.prompt_turns("subtask")] == ["Goal: ${task}"]
+    with pytest.raises(ValueError, match=r"no assistant target turn supervising \$\{memory\}"):
+        recipe.prompt_turns("memory")
+
+
+def test_prompt_turns_uses_first_matching_blend_component():
+    def component(label: str) -> TrainingRecipe:
+        return TrainingRecipe(
+            weight=1.0,
+            messages=[
+                _minimal_message_turn(f"{label}: ${{task}}"),
+                MessageTurn(
+                    role="assistant",
+                    content="${subtask}",
+                    stream="high_level",
+                    target=True,
+                ),
+            ],
+        )
+
+    recipe = TrainingRecipe(blend={"first": component("first"), "second": component("second")})
+
+    assert recipe.prompt_turns("subtask")[0].content == "first: ${task}"
+
+
+def test_render_message_turns_substitutes_without_dataset_dependencies():
+    turns = [
+        MessageTurn(role="user", content="Goal: ${task}", stream="high_level"),
+        MessageTurn(
+            role="assistant",
+            content="${subtask}",
+            stream="high_level",
+            target=True,
+        ),
+    ]
+
+    rendered = render_message_turns(turns, {"task": "tidy", "subtask": "pick up cup"})
+
+    assert rendered == {
+        "messages_rendered": [
+            {"role": "user", "content": "Goal: tidy"},
+            {"role": "assistant", "content": "pick up cup"},
+        ],
+        "message_streams": ["high_level", "high_level"],
+        "target_message_indices": [1],
+    }
+
+
+def test_resolve_recipe_override_normalizes_inline_dict_and_loads_explicit_path(tmp_path: Path):
+    inline = {
+        "messages": [
+            {"role": "user", "content": "${task}", "stream": "low_level"},
+        ]
+    }
+    normalized = resolve_recipe_override(inline, None)
+    assert isinstance(normalized, TrainingRecipe)
+
+    override = tmp_path / "override.yaml"
+    override.write_text("messages:\n  - {role: user, content: external, stream: low_level}\n")
+    assert resolve_recipe_override(normalized, override).messages[0].content == "external"
+
+    assert resolve_recipe_override(normalized, tmp_path / "stale.yaml") is normalized
+    with pytest.raises(FileNotFoundError):
+        resolve_recipe_override(None, tmp_path / "missing.yaml")

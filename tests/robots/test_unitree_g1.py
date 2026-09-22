@@ -14,132 +14,91 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for Unitree G1 robot. Meant to be run in an environment where the Unitree SDK is installed."""
+"""Tests for the UnitreeG1 robot class.
 
+The Unitree SDK, the cameras and the arm IK are all mocked, so these run without hardware
+or the SDK installed. Pure helper/config tests live in ``test_unitree_g1_utils.py``.
+"""
+
+import threading
+import time
+from contextlib import ExitStack
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 
-from lerobot.utils.import_utils import _unitree_sdk_available
-
-if not _unitree_sdk_available:
-    pytest.skip("Unitree SDK not available", allow_module_level=True)
-
 from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
 from lerobot.robots.unitree_g1.g1_utils import (
     NUM_MOTORS,
     REMOTE_AXES,
-    REMOTE_BUTTONS,
-    REMOTE_KEYS,
     G1_29_JointArmIndex,
     G1_29_JointIndex,
-    default_remote_input,
-    get_gravity_orientation,
 )
 
-# ---------------------------------------------------------------------------
-# Unit tests for g1_utils (no SDK needed)
-# ---------------------------------------------------------------------------
-
-
-class TestG1Utils:
-    def test_num_motors(self):
-        assert NUM_MOTORS == 29
-
-    def test_joint_index_count(self):
-        assert len(G1_29_JointIndex) == 29
-
-    def test_joint_arm_index_count(self):
-        assert len(G1_29_JointArmIndex) == 14
-
-    def test_arm_indices_are_subset_of_full(self):
-        full_values = {j.value for j in G1_29_JointIndex}
-        arm_values = {j.value for j in G1_29_JointArmIndex}
-        assert arm_values.issubset(full_values)
-
-    def test_arm_indices_start_at_15(self):
-        assert min(j.value for j in G1_29_JointArmIndex) == 15
-        assert max(j.value for j in G1_29_JointArmIndex) == 28
-
-    def test_enum_naming_consistency(self):
-        """Verify all wrist joints use consistent PascalCase naming."""
-        wrist_joints = [j for j in G1_29_JointIndex if "Wrist" in j.name]
-        for j in wrist_joints:
-            # Should be "WristYaw", "WristPitch", "WristRoll" — no lowercase after "Wrist"
-            after_wrist = j.name.split("Wrist")[1]
-            assert after_wrist[0].isupper(), f"{j.name} has inconsistent casing after 'Wrist'"
-
-    def test_remote_keys_structure(self):
-        assert len(REMOTE_AXES) == 4
-        assert len(REMOTE_BUTTONS) == 16
-        assert len(REMOTE_KEYS) == 20
-        assert REMOTE_KEYS == REMOTE_AXES + REMOTE_BUTTONS
-
-    def test_default_remote_input(self):
-        d = default_remote_input()
-        assert len(d) == 20
-        assert all(v == 0.0 for v in d.values())
-        assert set(d.keys()) == set(REMOTE_KEYS)
-
-    def test_gravity_orientation_identity(self):
-        """Quaternion [1, 0, 0, 0] (no rotation) should give gravity along -z."""
-        g = get_gravity_orientation([1.0, 0.0, 0.0, 0.0])
-        assert g.shape == (3,)
-        assert g.dtype == np.float32
-        np.testing.assert_allclose(g, [0.0, 0.0, -1.0], atol=1e-6)
-
-    def test_gravity_orientation_dtype(self):
-        g = get_gravity_orientation(np.array([1.0, 0.0, 0.0, 0.0]))
-        assert g.dtype == np.float32
-
+TOKEN_DIM = 64
 
 # ---------------------------------------------------------------------------
-# Unit tests for UnitreeG1Config (no SDK needed)
+# Controller stubs
 # ---------------------------------------------------------------------------
 
 
-class TestUnitreeG1Config:
-    def test_default_config(self):
-        cfg = UnitreeG1Config()
-        assert len(cfg.kp) == 29
-        assert len(cfg.kd) == 29
-        assert len(cfg.default_positions) == 29
-        assert cfg.is_simulation is True
-        assert cfg.controller is None
-        assert cfg.gravity_compensation is False
+class TokenController:
+    """Stand-in for SonicWholeBodyController: declares its own action and proprio spaces."""
 
-    def test_gains_are_positive(self):
-        cfg = UnitreeG1Config()
-        assert all(v > 0 for v in cfg.kp)
-        assert all(v > 0 for v in cfg.kd)
+    control_dt = 0.02
 
-    def test_config_copies_gains(self):
-        """Each config instance should have its own copy of gains."""
-        cfg1 = UnitreeG1Config()
-        cfg2 = UnitreeG1Config()
-        cfg1.kp[0] = 999.0
-        assert cfg2.kp[0] != 999.0
+    def __init__(self, dim: int = TOKEN_DIM):
+        self.action_ft = {f"motion_token.{i}.pos": float for i in range(dim)}
+        self.observation_ft = {f"motion_token_state.{i}.pos": float for i in range(dim)}
+        self.kp = np.full(NUM_MOTORS, 100.0, np.float32)
+        self.kd = np.full(NUM_MOTORS, 2.0, np.float32)
+        self.default_angles = np.zeros(NUM_MOTORS, np.float32)
+        self.reset_calls = 0
+
+    def run_step(self, action: dict, lowstate) -> dict:
+        return {}
+
+    def reset(self) -> None:
+        self.reset_calls += 1
+
+    def observation_state(self) -> dict[str, float]:
+        return dict.fromkeys(self.observation_ft, 0.0)
+
+
+class LocomotionOnlyController:
+    """Stand-in for GR00T/Holosoma: declares no optional features, so the robot's defaults apply."""
+
+    control_dt = 0.02
+
+    def run_step(self, action: dict, lowstate) -> dict:
+        return {}
+
+    def reset(self) -> None:
+        pass
+
+
+def make_camera_config(width: int = 640, height: int = 480, use_depth: bool = False):
+    """Duck-typed camera config.
+
+    ``_cameras_ft`` reads the resolution/rgb/depth attributes, and ``RobotConfig`` validates
+    that width, height and fps are all set.
+    """
+    return SimpleNamespace(width=width, height=height, fps=30, use_rgb=True, use_depth=use_depth)
 
 
 # ---------------------------------------------------------------------------
-# Robot mock and integration tests
+# SDK mocks
 # ---------------------------------------------------------------------------
 
 
 def _make_lowstate_msg_mock():
     """Create a mock that mimics the SDK LowState_ message."""
     msg = MagicMock()
-    for i in range(29):
-        motor = MagicMock()
-        motor.q = float(i) * 0.1
-        motor.dq = float(i) * 0.01
-        motor.tau_est = float(i) * 0.001
-        motor.temperature = 30.0 + i
-        msg.motor_state.__getitem__ = lambda self, idx, _motors={}: _motors.setdefault(
-            idx, MagicMock(q=idx * 0.1, dq=idx * 0.01, tau_est=idx * 0.001, temperature=30.0 + idx)
-        )
-
+    msg.motor_state.__getitem__ = lambda self, idx, _motors={}: _motors.setdefault(
+        idx, MagicMock(q=idx * 0.1, dq=idx * 0.01, tau_est=idx * 0.001, temperature=30.0 + idx)
+    )
     msg.imu_state.quaternion = [1.0, 0.0, 0.0, 0.0]
     msg.imu_state.gyroscope = [0.1, 0.2, 0.3]
     msg.imu_state.accelerometer = [0.0, 0.0, 9.81]
@@ -164,104 +123,585 @@ def _make_sdk_mocks():
     subscriber_mock = MagicMock()
     subscriber_mock.Read.return_value = lowstate_msg
 
-    publisher_mock = MagicMock()
-
     return {
         "lowcmd_default": lowcmd_default,
         "crc_mock": crc_mock,
         "subscriber_mock": subscriber_mock,
-        "publisher_mock": publisher_mock,
+        "publisher_mock": MagicMock(),
         "lowstate_msg": lowstate_msg,
     }
 
 
 @pytest.fixture
-def unitree_g1():
-    """Create a UnitreeG1 robot with all SDK dependencies mocked."""
+def make_robot():
+    """Factory for a UnitreeG1 with every hardware dependency mocked out.
+
+    Controllers are injected directly rather than resolved by name, so no controller
+    checkpoint is ever downloaded.
+    """
     mocks = _make_sdk_mocks()
+    module = "lerobot.robots.unitree_g1.unitree_g1"
 
-    mock_channel_init = MagicMock()
-    mock_channel_pub = MagicMock(return_value=mocks["publisher_mock"])
-    mock_channel_sub = MagicMock(return_value=mocks["subscriber_mock"])
+    with ExitStack() as stack:
+        # require_package would refuse to build the robot without the Unitree SDK installed.
+        stack.enter_context(patch(f"{module}.require_package", MagicMock()))
+        stack.enter_context(
+            patch(
+                f"{module}.make_cameras_from_configs",
+                lambda cfgs: {name: MagicMock(is_connected=True) for name in cfgs},
+            )
+        )
+        stack.enter_context(patch(f"{module}.G1_29_ArmIK", MagicMock()))
+        stack.enter_context(patch(f"{module}._SDKChannelFactoryInitialize", MagicMock()))
+        stack.enter_context(
+            patch(f"{module}._SDKChannelPublisher", MagicMock(return_value=mocks["publisher_mock"]))
+        )
+        stack.enter_context(
+            patch(f"{module}._SDKChannelSubscriber", MagicMock(return_value=mocks["subscriber_mock"]))
+        )
+        stack.enter_context(
+            patch(f"{module}.unitree_hg_msg_dds__LowCmd_", MagicMock(return_value=mocks["lowcmd_default"]))
+        )
+        stack.enter_context(patch(f"{module}.hg_LowCmd", MagicMock))
+        stack.enter_context(patch(f"{module}.hg_LowState", MagicMock))
+        stack.enter_context(patch(f"{module}.CRC", MagicMock(return_value=mocks["crc_mock"])))
 
-    with (
-        patch(
-            "lerobot.robots.unitree_g1.unitree_g1.make_cameras_from_configs",
-            return_value={},
-        ),
-        patch(
-            "lerobot.robots.unitree_g1.unitree_g1.G1_29_ArmIK",
-            return_value=MagicMock(),
-        ),
-        patch(
-            "lerobot.robots.unitree_g1.unitree_g1._SDKChannelFactoryInitialize",
-            mock_channel_init,
-        ),
-        patch(
-            "lerobot.robots.unitree_g1.unitree_g1._SDKChannelPublisher",
-            mock_channel_pub,
-        ),
-        patch(
-            "lerobot.robots.unitree_g1.unitree_g1._SDKChannelSubscriber",
-            mock_channel_sub,
-        ),
-        patch(
-            "lerobot.robots.unitree_g1.unitree_g1.unitree_hg_msg_dds__LowCmd_",
-            MagicMock(return_value=mocks["lowcmd_default"]),
-        ),
-        patch(
-            "lerobot.robots.unitree_g1.unitree_g1.hg_LowCmd",
-            MagicMock,
-        ),
-        patch(
-            "lerobot.robots.unitree_g1.unitree_g1.hg_LowState",
-            MagicMock,
-        ),
-        patch(
-            "lerobot.robots.unitree_g1.unitree_g1.CRC",
-            MagicMock(return_value=mocks["crc_mock"]),
-        ),
-    ):
         from lerobot.robots.unitree_g1.unitree_g1 import UnitreeG1
 
-        cfg = UnitreeG1Config(is_simulation=True, gravity_compensation=False)
-        robot = UnitreeG1(cfg)
-        yield robot, mocks
-        if robot.is_connected:
-            robot.disconnect()
+        built = []
+
+        def _factory(controller=None, cameras=None, **config_kwargs):
+            cfg = UnitreeG1Config(
+                is_simulation=True,
+                gravity_compensation=False,
+                cameras=cameras or {},
+                **config_kwargs,
+            )
+            robot = UnitreeG1(cfg)
+            if controller is not None:
+                robot.controller = controller
+                # observation_features/action_features are cached_property; drop any cached value
+                # so the injected controller is taken into account.
+                robot.__dict__.pop("observation_features", None)
+                robot.__dict__.pop("action_features", None)
+            built.append(robot)
+            return robot
+
+        yield _factory, mocks
+
+        for robot in built:
+            if robot.is_connected:
+                robot.disconnect()
 
 
-def test_init_state(unitree_g1):
-    robot, _ = unitree_g1
-    assert not robot.is_connected
-    assert robot.controller is None
+def arm_for_publish(robot, mocks, kp_value: float = 50.0, kd_value: float = 1.0):
+    """Attach the state that ``connect()`` would normally set up, for publish-only tests."""
+    robot.msg = mocks["lowcmd_default"]
+    robot.crc = mocks["crc_mock"]
+    robot.lowcmd_publisher = mocks["publisher_mock"]
+    robot.kp = np.full(NUM_MOTORS, kp_value, np.float32)
+    robot.kd = np.full(NUM_MOTORS, kd_value, np.float32)
+    for cmd in robot.msg.motor_cmd:
+        cmd.q = -1.0  # sentinel: untouched joints keep this value
+    return robot
 
 
-def test_observation_features(unitree_g1):
-    robot, _ = unitree_g1
-    features = robot.observation_features
-    # Should have .q for all 29 joints (no cameras configured)
-    assert len(features) == 29
-    for joint in G1_29_JointIndex:
-        assert f"{joint.name}.q" in features
+def published_targets(robot):
+    return {motor.name: robot.msg.motor_cmd[motor.value].q for motor in G1_29_JointIndex}
 
 
-def test_action_features_no_controller(unitree_g1):
-    robot, _ = unitree_g1
-    features = robot.action_features
-    # Without controller: all 29 joints
-    assert len(features) == 29
-    for joint in G1_29_JointIndex:
-        assert f"{joint.name}.q" in features
+def hardware_mode(robot):
+    """Switch to the real-robot branch after construction.
+
+    Building with ``is_simulation=False`` would make ``__init__`` import the ZMQ bridge, and
+    pyzmq is not installed in the test environment, so the flag is flipped once the robot exists.
+    """
+    robot.config.is_simulation = False
+    return robot
 
 
-def test_get_observation_before_connect(unitree_g1):
-    robot, _ = unitree_g1
-    obs = robot.get_observation()
-    assert obs == {}
+# ---------------------------------------------------------------------------
+# Construction
+# ---------------------------------------------------------------------------
 
 
-def test_disconnect_idempotent(unitree_g1):
-    robot, _ = unitree_g1
-    # Should not raise even when not connected
-    robot.disconnect()
+class TestInitialState:
+    def test_starts_disconnected(self, make_robot):
+        factory, _ = make_robot
+        robot = factory()
+        assert not robot.is_connected
+        assert robot.controller is None
+
+    def test_observation_empty_before_connect(self, make_robot):
+        factory, _ = make_robot
+        assert factory().get_observation() == {}
+
+    def test_disconnect_is_safe_before_connect(self, make_robot):
+        factory, _ = make_robot
+        factory().disconnect()
+
+    def test_name_and_config_class(self, make_robot):
+        factory, _ = make_robot
+        robot = factory()
+        assert robot.name == "unitree_g1"
+        assert robot.config_class is UnitreeG1Config
+
+    def test_stubs_satisfy_protocol(self):
+        """Controllers are duck-typed against a runtime-checkable Protocol."""
+        from lerobot.robots.unitree_g1.unitree_g1 import RobotController
+
+        assert isinstance(TokenController(), RobotController)
+        assert isinstance(LocomotionOnlyController(), RobotController)
+
+
+class TestMakeRobotController:
+    def test_none_disables_controller(self):
+        from lerobot.robots.unitree_g1.unitree_g1 import make_robot_controller
+
+        assert make_robot_controller(None) is None
+
+    def test_unknown_name_raises(self):
+        from lerobot.robots.unitree_g1.unitree_g1 import make_robot_controller
+
+        with pytest.raises(ValueError, match="Unknown controller") as excinfo:
+            make_robot_controller("NotAController")
+        # The error should tell the user what they can pick instead.
+        assert "SonicWholeBodyController" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# Feature schemas
+# ---------------------------------------------------------------------------
+
+
+class TestObservationFeatures:
+    def test_no_controller_joint_positions(self, make_robot):
+        factory, _ = make_robot
+        features = factory().observation_features
+        assert len(features) == NUM_MOTORS
+        assert set(features) == {f"{joint.name}.q" for joint in G1_29_JointIndex}
+
+    def test_whole_body_replaces_state(self, make_robot):
+        """Regression: merging the 29 joint keys with the 64-D token gave a 93-D state and
+        broke inference against a checkpoint trained on the token echo alone."""
+        factory, _ = make_robot
+        controller = TokenController()
+        features = factory(controller=controller).observation_features
+
+        assert len(features) == TOKEN_DIM
+        assert set(features) == set(controller.observation_ft)
+        assert not [key for key in features if key.endswith(".q")]
+
+    def test_locomotion_keeps_joint_state(self, make_robot):
+        """Controllers that declare no proprio features must not lose the joint keys."""
+        factory, _ = make_robot
+        features = factory(controller=LocomotionOnlyController()).observation_features
+        assert set(features) == {f"{joint.name}.q" for joint in G1_29_JointIndex}
+
+    def test_cameras_are_added_alongside_state(self, make_robot):
+        factory, _ = make_robot
+        robot = factory(controller=TokenController(), cameras={"ego_view": make_camera_config()})
+        features = robot.observation_features
+
+        assert len(features) == TOKEN_DIM + 1
+        assert features["ego_view"] == (480, 640, 3)
+
+    def test_depth_camera_adds_a_second_entry(self, make_robot):
+        factory, _ = make_robot
+        robot = factory(cameras={"ego_view": make_camera_config(use_depth=True)})
+        features = robot.observation_features
+
+        assert features["ego_view"] == (480, 640, 3)
+        assert features["ego_view_depth"] == (480, 640, 1)
+
+
+class TestActionFeatures:
+    def test_no_controller_is_full_joint_teleop(self, make_robot):
+        factory, _ = make_robot
+        features = factory().action_features
+        assert set(features) == {f"{joint.name}.q" for joint in G1_29_JointIndex}
+
+    def test_whole_body_owns_action_space(self, make_robot):
+        factory, _ = make_robot
+        controller = TokenController()
+        features = factory(controller=controller).action_features
+
+        assert len(features) == TOKEN_DIM
+        assert set(features) == set(controller.action_ft)
+
+    def test_locomotion_gets_arms_joystick(self, make_robot):
+        factory, _ = make_robot
+        features = factory(controller=LocomotionOnlyController()).action_features
+
+        expected = {f"{joint.name}.q" for joint in G1_29_JointArmIndex} | set(REMOTE_AXES)
+        assert set(features) == expected
+        assert len(features) == len(G1_29_JointArmIndex) + len(REMOTE_AXES)
+
+    def test_token_spaces_match(self, make_robot):
+        """A token policy consumes its own previous action as state; both must be 64-D."""
+        factory, _ = make_robot
+        robot = factory(controller=TokenController())
+        assert len(robot.action_features) == len(robot.observation_features) == TOKEN_DIM
+
+
+# ---------------------------------------------------------------------------
+# Command publishing
+# ---------------------------------------------------------------------------
+
+
+class TestPublishLowcmd:
+    def test_writes_only_present_joints(self, make_robot):
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(), mocks)
+
+        robot.publish_lowcmd({f"{G1_29_JointIndex.kLeftKnee.name}.q": 0.42})
+
+        assert robot.msg.motor_cmd[G1_29_JointIndex.kLeftKnee.value].q == pytest.approx(0.42)
+        assert robot.msg.motor_cmd[G1_29_JointIndex.kRightKnee.value].q == pytest.approx(-1.0)
+
+    def test_applies_configured_gains(self, make_robot):
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(), mocks, kp_value=77.0, kd_value=3.0)
+
+        robot.publish_lowcmd({f"{G1_29_JointIndex.kWaistYaw.name}.q": 0.0})
+
+        cmd = robot.msg.motor_cmd[G1_29_JointIndex.kWaistYaw.value]
+        assert cmd.kp == pytest.approx(77.0)
+        assert cmd.kd == pytest.approx(3.0)
+
+    def test_gain_overrides_win(self, make_robot):
+        """The controller thread passes its own gains (SONIC reads them from the ONNX)."""
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(), mocks, kp_value=77.0)
+
+        override_kp = np.full(NUM_MOTORS, 10.0, np.float32)
+        override_kd = np.full(NUM_MOTORS, 0.5, np.float32)
+        robot.publish_lowcmd({f"{G1_29_JointIndex.kWaistYaw.name}.q": 0.0}, kp=override_kp, kd=override_kd)
+
+        cmd = robot.msg.motor_cmd[G1_29_JointIndex.kWaistYaw.value]
+        assert cmd.kp == pytest.approx(10.0)
+        assert cmd.kd == pytest.approx(0.5)
+
+    def test_concurrent_publishes_dont_tear(self, make_robot):
+        """Publishes from two threads must never emit a half-updated command.
+
+        The controller thread, ``send_action()``, ``reset()`` and the shutdown path share one
+        lowcmd message, and the CRC covers whatever it holds at that moment, so an interleaved
+        update goes out as a valid-CRC mix of two commands. One publisher is parked after
+        writing its first joint and the other is let through, which forces that interleaving
+        instead of relying on timing.
+        """
+        first_joint_written = threading.Event()
+        other_publish_done = threading.Event()
+
+        class ParkedAction(dict):
+            """Blocks once the first joint has been written, inviting an interleaved publish."""
+
+            reads = 0
+
+            def __getitem__(self, key):
+                self.reads += 1
+                if self.reads == 2:
+                    first_joint_written.set()
+                    other_publish_done.wait(timeout=0.5)
+                return super().__getitem__(key)
+
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(), mocks)
+        knees = (G1_29_JointIndex.kLeftKnee, G1_29_JointIndex.kRightKnee)
+
+        published = []
+        robot.lowcmd_publisher.Write = lambda msg: published.append(
+            tuple(msg.motor_cmd[knee.value].q for knee in knees)
+        )
+
+        def publish_parked():
+            robot.publish_lowcmd(ParkedAction({f"{knee.name}.q": 1.0 for knee in knees}))
+
+        def publish_other():
+            first_joint_written.wait(timeout=1.0)
+            robot.publish_lowcmd({f"{knee.name}.q": 2.0 for knee in knees})
+            other_publish_done.set()
+
+        threads = [threading.Thread(target=publish_parked), threading.Thread(target=publish_other)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert len(published) == 2
+        for left, right in published:
+            assert left == right, f"published a mix of both commands: {left} and {right}"
+
+    def test_zero_gains_make_joints_passive(self, make_robot):
+        """Shutdown path: zero kp/kd/tau must reach the message."""
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(), mocks)
+
+        zeros = np.zeros(NUM_MOTORS, np.float32)
+        action = {f"{joint.name}.q": 0.0 for joint in G1_29_JointIndex}
+        robot.publish_lowcmd(action, kp=zeros, kd=zeros, tau=zeros)
+
+        for joint in G1_29_JointIndex:
+            cmd = robot.msg.motor_cmd[joint.value]
+            assert cmd.kp == pytest.approx(0.0)
+            assert cmd.kd == pytest.approx(0.0)
+            assert cmd.tau == pytest.approx(0.0)
+
+    def test_tau_defaults_to_zero(self, make_robot):
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(), mocks)
+
+        robot.publish_lowcmd({f"{G1_29_JointIndex.kLeftElbow.name}.q": 0.1})
+
+        assert robot.msg.motor_cmd[G1_29_JointIndex.kLeftElbow.value].tau == pytest.approx(0.0)
+
+    def test_stamps_crc_and_writes_once(self, make_robot):
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(), mocks)
+        mocks["publisher_mock"].Write.reset_mock()
+        mocks["crc_mock"].Crc.reset_mock()
+
+        robot.publish_lowcmd({f"{G1_29_JointIndex.kLeftKnee.name}.q": 0.0})
+
+        mocks["crc_mock"].Crc.assert_called_once_with(robot.msg)
+        mocks["publisher_mock"].Write.assert_called_once_with(robot.msg)
+
+    def test_ignores_unknown_keys(self, make_robot):
+        """Token and joystick keys share the action dict with joint targets."""
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(), mocks)
+
+        robot.publish_lowcmd({"motion_token.0.pos": 1.0, "remote.lx": 0.5})
+
+        for joint in G1_29_JointIndex:
+            assert robot.msg.motor_cmd[joint.value].q == pytest.approx(-1.0)
+
+
+# ---------------------------------------------------------------------------
+# Action dispatch
+# ---------------------------------------------------------------------------
+
+
+class TestSendAction:
+    def test_token_only_action_stays_off_the_wire(self, make_robot):
+        """With a controller loaded, a token-only action has nothing for send_action to publish.
+
+        Writing anyway just repeats the controller thread's last command with a fresh CRC, so
+        the robot sees commands at the policy rate on top of the controller rate.
+        """
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(controller=TokenController()), mocks)
+        mocks["publisher_mock"].Write.reset_mock()
+
+        robot.send_action({f"motion_token.{i}.pos": 0.5 for i in range(TOKEN_DIM)})
+
+        mocks["publisher_mock"].Write.assert_not_called()
+
+    def test_tokens_still_reach_the_controller(self, make_robot):
+        """Skipping the publish must not skip handing the action to the controller thread."""
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(controller=TokenController()), mocks)
+
+        robot.send_action({"motion_token.0.pos": 1.5, "remote.lx": 0.25})
+
+        assert robot.controller_input["motion_token.0.pos"] == 1.5
+        assert robot.controller_input["remote.lx"] == 0.25
+
+    def test_arm_targets_are_published(self, make_robot):
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(controller=TokenController()), mocks)
+        shoulder = G1_29_JointArmIndex.kLeftShoulderPitch
+        mocks["publisher_mock"].Write.reset_mock()
+
+        robot.send_action({f"{shoulder.name}.q": 0.3, "motion_token.0.pos": 0.5})
+
+        mocks["publisher_mock"].Write.assert_called_once_with(robot.msg)
+        assert robot.msg.motor_cmd[shoulder.value].q == pytest.approx(0.3)
+
+    def test_joint_action_is_published_without_ctrl(self, make_robot):
+        """Without a controller the caller owns every joint, so nothing is filtered out."""
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(), mocks)
+        mocks["publisher_mock"].Write.reset_mock()
+
+        robot.send_action({f"{motor.name}.q": 0.2 for motor in G1_29_JointIndex})
+
+        mocks["publisher_mock"].Write.assert_called_once_with(robot.msg)
+        assert all(q == pytest.approx(0.2) for q in published_targets(robot).values())
+
+
+# ---------------------------------------------------------------------------
+# Reset
+# ---------------------------------------------------------------------------
+
+
+def sim_ready(robot):
+    """Point the robot at a stub sim env so reset() takes its single-publish branch."""
+    robot.sim_env = MagicMock()
+    return robot
+
+
+class TestReset:
+    def test_homes_to_controller_pose(self, make_robot):
+        """The controller's home pose is what its policy expects, so it wins over the config."""
+        factory, mocks = make_robot
+        controller = TokenController()
+        controller.default_angles = np.full(NUM_MOTORS, 0.25, np.float32)
+        robot = sim_ready(arm_for_publish(factory(controller=controller), mocks))
+
+        robot.reset()
+
+        assert all(q == pytest.approx(0.25) for q in published_targets(robot).values())
+
+    def test_homes_to_config_without_ctrl(self, make_robot):
+        factory, mocks = make_robot
+        robot = sim_ready(arm_for_publish(factory(default_positions=[0.7] * NUM_MOTORS), mocks))
+
+        robot.reset()
+
+        assert all(q == pytest.approx(0.7) for q in published_targets(robot).values())
+
+    def test_explicit_pose_still_wins(self, make_robot):
+        factory, mocks = make_robot
+        controller = TokenController()
+        controller.default_angles = np.full(NUM_MOTORS, 0.25, np.float32)
+        robot = sim_ready(arm_for_publish(factory(controller=controller), mocks))
+
+        robot.reset(default_positions=np.full(NUM_MOTORS, -0.1, np.float32))
+
+        assert all(q == pytest.approx(-0.1) for q in published_targets(robot).values())
+
+    def test_clears_controller_state(self, make_robot):
+        factory, mocks = make_robot
+        controller = TokenController()
+        robot = sim_ready(arm_for_publish(factory(controller=controller), mocks))
+
+        robot.reset()
+
+        assert controller.reset_calls == 1
+
+    def test_holds_control_authority(self, make_robot):
+        """A controller tick starting mid-reset must wait instead of fighting the sweep.
+
+        The tick is launched from inside reset's own publish, so it is guaranteed to land while
+        the homing sweep is in progress rather than depending on thread scheduling.
+        """
+        factory, mocks = make_robot
+        controller = TokenController()
+        robot = sim_ready(arm_for_publish(factory(controller=controller), mocks))
+
+        ticks: list[threading.Thread] = []
+        blocked: list[bool] = []
+
+        def controller_tick():
+            with robot._control_lock:  # what the controller loop holds around a tick
+                pass
+
+        def on_write(msg):
+            tick = threading.Thread(target=controller_tick)
+            tick.start()
+            tick.join(timeout=0.2)
+            blocked.append(tick.is_alive())
+            ticks.append(tick)
+
+        robot.lowcmd_publisher.Write = on_write
+        robot.reset()
+        for tick in ticks:
+            tick.join(timeout=1.0)
+
+        assert blocked == [True], "a controller tick got through while reset was homing"
+        assert all(not tick.is_alive() for tick in ticks), "tick never got control back"
+
+
+# ---------------------------------------------------------------------------
+# Shutdown
+# ---------------------------------------------------------------------------
+
+
+class TestDisconnect:
+    def test_zero_torque_is_the_last_word(self, make_robot):
+        """Going passive is only meaningful as the final command on the wire.
+
+        The controller thread publishes at its own rate, so it has to be stopped and joined
+        before the zero-gain command; otherwise its next tick re-stiffens the joints and the
+        robot never actually goes limp.
+        """
+        factory, mocks = make_robot
+        robot = arm_for_publish(hardware_mode(factory()), mocks)
+
+        published = []
+        robot._send_zero_torque = lambda: published.append("zero_torque")
+        tick_started = threading.Event()
+
+        def controller_loop():
+            """Mirrors the real loop: check the flag, spend time in inference, then publish.
+
+            The publish is unconditional, so a tick already under way still sends stiff
+            targets even though the shutdown flag flipped while it was running.
+            """
+            while not robot._shutdown_event.is_set():
+                tick_started.set()
+                time.sleep(0.05)
+                published.append("controller")
+
+        robot._controller_thread = threading.Thread(target=controller_loop)
+        robot._controller_thread.start()
+        assert tick_started.wait(timeout=1.0), "controller loop never started a tick"
+
+        robot.disconnect()
+
+        assert "zero_torque" in published
+        after_going_passive = published[published.index("zero_torque") :]
+        assert "controller" not in after_going_passive, "controller published after zero torque"
+
+    def test_simulation_skips_zero_torque(self, make_robot):
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(), mocks)  # the fixture builds simulated robots
+        calls = []
+        robot._send_zero_torque = lambda: calls.append("zero_torque")
+
+        robot.disconnect()
+
+        assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# Controller input plumbing
+# ---------------------------------------------------------------------------
+
+
+class TestControllerInput:
+    def test_starts_from_a_zeroed_remote(self, make_robot):
+        factory, _ = make_robot
+        robot = factory(controller=TokenController())
+        assert all(value == 0.0 for value in robot.controller_input.values())
+
+    def test_action_values_are_merged_in(self, make_robot):
+        factory, _ = make_robot
+        robot = factory(controller=TokenController())
+
+        robot._update_controller_action({"remote.lx": 0.5, "motion_token.0.pos": 1.5})
+
+        assert robot.controller_input["remote.lx"] == 0.5
+        assert robot.controller_input["motion_token.0.pos"] == 1.5
+
+    def test_none_values_are_skipped(self, make_robot):
+        factory, _ = make_robot
+        robot = factory(controller=TokenController())
+
+        robot._update_controller_action({"remote.lx": 0.5})
+        robot._update_controller_action({"remote.lx": None})
+
+        assert robot.controller_input["remote.lx"] == 0.5
+
+    def test_partial_update_keeps_keys(self, make_robot):
+        """The controller thread reads a snapshot; stale axes must not be dropped."""
+        factory, _ = make_robot
+        robot = factory(controller=TokenController())
+
+        robot._update_controller_action({"remote.lx": 0.5, "remote.ly": -0.5})
+        robot._update_controller_action({"remote.lx": 0.25})
+
+        assert robot.controller_input["remote.lx"] == 0.25
+        assert robot.controller_input["remote.ly"] == -0.5

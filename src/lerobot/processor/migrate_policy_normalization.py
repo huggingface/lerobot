@@ -647,10 +647,15 @@ def main():
     tags = set(tags).union({"robotics", "lerobot", policy_type})
     tags = list(tags)
 
-    # Generate model card
-    card = policy.generate_model_card(
-        dataset_repo_id=dataset_repo_id, model_type=policy_type, license=license, tags=tags
-    )
+    # Generate model card through the free helper (PreTrainedPolicy.generate_model_card was
+    # removed with the publisher redesign), then apply the metadata recovered above — the
+    # migrated policy config does not carry the original repo's card fields.
+    from lerobot.common.train_utils import generate_model_card
+
+    card = generate_model_card(policy.config)
+    card.data.datasets = dataset_repo_id
+    card.data.license = license
+    card.data.tags = sorted(tags)
 
     # Save model card locally
     card.save(str(output_dir / "README.md"))

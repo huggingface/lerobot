@@ -75,12 +75,14 @@ from lerobot.cameras import opencv  # noqa: F401
 from lerobot.common.tracker_utils import TrackerLogger, make_tracker
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
-    load_training_state as utils_load_training_state,
+    load_training_metadata,
     save_checkpoint,
+    should_save_checkpoint,
     update_last_checkpoint,
 )
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset, make_dataset
+from lerobot.optim import load_optimizer_state
 from lerobot.policies import make_policy, make_pre_post_processors
 from lerobot.robots import so_follower  # noqa: F401
 from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
@@ -103,7 +105,7 @@ from lerobot.utils.constants import (
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.io_utils import load_json, write_json
 from lerobot.utils.process import ProcessSignalHandler, ensure_multiprocessing_start_method
-from lerobot.utils.random_utils import set_seed
+from lerobot.utils.random_utils import load_rng_state, set_seed
 from lerobot.utils.utils import (
     format_big_number,
     init_logging,
@@ -452,7 +454,7 @@ def add_actor_information_and_train(
             logging.info(f"[LEARNER] Number of optimization step: {optimization_step}")
 
         # Save checkpoint at specified intervals
-        if saving_checkpoint and (optimization_step % save_freq == 0 or optimization_step == online_steps):
+        if saving_checkpoint and should_save_checkpoint(optimization_step, save_freq, online_steps):
             save_training_checkpoint(
                 cfg=cfg,
                 optimization_step=optimization_step,
@@ -712,15 +714,18 @@ def load_training_state(
     algorithm-owned tensors) from the most recent checkpoint.
 
     Args:
-        cfg: Training configuration.
-        optimizers: Optimizers to load state into.
-        algorithm: Algorithm whose state dict should be restored.
-            Required for full main-equivalent resume;
-            the policy itself is restored separately via ``make_policy``.
-        device: Device on which to place loaded algorithm tensors.
+        cfg (TrainRLServerPipelineConfig): Training configuration; `cfg.resume` gates the load and
+            `cfg.output_dir` locates the last checkpoint.
+        optimizers (Optimizer | dict[str, Optimizer]): Optimizers to load state into.
+        algorithm (RLAlgorithm | None, optional): Algorithm whose state dict should be restored.
+            Required for full main-equivalent resume; the policy itself is restored separately via
+            `make_policy`. Defaults to None.
+        device (str | torch.device, optional): Device on which to place loaded algorithm tensors.
+            Defaults to "cpu".
 
     Returns:
-        tuple: (optimization_step, interaction_step) or (None, None) if not resuming
+        tuple[int | None, int | None]: `(optimization_step, interaction_step)`, or `(None, None)`
+        when not resuming or when loading the training state fails.
     """
     if not cfg.resume:
         return None, None
@@ -732,7 +737,10 @@ def load_training_state(
 
     try:
         # Restore optimizers + RNG + step from the standard `training_state/` folder
-        step, optimizers, _ = utils_load_training_state(checkpoint_dir, optimizers, None)
+        training_state_dir = checkpoint_dir / TRAINING_STATE_DIR
+        load_rng_state(training_state_dir)
+        step = load_training_metadata(training_state_dir)["step"]
+        optimizers = load_optimizer_state(optimizers, training_state_dir)
 
         # Restore algorithm-owned tensors
         if algorithm is not None:

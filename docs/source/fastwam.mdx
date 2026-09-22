@@ -122,6 +122,20 @@ FastWAM loads the Wan VAE, video DiT, text encoder, and tokenizer from the confi
 
 FastWAM's DiT uses PyTorch's `scaled_dot_product_attention` (SDPA) for all attention. It does **not** use FlashAttention: its Mixture-of-Transformers (MoT) routing needs arbitrary boolean `[query, key]` attention masks, which the FlashAttention varlen API cannot express. Installing the `flash-attn` package therefore has no effect on the FastWAM path. (Note that SDPA itself may still select PyTorch's own flash / memory-efficient / math kernel internally — this is unrelated to the `flash-attn` package.)
 
+### Compiled Action Inference
+
+FastWAM can compile its video-prefill and cached action-denoising graphs to reduce
+Python and CUDA kernel-launch overhead across the repeated inference steps:
+
+```bash
+--policy.compile_action_infer=true
+```
+
+The option is disabled by default. The first action prediction compiles a graph
+for the current input shapes and is therefore slower; later predictions with the
+same shapes reuse it. Shape changes may trigger recompilation. The eager path
+remains available on unsupported PyTorch or accelerator configurations.
+
 ### LIBERO Action Toggle
 
 FastWAM LIBERO checkpoints use `policy.toggle_action_dimensions=[-1]` by

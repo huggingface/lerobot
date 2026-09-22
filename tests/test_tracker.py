@@ -65,6 +65,7 @@ def stub_wandb(monkeypatch):
     fake.init = lambda **kwargs: calls["init"].append(kwargs)
     fake.log = lambda data=None, step=None: calls["log"].append((data, step))
     fake.define_metric = lambda *a, **kw: None
+    fake.Settings = lambda **kwargs: kwargs  # main wires console settings through wandb.Settings
 
     monkeypatch.setitem(sys.modules, "wandb", fake)
     monkeypatch.setattr("lerobot.common.tracker_utils.require_package", lambda *a, **kw: None)

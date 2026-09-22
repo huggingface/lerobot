@@ -17,6 +17,7 @@ from __future__ import annotations
 import abc
 import importlib
 from dataclasses import dataclass, field, fields
+from enum import Enum
 from typing import Any
 
 import draccus
@@ -281,7 +282,7 @@ class GripperConfig:
 class ResetConfig:
     """Configuration for environment reset behavior."""
 
-    fixed_reset_joint_positions: Any | None = None
+    fixed_reset_joint_positions: list[float] | None = None
     reset_time_s: float = 5.0
     control_time_s: float = 20.0
     terminate_on_success: bool = True
@@ -726,6 +727,53 @@ class IsaaclabArenaEnv(HubEnvConfig):
         )
 
 
+class G1EndEffector(str, Enum):
+    """What the G1's arms carry, by hardware name.
+
+    Shared with UnitreeG1Config, which owns the robot-level flag.
+    """
+
+    DUMMY = "dummy"  # bare wrists
+    DEX1 = "dex1"  # parallel grippers
+    DEX3 = "dex3"  # three-finger hands
+
+    @classmethod
+    def _missing_(cls, value: object) -> None:
+        raise ValueError(f"`end_effector` is expected to be in {list(cls)}, but {value} is provided.")
+
+
+@EnvConfig.register_subclass("unitree_g1_mujoco")
+@dataclass
+class UnitreeG1MujocoEnv(HubEnvConfig):
+    """Config for the MuJoCo simulation of the Unitree G1.
+
+    The end effector selects the MuJoCo model, and with it the finger actuators and the
+    wrist cameras that exist: "dummy" for bare wrists, "dex1" for the parallel grippers,
+    "dex3" for the three-finger hands.
+
+    The sim renders either its cameras or its window, never both: the offscreen contexts
+    are bound to the thread that creates them, which is not the one driving the viewer.
+    `onscreen` is therefore resolved from `publish_images` unless it is set explicitly.
+    """
+
+    hub_path: str = "lerobot/unitree-g1-mujoco"
+    end_effector: G1EndEffector = G1EndEffector.DEX1
+    publish_images: bool = True
+    camera_port: int = 5555
+    onscreen: bool | None = None
+
+    def __post_init__(self) -> None:
+        self.end_effector = G1EndEffector(self.end_effector)
+        if self.onscreen is None:
+            self.onscreen = not self.publish_images
+        elif self.onscreen and self.publish_images:
+            raise ValueError(
+                "The G1 sim cannot publish camera images and open its viewer in the same "
+                "process. Set publish_images=False to watch the window, or onscreen=False "
+                "to take the image stream."
+            )
+
+
 @EnvConfig.register_subclass("libero_plus")
 @dataclass
 class LiberoPlusEnv(LiberoEnv):
@@ -862,24 +910,31 @@ class RoboMMEEnv(EnvConfig):
     action_space: str = "joint_angle"  # or "ee_pose" (7-D)
     dataset_split: str = "test"  # "train" | "val" | "test"
     task_ids: list[int] | None = None
+    front_camera_name: str = "camera1"
+    wrist_camera_name: str = "camera2"
     features: dict[str, PolicyFeature] = field(default_factory=dict)
-    features_map: dict[str, str] = field(
-        default_factory=lambda: {
-            ACTION: ACTION,
-            "pixels/image": f"{OBS_IMAGES}.image",
-            "pixels/wrist_image": f"{OBS_IMAGES}.wrist_image",
-            "agent_pos": OBS_STATE,
-        }
-    )
+    features_map: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self):
         action_dim = 8 if self.action_space == "joint_angle" else 7
+        if self.front_camera_name == self.wrist_camera_name:
+            raise ValueError("RoboMME front and wrist camera names must be distinct.")
+        front_camera_key = f"pixels/{self.front_camera_name}"
+        wrist_camera_key = f"pixels/{self.wrist_camera_name}"
         self.features = {
             ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,)),
-            "pixels/image": PolicyFeature(type=FeatureType.VISUAL, shape=(256, 256, 3)),
-            "pixels/wrist_image": PolicyFeature(type=FeatureType.VISUAL, shape=(256, 256, 3)),
+            front_camera_key: PolicyFeature(type=FeatureType.VISUAL, shape=(256, 256, 3)),
+            wrist_camera_key: PolicyFeature(type=FeatureType.VISUAL, shape=(256, 256, 3)),
             "agent_pos": PolicyFeature(type=FeatureType.STATE, shape=(8,)),
         }
+        default_features_map = {
+            ACTION: ACTION,
+            front_camera_key: f"{OBS_IMAGES}.{self.front_camera_name}",
+            wrist_camera_key: f"{OBS_IMAGES}.{self.wrist_camera_name}",
+            "agent_pos": OBS_STATE,
+        }
+        # Preserve explicit mappings while filling in the RoboMME defaults.
+        self.features_map = {**default_features_map, **self.features_map}
 
     @property
     def gym_kwargs(self) -> dict:
@@ -896,5 +951,7 @@ class RoboMMEEnv(EnvConfig):
             dataset=self.dataset_split,
             episode_length=self.episode_length,
             task_ids=self.task_ids,
+            front_camera_name=self.front_camera_name,
+            wrist_camera_name=self.wrist_camera_name,
             env_cls=env_cls,
         )
