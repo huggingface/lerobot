@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import copy
 import math
 from collections.abc import Callable, Iterator
 from dataclasses import asdict
@@ -87,7 +88,11 @@ class SACAlgorithm(RLAlgorithm):
             )
             for _ in range(self.config.num_critics)
         ]
-        self.critic_target = CriticEnsemble(encoder=encoder, ensemble=target_heads)
+        # The target ensemble must own its own copy of the encoder: sharing the online encoder
+        # object would alias its parameters into `critic_target`, silently turning the EMA in
+        # `_update_target_networks` into a no-op for the encoder and tying the TD bootstrap
+        # target to the online trajectory instead of letting it trail behind.
+        self.critic_target = CriticEnsemble(encoder=copy.deepcopy(encoder), ensemble=target_heads)
         self.critic_target.load_state_dict(self.critic_ensemble.state_dict())
 
         # TODO(Khalil): Investigate and fix torch.compile
@@ -103,7 +108,8 @@ class SACAlgorithm(RLAlgorithm):
     def _init_discrete_critic_target(self, encoder: GaussianActorObservationEncoder) -> DiscreteCritic:
         """Build target discrete critic (main network is owned by the policy)."""
         discrete_critic_target = DiscreteCritic(
-            encoder=encoder,
+            # Own encoder copy, same aliasing rationale as `critic_target` above.
+            encoder=copy.deepcopy(encoder),
             input_dim=encoder.output_dim,
             output_dim=self.policy_config.num_discrete_actions,
             **asdict(self.config.discrete_critic_network_kwargs),
@@ -553,6 +559,17 @@ class SACAlgorithm(RLAlgorithm):
         if self.discrete_critic_target is not None:
             discrete_target_state = _split_prefix(state_dict, "discrete_critic_target.")
             self.discrete_critic_target.load_state_dict(discrete_target_state, strict=False)
+
+        # Encoder parameters are not serialized (`_strip_encoder_keys`), so the bundle cannot
+        # carry the target encoders: re-sync them from the online encoders — whose weights the
+        # checkpoint restores through the policy — so the EMA trails from the checkpoint state
+        # instead of a stale pre-load copy. Only the encoders are touched: the target heads
+        # keep their restored, deliberately lagged values.
+        self.critic_target.encoder.load_state_dict(self.critic_ensemble.encoder.state_dict())
+        if self.discrete_critic_target is not None:
+            self.discrete_critic_target.encoder.load_state_dict(
+                self.policy.discrete_critic.encoder.state_dict()
+            )
 
         if "log_alpha" in state_dict:
             self.log_alpha.data.copy_(state_dict["log_alpha"].to(self.log_alpha.device))
