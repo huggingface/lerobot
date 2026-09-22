@@ -33,6 +33,15 @@ A lightweight image based on `python:3.12-slim`. Includes all Python dependencie
 
 A CUDA-enabled image based on `nvidia/cuda`. This is the image for training — mostly used for internal interactions with the GPU cluster.
 
+### `Dockerfile.jetson` (NVIDIA Jetson, community-maintained)
+
+Builds `torch`/`torchcodec`/`torchvision` from source with CUDA support for NVIDIA Jetson Orin (JetPack 6.2, CUDA 12.6) — no prebuilt cp312 wheel exists for this platform yet. **Not** part of the nightly CI/Docker Hub pipeline above: maintained by [@ravediamond](https://github.com/ravediamond), manually kept in sync with [`ravediamond/lerobot-jetson`](https://github.com/ravediamond/lerobot-jetson) (the source of truth), where a prebuilt image is also published (`ghcr.io/ravediamond/lerobot-jetson`). See [#819](https://github.com/huggingface/lerobot/issues/819) for background.
+
+```bash
+docker build -f docker/Dockerfile.jetson -t lerobot-jetson .
+docker run -it --rm --runtime nvidia lerobot-jetson
+```
+
 ## Usage
 
 ### Running a pre-built image

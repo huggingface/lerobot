@@ -33,6 +33,7 @@ if TYPE_CHECKING:
         DistributedDataParallelKwargs,
         FullyShardedDataParallelPlugin,
         GradientAccumulationPlugin,
+        GradScalerKwargs,
     )
 
 
@@ -119,6 +120,65 @@ class DDPConfig:
 
 
 @dataclass
+class GradScalerConfig:
+    """Mirror of the `GradScalerKwargs` subset LeRobot exposes — fp16's loss scaler.
+
+    Inert unless `mixed_precision="fp16"`: accelerate reads this handler only on the branch
+    that builds the `torch.amp.GradScaler`. The defaults are accelerate's (and torch's) own.
+
+    `enabled` is deliberately not mirrored. fp16 without loss scaling underflows gradients to
+    zero and diverges, so a disabled scaler is never a valid LeRobot configuration; runs that
+    want no scaling want `mixed_precision="bf16"` instead.
+    """
+
+    init_scale: float = 65536.0
+    growth_factor: float = 2.0
+    backoff_factor: float = 0.5
+    growth_interval: int = 2000
+
+    def __post_init__(self) -> None:
+        """Validate the scaler fields against the invariants torch's update rule assumes.
+
+        Raises:
+            ValueError: If ``init_scale`` is not positive, ``growth_factor`` is not > 1
+                (the scale could never recover), ``backoff_factor`` is not in (0, 1) (an
+                overflow could never be escaped), or ``growth_interval`` is < 1.
+        """
+        # Coerced, not just validated, so the fields honour their annotations however the
+        # config was built. `init_scale` is the one that matters: the scaler reports it
+        # verbatim while still lazy but reports a float once materialized, so an int reaching
+        # it here (a direct Python constructor call — the CLI coerces) would write a float
+        # into the checkpoint and then fail the strict type check on the *second* resume.
+        self.init_scale = float(self.init_scale)
+        self.growth_factor = float(self.growth_factor)
+        self.backoff_factor = float(self.backoff_factor)
+        if self.init_scale <= 0:
+            raise ValueError(f"grad_scaler.init_scale must be > 0, got {self.init_scale}.")
+        if self.growth_factor <= 1:
+            raise ValueError(f"grad_scaler.growth_factor must be > 1, got {self.growth_factor}.")
+        if not 0 < self.backoff_factor < 1:
+            raise ValueError(f"grad_scaler.backoff_factor must be in (0, 1), got {self.backoff_factor}.")
+        if self.growth_interval < 1:
+            raise ValueError(f"grad_scaler.growth_interval must be >= 1, got {self.growth_interval}.")
+
+    def build_kwargs_handler(self) -> "GradScalerKwargs":
+        """Build the scaler kwargs handler for `Accelerator(kwargs_handlers=[...])`.
+
+        Returns:
+            GradScalerKwargs: Handler carrying the mirrored fields, consumed by accelerate
+                when it constructs the fp16 `GradScaler`.
+        """
+        from accelerate.utils import GradScalerKwargs
+
+        return GradScalerKwargs(
+            init_scale=self.init_scale,
+            growth_factor=self.growth_factor,
+            backoff_factor=self.backoff_factor,
+            growth_interval=self.growth_interval,
+        )
+
+
+@dataclass
 class GradientAccumulationConfig:
     """Mirror of the `GradientAccumulationPlugin` subset LeRobot supports.
 
@@ -191,13 +251,16 @@ class AcceleratorConfig:
     """Builds the `Accelerator` — the runtime counterpart of the `parallelism` topology.
 
     `mixed_precision` selects accelerate-native AMP for DDP/single-GPU runs and the FSDP2
-    `MixedPrecisionPolicy` for sharded runs (accelerate derives it). Sharded runs support
-    "no" and "bf16" only; fp16's GradScaler-over-DTensor path is unverified and fails fast
-    at config validation.
+    `MixedPrecisionPolicy` for sharded runs (accelerate derives it). All three values work on
+    every topology; "fp16" additionally gets a `torch.amp.GradScaler`, built by accelerate and
+    tuned through `grad_scaler`. Under FSDP2 the gradients it inspects are DTensors, whose
+    overflow flag torch reduces across the mesh, so a single rank's overflow skips the
+    optimizer update on all of them.
     """
 
     mixed_precision: str = "no"
     gradient_accumulation: GradientAccumulationConfig = field(default_factory=GradientAccumulationConfig)
+    grad_scaler: GradScalerConfig = field(default_factory=GradScalerConfig)
     fsdp: FSDPConfig = field(default_factory=FSDPConfig)
     ddp: DDPConfig = field(default_factory=DDPConfig)
     compile: CompileConfig = field(default_factory=CompileConfig)
@@ -222,6 +285,8 @@ class AcceleratorConfig:
         `parallelism` must already be resolved against the world size. The degradation matrix
         is encoded here and nowhere else: sharded -> FSDP2 (+HSDP via the accelerate
         `ParallelismConfig` mesh), replicated-only -> DDP kwargs, single process -> plain.
+        The scaler kwargs handler is orthogonal to that matrix: fp16 adds it on every
+        topology, and accelerate picks the right `GradScaler` flavour for the one in force.
 
         Args:
             parallelism (ParallelismConfig): The resolved process topology; selects which
@@ -241,11 +306,18 @@ class AcceleratorConfig:
             "mixed_precision": self.mixed_precision,
             "cpu": cpu,
         }
+        handlers: list = []
         if parallelism.is_sharded:
             kwargs["fsdp_plugin"] = self.fsdp.build_plugin()
             kwargs["parallelism_config"] = _accelerate_parallelism_config(parallelism)
         elif parallelism.is_replicated_only:
-            kwargs["kwargs_handlers"] = [self.ddp.build_kwargs_handler()]
+            handlers.append(self.ddp.build_kwargs_handler())
+        if self.mixed_precision == "fp16":
+            # Only appended for fp16: accelerate ignores this handler otherwise, and leaving
+            # it out keeps the "no"/"bf16" Accelerator identical to a run without a scaler.
+            handlers.append(self.grad_scaler.build_kwargs_handler())
+        if handlers:
+            kwargs["kwargs_handlers"] = handlers
         return Accelerator(**kwargs)
 
 
