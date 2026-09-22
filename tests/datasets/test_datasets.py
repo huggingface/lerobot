@@ -462,6 +462,23 @@ def test_set_image_transforms_supports_loaded_dataset(tmp_path, lerobot_dataset_
     assert dataset[0][camera_key].shape == torch.Size((3, 112, 112))
 
 
+def test_camera_keys_loads_a_subset_of_cameras(tmp_path, lerobot_dataset_factory):
+    root = tmp_path / "test"
+    full = lerobot_dataset_factory(root=root)
+    keep, *dropped = full.meta.camera_keys
+    delta_timestamps = {key: [-1 / full.meta.fps, 0.0] for key in full.meta.camera_keys}
+    subset = LeRobotDataset(DUMMY_REPO_ID, root=root, camera_keys=[keep], delta_timestamps=delta_timestamps)
+    assert subset.meta.camera_keys == [keep]
+    assert list(subset.delta_timestamps) == [keep]
+    item = subset[1]
+    assert torch.equal(item[keep][1], full[1][keep])
+    assert not any(key in item for key in dropped)
+    with pytest.raises(ValueError, match="Unknown camera keys"):
+        LeRobotDataset(DUMMY_REPO_ID, root=root, camera_keys=["observation.images.nope"])
+    with pytest.raises(ValueError, match="read-only"):
+        LeRobotDataset(DUMMY_REPO_ID, root=root, camera_keys=[keep], batch_encoding_size=2)
+
+
 def test_multilerobot_dataset_set_image_transforms_propagates(tmp_path, lerobot_dataset_factory):
     root = tmp_path / "multi"
     repo_ids = ["lerobot/test_multi_a", "lerobot/test_multi_b"]
