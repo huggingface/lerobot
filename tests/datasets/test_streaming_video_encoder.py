@@ -568,45 +568,9 @@ class TestStreamingVideoEncoder:
 
         encoder.close()
 
-    def test_full_queue_repeats_frame_instead_of_dropping(self, tmp_path, caplog):
-        """When the queue rejects a frame, the video still has one frame per fed frame."""
-        key = f"{OBS_IMAGES}.cam"
-        encoder = StreamingVideoEncoder(
-            fps=30,
-            rgb_encoder=self._make_encoder_config(
-                vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13
-            ),
-        )
-        encoder.start_episode([key], tmp_path)
-
-        num_frames = 12
-        rejected = {4, 5, num_frames - 1}
-        frame_queue = encoder._frame_queues[key]
-        real_put = frame_queue.put
-
-        def flaky_put(item, *args, **kwargs):
-            if item[0] in rejected:
-                raise queue.Full
-            return real_put(item, *args, **kwargs)
-
-        frame_queue.put = flaky_put
-        with caplog.at_level(logging.WARNING):
-            for _ in range(num_frames):
-                encoder.feed_frame(key, np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8))
-        frame_queue.put = real_put
-
-        assert "repeated the previous frame" in caplog.text
-
-        results = encoder.finish_episode()
-        mp4_path, stats = results[key]
-        with av.open(str(mp4_path)) as container:
-            total_frames = sum(1 for _ in container.decode(video=0))
-        assert total_frames == num_frames
-
-        encoder.close()
-
-    def test_raises_after_max_consecutive_repeats(self, tmp_path):
-        """feed_frame raises once too many frames are repeated back-to-back, and the counter resets on success."""
+    def test_back_pressure_repeats_frame_then_raises(self, tmp_path, caplog):
+        """A rejected frame is repeated (video stays aligned, counter resets on success), but a
+        sustained burst beyond max_repeated_frames raises."""
         key = f"{OBS_IMAGES}.cam"
         max_repeated = 5
         encoder = StreamingVideoEncoder(
@@ -616,35 +580,45 @@ class TestStreamingVideoEncoder:
             ),
             max_repeated_frames=max_repeated,
         )
-        encoder.start_episode([key], tmp_path)
-
-        frame_queue = encoder._frame_queues[key]
-        real_put = frame_queue.put
-        reject = False
-
-        def flaky_put(item, *args, **kwargs):
-            if reject:
-                raise queue.Full
-            return real_put(item, *args, **kwargs)
-
-        frame_queue.put = flaky_put
         frame = np.random.randint(0, 255, (64, 96, 3), dtype=np.uint8)
+        reject = {"on": False}
 
-        # A successful frame between two short reject bursts keeps the consecutive counter from tripping.
-        reject = True
-        for _ in range(max_repeated - 1):
-            encoder.feed_frame(key, frame)
-        reject = False
-        encoder.feed_frame(key, frame)  # resets the consecutive counter
+        def patch_queue(q):
+            real_put = q.put
+
+            def flaky_put(item, *args, **kwargs):
+                if reject["on"]:
+                    raise queue.Full
+                return real_put(item, *args, **kwargs)
+
+            q.put = flaky_put
+
+        # Episode 1: a short (< max) burst is repeated and warned; the counter resets on the next
+        # success, so it never trips, and the finished video keeps one frame per fed frame.
+        encoder.start_episode([key], tmp_path)
+        patch_queue(encoder._frame_queues[key])
+        num_frames = 12
+        rejected_idx = {4, 5}
+        with caplog.at_level(logging.WARNING):
+            for i in range(num_frames):
+                reject["on"] = i in rejected_idx
+                encoder.feed_frame(key, frame)
+        assert "repeated the previous frame" in caplog.text
         assert encoder._consecutive_repeats[key] == 0
 
-        # A sustained burst of exactly max_repeated repeats trips the guard.
-        reject = True
+        reject["on"] = False
+        mp4_path, _ = encoder.finish_episode()[key]
+        with av.open(str(mp4_path)) as container:
+            assert sum(1 for _ in container.decode(video=0)) == num_frames
+
+        # Episode 2: a sustained burst reaching max_repeated consecutive repeats trips the guard.
+        encoder.start_episode([key], tmp_path)
+        patch_queue(encoder._frame_queues[key])
+        reject["on"] = True
         with pytest.raises(RuntimeError, match="fell behind"):
             for _ in range(max_repeated):
                 encoder.feed_frame(key, frame)
 
-        frame_queue.put = real_put
         encoder.cancel_episode()
         encoder.close()
 
