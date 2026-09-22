@@ -471,8 +471,13 @@ class InferenceEngine(abc.ABC):
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
         """Return the next action tensor, or ``None`` if unavailable."""
 
-    def notify_observation(self, obs: dict) -> None:  # noqa: B027
-        """Publish the latest processed observation.  Default: no-op."""
+    def notify_observation(self, obs: dict, *, policy_tick: int | None = None) -> None:  # noqa: B027
+        """Publish the latest processed observation.  Default: no-op.
+
+        ``policy_tick`` counts training-rate steps (loop ticks divided by the
+        interpolation multiplier) so engines that keep observation history can
+        collapse repeated notifications within one tick.
+        """
 
     def pause(self) -> None:  # noqa: B027
         """Pause background inference.  Default: no-op."""
