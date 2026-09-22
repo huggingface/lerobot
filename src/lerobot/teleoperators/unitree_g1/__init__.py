@@ -18,9 +18,12 @@ from .config_unitree_g1 import ExoskeletonArmPortConfig, UnitreeG1TeleoperatorCo
 from .exo_calib import ExoskeletonCalibration, ExoskeletonJointCalibration
 from .exo_ik import ExoskeletonIKHelper
 from .exo_serial import ExoskeletonArm
+from .keyboard_g1 import UnitreeG1Keyboard, UnitreeG1KeyboardConfig
 from .unitree_g1 import UnitreeG1Teleoperator
 
 __all__ = [
+    "UnitreeG1Keyboard",
+    "UnitreeG1KeyboardConfig",
     "ExoskeletonArmPortConfig",
     "ExoskeletonCalibration",
     "ExoskeletonIKHelper",
