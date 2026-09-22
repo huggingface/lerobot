@@ -319,6 +319,7 @@ def record_loop(
 
                 # Applies a pipeline to the raw teleop action, default is IdentityProcessor
                 act_processed_teleop = teleop_action_processor((act, obs))
+                action_values = act_processed_teleop
                 robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
 
             elif isinstance(teleop, list):
@@ -328,6 +329,7 @@ def record_loop(
                 base_action = robot._from_keyboard_to_base_action(keyboard_action)
                 act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
                 act_processed_teleop = teleop_action_processor((act, obs))
+                action_values = act_processed_teleop
                 robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
             else:
                 robot_action_to_send = None
@@ -348,16 +350,30 @@ def record_loop(
             continue
 
         with timer.section("send"):
-            # Send action to robot
-            # Robot implementations may clip or otherwise modify the action at
-            # the hardware boundary. The returned value is the canonical action
-            # that was actually sent and must be used for recording.
+            # Robot implementations may clip or otherwise modify the command at
+            # the hardware boundary.
             sent_action = robot.send_action(robot_action_to_send)
 
-        # Write to dataset
+        # The dataset schema is defined by the recording-side processor. Some
+        # configurations (for example end-effector teleoperation) transform that
+        # representation again before sending joint commands to the robot. Use
+        # the returned command only when it can populate the configured action
+        # schema; otherwise preserve the recording representation.
+        recorded_action = sent_action
         if dataset is not None:
+            required_action_names = {
+                name
+                for key, feature in dataset.features.items()
+                if key.startswith(ACTION)
+                and feature["dtype"] == "float32"
+                and len(feature["shape"]) == 1
+                for name in feature["names"]
+            }
+            if not required_action_names.issubset(sent_action):
+                recorded_action = action_values
+
             with timer.section("record"):
-                action_frame = build_dataset_frame(dataset.features, sent_action, prefix=ACTION)
+                action_frame = build_dataset_frame(dataset.features, recorded_action, prefix=ACTION)
                 frame = {**observation_frame, **action_frame, "task": single_task}
                 dataset.add_frame(frame)
 
@@ -366,7 +382,7 @@ def record_loop(
                 log_visualization_data(
                     display_mode,
                     observation=obs_processed,
-                    action=sent_action,
+                    action=recorded_action,
                     compress_images=display_compressed_images,
                 )
 
