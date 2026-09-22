@@ -1275,8 +1275,7 @@ class VideoEncodingManager:
     def __exit__(self, exc_type, exc_val, exc_tb):
         writer = self.dataset.writer
         if writer is not None:
-            if exc_type is not None:
-                # No-op for non-streaming writers; cancels in-progress streaming encoding.
+            if exc_type is not None and writer.is_streaming_encoding:
                 writer.cancel_pending_videos()
 
             # finalize() handles flush_pending_videos + parquet + metadata
