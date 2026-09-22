@@ -35,6 +35,7 @@ from .storage import (
     is_remote_uri,
     localize_remote_root,
     make_dataset_reader,
+    make_dataset_writer,
 )
 from .utils import (
     create_lerobot_dataset_card,
@@ -314,7 +315,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.image_transforms = image_transforms
         if not is_default_format:
             self.episodes = self.reader.episodes
-            self.writer = None
+            self.writer: DatasetWriter | None = None
             self._is_finalized = False
             return
 
@@ -348,7 +349,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     encoder_queue_maxsize,
                     encoder_threads,
                 )
-            self.writer = DatasetWriter(
+            self.writer = make_dataset_writer(
+                storage_format=self.meta.storage_format,
                 meta=self.meta,
                 root=self.root,
                 rgb_encoder=rgb_encoder,
@@ -844,7 +846,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             streaming_enc = cls._build_streaming_encoder(
                 fps, rgb_encoder, depth_encoder, encoder_queue_maxsize, encoder_threads
             )
-        obj.writer = DatasetWriter(
+        obj.writer = make_dataset_writer(
+            storage_format=obj.meta.storage_format,
             meta=obj.meta,
             root=obj.root,
             rgb_encoder=rgb_encoder,
@@ -962,7 +965,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             streaming_enc = cls._build_streaming_encoder(
                 obj.meta.fps, rgb_encoder, depth_encoder, encoder_queue_maxsize, encoder_threads
             )
-        obj.writer = DatasetWriter(
+        obj.writer = make_dataset_writer(
+            storage_format=obj.meta.storage_format,
             meta=obj.meta,
             root=obj.root,
             rgb_encoder=rgb_encoder,

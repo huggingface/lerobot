@@ -1275,14 +1275,15 @@ class VideoEncodingManager:
     def __exit__(self, exc_type, exc_val, exc_tb):
         writer = self.dataset.writer
         if writer is not None:
-            if exc_type is not None and writer._streaming_encoder is not None:
+            if exc_type is not None:
+                # No-op for non-streaming writers; cancels in-progress streaming encoding.
                 writer.cancel_pending_videos()
 
             # finalize() handles flush_pending_videos + parquet + metadata
             self.dataset.finalize()
 
             # Clean up episode images if recording was interrupted (only for non-streaming mode)
-            if exc_type is not None and writer._streaming_encoder is None:
+            if exc_type is not None and not writer.is_streaming_encoding:
                 writer.cleanup_interrupted_episode(self.dataset.num_episodes)
         else:
             self.dataset.finalize()

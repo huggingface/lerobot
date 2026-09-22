@@ -15,6 +15,8 @@
 # limitations under the License.
 """Contract tests for DatasetWriter."""
 
+import sys
+import types
 from pathlib import Path
 from unittest.mock import patch
 
@@ -26,8 +28,14 @@ from PIL import Image
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.configs import VideoEncoderConfig
-from lerobot.datasets.dataset_writer import _encode_video_worker
+from lerobot.datasets.dataset_writer import DatasetWriter, LeRobotDatasetWriter, _encode_video_worker
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.storage import (
+    _DATASET_WRITER_MODULES,
+    DEFAULT_STORAGE_FORMAT,
+    make_dataset_writer,
+    register_dataset_writer,
+)
 from lerobot.datasets.utils import DEFAULT_IMAGE_PATH
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_REPO_ID
 
@@ -304,3 +312,102 @@ def test_finalize_then_read_roundtrip(tmp_path):
     for i in range(5):
         item = dataset[i]
         assert torch.allclose(item["state"], known_states[i], atol=1e-5)
+
+
+# ── Writer registry ──────────────────────────────────────────────────
+
+
+class DummyWriter(DatasetWriter):
+    """Minimal in-memory writer used to exercise the registry."""
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.episode_buffer = None
+
+    def add_frame(self, frame):
+        pass
+
+    def save_episode(self, episode_data=None, parallel_encoding=True):
+        pass
+
+    def clear_episode_buffer(self, delete_images=True):
+        pass
+
+    def start_image_writer(self, num_processes=0, num_threads=4):
+        pass
+
+    def stop_image_writer(self):
+        pass
+
+    def cleanup_interrupted_episode(self, episode_index):
+        pass
+
+    def flush_pending_videos(self):
+        pass
+
+    def cancel_pending_videos(self):
+        pass
+
+    def finalize(self):
+        pass
+
+
+def test_make_dataset_writer_default_returns_lerobot_writer(tmp_path):
+    """The default storage format resolves to the concrete LeRobotDatasetWriter."""
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=tmp_path / "ds"
+    )
+    writer = make_dataset_writer(
+        DEFAULT_STORAGE_FORMAT,
+        meta=dataset.meta,
+        root=dataset.root,
+        rgb_encoder=None,
+        depth_encoder=None,
+        encoder_threads=None,
+        batch_encoding_size=1,
+    )
+    assert isinstance(writer, LeRobotDatasetWriter)
+    assert isinstance(writer, DatasetWriter)
+
+
+@pytest.mark.parametrize("storage_format", ["lance", "does-not-exist"])
+def test_make_dataset_writer_unsupported_raises(storage_format):
+    """Requesting a writer for a non-writable format fails with a clear error."""
+    with pytest.raises(ValueError, match=storage_format):
+        make_dataset_writer(storage_format)
+
+
+def test_create_and_resume_use_registry(tmp_path):
+    """create() and resume() obtain their writer through the registry factory."""
+    root = tmp_path / "ds"
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=root
+    )
+    assert isinstance(dataset.writer, LeRobotDatasetWriter)
+
+    for _ in range(3):
+        dataset.add_frame(_make_frame(SIMPLE_FEATURES))
+    dataset.save_episode()
+    dataset.finalize()
+
+    resumed = LeRobotDataset.resume(repo_id=DUMMY_REPO_ID, root=root)
+    assert isinstance(resumed.writer, LeRobotDatasetWriter)
+
+
+def test_register_dataset_writer_selects_custom_writer(monkeypatch):
+    """A custom writer can be registered and selected without touching LeRobotDataset."""
+    module = types.ModuleType("dummyfmt_writer")
+    module.DATASET_WRITER = DummyWriter
+    monkeypatch.setitem(sys.modules, "dummyfmt_writer", module)
+    register_dataset_writer("dummyfmt", "dummyfmt_writer")
+    try:
+        writer = make_dataset_writer("dummyfmt", meta="meta", root="root")
+        assert isinstance(writer, DummyWriter)
+        assert writer.kwargs == {"meta": "meta", "root": "root"}
+
+        with pytest.raises(ValueError, match="already registered"):
+            register_dataset_writer("dummyfmt", "some.other.module")
+        with pytest.raises(ValueError, match="already registered"):
+            register_dataset_writer(DEFAULT_STORAGE_FORMAT, "dummyfmt_writer")
+    finally:
+        _DATASET_WRITER_MODULES.pop("dummyfmt", None)
