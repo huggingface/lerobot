@@ -27,7 +27,7 @@ from lerobot.processor import (
 from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
 from lerobot.robots.so_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
-    ForwardKinematicsJointsToEE,
+    ForwardKinematicsJointsToEEAction,
     InverseKinematicsEEToJoints,
 )
 from lerobot.teleoperators.so_leader import SO100Leader, SO100LeaderConfig
@@ -65,7 +65,7 @@ def main():
     # Build pipeline to convert teleop joints to EE action
     leader_to_ee = RobotProcessorPipeline[RobotAction, RobotAction](
         steps=[
-            ForwardKinematicsJointsToEE(
+            ForwardKinematicsJointsToEEAction(
                 kinematics=leader_kinematics_solver, motor_names=list(leader.bus.motors.keys())
             ),
         ],

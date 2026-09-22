@@ -36,7 +36,7 @@ from lerobot.processor import (
 )
 from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
 from lerobot.robots.so_follower.robot_kinematic_processor import (
-    ForwardKinematicsJointsToEE,
+    ForwardKinematicsJointsToEEObservation,
     InverseKinematicsEEToJoints,
 )
 from lerobot.utils.constants import ACTION, OBS_STR
@@ -95,7 +95,7 @@ def main():
     # Build pipeline to convert joints observation to EE observation
     robot_joints_to_ee_pose_processor = RobotProcessorPipeline[RobotObservation, RobotObservation](
         steps=[
-            ForwardKinematicsJointsToEE(
+            ForwardKinematicsJointsToEEObservation(
                 kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys())
             )
         ],

@@ -2436,3 +2436,148 @@ def test_initial_camera_not_overridden_by_step_image():
     key = f"{OBS_IMAGES}.front"
     assert key in out
     assert out[key]["shape"] == (240, 320, 3)  # from the step, not from initial
+
+
+class _SkipIfMissingMarkerMixin:
+    """Provides a pass-through transform_features so test steps only need to implement their field hook."""
+
+    def transform_features(self, features):
+        return features
+
+
+def test_skip_if_missing_observation_step():
+    from lerobot.processor import ObservationProcessorStep
+
+    class TolerantObsStep(_SkipIfMissingMarkerMixin, ObservationProcessorStep):
+        skip_if_missing = True
+
+        def observation(self, observation):
+            observation["ran"] = True
+            return observation
+
+    class StrictObsStep(_SkipIfMissingMarkerMixin, ObservationProcessorStep):
+        def observation(self, observation):
+            return observation
+
+    transition = create_transition(action=torch.zeros(2))
+    out = TolerantObsStep()(transition)
+    assert out[TransitionKey.OBSERVATION] is None
+    with pytest.raises(ValueError, match="requires an observation"):
+        StrictObsStep()(transition)
+
+    # With the field present, the hook still runs.
+    out = TolerantObsStep()(create_transition(observation={"x": 1}))
+    assert out[TransitionKey.OBSERVATION]["ran"] is True
+
+
+def test_skip_if_missing_action_steps():
+    from lerobot.processor import (
+        ActionProcessorStep,
+        PolicyActionProcessorStep,
+        RobotActionProcessorStep,
+    )
+
+    class TolerantActionStep(_SkipIfMissingMarkerMixin, ActionProcessorStep):
+        skip_if_missing = True
+
+        def action(self, action):
+            return action + 1
+
+    class TolerantPolicyActionStep(_SkipIfMissingMarkerMixin, PolicyActionProcessorStep):
+        skip_if_missing = True
+
+        def action(self, action):
+            return action + 1
+
+    class TolerantRobotActionStep(_SkipIfMissingMarkerMixin, RobotActionProcessorStep):
+        skip_if_missing = True
+
+        def action(self, action):
+            return {**action, "ran": True}
+
+    action_less = create_transition(observation={"x": 1})
+    for step in (TolerantActionStep(), TolerantPolicyActionStep(), TolerantRobotActionStep()):
+        out = step(action_less)
+        assert out[TransitionKey.ACTION] is None
+
+    # Present action still processed.
+    out = TolerantPolicyActionStep()(create_transition(action=torch.zeros(2)))
+    assert torch.equal(out[TransitionKey.ACTION], torch.ones(2))
+
+    # A present-but-wrong-type action still raises, even with skip_if_missing.
+    with pytest.raises(ValueError, match="PolicyAction"):
+        TolerantPolicyActionStep()(create_transition(action={"joint": 1.0}))
+    with pytest.raises(ValueError, match="RobotAction"):
+        TolerantRobotActionStep()(create_transition(action=torch.zeros(2)))
+
+
+def test_skip_if_missing_scalar_and_dict_steps():
+    from lerobot.processor import (
+        ComplementaryDataProcessorStep,
+        DoneProcessorStep,
+        InfoProcessorStep,
+        RewardProcessorStep,
+        TruncatedProcessorStep,
+    )
+
+    class TolerantRewardStep(_SkipIfMissingMarkerMixin, RewardProcessorStep):
+        skip_if_missing = True
+
+        def reward(self, reward):
+            return reward + 1.0
+
+    class TolerantDoneStep(_SkipIfMissingMarkerMixin, DoneProcessorStep):
+        skip_if_missing = True
+
+        def done(self, done):
+            return done
+
+    class TolerantTruncatedStep(_SkipIfMissingMarkerMixin, TruncatedProcessorStep):
+        skip_if_missing = True
+
+        def truncated(self, truncated):
+            return truncated
+
+    class TolerantInfoStep(_SkipIfMissingMarkerMixin, InfoProcessorStep):
+        skip_if_missing = True
+
+        def info(self, info):
+            return {**info, "ran": True}
+
+    class TolerantComplementaryStep(_SkipIfMissingMarkerMixin, ComplementaryDataProcessorStep):
+        skip_if_missing = True
+
+        def complementary_data(self, complementary_data):
+            return {**complementary_data, "ran": True}
+
+    # create_transition never yields None for these fields, so build the partial transition by hand.
+    empty_transition: EnvTransition = {}
+    for step, key in (
+        (TolerantRewardStep(), TransitionKey.REWARD),
+        (TolerantDoneStep(), TransitionKey.DONE),
+        (TolerantTruncatedStep(), TransitionKey.TRUNCATED),
+        (TolerantInfoStep(), TransitionKey.INFO),
+        (TolerantComplementaryStep(), TransitionKey.COMPLEMENTARY_DATA),
+    ):
+        out = step(empty_transition)
+        assert out.get(key) is None
+
+    # With the fields present (create_transition defaults), the hooks still run.
+    full = create_transition()
+    assert TolerantRewardStep()(full)[TransitionKey.REWARD] == 1.0
+    assert TolerantDoneStep()(full)[TransitionKey.DONE] is False
+    assert TolerantTruncatedStep()(full)[TransitionKey.TRUNCATED] is False
+    assert TolerantInfoStep()(full)[TransitionKey.INFO]["ran"] is True
+    assert TolerantComplementaryStep()(full)[TransitionKey.COMPLEMENTARY_DATA]["ran"] is True
+
+
+def test_skip_if_missing_default_is_strict():
+    from lerobot.processor import ActionProcessorStep
+
+    class DefaultActionStep(_SkipIfMissingMarkerMixin, ActionProcessorStep):
+        def action(self, action):
+            return action
+
+    assert DefaultActionStep.skip_if_missing is False
+    with pytest.raises(ValueError, match="requires an action"):
+        DefaultActionStep()(create_transition(observation={"x": 1}))
