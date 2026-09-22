@@ -85,7 +85,8 @@ from lerobot.envs import (
 from lerobot.envs.utils import NEW_ROLLOUT_OPTION
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
-from lerobot.processor import PolicyProcessorPipeline
+from lerobot.policies.factory import build_rename_override
+from lerobot.processor import PolicyProcessorPipeline, RenameObservationsProcessorStep
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.eval_stats import success_summary
@@ -769,18 +770,15 @@ def eval_main(cfg: EvalPipelineConfig):
 
     logging.info("Making policy.")
 
-    policy = make_policy(
-        cfg=cfg.policy,
-        env_cfg=cfg.env,
-        rename_map=cfg.rename_map,
-    )
-
-    policy.eval()
+    # Scratch policies populate the features needed to build their processors.
+    policy = None
+    if not cfg.policy.pretrained_path:
+        policy = make_policy(cfg=cfg.policy, env_cfg=cfg.env, rename_map=cfg.rename_map)
 
     # The inference device is automatically set to match the detected hardware, overriding any previous device settings from training to ensure compatibility.
-    preprocessor_overrides = {
-        "device_processor": {"device": str(policy.config.device)},
-        "rename_observations_processor": {"rename_map": cfg.rename_map},
+    preprocessor_overrides: dict[str, Any] = {
+        "device_processor": {"device": str(cfg.policy.device)},
+        **build_rename_override(cfg.rename_map),
     }
 
     preprocessor, postprocessor = make_pre_post_processors(
@@ -788,6 +786,19 @@ def eval_main(cfg: EvalPipelineConfig):
         pretrained_path=cfg.policy.pretrained_path,
         preprocessor_overrides=preprocessor_overrides,
     )
+
+    if policy is None:
+        rename_map = cfg.rename_map or next(
+            (
+                step.rename_map
+                for step in preprocessor.steps
+                if isinstance(step, RenameObservationsProcessorStep)
+            ),
+            {},
+        )
+        policy = make_policy(cfg=cfg.policy, env_cfg=cfg.env, rename_map=rename_map)
+
+    policy.eval()
 
     # Create environment-specific preprocessor and postprocessor (e.g., for LIBERO environments)
     env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env, policy_cfg=cfg.policy)
