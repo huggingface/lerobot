@@ -345,6 +345,17 @@ robot's `connect()`, which enables motors.
 
 Compose and review with:
 
+Each feature view's `targets` entries accept either `point: [x, y]` or
+`points: [[source_x, source_y], [destination_x, destination_y]]`, together with
+`instruction` and `evidence`. The instruction must explain the points' roles in
+that order. All coordinates belong to the view's named camera and original
+`image_size`; a pair cannot mix camera views. The compiler preserves the supplied
+order and emits both pointing and semantic-plus-pointing candidates. Each candidate
+still needs review against the demonstrated interval: an object/destination pair
+does not establish that a pick-and-place occurred, and coordinates from one frame
+must not be reused across intervals where their targets move. Existing `point`
+features remain supported. Supplying both `point` and `points` is rejected.
+
 ```bash
 uv run examples/rebot_agent/prepare_steering.py \
   --features /path/to/grounded_features.json \

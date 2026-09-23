@@ -118,6 +118,52 @@ def test_camera_scoped_points_keep_original_coordinate_frame():
         SteeringCommands(data)
 
 
+@pytest.mark.parametrize("geometry", [{"point": [100, 200]}, {"points": [[100, 200], [300, 150]]}])
+def test_composition_preserves_target_order_and_combined_grounding(geometry):
+    compose = runpy.run_path(str(Path(__file__).parents[2] / "examples/rebot_agent/prepare_steering.py"))[
+        "compose_segment"
+    ]
+    features = {
+        "episode_index": 3,
+        "start_frame": 0,
+        "end_frame": 5,
+        "subtask": "place tape in the bin",
+        "subtask_evidence": {"source": "timestamped video"},
+        "views": [
+            {
+                "camera": "observation.images.base",
+                "image_size": [640, 480],
+                "targets": [
+                    {
+                        **geometry,
+                        "instruction": "pick the object at the first point and place it at the second point"
+                        if "points" in geometry
+                        else "reach to the target",
+                        "evidence": {"source": "reviewed object masks", "frame": 0},
+                    }
+                ],
+            }
+        ],
+    }
+    before = copy.deepcopy(features)
+    segment = compose(features)
+    assert features == before
+    point, combination = segment["commands"][1:]
+    assert point["style"] == "point" and combination["style"] == "combination"
+    assert point["points"] == combination["points"] == geometry.get("points", [geometry.get("point")])
+    assert combination["evidence"] == [features["subtask_evidence"], point["evidence"]]
+    assert "review" not in segment
+    # Structure alone never accepts a command. This review is only a test fixture.
+    segment["review"] = {"verdict": "accepted", "reviewer": "test-only"}
+    data = manifest()
+    data["segments"] = [segment]
+    SteeringCommands(data)
+    target = features["views"][0]["targets"][0]
+    target.update(point=[1, 2], points=[[1, 2], [3, 4]])
+    with pytest.raises(ValueError, match="either one point"):
+        compose(features)
+
+
 def test_coverage_detects_absent_episodes_holes_and_out_of_range_intervals():
     index = SteeringCommands(manifest())
     assert index.coverage({3: 5})["complete"]

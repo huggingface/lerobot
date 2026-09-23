@@ -37,13 +37,25 @@ def compose_segment(features: dict) -> dict:
     for view in features.get("views", []):
         common = {k: view[k] for k in ("camera", "image_size")}
         for target in view.get("targets", []):
+            if ("point" in target) == ("points" in target):
+                raise ValueError("A target command needs either one point or an ordered points list")
+            points = target["points"] if "points" in target else [target["point"]]
             commands.append(
                 {
                     **common,
                     "style": "point",
                     "text": target["instruction"],
-                    "points": [target["point"]],
+                    "points": points,
                     "evidence": target["evidence"],
+                }
+            )
+            commands.append(
+                {
+                    **common,
+                    "style": "combination",
+                    "text": f"{features['subtask']}; {target['instruction']}",
+                    "points": points,
+                    "evidence": [features["subtask_evidence"], target["evidence"]],
                 }
             )
         for trace in view.get("traces", []):
