@@ -371,7 +371,19 @@ class Molmo:
         )
 
 
-def run_molmo(output: Path, manifest: dict, stage: str, model):
+def verify_point_target(output: Path, manifest: dict, point_target: str):
+    """Check every cached point before writing outputs or runtime provenance."""
+    if point_target not in {"object", "material"}:
+        raise ValueError(f"Unknown pointing target: {point_target}")
+    for clip in manifest["clips"]:
+        target = output / clip["path"] / "point.json"
+        if target.exists() and json.loads(target.read_text()).get("point_target", "object") != point_target:
+            raise ValueError("Pointing target changed; use a separate extraction to preserve prior evidence")
+
+
+def run_molmo(output: Path, manifest: dict, stage: str, model, *, point_target: str = "object"):
+    if stage == "point":
+        verify_point_target(output, manifest, point_target)
     for clip in manifest["clips"]:
         directory = output / clip["path"]
         target = directory / f"{stage}.json"
@@ -397,6 +409,12 @@ def run_molmo(output: Path, manifest: dict, stage: str, model):
             objects = []
             for object_id, name in enumerate(identification["objects"], 1):
                 prompt = f"Point to the {name}. Return a single point only if it is visible and unambiguous."
+                if point_target == "material":
+                    prompt = (
+                        f"Point to one visible solid part of the {name} itself, "
+                        "on its material surface. Avoid holes, empty interiors, and the surrounding table. "
+                        "Return a single point only if the object is visible and unambiguous."
+                    )
                 raw = model(image, prompt)
                 objects.append(
                     {
@@ -411,6 +429,7 @@ def run_molmo(output: Path, manifest: dict, stage: str, model):
                 "objects": objects,
                 "identity_scope": "clip",
                 "coordinate_system": "original_image_xy_pixels",
+                "point_target": point_target,
             }
         write_json(target, {**result, "model": manifest["models"][stage], "review": "pending"})
 
@@ -516,6 +535,12 @@ def main():
         "--stride", type=int, default=1, help="1 preserves all frames; larger values are pilot-only"
     )
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument(
+        "--point-target",
+        choices=["object", "material"],
+        default="object",
+        help="Molmo point prompt: material requests a visible solid surface for SAM2 seeds; still requires review",
+    )
     args = parser.parse_args()
     if args.stage == "prepare-required":
         if args.parent is None or not args.objects:
@@ -530,6 +555,8 @@ def main():
         return
     manifest = json.loads((args.output / "extraction.json").read_text())
     verify_frames(args.output, manifest)
+    if args.stage == "point":
+        verify_point_target(args.output, manifest, args.point_target)
     if args.stage in ("identify", "reparse-identify") and manifest["models"]["identify"] is None:
         raise ValueError("This recovery extraction uses instruction-named candidates; continue with point")
     # This file also records the script used when running remotely from an uncommitted checkout.
@@ -541,6 +568,8 @@ def main():
     for package in ("torch", "transformers", "huggingface-hub", "tensorflow-cpu", "SAM-2"):
         with contextlib.suppress(importlib.metadata.PackageNotFoundError):
             provenance[package] = importlib.metadata.version(package)
+    if args.stage == "point":
+        provenance["point_target"] = args.point_target
     write_json(args.output / f"{args.stage}_runtime.json", provenance)
     if args.stage == "reparse-identify":
         print(json.dumps(reparse_identification(args.output, manifest)), flush=True)
@@ -549,7 +578,13 @@ def main():
         print(json.dumps(filter_objects(args.output, manifest)), flush=True)
         return
     if args.stage in ("identify", "point"):
-        run_molmo(args.output, manifest, args.stage, Molmo(manifest["models"][args.stage], args.device))
+        run_molmo(
+            args.output,
+            manifest,
+            args.stage,
+            Molmo(manifest["models"][args.stage], args.device),
+            point_target=args.point_target,
+        )
     else:
         require_package("SAM-2", extra=None, import_name="sam2")
         spec = manifest["models"]["track"]

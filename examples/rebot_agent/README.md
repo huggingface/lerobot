@@ -77,6 +77,14 @@ language switching. The interval is seconds of execution, not the paper's exact
 
 ## Store grounded geometry in native language annotations
 
+For hollow or thin objects, a Molmo object-center point can land on background and
+seed the wrong SAM2 mask. In a **separate extraction**, try
+`extract_visual.py point --output PATH --point-target material` to request a point
+on visible object material. The exact prompt, response, and target mode are stored;
+resuming with a different mode refuses to reuse prior points. Inspect masks before
+accepting candidates: a ReBot pilot improved tape-roll tracking with this prompt,
+but a cable still produced a tabletop mask. Mask presence alone is not validation.
+
 ```bash
 uv run examples/rebot_agent/export_language_annotations.py \
   --dataset-root /path/to/source_dataset \

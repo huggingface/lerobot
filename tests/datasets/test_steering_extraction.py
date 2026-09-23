@@ -51,6 +51,33 @@ def test_object_selection_does_not_silently_truncate_or_invent_identities(extrac
             parse(raw)
 
 
+def test_point_target_resume_preserves_evidence_and_rejects_changed_strategy(extractor, tmp_path):
+    directory = tmp_path / "clip"
+    (directory / "frames").mkdir(parents=True)
+    Image.new("RGB", (8, 6)).save(directory / "frames/000000.jpg")
+    (directory / "identify.json").write_text(json.dumps({"objects": ["tape"], "error": None}))
+    manifest = {"models": extractor["MODELS"], "clips": [{"path": "clip"}]}
+    model = Mock(return_value='<point x="50" y="50">tape</point>')
+    run = extractor["run_molmo"]
+    run(tmp_path, manifest, "point", model, point_target="material")
+    target = directory / "point.json"
+    result = json.loads(target.read_text())
+    assert result["point_target"] == "material"
+    assert result["objects"][0]["prompt"] == model.call_args.args[1]
+    assert result["objects"][0]["raw"] == model.return_value
+    before = target.read_bytes()
+    run(tmp_path, manifest, "point", model, point_target="material")
+    assert model.call_count == 1
+    with pytest.raises(ValueError, match="Pointing target changed"):
+        run(tmp_path, manifest, "point", model)
+    assert target.read_bytes() == before
+    # Pre-option outputs used the object prompt and remain resumable in that mode.
+    del result["point_target"]
+    target.write_text(json.dumps(result))
+    run(tmp_path, manifest, "point", model)
+    assert model.call_count == 1
+
+
 def test_reparse_preserves_model_response_and_records_recovery(extractor, tmp_path):
     directory = tmp_path / "clip"
     directory.mkdir()
