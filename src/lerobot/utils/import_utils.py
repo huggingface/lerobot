@@ -206,8 +206,16 @@ def _lazy_imports(module_name: str) -> dict[str, ast.Module]:
             if isinstance(stmt, ast.Import | ast.ImportFrom) and all(
                 alias.name != "*" for alias in stmt.names
             ):
-                names = [(alias.asname or alias.name).split(".")[0] for alias in stmt.names]
-                code |= dict.fromkeys(names, ast.Module(body=[stmt], type_ignores=[]))
+                # One import per name, so using one name does not also load the others it is listed with.
+                for alias in stmt.names:
+                    one: ast.stmt = (
+                        ast.ImportFrom(module=stmt.module, names=[alias], level=stmt.level)
+                        if isinstance(stmt, ast.ImportFrom)
+                        else ast.Import(names=[alias])
+                    )
+                    name = (alias.asname or alias.name).split(".")[0]
+                    body = code[name].body if name in code else []
+                    code[name] = ast.Module(body=[*body, ast.copy_location(one, stmt)], type_ignores=[])
             elif isinstance(stmt, ast.AnnAssign | ast.Assign) and all(
                 isinstance(t, ast.Name) for t in targets
             ):
@@ -240,7 +248,11 @@ def lazy_getattr(module_name: str) -> Callable[[str], Any]:
                 module = sys.modules[module_name]
                 flags = __future__.annotations.compiler_flag
                 code = compile(lazy_imports[name], inspect.getfile(module), "exec", flags, dont_inherit=True)
-                exec(code, vars(module))  # nosec B102: the module's own imports
+                try:
+                    exec(code, vars(module))  # nosec B102: the module's own imports
+                except AttributeError as e:
+                    # Python would read this as "no such attribute" and drop the real error.
+                    raise ImportError(f"importing {name!r} for {module_name!r} failed: {e}") from e
                 return vars(module)[name]
         raise AttributeError(f"module {module_name!r} has no attribute {name!r}")
 

@@ -98,6 +98,32 @@ def test_unsupported_statements_are_rejected(make_module):
         _ = mod.helper
 
 
+def test_attribute_error_while_importing_is_not_hidden(make_module, tmp_path):
+    (tmp_path / "lazy_pkg" / "broken.py").write_text("raise AttributeError('real cause')\n")
+    make_module("""
+        if LAZY_IMPORTS:
+            from lazy_pkg.broken import thing
+        else:
+            __getattr__ = lazy_getattr(__name__)
+    """)
+    mod = importlib.import_module("lazy_pkg.mod")
+    with pytest.raises(ImportError, match="real cause"):
+        _ = mod.thing
+
+
+def test_dotted_imports_sharing_a_package_all_run(make_module, tmp_path):
+    (tmp_path / "lazy_pkg" / "a.py").write_text("A = 1\n")
+    (tmp_path / "lazy_pkg" / "b.py").write_text("B = 2\n")
+    make_module("""
+        if LAZY_IMPORTS:
+            import lazy_pkg.a, lazy_pkg.b
+        else:
+            __getattr__ = lazy_getattr(__name__)
+    """)
+    mod = importlib.import_module("lazy_pkg.mod")
+    assert (mod.lazy_pkg.a.A, mod.lazy_pkg.b.B) == (1, 2)
+
+
 def test_reload_sees_the_new_block(make_module):
     block = """
         if LAZY_IMPORTS:
@@ -119,5 +145,5 @@ def test_every_lazy_name_in_lerobot_resolves(module_name):
     module = importlib.import_module(module_name)
     names = _lazy_imports(module_name)
     assert names
-    for name in names:
+    for name in [*names, *getattr(module, "__all__", [])]:
         assert getattr(module, name) is not None

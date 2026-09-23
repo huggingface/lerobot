@@ -69,8 +69,10 @@ if attempts:
         "lerobot.scripts.lerobot_find_port",
         "lerobot.scripts.lerobot_setup_can",
         "lerobot.scripts.lerobot_setup_motors",
+        "lerobot.scripts.lerobot_teleoperate",
         "lerobot.configs",
         "lerobot.policies",
+        "lerobot.processor",
         pytest.param(
             "lerobot.scripts.lerobot_rollout",
             marks=pytest.mark.skipif(not _datasets_available, reason="datasets not installed"),
