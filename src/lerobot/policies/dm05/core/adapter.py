@@ -69,31 +69,6 @@ def resolve_torch_dtype(dtype: str) -> torch.dtype:
     raise ValueError(f"Unsupported dtype: {dtype}")
 
 
-def relative_action_mask(
-    action_dim: int,
-    action_names: Sequence[str] | None,
-    exclude_joints: Sequence[str],
-) -> list[bool]:
-    """Return the OpenDM-style delta mask for an action vector."""
-    excluded = [str(name).lower() for name in exclude_joints if name]
-    if not excluded:
-        return [True] * action_dim
-    if action_names is None or len(action_names) != action_dim:
-        raise ValueError(
-            "DM05 relative_exclude_joints requires one action feature name per dimension; "
-            f"got {0 if action_names is None else len(action_names)} names for {action_dim} dimensions."
-        )
-
-    action_names_lower = [str(name).lower() for name in action_names]
-    unmatched = [
-        token for token in excluded if not any(token == name or token in name for name in action_names_lower)
-    ]
-    if unmatched:
-        raise ValueError(f"DM05 relative_exclude_joints did not match action feature names: {unmatched}.")
-    mask = [not any(token == name or token in name for token in excluded) for name in action_names_lower]
-    return mask
-
-
 def normalize_task_batch(task: Any, batch_size: int, default_task: str) -> list[str]:
     """Broadcast or validate task prompts for a batched DM05 input."""
     if task is None:

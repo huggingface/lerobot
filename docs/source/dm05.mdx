@@ -72,28 +72,12 @@ matching state/action dimensions and matching relative-action statistics.
 
 ### Normalization statistics
 
-Absolute-action training, the default, uses the standard LeRobot state/action statistics in
-`meta/stats.json` directly.
+Training uses the standard LeRobot state/action statistics in `meta/stats.json`.
 
 Relative-action training changes the arm targets to `action - state`, while excluded dimensions such as the
-gripper remain absolute. Prepare matching statistics in a separate dataset checkout before enabling
-`policy.use_relative_actions`:
-
-```bash
-uv run python -m lerobot.policies.dm05.prepare_stats_dm05 \
-  --repo-id=org/dataset \
-  --root=/path/to/dataset \
-  --chunk-size=10 \
-  --drop-n-last-frames=1 \
-  --force
-```
-
-The command writes `/path/to/dataset/meta/stats.json` in place. Match its chunk, episode selection, and
-`--relative-exclude-joints` values to training. `--force` is required when replacing standard absolute-action
-statistics.
-
-Without complete target statistics, `--policy.path` reuses checkpoint statistics with a warning. This is valid only
-for the same state/action contract and distribution.
+gripper remain absolute. The statistics are still the dataset's own, so the normalization scale is fitted to
+absolute actions rather than to deltas. This costs some signal but trains; it is a general LeRobot issue with
+`RelativeActionsProcessorStep`, shared with the other policies that use it, not a DM05-specific one.
 
 ## Evaluation
 

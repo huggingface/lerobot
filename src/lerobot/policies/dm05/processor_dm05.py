@@ -42,11 +42,6 @@ from .conversion_dm05 import (
     DM05StateBinsProcessorStep,
     DM05TokenizerProcessorStep,
 )
-from .stats_validation_dm05 import (
-    dm05_prepare_stats_command,
-    dm05_stats_complete,
-    validate_dm05_relative_action_stats,
-)
 
 
 @dataclass
@@ -91,16 +86,6 @@ def make_dm05_pre_post_processors(
     """Build the LeRobot processor pipeline for the OpenDM adapter."""
 
     config.validate_features()
-    if not dm05_stats_complete(config, dataset_stats):
-        if not config.use_relative_actions:
-            raise ValueError("DM05 absolute-action training requires standard LeRobot dataset statistics.")
-        command = dm05_prepare_stats_command(config, getattr(config, "_runtime_dataset_meta", None))
-        raise ValueError(
-            "DM05 relative-action training requires matching state-relative action statistics. "
-            f"Run `{command}` before training."
-        )
-    validate_dm05_relative_action_stats(config, dataset_stats)
-
     # OpenDM normalizes only numeric state/action fields.
     normalizer = NormalizerProcessorStep(
         features={
