@@ -26,6 +26,7 @@ from torch import nn
 
 pytest.importorskip("transformers", reason="g05 requires the `g05` extra (transformers)")
 
+from safetensors.torch import save_file
 from transformers import DynamicCache
 from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig, Qwen3_5VisionConfig
 from transformers.models.qwen3_5.modeling_qwen3_5 import (
@@ -1418,8 +1419,8 @@ def test_save_pretrained_copies_required_gated_sidecars_portably(tmp_path: Path)
     processor = source / "hf_processor"
     processor.mkdir(parents=True)
     (processor / "tokenizer.json").write_text("{}")
-    tokenizer = source / "action_tokenizer.pt"
-    torch.save({"codec": "ActionCodec"}, tokenizer)
+    tokenizer = source / "action_tokenizer.safetensors"
+    save_file({"codec.weight": torch.ones(2)}, tokenizer)
     for name in ("LICENSE-G0.5", "NOTICE"):
         (source / name).write_text("{}")
     config = _config(
@@ -1433,12 +1434,12 @@ def test_save_pretrained_copies_required_gated_sidecars_portably(tmp_path: Path)
     G05Policy(config, backend=TinyG05Backend()).save_pretrained(output)
 
     assert (output / "hf_processor" / "tokenizer.json").is_file()
-    assert (output / "action_tokenizer.pt").is_file()
+    assert (output / "action_tokenizer.safetensors").is_file()
     assert (output / "LICENSE-G0.5").is_file()
     loaded_config = PreTrainedConfig.from_pretrained(output)
     assert isinstance(loaded_config, G05Config)
     assert loaded_config.author_model_config["hf_processor_path"] == "hf_processor"
-    assert loaded_config.author_model_config["AT_CONFIG"]["ckpt_dir"] == "action_tokenizer.pt"
+    assert loaded_config.author_model_config["AT_CONFIG"]["ckpt_dir"] == "action_tokenizer.safetensors"
 
 
 def test_tiny_fixed_batch_overfit_reduces_loss():

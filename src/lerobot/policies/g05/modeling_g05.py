@@ -1257,13 +1257,7 @@ class G05NativeActionCodec:
     ) -> G05NativeActionCodec:
         """Load the codec weights from the checkpoint."""
         codec = cls(config, action_token_begin=action_token_begin)
-        checkpoint = torch.load(
-            Path(str(config["ckpt_dir"])),
-            map_location="cpu",
-            mmap=True,
-            weights_only=True,
-        )
-        state_dict = checkpoint.get("model_state_dict", checkpoint)
+        state_dict = load_file(Path(str(config["ckpt_dir"])), device="cpu")
         codec.module.load_state_dict(state_dict, strict=True)
         codec.module.eval()
         return codec
@@ -2980,7 +2974,7 @@ class G05Policy(PreTrainedPolicy):
         author_config = dict(config.author_model_config)
         author_config["hf_processor_path"] = str(resolved_path / "hf_processor")
         at_config = dict(author_config.get("AT_CONFIG") or {})
-        at_config["ckpt_dir"] = str(resolved_path / "action_tokenizer.pt")
+        at_config["ckpt_dir"] = str(resolved_path / "action_tokenizer.safetensors")
         author_config["AT_CONFIG"] = at_config
         author_config["pretrained_model_path"] = None
         config.author_model_config = author_config
@@ -3021,9 +3015,9 @@ class G05Policy(PreTrainedPolicy):
         if (
             tokenizer_path is not None
             and tokenizer_path.is_file()
-            and tokenizer_path.resolve() != (save_directory / "action_tokenizer.pt").resolve()
+            and tokenizer_path.resolve() != (save_directory / "action_tokenizer.safetensors").resolve()
         ):
-            shutil.copy2(tokenizer_path, save_directory / "action_tokenizer.pt")
+            shutil.copy2(tokenizer_path, save_directory / "action_tokenizer.safetensors")
         for name in (
             "g05_dataset_stats.json",
             "author_config.yaml",
@@ -3045,7 +3039,7 @@ class G05Policy(PreTrainedPolicy):
             portable = dict(author_config)
             portable["hf_processor_path"] = "hf_processor"
             portable_at = dict(portable.get("AT_CONFIG") or {})
-            portable_at["ckpt_dir"] = "action_tokenizer.pt"
+            portable_at["ckpt_dir"] = "action_tokenizer.safetensors"
             portable["AT_CONFIG"] = portable_at
             portable["pretrained_model_path"] = None
             runtime_config = self.config.author_model_config

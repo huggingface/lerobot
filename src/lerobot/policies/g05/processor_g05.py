@@ -1004,6 +1004,13 @@ def make_g05_pre_post_processors_from_pretrained(
         preprocessor_config_filename=preprocessor_config_filename,
         postprocessor_config_filename=postprocessor_config_filename,
     )
+    for step in preprocessor.steps:
+        if isinstance(step, G05TokenizerStep):
+            # The tokenizer bundle and action tokenizer ship inside the checkpoint, so follow the
+            # checkpoint being loaded instead of the path baked in when it was first saved. A copy
+            # of a checkpoint would otherwise keep fetching them from the repository it came from.
+            step.checkpoint_path = str(pretrained_path)
+            step.revision = revision
     return reconcile_g05_processors(config, preprocessor, postprocessor)
 
 
@@ -1607,7 +1614,7 @@ class G05TokenizerStep(ProcessorStep):
             snapshot_download(
                 repo_id=self.checkpoint_path,
                 revision=self.revision,
-                allow_patterns=["hf_processor/*", "action_tokenizer.pt"],
+                allow_patterns=["hf_processor/*", "action_tokenizer.safetensors"],
             )
         )
 
@@ -1626,7 +1633,7 @@ class G05TokenizerStep(ProcessorStep):
         )
         model_config["hf_processor_path"] = str(processor_path)
         action_config = dict(model_config.get("AT_CONFIG") or {})
-        action_config["ckpt_dir"] = str(root / "action_tokenizer.pt")
+        action_config["ckpt_dir"] = str(root / "action_tokenizer.safetensors")
         model_config["AT_CONFIG"] = action_config
         self._model_config = model_config
         self._tokenizer = G05Tokenizer(processor_path, model_config)

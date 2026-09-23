@@ -3,8 +3,8 @@
 G0.5 is a Qwen3.5-2B vision-language-action model that can generate embodied
 reasoning and actions in one stream. LeRobot exposes the action phase as System 1
 and the optional native chain-of-thought phase as System 2. They are not separate
-models: the runtime obtains both from one inference call and the action stays
-conditioned on the same post-reasoning KV state.
+models: the runtime obtains both from one inference call, and the action stays
+conditioned on the reasoning.
 
 ## Model Overview
 
@@ -51,12 +51,12 @@ The converted checkpoints are private under the LeRobot organization:
 
 ### Converted Checkpoints
 
-| Repository                                                                | Contract                     |
-| ------------------------------------------------------------------------- | ---------------------------- |
-| [`lerobot/g05_base`](https://huggingface.co/lerobot/g05_base)             | 27D base, R1 Lite processor  |
-| [`lerobot/g05_libero`](https://huggingface.co/lerobot/g05_libero)         | 20D LIBERO                   |
-| [`lerobot/g05_robotwin20`](https://huggingface.co/lerobot/g05_robotwin20) | 20D RoboTwin                 |
-| [`lerobot/g05_so101`](https://huggingface.co/lerobot/g05_so101)           | 20D SO-101 (`so100` profile) |
+| Repository           | Contract                     |
+| -------------------- | ---------------------------- |
+| `TBD/g05_base`       | 27D base, R1 Lite processor  |
+| `TBD/g05_libero`     | 20D LIBERO                   |
+| `TBD/g05_robotwin20` | 20D RoboTwin                 |
+| `TBD/g05_so101`      | 20D SO-101 (`so100` profile) |
 
 `lerobot/g05_base` supplies those 27D model weights, both action heads, the
 ActionCodec tokenizer, and the released six-step R1 Lite processor/statistics
@@ -73,8 +73,7 @@ uv sync --extra g05 --extra test
 The LeRobot organization hosts the prepared base, LIBERO, RoboTwin, and SO-101
 checkpoints privately. Authenticate with `hf auth login` before loading them.
 SO-100 and SO-101 share the released `so100` embodiment token and six-joint
-right-arm contract. A missing left-wrist camera is zero-padded exactly as in the
-author deployment client.
+right-arm contract. A missing left-wrist camera is zero-padded.
 
 ## Usage
 
@@ -84,13 +83,11 @@ head, camera order, dimensions, normalization, and execution horizon.
 
 ### Interactive System 1 and System 2 Runtime
 
-G0.5 emits reasoning and actions from one inference stream, so there is no
-separate text head to schedule: `predict_action_chunk(batch, with_text=True)`
-returns the chunk together with the chain-of-thought generated in the same pass,
-and `predict_action_chunk_with_runtime` returns the full telemetry when you want
-the generated token ids too. The flow head runs on the cache the CoT tokens
-extended, so the action is conditioned on that text rather than merely
-accompanied by it.
+G0.5 emits reasoning and actions from one inference stream:
+`predict_action_chunk(batch, with_text=True)` returns the chunk together with
+the chain-of-thought generated in the same pass, and the action is conditioned
+on that reasoning. `predict_action_chunk_with_runtime` returns the full
+telemetry when you also need the generated token ids.
 
 `policy.runtime_system` on the checkpoint selects the path. System 1 executes
 the selected ActionCodec or flow chunk directly and generates no CoT:
@@ -137,27 +134,18 @@ lerobot-rollout \
 | ------------------------ | ------------------------------------------------------------- |
 | `/start`                 | start (or restart) the policy control loop                    |
 | `/subtask <text>`        | set the instruction the policy follows                        |
-| `/vqa <text>`            | generic text query, not supported on G0.5 (see below)         |
+| `/vqa <text>`            | not supported on G0.5                                         |
 | `/autosteer <goal>\|off` | let the policy pick its own subtasks toward a high-level goal |
 | `/reset`                 | stop movement, return to initial position, restore the task   |
 | `/stop`                  | end the session and shut down                                 |
 | `/help`                  | show the command list                                         |
 
-Both text queries need a checkpoint with `predict_cot=true` and answer from the
-live observation, so they are rejected until `/start` is running.
+`/autosteer` needs a checkpoint with `predict_cot=true` and answers from the
+live observation, so it is rejected until `/start` is running. It prints the
+subtask it picks as `Autosteer subtask:`, and `--autosteer_interval_s` sets how
+many seconds of motion pass between two re-planning queries.
 
-`/autosteer` is the supported one: its `next_subtask` query renders through the
-checkpoint recipe's `Subtask: ${subtask}` target, so the reply is a real
-subtask. It prints as `Autosteer subtask:`, and `--autosteer_interval_s` sets
-how many seconds of motion pass between two re-planning queries.
-
-`/vqa` does **not** work on G0.5, even though it returns text. The runtime hands
-a `vqa` query over as a bare user message, and the G0.5 prompt template has only
-a `Task:` slot, so the question is consumed as the task rather than answered.
-The reply is the ordinary `Subtask: ...|Action:` continuation the model would
-have produced for that string as an instruction, which reads like a confident
-answer but is not grounded in the question. Ask for grounded perception through
-a task phrased as an instruction instead.
+`/vqa` is not supported on G0.5.
 
 In interactive mode `--duration` bounds each `/start` segment rather than the
 whole session.
@@ -208,18 +196,9 @@ lerobot-train \
   --save_freq=1000
 ```
 
-The built-in recipe in `G05Config` resolves the active
-`language_persistent` `subtask` and camera-scoped grounded `vqa` event at each
-sample timestamp. It emits each optional BBox or Subtask target when that
-annotation is present; unavailable annotations are skipped through the recipe's
-existing `if_present` guard.
-
-Grounded VQA boxes are converted from pixel-space `xyxy` JSON using the source
-camera dimensions captured before image resizing, then serialized as G0.5
-`<locXXXX>` tokens. Joint samples preserve the released checkpoint's
-`BBox → Subtask → Action` order. The user/task conditioning tokens remain
-masked; the native backend applies its language/action objective to the
-assistant sequence.
+The built-in recipe resolves the `subtask` and grounded `vqa` annotations at
+each sample timestamp, and emits each BBox or Subtask target when that
+annotation is present. Samples without them are skipped.
 
 Generate the required `subtask` and grounded `vqa` language columns with
 `lerobot-annotate` as described in the
@@ -231,9 +210,8 @@ policy config.
 
 The SO-101 recipe uses AdamW at `8e-5` with 1,000 warmup steps. The packaged
 LIBERO and RoboTwin configurations use their released `1e-5` recipe, with
-1,000 and 500 warmup steps respectively. All profiles preserve G0.5's six
-decay/no-decay parameter groups and the configured VLM and vision learning-rate
-multipliers. Override these only when deliberately changing the author recipe:
+1,000 and 500 warmup steps respectively. All profiles preserve G0.5's parameter groups and
+learning-rate multipliers. Override these only when deliberately changing the author recipe:
 
 ```bash
 --policy.optimizer_lr=2e-5 \
