@@ -1,5 +1,6 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 # Licensed under the Apache License, Version 2.0.
+import copy
 import json
 import runpy
 from pathlib import Path
@@ -155,6 +156,141 @@ def test_native_temporal_prompt_stays_on_its_frame_with_complete_offline_provena
         assert obj["tracking_prompt"] == (prompt if index == 2 else None)
         assert obj["review"] == "pending"
         assert obj["mask_present"] == (index != 1)
+
+
+@pytest.fixture
+def point_bindings(sample):
+    api, dataset, extraction, output, path = sample
+    selected_path = extraction / "clip/task_objects.json"
+    selected = json.loads(selected_path.read_text())
+    selected["objects"].append({"object_id": 2, "name": "bin", "point": [7, 3]})
+    for i, frame in enumerate(selected["frames"]):
+        frame["objects"][0].update(mask_present=True, centroid=[2.2 + i, 2.6], bbox_xyxy=[1, 1, 6, 5])
+        frame["objects"].append(
+            {
+                "object_id": 2,
+                "mask_present": True,
+                "centroid": [7.75, 3.0],
+                "bbox_xyxy": [7, 2, 8, 4],
+                "mask_path": f"masks/{i}.png",
+                "area_fraction": 0.1,
+            }
+        )
+    selected_path.write_text(json.dumps(selected))
+    api["export_dataset"](dataset, [extraction], output)
+    prefix = api["digest"](extraction / "extraction.json") + ":clip:"
+    bindings = {
+        "source": json.loads((output / "source.json").read_text()),
+        "grounding_provenance_sha256": api["digest"](output / "meta/grounding_provenance.json"),
+        "data_sha256": {
+            str(p.relative_to(output)): api["digest"](p) for p in (output / "data").rglob("*.parquet")
+        },
+        "segments": [
+            {
+                "episode_index": 0,
+                "start_frame": 0,
+                "end_frame": 3,
+                "subtask": "Put tape in the bin",
+                "subtask_evidence": {"source": "fixture instruction"},
+                "camera": "observation.images.base",
+                "image_size": [8, 6],
+                "objects": [
+                    {"role": "pick", "object_id": prefix + "1", "name": "tape"},
+                    {"role": "place", "object_id": prefix + "2", "name": "bin"},
+                ],
+                "role_review": {
+                    "verdict": "accepted",
+                    "reviewer": {"kind": "model", "id": "test"},
+                    "notes": "Role-only fixture review",
+                },
+            }
+        ],
+    }
+    compiler = runpy.run_path(
+        str(Path(__file__).parents[2] / "examples/rebot_agent/compile_point_features.py")
+    )
+    return compiler, output, bindings
+
+
+def test_native_points_compile_in_reviewed_order_without_approving_or_mutating(point_bindings):
+    compiler, root, bindings = point_bindings
+    before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    features, report = compiler["compile_features"](root, bindings)
+    assert all(p.read_bytes() == content for p, content in before.items())
+    assert not features["accepted_training_labels"] and not features["human_verified"]
+    assert report["segments"][0]["status"] == "candidate_ready_for_command_review"
+    segment = features["segments"][0]
+    target = segment["views"][0]["targets"][0]
+    assert target["points_by_frame"] == {"0": [[2, 3], [7, 3]], "1": [[3, 3], [7, 3]], "2": [[4, 3], [7, 3]]}
+    assert target["evidence"]["role_review"] == bindings["segments"][0]["role_review"]
+    assert "motions" not in segment and "traces" not in segment["views"][0]
+    # The normal compiler still needs a separate command review before the training index accepts it.
+    compose = runpy.run_path(str(Path(__file__).parents[2] / "examples/rebot_agent/prepare_steering.py"))[
+        "compose_segment"
+    ]
+    from lerobot.datasets.steering_commands import SteeringCommands
+
+    commands = compose(segment)
+    with pytest.raises(ValueError, match="accepted, attributed review"):
+        SteeringCommands({"version": 1, "source": features["source"], "segments": [commands]})
+
+
+@pytest.mark.parametrize("fault", ["mask", "identity", "camera"])
+def test_missing_native_geometry_reports_gap_without_shortening_interval(point_bindings, fault):
+    compiler, root, bindings = point_bindings
+    path = next((root / "data").rglob("*.parquet"))
+    table = pq.read_table(path)
+    rows = table.to_pylist()
+    event = next(r for r in rows[1]["language_events"] if r["style"] == "vqa" and r["role"] == "assistant")
+    content = json.loads(event["content"])
+    if fault == "mask":
+        content["detections"][0].update(mask_present=False, point=None, bbox=None)
+    elif fault == "identity":
+        content["detections"].pop(0)
+    else:
+        event["camera"] = "observation.images.other"
+    event["content"] = json.dumps(content)
+    event_array = runpy.run_path(
+        str(Path(__file__).parents[2] / "examples/rebot_agent/export_language_annotations.py")
+    )["event_array"]
+    table = table.set_column(
+        table.column_names.index("language_events"),
+        "language_events",
+        event_array([row["language_events"] for row in rows]),
+    )
+    pq.write_table(table, path)
+    bindings["data_sha256"][str(path.relative_to(root))] = compiler["digest"](path)
+    features, report = compiler["compile_features"](root, bindings)
+    assert not features["segments"]
+    gap = report["segments"][0]
+    assert (gap["start_frame"], gap["end_frame"]) == (0, 3)
+    assert gap["missing"][0]["frame_index"] == 1 and gap["status"] == "missing_geometry"
+
+
+@pytest.mark.parametrize(
+    "fault", ["source", "provenance", "shards", "role_order", "review", "camera", "overlap", "absent_frame"]
+)
+def test_invalid_native_role_bindings_fail(point_bindings, fault):
+    compiler, root, bindings = point_bindings
+    segment = bindings["segments"][0]
+    if fault == "source":
+        bindings["source"]["revision"] = "wrong"
+    elif fault == "provenance":
+        bindings["grounding_provenance_sha256"] = "stale"
+    elif fault == "shards":
+        bindings["data_sha256"] = {}
+    elif fault == "role_order":
+        segment["objects"].reverse()
+    elif fault == "review":
+        segment["role_review"]["verdict"] = "uncertain"
+    elif fault == "camera":
+        segment["image_size"] = [80, 60]
+    elif fault == "overlap":
+        bindings["segments"].append(copy.deepcopy(segment))
+    else:
+        segment["end_frame"] = 5
+    with pytest.raises(ValueError):
+        compiler["compile_features"](root, bindings)
 
 
 def test_native_export_binds_reviewed_identity_to_original_model_evidence(sample):

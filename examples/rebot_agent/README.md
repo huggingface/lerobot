@@ -195,3 +195,58 @@ remain distinct from object trajectories. Missing, ambiguous, or invalid predict
 retain null geometry in both VQA and trajectory samples; detection does not establish
 verified visibility or arm identity. These predictions still require annotation review,
 even when the detector was fitted on human-reviewed images.
+
+## Compile pointing candidates from native annotations
+
+`compile_point_features.py` connects the native geometry export to `prepare_steering.py`.
+After reviewing which tracked identity is the picked object and which is its destination,
+save a bindings JSON with `source`, `grounding_provenance_sha256`, `data_sha256` (every
+relative `data/*.parquet` path and its SHA-256), and `segments`. Each segment contains:
+
+```json
+{
+  "episode_index": 0,
+  "start_frame": 0,
+  "end_frame": 30,
+  "subtask": "Put the cloth in the bin",
+  "subtask_evidence": {
+    "source": "timestamped source annotation and inspected video"
+  },
+  "camera": "observation.images.base",
+  "image_size": [640, 480],
+  "objects": [
+    { "role": "pick", "object_id": "EXTRACTION_HASH:CLIP:1", "name": "cloth" },
+    { "role": "place", "object_id": "EXTRACTION_HASH:CLIP:2", "name": "bin" }
+  ],
+  "role_review": {
+    "verdict": "accepted",
+    "reviewer": { "kind": "model", "id": "REVIEWER" },
+    "notes": "Visible evidence identifying the picked object and destination"
+  }
+}
+```
+
+This is a schema illustration, not an accepted annotation. Copy exact identities and
+names from the native VQA detections. The two identities can come from different
+extractions, such as a corrected pick-object track and a destination recovery track,
+after exporting them together into one derived dataset. Roles stay ordered pick then
+place; the compiler does not infer them from names or observed gripper closure.
+
+```bash
+uv run examples/rebot_agent/compile_point_features.py \
+  --dataset-root outputs/rebot_grounding_candidates \
+  --bindings reviewed_object_roles.json --output outputs/point_features
+uv run examples/rebot_agent/prepare_steering.py \
+  --dataset-root outputs/rebot_grounding_candidates \
+  --features outputs/point_features/features.candidates.json \
+  --output outputs/point_command_review
+```
+
+The first step is read-only on the dataset and requires no model API. It writes
+per-frame ordered points in original-image coordinates, with role review and native
+file hashes retained as evidence. `coverage.json` identifies requested intervals with
+missing masks, identities, or camera annotations. Those intervals remain unresolved;
+the compiler neither interpolates points nor silently shortens their action horizons.
+Subtask, point, and combined command candidates still require a separate visual
+command review. This does not supply calibrated motion commands or gripper traces,
+and it does not satisfy the full-mixture training requirements by itself.

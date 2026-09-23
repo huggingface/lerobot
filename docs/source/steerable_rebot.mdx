@@ -189,6 +189,14 @@ composing point/motion/trace commands. Object trajectories are not gripper traje
 The paper trained DETR on 100 manually labeled Bridge gripper images; ReBot needs its
 own reviewed per-arm labels and a validated detector. Generic COCO DETR is insufficient.
 
+`examples/rebot_agent/compile_point_features.py` reads the native geometry export and
+explicitly reviewed pick/place identity bindings to build per-frame pointing candidates
+for `prepare_steering.py`. It binds input file hashes, keeps target order, and reports
+missing-geometry intervals without interpolation or shortened action horizons. See the
+binding schema and commands in `examples/rebot_agent/README.md`.
+Role review identifies the objects; a separate visual command review must still assess
+whether the proposed instruction matches the demonstrated interval.
+
 A correct first-frame seed can still drift to a gripper or fail to recover after
 occlusion. Use `extract_visual.py prepare-reviewed-points --parent PARENT --output FRESH
 --seed-review REVIEW.json` to retrack a separate copy with attributed corrections.
