@@ -31,7 +31,7 @@ import torchvision.transforms.functional as vision_functional
 from torch import Tensor
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
-from lerobot.lerobot_types import EnvTransition, TransitionKey
+from lerobot.lerobot_types import EnvTransition, RobotObservation, TransitionKey
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
@@ -39,6 +39,7 @@ from lerobot.processor import (
     NormalizerProcessorStep,
     ObservationProcessorStep,
     PolicyAction,
+    PolicyActionProcessorStep,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
@@ -220,7 +221,7 @@ class G05ActionFrameTransformStep(_G05JointFrameMixin, ProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register(name="g05_image_transform")
-class G05ImageTransformStep(ProcessorStep):
+class G05ImageTransformStep(ObservationProcessorStep):
     """Apply the checkpoint's per-camera resize and ``[0,1]`` to ``[-1,1]`` transform."""
 
     camera_order: tuple[str, ...]
@@ -237,17 +238,12 @@ class G05ImageTransformStep(ProcessorStep):
         self.std = tuple(self.std)
         self.optional_camera_keys = tuple(self.optional_camera_keys)
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
+    def observation(self, observation: RobotObservation) -> RobotObservation:
         """Resize each camera to its checkpoint size and rescale `[0,1]` to `[-1,1]`."""
-        observation = transition.get(TransitionKey.OBSERVATION)
-        if observation is None:
-            return transition
         missing = [key for key in self.camera_order if key not in observation]
         required_missing = [key for key in missing if key not in self.optional_camera_keys]
         if required_missing:
             raise ValueError(f"G0.5 is missing camera(s) {missing}; required order is {self.camera_order}.")
-        transition = transition.copy()
-        observation = dict(observation)
         if missing:
             reference = next(
                 (torch.as_tensor(observation[key]) for key in self.camera_order if key in observation),
@@ -275,8 +271,7 @@ class G05ImageTransformStep(ProcessorStep):
             mean = flat.new_tensor(self.mean).view(1, 3, 1, 1)
             std = flat.new_tensor(self.std).view(1, 3, 1, 1)
             observation[key] = ((flat - mean) / std).reshape(*image.shape[:-3], 3, *target_size)
-        transition[TransitionKey.OBSERVATION] = observation
-        return transition
+        return observation
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -710,7 +705,7 @@ class G05StepwiseUnnormalizerStep(UnnormalizerProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register(name="g05_inverse_action_projection")
-class G05InverseActionProjectionStep(ProcessorStep):
+class G05InverseActionProjectionStep(PolicyActionProcessorStep):
     """Project policy-layout actions back to the environment's exact raw layout."""
 
     embodiment: str
@@ -721,18 +716,13 @@ class G05InverseActionProjectionStep(ProcessorStep):
         """Policy-slot indices holding this embodiment's action dimensions."""
         return G05_EMBODIMENT_MAPPINGS[self.embodiment]["action"]
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
+    def action(self, action: PolicyAction) -> PolicyAction:
         """Gather the embodiment's action dimensions back out of the policy layout."""
-        action = transition.get(TransitionKey.ACTION)
-        if not isinstance(action, torch.Tensor):
-            return transition
         if action.shape[-1] != self.policy_action_dim:
             raise ValueError(
                 f"G0.5 policy action has {action.shape[-1]} dimensions, expected {self.policy_action_dim}."
             )
-        transition = transition.copy()
-        transition[TransitionKey.ACTION] = action[..., list(self.indices)]
-        return transition
+        return action[..., list(self.indices)]
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -750,28 +740,23 @@ class G05InverseActionProjectionStep(ProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register(name="g05_libero_gripper")
-class G05LiberoGripperStep(ProcessorStep):
+class G05LiberoGripperStep(PolicyActionProcessorStep):
     """Convert the released checkpoint's gripper value to LIBERO's binary command."""
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
+    def action(self, action: PolicyAction) -> PolicyAction:
         """Rewrite the trailing gripper value as LIBERO's binary open/close command."""
-        action = transition.get(TransitionKey.ACTION)
-        if not isinstance(action, torch.Tensor):
-            return transition
         if action.shape[-1] != 7:
             raise ValueError(f"G0.5 LIBERO action must have 7 dimensions, got {action.shape[-1]}.")
         value = action[..., -1]
         in_unit_interval = (value >= 0.0) & (value <= 1.0)
         open_gripper = torch.where(in_unit_interval, value > 0.5, value > 0.0)
-        transition = transition.copy()
         action = action.clone()
         action[..., -1] = torch.where(
             open_gripper,
             value.new_tensor(-1.0),
             value.new_tensor(1.0),
         )
-        transition[TransitionKey.ACTION] = action
-        return transition
+        return action
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -786,25 +771,22 @@ class G05LiberoGripperStep(ProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register(name="g05_action_history_crop")
-class G05ActionHistoryCropStep(ProcessorStep):
+class G05ActionHistoryCropStep(PolicyActionProcessorStep):
     """Remove the author model's observation-alignment prefix from action chunks."""
 
     num_obs_steps: int = 1
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
+    def action(self, action: PolicyAction) -> PolicyAction:
         """Drop the leading steps that align the chunk with the observation history."""
-        action = transition.get(TransitionKey.ACTION)
-        if not isinstance(action, torch.Tensor) or self.num_obs_steps <= 1:
-            return transition
+        if self.num_obs_steps <= 1:
+            return action
         start = self.num_obs_steps - 1
         if action.ndim < 2 or action.shape[-2] <= start:
             raise ValueError(
                 "G0.5 action history crop requires a full action chunk with at least "
                 f"{self.num_obs_steps} steps, got {tuple(action.shape)}."
             )
-        transition = transition.copy()
-        transition[TransitionKey.ACTION] = action[..., start:, :]
-        return transition
+        return action[..., start:, :]
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
