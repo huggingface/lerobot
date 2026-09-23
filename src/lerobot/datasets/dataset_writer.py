@@ -140,15 +140,19 @@ class BaseDatasetWriter(ABC):
     # what its storage model actually needs (mirrors BaseDatasetReader's defaults).
     def start_image_writer(self, num_processes: int = 0, num_threads: int = 4) -> None:
         """Start background image persistence. No-op unless the format stages frames."""
+        return
 
     def stop_image_writer(self) -> None:
         """Stop background image persistence. No-op unless the format stages frames."""
+        return
 
     def flush_pending_videos(self) -> None:
         """Flush any deferred video encoding. No-op unless the format defers encoding."""
+        return
 
     def cancel_pending_videos(self) -> None:
         """Cancel any in-progress video encoding without flushing. No-op by default."""
+        return
 
     @property
     def is_streaming_encoding(self) -> bool:
