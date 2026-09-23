@@ -1,5 +1,6 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 # Licensed under the Apache License, Version 2.0.
+import copy
 import runpy
 from pathlib import Path
 
@@ -102,3 +103,97 @@ def test_invalid_measurement_timing_is_not_interpolated(segment, times):
             translation_speed_m_s=0.01,
             gripper_speed_deg_s=10,
         )
+
+
+def test_gripper_only_segmentation_has_no_invented_cartesian_channels(segment):
+    results = segment(
+        np.arange(6),
+        {},
+        {"left": np.array([0, -30, -60, -30, 0, 0]), "right": np.zeros(6)},
+        boundaries=[2],
+        translation_speed_m_s=0.01,
+        gripper_speed_deg_s=10,
+        median_window=1,
+    )
+    assert [i for s in results for i in range(s["start_frame"], s["end_frame"])] == list(range(6))
+    assert {0, 2, 4, 5} <= {s["start_frame"] for s in results}
+    for interval in results[:-1]:
+        assert set(interval["channel_signs"]) == {"left.gripper", "right.gripper"}
+        assert set(interval["measured_delta"]) == {"left.gripper", "right.gripper"}
+    assert results[-1]["review_flags"] == ["no_outgoing_observation"]
+
+
+@pytest.fixture
+def gripper_extractor():
+    return runpy.run_path(str(Path(__file__).parents[2] / "examples/rebot_agent/fk_motion.py"))[
+        "extract_gripper_motion"
+    ]
+
+
+@pytest.fixture
+def gripper_config():
+    return {
+        "arm": "left",
+        "state_key": "left_gripper.pos",
+        "units": "degrees",
+        "opening_sign": -1,
+        "deadband_degrees": 10,
+        "semantics_review": {
+            "verdict": "accepted",
+            "reviewer": {"kind": "model", "id": "test-reviewer"},
+            "notes": "Fixture: decreasing angle opens the recorded left gripper.",
+            "evidence": [{"source": "test fixture"}],
+        },
+    }
+
+
+@pytest.mark.parametrize("units", ["degrees", "radians"])
+@pytest.mark.parametrize("angles,verb", [([0, -30, -60], "open"), ([-60, -30, 0], "close")])
+def test_gripper_command_preserves_review_and_measured_evidence(
+    gripper_extractor, gripper_config, units, angles, verb
+):
+    gripper_config["units"] = units
+    values = np.asarray(angles, dtype=float)
+    if units == "radians":
+        values = np.deg2rad(values)
+    result = gripper_extractor(values[:, None], ["left_gripper.pos"], gripper_config)
+    assert result[0]["text"] == f"{verb} the left gripper"
+    evidence = result[0]["evidence"]
+    assert evidence["measured_delta_degrees"] == pytest.approx(angles[-1] - angles[0])
+    assert evidence["semantics_review"] == gripper_config["semantics_review"]
+    assert evidence["review"] == "pending" and not evidence["accepted_training_labels"]
+    assert "human_verified" not in evidence
+    gripper_config["semantics_review"]["notes"] = "changed"
+    assert evidence["semantics_review"]["notes"] != "changed"
+
+
+@pytest.mark.parametrize(
+    "angles", [[0, -60, 0], [0, -100, -20], [0, -100, -80, -180], [0, float("nan"), -60]]
+)
+def test_gripper_reversals_and_missing_measurements_cannot_be_commands(
+    gripper_extractor, gripper_config, angles
+):
+    with pytest.raises(ValueError):
+        gripper_extractor(np.asarray(angles)[:, None], ["left_gripper.pos"], gripper_config)
+
+
+def test_gripper_hold_is_not_an_open_or_close_command(gripper_extractor, gripper_config):
+    assert gripper_extractor([[0], [-0.2], [0]], ["left_gripper.pos"], gripper_config) == []
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"semantics_review": {}},
+        {"opening_sign": 0},
+        {"opening_sign": True},
+        {"arm": "right"},
+        {"units": "normalized"},
+        {"deadband_degrees": 0},
+    ],
+)
+def test_gripper_labels_require_supported_mapping_and_review(gripper_extractor, gripper_config, changes):
+    config = copy.deepcopy(gripper_config)
+    config.update(changes)
+    with pytest.raises(ValueError):
+        gripper_extractor([[0], [-60]], ["left_gripper.pos"], config)

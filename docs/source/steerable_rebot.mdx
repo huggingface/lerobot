@@ -317,9 +317,28 @@ The training command loader also rejects missing/unverified calibration on FK
 evidence, including evidence nested in combined commands. A VLM accepting the
 visible command does not override this requirement. Use `measured_positions` and
 the segmentation CLI for nominal, explicitly unverified diagnostic calculations.
-It currently describes translations only; rotations and open/closed gripper labels
-need additional validated extraction. No URDF or calibration is guessed. Image
+It currently describes translations only; rotations need additional validated
+extraction. No URDF or calibration is guessed. Image
 projection is not part of this helper.
+
+For relative opening/closing commands, `fk_motion.extract_gripper_motion` separately
+accepts measured states, state names, and `arm`, `state_key` (such as
+`left_gripper.pos`), `units`, `opening_sign` (`-1` or `1`), `deadband_degrees`, and
+`semantics_review`. The latter needs an accepted verdict, an attributed
+`reviewer` (`kind` and `id`), notes, and source evidence supporting the recorded arm,
+units, and angle direction. Validate those against timestamped video; nominal driver
+limits alone are insufficient. The helper rejects reversing intervals and retains
+measured angles, a measurement hash, and the original review attribution. Its outputs
+remain candidates for command/video review, not human-verified labels or evidence of
+grasp success. Include the observation immediately following the final action frame
+when extracting a transition. This relative-angle operation does not establish any
+Cartesian calibration or absolute open/closed threshold.
+
+Use `segment_motion(timestamps, {}, grippers, ...)` for gripper-only interval proposals
+when calibrated Cartesian positions are unavailable. It omits Cartesian channels
+entirely, preserves reversals and semantic boundaries, and leaves the final observation
+unresolved. Review the proposed boundaries and commands before adding their features
+to the training manifest.
 
 The ReBot B601 driver's calibration routine sets zero positions inside each motor
 and then saves `homing_offset=0` in its calibration metadata. Finding that file

@@ -8,6 +8,7 @@ or independently validated camera calibration; FK poses are not pixel coordinate
 """
 
 import argparse
+import copy
 import hashlib
 import json
 import re
@@ -106,6 +107,84 @@ def extract_motion(states, state_names: list[str], config: dict, *, kinematics=N
     return result
 
 
+def extract_gripper_motion(states, state_names: list[str], config: dict) -> list[dict]:
+    """Describe a short measured opening/closing interval using reviewed angle semantics.
+
+    This needs no Cartesian calibration, but the named arm, units and opening sign
+    must be grounded independently. A model review stays a model review. Returned
+    features are candidates for command/video review, never proof of grasp success.
+    Include the closing observation after the interval's final action-owning frame.
+    """
+    arm, units = config.get("arm"), config.get("units")
+    key = config.get("state_key")
+    if arm not in {"left", "right"} or key != f"{arm}_gripper.pos" or units not in {"degrees", "radians"}:
+        raise ValueError("Specify the recorded ReBot arm, its gripper state key and measured units")
+    review = config.get("semantics_review", {})
+    reviewer = review.get("reviewer", {})
+    if (
+        review.get("verdict") != "accepted"
+        or reviewer.get("kind") not in {"model", "human"}
+        or not reviewer.get("id")
+        or not review.get("notes")
+        or not review.get("evidence")
+    ):
+        raise ValueError("Gripper semantics require an attributed review with source evidence")
+    opening_sign = config.get("opening_sign")
+    threshold = config.get("deadband_degrees", 0)
+    if (
+        isinstance(opening_sign, bool)
+        or opening_sign not in {-1, 1}
+        or not np.isfinite(threshold)
+        or threshold <= 0
+    ):
+        raise ValueError("Use a reviewed opening sign and positive angular deadband")
+    values = np.asarray(states, dtype=float)
+    if (
+        len(set(state_names)) != len(state_names)
+        or key not in state_names
+        or values.ndim != 2
+        or values.shape[1] != len(state_names)
+        or len(values) < 2
+        or not np.isfinite(values).all()
+    ):
+        raise ValueError("Need at least two finite measured states with unique state names")
+    angles = values[:, state_names.index(key)]
+    if units == "radians":
+        angles = np.rad2deg(angles)
+    delta = float(angles[-1] - angles[0])
+    travel = float(np.abs(np.diff(angles)).sum())
+    if abs(delta) < threshold:
+        if travel >= threshold:
+            raise ValueError("Split this reversing gripper trajectory before assigning a command")
+        return []
+    directed = angles * np.sign(delta)
+    reversal = float((np.maximum.accumulate(directed) - directed).max())
+    if travel > 1.5 * abs(delta) or reversal >= threshold:
+        raise ValueError("Split this reversing gripper trajectory before assigning a command")
+    verb = "open" if delta * opening_sign > 0 else "close"
+    return [
+        {
+            "text": f"{verb} the {arm} gripper",
+            "evidence": {
+                "method": "measured gripper-angle change",
+                "state_key": key,
+                "recorded_units": units,
+                "opening_sign": opening_sign,
+                "deadband_degrees": threshold,
+                "semantics_review": copy.deepcopy(review),
+                "measured_start_degrees": float(angles[0]),
+                "measured_end_degrees": float(angles[-1]),
+                "measured_delta_degrees": delta,
+                "measured_travel_degrees": travel,
+                "sample_count": len(angles),
+                "angles_float64_le_sha256": hashlib.sha256(angles.astype("<f8").tobytes()).hexdigest(),
+                "review": "pending",
+                "accepted_training_labels": False,
+            },
+        }
+    ]
+
+
 def segment_motion(
     timestamps,
     positions: dict[str, np.ndarray],
@@ -121,6 +200,8 @@ def segment_motion(
 ) -> list[dict]:
     """Partition every frame into offline candidate intervals; never emit language labels.
 
+    Pass an empty positions dictionary to segment measured grippers without FK.
+    This omits Cartesian channels entirely; it does not assume stationary arms.
     A sample i owns transition i -> i+1. The final sample has no measured outgoing
     transition and is kept as an unresolved singleton. Filtering uses future frames
     inside each semantic interval, so this function must not be used at rollout time.
@@ -132,8 +213,12 @@ def segment_motion(
     if (dt <= 0).any() or (dt > 1.5 * np.median(dt)).any():
         raise ValueError("Timestamps must increase without unobserved temporal gaps")
     n = len(times)
-    if not positions or set(positions) != set(grippers) or not set(positions) <= {"left", "right"}:
-        raise ValueError("Positions and gripper angles must identify the same ReBot arms")
+    if (
+        not grippers
+        or not set(grippers) <= {"left", "right"}
+        or (positions and set(positions) != set(grippers))
+    ):
+        raise ValueError("Grippers must identify ReBot arms; supplied positions must identify the same arms")
     if (
         not isinstance(median_window, int)
         or median_window < 1
@@ -148,22 +233,26 @@ def segment_motion(
         raise ValueError("Use positive speed thresholds, an odd median window, and a nonnegative duration")
     if any(not isinstance(b, int) or b < 0 or b > n for b in boundaries):
         raise ValueError("Semantic boundaries must be episode-local frame indices")
-    columns, names, thresholds = [], [], []
-    for arm in sorted(positions):
-        xyz, grip = np.asarray(positions[arm], dtype=float), np.asarray(grippers[arm], dtype=float)
-        if (
-            xyz.shape != (n, 3)
-            or grip.shape != (n,)
-            or not np.isfinite(xyz).all()
-            or not np.isfinite(grip).all()
-        ):
-            raise ValueError("Every arm needs finite Nx3 positions and N measured gripper angles")
-        columns.extend([xyz, grip[:, None]])
-        names.extend([f"{arm}.{axis}" for axis in ("x", "y", "z", "gripper")])
-        thresholds.extend([translation_speed_m_s] * 3 + [gripper_speed_deg_s])
+    columns, names, thresholds, reversal_thresholds = [], [], [], []
+    for arm in sorted(grippers):
+        grip = np.asarray(grippers[arm], dtype=float)
+        if grip.shape != (n,) or not np.isfinite(grip).all():
+            raise ValueError("Every arm needs N finite measured gripper angles")
+        if positions:
+            xyz = np.asarray(positions[arm], dtype=float)
+            if xyz.shape != (n, 3) or not np.isfinite(xyz).all():
+                raise ValueError("Every supplied arm needs finite Nx3 positions")
+            columns.append(xyz)
+            names.extend(f"{arm}.{axis}" for axis in ("x", "y", "z"))
+            thresholds.extend([translation_speed_m_s] * 3)
+            reversal_thresholds.extend([translation_reversal_m] * 3)
+        columns.append(grip[:, None])
+        names.append(f"{arm}.gripper")
+        thresholds.append(gripper_speed_deg_s)
+        reversal_thresholds.append(gripper_reversal_deg)
     values = np.concatenate(columns, axis=1)
     thresholds = np.asarray(thresholds)
-    reversal_thresholds = np.tile([translation_reversal_m] * 3 + [gripper_reversal_deg], len(positions))
+    reversal_thresholds = np.asarray(reversal_thresholds)
     cuts = sorted({0, n, *boundaries})
     result = []
     for start, end in zip(cuts[:-1], cuts[1:], strict=True):
