@@ -209,6 +209,38 @@ def test_gaussian_actor_policy_select_action(batch_size: int, state_dim: int, ac
         assert selected_action.shape[-1] == action_dim
 
 
+def test_use_tanh_squash_false_disables_squashing():
+    """policy_kwargs.use_tanh_squash=False must produce un-squashed Gaussian
+    samples, as documented in the GaussianActorConfig docstring (#4727).
+
+    A tanh-squashed sample is strictly inside (-1, 1); a plain diagonal
+    Gaussian with initial std≈1 over a large batch must exceed that bound.
+    """
+    config = create_default_config(state_dim=6, continuous_action_dim=6)
+    config.policy_kwargs.use_tanh_squash = False
+    policy = GaussianActorPolicy(config=config)
+    policy.eval()
+
+    with torch.no_grad():
+        batch = create_observation_batch(batch_size=256, state_dim=6)
+        actions = policy.select_action(batch)
+    assert actions.abs().max().item() > 1.0, (
+        "use_tanh_squash=False should sample from the un-squashed Gaussian"
+    )
+
+
+def test_use_tanh_squash_true_keeps_bounded():
+    """Default config stays tanh-squashed: all samples inside (-1, 1)."""
+    config = create_default_config(state_dim=6, continuous_action_dim=6)
+    policy = GaussianActorPolicy(config=config)
+    policy.eval()
+
+    with torch.no_grad():
+        batch = create_observation_batch(batch_size=256, state_dim=6)
+        actions = policy.select_action(batch)
+    assert actions.abs().max().item() < 1.0
+
+
 def test_gaussian_actor_policy_select_action_with_discrete():
     """select_action should return continuous + discrete actions."""
     config = create_default_config(state_dim=10, continuous_action_dim=6)
