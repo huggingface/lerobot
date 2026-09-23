@@ -40,8 +40,8 @@ This LIBERO recipe matches OpenDM: `policy.add_state=false` and stored actions a
 checkpoint default `policy.add_state=true` unless another recipe specifies otherwise. Relative targets require
 matching state/action dimensions and matching relative-action statistics; environment control mode is separate.
 
-Absolute-action training uses standard LeRobot dataset statistics. Relative actions require separately prepared
-relative-action statistics; see the [normalization guide](./dm05.mdx#normalization-statistics).
+Training uses standard LeRobot dataset statistics; see the
+[normalization guide](./dm05.mdx#normalization-statistics).
 
 ## Evaluation
 

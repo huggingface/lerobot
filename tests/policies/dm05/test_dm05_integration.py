@@ -17,6 +17,7 @@
 import fnmatch
 import importlib.util
 import json
+import logging
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
@@ -43,11 +44,6 @@ from lerobot.policies.dm05.core.modeling import (
 )
 from lerobot.policies.dm05.core.tokenization import DM05Tokenization
 from lerobot.policies.dm05.modeling_dm05 import DM05Policy, prepare_compiled_suffix_inputs
-from lerobot.policies.dm05.prepare_stats_dm05 import (
-    _training_episodes,
-    compute_dm05_stats,
-    prepare_dm05_stats,
-)
 from lerobot.policies.dm05.processor_dm05 import make_dm05_pre_post_processors
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.processor import (
@@ -251,107 +247,6 @@ def test_dm05_config_defaults_and_validation(monkeypatch, tmp_path):
     config.save_pretrained(tmp_path)
     saved_config = json.loads((tmp_path / "config.json").read_text())
     assert not {"norm_stats_sample_size", "norm_stats_sample_seed"} & saved_config.keys()
-
-
-def test_dm05_relative_stats_preparation_uses_training_chunks(tmp_path):
-    states = np.asarray([[10 * i, 100 + i, 1000 + i] for i in range(6)], dtype=np.float32)
-    actions = np.asarray([[10 * i + 1, 200 + i, 2000 + i] for i in range(6)], dtype=np.float32)
-
-    class NumericDataset:
-        root = tmp_path
-        meta = SimpleNamespace(
-            stats=None,
-            features={
-                OBS_STATE: {"dtype": "float32", "shape": (3,), "names": ["s0", "s1", "s2"]},
-                ACTION: {
-                    "dtype": "float32",
-                    "shape": (3,),
-                    "names": {"gripper": 1, "tool": 2, "joint": 0},
-                },
-            },
-        )
-
-        def __len__(self):
-            return len(states)
-
-        def select_columns(self, _):
-            return self
-
-        def __getitem__(self, key):
-            if key == "episode_index":
-                return [0, 0, 0, 1, 1, 1]
-            raise KeyError(key)
-
-        def select(self, indices):
-            return {OBS_STATE: states[indices].tolist(), ACTION: actions[indices].tolist()}
-
-    dataset = NumericDataset()
-    meta = dataset.meta
-    processor_path = tmp_path / "processor"
-    _save_tiny_real_processor(processor_path)
-    config = _dm05_config(processor_name_or_path=str(processor_path))
-    config.set_dataset_feature_metadata(meta.features)
-    assert config.action_feature_names == ["joint", "gripper", "tool"]
-    # The numeric fixture declares no camera; DM05 needs one for the pipeline to be constructible.
-    config.input_features["observation.images.front"] = PolicyFeature(
-        type=FeatureType.VISUAL, shape=(3, 16, 16)
-    )
-
-    meta.repo_id = "local/numeric"
-    meta.root = tmp_path
-    config._runtime_dataset_meta = meta
-    with pytest.raises(ValueError, match="standard LeRobot dataset statistics"):
-        make_dm05_pre_post_processors(config, None)
-
-    with pytest.raises(ValueError, match="standard LeRobot dataset stats"):
-        compute_dm05_stats(config, dataset, sample_size=6)
-
-    flat_indices = np.asarray([0, 1, 1, 2, 3, 4, 4, 5])
-    config.use_relative_actions = True
-    meta.stats = compute_dm05_stats(config, dataset, sample_size=6)
-    np.testing.assert_array_equal(meta.stats[OBS_STATE]["count"], [4])
-    np.testing.assert_array_equal(meta.stats[ACTION]["count"], [8])
-    owner_frames = np.asarray([0, 0, 1, 1, 3, 3, 4, 4])
-    expected_relative = actions[flat_indices].copy()
-    expected_relative[:, [0, 2]] -= states[owner_frames][:, [0, 2]]
-    np.testing.assert_allclose(
-        meta.stats[ACTION]["q99"],
-        np.quantile(expected_relative, 0.99, axis=0),
-        rtol=0,
-        atol=1e-5,
-    )
-    excluded_constant_stats = {
-        OBS_STATE: {"q01": [0.0] * 3, "q99": [1.0] * 3},
-        ACTION: {"q01": [0.0] * 3, "q99": [1.0, 0.0, 1.0]},
-    }
-    make_dm05_pre_post_processors(config, excluded_constant_stats)
-    invalid_relative_stats = {
-        **excluded_constant_stats,
-        ACTION: {"q01": [0.0] * 3, "q99": [0.0, 0.0, 1.0]},
-    }
-    with pytest.raises(ValueError, match="non-degenerate.*invalid indices: \\[0\\]"):
-        make_dm05_pre_post_processors(config, invalid_relative_stats)
-    meta.stats = {ACTION: {"q01": [0.0] * 3, "q99": [1.0] * 3}}
-    with pytest.raises(ValueError, match="--force"):
-        compute_dm05_stats(config, dataset, sample_size=6)
-
-    meta.stats = None
-    stats_path, changed = prepare_dm05_stats(config, dataset)
-    assert changed is True
-    assert stats_path == tmp_path / "meta/stats.json"
-    written = json.loads(stats_path.read_text())
-    assert set(written[OBS_STATE]) >= {"q01", "q10", "q90", "q99"}
-    assert set(written[ACTION]) >= {"q01", "q10", "q90", "q99"}
-
-    selected_dataset = SimpleNamespace(
-        episodes=[1, 2, 4, 5],
-        meta=SimpleNamespace(
-            total_episodes=6,
-            episodes={"tasks": [["a"], ["a"], ["a"], ["b"], ["b"], ["b"]]},
-        ),
-    )
-    assert _training_episodes(selected_dataset, eval_split=0) == [1, 2, 4, 5]
-    assert _training_episodes(selected_dataset, eval_split=0.5) == [1, 4]
 
 
 def test_dm05_tokenization_builds_opendm_style_user_content_without_random_branches():
@@ -738,7 +633,7 @@ def test_dm05_gradient_checkpointing_includes_vision_tower():
     assert model.model.action_expert.gradient_checkpointing_layers == 2
 
 
-def test_dm05_tiny_real_processor_core_save_and_offline_hub_reload(monkeypatch, tmp_path):
+def test_dm05_tiny_real_processor_core_save_and_offline_hub_reload(monkeypatch, tmp_path, caplog):
     processor_path = tmp_path / "processor"
     original_processor = _save_tiny_real_processor(processor_path)
     core_config = _tiny_core_config()
@@ -939,13 +834,16 @@ def test_dm05_tiny_real_processor_core_save_and_offline_hub_reload(monkeypatch, 
     config_path.write_text(json.dumps(relative_payload))
     relative_config = PreTrainedConfig.from_pretrained(checkpoint.name)
     relative_config.use_relative_actions = True
-    with pytest.raises(ValueError, match="requires complete relative-action dataset statistics"):
+    # Enabling relative actions on an absolute-action checkpoint warns rather than raising: the
+    # dataset's own statistics are fitted to absolute actions, which costs signal but still trains.
+    with caplog.at_level(logging.WARNING, logger="lerobot.policies.dm05.modeling_dm05"):
         DM05Policy.from_pretrained(
             checkpoint.name,
             config=relative_config,
             dataset_meta=SimpleNamespace(repo_id="org/dataset", root=tmp_path, stats=None),
             dataset_stats=None,
         )
+    assert "absolute-action checkpoint" in caplog.text
     relative_payload["use_relative_actions"] = True
     config_path.write_text(json.dumps(relative_payload))
 

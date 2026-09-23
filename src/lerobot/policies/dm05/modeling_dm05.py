@@ -31,7 +31,7 @@ from huggingface_hub import snapshot_download
 from torch import Tensor
 
 from lerobot.configs import PreTrainedConfig
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import require_package
 
 from ..common.vla_utils import pad_vector
@@ -44,11 +44,6 @@ from .core.adapter import (
     resolve_torch_dtype,
 )
 from .core.utils import build_action_prefix_mask, validate_action_prefill_pair
-from .stats_validation_dm05 import (
-    dm05_prepare_stats_command,
-    dm05_stats_complete,
-    validate_dm05_relative_action_stats,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -358,39 +353,7 @@ class DM05Policy(PreTrainedPolicy):
             raise ValueError(f"Expected a saved DM05 config, got {type(saved_config).__name__}.")
         saved_config.validate_features()
 
-        dataset_meta = kwargs.get("dataset_meta")
-        dataset_stats = kwargs.get("dataset_stats")
-        stats_complete = dm05_stats_complete(config, dataset_stats)
-        if stats_complete:
-            validate_dm05_relative_action_stats(config, dataset_stats)
-        if dataset_meta is not None and not stats_complete:
-            target_dims = (
-                config.input_features[OBS_STATE].shape[-1],
-                config.output_features[ACTION].shape[-1],
-            )
-            checkpoint_dims = (
-                saved_config.input_features[OBS_STATE].shape[-1],
-                saved_config.output_features[ACTION].shape[-1],
-            )
-            if target_dims != checkpoint_dims:
-                message = (
-                    "DM05 cannot reuse checkpoint statistics for different state/action dimensions "
-                    f"({checkpoint_dims} -> {target_dims})."
-                )
-                if config.use_relative_actions:
-                    message += f" Run `{dm05_prepare_stats_command(config, dataset_meta)}` before training."
-                else:
-                    message += " Provide the target dataset's standard LeRobot meta/stats.json."
-                raise ValueError(message)
-        if dataset_meta is not None and dataset_stats and not stats_complete:
-            logger.warning(
-                "Ignoring incomplete DM05 dataset statistics and retaining the checkpoint processor stats. "
-                "Prepare complete target stats before fine-tuning a different embodiment or distribution."
-            )
-            dataset_meta.stats = None
-            kwargs["dataset_stats"] = None
-            dataset_stats = None
-        elif dataset_meta is not None and not dataset_stats:
+        if kwargs.get("dataset_meta") is not None and not kwargs.get("dataset_stats"):
             logger.warning(
                 "DM05 dataset statistics are missing; the checkpoint processor stats will be retained. "
                 "This is valid only when the target state/action contract matches the checkpoint."
@@ -401,11 +364,11 @@ class DM05Policy(PreTrainedPolicy):
                 "A relative-action DM05 checkpoint cannot be loaded with "
                 "use_relative_actions=False because its saved processor statistics are relative."
             )
-        if config.use_relative_actions and not saved_config.use_relative_actions and not stats_complete:
-            command = dm05_prepare_stats_command(config, dataset_meta)
-            raise ValueError(
-                "Enabling DM05 relative actions from an absolute-action checkpoint requires complete "
-                f"relative-action dataset statistics. Run `{command} --force` before training."
+        if config.use_relative_actions and not saved_config.use_relative_actions:
+            logger.warning(
+                "Enabling DM05 relative actions from an absolute-action checkpoint: the dataset "
+                "statistics must describe `action - state` deltas on the relative dimensions, not "
+                "absolute actions, or the normalization scale will be wrong."
             )
         if not _has_dm05_core_config_payload(config):
             raise ValueError(
