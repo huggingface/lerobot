@@ -23,7 +23,7 @@
 Use the migration script to convert models with embedded normalization:
 
 ```shell
-python src/lerobot/processor/migrate_policy_normalization.py \
+python -m lerobot.processor.migrate_policy_normalization \
     --pretrained-path lerobot/act_aloha_sim_transfer_cube_human \
     --push-to-hub \
     --branch migrated
