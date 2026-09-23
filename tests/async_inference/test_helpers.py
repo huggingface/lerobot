@@ -31,9 +31,8 @@ from lerobot.async_inference.helpers import (  # noqa: E402
     prepare_image,
     prepare_raw_observation,
     raw_observation_to_observation,
-    resize_robot_observation_image,
 )
-from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.policies.utils import build_inference_frame  # noqa: E402
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
 
 # ---------------------------------------------------------------------
@@ -245,20 +244,6 @@ def _create_mock_lerobot_features():
     }
 
 
-def _create_mock_policy_image_features():
-    """Create mock policy image features with different resolutions."""
-    return {
-        f"{OBS_IMAGES}.laptop": PolicyFeature(
-            type=FeatureType.VISUAL,
-            shape=(3, 224, 224),  # Policy expects smaller resolution
-        ),
-        f"{OBS_IMAGES}.phone": PolicyFeature(
-            type=FeatureType.VISUAL,
-            shape=(3, 160, 160),  # Different resolution for second camera
-        ),
-    }
-
-
 def test_prepare_image():
     """Test image preprocessing: int8 → float32, normalization to [0,1]."""
     # Create mock int8 image data
@@ -283,32 +268,12 @@ def test_prepare_image():
     assert processed.is_contiguous()
 
 
-def test_resize_robot_observation_image():
-    """Test image resizing from robot resolution to policy resolution."""
-    # Create mock image: (H=480, W=640, C=3)
-    original_image = torch.randint(0, 256, size=(480, 640, 3), dtype=torch.uint8)
-    target_shape = (3, 224, 224)  # (C, H, W)
-
-    resized = resize_robot_observation_image(original_image, target_shape)
-
-    # Check output shape matches target
-    assert resized.shape == target_shape
-
-    # Check that original image had different dimensions
-    assert original_image.shape != resized.shape
-
-    # Check that resizing preserves value range
-    assert resized.min() >= 0
-    assert resized.max() <= 255
-
-
 def test_prepare_raw_observation():
     """Test the preparation of raw robot observation to lerobot format."""
     robot_obs = _create_mock_robot_observation()
     lerobot_features = _create_mock_lerobot_features()
-    policy_image_features = _create_mock_policy_image_features()
 
-    prepared = prepare_raw_observation(robot_obs, lerobot_features, policy_image_features)
+    prepared = prepare_raw_observation(robot_obs, lerobot_features)
 
     # Check that state is properly extracted and batched
     assert OBS_STATE in prepared
@@ -316,29 +281,85 @@ def test_prepare_raw_observation():
     assert isinstance(state, torch.Tensor)
     assert state.shape == (1, 4)  # Batched state
 
-    # Check that images are processed and resized
+    # Check that images are present
     assert f"{OBS_IMAGES}.laptop" in prepared
     assert f"{OBS_IMAGES}.phone" in prepared
 
     laptop_img = prepared[f"{OBS_IMAGES}.laptop"]
     phone_img = prepared[f"{OBS_IMAGES}.phone"]
 
-    # Check image shapes match policy requirements
-    assert laptop_img.shape == policy_image_features[f"{OBS_IMAGES}.laptop"].shape
-    assert phone_img.shape == policy_image_features[f"{OBS_IMAGES}.phone"].shape
+    # Images are only transposed to (C, H, W): the camera resolution is preserved, and no
+    # resizing to `policy.config.image_features` happens here anymore (#2980). dtype stays
+    # uint8 until `prepare_image` converts it.
+    assert laptop_img.shape == (3, 480, 640)
+    assert phone_img.shape == (3, 480, 640)
+    assert laptop_img.dtype == torch.uint8
+    assert phone_img.dtype == torch.uint8
 
     # Check that images are tensors
     assert isinstance(laptop_img, torch.Tensor)
     assert isinstance(phone_img, torch.Tensor)
 
 
+def test_prepare_raw_observation_rejects_non_hwc_image():
+    """A (H, W) grayscale frame cannot be transposed to (C, H, W): fail loudly, not silently."""
+    robot_obs = {
+        "shoulder": 1.0,
+        "elbow": 2.0,
+        "wrist": 3.0,
+        "gripper": 0.5,
+        "laptop": np.zeros((480, 640), dtype=np.uint8),
+    }
+    lerobot_features = {
+        OBS_STATE: {
+            "dtype": "float32",
+            "shape": [4],
+            "names": ["shoulder", "elbow", "wrist", "gripper"],
+        },
+        f"{OBS_IMAGES}.laptop": {
+            "dtype": "image",
+            "shape": [480, 640],
+            "names": ["height", "width"],
+        },
+    }
+
+    with pytest.raises(ValueError, match="H, W, C"):
+        prepare_raw_observation(robot_obs, lerobot_features)
+
+
+def test_prepare_raw_observation_rejects_channel_first_image():
+    """A frame that is already (C, H, W) also has ndim == 3: checking ndim alone would let it
+    through and silently permute it into a nonsense (W, C, H) shape instead of raising."""
+    robot_obs = {
+        "shoulder": 1.0,
+        "elbow": 2.0,
+        "wrist": 3.0,
+        "gripper": 0.5,
+        "laptop": np.zeros((3, 480, 640), dtype=np.uint8),
+    }
+    lerobot_features = {
+        OBS_STATE: {
+            "dtype": "float32",
+            "shape": [4],
+            "names": ["shoulder", "elbow", "wrist", "gripper"],
+        },
+        f"{OBS_IMAGES}.laptop": {
+            "dtype": "image",
+            "shape": [3, 480, 640],
+            "names": ["channels", "height", "width"],
+        },
+    }
+
+    with pytest.raises(ValueError, match="H, W, C"):
+        prepare_raw_observation(robot_obs, lerobot_features)
+
+
 def test_raw_observation_to_observation_basic():
     """Test the main raw_observation_to_observation function."""
     robot_obs = _create_mock_robot_observation()
     lerobot_features = _create_mock_lerobot_features()
-    policy_image_features = _create_mock_policy_image_features()
 
-    observation = raw_observation_to_observation(robot_obs, lerobot_features, policy_image_features)
+    observation = raw_observation_to_observation(robot_obs, lerobot_features)
 
     # Check that all expected keys are present
     assert OBS_STATE in observation
@@ -354,9 +375,9 @@ def test_raw_observation_to_observation_basic():
     laptop_img = observation[f"{OBS_IMAGES}.laptop"]
     phone_img = observation[f"{OBS_IMAGES}.phone"]
 
-    # Images should have batch dimension: (B, C, H, W)
-    assert laptop_img.shape == (1, 3, 224, 224)
-    assert phone_img.shape == (1, 3, 160, 160)
+    # Images keep the camera resolution and gain a batch dimension: (B, C, H, W)
+    assert laptop_img.shape == (1, 3, 480, 640)
+    assert phone_img.shape == (1, 3, 480, 640)
 
     # Check image dtype and range (should be float32 in [0, 1])
     assert laptop_img.dtype == torch.float32
@@ -371,9 +392,8 @@ def test_raw_observation_to_observation_with_non_tensor_data():
     robot_obs["task"] = "pick up the red cube"  # Add string instruction
 
     lerobot_features = _create_mock_lerobot_features()
-    policy_image_features = _create_mock_policy_image_features()
 
-    observation = raw_observation_to_observation(robot_obs, lerobot_features, policy_image_features)
+    observation = raw_observation_to_observation(robot_obs, lerobot_features)
 
     # Check that task string is preserved
     assert "task" in observation
@@ -386,9 +406,8 @@ def test_raw_observation_to_observation_device_handling():
     """Test that tensors are created (device placement is handled by preprocessor)."""
     robot_obs = _create_mock_robot_observation()
     lerobot_features = _create_mock_lerobot_features()
-    policy_image_features = _create_mock_policy_image_features()
 
-    observation = raw_observation_to_observation(robot_obs, lerobot_features, policy_image_features)
+    observation = raw_observation_to_observation(robot_obs, lerobot_features)
 
     # Check that all expected keys produce tensors (device placement handled by preprocessor later)
     for key, value in observation.items():
@@ -400,11 +419,10 @@ def test_raw_observation_to_observation_deterministic():
     """Test that the function produces consistent results for the same input."""
     robot_obs = _create_mock_robot_observation()
     lerobot_features = _create_mock_lerobot_features()
-    policy_image_features = _create_mock_policy_image_features()
 
     # Run twice with same input
-    obs1 = raw_observation_to_observation(robot_obs, lerobot_features, policy_image_features)
-    obs2 = raw_observation_to_observation(robot_obs, lerobot_features, policy_image_features)
+    obs1 = raw_observation_to_observation(robot_obs, lerobot_features)
+    obs2 = raw_observation_to_observation(robot_obs, lerobot_features)
 
     # Results should be identical
     assert set(obs1.keys()) == set(obs2.keys())
@@ -435,20 +453,77 @@ def test_image_processing_pipeline_preserves_content():
             "names": ["height", "width", "channels"],
         },
     }
-    policy_image_features = {
-        f"{OBS_IMAGES}.laptop": PolicyFeature(
-            type=FeatureType.VISUAL,
-            shape=(3, 50, 50),  # Downsamples from 100x100
-        )
-    }
 
-    observation = raw_observation_to_observation(robot_obs, lerobot_features, policy_image_features)
+    observation = raw_observation_to_observation(robot_obs, lerobot_features)
 
     processed_img = observation[f"{OBS_IMAGES}.laptop"].squeeze(0)  # Remove batch dim
 
+    # Resolution is preserved end-to-end; only dtype/layout change.
+    assert processed_img.shape == (3, 100, 100)
+
     # Check that the center region has higher values than corners
-    # Due to bilinear interpolation, exact values will change but pattern should remain
-    center_val = processed_img[:, 25, 25].mean()  # Center of 50x50 image
-    corner_val = processed_img[:, 5, 5].mean()  # Corner
+    center_val = processed_img[:, 50, 50].mean()  # Inside the white square
+    corner_val = processed_img[:, 5, 5].mean()  # Outside it
 
     assert center_val > corner_val, "Image processing should preserve recognizable patterns"
+
+
+# ---------------------------------------------------------------------
+# sync/async preprocessing parity  (regression guard for #2980 / #2475)
+# ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "camera_shapes",
+    [
+        {"laptop": (480, 640, 3)},
+        {"laptop": (720, 1280, 3)},
+        {"laptop": (480, 640, 3), "phone": (720, 1280, 3)},
+    ],
+    ids=["480p", "720p", "mixed_resolution"],
+)
+def test_sync_and_async_preprocessing_are_identical(camera_shapes):
+    """The async server must hand the policy exactly what sync inference hands it.
+
+    `build_inference_frame` is what `SyncInferenceEngine` uses; `raw_observation_to_observation`
+    is what `PolicyServer._predict_action_chunk` uses. Given the same robot observation they must
+    produce bit-identical tensors, otherwise the same checkpoint behaves differently depending on
+    which inference backend runs it -- which is exactly what #2980 reported: async used to resize
+    camera frames down to `policy.config.image_features` (the *dataset recording* resolution),
+    squashing the aspect ratio and defeating the policy's internal `resize_with_pad`.
+    """
+    rng = np.random.default_rng(0)
+    motor_names = ["shoulder", "elbow", "wrist", "gripper"]
+    task = "pick up the red cube"
+
+    robot_obs = {name: float(i) for i, name in enumerate(motor_names)}
+    # `RobotClient.control_loop_observation` always sets this key, even for non-VLA policies.
+    robot_obs["task"] = task
+    lerobot_features = {
+        OBS_STATE: {"dtype": "float32", "shape": [len(motor_names)], "names": motor_names},
+    }
+    for camera, shape in camera_shapes.items():
+        robot_obs[camera] = rng.integers(0, 256, size=shape, dtype=np.uint8)
+        lerobot_features[f"{OBS_IMAGES}.{camera}"] = {
+            "dtype": "image",
+            "shape": list(shape),
+            "names": ["height", "width", "channels"],
+        }
+
+    sync_observation = build_inference_frame(
+        dict(robot_obs), torch.device("cpu"), lerobot_features, task=task
+    )
+    async_observation = raw_observation_to_observation(dict(robot_obs), lerobot_features)
+
+    # `robot_type` is sync-only bookkeeping: nothing downstream reads it back off the observation.
+    shared_keys = set(sync_observation) - {"robot_type"}
+    assert shared_keys == set(async_observation)
+
+    for key in sorted(shared_keys):
+        expected, actual = sync_observation[key], async_observation[key]
+        if isinstance(expected, torch.Tensor):
+            assert actual.shape == expected.shape, key
+            assert actual.dtype == expected.dtype, key
+            torch.testing.assert_close(actual, expected, rtol=0, atol=0, msg=f"mismatch for {key}")
+        else:
+            assert actual == expected, key
