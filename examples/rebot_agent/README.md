@@ -109,6 +109,19 @@ successful clips, and refuses to change identities after pointing or tracking.
 Repeated runs do not retry the same failure indefinitely. Inspect unresolved errors
 before pointing; recovered and retried candidates still require visual review.
 
+When an image review establishes better object names, use
+`extract_visual.py review-identify --output PATH --identification-review REVIEW.json`
+after the extraction job has stopped and before pointing or tracking. The review
+contains `parent_manifest_sha256`, an attributed `reviewer` (`kind`: `model` or
+`human`, and `id`), and `corrections`. Each correction supplies `clip`,
+`source_identification_sha256`, the first image's `frame_sha256`, an explicit list
+of at most four distinct `objects`, and a visual `reason`. All corrections are
+checked before any prediction changes. The complete previous responses remain in
+the resulting identification records, including failed model retries. Corrected
+names are attributed to their reviewer; they do not approve masks or training labels.
+Native language exports bind detections to the identification hash and retain the
+full identification history once per clip in `meta/grounding_provenance.json`.
+
 For hollow or thin objects, a Molmo object-center point can land on background and
 seed the wrong SAM2 mask. In a **separate extraction**, try
 `extract_visual.py point --output PATH --point-target material` to request a point

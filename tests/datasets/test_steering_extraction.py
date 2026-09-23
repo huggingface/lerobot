@@ -261,6 +261,81 @@ def test_retry_preflights_all_failures_before_model_calls(extractor, tmp_path):
     assert (tmp_path / "a/identify.json").read_bytes() == before
 
 
+@pytest.fixture
+def name_review_case(extractor, tmp_path):
+    clips = []
+    corrections = []
+    for name in ("a", "b"):
+        directory = tmp_path / name
+        (directory / "frames").mkdir(parents=True)
+        image = directory / "frames/000000.jpg"
+        Image.new("RGB", (8, 6)).save(image)
+        target = directory / "identify.json"
+        target.write_text(
+            json.dumps({"objects": [], "raw": "bad response", "error": "failed", "review": "pending"})
+        )
+        clips.append({"path": name, "frames": [{"sha256": extractor["sha256"](image)}]})
+        corrections.append(
+            {
+                "clip": name,
+                "source_identification_sha256": extractor["sha256"](target),
+                "frame_sha256": extractor["sha256"](image),
+                "objects": ["pink cable", "black bin"],
+                "reason": "Fixture visual review; not actual training evidence",
+            }
+        )
+    manifest = {"clips": clips}
+    (tmp_path / "extraction.json").write_text(json.dumps(manifest))
+    review = {
+        "parent_manifest_sha256": extractor["sha256"](tmp_path / "extraction.json"),
+        "reviewer": {"kind": "model", "id": "test-reviewer"},
+        "corrections": corrections,
+    }
+    return manifest, tmp_path / "review.json", review
+
+
+def test_name_review_retains_original_evidence_without_accepting_labels(
+    extractor, tmp_path, name_review_case
+):
+    manifest, path, review = name_review_case
+    original = json.loads((tmp_path / "a/identify.json").read_text())
+    path.write_text(json.dumps(review))
+    result = extractor["review_identification"](tmp_path, manifest, path)
+    assert result["corrected_clips"] == 2 and not result["accepted_training_labels"]
+    restored = json.loads((tmp_path / "a/identify.json").read_text())
+    assert restored["objects"] == ["pink cable", "black bin"]
+    assert restored["objects_source"] == "model_review" and restored["review"] == "pending"
+    assert restored["error"] is None and restored["raw"] == original["raw"]
+    assert restored["identification_review"]["previous_result"] == original
+    assert (
+        restored["identification_review"]["correction"]["source_identification_sha256"]
+        == review["corrections"][0]["source_identification_sha256"]
+    )
+    with pytest.raises(ValueError, match="stale"):
+        extractor["review_identification"](tmp_path, manifest, path)
+
+
+@pytest.mark.parametrize("failure", ["stale", "frame", "duplicate_names", "dependent", "reviewer"])
+def test_name_review_preflight_preserves_every_original(extractor, tmp_path, name_review_case, failure):
+    manifest, path, review = name_review_case
+    last = review["corrections"][-1]
+    if failure == "stale":
+        last["source_identification_sha256"] = "wrong"
+    elif failure == "frame":
+        (tmp_path / "b/frames/000000.jpg").write_bytes(b"different frame")
+    elif failure == "duplicate_names":
+        last["objects"] = ["cube", "cube"]
+    elif failure == "dependent":
+        (tmp_path / "b/point.json").write_text("{}")
+    else:
+        review["reviewer"]["kind"] = "automatic_ground_truth"
+    path.write_text(json.dumps(review))
+    before = {name: (tmp_path / name / "identify.json").read_bytes() for name in ("a", "b")}
+    with pytest.raises(ValueError):
+        extractor["review_identification"](tmp_path, manifest, path)
+    assert all((tmp_path / name / "identify.json").read_bytes() == data for name, data in before.items())
+
+
 def test_tracking_preserves_source_time_identity_and_missing_masks(extractor, tmp_path):
     (tmp_path / "frames").mkdir()
     for i in range(2):

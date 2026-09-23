@@ -133,6 +133,35 @@ def test_native_seed_correction_retains_model_attribution_only_at_anchor(sample)
         assert obj["seed_review"] == (review if index == 0 else None)
 
 
+def test_native_export_binds_reviewed_identity_to_original_model_evidence(sample):
+    api, dataset, extraction, output, path = sample
+    identification = {
+        "objects": ["tape"],
+        "error": None,
+        "review": "pending",
+        "objects_source": "model_review",
+        "identification_review": {
+            "reviewer": {"kind": "model", "id": "test-reviewer"},
+            "previous_result": {"raw": "original response", "error": "parse failure"},
+            "accepted_training_labels": False,
+        },
+    }
+    identity_path = extraction / "clip/identify.json"
+    identity_path.write_text(json.dumps(identification))
+    api["export_dataset"](dataset, [extraction], output)
+    provenance = json.loads((output / "meta/grounding_provenance.json").read_text())
+    clip = provenance["extractions"][0]["clips"][0]
+    assert clip["identification"] == identification
+    assert clip["identification_sha256"] == api["digest"](identity_path)
+    events = pq.read_table(output / "data/chunk-000/file-000.parquet")["language_events"].to_pylist()
+    obj = json.loads(
+        next(r["content"] for r in events[0] if r["style"] == "vqa" and r["role"] == "assistant")
+    )["detections"][0]
+    assert obj["identity_source"] == "model_review"
+    assert obj["evidence"]["identification_sha256"] == clip["identification_sha256"]
+    assert obj["review"] == "pending"
+
+
 def test_export_roundtrip_native_rows_preserves_source_and_temporal_causality(sample, tmp_path):
     api, dataset, extraction, output, path = sample
     before = path.read_bytes()

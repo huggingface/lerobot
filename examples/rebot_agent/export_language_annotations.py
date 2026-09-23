@@ -95,8 +95,18 @@ def collect_candidates(extractions: list[Path], source: dict):
             if not names:
                 continue
             history = defaultdict(list)
+            identity_path = directory / "identify.json"
+            identification = read_json(identity_path) if identity_path.exists() else None
+            identity_hash = digest(identity_path) if identification is not None else None
+            if identification is not None and identification.get("error"):
+                raise ValueError("Resolve failed identification before exporting its geometry")
             provenance[-1]["clips"].append(
-                {"path": clip["path"], "filter_sha256": digest(directory / "task_objects.json")}
+                {
+                    "path": clip["path"],
+                    "filter_sha256": digest(directory / "task_objects.json"),
+                    "identification_sha256": identity_hash,
+                    "identification": identification,
+                }
             )
             for index, frame in enumerate(frames):
                 if not clip["start_frame"] <= frame["frame_index"] < clip["end_frame"]:
@@ -129,6 +139,7 @@ def collect_candidates(extractions: list[Path], source: dict):
                     evidence = {
                         "extraction_sha256": manifest_hash,
                         "clip": clip["path"],
+                        "identification_sha256": identity_hash,
                         "source_frame_sha256": frame["sha256"],
                         "mask_path": obj["mask_path"],
                         "mask_sha256": digest(directory / obj["mask_path"]) if obj["mask_path"] else None,
@@ -137,6 +148,9 @@ def collect_candidates(extractions: list[Path], source: dict):
                     bucket["detections"].append(
                         {
                             "label": candidate["name"],
+                            "identity_source": identification.get("objects_source", "extractor_candidate")
+                            if identification is not None
+                            else "extractor_candidate",
                             "object_id": identity,
                             "entity": "object",
                             "bbox_format": "xyxy",

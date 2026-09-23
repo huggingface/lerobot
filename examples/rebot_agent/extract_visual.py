@@ -169,6 +169,66 @@ def retry_identification(output: Path, manifest: dict, model):
     return report
 
 
+def review_identification(output: Path, manifest: dict, review_path: Path):
+    """Apply attributed name corrections before geometry extraction, preserving model evidence."""
+    review = json.loads(review_path.read_text())
+    if review["parent_manifest_sha256"] != sha256(output / "extraction.json"):
+        raise ValueError("Identification review refers to a different manifest")
+    reviewer = review["reviewer"]
+    if reviewer.get("kind") not in {"human", "model"} or not reviewer.get("id", "").strip():
+        raise ValueError("Identification review requires an attributed human or model reviewer")
+    if not review["corrections"]:
+        raise ValueError("Identification review has no corrections")
+    clips = {clip["path"]: clip for clip in manifest["clips"]}
+    pending, seen = [], set()
+    for correction in review["corrections"]:
+        name = correction["clip"]
+        if name not in clips or Path(name).name != name or name in seen:
+            raise ValueError("Unknown or duplicate reviewed clip")
+        seen.add(name)
+        directory = output / name
+        target = directory / "identify.json"
+        if correction["source_identification_sha256"] != sha256(target):
+            raise ValueError("Identification review refers to stale predictions")
+        frame = clips[name]["frames"][0]
+        if correction["frame_sha256"] != frame["sha256"] or frame["sha256"] != sha256(
+            directory / "frames/000000.jpg"
+        ):
+            raise ValueError("Identification review must refer to the actual first source frame")
+        if not correction.get("reason", "").strip():
+            raise ValueError("Name correction requires visual evidence or an uncertainty reason")
+        if not isinstance(correction["objects"], list):
+            raise ValueError("Reviewed objects must be an explicit list")
+        objects = parse_objects(json.dumps(correction["objects"]))
+        previous = json.loads(target.read_text())
+        if previous["review"] != "pending":
+            raise ValueError("Only pending identifications may be corrected")
+        if (directory / "point.json").exists() or (directory / "tracks.json").exists():
+            raise ValueError("Cannot change object identities after dependent extraction")
+        pending.append((target, previous, correction, objects))
+    review_hash = sha256(review_path)
+    for target, previous, correction, objects in pending:
+        write_json(
+            target,
+            {
+                **previous,
+                "objects": objects,
+                "error": None,
+                "objects_source": f"{reviewer['kind']}_review",
+                "identification_review": {
+                    "reviewer": reviewer,
+                    "correction": correction,
+                    "previous_result": previous,
+                    "review_sha256": review_hash,
+                    "script_sha256": sha256(Path(__file__)),
+                    "accepted_training_labels": False,
+                },
+            },
+        )
+    write_json(output / f"identification_review_{review_hash}.json", review)
+    return {"corrected_clips": len(pending), "reviewer": reviewer, "accepted_training_labels": False}
+
+
 def parse_point(text: str, size: tuple[int, int]) -> list[int] | None:
     """Molmo's XML points use percentages; reject ambiguous multi-object responses."""
     matches = re.findall(r"<point\b[^>]*>.*?</point>", text, flags=re.DOTALL)
@@ -660,6 +720,7 @@ def main():
             "identify",
             "reparse-identify",
             "retry-identify",
+            "review-identify",
             "point",
             "track",
             "filter-objects",
@@ -672,6 +733,7 @@ def main():
         "--seed-review", type=Path, help="Attributed seed corrections for prepare-reviewed-points"
     )
     parser.add_argument("--objects", nargs="+", help="Instruction-named candidates to retry when missing")
+    parser.add_argument("--identification-review", type=Path, help="Attributed object-name corrections")
     parser.add_argument("--episodes", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     parser.add_argument("--cameras", nargs="+", default=["observation.images.base"])
     parser.add_argument(
@@ -685,6 +747,8 @@ def main():
         help="Molmo point prompt: material requests a visible solid surface for SAM2 seeds; still requires review",
     )
     args = parser.parse_args()
+    if args.stage == "review-identify" and args.identification_review is None:
+        parser.error("review-identify requires --identification-review")
     if args.stage == "prepare-reviewed-points":
         if args.parent is None or args.seed_review is None:
             parser.error("prepare-reviewed-points requires --parent and --seed-review")
@@ -714,7 +778,9 @@ def main():
     # This file also records the script used when running remotely from an uncommitted checkout.
     provenance = {
         "script_sha256": sha256(Path(__file__)),
-        "device": "cpu" if args.stage in ("reparse-identify", "filter-objects") else args.device,
+        "device": "cpu"
+        if args.stage in ("reparse-identify", "review-identify", "filter-objects")
+        else args.device,
         "models": manifest["models"],
     }
     for package in ("torch", "transformers", "huggingface-hub", "tensorflow-cpu", "SAM-2"):
@@ -725,6 +791,11 @@ def main():
     write_json(args.output / f"{args.stage}_runtime.json", provenance)
     if args.stage == "reparse-identify":
         print(json.dumps(reparse_identification(args.output, manifest)), flush=True)
+        return
+    if args.stage == "review-identify":
+        print(
+            json.dumps(review_identification(args.output, manifest, args.identification_review)), flush=True
+        )
         return
     if args.stage == "retry-identify":
         report = retry_identification(
