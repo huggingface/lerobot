@@ -69,3 +69,68 @@ def test_from_pretrained_cli_overrides_still_applied():
         cfg = PreTrainedConfig.from_pretrained(tmpdir, cli_overrides=["--lr=0.5"])
         assert cfg.lr == 0.5
         assert str(cfg.pretrained_path) == tmpdir
+
+
+def test_from_pretrained_backfills_path_type():
+    # The field is `Path | None`; the backfill must not assign a bare str.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _write_checkpoint(tmpdir)
+        cfg = PreTrainedConfig.from_pretrained(tmpdir)
+        assert isinstance(cfg.pretrained_path, Path)
+
+
+def test_from_pretrained_hub_id_backfills_repo_and_revision(monkeypatch, tmp_path):
+    # Hub-id resolution goes through hf_hub_download; mock it to hand back a
+    # local config file and check the backfilled path/revision track the args.
+    import lerobot.configs.policies as policies_mod
+
+    def fake_download(*, repo_id, filename, revision=None, **kwargs):
+        assert repo_id == "user/dummy_backfill"
+        assert filename == "config.json"
+        cfg_file = tmp_path / "config.json"
+        cfg_file.write_text(
+            json.dumps(
+                {
+                    "type": "_dummy_backfill",
+                    "n_obs_steps": 2,
+                    "input_features": {},
+                    "output_features": {},
+                }
+            )
+        )
+        return str(cfg_file)
+
+    monkeypatch.setattr(policies_mod, "hf_hub_download", fake_download)
+    cfg = PreTrainedConfig.from_pretrained("user/dummy_backfill", revision="v2")
+    assert isinstance(cfg, _DummyBackfillConfig)
+    assert str(cfg.pretrained_path) == "user/dummy_backfill"
+    assert cfg.pretrained_revision == "v2"
+
+
+# ── RewardModelConfig has the same pattern and needs the same backfill ──
+
+from lerobot.configs.rewards import RewardModelConfig  # noqa: E402
+
+
+@RewardModelConfig.register_subclass("_dummy_reward_backfill")
+@dataclass
+class _DummyRewardBackfillConfig(RewardModelConfig):
+    lr: float = 1e-4
+
+    def get_optimizer_preset(self):  # pragma: no cover
+        return None
+
+
+def test_reward_config_from_pretrained_backfills_path():
+    # RewardModelConfig.from_pretrained left pretrained_path=None; direct
+    # callers (PreTrainedRewardModel.from_pretrained, make_reward_model)
+    # branch on it — e.g. RobometerRewardModel.__init__ takes the "fresh
+    # model" branch instead of loading the checkpoint.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        Path(tmpdir, "config.json").write_text(
+            json.dumps({"type": "_dummy_reward_backfill", "lr": 0.1})
+        )
+        cfg = RewardModelConfig.from_pretrained(tmpdir)
+        assert isinstance(cfg, _DummyRewardBackfillConfig)
+        assert cfg.pretrained_path == tmpdir
+        assert cfg.pretrained_revision is None
