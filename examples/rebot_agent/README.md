@@ -11,8 +11,11 @@ Before a physical rollout, replace the arm/camera placeholders and register a tr
 checkpoint. The checked-in file does not contain installation calibration or credentials.
 
 [astra_goal.md](astra_goal.md) is the reusable system/goal prompt for the complete
-physical improvement loop. Paste it into an external agent's goal, or configure the
-built-in live supervisor with:
+physical improvement loop. It also directs Astra to adapt Steerable Policies to our
+data using the ReBot URDF, forward kinematics, and multiple aligned semantic, motion,
+gripper, and calibrated visual command streams. This is an implementation objective;
+the prompt itself does not generate those annotations. Paste it into an external
+agent's goal, or configure the built-in live supervisor with:
 
 ```json
 "supervisor": {

@@ -27,9 +27,11 @@ successful training job alone does not achieve this goal.
   **80% active subtask instructions and 20% overall-task instructions**. Both branches
   supervise robot actions. These are sampling weights, not action/text loss weights.
   Preserve the overall goal separately from the currently active steering instruction.
-- This experiment is inspired by Steerable Policies:
-  https://steerable-policies.github.io/. Broader command styles are future experiments,
-  not capabilities established by the initial 80/20 recipe.
+- Follow [Steerable Policies](https://steerable-policies.github.io/) and its
+  [Bridge implementation](https://github.com/steerable-policies/steerable-policies-bridge)
+  closely. Actively build and validate multiple grounded command styles for our ReBot
+  data, including URDF/forward-kinematics-derived motion language. The initial 80/20
+  recipe is a baseline to improve, not the final annotation scope.
 - The first collection milestone is **50 additional real-world attempts**, including
   failures and unknown outcomes. Track this budget across sessions and restarts.
   The initial improvement milestone includes training a first policy, collecting and
@@ -95,6 +97,115 @@ Use `create_candidate`, `start_training`, `job_status`, and `register_policy` as
 available. Inspect failures and validate a checkpoint before rollout. Stop physical
 control before training on the same host. Training loss is a diagnostic, not a
 measurement of physical success or steerability.
+
+## Ground ReBot annotations in the paper and forward kinematics
+
+Read the [paper](https://arxiv.org/html/2602.13193v3), particularly Sections IV-A/B
+and Appendix A, and inspect the reference code before implementing this extension.
+The reference `RLDSBatchTransform` maps episode/frame IDs to a subtask and samples
+an alternative command from that subtask's command list while retaining the action
+target. Record the source revision you use; the reviewed Bridge revision was
+`b95286e7823e1f05e490a96ae98f7a3e3ac396f8`, with training logic in
+`prismatic/vla/datasets/datasets.py`.
+
+Follow the paper's sequence of extracting grounded features, decomposing behavior,
+and composing several command styles. Adapt it to LeRobot's annotation and recipe
+interfaces. The Bridge training repository consumes precomputed annotations; do not
+assume it includes a ready-made ReBot annotation pipeline. ReBot URDF/FK grounding is
+our embodiment-specific extension, not a claim about the paper's implementation.
+
+**Build the geometric foundation.** Locate the authoritative URDF for the actual
+ReBot B601 hardware and gripper. Verify the model revision, dimensions, end-effector
+tool-center-point frame, joint-name mapping, joint directions, zero offsets, and
+recorded units for each arm. A similarly named OpenArm or WidowX model is not a
+substitute. Record the URDF hash and calibration provenance. If the URDF or essential
+mapping is missing, identify the exact missing artifact and continue independent
+annotation work without fabricating poses.
+
+Read timestamped measured joints from `observation.state`, using feature names rather
+than guessed vector indices. Compute a separate end-effector pose trajectory for
+each arm using LeRobot's `RobotKinematics.forward_kinematics` or a validated equivalent.
+The current LeRobot wrapper accepts degrees and performs its own radians conversion;
+check the actual API before transforming units. Handle fixed/mimic/prismatic joints
+and gripper aperture according to the model instead of treating every state element
+as a revolute arm joint. Do not replace measured motion with commanded action targets;
+if only targets are available, label that limitation and validate tracking separately.
+
+Keep transforms explicit: each arm's base, a shared robot/table frame if calibrated,
+the tool frame, and camera frames. Never subtract poses expressed in different bases.
+Define the axis-to-language convention for left/right, forward/backward, and up/down
+in a named frame. Distinguish arm identity from motion direction, especially for the
+mirrored bimanual setup. Use appropriate relative rotations for orientation changes,
+with a documented convention rather than differences of wrapped Euler angles.
+
+**Extract atomic commands from measured behavior.** Align state, video, and gripper
+timestamps. Estimate end-effector displacement, direction, speed, orientation change,
+and gripper opening/closing over configurable short windows. Segment at meaningful
+motion changes, gripper transitions, pauses, and semantic subtask boundaries. Determine
+deadbands and hysteresis from observed noise so tiny jitter does not become a command.
+Represent no-motion and missing-data intervals explicitly. Account for action-chunk
+horizons crossing command boundaries so a short command is not paired with a later,
+contradictory maneuver.
+
+Produce evidence-backed labels such as “move the left gripper upward,” “move the
+right gripper toward the robot,” or “close the left gripper.” Include distances or
+rotation magnitudes only when their calibration and precision support them. Gripper
+closure alone does not prove a grasp; FK alone does not identify an object, contact,
+or placement success. Use synchronized visual evidence for those semantic claims.
+
+**Preserve multiple aligned annotation streams.** For the same demonstrated interval,
+retain the overall task, semantic subtask, per-arm Cartesian motion, gripper behavior,
+and verified combinations of these. Add pointing and image-plane gripper trajectories
+when camera calibration or a validated visual tracking method supports them. Projecting
+FK into video requires intrinsics, distortion handling, extrinsics, and synchronized
+poses; moving wrist cameras need time-varying transforms. Validate projected tracks
+against visible grippers and propagate resize/crop transforms to coordinate labels.
+Do not express robot-base coordinates as image pixels or silently reuse a base-camera
+label for a wrist view.
+
+Use structured geometry to constrain any VLM-generated phrasing. Allow wording
+diversity while preserving the measured arm, frame, direction, gripper state, and
+interval. Store the geometric source and confidence so a label can be audited.
+Only compose semantic and motion labels whose evidence and time intervals agree.
+
+Use existing `subtask`/`motion` styles and camera-scoped `trace` events where they fit.
+Extend the schema and resolvers deliberately if arm selectors, command variants, or
+interval endpoints need explicit representation. Do not insert indistinguishable
+same-style rows that make `active_at` ambiguous, and do not overload `camera` with
+an arm identifier. Annotation streams are distinct from the recipe's `low_level`
+action-conditioning stream. Materialize a new versioned dataset or annotation artifact
+with stable source episode/frame IDs, intervals, arm/frame identities, provenance,
+and quality flags; preserve the original data and held-out episode identities.
+
+**Train and test the richer interface.** Keep the original 80% semantic-subtask /
+20% task recipe as a control. Add a candidate retaining 20% overall-task conditioning
+and distributing the remaining 80% across the validated semantic, motion, gripper,
+and hybrid command variants; add visual commands once grounded. Save explicit weights
+and annotation coverage. These are our experiment settings, not paper-prescribed
+ratios. Sample valid alternative commands for a demonstrated interval while keeping
+its action target. Check the existing sampler's fixed per-index behavior: if repeated
+visits cannot expose multiple variants, implement seeded sampling across epochs or
+explicit sample expansion and measure the realized mixture. Missing annotations must
+be counted and handled explicitly, rather than silently changing the experiment.
+
+Offline annotation may inspect the demonstrated future to describe an upcoming
+motion. Keep that future restricted to label generation: policy observations and
+live supervisor inputs must contain only information available at decision time.
+
+First validate a small, diverse episode subset with FK sanity checks, per-arm plots,
+video overlays where projection is calibrated, and a manual sample of direction and
+gripper labels. Measure coverage, disagreement, and rejected labels before processing
+the full dataset. Compare task-only, the 80/20 baseline, and the richer mixture using
+fixed held-out episodes and comparable real-world trials. Test both arms, opposite
+directions, open/close commands, paraphrases, and changes of abstraction during a task.
+Measure command compliance as well as completion. At rollout, choose among command
+styles actually trained and validated for the selected checkpoint, observe their
+effects, and use those results to improve the annotations and command-selection prompt.
+
+Deliver the annotation implementation/configuration, URDF and calibration manifest,
+versioned annotated data, quality report, training recipes/checkpoints, and comparative
+results as they become available. Do not stop after writing this plan or training only
+the baseline when the inputs for richer annotation are available.
 
 ## Live hybrid control
 
