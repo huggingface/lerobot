@@ -171,6 +171,35 @@ manifest, checkpoint weights, and configuration. Partial or mismatched extractio
 cannot be exported. Use a fresh derived dataset when adding grippers to a previous
 object-only export.
 
+When combining original extractions with corrected versions, explicitly select the
+corrected clips with `--clip-replacements replacements.json`. Supply both extraction
+roots through `--extractions`. Otherwise their objects remain independent candidates.
+The JSON file is a list of whole-clip replacements:
+
+```json
+[
+  {
+    "source": {
+      "extraction_sha256": "ORIGINAL_MANIFEST_SHA256",
+      "clip": "episode_007/span_003"
+    },
+    "target": {
+      "extraction_sha256": "CORRECTED_MANIFEST_SHA256",
+      "clip": "episode_007/span_003"
+    },
+    "reason": "Use the corrected pen track with its attributed point review"
+  }
+]
+```
+
+Both clips must cover exactly the same pinned source frames, timestamps, camera,
+dimensions, and interval. Unknown references, duplicate sources, and replacement
+chains are rejected before output creation; point each superseded version directly
+to its final correction. Only the target clip contributes visual objects and traces.
+The source manifest, track/filter hashes, and selection reason remain in provenance.
+Independent gripper predictions are retained even when their visual clip is replaced.
+Replacement selects evidence; it does not accept labels for training.
+
 The exporter creates a derived LeRobot dataset with `language_events` in its data
 Parquet files. It uses the existing camera-tagged `vqa` events for bounding boxes,
 mask-centroid points, and first-frame Molmo pointing seeds, plus `trace` events for

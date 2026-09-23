@@ -3,6 +3,7 @@
 import copy
 import json
 import runpy
+import shutil
 from pathlib import Path
 
 import pyarrow as pa
@@ -132,6 +133,109 @@ def test_native_seed_correction_retains_model_attribution_only_at_anchor(sample)
         )["detections"][0]
         assert obj["seed_point_source"] == ("model_review" if index == 0 else None)
         assert obj["seed_review"] == (review if index == 0 else None)
+
+
+@pytest.fixture
+def replacement(sample, tmp_path):
+    api, _, extraction, _, _ = sample
+    corrected = tmp_path / "corrected"
+    shutil.copytree(extraction, corrected)
+    manifest_path = corrected / "extraction.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["correction"] = "model point review"
+    manifest_path.write_text(json.dumps(manifest))
+    selected_path = corrected / "clip/task_objects.json"
+    selected = json.loads(selected_path.read_text())
+    selected["source_manifest_sha256"] = api["digest"](manifest_path)
+    selected["frames"][2]["objects"][0]["centroid"] = [3.0, 2.0]
+    selected_path.write_text(json.dumps(selected))
+    plan = [
+        {
+            "source": {"extraction_sha256": api["digest"](extraction / "extraction.json"), "clip": "clip"},
+            "target": {"extraction_sha256": api["digest"](manifest_path), "clip": "clip"},
+            "reason": "Use corrected model point; labels still pending review",
+        }
+    ]
+    return corrected, plan
+
+
+def test_replacement_exports_only_corrected_visuals_preserving_source_and_independent_grippers(
+    sample, replacement, gripper_predictions
+):
+    api, dataset, extraction, output, path = sample
+    corrected, plan = replacement
+    grippers, _, _, _ = gripper_predictions
+    before = {
+        p: p.read_bytes() for root in (dataset, extraction, corrected) for p in root.rglob("*") if p.is_file()
+    }
+    api["export_dataset"](dataset, [extraction, corrected], output, [grippers], plan)
+    assert all(p.read_bytes() == value for p, value in before.items())
+    table = pq.read_table(output / path.relative_to(dataset))
+    source = pq.read_table(path)
+    assert table.drop(["language_events"]).equals(source.drop(["language_events"]))
+    old_events = api["event_array"](source["language_events"].to_pylist()).to_pylist()
+    for index, rows in enumerate(table["language_events"].to_pylist()):
+        assert rows[: len(old_events[index])] == old_events[index]
+        if index == 3:
+            assert rows == old_events[index]
+            continue
+        answer = json.loads(
+            next(r["content"] for r in rows if r["style"] == "vqa" and r["role"] == "assistant")
+        )
+        objects = [d for d in answer["detections"] if d["entity"] == "object"]
+        assert len(objects) == 1
+        assert objects[0]["object_id"] == plan[0]["target"]["extraction_sha256"] + ":clip:1"
+        assert objects[0]["point"] == ([2.0, 2.0], None, [3.0, 2.0])[index]
+        assert len([d for d in answer["detections"] if d["entity"] == "gripper"]) == 2
+        assert answer["accepted_training_labels"] is False
+        traces = json.loads(next(r["content"] for r in rows if r["style"] == "trace"))["trajectories"]
+        assert len(traces) == 3
+        assert all([s["frame_index"] for s in t["samples"]] == list(range(index + 1)) for t in traces)
+    report = json.loads((output / "meta/grounding_provenance.json").read_text())
+    assert report["clip_replacements"] == plan
+    original = report["extractions"][0]["clips"][0]
+    assert original["superseded_by"] == plan[0]["target"]
+    assert original["tracks_sha256"] == api["digest"](extraction / "clip/tracks.json")
+    assert original["filter_sha256"] == api["digest"](extraction / "clip/task_objects.json")
+    assert report["accepted_training_labels"] is False
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["unknown", "self", "duplicate", "cycle", "reason", "frames", "camera", "interval", "source", "schema"],
+)
+def test_invalid_replacement_fails_before_output(sample, replacement, case):
+    api, dataset, extraction, output, _ = sample
+    corrected, plan = replacement
+    if case == "unknown":
+        plan[0]["target"]["clip"] = "absent"
+    elif case == "self":
+        plan[0]["target"] = copy.deepcopy(plan[0]["source"])
+    elif case == "duplicate":
+        plan.append(copy.deepcopy(plan[0]))
+    elif case == "cycle":
+        plan.append({"source": plan[0]["target"], "target": plan[0]["source"], "reason": "cycle"})
+    elif case == "reason":
+        plan[0]["reason"] = " "
+    elif case == "schema":
+        plan = {}
+    else:
+        manifest_path = corrected / "extraction.json"
+        manifest = json.loads(manifest_path.read_text())
+        clip = manifest["clips"][0]
+        if case == "frames":
+            clip["frames"][0]["sha256"] = "changed"
+        elif case == "camera":
+            clip["camera"] = "observation.images.left_wrist"
+        elif case == "interval":
+            clip["end_frame"] += 1
+        elif case == "source":
+            manifest["source"]["revision"] = "other"
+        manifest_path.write_text(json.dumps(manifest))
+        plan[0]["target"]["extraction_sha256"] = api["digest"](manifest_path)
+    with pytest.raises(ValueError):
+        api["export_dataset"](dataset, [extraction, corrected], output, clip_replacements=plan)
+    assert not output.exists()
 
 
 def test_native_temporal_prompt_stays_on_its_frame_with_complete_offline_provenance(sample):

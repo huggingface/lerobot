@@ -50,10 +50,63 @@ def coordinates(value, size, *, box=False):
     return value
 
 
-def collect_candidates(extractions: list[Path], source: dict):
+def validate_replacements(extractions: list[Path], source: dict, replacements: list[dict]) -> dict:
+    """Resolve explicit visual clip replacements only across identical source frames."""
+    clips = {}
+    manifests = set()
+    for root in extractions:
+        manifest_hash = digest(root / "extraction.json")
+        manifest = read_json(root / "extraction.json")
+        if manifest_hash in manifests:
+            raise ValueError("Duplicate extraction")
+        manifests.add(manifest_hash)
+        if manifest["source"] != source:
+            raise ValueError("Extraction and dataset source revisions differ")
+        for clip in manifest["clips"]:
+            key = (manifest_hash, clip["path"])
+            if key in clips:
+                raise ValueError("Duplicate clip path in extraction")
+            clips[key] = clip
+
+    def reference(value):
+        if not isinstance(value, dict) or set(value) != {"extraction_sha256", "clip"}:
+            raise ValueError("Replacement references require extraction_sha256 and clip")
+        if any(not isinstance(v, str) or not v for v in value.values()):
+            raise ValueError("Replacement references must be nonempty strings")
+        key = (value["extraction_sha256"], value["clip"])
+        if key not in clips:
+            raise ValueError("Replacement references an unknown extraction clip")
+        return key
+
+    if not isinstance(replacements, list):
+        raise ValueError("Clip replacements must be a list")
+    resolved = {}
+    targets = set()
+    fields = ("episode_index", "start_frame", "end_frame", "camera", "image_size", "frames")
+    for item in replacements:
+        if not isinstance(item, dict) or set(item) != {"source", "target", "reason"}:
+            raise ValueError("Each replacement requires source, target, and reason")
+        if not isinstance(item["reason"], str) or not item["reason"].strip():
+            raise ValueError("Replacement reason must be nonempty")
+        original, target = reference(item["source"]), reference(item["target"])
+        if original == target or original in resolved:
+            raise ValueError("Self replacements and duplicate replacement sources are invalid")
+        if any(clips[original][field] != clips[target][field] for field in fields):
+            raise ValueError("Replacement clips must have identical source frames, interval, and camera")
+        resolved[original] = item
+        targets.add(target)
+    if targets.intersection(resolved):
+        raise ValueError("Replacement chains or cycles are ambiguous; name the final target directly")
+    return resolved
+
+
+def collect_candidates(extractions: list[Path], source: dict, clip_replacements: list[dict] | None = None):
     """Aggregate by source frame/camera so native scalar VQA resolvers stay unambiguous."""
     events = {}
     provenance = []
+    replacements = validate_replacements(
+        extractions, source, clip_replacements if clip_replacements is not None else []
+    )
     seen = set()
     for root in extractions:
         manifest = read_json(root / "extraction.json")
@@ -92,8 +145,6 @@ def collect_candidates(extractions: list[Path], source: dict):
                 a["frame_index"] >= b["frame_index"] for a, b in zip(frames, frames[1:], strict=False)
             ):
                 raise ValueError("Frames must be strictly ordered")
-            if not names:
-                continue
             history = defaultdict(list)
             identity_path = directory / "identify.json"
             identification = read_json(identity_path) if identity_path.exists() else None
@@ -104,6 +155,7 @@ def collect_candidates(extractions: list[Path], source: dict):
                 {
                     "path": clip["path"],
                     "filter_sha256": digest(directory / "task_objects.json"),
+                    "tracks_sha256": selected["source_tracks_sha256"],
                     "identification_sha256": identity_hash,
                     "identification": identification,
                     "tracking_prompts": {
@@ -113,6 +165,13 @@ def collect_candidates(extractions: list[Path], source: dict):
                     },
                 }
             )
+            replacement = replacements.get((manifest_hash, clip["path"]))
+            if replacement is not None:
+                provenance[-1]["clips"][-1]["superseded_by"] = replacement["target"]
+                provenance[-1]["clips"][-1]["replacement_reason"] = replacement["reason"]
+                continue
+            if not names:
+                continue
             for index, frame in enumerate(frames):
                 if not clip["start_frame"] <= frame["frame_index"] < clip["end_frame"]:
                     raise ValueError("Frame outside clip interval")
@@ -383,14 +442,18 @@ def event_array(rows: list[list[dict]]) -> pa.Array:
 
 
 def export_dataset(
-    dataset: Path, extractions: list[Path], output: Path, grippers: list[Path] | None = None
+    dataset: Path,
+    extractions: list[Path],
+    output: Path,
+    grippers: list[Path] | None = None,
+    clip_replacements: list[dict] | None = None,
 ) -> dict:
     dataset, output = dataset.resolve(), output.resolve()
     if output.exists() or dataset in output.parents:
         raise ValueError("Output must be a fresh directory outside the source dataset")
     source = read_json(dataset / "source.json")
     source = {k: source[k] for k in ("repo_id", "revision")}
-    events, provenance = collect_candidates(extractions, source)
+    events, provenance = collect_candidates(extractions, source, clip_replacements)
     gripper_provenance = collect_grippers(grippers or [], extractions, source, events)
     info = read_json(dataset / "meta/info.json")
     by_frame = defaultdict(dict)
@@ -465,6 +528,7 @@ def export_dataset(
         "source_data_sha256": shard_hashes,
         "extractions": provenance,
         "gripper_extractions": gripper_provenance,
+        "clip_replacements": clip_replacements if clip_replacements is not None else [],
         "annotated_frames": len(seen),
         "camera_frames": len(events),
         "language_rows_added": 3 * len(events),
@@ -487,8 +551,23 @@ def main():
     parser.add_argument(
         "--grippers", type=Path, nargs="+", help="Optional completed gripper_detector.py extractions"
     )
+    parser.add_argument(
+        "--clip-replacements",
+        type=Path,
+        help="JSON list of explicit visual clip replacements; grippers are unchanged",
+    )
     args = parser.parse_args()
-    print(json.dumps(export_dataset(args.dataset_root, args.extractions, args.output, args.grippers)))
+    print(
+        json.dumps(
+            export_dataset(
+                args.dataset_root,
+                args.extractions,
+                args.output,
+                args.grippers,
+                read_json(args.clip_replacements) if args.clip_replacements is not None else None,
+            )
+        )
+    )
 
 
 if __name__ == "__main__":
