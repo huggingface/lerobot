@@ -432,22 +432,18 @@ def test_create_and_resume_with_custom_storage_format(tmp_path, monkeypatch):
             image_writer_threads=2,
         )
 
-        # Writer resolved through the registry with forwarded constructor args
+        # Only the format-agnostic core is forwarded; lerobot encoder kwargs are
+        # reserved for the default writer, mirroring make_dataset_reader.
         writer = dataset.writer
         assert isinstance(writer, DummyWriter)
-        assert writer.kwargs["meta"] is dataset.meta
-        assert writer.kwargs["root"] == dataset.root
-        assert set(writer.kwargs) >= {
-            "rgb_encoder",
-            "depth_encoder",
-            "encoder_threads",
-            "batch_encoding_size",
-            "streaming_encoder",
-        }
+        assert writer.kwargs == {"meta": dataset.meta, "root": dataset.root}
         # Optional hook started through the integration path
         assert writer.image_writer_args == (0, 2)
         # storage_format persisted so the backend is resolvable on reload
         assert dataset.meta.storage_format == "dummyfmt"
+        # lerobot-specific path templates are not stamped onto other formats
+        assert dataset.meta.data_path is None
+        assert dataset.meta.video_path is None
 
         # Recording lifecycle is delegated to the custom writer
         for _ in range(3):
@@ -462,6 +458,13 @@ def test_create_and_resume_with_custom_storage_format(tmp_path, monkeypatch):
         resumed = LeRobotDataset.resume(repo_id=DUMMY_REPO_ID, root=root)
         assert isinstance(resumed.writer, DummyWriter)
         assert resumed.meta.storage_format == "dummyfmt"
-        assert resumed.writer.kwargs["initial_frames"] == resumed.meta.total_frames
+        # info.json round-trip keeps the templates absent (not defaulted back in)
+        assert resumed.meta.data_path is None
+        assert resumed.meta.video_path is None
+        assert resumed.writer.kwargs == {
+            "meta": resumed.meta,
+            "root": resumed.root,
+            "initial_frames": resumed.meta.total_frames,
+        }
     finally:
         _DATASET_WRITER_MODULES.pop("dummyfmt", None)

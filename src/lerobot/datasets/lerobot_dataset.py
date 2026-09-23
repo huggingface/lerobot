@@ -852,16 +852,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
             streaming_enc = cls._build_streaming_encoder(
                 fps, rgb_encoder, depth_encoder, encoder_queue_maxsize, encoder_threads
             )
-        obj.writer = make_dataset_writer(
-            storage_format=obj.meta.storage_format,
-            meta=obj.meta,
-            root=obj.root,
-            rgb_encoder=rgb_encoder,
-            depth_encoder=depth_encoder,
-            encoder_threads=encoder_threads,
-            batch_encoding_size=batch_encoding_size,
-            streaming_encoder=streaming_enc,
-        )
+        writer_kwargs = {"meta": obj.meta, "root": obj.root}
+        if obj.meta.storage_format == DEFAULT_STORAGE_FORMAT:
+            writer_kwargs.update(
+                rgb_encoder=rgb_encoder,
+                depth_encoder=depth_encoder,
+                encoder_threads=encoder_threads,
+                batch_encoding_size=batch_encoding_size,
+                streaming_encoder=streaming_enc,
+            )
+        obj.writer = make_dataset_writer(obj.meta.storage_format, **writer_kwargs)
 
         if image_writer_processes or image_writer_threads:
             obj.writer.start_image_writer(image_writer_processes, image_writer_threads)
@@ -971,17 +971,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
             streaming_enc = cls._build_streaming_encoder(
                 obj.meta.fps, rgb_encoder, depth_encoder, encoder_queue_maxsize, encoder_threads
             )
-        obj.writer = make_dataset_writer(
-            storage_format=obj.meta.storage_format,
-            meta=obj.meta,
-            root=obj.root,
-            rgb_encoder=rgb_encoder,
-            depth_encoder=depth_encoder,
-            encoder_threads=encoder_threads,
-            batch_encoding_size=batch_encoding_size,
-            streaming_encoder=streaming_enc,
-            initial_frames=obj.meta.total_frames,
-        )
+        writer_kwargs = {"meta": obj.meta, "root": obj.root, "initial_frames": obj.meta.total_frames}
+        if obj.meta.storage_format == DEFAULT_STORAGE_FORMAT:
+            writer_kwargs.update(
+                rgb_encoder=rgb_encoder,
+                depth_encoder=depth_encoder,
+                encoder_threads=encoder_threads,
+                batch_encoding_size=batch_encoding_size,
+                streaming_encoder=streaming_enc,
+            )
+        obj.writer = make_dataset_writer(obj.meta.storage_format, **writer_kwargs)
 
         if image_writer_processes or image_writer_threads:
             obj.writer.start_image_writer(image_writer_processes, image_writer_threads)

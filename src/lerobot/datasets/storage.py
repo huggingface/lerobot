@@ -92,7 +92,7 @@ def _writer_module(storage_format: str):
     module_name = _DATASET_WRITER_MODULES.get(storage_format)
     if module_name is None:
         raise ValueError(
-            f"Cannot write storage_format {storage_format!r}. Writable formats: "
+            f"Unknown storage_format {storage_format!r}. Supported formats: "
             f"{[DEFAULT_STORAGE_FORMAT, *_DATASET_WRITER_MODULES]}."
         )
     return importlib.import_module(module_name)
