@@ -149,6 +149,11 @@ class DAggerKeyboardConfig:
     pause_resume: str = "space"
     correction: str = "tab"
     upload: str = "enter"
+    # Arrow-key controls used by the episodic recording path (--strategy.record_autonomous=True
+    # + --strategy.use_sentry_rotation=False).  Only honoured outside the CORRECTING phase — see
+    # DAggerStrategy._run_episodic.
+    exit_early: str = "right"
+    rerecord_episode: str = "left"
 
 
 @dataclass
@@ -220,10 +225,20 @@ class DAggerStrategyConfig(RolloutStrategyConfig):
     3. **upload** — push dataset to hub on demand (corrections-only mode).
 
     When ``record_autonomous=False`` (default) only human-correction windows
-    are recorded — each correction becomes its own episode.  Set to ``True``
-    to record both autonomous and correction frames with size-based episode
-    rotation (same as Sentry) and background uploading.  ``push_to_hub`` is
-    blocked while a correction is in progress.
+    are recorded — each correction becomes its own episode.
+
+    When ``record_autonomous=True``, both autonomous and correction frames are
+    recorded.  Two rotation styles are available, selected by
+    ``use_sentry_rotation``:
+
+    - ``use_sentry_rotation=True``: size-based episode rotation, same as Sentry,
+      with background uploading (``DAggerStrategy._run_continuous``).
+    - ``use_sentry_rotation=False`` (default): episodic-style recording that
+      mirrors ``lerobot-record`` — fixed-length episodes with a reset phase in
+      between, arrow-key early-exit/re-record support
+      (``DAggerStrategy._run_episodic``).
+
+    ``push_to_hub`` is blocked while a correction is in progress.
     """
 
     # TODO(Steven): DAgger shouldn't require a dataset (user may want to just rollout+intervene
@@ -231,13 +246,21 @@ class DAggerStrategyConfig(RolloutStrategyConfig):
     dataset_mode: ClassVar[str] = "required"
     requires_teleop: ClassVar[bool] = True
 
-    # Number of correction episodes to collect (corrections-only mode).
-    # When None, falls back to ``--dataset.num_episodes``.
+    # Number of correction episodes to collect (corrections-only mode), or the
+    # number of episodes to record when record_autonomous=True.
+    # When None, falls back to ``--dataset.num_episodes`` (resolved in
+    # ``RolloutConfig.__post_init__``).
     num_episodes: int | None = None
     record_autonomous: bool = False
+    # Only meaningful when record_autonomous=True. True selects the Sentry-style
+    # continuous/size-based rotation path (_run_continuous); False (default)
+    # selects the fixed-length episodic path (_run_episodic). Ignored, with a
+    # warning, when record_autonomous=False.
+    use_sentry_rotation: bool = False
     upload_every_n_episodes: int = 5
-    # Target video file size in MB for episode rotation (record_autonomous
-    # mode only).  Defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB when None.
+    # Target video file size in MB for episode rotation (record_autonomous +
+    # use_sentry_rotation mode only).  Defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB
+    # when None.
     target_video_file_size_mb: int | None = None
     # Whether to turn on or off the smooth handover behavior at phase transitions:
     # the leader is driven to the follower position on pause (teleops with
@@ -247,6 +270,9 @@ class DAggerStrategyConfig(RolloutStrategyConfig):
     # pose on engage: the handover is already continuous there, and the blocking
     # interpolation only delays the start of the correction.
     smooth_handover: bool = True
+    # Only used by the episodic path (_run_episodic): mirrors
+    # EpisodicStrategyConfig.reset_to_initial_position for the no-teleop case.
+    reset_to_initial_position: bool = True
     input_device: str = "keyboard"
     keyboard: DAggerKeyboardConfig = field(default_factory=DAggerKeyboardConfig)
     pedal: DAggerPedalConfig = field(default_factory=DAggerPedalConfig)
@@ -254,10 +280,18 @@ class DAggerStrategyConfig(RolloutStrategyConfig):
     def __post_init__(self):
         if self.input_device not in ("keyboard", "pedal"):
             raise ValueError(f"DAgger input_device must be 'keyboard' or 'pedal', got '{self.input_device}'")
+        if self.use_sentry_rotation and not self.record_autonomous:
+            logger.warning(
+                "--strategy.use_sentry_rotation=True does not apply when "
+                "--strategy.record_autonomous=False; ignoring."
+            )
 
     def requires_streaming_encoding(self) -> bool:
-        # Only when the autonomous phase is recorded too; corrections are saved between phases.
-        return self.record_autonomous
+        # Only the continuous, size-based rotation path writes frames from inside
+        # the timed control loop without episode-boundary pauses; the episodic
+        # path saves at fixed episode boundaries like EpisodicStrategyConfig and
+        # doesn't need it.
+        return self.record_autonomous and self.use_sentry_rotation
 
     def extra_dataset_features(self) -> dict[str, dict]:
         return {"intervention": {"dtype": "bool", "shape": (1,), "names": None}}
@@ -390,6 +424,23 @@ class RolloutConfig:
         ):
             logger.warning("%s strategy forces streaming_encoding=True", strategy.type)
             self.dataset.streaming_encoding = True
+
+        # DAgger: resolve num_episodes from dataset config when not explicitly set.
+        # This is DAgger-specific (num_episodes means "correction episodes" or
+        # "recorded episodes", not part of the generic strategy interface above),
+        # so it stays as an isinstance check rather than a declared capability.
+        if isinstance(strategy, DAggerStrategyConfig) and strategy.num_episodes is None:
+            if self.dataset is not None:
+                strategy.num_episodes = self.dataset.num_episodes
+                logger.info(
+                    "DAgger num_episodes not set — using --dataset.num_episodes=%d",
+                    strategy.num_episodes,
+                )
+            else:
+                raise ValueError(
+                    "DAgger num_episodes must be set either via --strategy.num_episodes or "
+                    "--dataset.num_episodes"
+                )
 
         # --- Policy loading ---
         if self.robot is None:
