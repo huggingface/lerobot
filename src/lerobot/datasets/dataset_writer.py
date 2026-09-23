@@ -764,8 +764,6 @@ class DatasetWriter(BaseDatasetWriter):
         self.flush_pending_videos()
         # 3. Close own parquet writer
         self.close_writer()
-        # 4. Finalize metadata (idempotent)
-        self._meta.finalize()
         self._finalized = True
 
     def __del__(self):

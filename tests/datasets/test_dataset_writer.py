@@ -419,7 +419,7 @@ def test_create_and_resume_with_custom_storage_format(tmp_path, monkeypatch):
         # reserved for the default writer, mirroring make_dataset_reader.
         writer = dataset.writer
         assert isinstance(writer, DummyWriter)
-        assert writer.kwargs == {"meta": dataset.meta, "root": dataset.root}
+        assert writer.kwargs == {"meta": dataset.meta, "root": dataset.root, "initial_frames": 0}
         # Optional hook started through the integration path
         assert writer.image_writer_args == (0, 2)
         # storage_format persisted so the backend is resolvable on reload

@@ -119,7 +119,7 @@ def create_empty_dataset_info(
         video_files_size_in_mb=video_files_size_in_mb or DEFAULT_VIDEO_FILE_SIZE_IN_MB,
         data_path=DEFAULT_DATA_PATH if is_default_format else None,
         video_path=DEFAULT_VIDEO_PATH if (is_default_format and use_videos) else None,
-        storage_format=storage_format,
+        storage_format=storage_format or DEFAULT_STORAGE_FORMAT,
     )
 
 

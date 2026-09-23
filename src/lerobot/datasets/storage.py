@@ -75,8 +75,8 @@ def make_dataset_reader(storage_format: str, **kwargs) -> BaseDatasetReader:
 
 # Non-default writable storage formats and the module implementing each. Modules
 # are imported lazily and must expose a ``DATASET_WRITER`` class implementing
-# :class:`~lerobot.datasets.dataset_writer.BaseDatasetWriter`. No Lance writer is
-# registered yet, so this stays empty and only the default format is writable.
+# :class:`~lerobot.datasets.dataset_writer.BaseDatasetWriter` (constructed with
+# the keyword arguments ``meta``, ``root`` and ``initial_frames``).
 _DATASET_WRITER_MODULES: dict[str, str] = {}
 
 
