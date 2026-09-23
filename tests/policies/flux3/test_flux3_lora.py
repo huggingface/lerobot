@@ -72,8 +72,6 @@ def test_native_task_vae_disables_droid_chunking():
 
 @pytest.fixture(autouse=True)
 def task_vae(monkeypatch, fake_text_encoder):
-    # Restore the global precision setting changed by the trainer.
-    monkeypatch.setattr(torch.backends.cuda.matmul, "allow_tf32", torch.backends.cuda.matmul.allow_tf32)
     monkeypatch.setattr(Flux3Policy, "_build_video_vae", lambda self, cfg: TaskVideoVAE())
 
 
@@ -358,9 +356,12 @@ def test_exporter_creates_cli_config_without_training(tmp_path, monkeypatch, use
         exporter.export_base(source, "test/so101", stats, None, output)
 
 
-def test_actual_trainer_peft_ema_checkpoint_and_resume(tmp_path):
+def test_actual_trainer_peft_ema_checkpoint_and_resume(tmp_path, monkeypatch):
     for package in ("accelerate", "peft", "diffusers"):
         pytest.importorskip(package)
+
+    # Restore the global precision setting changed by train() at teardown.
+    monkeypatch.setattr(torch.backends.cuda.matmul, "allow_tf32", torch.backends.cuda.matmul.allow_tf32)
 
     root = tmp_path / "dataset"
     dataset = LeRobotDataset.create(
