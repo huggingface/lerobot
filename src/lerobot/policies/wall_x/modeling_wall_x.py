@@ -58,7 +58,7 @@ from lerobot.utils.import_utils import (
 from lerobot.utils.language import require_single_text_output
 
 from ..pretrained import PreTrainedPolicy
-from ..utils import populate_queues
+from ..utils import log_model_loading_keys, populate_queues
 from .configuration_wall_x import WallXConfig
 from .constant import WALL_X_GENERATION_PROMPT_IDS
 
@@ -387,7 +387,8 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
             del sd[key]
         state_dict.update(sd)
 
-        model.load_state_dict(state_dict, strict=False)
+        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+        log_model_loading_keys(missing_keys, unexpected_keys)
 
         return model
 
