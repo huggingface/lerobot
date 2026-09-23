@@ -27,8 +27,8 @@ from lerobot.rewards.robometer import RobometerConfig
 from lerobot.rewards.robometer.configuration_robometer import ROBOMETER_SPECIAL_TOKENS
 from lerobot.rewards.robometer.modeling_robometer import (
     ROBOMETER_FEATURE_PREFIX,
+    RobometerPrediction,
     convert_bins_to_continuous,
-    decode_progress_outputs,
 )
 from tests.utils import skip_if_package_missing
 
@@ -164,7 +164,7 @@ def _patch_build(monkeypatch) -> None:
 
 
 def _make_batch(features: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-    """Build a `compute_reward`-ready batch using Robometer's namespaced keys."""
+    """Build a ``predict_progress`` input using Robometer's namespaced keys."""
     return {f"{ROBOMETER_FEATURE_PREFIX}{key}": value for key, value in features.items()}
 
 
@@ -192,31 +192,6 @@ def test_convert_bins_to_continuous_returns_expected_values():
     assert torch.allclose(values, torch.tensor([0.0, 1.0]), atol=1e-3)
 
 
-def test_decode_progress_outputs_returns_last_frame_values():
-    progress = torch.tensor([[0.1, 0.9], [0.4, 0.6]])
-    success_logits = torch.tensor([[0.0, 5.0], [0.0, -5.0]])
-
-    outputs = decode_progress_outputs(progress, success_logits, is_discrete_mode=False)
-
-    assert outputs["progress_pred"] == [pytest.approx([0.1, 0.9]), pytest.approx([0.4, 0.6])]
-    assert outputs["success_probs"][0][-1] == pytest.approx(torch.sigmoid(torch.tensor(5.0)).item(), abs=1e-3)
-    assert outputs["success_probs"][1][-1] == pytest.approx(
-        torch.sigmoid(torch.tensor(-5.0)).item(), abs=1e-3
-    )
-
-
-def test_decode_progress_outputs_discrete_mode_softmaxes_over_bins():
-    # 2 frames, peaks at bin 0 and bin 9 → continuous predictions 0.0 and 1.0
-    bin_logits = torch.full((1, 2, 10), -10.0)
-    bin_logits[0, 0, 0] = 10.0
-    bin_logits[0, 1, -1] = 10.0
-
-    outputs = decode_progress_outputs(bin_logits, success_logits=None, is_discrete_mode=True)
-
-    assert outputs["success_probs"] == []
-    assert outputs["progress_pred"][0] == pytest.approx([0.0, 1.0], abs=1e-3)
-
-
 @skip_if_package_missing("transformers")
 def test_robometer_post_init_overwrites_vocab_size_with_tokenizer_length(monkeypatch):
     """``RobometerConfig.__post_init__`` must overwrite the backbone's stale
@@ -232,49 +207,120 @@ def test_robometer_post_init_overwrites_vocab_size_with_tokenizer_length(monkeyp
 
 
 @skip_if_package_missing("transformers")
-def test_robometer_compute_reward_reads_pre_encoded_inputs(monkeypatch):
+def test_robometer_predict_progress_returns_typed_frame_signals(monkeypatch):
     from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
 
-    progress = torch.tensor([[0.1, 0.9], [0.4, 0.6]])
+    progress = torch.tensor([[-0.1, 1.2], [0.4, 0.6]], dtype=torch.float16)
     success_logits = torch.tensor([[0.0, 5.0], [0.0, -5.0]])
-    _patch_build(monkeypatch)
-
-    cfg = RobometerConfig(device="cpu", reward_output="progress", progress_loss_type="l2")
-    model = RobometerRewardModel(cfg)
-    # Bypass the Qwen3-VL forward + head extraction with deterministic logits.
-    monkeypatch.setattr(model, "_compute_rbm_logits", lambda _inputs: (progress, success_logits))
-
-    batch = _make_batch({"input_ids": torch.zeros(2, 2, dtype=torch.long)})
-    rewards = model.compute_reward(batch)
-
-    assert torch.allclose(rewards, torch.tensor([0.9, 0.6]))
-
-
-@skip_if_package_missing("transformers")
-def test_robometer_compute_reward_can_return_binary_success(monkeypatch):
-    from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
-
-    progress = torch.tensor([[0.1, 0.9], [0.4, 0.6]])
-    success_logits = torch.tensor([[0.0, 5.0], [0.0, -5.0]])  # sigmoid(5) > 0.5; sigmoid(-5) < 0.5
     _patch_build(monkeypatch)
 
     cfg = RobometerConfig(
         device="cpu",
         reward_output="success",
-        success_threshold=0.5,
+        success_threshold=0.99,
         progress_loss_type="l2",
     )
     model = RobometerRewardModel(cfg)
+    # Bypass the Qwen3-VL forward + head extraction with deterministic logits.
     monkeypatch.setattr(model, "_compute_rbm_logits", lambda _inputs: (progress, success_logits))
 
     batch = _make_batch({"input_ids": torch.zeros(2, 2, dtype=torch.long)})
-    rewards = model.compute_reward(batch)
+    prediction = model.predict_progress(batch)
 
-    assert torch.equal(rewards, torch.tensor([1.0, 0.0]))
+    assert isinstance(prediction, RobometerPrediction)
+    assert prediction.progress.shape == (2, 2)
+    assert prediction.success_probability.shape == (2, 2)
+    assert prediction.progress.dtype == torch.float32
+    assert prediction.success_probability.dtype == torch.float32
+    assert prediction.progress.device == next(model.model.parameters()).device
+    assert torch.allclose(
+        prediction.progress,
+        torch.tensor([[0.0, 1.0], [0.4, 0.6]]),
+        atol=2e-4,
+    )
+    assert torch.allclose(prediction.success_probability, torch.sigmoid(success_logits))
 
 
 @skip_if_package_missing("transformers")
-def test_robometer_compute_reward_errors_when_inputs_missing(monkeypatch):
+def test_robometer_predict_progress_decodes_discrete_logits(monkeypatch):
+    from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
+
+    progress_logits = torch.full((1, 2, 10), -10.0)
+    progress_logits[0, 0, 0] = 10.0
+    progress_logits[0, 1, -1] = 10.0
+    success_logits = torch.zeros(1, 2)
+    _patch_build(monkeypatch)
+
+    cfg = RobometerConfig(device="cpu", progress_loss_type="discrete")
+    model = RobometerRewardModel(cfg)
+    monkeypatch.setattr(
+        model,
+        "_compute_rbm_logits",
+        lambda _inputs: (progress_logits, success_logits),
+    )
+
+    prediction = model.predict_progress(_make_batch({"input_ids": torch.zeros(1, 2, dtype=torch.long)}))
+
+    assert torch.allclose(prediction.progress, torch.tensor([[0.0, 1.0]]), atol=1e-3)
+
+
+@skip_if_package_missing("transformers")
+def test_robometer_predict_progress_ignores_legacy_scalar_selection_config(monkeypatch):
+    from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
+
+    progress = torch.tensor([[0.2, 0.8]])
+    success_logits = torch.tensor([[-2.0, 2.0]])
+    _patch_build(monkeypatch)
+
+    predictions = []
+    for reward_output, threshold in [("progress", 0.1), ("success", 0.9)]:
+        model = RobometerRewardModel(
+            RobometerConfig(
+                device="cpu",
+                reward_output=reward_output,
+                success_threshold=threshold,
+                progress_loss_type="l2",
+            )
+        )
+        monkeypatch.setattr(
+            model,
+            "_compute_rbm_logits",
+            lambda _inputs: (progress, success_logits),
+        )
+        predictions.append(
+            model.predict_progress(_make_batch({"input_ids": torch.zeros(1, 2, dtype=torch.long)}))
+        )
+
+    assert torch.equal(predictions[0].progress, predictions[1].progress)
+    assert torch.equal(predictions[0].success_probability, predictions[1].success_probability)
+
+
+@skip_if_package_missing("transformers")
+def test_robometer_predict_progress_does_not_mutate_input(monkeypatch):
+    from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
+
+    _patch_build(monkeypatch)
+    model = RobometerRewardModel(RobometerConfig(device="cpu", progress_loss_type="l2"))
+
+    def fake_compute(inputs):
+        inputs.pop("prog_token_id")
+        return torch.zeros(1, 1), torch.zeros(1, 1)
+
+    monkeypatch.setattr(model, "_compute_rbm_logits", fake_compute)
+    batch = _make_batch(
+        {
+            "input_ids": torch.zeros(1, 1, dtype=torch.long),
+            "prog_token_id": torch.tensor(42),
+        }
+    )
+
+    model.predict_progress(batch)
+
+    assert f"{ROBOMETER_FEATURE_PREFIX}prog_token_id" in batch
+
+
+@skip_if_package_missing("transformers")
+def test_robometer_predict_progress_errors_when_inputs_missing(monkeypatch):
     from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
 
     _patch_build(monkeypatch)
@@ -283,7 +329,7 @@ def test_robometer_compute_reward_errors_when_inputs_missing(monkeypatch):
     model = RobometerRewardModel(cfg)
 
     with pytest.raises(KeyError, match=r"observation\.robometer\.input_ids"):
-        model.compute_reward({})
+        model.predict_progress({})
 
 
 @skip_if_package_missing("transformers")
@@ -331,10 +377,30 @@ def test_robometer_save_pretrained_roundtrips(monkeypatch, tmp_path):
     reloaded_cfg = RewardModelConfig.from_pretrained(str(tmp_path))
     assert isinstance(reloaded_cfg, RobometerConfig)
     reloaded_cfg.pretrained_path = str(tmp_path)  # mimic lerobot-train's `validate()`
-    reloaded = RobometerRewardModel.from_pretrained(str(tmp_path), config=reloaded_cfg)
+    reloaded = RobometerRewardModel.from_pretrained(str(tmp_path), config=reloaded_cfg, strict=True)
 
     assert reloaded.config.image_key == "observation.images.cam_top"
     assert reloaded.config.task_key == "task"
     assert reloaded.config.reward_output == "success"
     assert reloaded.config.success_threshold == 0.7
     assert reloaded.config.progress_loss_type == "l2"  # came back from config.json
+
+    # A successful load must restore values, not merely recreate keys. Compare
+    # both every parameter and a public prediction so ``strict=False`` cannot
+    # hide a silently skipped head.
+    original_state = model.state_dict()
+    reloaded_state = reloaded.state_dict()
+    assert original_state.keys() == reloaded_state.keys()
+    for key in original_state:
+        assert torch.equal(original_state[key], reloaded_state[key]), key
+
+    batch = _make_batch(
+        {
+            "input_ids": torch.tensor([[1, 99, 1, 99]]),
+            "prog_token_id": torch.tensor(99),
+        }
+    )
+    expected = model.predict_progress(batch)
+    actual = reloaded.predict_progress(batch)
+    assert torch.equal(actual.progress, expected.progress)
+    assert torch.equal(actual.success_probability, expected.success_probability)
