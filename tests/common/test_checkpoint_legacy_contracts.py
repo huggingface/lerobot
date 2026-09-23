@@ -136,6 +136,7 @@ def sharded_passthrough_accelerator() -> SimpleNamespace:
         unwrap_model=lambda m: m,
         wait_for_everyone=lambda: None,
         state=SimpleNamespace(fsdp_plugin=FSDPConfig().build_plugin()),
+        scaler=None,  # these contracts are fp32; a real Accelerator exposes the attribute
     )
 
 
