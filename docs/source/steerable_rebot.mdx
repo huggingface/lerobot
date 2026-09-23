@@ -141,6 +141,13 @@ and overlays. Identities are scoped to a clip and camera; association across cam
 or subtasks is not established. Missing/ambiguous points stay missing. Mask presence
 is a prediction, not verified visibility; geometric diagnostics are not confidence.
 
+If identification failed only because Molmo wrapped an object list in prose or omitted
+quotes around names, run `extract_visual.py reparse-identify --output outputs/rebot_visual`
+before resuming pointing. This CPU-only step keeps the raw response, model identity,
+previous file hash and error, and parser hash. It changes only failed, unreviewed results
+with no dependent points/tracks. Ambiguous lists remain failed; recovering syntax does
+not verify that the named objects exist or are relevant.
+
 These are **unreviewed features**, not automatically equivalent action instructions.
 Inspect overlays and split long semantic spans into action-consistent intervals before
 composing point/motion/trace commands. Object trajectories are not gripper trajectories.

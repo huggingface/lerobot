@@ -34,9 +34,51 @@ def test_molmo_percentages_are_scaled_and_ambiguous_points_are_missing(extractor
 def test_object_selection_does_not_silently_truncate_or_invent_identities(extractor):
     parse = extractor["parse_objects"]
     assert parse('```json\n["tape", "black bin"]\n```') == ["tape", "black bin"]
-    for raw in ['["tape", "tape"]', '["1", "2", "3", "4", "5"]', '{"objects": []}', "[null]"]:
+    assert parse('Here is the list: {"taskDescription": "pick", "objects": ["tape", "bin"]}\nDone.') == [
+        "tape",
+        "bin",
+    ]
+    assert parse(" [remote, tape, cracker, screwdriver]") == ["remote", "tape", "cracker", "screwdriver"]
+    for raw in [
+        '["tape", "tape"]',
+        '["1", "2", "3", "4", "5"]',
+        '{"names": []}',
+        "[null]",
+        '["tape"] ["bin"]',
+        '[remote, "tape"]',
+    ]:
         with pytest.raises(ValueError):
             parse(raw)
+
+
+def test_reparse_preserves_model_response_and_records_recovery(extractor, tmp_path):
+    directory = tmp_path / "clip"
+    directory.mkdir()
+    target = directory / "identify.json"
+    result = {
+        "model": extractor["MODELS"]["identify"],
+        "review": "pending",
+        "raw": "[tape, bin]",
+        "prompt": "original prompt",
+        "objects": [],
+        "error": "old parse failure",
+    }
+    target.write_text(json.dumps(result))
+    old_hash = extractor["sha256"](target)
+    manifest = {"models": extractor["MODELS"], "clips": [{"path": "clip"}]}
+    report = extractor["reparse_identification"](tmp_path, manifest)
+    restored = json.loads(target.read_text())
+    assert report[0]["status"] == "reparsed"
+    assert restored["raw"] == result["raw"] and restored["prompt"] == result["prompt"]
+    assert restored["objects"] == ["tape", "bin"] and restored["review"] == "pending"
+    assert restored["format_recovery"]["previous_file_sha256"] == old_hash
+    # A retry must not overwrite provenance or re-query successful identification.
+    assert extractor["reparse_identification"](tmp_path, manifest) == []
+    assert json.loads(target.read_text()) == restored
+    target.write_text(json.dumps(result))
+    (directory / "point.json").write_text("{}")
+    with pytest.raises(ValueError, match="dependent extraction"):
+        extractor["reparse_identification"](tmp_path, manifest)
 
 
 def test_tracking_preserves_source_time_identity_and_missing_masks(extractor, tmp_path):

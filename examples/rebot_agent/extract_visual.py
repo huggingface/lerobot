@@ -59,7 +59,23 @@ def sha256(path: Path) -> str:
 
 
 def parse_objects(text: str) -> list[str]:
-    value = json.loads(text.strip().removeprefix("```json").removesuffix("```").strip())
+    text = text.strip().removeprefix("```json").removesuffix("```").strip()
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        # Molmo sometimes emits a bare list of names, or explains an objects JSON
+        # object in prose. Recover only the explicitly listed names, never new ones.
+        if re.fullmatch(r"\[\s*[A-Za-z][^\[\]\"{}\n]*\]", text):
+            value = [name.strip() for name in text[1:-1].split(",")]
+        else:
+            start = re.search(r"[\[{]", text)
+            if start is None:
+                raise ValueError("No object list in model response") from None
+            value, end = json.JSONDecoder().raw_decode(text, start.start())
+            if re.search(r"[\[{]", text[end:]):
+                raise ValueError("Ambiguous multiple object lists") from None
+    if isinstance(value, dict) and "objects" in value:
+        value = value["objects"]
     if not isinstance(value, list) or len(value) > 4:
         raise ValueError("Expected a JSON list of up to four object names")
     if any(not isinstance(name, str) or not name.strip() or len(name) > 150 for name in value):
@@ -67,6 +83,36 @@ def parse_objects(text: str) -> list[str]:
     if len(set(value)) != len(value):
         raise ValueError("Duplicate object identities")
     return value
+
+
+def reparse_identification(output: Path, manifest: dict):
+    """Recover syntax from failed raw responses, without model calls or semantic approval."""
+    report = []
+    for clip in manifest["clips"]:
+        directory = output / clip["path"]
+        target = directory / "identify.json"
+        result = json.loads(target.read_text())
+        if not result["error"]:
+            continue
+        if result["model"] != manifest["models"]["identify"] or result["review"] != "pending":
+            raise ValueError("Only unreviewed responses from the pinned identification model can be reparsed")
+        if (directory / "point.json").exists() or (directory / "tracks.json").exists():
+            raise ValueError("Cannot change object identities after dependent extraction")
+        try:
+            objects = parse_objects(result["raw"])
+        except (ValueError, TypeError) as exc:
+            report.append({"clip": clip["path"], "status": "unresolved", "error": str(exc)})
+            continue
+        result["format_recovery"] = {
+            "previous_file_sha256": sha256(target),
+            "previous_error": result["error"],
+            "parser_script_sha256": sha256(Path(__file__)),
+        }
+        result.update(objects=objects, error=None)
+        write_json(target, result)
+        report.append({"clip": clip["path"], "status": "reparsed", "objects": objects})
+    write_json(output / "reparsed_identification.json", report)
+    return report
 
 
 def parse_point(text: str, size: tuple[int, int]) -> list[int] | None:
@@ -308,7 +354,7 @@ def track_clip(directory: Path, clip: dict, predictor):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=["prepare", "identify", "point", "track"])
+    parser.add_argument("stage", choices=["prepare", "identify", "reparse-identify", "point", "track"])
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--dataset-root", type=Path)
     parser.add_argument("--episodes", type=int, nargs="+", default=[0, 1, 2, 3, 4])
@@ -328,13 +374,16 @@ def main():
     # This file also records the script used when running remotely from an uncommitted checkout.
     provenance = {
         "script_sha256": sha256(Path(__file__)),
-        "device": args.device,
+        "device": "cpu" if args.stage == "reparse-identify" else args.device,
         "models": manifest["models"],
     }
     for package in ("torch", "transformers", "huggingface-hub", "tensorflow-cpu", "SAM-2"):
         with contextlib.suppress(importlib.metadata.PackageNotFoundError):
             provenance[package] = importlib.metadata.version(package)
     write_json(args.output / f"{args.stage}_runtime.json", provenance)
+    if args.stage == "reparse-identify":
+        print(json.dumps(reparse_identification(args.output, manifest)), flush=True)
+        return
     if args.stage in ("identify", "point"):
         run_molmo(args.output, manifest, args.stage, Molmo(manifest["models"][args.stage], args.device))
     else:
