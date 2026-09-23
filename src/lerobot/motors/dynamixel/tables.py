@@ -33,10 +33,12 @@
 # 2. We can change the value of the MyControlTableKey enums without impacting the client code
 
 
+MODEL_NUMBER = (0, 2)
+
 # {data_name: (address, size_byte)}
 # https://emanual.robotis.com/docs/en/dxl/x/{MODEL}/#control-table
 X_SERIES_CONTROL_TABLE = {
-    "Model_Number": (0, 2),
+    "Model_Number": MODEL_NUMBER,
     "Model_Information": (2, 4),
     "Firmware_Version": (6, 1),
     "ID": (7, 1),
