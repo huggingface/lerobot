@@ -600,7 +600,8 @@ choices = {
     for n, c in registry.get_known_choices().items()
     if c.__module__.startswith("lerobot.policies.")
 }
-print(json.dumps([steps, {n: "lerobot." + m for n, m in BUILTIN_STEP_MODULES.items()}, choices, ChoicesFromPolicies.POLICY_CHOICES]))
+step_table = {n: "lerobot." + m for n, m in BUILTIN_STEP_MODULES.items() if m.startswith("policies.")}
+print(json.dumps([steps, step_table, choices, ChoicesFromPolicies.POLICY_CHOICES]))
 """
     result = run_python(code)
     assert result.returncode == 0, result.stderr

@@ -28,7 +28,7 @@ from lerobot.utils.import_utils import _datasets_available
 
 # The spec is still found, so code that only checks whether torch is installed keeps working. Each
 # load attempt is recorded, so an import wrapped in try/except still fails the test.
-IMPORT_WITHOUT_TORCH = """
+BLOCK_TORCH = """
 import importlib
 import importlib.abc
 import importlib.machinery
@@ -54,10 +54,16 @@ class BlockTorch(importlib.abc.MetaPathFinder):
 
 
 sys.meta_path.insert(0, BlockTorch())
+"""
+
+IMPORT_WITHOUT_TORCH = (
+    BLOCK_TORCH
+    + """
 importlib.import_module(sys.argv[1])
 if attempts:
     sys.exit(attempts[0])
 """
+)
 
 
 @pytest.mark.parametrize(
@@ -69,10 +75,12 @@ if attempts:
         "lerobot.scripts.lerobot_find_port",
         "lerobot.scripts.lerobot_setup_can",
         "lerobot.scripts.lerobot_setup_motors",
+        "lerobot.scripts.lerobot_teleoperate",
         "lerobot.configs",
         "lerobot.policies",
         "lerobot.policies.rtc",
         "lerobot.inference",
+        "lerobot.processor",
         pytest.param(
             "lerobot.scripts.lerobot_rollout",
             marks=[
