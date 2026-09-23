@@ -18,7 +18,7 @@ import builtins
 import logging
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
+from typing import TYPE_CHECKING, TypedDict, Unpack
 
 import numpy as np
 import torch
@@ -109,7 +109,7 @@ class PI0FastPaliGemma(nn.Module):
         self,
         vlm_config,
         use_adarms=None,
-        precision: Literal["bfloat16", "float32"] = "bfloat16",
+        precision: torch.dtype = torch.bfloat16,
     ):
         if use_adarms is None:
             use_adarms = [False, False]
@@ -145,10 +145,10 @@ class PI0FastPaliGemma(nn.Module):
 
         self.to_bfloat16_for_selected_params(precision)
 
-    def to_bfloat16_for_selected_params(self, precision: Literal["bfloat16", "float32"] = "bfloat16"):
-        if precision == "bfloat16":
+    def to_bfloat16_for_selected_params(self, precision: torch.dtype = torch.bfloat16):
+        if precision == torch.bfloat16:
             self.to(dtype=torch.bfloat16)
-        elif precision == "float32":
+        elif precision == torch.float32:
             self.to(dtype=torch.float32)
             return
         else:

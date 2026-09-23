@@ -18,7 +18,7 @@ import builtins
 import logging
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
+from typing import TYPE_CHECKING, TypedDict, Unpack
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -292,7 +292,7 @@ class PaliGemmaWithExpertModel(
         vlm_config,
         action_expert_config,
         use_adarms=None,
-        precision: Literal["bfloat16", "float32"] = "bfloat16",
+        precision: torch.dtype = torch.bfloat16,
         image_size: int = DEFAULT_IMAGE_SIZE,
         freeze_vision_encoder: bool = False,
         train_expert_only: bool = False,
@@ -345,10 +345,10 @@ class PaliGemmaWithExpertModel(
         self.to_bfloat16_for_selected_params(precision)
         self._set_requires_grad()
 
-    def to_bfloat16_for_selected_params(self, precision: Literal["bfloat16", "float32"] = "bfloat16"):
-        if precision == "bfloat16":
+    def to_bfloat16_for_selected_params(self, precision: torch.dtype = torch.bfloat16):
+        if precision == torch.bfloat16:
             self.to(dtype=torch.bfloat16)
-        elif precision == "float32":
+        elif precision == torch.float32:
             self.to(dtype=torch.float32)
             return
         else:

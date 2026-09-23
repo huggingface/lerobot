@@ -114,7 +114,7 @@ class XVLAModel(nn.Module):
 
     def _get_target_dtype(self) -> torch.dtype:
         """Get the target dtype based on config."""
-        if self.config.dtype == "bfloat16":
+        if self.config.dtype == torch.bfloat16:
             return torch.bfloat16
         return torch.float32
 

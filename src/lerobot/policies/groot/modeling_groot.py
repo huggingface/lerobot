@@ -113,7 +113,7 @@ class GrootPolicy(PreTrainedPolicy):
         qwen_model = getattr(backbone, "model", None)
         if qwen_model is not None:
             _tie_unused_qwen_lm_head(qwen_model)
-        if self.config.model_params_fp32:
+        if self.config.dtype == torch.float32:
             self._cast_model_parameters_to_fp32(model)
         return model
 

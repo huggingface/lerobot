@@ -37,17 +37,17 @@ class Qwen3VLInterface(torch.nn.Module):
         self.config = config
         self.model = Qwen3VLForConditionalGeneration.from_pretrained(
             config.qwen_model_name,
-            torch_dtype=self._get_torch_dtype(config.torch_dtype),
+            torch_dtype=self._get_torch_dtype(config.dtype),
         )
         self.processor = AutoProcessor.from_pretrained(config.qwen_model_name)
         self.processor.tokenizer.padding_side = config.tokenizer_padding_side
         self.model.config.hidden_size = self.model.config.text_config.hidden_size
 
     @staticmethod
-    def _get_torch_dtype(dtype_name: str) -> torch.dtype:
-        if dtype_name == "float32":
+    def _get_torch_dtype(dtype: torch.dtype) -> torch.dtype:
+        if dtype == torch.float32:
             return torch.float32
-        if dtype_name == "float16":
+        if dtype == torch.float16:
             return torch.float16
         return torch.bfloat16
 
