@@ -70,6 +70,7 @@ if attempts:
     [
         "lerobot.inference",
         "lerobot.scripts.lerobot_calibrate",
+        "lerobot.scripts.lerobot_teleoperate",
     ],
 )
 def test_imports_without_torch(module):
