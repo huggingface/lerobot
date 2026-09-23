@@ -84,55 +84,45 @@ head, camera order, dimensions, normalization, and execution horizon.
 
 ### Interactive System 1 and System 2 Runtime
 
-G0.5 emits reasoning and actions from one inference stream, so it has no
-separate text head: it does not implement `generate_text`, and the interactive
-runtime therefore never generates a subtask for it. The operator's task is
-forwarded byte-for-byte and drives action prediction directly. G0.5 never
-samples `task_aug` text, launches a second planner, or feeds generated CoT back
-as a replacement task.
+G0.5 emits reasoning and actions from one inference stream, so there is no
+separate text head to schedule: `predict_action_chunk(batch, with_text=True)`
+returns the chunk together with the chain-of-thought generated in the same pass,
+and `predict_action_chunk_with_runtime` returns the full telemetry when you want
+the generated token ids too. The flow head runs on the cache the CoT tokens
+extended, so the action is conditioned on that text rather than merely
+accompanied by it.
 
 `policy.runtime_system` on the checkpoint selects the path. System 1 executes
-the selected ActionCodec or flow chunk directly:
+the selected ActionCodec or flow chunk directly and generates no CoT:
 
 ```bash
 lerobot-rollout \
   --policy.path=lerobot/g05_so101 \
-  --language \
   --policy.runtime_system=system1 \
   --task="pick up the cup" \
-  --mode=action
+  --fps=30
 ```
 
 System 2 is available only when the packaged checkpoint metadata has
-`predict_cot=true`. `predict_action_chunk_with_text` returns the chain-of-thought
-generated in the same pass as the chunk it belongs to:
+`predict_cot=true`:
 
 ```python
-prediction = policy.predict_action_chunk_with_text(batch)
-print(prediction.text)  # "Subtask: grasp the cup ..."
-prediction.action  # the chunk that reasoning produced
+action, text = policy.predict_action_chunk(batch, with_text=True)
+print(text)  # "Subtask: grasp the cup ..."
 ```
 
-The interactive panel shows it on a `reasoning` line, and
-`predict_action_chunk_with_runtime` returns the full telemetry when you want the
-generated token ids too. The reasoning is display-only: it never re-enters the
-observation batch, so it cannot replace the operator's task. System 1 emits none
-and reports `text=None`.
+System 1 generates none and reports `text=None`.
+
+#### Driving a session from stdin
+
+`--interactive=true` drives the rollout with chat-style commands while the
+hardware and policy stay connected and warm. The robot does not move until you
+type `/start`, which makes this the safe way to bring up a physical SO-101:
+confirm the camera indices and the arm port first, then start.
 
 ```bash
 lerobot-rollout \
-  --policy.path=lerobot/g05_so101 \
-  --language \
-  --task="clear the table" \
-  --mode=action
-```
-
-For a physical SO-101, start paused, confirm the camera indices and arm port,
-then type `/action <task>`:
-
-```bash
-lerobot-rollout \
-  --language \
+  --interactive=true \
   --policy.path=lerobot/g05_so101 \
   --policy.device=cuda \
   --robot.type=so101_follower \
@@ -140,10 +130,37 @@ lerobot-rollout \
   --robot.id=my_follower \
   --robot.cameras='{exterior: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist_right: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}}' \
   --task="pick up the cube" \
-  --mode=paused \
-  --ctrl_hz=30 \
-  --chunk_hz=1
+  --fps=30
 ```
+
+| Command                  | Effect                                                        |
+| ------------------------ | ------------------------------------------------------------- |
+| `/start`                 | start (or restart) the policy control loop                    |
+| `/subtask <text>`        | set the instruction the policy follows                        |
+| `/vqa <text>`            | generic text query, not supported on G0.5 (see below)         |
+| `/autosteer <goal>\|off` | let the policy pick its own subtasks toward a high-level goal |
+| `/reset`                 | stop movement, return to initial position, restore the task   |
+| `/stop`                  | end the session and shut down                                 |
+| `/help`                  | show the command list                                         |
+
+Both text queries need a checkpoint with `predict_cot=true` and answer from the
+live observation, so they are rejected until `/start` is running.
+
+`/autosteer` is the supported one: its `next_subtask` query renders through the
+checkpoint recipe's `Subtask: ${subtask}` target, so the reply is a real
+subtask. It prints as `Autosteer subtask:`, and `--autosteer_interval_s` sets
+how many seconds of motion pass between two re-planning queries.
+
+`/vqa` does **not** work on G0.5, even though it returns text. The runtime hands
+a `vqa` query over as a bare user message, and the G0.5 prompt template has only
+a `Task:` slot, so the question is consumed as the task rather than answered.
+The reply is the ordinary `Subtask: ...|Action:` continuation the model would
+have produced for that string as an instruction, which reads like a confident
+answer but is not grounded in the question. Ask for grounded perception through
+a task phrased as an instruction instead.
+
+In interactive mode `--duration` bounds each `/start` segment rather than the
+whole session.
 
 The checkpoint is non-commercial and may be private; authenticate with
 `hf auth login` before loading it.
