@@ -30,6 +30,8 @@ from huggingface_hub import DatasetCard, DatasetCardData, HfApi
 
 from lerobot.utils.utils import flatten_dict, unflatten_dict
 
+from .storage import DEFAULT_STORAGE_FORMAT
+
 V30_MESSAGE = """
 The dataset you requested ({repo_id}) is in {version} format.
 
@@ -177,14 +179,15 @@ class DatasetInfo:
     data_files_size_in_mb: int = field(default=DEFAULT_DATA_FILE_SIZE_IN_MB)
     video_files_size_in_mb: int = field(default=DEFAULT_VIDEO_FILE_SIZE_IN_MB)
 
-    # File path templates
-    data_path: str = field(default=DEFAULT_DATA_PATH)
-    video_path: str | None = field(default=DEFAULT_VIDEO_PATH)
+    # File path templates — specific to the default parquet/mp4 layout. Left
+    # unset (``None``) for other storage formats.
+    data_path: str | None = None
+    video_path: str | None = None
 
-    # Format holding the underlying data files. ``None`` means the built-in
-    # parquet/mp4 layout; any other value (e.g. "lance") routes LeRobotDataset's
+    # Format holding the underlying data files. Defaults to the built-in parquet/mp4
+    # layout (``"lerobot"``); any other value (e.g. "lance") routes LeRobotDataset's
     # data access through the storage backend registered for that format.
-    storage_format: str | None = None
+    storage_format: str = DEFAULT_STORAGE_FORMAT
 
     # Optional metadata
     robot_type: str | None = None
@@ -213,17 +216,16 @@ class DatasetInfo:
         """Return a JSON-serialisable dict.
 
         Converts tuple shapes back to lists so ``json.dump`` can handle them.
-        Drops ``tools`` and ``storage_format`` when unset so existing datasets
-        keep a clean ``info.json``.
+        Drops ``tools`` and the format-specific path templates (``data_path`` /
+        ``video_path``) when unset so existing datasets keep a clean ``info.json``.
         """
         d = dataclasses.asdict(self)
         for ft in d["features"].values():
             if isinstance(ft.get("shape"), tuple):
                 ft["shape"] = list(ft["shape"])
-        if d.get("tools") is None:
-            d.pop("tools", None)
-        if d.get("storage_format") is None:
-            d.pop("storage_format", None)
+        for key in ("tools", "data_path", "video_path"):
+            if d.get(key) is None:
+                d.pop(key, None)
         return d
 
     @classmethod
@@ -232,13 +234,17 @@ class DatasetInfo:
 
         Unknown keys are ignored for forward compatibility with datasets that
         carry additional fields (e.g. ``total_videos`` from v2.x). A warning is
-        logged when such fields are present.
+        logged when such fields are present. A missing ``storage_format`` (legacy
+        datasets predating the key) resolves to the default parquet/mp4 layout.
         """
         known = {f.name for f in dataclasses.fields(cls)}
         unknown = sorted(k for k in data if k not in known)
         if unknown:
             logger.warning(f"Unknown fields in DatasetInfo: {unknown}. These will be ignored.")
-        return cls(**{k: v for k, v in data.items() if k in known})
+        info = cls(**{k: v for k, v in data.items() if k in known})
+        if info.storage_format is None:
+            info.storage_format = DEFAULT_STORAGE_FORMAT
+        return info
 
     # ---------------------------------------------------------------------------
     # Temporary dict-style compatibility layer

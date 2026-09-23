@@ -26,6 +26,7 @@ from lerobot.utils.constants import DEFAULT_FEATURES, LANGUAGE_PERSISTENT
 from lerobot.utils.utils import is_valid_numpy_dtype_string
 
 from .language import is_language_column, language_events_column_feature, language_persistent_column_feature
+from .storage import DEFAULT_STORAGE_FORMAT
 from .utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
@@ -89,7 +90,7 @@ def create_empty_dataset_info(
     chunks_size: int | None = None,
     data_files_size_in_mb: int | None = None,
     video_files_size_in_mb: int | None = None,
-    storage_format: str | None = None,
+    storage_format: str = DEFAULT_STORAGE_FORMAT,
 ) -> DatasetInfo:
     """Create a template ``DatasetInfo`` object for a new dataset's ``meta/info.json``.
 
@@ -102,12 +103,12 @@ def create_empty_dataset_info(
         chunks_size (int | None): Max files per chunk directory. Defaults to ``DEFAULT_CHUNK_SIZE``.
         data_files_size_in_mb (int | None): Max parquet file size in MB. Defaults to ``DEFAULT_DATA_FILE_SIZE_IN_MB``.
         video_files_size_in_mb (int | None): Max video file size in MB. Defaults to ``DEFAULT_VIDEO_FILE_SIZE_IN_MB``.
-        storage_format (str | None): Storage format holding the data files. ``None`` keeps the
-            default parquet/mp4 layout and is omitted from ``info.json``.
+        storage_format (str): Storage format holding the data files. The default keeps the built-in parquet/mp4 layout.
 
     Returns:
         DatasetInfo: A typed dataset information object with initial metadata.
     """
+    is_default_format = storage_format in (None, DEFAULT_STORAGE_FORMAT)
     return DatasetInfo(
         codebase_version=codebase_version,
         fps=fps,
@@ -116,8 +117,8 @@ def create_empty_dataset_info(
         chunks_size=chunks_size or DEFAULT_CHUNK_SIZE,
         data_files_size_in_mb=data_files_size_in_mb or DEFAULT_DATA_FILE_SIZE_IN_MB,
         video_files_size_in_mb=video_files_size_in_mb or DEFAULT_VIDEO_FILE_SIZE_IN_MB,
-        data_path=DEFAULT_DATA_PATH,
-        video_path=DEFAULT_VIDEO_PATH if use_videos else None,
+        data_path=DEFAULT_DATA_PATH if is_default_format else None,
+        video_path=DEFAULT_VIDEO_PATH if (is_default_format and use_videos) else None,
         storage_format=storage_format,
     )
 
