@@ -1,0 +1,292 @@
+[
+  {
+    "id": "tape_standard",
+    "task": "Pick up the white tape roll and place it into the black bin.",
+    "targets": [
+      "white tape roll"
+    ],
+    "distractors": [],
+    "tags": [
+      "single_object"
+    ],
+    "time_limit_s": 90,
+    "readiness": "draft_operator_scene_check_required",
+    "reset_instructions": "Put the tape roll flat on the table, clear of other objects. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "The tape roll is wholly inside the bin and released. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": null
+  },
+  {
+    "id": "tape_paraphrase",
+    "task": "Move the white roll of tape off the table and into the black container.",
+    "targets": [
+      "white tape roll"
+    ],
+    "distractors": [],
+    "tags": [
+      "paraphrase"
+    ],
+    "time_limit_s": 90,
+    "readiness": "draft_operator_scene_check_required",
+    "reset_instructions": "Reuse the photographed tape_standard layout, including tape orientation and bin position. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "The tape roll is wholly inside the bin and released. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": null
+  },
+  {
+    "id": "screwdriver_distractors",
+    "task": "Put only the blue-handled screwdriver into the bin.",
+    "targets": [
+      "blue-handled screwdriver"
+    ],
+    "distractors": [
+      "white marker",
+      "pink pen"
+    ],
+    "tags": [
+      "distractor"
+    ],
+    "time_limit_s": 90,
+    "readiness": "draft_operator_scene_check_required",
+    "reset_instructions": "Separate the screwdriver, marker, and pen on the table with reachable, nonoverlapping grasps; record each pose. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "Only the screwdriver is transferred into the bin; the marker and pen remain on the table. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": null
+  },
+  {
+    "id": "cup_standard",
+    "task": "Place the white cup into the bin.",
+    "targets": [
+      "white cup"
+    ],
+    "distractors": [],
+    "tags": [
+      "single_object"
+    ],
+    "time_limit_s": 90,
+    "readiness": "draft_operator_scene_check_required",
+    "reset_instructions": "Set the empty cup upright at the photographed table position. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "The cup is released wholly inside the bin; its final orientation is unrestricted. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": null
+  },
+  {
+    "id": "blue_cap_select",
+    "task": "Put the blue cap into the bin and leave the green cap on the table.",
+    "targets": [
+      "blue cap"
+    ],
+    "distractors": [
+      "green cap"
+    ],
+    "tags": [
+      "distractor"
+    ],
+    "time_limit_s": 90,
+    "readiness": "draft_operator_scene_check_required",
+    "reset_instructions": "Place both caps open-side down at separate photographed positions; neither covers the other. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "The blue cap is released wholly inside the bin and the green cap remains on the table. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": null
+  },
+  {
+    "id": "red_block_select",
+    "task": "Put only the red block into the bin.",
+    "targets": [
+      "red block"
+    ],
+    "distractors": [
+      "blue block",
+      "yellow block"
+    ],
+    "tags": [
+      "distractor"
+    ],
+    "time_limit_s": 90,
+    "readiness": "draft_operator_scene_check_required",
+    "reset_instructions": "Place the three blocks separately at photographed positions, with equal access and no stacking. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "Only the red block is transferred into the bin; the other two remain on the table. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": null
+  },
+  {
+    "id": "cable_standard",
+    "task": "Pick up the white cable and place the entire cable into the bin.",
+    "targets": [
+      "white cable"
+    ],
+    "distractors": [],
+    "tags": [
+      "single_object"
+    ],
+    "time_limit_s": 90,
+    "readiness": "draft_operator_scene_check_required",
+    "reset_instructions": "Lay the untangled cable in the same photographed loop, with both connectors resting on the table. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "The full cable, including both connectors, is released inside the bin; no section hangs over its rim. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": null
+  },
+  {
+    "id": "remote_paraphrase",
+    "task": "Clear the remote from the table by putting it in the black container.",
+    "targets": [
+      "black remote"
+    ],
+    "distractors": [],
+    "tags": [
+      "paraphrase"
+    ],
+    "time_limit_s": 90,
+    "readiness": "draft_operator_scene_check_required",
+    "reset_instructions": "Place the remote buttons-up at the photographed position and orientation. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "The remote is released wholly inside the bin. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": null
+  },
+  {
+    "id": "black_box_select",
+    "task": "Put the small black-and-white box into the bin; leave the black battery holder on the table.",
+    "targets": [
+      "small black-and-white box"
+    ],
+    "distractors": [
+      "black battery holder"
+    ],
+    "tags": [
+      "distractor"
+    ],
+    "time_limit_s": 90,
+    "readiness": "draft_operator_scene_check_required",
+    "reset_instructions": "Place the box and battery holder apart with their distinguishing surfaces visible in the base image. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "The box is released inside the bin; the battery holder remains on the table. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": null
+  },
+  {
+    "id": "marker_then_red_block",
+    "task": "First put the white marker into the bin, then put the red block into the bin.",
+    "targets": [
+      "white marker",
+      "red block"
+    ],
+    "distractors": [],
+    "tags": [
+      "multi_step"
+    ],
+    "time_limit_s": 90,
+    "readiness": "draft_operator_scene_check_required",
+    "reset_instructions": "Place the marker and red block apart at their photographed starting poses. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "Both objects are released wholly inside the bin, with marker release preceding red-block release. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": null
+  },
+  {
+    "id": "left_arm_tape",
+    "task": "Use only the left arm to put the white tape roll into the bin.",
+    "targets": [
+      "white tape roll"
+    ],
+    "distractors": [],
+    "tags": [
+      "arm_selection"
+    ],
+    "time_limit_s": 90,
+    "readiness": "draft_operator_scene_check_required",
+    "reset_instructions": "Identify the physical left arm in the reset evidence. Put the tape at a pose reachable by that arm and capture the inactive arm pose. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "The tape is released wholly inside the bin; only the physical left arm performs the manipulation and the right arm does not assist. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": null
+  },
+  {
+    "id": "right_arm_cup",
+    "task": "Use only the right arm to put the white cup into the bin.",
+    "targets": [
+      "white cup"
+    ],
+    "distractors": [],
+    "tags": [
+      "arm_selection"
+    ],
+    "time_limit_s": 90,
+    "readiness": "draft_operator_scene_check_required",
+    "reset_instructions": "Identify the physical right arm in the reset evidence. Set the empty cup upright at a pose reachable by that arm and capture the inactive arm pose. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "The cup is released wholly inside the bin; only the physical right arm performs the manipulation and the left arm does not assist. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": null
+  },
+  {
+    "id": "novel_spoon",
+    "task": "Put the wooden spoon into the bin.",
+    "targets": [
+      "wooden spoon"
+    ],
+    "distractors": [],
+    "tags": [
+      "novel_object"
+    ],
+    "time_limit_s": 90,
+    "readiness": "draft_operator_scene_check_required",
+    "reset_instructions": "After inventory/novelty verification, lay the spoon flat at the photographed pose. It must fit completely inside the bin. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "The spoon is released wholly inside the bin. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": "Pending: verify this physical target was absent from training demonstrations 0-89; retain inventory/video evidence. Do not claim novelty from its name alone."
+  },
+  {
+    "id": "novel_spoon_paraphrase",
+    "task": "Clear the wooden spoon from the table by moving it into the black container.",
+    "targets": [
+      "wooden spoon"
+    ],
+    "distractors": [],
+    "tags": [
+      "novel_object",
+      "paraphrase"
+    ],
+    "time_limit_s": 90,
+    "readiness": "draft_operator_scene_check_required",
+    "reset_instructions": "Reuse the verified object and exact photographed novel_spoon layout. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "The spoon is released wholly inside the bin. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": "Pending: verify this physical target was absent from training demonstrations 0-89; retain inventory/video evidence. Do not claim novelty from its name alone."
+  },
+  {
+    "id": "novel_sponge_select",
+    "task": "Put the sponge into the bin and leave the white tape roll on the table.",
+    "targets": [
+      "sponge"
+    ],
+    "distractors": [
+      "white tape roll"
+    ],
+    "tags": [
+      "novel_object",
+      "distractor"
+    ],
+    "time_limit_s": 90,
+    "readiness": "draft_operator_scene_check_required",
+    "reset_instructions": "After inventory/novelty verification, put a dry sponge and the tape roll separately at their photographed poses. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "The sponge is released wholly inside the bin; the tape remains on the table. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": "Pending: verify this physical target was absent from training demonstrations 0-89; retain inventory/video evidence. Do not claim novelty from its name alone."
+  },
+  {
+    "id": "cup_then_novel_spoon",
+    "task": "First put the white cup into the bin, then put the wooden spoon into the bin.",
+    "targets": [
+      "white cup",
+      "wooden spoon"
+    ],
+    "distractors": [],
+    "tags": [
+      "novel_object",
+      "multi_step"
+    ],
+    "time_limit_s": 90,
+    "readiness": "draft_operator_scene_check_required",
+    "reset_instructions": "Use the verified spoon, set the empty cup upright, and place the spoon separately. Check that both fit inside the bin together. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "Both objects are released wholly inside the bin, with cup release preceding spoon release. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": "Pending: verify this physical target was absent from training demonstrations 0-89; retain inventory/video evidence. Do not claim novelty from its name alone."
+  },
+  {
+    "id": "cap_then_cloth",
+    "task": "First put the yellow cap into the bin, then put the green cloth into the bin.",
+    "targets": [
+      "yellow cap",
+      "green cloth"
+    ],
+    "distractors": [],
+    "tags": [
+      "multi_step"
+    ],
+    "time_limit_s": 90,
+    "readiness": "draft_operator_scene_check_required",
+    "reset_instructions": "Place the cap open-side down and the cloth flat at separate photographed positions; restore the same cloth folds for every condition. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "The cap and entire cloth are released wholly inside the bin, with cap release preceding cloth release. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": null
+  }
+]

@@ -14,6 +14,23 @@ milestone: 50 preplanned attempts, an append-only journal, separate operator/mod
 labels, and reports that retain failures and unknowns. It records evidence around
 main's rollout; it does not start the robot or turn planner assessments into success labels.
 
+[`evaluation_scenarios.draft.json`](evaluation_scenarios.draft.json) supplies a concrete
+17-scenario starting draft: familiar targets, paraphrases, distractors, physical-arm
+selection, ordered tasks, and proposed novel spoon/sponge targets. Its objects and
+reset layouts still need an operator check on the actual table. The novel targets
+are proposals, not verified inventory or novelty claims. Confirm their absence from
+the training demonstrations and retain that evidence before using those tags.
+Photograph each finalized reset, keep the 90-second limit fixed across conditions,
+and freeze the resulting plan before collection. The last cap/cloth scenario receives
+the task-only/full pair; the other 16 receive all three conditions.
+
+For this planner comparison, use the **same validated full-mixture checkpoint** for
+all three conditions, changing only the permitted prompting styles and planner mode.
+The semantic training baseline is a separate training control. Changing weights
+between prompting conditions would confound the planner comparison. The draft does
+not start any attempt or supply operator success labels; unavailable objects or
+unverified resets must be resolved before it becomes the final physical test plan.
+
 ## Train on the science cluster
 
 Connect with `sft ssh hpc-cluster-science-login-81-129`, obtain a single-node scheduler
