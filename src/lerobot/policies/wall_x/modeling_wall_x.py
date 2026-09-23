@@ -45,12 +45,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as functional
 from safetensors import SafetensorError
-from safetensors.torch import load_file
+from safetensors.torch import load_file, load_model
 from torch import Tensor
 from torch.distributions import Beta
 from torch.nn import CrossEntropyLoss
 
 from lerobot.utils.constants import ACTION, MESSAGES_RENDERED
+from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.import_utils import (
     _wallx_deps_available,
     require_package,
@@ -58,7 +59,7 @@ from lerobot.utils.import_utils import (
 from lerobot.utils.language import require_single_text_output
 
 from ..pretrained import PreTrainedPolicy
-from ..utils import populate_queues
+from ..utils import log_model_loading_keys, populate_queues
 from .configuration_wall_x import WallXConfig
 from .constant import WALL_X_GENERATION_PROMPT_IDS
 
@@ -301,6 +302,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         token: str | bool | None = None,
         revision: str = "main",
         strict: bool = False,
+        load_weights: bool = True,
         **kwargs: Any,
     ):
         """
@@ -313,6 +315,8 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
             attn_implementation (str, optional): Attention implementation, if None will load from default config
             vision_attn_implementation (str, optional): Vision attention backend. ``auto`` uses packed
                 variable-length attention when supported and otherwise falls back to SDPA.
+            load_weights (bool): Load native base weights. False constructs the architecture and
+                processor only, for restoration from a complete LeRobot policy checkpoint.
             **kwargs: Additional arguments
 
         Returns:
@@ -362,6 +366,9 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
 
         # Resize token embeddings to match processor tokenizer vocabulary size
         model.resize_token_embeddings(len(processor.tokenizer))
+
+        if not load_weights:
+            return model
 
         logger.info("Loading Wall-X model from %s", pretrained_name_or_path)
         try:
@@ -1770,7 +1777,7 @@ class WallXPolicy(PreTrainedPolicy):
     config_class = WallXConfig
     name = "wall_x"
 
-    def __init__(self, config: WallXConfig, **kwargs):
+    def __init__(self, config: WallXConfig, *, _load_base_weights: bool = True, **kwargs):
         require_package("transformers", extra="wallx")
         require_package("peft", extra="wallx")
         require_package("torchdiffeq", extra="wallx")
@@ -1786,11 +1793,44 @@ class WallXPolicy(PreTrainedPolicy):
             action_tokenizer_path=config.action_tokenizer_path,
             attn_implementation=config.attn_implementation,
             vision_attn_implementation=config.vision_attn_implementation,
+            load_weights=_load_base_weights,
         )
         self.model.to(config.device)
         self.model.to_bfloat16_for_selected_params()
 
         self.reset()
+
+    @classmethod
+    def from_pretrained(cls, pretrained_name_or_path, **kwargs):
+        # The LeRobot checkpoint already contains the backbone and action head. Avoid
+        # downloading/loading another full weight file that would immediately be overwritten.
+        kwargs["_load_base_weights"] = False
+        return super().from_pretrained(pretrained_name_or_path, **kwargs)
+
+    @classmethod
+    def _load_as_safetensor(cls, model, model_file: str, map_location: str, strict: bool):
+        missing, unexpected = load_model(
+            model, model_file, strict=strict, device=resolve_safetensors_device(map_location)
+        )
+        if missing:
+            # Preserve non-strict partial-checkpoint behavior: missing parameters must
+            # come from the pinned base model, never the randomly initialized shell.
+            logger.info("Restoring %d missing checkpoint tensors from the native base", len(missing))
+            config = model.config
+            base = Qwen2_5_VLMoEForAction.from_pretrained(
+                pretrained_name_or_path=config.pretrained_name_or_path,
+                revision=config.base_model_revision or "main",
+                action_tokenizer_path=config.action_tokenizer_path,
+                attn_implementation=config.attn_implementation,
+                vision_attn_implementation=config.vision_attn_implementation,
+            )
+            state = {f"model.{key}": value for key, value in base.state_dict().items()}
+            absent = set(missing) - state.keys()
+            if absent:
+                raise ValueError(f"Checkpoint and native base both lack policy tensors: {sorted(absent)}")
+            model.load_state_dict({key: state[key] for key in missing}, strict=False)
+        log_model_loading_keys(missing, unexpected)
+        return model
 
     def reset(self):
         """Reset action queue."""

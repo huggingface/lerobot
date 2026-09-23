@@ -440,6 +440,87 @@ def test_native_base_revision_is_separate_from_finetuned_checkpoint_revision(mon
     assert config.pretrained_revision == "finetuned-sha"
 
 
+def test_architecture_only_restore_does_not_resolve_base_weights(monkeypatch):
+    from lerobot.policies.wall_x import modeling_wall_x
+
+    processor = SimpleNamespace(tokenizer=SimpleNamespace(pad_token_id=0))
+
+    class Tokenizer:
+        pad_token_id = 0
+
+        def __len__(self):
+            return 32
+
+    processor.tokenizer = Tokenizer()
+    monkeypatch.setattr(modeling_wall_x.AutoProcessor, "from_pretrained", lambda *a, **k: processor)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Architecture-only restoration tried to access the base weight file")
+
+    monkeypatch.setattr(modeling_wall_x, "cached_file", forbidden)
+
+    class Shell:
+        def __init__(self, config, **kwargs):
+            self.processor = kwargs["processor"]
+
+        def resize_token_embeddings(self, size):
+            self.vocab_size = size
+
+    model = Qwen2_5_VLMoEForAction.from_pretrained.__func__(
+        Shell,
+        "base-model",
+        config=SimpleNamespace(text_config=SimpleNamespace()),
+        load_weights=False,
+    )
+    assert model.processor is processor
+    assert model.vocab_size == 32
+
+
+@pytest.mark.parametrize("partial,strict", [(False, False), (False, True), (True, False), (True, True)])
+def test_policy_checkpoint_load_uses_base_only_for_missing_tensors(monkeypatch, tmp_path, partial, strict):
+    from safetensors.torch import save_file
+
+    calls = []
+
+    class TinyModel(torch.nn.Linear):
+        def __init__(self, load_weights):
+            super().__init__(2, 2)
+            torch.nn.init.constant_(self.weight, 3 if load_weights else -1)
+            torch.nn.init.constant_(self.bias, 5 if load_weights else -1)
+
+        def to_bfloat16_for_selected_params(self):
+            pass
+
+    def load(**kwargs):
+        calls.append(kwargs)
+        return TinyModel(kwargs.get("load_weights", True))
+
+    monkeypatch.setattr(Qwen2_5_VLMoEForAction, "from_pretrained", load)
+    config = WallXConfig(device="cpu", base_model_revision="pinned-base")
+    config.input_features = {
+        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(14,)),
+        "observation.images.base": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 480, 640)),
+    }
+    config.output_features = {"action": PolicyFeature(type=FeatureType.ACTION, shape=(14,))}
+    config._save_pretrained(tmp_path)
+    state = {"model.weight": torch.full((2, 2), 11.0)}
+    if not partial:
+        state["model.bias"] = torch.full((2,), 17.0)
+    save_file(state, tmp_path / "model.safetensors")
+    if partial and strict:
+        with pytest.raises(RuntimeError, match="Missing key"):
+            WallXPolicy.from_pretrained(tmp_path, strict=True)
+        assert len(calls) == 1
+    else:
+        policy = WallXPolicy.from_pretrained(tmp_path, strict=strict)
+        torch.testing.assert_close(policy.model.weight, state["model.weight"])
+        torch.testing.assert_close(policy.model.bias, torch.full((2,), 5.0 if partial else 17.0))
+        assert not policy.training
+        assert len(calls) == (2 if partial else 1)
+        assert all(c["revision"] == "pinned-base" for c in calls)
+    assert calls[0]["load_weights"] is False
+
+
 @require_cuda
 @require_hf_token
 def test_policy_instantiation():

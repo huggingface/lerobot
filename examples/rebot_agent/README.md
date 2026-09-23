@@ -59,6 +59,11 @@ execution check; it does not replace full held-out validation or physical evalua
 and masked internally. The full run defaults to 20,000 steps and batch one per GPU;
 these are starting settings that still require hardware validation.
 
+Restoring a complete WALL-X policy checkpoint reads the pinned base repository's
+configuration and processor assets without fetching its weights again. Non-strict
+partial restores still load base weights to fill missing tensors; strict restores
+reject incomplete checkpoints.
+
 ## Use Astra through the language runtime
 
 Add these options to your existing, calibrated `lerobot-rollout` command, keeping
