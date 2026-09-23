@@ -116,6 +116,23 @@ def sample(tmp_path):
     return api, dataset, extraction, tmp_path / "out", path
 
 
+def test_native_seed_correction_retains_model_attribution_only_at_anchor(sample):
+    api, dataset, extraction, output, path = sample
+    selected_path = extraction / "clip/task_objects.json"
+    selected = json.loads(selected_path.read_text())
+    review = {"reviewer": {"kind": "model", "id": "test"}, "accepted_training_labels": False}
+    selected["objects"][0].update(point_source="model_review", seed_review=review)
+    selected_path.write_text(json.dumps(selected))
+    api["export_dataset"](dataset, [extraction], output)
+    events = pq.read_table(output / "data/chunk-000/file-000.parquet")["language_events"].to_pylist()
+    for index, rows in enumerate(events[:3]):
+        obj = json.loads(
+            next(r["content"] for r in rows if r["style"] == "vqa" and r["role"] == "assistant")
+        )["detections"][0]
+        assert obj["seed_point_source"] == ("model_review" if index == 0 else None)
+        assert obj["seed_review"] == (review if index == 0 else None)
+
+
 def test_export_roundtrip_native_rows_preserves_source_and_temporal_causality(sample, tmp_path):
     api, dataset, extraction, output, path = sample
     before = path.read_bytes()

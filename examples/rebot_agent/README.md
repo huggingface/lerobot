@@ -85,6 +85,19 @@ resuming with a different mode refuses to reuse prior points. Inspect masks befo
 accepting candidates: a ReBot pilot improved tape-roll tracking with this prompt,
 but a cable still produced a tabletop mask. Mask presence alone is not validation.
 
+To correct a seed after inspecting its first frame, use
+`extract_visual.py prepare-reviewed-points --parent ORIGINAL --seed-review review.json --output NEW`.
+The review JSON contains `parent_manifest_sha256`, an attributed `reviewer`
+(`kind`: `model` or `human`, and `id`), and a `corrections` list. Each correction
+specifies `clip`, `object_id`, `name`, `source_point_sha256`, `frame_sha256`,
+`point` in original-image `[x, y]` coordinates, and a visual `reason`.
+Use `point: null` when the object cannot be localized. Frame and prediction hashes
+must match the parent. The new extraction preserves original predictions and
+reviewer attribution, then requires the normal `track` and `filter-objects` stages.
+Correcting a seed does not accept the resulting track. Native exports retain this
+provenance as `seed_point_source` and `seed_review`; model reviews are never relabeled
+as human verification.
+
 ```bash
 uv run examples/rebot_agent/export_language_annotations.py \
   --dataset-root /path/to/source_dataset \

@@ -145,7 +145,10 @@ def collect_candidates(extractions: list[Path], source: dict):
                             "point": point,
                             "point_source": "mask_centroid",
                             "seed_point": coordinates(candidate["point"], size) if index == 0 else None,
-                            "seed_point_source": "molmo" if index == 0 else None,
+                            "seed_point_source": candidate.get("point_source", "molmo")
+                            if index == 0
+                            else None,
+                            "seed_review": candidate.get("seed_review") if index == 0 else None,
                             "mask_present": obj["mask_present"],
                             "mask_area_fraction": obj["area_fraction"],
                             "missing_reason": obj.get("missing_reason"),

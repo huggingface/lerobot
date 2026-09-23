@@ -78,6 +78,94 @@ def test_point_target_resume_preserves_evidence_and_rejects_changed_strategy(ext
     assert model.call_count == 1
 
 
+@pytest.fixture
+def seed_review_case(extractor, tmp_path):
+    parent, output = tmp_path / "parent", tmp_path / "corrected"
+    directory = parent / "clip"
+    (directory / "frames").mkdir(parents=True)
+    image = directory / "frames/000000.jpg"
+    Image.new("RGB", (8, 6)).save(image)
+    (directory / "identify.json").write_text(json.dumps({"objects": ["cable"], "error": None}))
+    point = directory / "point.json"
+    point.write_text(json.dumps({"objects": [{"object_id": 1, "name": "cable", "point": [4, 3]}]}))
+    manifest = parent / "extraction.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "source": {"repo_id": "test", "revision": "pinned"},
+                "models": extractor["MODELS"],
+                "clips": [
+                    {
+                        "path": "clip",
+                        "image_size": [8, 6],
+                        "frames": [{"sha256": extractor["sha256"](image)}],
+                    }
+                ],
+            }
+        )
+    )
+    review = {
+        "parent_manifest_sha256": extractor["sha256"](manifest),
+        "reviewer": {"kind": "model", "id": "test-reviewer"},
+        "corrections": [
+            {
+                "clip": "clip",
+                "object_id": 1,
+                "name": "cable",
+                "source_point_sha256": extractor["sha256"](point),
+                "frame_sha256": extractor["sha256"](image),
+                "point": [2, 3],
+                "reason": "Visible cable material, rather than its empty center",
+            }
+        ],
+    }
+    return parent, output, tmp_path / "review.json", review
+
+
+def test_seed_corrections_preserve_parent_and_model_attribution(extractor, seed_review_case):
+    parent, output, path, review = seed_review_case
+    path.write_text(json.dumps(review))
+    before = {p: p.read_bytes() for p in parent.rglob("*") if p.is_file()}
+    manifest = extractor["prepare_reviewed_points"](parent, output, path)
+    assert all(p.read_bytes() == data for p, data in before.items())
+    obj = json.loads((output / "clip/point.json").read_text())["objects"][0]
+    assert obj["point"] == [2, 3] and obj["point_source"] == "model_review"
+    assert obj["seed_review"]["original_prediction"]["point"] == [4, 3]
+    assert not obj["seed_review"]["accepted_training_labels"]
+    assert manifest["preparation"]["reviewer"] == review["reviewer"]
+    assert not (output / "clip/tracks.json").exists()
+    with pytest.raises(ValueError, match="Pointing target changed"):
+        extractor["verify_point_target"](output, manifest, "object")
+
+
+@pytest.mark.parametrize(
+    "field,value,error",
+    [
+        ("source_point_sha256", "stale", "stale point"),
+        ("frame_sha256", "stale", "first source frame"),
+        ("name", "different object", "object identity"),
+        ("point", [8, 3], "image coordinates"),
+        ("point", [True, 3], "image coordinates"),
+    ],
+)
+def test_invalid_seed_review_creates_no_output(extractor, seed_review_case, field, value, error):
+    parent, output, path, review = seed_review_case
+    review["corrections"][0][field] = value
+    path.write_text(json.dumps(review))
+    with pytest.raises(ValueError, match=error):
+        extractor["prepare_reviewed_points"](parent, output, path)
+    assert not output.exists()
+
+
+def test_uncertain_review_can_withdraw_a_seed_without_inventing_visibility(extractor, seed_review_case):
+    parent, output, path, review = seed_review_case
+    review["corrections"][0].update(point=None, reason="Object not unambiguously visible")
+    path.write_text(json.dumps(review))
+    extractor["prepare_reviewed_points"](parent, output, path)
+    obj = json.loads((output / "clip/point.json").read_text())["objects"][0]
+    assert obj["point"] is None and obj["point_source"] == "model_review"
+
+
 def test_reparse_preserves_model_response_and_records_recovery(extractor, tmp_path):
     directory = tmp_path / "clip"
     directory.mkdir()

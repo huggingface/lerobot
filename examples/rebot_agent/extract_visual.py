@@ -265,6 +265,91 @@ def prepare_required(parent: Path, output: Path, names: list[str]) -> dict:
     return manifest
 
 
+def prepare_reviewed_points(parent: Path, output: Path, review_path: Path) -> dict:
+    """Apply attributed seed corrections in a fresh extraction, never approving tracks."""
+    if output.exists() or parent.resolve() in output.resolve().parents:
+        raise ValueError("Use a fresh output outside the parent extraction")
+    original = json.loads((parent / "extraction.json").read_text())
+    review = json.loads(review_path.read_text())
+    parent_hash = sha256(parent / "extraction.json")
+    if review["parent_manifest_sha256"] != parent_hash:
+        raise ValueError("Seed review refers to a different parent manifest")
+    reviewer = review["reviewer"]
+    if reviewer.get("kind") not in {"human", "model"} or not reviewer.get("id", "").strip():
+        raise ValueError("Seed review requires an attributed human or model reviewer")
+    if not review["corrections"]:
+        raise ValueError("Seed review has no corrections")
+    clips = {clip["path"]: clip for clip in original["clips"]}
+    selected, seen = {}, set()
+    for correction in review["corrections"]:
+        name, object_id = correction["clip"], correction["object_id"]
+        if name not in clips or Path(name).name != name:
+            raise ValueError("Unknown or invalid clip path")
+        if type(object_id) is not int or (name, object_id) in seen:
+            raise ValueError("Invalid or duplicate corrected object identity")
+        seen.add((name, object_id))
+        clip = clips[name]
+        point_path = parent / name / "point.json"
+        if correction["source_point_sha256"] != sha256(point_path):
+            raise ValueError("Seed review refers to stale point predictions")
+        if correction["frame_sha256"] != clip["frames"][0]["sha256"]:
+            raise ValueError("Seed review must refer to the first source frame")
+        if not correction.get("reason", "").strip():
+            raise ValueError("Seed correction requires visual evidence or an uncertainty reason")
+        point = correction["point"]
+        if point is not None and (
+            not isinstance(point, list)
+            or len(point) != 2
+            or any(
+                isinstance(v, bool) or not isinstance(v, (int, float)) or not np.isfinite(v) or not 0 <= v < n
+                for v, n in zip(point, clip["image_size"], strict=True)
+            )
+        ):
+            raise ValueError("Corrected point must be in original image coordinates, or null")
+        points = selected.setdefault(name, json.loads(point_path.read_text()))
+        matches = [obj for obj in points["objects"] if obj["object_id"] == object_id]
+        if len(matches) != 1 or matches[0]["name"] != correction["name"]:
+            raise ValueError("Corrected object identity differs from the source prediction")
+        obj = matches[0]
+        previous = dict(obj)
+        obj.update(
+            point=point,
+            point_source=f"{reviewer['kind']}_review",
+            seed_review={
+                "reviewer": reviewer,
+                "correction": correction,
+                "original_prediction": previous,
+                "review_sha256": sha256(review_path),
+                "accepted_training_labels": False,
+            },
+        )
+    selected_clips = [clip for clip in original["clips"] if clip["path"] in selected]
+    verify_frames(parent, {"clips": selected_clips})
+    manifest = {
+        **original,
+        "clips": selected_clips,
+        "review": "pending",
+        "preparation": {
+            "method": "attributed_seed_corrections",
+            "parent_manifest_sha256": parent_hash,
+            "review_sha256": sha256(review_path),
+            "script_sha256": sha256(Path(__file__)),
+            "reviewer": reviewer,
+            "accepted_training_labels": False,
+        },
+    }
+    output.mkdir(parents=True)
+    shutil.copy2(review_path, output / "seed_review.json")
+    for name, points in selected.items():
+        directory = output / name
+        directory.mkdir()
+        shutil.copytree(parent / name / "frames", directory / "frames")
+        shutil.copy2(parent / name / "identify.json", directory / "identify.json")
+        write_json(directory / "point.json", {**points, "point_target": "reviewed", "review": "pending"})
+    write_json(output / "extraction.json", manifest)
+    return manifest
+
+
 def prepare(root: Path, output: Path, episodes: list[int], cameras: list[str], stride: int):
     """Materialize timestamp-aligned, original-size frames using main's dataset reader."""
     # Preparation uses main's Hub/dataset stack. Legacy Molmo inference runs from the
@@ -518,6 +603,7 @@ def main():
         choices=[
             "prepare",
             "prepare-required",
+            "prepare-reviewed-points",
             "identify",
             "reparse-identify",
             "point",
@@ -528,6 +614,9 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--dataset-root", type=Path)
     parser.add_argument("--parent", type=Path, help="Existing filtered extraction for prepare-required")
+    parser.add_argument(
+        "--seed-review", type=Path, help="Attributed seed corrections for prepare-reviewed-points"
+    )
     parser.add_argument("--objects", nargs="+", help="Instruction-named candidates to retry when missing")
     parser.add_argument("--episodes", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     parser.add_argument("--cameras", nargs="+", default=["observation.images.base"])
@@ -542,6 +631,12 @@ def main():
         help="Molmo point prompt: material requests a visible solid surface for SAM2 seeds; still requires review",
     )
     args = parser.parse_args()
+    if args.stage == "prepare-reviewed-points":
+        if args.parent is None or args.seed_review is None:
+            parser.error("prepare-reviewed-points requires --parent and --seed-review")
+        manifest = prepare_reviewed_points(args.parent, args.output, args.seed_review)
+        print(json.dumps({"clips": len(manifest["clips"]), "review": "pending"}), flush=True)
+        return
     if args.stage == "prepare-required":
         if args.parent is None or not args.objects:
             parser.error("prepare-required requires --parent and --objects")
