@@ -47,12 +47,12 @@ from lerobot.policies.g05.modeling_g05 import (
     G05Policy,
     G05TextGeneration,
 )
-from lerobot.policies.g05.processor_g05 import (
+from lerobot.policies.g05.processor_g05 import G05TokenizerStep
+from lerobot.policies.g05.tokenizer_g05 import (
     G05_INPUT_IDS,
     G05_LABELS,
     G05_SPLIT_INDEX,
     G05_TOKEN_TYPES,
-    G05TokenizerStep,
     G05TokenType,
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
