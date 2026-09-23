@@ -69,6 +69,7 @@ TRAINING_STEP = "training_step.json"
 OPTIMIZER_STATE = "optimizer_state.safetensors"
 OPTIMIZER_PARAM_GROUPS = "optimizer_param_groups.json"
 SCHEDULER_STATE = "scheduler_state.json"
+SCALER_STATE = "scaler_state.json"
 
 POLICY_PREPROCESSOR_DEFAULT_NAME = "policy_preprocessor"
 POLICY_POSTPROCESSOR_DEFAULT_NAME = "policy_postprocessor"
