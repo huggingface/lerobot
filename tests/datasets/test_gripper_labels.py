@@ -103,3 +103,90 @@ def test_invalid_gripper_labels_cannot_enter_training(label_pack, tmp_path, case
     with pytest.raises(ValueError):
         run_export(label_pack, tmp_path)
     assert not (tmp_path / "export").exists()
+
+
+@pytest.fixture
+def model_suggestions(label_pack, tmp_path):
+    module, pack_path, _ = label_pack
+    pack = json.loads(pack_path.read_text())
+    suggestions = {
+        "kind": "model_proposals",
+        "reviewer": "model fixture </script>",
+        "pack_sha256": module["digest"](pack_path),
+        "images": [
+            {
+                "id": 0,
+                "image_sha256": pack["images"][0]["sha256"],
+                "candidates": [{"bbox_xyxy": [1, 2, 5, 8]}],
+            },
+            {"id": 1, "image_sha256": pack["images"][1]["sha256"], "candidates": []},
+        ],
+    }
+    path = tmp_path / "suggestions.json"
+    path.write_text(json.dumps(suggestions))
+    return path, suggestions
+
+
+def test_model_suggestions_render_separately_without_changing_source(label_pack, model_suggestions, tmp_path):
+    module, pack_path, labels = label_pack
+    source = pack_path.read_bytes()
+    labels_before = json.dumps(labels)
+    suggestions_path, _ = model_suggestions
+    output = tmp_path / "review.html"
+    module["render_review"](pack_path, output, suggestions_path)
+    html = output.read_text()
+    assert "/* MODEL_SUGGESTIONS */ null" not in html
+    assert module["digest"](suggestions_path) in html
+    assert "model fixture </script>" not in html
+    assert "model fixture \\u003c/script>" in html
+    assert pack_path.read_bytes() == source
+    assert json.dumps(labels) == labels_before
+    assert not (tmp_path / "reviewed_labels.json").exists()
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["pack", "image", "image_bytes", "duplicate", "unknown", "arm", "bounds", "nan", "bool", "reviewer"],
+)
+def test_invalid_model_suggestions_fail_before_render(label_pack, model_suggestions, tmp_path, case):
+    module, pack_path, _ = label_pack
+    path, document = model_suggestions
+    row = document["images"][0]
+    if case == "pack":
+        document["pack_sha256"] = "stale"
+    elif case == "image":
+        row["image_sha256"] = "stale"
+    elif case == "image_bytes":
+        Image.new("RGB", (16, 12), "white").save(tmp_path / "0.jpg")
+    elif case == "duplicate":
+        document["images"].append(row)
+    elif case == "unknown":
+        row["id"] = 99
+    elif case == "arm":
+        row["candidates"][0]["arm"] = "left"
+    elif case == "reviewer":
+        document["reviewer"] = " "
+    else:
+        row["candidates"][0]["bbox_xyxy"][0] = {"bounds": -1, "nan": float("nan"), "bool": True}[case]
+    path.write_text(json.dumps(document))
+    output = tmp_path / "review.html"
+    with pytest.raises(ValueError):
+        module["render_review"](pack_path, output, path)
+    assert not output.exists()
+
+
+def test_model_proposal_does_not_replace_human_confirmation(label_pack, tmp_path):
+    row = label_pack[2]["images"][0]
+    row["arms"]["left"]["model_proposal"] = {"reviewer": "model fixture", "candidate": [1, 2, 5, 8]}
+    row["review"]["confirmed"] = False
+    with pytest.raises(ValueError, match="human review"):
+        run_export(label_pack, tmp_path)
+    assert not (tmp_path / "export").exists()
+
+
+def test_confirmed_fixture_retains_model_proposal_provenance(label_pack, tmp_path):
+    proposal = {"reviewer": "model fixture", "source_sha256": "fixture", "candidate": [1, 2, 5, 8]}
+    label_pack[2]["images"][0]["arms"]["left"]["model_proposal"] = proposal
+    run_export(label_pack, tmp_path)
+    reviewed = json.loads((tmp_path / "export/reviewed_labels.json").read_text())
+    assert reviewed["images"][0]["arms"]["left"]["model_proposal"] == proposal

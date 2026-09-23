@@ -204,6 +204,26 @@ image-left/image-right. Record each arm as visible, not visible, or uncertain. C
 images under a reviewer ID and export the label JSON. The tool supports local browser
 drafts and importing exported labels. It does not pre-accept model predictions.
 
+Optionally show model-proposed boxes as dashed, unassigned overlays:
+
+```bash
+uv run examples/rebot_agent/gripper_labels.py review \
+  --pack outputs/gripper_review/pack.json \
+  --suggestions /path/to/model_suggestions.json \
+  --output outputs/gripper_review/review_with_suggestions.html
+```
+
+The suggestions document has `kind: "model_proposals"`, a model `reviewer`, the
+`pack_sha256`, and an `images` list. Each entry contains its pack image `id`,
+`image_sha256`, optional `notes`, and `candidates: [{"bbox_xyxy": [x1, y1, x2, y2]}]`.
+Coordinates use original-image pixels and candidates must not assign an `arm`.
+The renderer checks pack/image hashes and box bounds. An empty candidate list makes
+no visibility claim. Clicking **Use for left/right** copies a proposal into an
+unconfirmed label; the reviewer must check boundaries, visibility, and physical arm
+identity before confirmation. Exported labels retain the chosen model proposal and
+its source hash separately from the human review. Rendering suggestions does not
+change existing browser drafts or the image pack.
+
 The default pack contains 80 detector-training and 20 detector-validation images,
 separated by whole episode; all are outside VLA holdout episodes 90–99. All three
 camera streams must be downloaded for the selected episodes. The exporter requires

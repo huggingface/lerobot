@@ -21,6 +21,59 @@ def digest(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def render_review(pack_path: Path, output: Path, suggestions_path: Path | None = None):
+    """Show unassigned model boxes without modifying any human labels or confirmations."""
+    if output.resolve().suffix != ".html" or output.resolve().parent != pack_path.resolve().parent:
+        raise ValueError("Write the review HTML beside its image pack")
+    pack = json.loads(pack_path.read_text())
+    suggestions = None
+    if suggestions_path is not None:
+        suggestions = json.loads(suggestions_path.read_text())
+        if (
+            suggestions.get("kind") != "model_proposals"
+            or suggestions.get("pack_sha256") != digest(pack_path)
+            or not isinstance(suggestions.get("reviewer"), str)
+            or not suggestions["reviewer"].strip()
+        ):
+            raise ValueError("Suggestions require model attribution and the matching image pack")
+        by_id = {image["id"]: image for image in pack["images"]}
+        seen = set()
+        for row in suggestions["images"]:
+            if row["id"] not in by_id or row["id"] in seen:
+                raise ValueError("Unknown or duplicate suggestion image")
+            seen.add(row["id"])
+            image = by_id[row["id"]]
+            if (
+                row["image_sha256"] != image["sha256"]
+                or digest(pack_path.parent / image["file_name"]) != image["sha256"]
+            ):
+                raise ValueError("Suggestion image differs from the reviewed source")
+            for candidate in row["candidates"]:
+                box = candidate["bbox_xyxy"]
+                if (
+                    not isinstance(box, list)
+                    or len(box) != 4
+                    or any(type(v) not in (int, float) for v in box)
+                    or not np.isfinite(box).all()
+                    or not (
+                        0 <= box[0] < box[2] <= image["width"] and 0 <= box[1] < box[3] <= image["height"]
+                    )
+                    or "arm" in candidate
+                ):
+                    raise ValueError(
+                        "Suggestions must be valid unassigned boxes in original-image coordinates"
+                    )
+        suggestions = {**suggestions, "source_sha256": digest(suggestions_path)}
+    payload = json.dumps({"pack_sha256": digest(pack_path), "pack": pack}).replace("<", "\\u003c")
+    suggestion_payload = json.dumps(suggestions).replace("<", "\\u003c")
+    template = Path(__file__).with_name("gripper_review.html").read_text()
+    output.write_text(
+        template.replace("/* PACK_DATA */ null", payload).replace(
+            "/* MODEL_SUGGESTIONS */ null", suggestion_payload
+        )
+    )
+
+
 def prepare(root: Path, output: Path, episodes: list[int], per_episode: int = 4):
     """Stratify views/times and split detector evaluation by episode, outside VLA holdout."""
     source = json.loads((root / "source.json").read_text())
@@ -83,9 +136,7 @@ def prepare(root: Path, output: Path, episodes: list[int], per_episode: int = 4)
             )
     pack_path = output / "pack.json"
     pack_path.write_text(json.dumps(manifest, indent=2) + "\n")
-    payload = json.dumps({"pack_sha256": digest(pack_path), "pack": manifest}).replace("<", "\\u003c")
-    template = Path(__file__).with_name("gripper_review.html").read_text()
-    (output / "review.html").write_text(template.replace("/* PACK_DATA */ null", payload))
+    render_review(pack_path, output / "review.html")
     return manifest
 
 
@@ -200,12 +251,20 @@ def main():
     export.add_argument("--pack", type=Path, required=True)
     export.add_argument("--labels", type=Path, required=True)
     export.add_argument("--output", type=Path, required=True)
+    review = commands.add_parser("review")
+    review.add_argument("--pack", type=Path, required=True)
+    review.add_argument("--suggestions", type=Path)
+    review.add_argument(
+        "--output", type=Path, required=True, help="HTML beside the pack, so image paths resolve"
+    )
     args = parser.parse_args()
     if args.command == "prepare":
         result = prepare(args.dataset_root, args.output, args.episodes, args.per_episode)
         print(f"Prepared {len(result['images'])} images. Open {args.output / 'review.html'}.")
-    else:
+    elif args.command == "export":
         print(json.dumps(export_coco(args.pack, args.labels, args.output), indent=2))
+    else:
+        render_review(args.pack, args.output, args.suggestions)
 
 
 if __name__ == "__main__":

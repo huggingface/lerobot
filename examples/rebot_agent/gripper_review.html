@@ -40,6 +40,7 @@
       <div class="arm right"><strong>Right gripper</strong><select id="right-state" aria-label="Right gripper visibility"><option value="unlabeled">Not yet labeled</option><option value="visible">Visible — draw a box</option><option value="not_visible">Not visible</option><option value="uncertain">Uncertain</option></select><div id="right-box" class="muted"></div></div>
       <label><input id="identity" type="checkbox">I verified the physical arm identity of every visible gripper.</label>
       <button id="confirm" class="primary">Confirm this image</button><p id="review-status" class="muted"></p>
+      <section id="suggestions" class="muted" aria-label="Unverified model box suggestions"></section>
     </section>
   </div>
   <div class="bar"><button id="previous">Previous</button><button id="next">Next</button><button id="unreviewed">Next unreviewed</button></div>
@@ -47,9 +48,11 @@
   <p class="muted">Edits are kept in this browser when storage is available. Export a JSON file to preserve your work and transfer it to training. Confirmed labels are human annotations; no model prediction is pre-accepted.</p>
   <script>
     const payload = /* PACK_DATA */ null;
+    const suggestionPayload = /* MODEL_SUGGESTIONS */ null;
     const $ = id => document.getElementById(id);
     if (!payload) throw new Error("Generate this review pack with gripper_labels.py prepare.");
     const pack = payload.pack, arms = ["left", "right"], key = "rebot-grippers-" + payload.pack_sha256;
+    const suggestionsById = new Map((suggestionPayload?.images || []).map(row => [row.id, row]));
     let labels = { version: 1, pack_sha256: payload.pack_sha256, images: pack.images.map(im => ({ id: im.id, arms: Object.fromEntries(arms.map(arm => [arm, { visibility: "unlabeled", bbox_xyxy: null }])), review: { kind: "human", reviewer: "", confirmed: false, arm_identity_verified: false } })) };
     let index = 0, active = "left", start = null, preview = null, imageReady = false;
     const image = new Image(), canvas = $("canvas"), ctx = canvas.getContext("2d");
@@ -71,15 +74,32 @@
     try { const saved = localStorage.getItem(key); if (saved) labels = validateImported(JSON.parse(saved)); } catch (_) { $("notice").textContent = "Saved browser state could not be loaded. Import an exported file to resume."; }
     function persist() { try { localStorage.setItem(key, JSON.stringify(labels)); } catch (_) { $("notice").textContent = "Browser storage is unavailable; export your labels before closing."; } }
     function row() { return labels.images[index]; }
+    function suggestions() { return suggestionsById.get(pack.images[index].id); }
     function changed() { row().review.confirmed = false; row().review.arm_identity_verified = false; $("identity").checked = false; persist(); controls(); draw(); }
     function controls() {
       arms.forEach(arm => { $(arm).className = active === arm ? "primary" : ""; $(arm + "-state").value = row().arms[arm].visibility; $(arm + "-box").textContent = row().arms[arm].bbox_xyxy?.join(", ") || "No box"; });
       $("progress").textContent = `${labels.images.filter(r => r.review.confirmed).length} / ${pack.images.length} confirmed`;
       $("review-status").textContent = row().review.confirmed ? `Confirmed by ${row().review.reviewer}` : "Not confirmed";
       $("previous").disabled = index === 0; $("next").disabled = index === pack.images.length - 1;
+      const panel = $("suggestions"); panel.replaceChildren();
+      const proposed = suggestions();
+      if (proposed) {
+        const title = document.createElement("p"); title.textContent = `Unverified model suggestions by ${suggestionPayload.reviewer}. Assign physical arm identity only after checking the image.`; panel.append(title);
+        const note = document.createElement("p"); note.textContent = proposed.notes || ""; panel.append(note);
+        if (!proposed.candidates.length) { const empty = document.createElement("p"); empty.textContent = "No box suggested. Both arms still need human visibility labels."; panel.append(empty); }
+        proposed.candidates.forEach((candidate, i) => {
+          const group = document.createElement("div"); group.className = "bar";
+          const label = document.createElement("span"); label.textContent = `Candidate ${i + 1}: ${candidate.bbox_xyxy.join(", ")}`; group.append(label);
+          arms.forEach(arm => { const button = document.createElement("button"); button.textContent = `Use for ${arm}`; button.onclick = () => {
+            row().arms[arm] = { visibility: "visible", bbox_xyxy: [...candidate.bbox_xyxy], model_proposal: { reviewer: suggestionPayload.reviewer, source_sha256: suggestionPayload.source_sha256, image_sha256: proposed.image_sha256, candidate } }; changed();
+          }; group.append(button); }); panel.append(group);
+        });
+      }
     }
     function draw() {
       ctx.clearRect(0, 0, canvas.width, canvas.height); if (!imageReady) return; ctx.drawImage(image, 0, 0);
+      ctx.save(); ctx.setLineDash([6, 4]); ctx.strokeStyle = "#695800"; ctx.fillStyle = "#695800"; ctx.lineWidth = 2; ctx.font = "bold 14px sans-serif";
+      (suggestions()?.candidates || []).forEach((candidate, i) => { const b = candidate.bbox_xyxy; ctx.strokeRect(b[0], b[1], b[2] - b[0], b[3] - b[1]); ctx.fillText(`candidate ${i + 1}`, b[0] + 3, Math.max(14, b[1] - 5)); }); ctx.restore();
       arms.forEach(arm => { const b = preview && arm === active ? preview : row().arms[arm].bbox_xyxy; if (!b) return; ctx.strokeStyle = arm === "left" ? "#159bea" : "#fa5d90"; ctx.lineWidth = 3; ctx.strokeRect(b[0], b[1], b[2] - b[0], b[3] - b[1]); ctx.fillStyle = ctx.strokeStyle; ctx.font = "bold 16px sans-serif"; ctx.fillText(arm, b[0] + 3, Math.max(16, b[1] - 5)); });
     }
     function load() {
@@ -94,7 +114,7 @@
     function box(a, b) { return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])]; }
     canvas.onpointerdown = e => { if (!imageReady || e.button !== 0) return; start = coordinates(e); canvas.setPointerCapture(e.pointerId); };
     canvas.onpointermove = e => { if (!start) return; preview = box(start, coordinates(e)); draw(); };
-    canvas.onpointerup = e => { if (!start) return; const b = box(start, coordinates(e)); start = preview = null; if (b[2] > b[0] && b[3] > b[1]) { row().arms[active] = { visibility: "visible", bbox_xyxy: b }; changed(); } else draw(); };
+    canvas.onpointerup = e => { if (!start) return; const b = box(start, coordinates(e)); start = preview = null; if (b[2] > b[0] && b[3] > b[1]) { row().arms[active] = { ...row().arms[active], visibility: "visible", bbox_xyxy: b }; changed(); } else draw(); };
     canvas.onpointercancel = () => { start = preview = null; draw(); };
     arms.forEach(arm => { $(arm).onclick = () => { active = arm; controls(); }; $(arm + "-state").onchange = () => { const visibility = $(arm + "-state").value; row().arms[arm].visibility = visibility; if (visibility !== "visible") row().arms[arm].bbox_xyxy = null; changed(); }; });
     $("confirm").onclick = () => {
