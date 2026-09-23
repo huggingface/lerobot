@@ -459,7 +459,10 @@ def test_postfilter_keeps_raw_evidence_ids_and_missing_points(extractor, tmp_pat
     assert result["source_tracks_sha256"] == source_hash == extractor["sha256"](source)
 
 
-def test_required_candidates_retry_only_missing_task_objects_without_rewriting_evidence(extractor, tmp_path):
+@pytest.mark.parametrize("source", ["task-objects", "points"])
+def test_required_candidates_retry_only_missing_task_objects_without_rewriting_evidence(
+    extractor, tmp_path, source
+):
     parent = tmp_path / "parent"
     parent.mkdir()
     manifest = {"version": 1, "source": {"repo_id": "test"}, "models": extractor["MODELS"], "clips": []}
@@ -468,6 +471,7 @@ def test_required_candidates_retry_only_missing_task_objects_without_rewriting_e
         ("present", "put the block into the black bin", "black bin", [2, 2]),
         ("home", "return home", "bin", [2, 2]),
         ("no_point", "put the block into the bin", "bin", None),
+        ("alias_filtered_out", "put the block into the bin", "black bin", [2, 2]),
     ]
     for name, task, obj, point in cases:
         directory = parent / name
@@ -477,22 +481,36 @@ def test_required_candidates_retry_only_missing_task_objects_without_rewriting_e
         manifest["clips"].append(
             {"path": name, "subtask": task, "frames": [{"sha256": extractor["sha256"](frame)}]}
         )
-        (directory / "tracks.json").write_text(
+        (directory / ("point.json" if source == "points" else "tracks.json")).write_text(
             json.dumps({"objects": [{"object_id": 7, "name": obj, "point": point}], "frames": []})
         )
     (parent / "extraction.json").write_text(json.dumps(manifest))
-    extractor["filter_objects"](parent, manifest)
+    if source == "task-objects":
+        extractor["filter_objects"](parent, manifest)
     hashes = {p: extractor["sha256"](p) for p in parent.rglob("*") if p.is_file()}
     output = tmp_path / "retry"
-    recovery = extractor["prepare_required"](parent, output, ["bin"])
-    assert [c["path"] for c in recovery["clips"]] == ["missing", "no_point"]
+    recovery = extractor["prepare_required"](parent, output, ["bin"], source=source)
+    assert [c["path"] for c in recovery["clips"]] == ["missing", "no_point", "alias_filtered_out"]
+    assert recovery["preparation"]["candidate_source"] == source
     assert recovery["models"]["identify"] is None
     assert recovery["models"]["point"] == extractor["MODELS"]["point"]
     candidate = json.loads((output / "missing/identify.json").read_text())
     assert candidate["objects"] == ["bin"]
     assert candidate["review"] == "pending" and candidate["model"] is None
+    original_candidate = parent / "missing" / candidate["parent_candidates_file"]
+    assert (output / "missing/parent_candidates.json").read_bytes() == original_candidate.read_bytes()
+    assert candidate["parent_candidates_sha256"] == extractor["sha256"](original_candidate)
     assert all(extractor["sha256"](p) == h for p, h in hashes.items())
     extractor["verify_frames"](output, recovery)
+    with pytest.raises(ValueError, match="outside"):
+        extractor["prepare_required"](parent, parent / "nested", ["bin"], source=source)
+    if source == "points":
+        # A partial parent cannot silently produce an incomplete recovery manifest.
+        (parent / "home/point.json").unlink()
+        with pytest.raises(FileNotFoundError):
+            extractor["prepare_required"](parent, tmp_path / "incomplete", ["bin"], source=source)
+        assert not (tmp_path / "incomplete").exists()
+        return
     # A filtered result may not silently be reused after the tracks have changed.
     (parent / "missing/tracks.json").write_text("{}")
     with pytest.raises(ValueError, match="stale"):

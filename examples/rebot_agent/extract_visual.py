@@ -310,10 +310,14 @@ def filter_objects(output: Path, manifest: dict) -> dict:
     return report
 
 
-def prepare_required(parent: Path, output: Path, names: list[str]) -> dict:
+def prepare_required(parent: Path, output: Path, names: list[str], *, source: str = "task-objects") -> dict:
     """Retry missing instruction-named candidates in a separate extraction, without inventing visibility."""
     if not names or any(not name.strip() for name in names) or len(set(names)) != len(names):
         raise ValueError("Provide distinct nonempty required object names")
+    if source not in {"task-objects", "points"}:
+        raise ValueError("Required candidate source must be task-objects or points")
+    if output.exists() or parent.resolve() in output.resolve().parents:
+        raise ValueError("Use a fresh output outside the parent extraction")
     manifest_path = parent / "extraction.json"
     original = json.loads(manifest_path.read_text())
     verify_frames(parent, original)
@@ -321,24 +325,24 @@ def prepare_required(parent: Path, output: Path, names: list[str]) -> dict:
     selected = []
     for clip in original["clips"]:
         directory = parent / clip["path"]
-        filtered_path = directory / "task_objects.json"
-        filtered = json.loads(filtered_path.read_text())
-        if (
-            filtered["source_tracks_sha256"] != sha256(directory / "tracks.json")
-            or filtered["source_manifest_sha256"] != manifest_hash
+        candidate_path = directory / ("point.json" if source == "points" else "task_objects.json")
+        # Snapshot exactly the bytes used for selection, including raw pointing responses.
+        candidate_bytes = candidate_path.read_bytes()
+        candidates = json.loads(candidate_bytes)
+        if source == "task-objects" and (
+            candidates["source_tracks_sha256"] != sha256(directory / "tracks.json")
+            or candidates["source_manifest_sha256"] != manifest_hash
         ):
             raise ValueError("Run filter-objects again: parent candidate filtering is stale")
+        relevant = [obj for obj in candidates["objects"] if object_mentioned(obj["name"], clip["subtask"])]
         missing = [
             name
             for name in names
             if object_mentioned(name, clip["subtask"])
-            and not any(
-                obj["point"] is not None and object_mentioned(name, obj["name"])
-                for obj in filtered["objects"]
-            )
+            and not any(obj["point"] is not None and object_mentioned(name, obj["name"]) for obj in relevant)
         ]
         if missing:
-            selected.append((clip, missing, sha256(filtered_path)))
+            selected.append((clip, missing, candidate_path.name, candidate_bytes))
     if not selected:
         raise ValueError("No missing instruction-named candidates matched the requested objects")
     output.mkdir(parents=True, exist_ok=False)
@@ -351,14 +355,18 @@ def prepare_required(parent: Path, output: Path, names: list[str]) -> dict:
             "parent_manifest_sha256": manifest_hash,
             "script_sha256": sha256(Path(__file__)),
             "requested_objects": names,
+            "candidate_source": source,
             "note": "Names come from instructions, not visual identification. Pointing/tracking still require review.",
         },
         "clips": [],
     }
-    for clip, missing, filtered_hash in selected:
+    for clip, missing, candidate_name, candidate_bytes in selected:
         directory = output / clip["path"]
         directory.mkdir()
         shutil.copytree(parent / clip["path"] / "frames", directory / "frames")
+        candidate_snapshot = directory / "parent_candidates.json"
+        candidate_snapshot.write_bytes(candidate_bytes)
+        candidate_hash = sha256(candidate_snapshot)
         write_json(
             directory / "identify.json",
             {
@@ -369,7 +377,9 @@ def prepare_required(parent: Path, output: Path, names: list[str]) -> dict:
                 "error": None,
                 "model": None,
                 "review": "pending",
-                "parent_filtered_sha256": filtered_hash,
+                **({"parent_filtered_sha256": candidate_hash} if source == "task-objects" else {}),
+                "parent_candidates_file": candidate_name,
+                "parent_candidates_sha256": candidate_hash,
                 "instruction": clip["subtask"],
             },
         )
@@ -728,7 +738,13 @@ def main():
     )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--dataset-root", type=Path)
-    parser.add_argument("--parent", type=Path, help="Existing filtered extraction for prepare-required")
+    parser.add_argument("--parent", type=Path, help="Parent extraction for candidate recovery")
+    parser.add_argument(
+        "--required-source",
+        choices=["task-objects", "points"],
+        default="task-objects",
+        help="Use completed points to recover missing candidates while parent tracking is still running",
+    )
     parser.add_argument(
         "--seed-review", type=Path, help="Attributed seed corrections for prepare-reviewed-points"
     )
@@ -758,7 +774,7 @@ def main():
     if args.stage == "prepare-required":
         if args.parent is None or not args.objects:
             parser.error("prepare-required requires --parent and --objects")
-        manifest = prepare_required(args.parent, args.output, args.objects)
+        manifest = prepare_required(args.parent, args.output, args.objects, source=args.required_source)
         print(json.dumps({"clips": len(manifest["clips"]), "review": "pending"}), flush=True)
         return
     if args.stage == "prepare":

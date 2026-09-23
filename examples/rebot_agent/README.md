@@ -148,6 +148,15 @@ Correcting a seed does not accept the resulting track. Native exports retain thi
 provenance as `seed_point_source` and `seed_review`; model reviews are never relabeled
 as human verification.
 
+To recover an instruction-named object omitted by identification, use
+`extract_visual.py prepare-required --parent ORIGINAL --output NEW --objects bin`.
+Once every parent clip has a point result, add `--required-source points` to start
+recovery before parent tracking finishes. This applies the same name-in-subtask
+filter, snapshots the candidate evidence with hashes, and writes a separate
+extraction. It does not alter the running parent or establish object visibility.
+Run `point`, `track`, and `filter-objects` on the new extraction and review its masks
+before accepting annotations.
+
 ```bash
 uv run examples/rebot_agent/export_language_annotations.py \
   --dataset-root /path/to/source_dataset \
