@@ -33,9 +33,14 @@ from .constants import (
     REWARD,
 )
 from .decorators import check_if_already_connected, check_if_not_connected
-from .device_utils import auto_select_torch_device, get_safe_torch_device, is_torch_device_available
 from .errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from .import_utils import is_package_available, require_package
+from .import_utils import LAZY_IMPORTS, is_package_available, lazy_getattr, require_package
+
+# These import torch, so they are imported the first time one of them is used.
+if LAZY_IMPORTS:
+    from .device_utils import auto_select_torch_device, get_safe_torch_device, is_torch_device_available
+
+__getattr__ = lazy_getattr(__name__)
 
 __all__ = [
     # Constants

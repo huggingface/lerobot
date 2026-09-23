@@ -19,7 +19,17 @@ from __future__ import annotations
 from typing import Any, Final, Literal, TypeAlias, TypedDict, final
 
 import numpy as np
-import torch
+
+from lerobot.utils.import_utils import LAZY_IMPORTS, lazy_getattr
+
+# These need torch, so they are declared the first time one of them is used.
+if LAZY_IMPORTS:
+    import torch
+
+    # Kept as `TypeAlias` (not PEP 695 `type`): both are used in `isinstance()` checks.
+    PolicyAction: TypeAlias = torch.Tensor  # noqa: UP040
+
+__getattr__ = lazy_getattr(__name__)
 
 
 @final
@@ -35,8 +45,6 @@ class TransitionKey:
     COMPLEMENTARY_DATA: Final[Literal["complementary_data"]] = "complementary_data"
 
 
-# Kept as `TypeAlias` (not PEP 695 `type`): both are used in `isinstance()` checks.
-PolicyAction: TypeAlias = torch.Tensor  # noqa: UP040
 RobotAction = dict[str, Any]
 EnvAction: TypeAlias = np.ndarray  # noqa: UP040
 RobotObservation = dict[str, Any]

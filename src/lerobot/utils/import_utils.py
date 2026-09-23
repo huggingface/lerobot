@@ -13,11 +13,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import ast
+import functools
 import importlib
 import importlib.metadata
 import importlib.util
+import inspect
 import logging
-from typing import Any, Literal, overload
+import sys
+from collections.abc import Callable
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from draccus.choice_types import ChoiceRegistry
 
@@ -173,6 +179,53 @@ _grpc_available = is_package_available("grpcio", import_name="grpc")
 _wallx_deps_available = (
     _transformers_available and _peft_available and _torchdiffeq_available and _qwen_vl_utils_available
 )
+
+
+# Imports under `if LAZY_IMPORTS:` do not run when their module is imported, and type checkers see them as usual. The
+# module sets `__getattr__ = lazy_getattr(__name__)`, which runs the import of a name the first time it is used.
+LAZY_IMPORTS = TYPE_CHECKING
+
+
+@functools.cache
+def _lazy_imports(module_name: str) -> dict[str, ast.Module]:
+    """Map each name declared under `if LAZY_IMPORTS:` in a module to the code that declares it.
+
+    That is its import statement, or the whole block for a name the block assigns, since the assignment may use the
+    block's imports.
+    """
+    tree = ast.parse(Path(inspect.getfile(sys.modules[module_name])).read_text())
+    code: dict[str, ast.Module] = {}
+    for block in tree.body:
+        if not (
+            isinstance(block, ast.If) and isinstance(block.test, ast.Name) and block.test.id == "LAZY_IMPORTS"
+        ):
+            continue
+        for stmt in block.body:
+            if isinstance(stmt, ast.Import | ast.ImportFrom):
+                for alias in stmt.names:
+                    code[(alias.asname or alias.name).split(".")[0]] = ast.Module(
+                        body=[stmt], type_ignores=[]
+                    )
+            elif isinstance(stmt, ast.AnnAssign | ast.Assign):
+                targets = [stmt.target] if isinstance(stmt, ast.AnnAssign) else stmt.targets
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        code[target.id] = ast.Module(body=block.body, type_ignores=[])
+    return code
+
+
+def lazy_getattr(module_name: str) -> Callable[[str], Any]:
+    """Return a module `__getattr__` that runs the `if LAZY_IMPORTS:` import of a name the first time it is used."""
+
+    def getattr_(name: str) -> Any:
+        code = _lazy_imports(module_name).get(name)
+        if code is None:
+            raise AttributeError(f"module {module_name!r} has no attribute {name!r}")
+        module = sys.modules[module_name]
+        exec(compile(code, inspect.getfile(module), "exec", dont_inherit=True), vars(module))  # nosec B102: the module's own imports
+        return vars(module)[name]
+
+    return getattr_
 
 
 def make_device_from_device_class(config: ChoiceRegistry) -> Any:
