@@ -43,6 +43,7 @@ def _training_dataset(cfg: TrainPipelineConfig, *, evaluation=False):
             task_recipe=cfg.dataset.task_recipe,
             steering_manifest=cfg.dataset.steering_manifest,
             task_probability=cfg.dataset.steering_task_probability,
+            required_styles=cfg.dataset.steering_required_styles,
             deterministic=evaluation,
         )
     if cfg.dataset.task_recipe is not None:

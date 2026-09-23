@@ -29,6 +29,7 @@ torchrun --nproc-per-node=8 $(which lerobot-train) \
 """
 
 import dataclasses
+import json
 import logging
 import sys
 import time
@@ -62,6 +63,7 @@ from lerobot.configs import JobConfig, parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
 from lerobot.datasets.factory import make_train_eval_datasets
+from lerobot.datasets.steering_commands import SteeringCommandDataset
 from lerobot.distributed import (
     ParallelDims,
     finalize_sharded_policy,
@@ -469,6 +471,15 @@ def train(cfg: TrainPipelineConfig):
     if not is_main_process():
         dataset, eval_dataset = make_train_eval_datasets(cfg)
 
+    steering_profiles = None
+    if is_main_process() and isinstance(dataset, SteeringCommandDataset):
+        steering_profiles = {"train": dataset.steering_coverage}
+        if isinstance(eval_dataset, SteeringCommandDataset):
+            steering_profiles["eval"] = eval_dataset.steering_coverage
+        cfg.output_dir.mkdir(parents=True, exist_ok=True)
+        (cfg.output_dir / "steering_coverage.json").write_text(json.dumps(steering_profiles, indent=2) + "\n")
+        logging.info("Steering annotation profiles: %s", steering_profiles)
+
     # --- policy (weight source decided by the resume rule) -------------------------------------
     # On resume, cfg was parsed FROM the checkpoint's train_config.json, so cfg.checkpoint_format
     # IS the recorded value: DCP-bearing formats skip the safetensors load here and stream the
@@ -860,6 +871,10 @@ def train(cfg: TrainPipelineConfig):
                 accelerator=accelerator,
             )
             if is_main_process():
+                if steering_profiles is not None:
+                    (checkpoint_dir / PRETRAINED_MODEL_DIR / "steering_coverage.json").write_text(
+                        json.dumps({"training_step": step, **steering_profiles}, indent=2) + "\n"
+                    )
                 if ema is not None:
                     # Save the shadow for exact resume, plus a directly loadable copy of the EMA
                     # weights (lerobot-eval --policy.path=<checkpoint>/pretrained_model_ema).

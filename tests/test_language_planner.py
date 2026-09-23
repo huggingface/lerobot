@@ -160,6 +160,13 @@ def test_rebot_task_branch_corrects_source_task_in_both_training_conditions(tmp_
         )
     )
     rich, _ = module["prepare_run"](tmp_path, 1, 1, True, path)
+    assert set(rich["dataset"]["steering_required_styles"]) == {
+        "subtask",
+        "motion",
+        "point",
+        "trace",
+        "combination",
+    }
     assert (
         task_from_recipe(sample, TrainingRecipe.from_dict(rich["dataset"]["task_recipe"]))["task"] == expected
     )

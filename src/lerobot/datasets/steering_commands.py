@@ -3,7 +3,9 @@
 """Bridge-style random command substitution, with reviewed ReBot grounding provenance."""
 
 import bisect
+import hashlib
 import json
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -61,6 +63,44 @@ class SteeringCommands:
     def at(self, episode: int, frame: int) -> list[dict]:
         return self.span_at(episode, frame)["commands"]
 
+    def annotation_profile(self, episodes=None) -> dict:
+        """Describe labels and expected command sampling, not learned robot capabilities."""
+        selected = sorted(self.episodes if episodes is None else episodes)
+        frames = dict.fromkeys(sorted(STYLES), 0)
+        alternatives = dict.fromkeys(frames, 0)
+        expected = dict.fromkeys(frames, 0.0)
+        camera_frames = {}
+        total = 0
+        for episode in selected:
+            for span in self.episodes.get(episode, []):
+                length = span["end_frame"] - span["start_frame"]
+                total += length
+                counts = Counter(command["style"] for command in span["commands"])
+                for style, count in counts.items():
+                    frames[style] += length
+                    alternatives[style] += count
+                    expected[style] += length * count / len(span["commands"])
+                # Count an interval once per camera/style even if it has several paraphrases.
+                for camera, style in {
+                    (command["camera"], command["style"])
+                    for command in span["commands"]
+                    if command.get("points")
+                }:
+                    camera_frames.setdefault(camera, dict.fromkeys(frames, 0))[style] += length
+        return {
+            "episodes": selected,
+            "annotated_frames": total,
+            "frames_with_style": frames,
+            "alternatives_by_style": alternatives,
+            "coordinate_frames_by_camera_style": dict(sorted(camera_frames.items())),
+            "missing_styles": [style for style, count in frames.items() if not count],
+            "expected_style_fraction_given_steering": {
+                style: weight / total if total else 0.0 for style, weight in expected.items()
+            },
+            "sampling_assumption": "Uniform covered-frame sampling, then uniform command alternatives; excludes task branch",
+            "physical_capabilities_verified": False,
+        }
+
     def coverage(self, episode_lengths: dict[int, int]) -> dict:
         """Check every requested frame before training, including wholly absent episodes."""
         gaps = []
@@ -82,6 +122,7 @@ class SteeringCommands:
             "covered_frames": covered,
             "total_frames": sum(episode_lengths.values()),
             "gaps": gaps,
+            "annotation_profile": self.annotation_profile(episode_lengths),
         }
 
     def sample(
@@ -126,9 +167,19 @@ class SteeringCommandDataset(RecipeTaskDataset):
     """Reuse decoding and recipe tasks; mask chunk targets outside reviewed steering intervals."""
 
     def __init__(
-        self, *args, steering_manifest: str, task_probability: float = 0.2, deterministic=False, **kwargs
+        self,
+        *args,
+        steering_manifest: str,
+        task_probability: float = 0.2,
+        required_styles: list[str] | None = None,
+        deterministic=False,
+        **kwargs,
     ):
-        self.steering = SteeringCommands(json.loads(Path(steering_manifest).read_text()))
+        manifest_bytes = Path(steering_manifest).read_bytes()
+        self.steering = SteeringCommands(json.loads(manifest_bytes))
+        required_styles = [] if required_styles is None else required_styles
+        if set(required_styles) - STYLES:
+            raise ValueError("Unknown required steering style")
         self.task_probability = task_probability
         self.deterministic = deterministic
         if not 0 <= task_probability <= 1:
@@ -148,6 +199,25 @@ class SteeringCommandDataset(RecipeTaskDataset):
             raise ValueError(
                 f"Missing reviewed steering coverage: {len(report['gaps'])} gaps; first: {report['gaps'][0]}"
             )
+        missing = set(required_styles) & set(report["annotation_profile"]["missing_styles"])
+        if missing:
+            raise ValueError(f"Required steering styles absent from selected episodes: {sorted(missing)}")
+        self.steering_coverage = {
+            **report,
+            "source": self.steering.source,
+            "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "task_probability": self.task_probability,
+            "required_styles": required_styles,
+            "expected_style_fraction": {
+                "task": self.task_probability,
+                **{
+                    style: (1 - self.task_probability) * fraction
+                    for style, fraction in report["annotation_profile"][
+                        "expected_style_fraction_given_steering"
+                    ].items()
+                },
+            },
+        }
         for spans in self.steering.episodes.values():
             for span in spans:
                 for command in span["commands"]:

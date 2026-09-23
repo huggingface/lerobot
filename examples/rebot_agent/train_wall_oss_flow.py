@@ -38,6 +38,7 @@ def prepare_run(
             raise ValueError("Steering manifest source differs from the training dataset")
         config["dataset"]["steering_manifest"] = str(steering_manifest.resolve())
         config["dataset"]["steering_task_probability"] = 0.2
+        config["dataset"]["steering_required_styles"] = ["subtask", "motion", "point", "trace", "combination"]
         config["dataset"]["image_transforms"] = {"enable": False}
         # Keep the same corrected task conditioning in both experiment arms.
         config["dataset"]["task_recipe"] = asdict(recipe.blend["high_level_task"])

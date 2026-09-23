@@ -323,7 +323,21 @@ uv run examples/rebot_agent/prepare_steering.py \
 The script uses `OPENAI_API_KEY`. It saves all reviews and an accepted-only manifest
 without rewriting the dataset. Rejected intervals become coverage gaps that must be
 fixed before training. `coverage.json` checks all dataset episodes and frames, including
-episodes absent from the feature input. Training checks coverage before sampling.
+episodes absent from the feature input. It also reports frame coverage by style,
+coordinate coverage by camera/style, missing styles, and the expected command mixture
+under uniform frame/alternative sampling. These describe the annotations, not measured
+robot capabilities. Repeated alternatives affect sampling weight; several alternatives
+of one style on a frame do not multiply that style's frame coverage.
+
+Training checks coverage before sampling. The full-mixture launcher requires all five
+steering styles to be present in each selected train/eval split; the semantic baseline
+uses its separate recipe. A style that appears only in held-out episodes cannot satisfy
+the training check. Global presence does not guarantee adequate coverage: review the
+reported per-style frame counts and mixture before launching the final experiment.
+Main's trainer writes split-specific `steering_coverage.json`, including the manifest
+hash and 80/20 task mixture, in the training directory and saved checkpoints. The
+library's `dataset.steering_required_styles` defaults to empty for explicitly configured
+subset experiments; the ReBot full-mixture launcher sets all five styles.
 Use `--resume` to reuse completed reviews with identical saved input features.
 The reviewer sees up to six timestamped frames per segment;
 this can miss short events, so manually audit overlays and command boundaries, and

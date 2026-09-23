@@ -1,14 +1,16 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 # Licensed under the Apache License, Version 2.0.
 import copy
+import json
 import runpy
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import torch
 
-from lerobot.datasets.steering_commands import SteeringCommands
+from lerobot.datasets.steering_commands import SteeringCommandDataset, SteeringCommands
 
 
 def manifest():
@@ -162,3 +164,102 @@ def test_fk_uses_calibrated_measured_joints_and_rejects_reversals(tmp_path):
     assert motion[0]["evidence"]["displacement_m"][0] == pytest.approx(-0.9)
     with pytest.raises(ValueError, match="reversing"):
         extract([[0], [np.pi / 2], [0.1]], ["left.joint"], config, kinematics=Kinematics())
+
+
+def test_annotation_profile_weights_frames_and_variants_and_excludes_other_episodes():
+    data = manifest()
+    point = {
+        "style": "point",
+        "text": "reach here",
+        "evidence": "fixture",
+        "camera": "observation.images.base",
+        "image_size": [640, 480],
+        "points": [[30, 40]],
+    }
+    later = copy.deepcopy(data["segments"][0])
+    later.update(
+        start_frame=5,
+        end_frame=20,
+        commands=[
+            {"style": "subtask", "text": "reach", "evidence": "fixture"},
+            {"style": "subtask", "text": "approach", "evidence": "fixture"},
+            point,
+        ],
+    )
+    heldout = copy.deepcopy(later)
+    heldout.update(
+        episode_index=4,
+        start_frame=0,
+        end_frame=50,
+        commands=[{**point, "style": "trace", "points": [[1, 2], [3, 4]]}],
+    )
+    data["segments"].extend([later, heldout])
+    profile = SteeringCommands(data).coverage({3: 20})["annotation_profile"]
+    assert profile["annotated_frames"] == 20
+    assert profile["frames_with_style"] == {
+        "subtask": 20,
+        "motion": 5,
+        "point": 15,
+        "trace": 0,
+        "combination": 0,
+    }
+    assert profile["alternatives_by_style"]["subtask"] == 3
+    fractions = profile["expected_style_fraction_given_steering"]
+    assert fractions["subtask"] == pytest.approx(0.625)
+    assert fractions["motion"] == pytest.approx(0.125)
+    assert fractions["point"] == pytest.approx(0.25)
+    assert sum(fractions.values()) == pytest.approx(1.0)
+    assert set(profile["missing_styles"]) == {"trace", "combination"}
+    assert profile["coordinate_frames_by_camera_style"]["observation.images.base"]["point"] == 15
+    assert profile["physical_capabilities_verified"] is False
+
+
+def test_required_styles_use_selected_split_and_profile_includes_task_mixture(monkeypatch, tmp_path):
+    data = manifest()
+    other = copy.deepcopy(data["segments"][0])
+    other.update(
+        episode_index=4,
+        commands=[
+            {
+                "style": "point",
+                "text": "reach",
+                "evidence": "fixture",
+                "camera": "observation.images.base",
+                "image_size": [640, 480],
+                "points": [[1, 2]],
+            }
+        ],
+    )
+    data["segments"].append(other)
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(data))
+
+    def init(dataset, repo_id, *, episodes, **kwargs):
+        dataset.repo_id = repo_id
+        dataset.episodes = episodes
+        dataset.delta_timestamps = None
+        dataset.meta = SimpleNamespace(
+            fps=30,
+            episodes={3: {"length": 5}, 4: {"length": 5}},
+            features={"observation.images.base": {"shape": [480, 640, 3]}},
+        )
+
+    monkeypatch.setattr("lerobot.datasets.language_task.RecipeTaskDataset.__init__", init)
+    with pytest.raises(ValueError, match="absent from selected episodes"):
+        SteeringCommandDataset(
+            "test/data", episodes=[3], revision="abc", steering_manifest=str(path), required_styles=["point"]
+        )
+    dataset = SteeringCommandDataset(
+        "test/data",
+        episodes=[3],
+        revision="abc",
+        steering_manifest=str(path),
+        required_styles=["motion", "subtask"],
+    )
+    profile = dataset.steering_coverage
+    assert profile["expected_style_fraction"]["task"] == 0.2
+    assert profile["expected_style_fraction"]["motion"] == 0.4
+    assert profile["expected_style_fraction"]["subtask"] == 0.4
+    assert profile["expected_style_fraction"]["point"] == 0
+    assert profile["required_styles"] == ["motion", "subtask"]
+    assert len(profile["manifest_sha256"]) == 64

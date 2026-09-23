@@ -60,6 +60,7 @@ class DatasetConfig:
     task_recipe: dict | None = None
     steering_manifest: str | None = None
     steering_task_probability: float = 0.2
+    steering_required_styles: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.repo_type not in ("dataset", "bucket"):
