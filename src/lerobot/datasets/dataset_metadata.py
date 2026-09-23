@@ -308,21 +308,25 @@ class LeRobotDatasetMetadata:
         """Codebase version used to create this dataset."""
         return packaging.version.parse(self.info.codebase_version)
 
-    def get_data_file_path(self, ep_index: int) -> Path | None:
+    def get_data_file_path(self, ep_index: int) -> Path:
         """Return the relative parquet file path for the given episode index.
 
         Args:
             ep_index: Zero-based episode index.
 
         Returns:
-            Path to the parquet file containing this episode's data, or ``None``
-            for non-default storage formats.
+            Path to the parquet file containing this episode's data.
 
         Raises:
             IndexError: If ``ep_index`` is out of range.
+            NotImplementedError: For non-default storage formats, which manage
+                their own file layout.
         """
         if self.storage_format != DEFAULT_STORAGE_FORMAT:
-            return None
+            raise NotImplementedError(
+                f"get_data_file_path() is only supported for the {DEFAULT_STORAGE_FORMAT!r} storage format, "
+                f"not {self.storage_format!r}."
+            )
         if self.episodes is None:
             self.episodes = load_episodes(self.root)
         if ep_index >= len(self.episodes):
@@ -335,7 +339,7 @@ class LeRobotDatasetMetadata:
         fpath = self.data_path.format(chunk_index=chunk_idx, file_index=file_idx)
         return Path(fpath)
 
-    def get_video_file_path(self, ep_index: int, vid_key: str) -> Path | None:
+    def get_video_file_path(self, ep_index: int, vid_key: str) -> Path:
         """Return the relative video file path for the given episode and video key.
 
         Args:
@@ -344,15 +348,19 @@ class LeRobotDatasetMetadata:
                 (e.g. ``'observation.images.laptop'``).
 
         Returns:
-            Path to the video file containing this episode's frames, or ``None``
-            for non-default storage formats.
+            Path to the video file containing this episode's frames.
 
         Raises:
             IndexError: If ``ep_index`` is out of range.
             ValueError: If the dataset stores no videos (no ``video_path`` template).
+            NotImplementedError: For non-default storage formats, which manage
+                their own file layout.
         """
         if self.storage_format != DEFAULT_STORAGE_FORMAT:
-            return None
+            raise NotImplementedError(
+                f"get_video_file_path() is only supported for the {DEFAULT_STORAGE_FORMAT!r} storage format, "
+                f"not {self.storage_format!r}."
+            )
         if self.episodes is None:
             self.episodes = load_episodes(self.root)
         if ep_index >= len(self.episodes):
