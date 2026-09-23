@@ -45,10 +45,25 @@ def prepare_run(
     config.update(batch_size=batch_size, output_dir=str(output / "training"))
     config["accelerator"] = {"mixed_precision": "bf16"}
     if smoke:
-        config.update(steps=10, save_freq=10, log_freq=1, eval_steps=10, num_workers=0)
+        config.update(steps=10, save_freq=10, log_freq=1, eval_steps=10, max_eval_samples=20, num_workers=0)
     argv = [sys.executable, "-m", "torch.distributed.run", "--standalone", f"--nproc-per-node={gpus}"]
     argv.extend(["-m", "lerobot.scripts.lerobot_train", f"--config_path={output / 'config.json'}"])
     return config, argv
+
+
+def reload_command(argv: list[str], output: Path, steps: int) -> list[str]:
+    """Exercise native checkpoint/optimizer reload and one further update in a fresh process."""
+    checkpoint = output / "training/checkpoints/last/pretrained_model/train_config.json"
+    if not checkpoint.is_file():
+        raise FileNotFoundError(f"Training did not save its checkpoint configuration: {checkpoint}")
+    # Keep the same process topology, model, recipe and split saved by the training run.
+    return [arg for arg in argv if not arg.startswith("--config_path=")] + [
+        f"--config_path={checkpoint}",
+        "--resume=true",
+        f"--steps={steps + 1}",
+        f"--eval_steps={steps + 1}",
+        "--save_checkpoint=false",
+    ]
 
 
 def main():
@@ -56,7 +71,11 @@ def main():
     parser.add_argument("--output", type=Path, required=True, help="New directory for this launch")
     parser.add_argument("--gpus", type=int, choices=range(1, 5), default=1)
     parser.add_argument("--batch-size", type=int, default=1, help="Per-GPU micro-batch size")
-    parser.add_argument("--smoke", action="store_true", help="Ten steps, validation, and checkpoint save")
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="Ten updates, bounded validation, save, then native reload/update",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Write config and command without training")
     parser.add_argument(
         "--steering-manifest", type=Path, help="Reviewed multi-style commands; omit for the semantic baseline"
@@ -90,6 +109,16 @@ def main():
     if not args.dry_run:
         # Preserve torchrun's output for the scheduler log and propagate a failed rank's exit status.
         subprocess.run(argv, cwd=workspace, check=True)
+        if args.smoke:
+            reload_argv = reload_command(argv, output, config["steps"])
+            (output / "reload_launch.json").write_text(json.dumps({"argv": reload_argv}, indent=2) + "\n")
+            subprocess.run(reload_argv, cwd=workspace, check=True)
+            (output / "smoke_completed.json").write_text(
+                json.dumps(
+                    {"saved_step": config["steps"], "reloaded_update_step": config["steps"] + 1}, indent=2
+                )
+                + "\n"
+            )
 
 
 if __name__ == "__main__":

@@ -26,6 +26,10 @@ uv run examples/rebot_agent/train_wall_oss_flow.py --gpus 4 --steering-manifest 
 
 Use a fresh output directory for each launch. Check finite losses, memory, held-out
 loss, and checkpoint reload after the smoke test before launching the full run.
+The smoke run evaluates 20 held-out samples, saves step 10, then starts a fresh
+process through main's checkpoint resume path for one further update and validation.
+It writes `smoke_completed.json` only if both processes succeed. This is a bounded
+execution check; it does not replace full held-out validation or physical evaluation.
 `training.json` pins the dataset and native base-model revision and configures WALL-OSS-Flow, using native
 `policy.pretrained_name_or_path` initialization. The 14 ReBot dimensions are padded
 and masked internally. The full run defaults to 20,000 steps and batch one per GPU;

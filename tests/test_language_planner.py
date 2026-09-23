@@ -112,9 +112,27 @@ def test_four_gpu_training_config_uses_main_parser(tmp_path):
     assert parsed.policy.base_model_revision == "44e827683819957d8c574e8b746a1a97e77f518a"
     assert parsed.policy.recipe["messages"][0]["stream"] == "low_level"
     assert parsed.steps == parsed.eval_steps == parsed.save_freq == 10
+    assert parsed.max_eval_samples == 20
     assert "--nproc-per-node=4" in argv
     with pytest.raises(ValueError):
         module["prepare_run"](tmp_path, 5, 1, True)
+
+
+def test_smoke_reload_requires_saved_checkpoint_and_preserves_topology(tmp_path):
+    module = runpy.run_path(str(Path(__file__).parents[1] / "examples/rebot_agent/train_wall_oss_flow.py"))
+    config, argv = module["prepare_run"](tmp_path, 4, 1, True)
+    with pytest.raises(FileNotFoundError, match="did not save"):
+        module["reload_command"](argv, tmp_path, config["steps"])
+    checkpoint = tmp_path / "training/checkpoints/last/pretrained_model/train_config.json"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_text(json.dumps(config))
+    reload_argv = module["reload_command"](argv, tmp_path, config["steps"])
+    assert "--nproc-per-node=4" in reload_argv
+    assert [arg for arg in reload_argv if arg.startswith("--config_path=")] == [f"--config_path={checkpoint}"]
+    assert "--resume=true" in reload_argv
+    assert "--steps=11" in reload_argv
+    assert "--eval_steps=11" in reload_argv
+    assert "--save_checkpoint=false" in reload_argv
 
 
 def test_rebot_task_branch_corrects_source_task_in_both_training_conditions(tmp_path):

@@ -9,7 +9,8 @@
         "dataset": {
           "repo_id": "pepijn223/rebot_diverse_picking_100_annotated",
           "revision": "93c97807c46535745d0587d4296416bf2d4aa80d",
-          "eval_split": 0.1
+          "eval_split": 0.1,
+          "video_backend": "pyav"
         },
         "policy": {
           "base_model_revision": "44e827683819957d8c574e8b746a1a97e77f518a",
