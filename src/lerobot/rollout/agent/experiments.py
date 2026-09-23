@@ -40,9 +40,11 @@ class ExperimentStore:
     def candidates(self):
         return [json.loads(p.read_text()) for p in sorted(self.root.glob("candidates/*.json"))]
 
-    def create_candidate(self, name, base_model, training, recipe, parent=None):
+    def create_candidate(self, name, base_model, training, recipe, parent=None, policy_type=None):
         """A candidate records the complete training config and recipe, not just a mutable filename."""
         name = self._name(name)
+        if policy_type not in (None, "wall_x"):
+            raise ValueError("Native base initialization is currently supported only for wall_x")
         path = self.root / "candidates" / f"{name}.json"
         path.parent.mkdir(exist_ok=True)
         recipe = TrainingRecipe.from_dict(recipe)
@@ -56,6 +58,7 @@ class ExperimentStore:
         candidate = {
             "name": name,
             "base_model": base_model,
+            "policy_type": policy_type,
             "training": training,
             "parent": parent,
             "created_at": time.time(),
@@ -115,14 +118,25 @@ class ExperimentStore:
             sys.executable,
             "-m",
             "lerobot.scripts.lerobot_train",
-            f"--policy.path={candidate['base_model']}",
         ]
+        if candidate.get("policy_type") == "wall_x":
+            # The upstream WALL-OSS base is a Qwen checkpoint, not a LeRobot policy config.
+            argv.extend(
+                ["--policy.type=wall_x", f"--policy.pretrained_name_or_path={candidate['base_model']}"]
+            )
+        else:
+            argv.append(f"--policy.path={candidate['base_model']}")
         for key, value in training.items():
             if key in ("output_dir", "resume", "job"):
                 raise ValueError(f"{key} is owned by the experiment runner")
             if isinstance(value, dict):
                 for field, item in value.items():
-                    if key == "policy" and field in ("path", "pretrained_path", "type"):
+                    if key == "policy" and field in (
+                        "path",
+                        "pretrained_path",
+                        "type",
+                        "pretrained_name_or_path",
+                    ):
                         raise ValueError("Choose base_model instead of overriding policy path/type")
                     argv.append(f"--{key}.{field}={json.dumps(item) if not isinstance(item, str) else item}")
             else:

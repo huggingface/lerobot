@@ -96,6 +96,11 @@ EXPERIMENT_TOOLS = [
         {
             "name": STRING,
             "base_model": STRING,
+            "policy_type": {
+                "type": "string",
+                "enum": ["wall_x"],
+                "description": "Set only for an upstream WALL-OSS-Flow base; omit for LeRobot checkpoints.",
+            },
             "training_json": STRING,
             "recipe_json": STRING,
             "parent": STRING,

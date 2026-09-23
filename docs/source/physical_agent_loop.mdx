@@ -65,10 +65,19 @@ candidate and training configuration. The original dataset remains unchanged. Th
 through `task_aug` paraphrases when those annotations are present. It does not
 generate new paraphrases or assume unannotated command styles.
 
-The example initializes two candidates:
+The example initializes three candidates:
 
+- `wall_oss_flow_80_20_v1`, based on `x-square-robot/wall-oss-flow`, is the selected ReBot baseline.
 - `smolvla_80_20_v1`, based on `lerobot/smolvla_base`.
 - `pi05_80_20_v1`, based on `lerobot/pi05_base`.
+
+The WALL-OSS-Flow candidate sets `policy_type=wall_x` to initialize the native base
+through `policy.pretrained_name_or_path`. It replaces the policy's default text-target
+recipe with a low-level task pass-through so the dataset's 80/20 task recipe supplies
+the action instruction. ReBot's 14
+state/action dimensions are padded and masked to 20 internally. For subsequent
+fine-tuning of a saved LeRobot checkpoint, omit `policy_type` and use that checkpoint
+as `base_model`.
 
 Their batch sizes and 20,000-step budgets are starting configurations, not measured
 performance recommendations. Adjust them to the training host. Input features are
@@ -79,7 +88,7 @@ held-out loss is distinct from real-world task success.
 In the interactive prompt:
 
 ```text
-/train smolvla_80_20_v1
+/train wall_oss_flow_80_20_v1
 ```
 
 This launches `lerobot-train` as a subprocess and returns a job ID. Use `job_status`

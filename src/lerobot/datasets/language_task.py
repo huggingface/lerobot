@@ -19,7 +19,9 @@ def task_from_recipe(sample: dict[str, Any], recipe: TrainingRecipe) -> dict[str
         events=sample.get("language_events") or [],
         t=float(sample["timestamp"]),
         sample_idx=int(sample["index"]),
-        task=sample.get("task"),
+        # Supply the canonical task as fallback so task_aug annotations can be sampled.
+        # Passing it as an explicit task override would disable recipe paraphrases.
+        dataset_ctx={"task": sample.get("task")},
     )
     if rendered is None or rendered["target_message_indices"]:
         raise ValueError("task_recipe must render action conditioning, without text prediction targets")

@@ -79,8 +79,12 @@ unchanged. Establish an episode-level training/validation split before training;
 the supplied example holds out the last 10 seed episodes. Preserve the identity of
 held-out episodes through subsequent aggregations.
 
-Use the supplied SmolVLA and Pi0.5 candidates as starting options, selecting a first
-model according to actual resources and compatibility. You may choose another VLA,
+The user selected **WALL-OSS-Flow** (`wall_x`, `x-square-robot/wall-oss-flow`) for the
+first fine-tune. Use `wall_oss_flow_80_20_v1` and the science cluster reached through
+`sft ssh hpc-cluster-science-login-81-129`, using at most four H100 GPUs and the cluster's
+scheduler. Inspect available resources and run a short forward/backward/checkpoint
+smoke test before the full job. The supplied SmolVLA and Pi0.5 candidates remain
+comparison options. You may choose another VLA,
 fine-tune an existing checkpoint, or change training settings when the evidence
 supports it. Save each candidate's parent, model/checkpoint identity, dataset revision
 and episode selections, complete recipe, hyperparameters, code version, and results.

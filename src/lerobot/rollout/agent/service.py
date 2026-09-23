@@ -52,7 +52,11 @@ class AgentHarness:
             if not path.exists():
                 recipe = asdict(TrainingRecipe.from_yaml(self.workspace / candidate["recipe_path"]))
                 self.experiments.create_candidate(
-                    candidate["name"], candidate["base_model"], candidate["training"], recipe
+                    candidate["name"],
+                    candidate["base_model"],
+                    candidate["training"],
+                    recipe,
+                    policy_type=candidate.get("policy_type"),
                 )
         provider = config.get("supervisor")
         if provider:
@@ -137,6 +141,7 @@ class AgentHarness:
                 json.loads(args["training_json"]),
                 json.loads(args["recipe_json"]),
                 args.get("parent"),
+                policy_type=args.get("policy_type"),
             )
         if name == "start_training":
             if self._thread and self._thread.is_alive():

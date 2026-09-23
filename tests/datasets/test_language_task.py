@@ -44,6 +44,21 @@ def test_task_recipe_preserves_original_sample_and_actions(recipe):
     assert task_from_recipe(sample(timestamp=10), recipe)["task"] == "pick the remote"
 
 
+def test_task_recipe_uses_existing_task_paraphrases():
+    recipe = TrainingRecipe.from_dict(
+        {"messages": [{"role": "user", "content": "${task}", "stream": "low_level"}]}
+    )
+    item = sample()
+    assert task_from_recipe(item, recipe)["task"] == item["task"]
+    paraphrases = {"collect the objects in the bin", "put all objects into the bin"}
+    item["language_persistent"].extend(
+        {"role": "user", "style": "task_aug", "content": text, "timestamp": 0.0}
+        for text in sorted(paraphrases)
+    )
+    assert {task_from_recipe({**item, "index": i}, recipe)["task"] for i in range(50)} == paraphrases
+    assert item["task"] == "put everything in the bin"
+
+
 def test_missing_subtask_cannot_silently_train_generic_task(recipe):
     item = sample()
     item["language_persistent"] = []
