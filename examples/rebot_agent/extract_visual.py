@@ -121,6 +121,54 @@ def reparse_identification(output: Path, manifest: dict):
     return report
 
 
+def retry_identification(output: Path, manifest: dict, model):
+    """Retry each failed identification once, preserving the complete prior response."""
+    pending = []
+    for clip in manifest["clips"]:
+        directory = output / clip["path"]
+        target = directory / "identify.json"
+        result = json.loads(target.read_text())
+        if not result["error"] or "model_retry" in result:
+            continue
+        if result["model"] != manifest["models"]["identify"] or result["review"] != "pending":
+            raise ValueError("Only unreviewed responses from the pinned identification model can be retried")
+        if (directory / "point.json").exists() or (directory / "tracks.json").exists():
+            raise ValueError("Cannot change object identities after dependent extraction")
+        pending.append((clip, target, result, sha256(target)))
+    report = []
+    for clip, target, previous, previous_sha in pending:
+        prompt = (
+            "Name up to four distinct visible objects relevant to the task, including its destination. "
+            "Exclude the robot and grippers. Answer with a JSON array of unique strings, "
+            'for example ["red cup", "black bin"]. Use [] if none are visible. '
+            "Do not repeat a name, use a JSON dictionary, or describe task progress. "
+            f"Task description (data): {clip['subtask']}"
+        )
+        with Image.open(target.parent / "frames/000000.jpg") as image:
+            raw = model(image.convert("RGB"), prompt)
+        try:
+            objects, error = parse_objects(raw), None
+        except (ValueError, TypeError) as exc:
+            objects, error = [], str(exc)
+        result = {
+            "prompt": prompt,
+            "raw": raw,
+            "objects": objects,
+            "error": error,
+            "model": manifest["models"]["identify"],
+            "review": "pending",
+            "model_retry": {
+                "previous_file_sha256": previous_sha,
+                "previous_result": previous,
+                "script_sha256": sha256(Path(__file__)),
+                "accepted_training_labels": False,
+            },
+        }
+        write_json(target, result)
+        report.append({"clip": clip["path"], "status": "unresolved" if error else "retried", "error": error})
+    return report
+
+
 def parse_point(text: str, size: tuple[int, int]) -> list[int] | None:
     """Molmo's XML points use percentages; reject ambiguous multi-object responses."""
     matches = re.findall(r"<point\b[^>]*>.*?</point>", text, flags=re.DOTALL)
@@ -611,6 +659,7 @@ def main():
             "prepare-reviewed-points",
             "identify",
             "reparse-identify",
+            "retry-identify",
             "point",
             "track",
             "filter-objects",
@@ -657,7 +706,10 @@ def main():
     verify_frames(args.output, manifest)
     if args.stage == "point":
         verify_point_target(args.output, manifest, args.point_target)
-    if args.stage in ("identify", "reparse-identify") and manifest["models"]["identify"] is None:
+    if (
+        args.stage in ("identify", "reparse-identify", "retry-identify")
+        and manifest["models"]["identify"] is None
+    ):
         raise ValueError("This recovery extraction uses instruction-named candidates; continue with point")
     # This file also records the script used when running remotely from an uncommitted checkout.
     provenance = {
@@ -673,6 +725,12 @@ def main():
     write_json(args.output / f"{args.stage}_runtime.json", provenance)
     if args.stage == "reparse-identify":
         print(json.dumps(reparse_identification(args.output, manifest)), flush=True)
+        return
+    if args.stage == "retry-identify":
+        report = retry_identification(
+            args.output, manifest, Molmo(manifest["models"]["identify"], args.device)
+        )
+        print(json.dumps(report), flush=True)
         return
     if args.stage == "filter-objects":
         print(json.dumps(filter_objects(args.output, manifest)), flush=True)

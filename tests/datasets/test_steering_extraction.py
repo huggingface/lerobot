@@ -207,6 +207,60 @@ def test_reparse_preserves_model_response_and_records_recovery(extractor, tmp_pa
         extractor["reparse_identification"](tmp_path, manifest)
 
 
+@pytest.mark.parametrize("raw", ['["tape", "bin"]', '["battery", "battery"]'])
+def test_identification_retry_preserves_original_and_is_bounded(extractor, tmp_path, raw):
+    clips = [{"path": name, "subtask": "pick up tape"} for name in ("failed", "successful")]
+    manifest = {"models": extractor["MODELS"], "clips": clips}
+    originals = {}
+    for clip in clips:
+        directory = tmp_path / clip["path"]
+        (directory / "frames").mkdir(parents=True)
+        Image.new("RGB", (8, 6)).save(directory / "frames/000000.jpg")
+        result = {
+            "model": extractor["MODELS"]["identify"],
+            "review": "pending",
+            "raw": '{"ambiguous": "tape"}',
+            "prompt": "original prompt",
+            "objects": [] if clip["path"] == "failed" else ["bin"],
+            "error": "invalid response" if clip["path"] == "failed" else None,
+        }
+        target = directory / "identify.json"
+        target.write_text(json.dumps(result))
+        originals[clip["path"]] = (target.read_bytes(), extractor["sha256"](target), result)
+    model = Mock(return_value=raw)
+    retry = extractor["retry_identification"]
+    report = retry(tmp_path, manifest, model)
+    assert len(report) == 1 and model.call_count == 1
+    target = tmp_path / "failed/identify.json"
+    result = json.loads(target.read_text())
+    assert result["raw"] == raw and result["review"] == "pending"
+    assert result["model_retry"]["previous_result"] == originals["failed"][2]
+    assert result["model_retry"]["previous_file_sha256"] == originals["failed"][1]
+    assert not result["model_retry"]["accepted_training_labels"]
+    assert bool(result["error"]) == (raw == '["battery", "battery"]')
+    assert (tmp_path / "successful/identify.json").read_bytes() == originals["successful"][0]
+    before = target.read_bytes()
+    assert retry(tmp_path, manifest, model) == []
+    assert model.call_count == 1 and target.read_bytes() == before
+
+
+def test_retry_preflights_all_failures_before_model_calls(extractor, tmp_path):
+    manifest = {"models": extractor["MODELS"], "clips": [{"path": "a"}, {"path": "b"}]}
+    for clip in manifest["clips"]:
+        directory = tmp_path / clip["path"]
+        directory.mkdir()
+        (directory / "identify.json").write_text(
+            json.dumps({"error": "failed", "review": "pending", "model": extractor["MODELS"]["identify"]})
+        )
+    (tmp_path / "b/point.json").write_text("{}")
+    before = (tmp_path / "a/identify.json").read_bytes()
+    model = Mock()
+    with pytest.raises(ValueError, match="dependent extraction"):
+        extractor["retry_identification"](tmp_path, manifest, model)
+    model.assert_not_called()
+    assert (tmp_path / "a/identify.json").read_bytes() == before
+
+
 def test_tracking_preserves_source_time_identity_and_missing_masks(extractor, tmp_path):
     (tmp_path / "frames").mkdir()
     for i in range(2):

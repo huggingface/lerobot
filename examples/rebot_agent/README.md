@@ -101,6 +101,14 @@ language switching. The interval is seconds of execution, not the paper's exact
 
 ## Store grounded geometry in native language annotations
 
+After identification has finished, `extract_visual.py reparse-identify --output PATH`
+can recover explicit name lists from failed response formats. For remaining failures,
+`retry-identify --output PATH` makes one additional Molmo call per failed clip with a
+stricter list prompt. It preserves the complete original response and its hash, skips
+successful clips, and refuses to change identities after pointing or tracking.
+Repeated runs do not retry the same failure indefinitely. Inspect unresolved errors
+before pointing; recovered and retried candidates still require visual review.
+
 For hollow or thin objects, a Molmo object-center point can land on background and
 seed the wrong SAM2 mask. In a **separate extraction**, try
 `extract_visual.py point --output PATH --point-target material` to request a point
