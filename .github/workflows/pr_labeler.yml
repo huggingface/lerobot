@@ -23,12 +23,14 @@ on:
       - main
     types: [opened, synchronize, reopened, ready_for_review]
 
-permissions:
-  contents: read
-  pull-requests: write
+
+permissions: {}
 
 jobs:
   triage:
+    permissions:
+      contents: read
+      pull-requests: write
     name: Label PR
     runs-on: ubuntu-latest
     if: github.repository == 'huggingface/lerobot' && !github.event.pull_request.draft

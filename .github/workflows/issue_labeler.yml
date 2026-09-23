@@ -19,12 +19,13 @@ on:
   issues:
     types: [opened, edited]
 
-permissions:
-  contents: read
-  issues: write
+
+permissions: {}
 
 jobs:
   label-issue:
+    permissions:
+      issues: write
     name: Auto Label Issue
     runs-on: ubuntu-latest
     if: github.repository == 'huggingface/lerobot'
