@@ -180,7 +180,7 @@ def verify_frames(output: Path, manifest: dict):
 
 class Molmo:
     def __init__(self, specification: dict, device: str):
-        require_package("transformers")
+        require_package("transformers", extra="transformers-dep")
         arguments = {"revision": specification["revision"], "trust_remote_code": True}
         self.processor = AutoProcessor.from_pretrained(specification["repo_id"], **arguments)
         self.model = AutoModelForCausalLM.from_pretrained(
@@ -335,7 +335,7 @@ def main():
     if args.stage in ("identify", "point"):
         run_molmo(args.output, manifest, args.stage, Molmo(manifest["models"][args.stage], args.device))
     else:
-        require_package("SAM-2", import_name="sam2")
+        require_package("SAM-2", extra=None, import_name="sam2")
         spec = manifest["models"]["track"]
         checkpoint = hf_hub_download(spec["repo_id"], spec["filename"], revision=spec["revision"])
         predictor = build_sam2_video_predictor(spec["config"], checkpoint, device=args.device)

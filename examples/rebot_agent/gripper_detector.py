@@ -153,7 +153,7 @@ def evaluate(model, processor, loader, device, threshold, margin):
 
 
 def train(args):
-    require_package("transformers")
+    require_package("transformers", extra="transformers-dep")
     if args.epochs < 1 or args.batch_size < 1:
         raise ValueError("Use positive epochs and batch size")
     if args.device.startswith("cuda") and not torch.cuda.is_available():
@@ -253,7 +253,7 @@ def train(args):
 
 @torch.inference_mode()
 def extract(args):
-    require_package("transformers")
+    require_package("transformers", extra="transformers-dep")
     model = DetrForObjectDetection.from_pretrained(args.checkpoint).to(args.device).eval()
     if model.config.id2label != LABELS:
         raise ValueError("Use a trained per-arm ReBot detector, not a generic COCO checkpoint")

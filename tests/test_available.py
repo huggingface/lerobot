@@ -51,6 +51,17 @@ def test_require_package_passes_when_available():
             _require_package_cache.clear()
 
 
+def test_require_standalone_package_does_not_invent_a_lerobot_extra():
+    with patch("lerobot.utils.import_utils.is_package_available", return_value=False) as available:
+        _require_package_cache.clear()
+        try:
+            with pytest.raises(ImportError, match="uv pip install 'SAM-2'"):
+                require_package("SAM-2", extra=None, import_name="sam2")
+            available.assert_called_once_with("SAM-2", "sam2")
+        finally:
+            _require_package_cache.clear()
+
+
 def test_require_package_error_message_includes_uv():
     """Error message includes both pip and uv install commands."""
     with patch("lerobot.utils.import_utils.is_package_available", return_value=False):

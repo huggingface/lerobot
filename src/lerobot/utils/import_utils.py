@@ -92,15 +92,16 @@ def get_safe_default_video_backend():
 _require_package_cache: dict[str, bool] = {}
 
 
-def require_package(pkg_name: str, extra: str, import_name: str | None = None) -> None:
-    """Raise an informative ImportError if a package required by an optional feature is missing."""
+def require_package(pkg_name: str, extra: str | None, import_name: str | None = None) -> None:
+    """Raise with installation guidance; ``extra=None`` names a standalone optional package."""
     cache_key = import_name or pkg_name
     if cache_key not in _require_package_cache:
         _require_package_cache[cache_key] = is_package_available(pkg_name, import_name)
     if not _require_package_cache[cache_key]:
+        target = f"lerobot[{extra}]" if extra is not None else pkg_name
         raise ImportError(
             f"'{pkg_name}' is required but not installed. Install it with: "
-            f"pip install 'lerobot[{extra}]' (or uv pip install 'lerobot[{extra}]')"
+            f"pip install '{target}' (or uv pip install '{target}')"
         )
 
 

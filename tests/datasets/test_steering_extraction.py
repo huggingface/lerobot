@@ -3,6 +3,7 @@
 import json
 import runpy
 from pathlib import Path
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -90,3 +91,16 @@ def test_modified_frame_invalidates_resume(extractor, tmp_path):
     Image.new("RGB", (8, 6), "white").save(path)
     with pytest.raises(ValueError, match="differs"):
         extractor["verify_frames"](tmp_path, manifest)
+
+
+def test_molmo_constructor_uses_real_dependency_guard(extractor, monkeypatch):
+    pytest.importorskip("transformers")
+    constructor = extractor["Molmo"]
+    processor, model = Mock(), Mock()
+    monkeypatch.setitem(constructor.__init__.__globals__, "AutoProcessor", processor)
+    monkeypatch.setitem(constructor.__init__.__globals__, "AutoModelForCausalLM", model)
+    instance = constructor(extractor["MODELS"]["identify"], "cpu")
+    assert instance.model is model.from_pretrained.return_value.eval.return_value
+    assert (
+        processor.from_pretrained.call_args.kwargs["revision"] == extractor["MODELS"]["identify"]["revision"]
+    )
