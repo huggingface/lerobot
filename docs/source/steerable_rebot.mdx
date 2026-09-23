@@ -22,16 +22,16 @@ multiple equivalent steering styles. It uses a VLM both to compose commands and,
 runtime, to select commands using observation/command history. The released Bridge
 training code consumes precomputed annotations; it is not a complete ReBot extractor.
 
-| Component           | ReBot implementation / current boundary                                                                                |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| VLA and robot       | Existing WALL-OSS-Flow and bimanual ReBot support in main; adaptations from the paper's OpenVLA/Pi0.5 and WidowX       |
-| Semantic labels     | Existing timestamped dataset annotations and main's annotation reader/decoder                                          |
-| Visual grounding    | Requires ReBot object masks/tracks and per-arm gripper tracks; Molmo/SAM2/DETR execution is not implemented by this PR |
-| Motion grounding    | `fk_motion.py` uses calibrated measured joints and main's `RobotKinematics`; actual URDF/calibration are required      |
-| Command composition | `prepare_steering.py` builds grounded template variants; a VLM paraphrasing stage is still an extension                |
-| Annotation review   | Astra inspects timestamped source images and proposed commands; accepted/uncertain/rejected results are saved          |
-| Training            | Fresh uniform sampling among reviewed alternatives on each visit; 20% overall tasks is our chosen mixture              |
-| Planning            | Astra through main's `/autosteer`, with bounded visual history; VLA remains the action controller                      |
+| Component           | ReBot implementation / current boundary                                                                                                |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| VLA and robot       | Existing WALL-OSS-Flow and bimanual ReBot support in main; adaptations from the paper's OpenVLA/Pi0.5 and WidowX                       |
+| Semantic labels     | Existing timestamped dataset annotations and main's annotation reader/decoder                                                          |
+| Visual grounding    | Staged Molmo identification/pointing and SAM2 mask tracking; ReBot-trained DETR gripper localization remains to implement and validate |
+| Motion grounding    | `fk_motion.py` uses calibrated measured joints and main's `RobotKinematics`; actual URDF/calibration are required                      |
+| Command composition | `prepare_steering.py` builds grounded template variants; a VLM paraphrasing stage is still an extension                                |
+| Annotation review   | Astra inspects timestamped source images and proposed commands; accepted/uncertain/rejected results are saved                          |
+| Training            | Fresh uniform sampling among reviewed alternatives on each visit; 20% overall tasks is our chosen mixture                              |
+| Planning            | Astra through main's `/autosteer`, with bounded visual history; VLA remains the action controller                                      |
 
 This is a paper-guided adaptation, not a completed reproduction. Configuring visual
 styles does not generate their training labels. Start with the semantic baseline;
@@ -99,6 +99,43 @@ from main's recipe blend alone, whose per-index choices repeat across visits.
 
 ## Prepare and review grounded features
 
+`extract_visual.py` prepares original-size frames with main's reader/decoder, identifies
+up to four task-relevant objects with MolmoE-1B-0924, points to them with Molmo-7B-D-0924,
+and tracks the resulting seeds with SAM2.1. Each model is pinned to a Hub revision.
+Run stages separately so only one extractor occupies GPU memory at a time. Preparation
+needs dataset dependencies; model stages additionally need the models' dependencies
+and SAM2. Use an isolated annotation environment: compatibility between Molmo's remote
+code and the training environment's Transformers version still needs GPU validation.
+The SAM2 reference code reviewed here is
+`facebookresearch/sam2@2b90b9f5ceec907a1c18123530e92e794ad901a4`.
+
+Place `source.json` in the downloaded dataset root with its `repo_id` and immutable
+40-character `revision`. A partial download can add `"partial": true`. Extraction also
+hashes actual source parquet and exported images. Start with a pilot:
+
+```bash
+uv run examples/rebot_agent/extract_visual.py prepare \
+  --dataset-root /path/to/pinned_dataset --output outputs/rebot_visual \
+  --episodes 0 1 2 3 4 --cameras observation.images.base --stride 15
+# Inside a GPU allocation with annotation dependencies installed:
+uv run examples/rebot_agent/extract_visual.py identify --output outputs/rebot_visual
+uv run examples/rebot_agent/extract_visual.py point --output outputs/rebot_visual
+uv run examples/rebot_agent/extract_visual.py track --output outputs/rebot_visual
+```
+
+Use stride 1 and all three cameras for full temporal extraction after inspecting the
+pilot. Stages resume completed clip outputs and verify image hashes. Outputs preserve
+raw Molmo responses, object IDs, source frame IDs, timestamps, masks, mask geometry,
+and overlays. Identities are scoped to a clip and camera; association across cameras
+or subtasks is not established. Missing/ambiguous points stay missing. Mask presence
+is a prediction, not verified visibility; geometric diagnostics are not confidence.
+
+These are **unreviewed features**, not automatically equivalent action instructions.
+Inspect overlays and split long semantic spans into action-consistent intervals before
+composing point/motion/trace commands. Object trajectories are not gripper trajectories.
+The paper trained DETR on 100 manually labeled Bridge gripper images; ReBot needs its
+own reviewed per-arm labels and a validated detector. Generic COCO DETR is insufficient.
+
 Extract features on a small diverse episode subset first. Each entry in the input
 feature JSON has `episode_index`, `start_frame`, `end_frame`, `subtask`, and
 `subtask_evidence`. Optional `motions` entries carry `text` and `evidence`. Optional
@@ -122,6 +159,14 @@ Segment motion changes before using it. It currently describes translations only
 rotation and gripper-state labels need additional validated extraction. No URDF or
 calibration is guessed. Image projection is not part of this helper.
 
+Seeed publishes the [B601-DM URDF](https://github.com/Seeed-Projects/reBot-DevArm/blob/b8286c70e67bd20623212d409cbf2c79322570bc/Rebot_Arm_description/DM/urdf/ReBot_Arm_DM.urdf).
+Its arm joints are `joint1`–`joint6`, base `base_link`, and tool `end_link`.
+Manufacturer CAN IDs 1–6 match LeRobot's shoulder pan/lift, elbow flex, wrist flex/yaw/roll
+order. LeRobot reports degrees. This establishes a nominal mapping, not the recorded
+physical zero pose or either arm's mounting frame. Verify those before using direction
+labels. The robot host is Madeleine. Inspect configuration files without calling the
+robot's `connect()`, which enables motors.
+
 Compose and review with:
 
 ```bash
@@ -133,7 +178,10 @@ uv run examples/rebot_agent/prepare_steering.py \
 
 The script uses `OPENAI_API_KEY`. It saves all reviews and an accepted-only manifest
 without rewriting the dataset. Rejected intervals become coverage gaps that must be
-fixed before training. The reviewer sees up to six timestamped frames per segment;
+fixed before training. `coverage.json` checks all dataset episodes and frames, including
+episodes absent from the feature input. Training checks coverage before sampling.
+Use `--resume` to reuse completed reviews with identical saved input features.
+The reviewer sees up to six timestamped frames per segment;
 this can miss short events, so manually audit overlays and command boundaries, and
 shorten segments where needed. Astra agreement is not ground truth. Offline review
 may inspect future demonstration frames; live planning receives only current images.
@@ -143,8 +191,8 @@ may inspect future demonstration frames; live planning receives only current ima
 Follow `examples/rebot_agent/README.md` for the science-cluster launcher. It supports
 one to four GPUs, BF16 DDP, a ten-step smoke test, and a full training run. It records
 the configuration, code revision, diff, and a copy of the reviewed manifest. Source
-dataset identity is pinned; capture the resolved base-model revision in the run's
-provenance before a production training run.
+dataset and native base weights/processor are pinned. `base_model_revision` is separate
+from the fine-tuned LeRobot checkpoint's revision.
 
 After validating checkpoint reload, add these flags to an existing calibrated
 ReBot rollout command with `--policy.path=/path/to/checkpoint`:
@@ -165,6 +213,12 @@ session. Use `--planner.log_path=...` to retain decisions and visible assessment
 Initially external planning supports only synchronous inference with `interpolation_multiplier=1`. API latency pauses
 action production, and cadence is configured in execution seconds rather than the
 paper's 20 environment steps. This timing difference needs physical measurement.
+
+After multi-style training, enable `task`, `subtask`, `motion`, `point`, and `combination`
+as validated. Keep gripper traces out of the default off-the-shelf planner: Appendix B
+excluded them because the VLM struggled to generate them. Trace labels can still serve
+policy training and controlled tests. Our original-pixel, named-camera command format
+adapts the paper's 0–255 convention; keep it consistent at training and inference.
 
 ## Validation milestone
 

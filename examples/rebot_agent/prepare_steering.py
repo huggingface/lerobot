@@ -17,6 +17,7 @@ import requests
 
 from lerobot.annotations.steerable_pipeline.frames import VideoFrameProvider
 from lerobot.annotations.steerable_pipeline.reader import iter_episodes
+from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.steering_commands import SteeringCommands
 from lerobot.rollout.planner import image_content
 
@@ -151,6 +152,9 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--model", default="gpt-6-astra")
     parser.add_argument("--api-base", default="https://api.openai.com/v1")
+    parser.add_argument(
+        "--resume", action="store_true", help="Reuse saved reviews for identical input features"
+    )
     args = parser.parse_args()
     features = json.loads(args.features.read_text())
     segments = [compose_segment(s) for s in features["segments"]]
@@ -159,25 +163,54 @@ def main():
     for span in validation:
         span["review"] = {"verdict": "accepted", "reviewer": "structural-check-only"}
     SteeringCommands({"version": 1, "source": features["source"], "segments": validation})
-    args.output.mkdir(parents=True, exist_ok=False)
+    source = json.loads((args.dataset_root / "source.json").read_text())
+    if any(source.get(key) != features["source"].get(key) for key in ("repo_id", "revision")):
+        raise ValueError("Dataset source.json differs from the feature source")
     records = {r.episode_index: r for r in iter_episodes(args.dataset_root)}
-    frames = VideoFrameProvider(args.dataset_root)
-    reviewed = []
     for segment in segments:
+        record = records[segment["episode_index"]]
+        if not set(range(segment["start_frame"], segment["end_frame"])).issubset(record.frame_indices):
+            raise ValueError("Feature interval contains absent source frames")
+    args.output.mkdir(parents=True, exist_ok=args.resume)
+    features_copy = args.output / "input_features.json"
+    if args.resume:
+        if not features_copy.exists() or json.loads(features_copy.read_text()) != features:
+            raise ValueError("Resume requires the identical saved input features")
+    else:
+        features_copy.write_text(json.dumps(features, indent=2) + "\n")
+    frames = VideoFrameProvider(args.dataset_root)
+    reviews_path = args.output / "reviews.json"
+    reviewed = json.loads(reviews_path.read_text()) if args.resume and reviews_path.exists() else []
+    if len(reviewed) > len(segments) or any(
+        {key: value for key, value in saved.items() if key != "review"} != segment
+        for saved, segment in zip(reviewed, segments, strict=False)
+    ):
+        raise ValueError("Saved reviews do not match the input segments")
+    for segment in segments[len(reviewed) :]:
         segment["review"] = review_segment(
             segment, records[segment["episode_index"]], frames, model=args.model, api_base=args.api_base
         )
         reviewed.append(segment)
-        (args.output / "reviews.json").write_text(json.dumps(reviewed, indent=2) + "\n")
+        temporary = reviews_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(reviewed, indent=2) + "\n")
+        temporary.replace(reviews_path)
     accepted = [s for s in reviewed if s["review"]["verdict"] == "accepted"]
     manifest = {"version": 1, "source": features["source"], "segments": accepted}
     (args.output / "steering_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    metadata = LeRobotDatasetMetadata(repo_id=features["source"]["repo_id"], root=args.dataset_root)
+    coverage = SteeringCommands(manifest).coverage(
+        {ep: int(metadata.episodes[ep]["length"]) for ep in range(metadata.total_episodes)}
+    )
+    (args.output / "coverage.json").write_text(json.dumps(coverage, indent=2) + "\n")
     print(
         json.dumps(
             {
                 "accepted": len(accepted),
                 "total": len(segments),
-                "coverage_complete": len(accepted) == len(segments),
+                "coverage_complete": coverage["complete"],
+                "covered_frames": coverage["covered_frames"],
+                "total_frames": coverage["total_frames"],
+                "gaps": len(coverage["gaps"]),
             }
         )
     )

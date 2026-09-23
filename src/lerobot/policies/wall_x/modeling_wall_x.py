@@ -1776,6 +1776,7 @@ class WallXPolicy(PreTrainedPolicy):
         # Initialize the wall-x model
         self.model = Qwen2_5_VLMoEForAction.from_pretrained(
             pretrained_name_or_path=config.pretrained_name_or_path,
+            revision=config.base_model_revision or "main",
             action_tokenizer_path=config.action_tokenizer_path,
             attn_implementation=config.attn_implementation,
             vision_attn_implementation=config.vision_attn_implementation,

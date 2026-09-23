@@ -76,6 +76,8 @@ class WallXConfig(PreTrainedConfig):
     # ==================== Action Prediction ====================
     # Pretrained model paths
     pretrained_name_or_path: str = "x-square-robot/wall-oss-flow"
+    # Native base weights/processor, separate from the fine-tuned LeRobot checkpoint revision.
+    base_model_revision: str | None = None
 
     # Tokenizer settings
     action_tokenizer_path: str | None = "lerobot/fast-action-tokenizer"

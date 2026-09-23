@@ -56,6 +56,29 @@ class SteeringCommands:
             raise ValueError(f"Missing reviewed steering commands for episode {episode}, frame {frame}")
         return spans[index]["commands"]
 
+    def coverage(self, episode_lengths: dict[int, int]) -> dict:
+        """Check every requested frame before training, including wholly absent episodes."""
+        gaps = []
+        covered = 0
+        for episode, length in episode_lengths.items():
+            cursor = 0
+            for span in self.episodes.get(episode, []):
+                start, end = span["start_frame"], span["end_frame"]
+                if end > length:
+                    raise ValueError(f"Steering interval exceeds episode {episode} length {length}")
+                if start > cursor:
+                    gaps.append({"episode_index": episode, "start_frame": cursor, "end_frame": start})
+                covered += end - start
+                cursor = end
+            if cursor < length:
+                gaps.append({"episode_index": episode, "start_frame": cursor, "end_frame": length})
+        return {
+            "complete": not gaps,
+            "covered_frames": covered,
+            "total_frames": sum(episode_lengths.values()),
+            "gaps": gaps,
+        }
+
     def sample(self, sample: dict, task_probability: float, *, deterministic: bool = False) -> dict:
         commands = self.at(int(sample["episode_index"]), int(sample["frame_index"]))
         # Training uses the worker-seeded RNG on every visit, like Bridge. Evaluation is frame-stable.
@@ -84,6 +107,12 @@ class SteeringCommandDataset(RecipeTaskDataset):
             or kwargs.get("revision") != self.steering.source["revision"]
         ):
             raise ValueError("Steering manifest does not match the pinned dataset")
+        episodes = self.episodes if self.episodes is not None else range(self.meta.total_episodes)
+        report = self.steering.coverage({ep: int(self.meta.episodes[ep]["length"]) for ep in episodes})
+        if not report["complete"]:
+            raise ValueError(
+                f"Missing reviewed steering coverage: {len(report['gaps'])} gaps; first: {report['gaps'][0]}"
+            )
         for spans in self.steering.episodes.values():
             for span in spans:
                 for command in span["commands"]:

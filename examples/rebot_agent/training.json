@@ -12,6 +12,7 @@
           "eval_split": 0.1
         },
         "policy": {
+          "base_model_revision": "44e827683819957d8c574e8b746a1a97e77f518a",
           "device": "cuda",
           "input_features": {},
           "output_features": {},

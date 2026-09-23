@@ -17,6 +17,9 @@ and evaluation evidence. Its success judgments remain distinct from operator lab
 ## Fixed context
 
 - Robot: bimanual ReBot B601, `bi_rebot_b601_follower`, diverse picking into a bin.
+- Robot host: `madeleine`. No separate joint calibration was supplied. Use Seeed's
+  official B601-DM URDF and verify the recording zero pose and mounting convention
+  before promoting nominal FK trajectories to training labels.
 - Dataset: `pepijn223/rebot_diverse_picking_100_annotated`, revision
   `93c97807c46535745d0587d4296416bf2d4aa80d`, 100 episodes, 30 Hz, 14 joint/gripper
   dimensions, base/left-wrist/right-wrist cameras. Subtask language is timestamped.
@@ -77,6 +80,10 @@ forward/backward, validation, checkpoint-save/reload smoke test on the GPU alloc
 before the full fine-tune. Confirm camera mapping, 14-dimensional actions, padding
 masks, finite losses, realized command mixture, and fixed held-out episode identities.
 Track the exact base model, code, data and annotation hashes, configuration, and output.
+
+Follow Appendix B's final off-the-shelf planner configuration: enable pointing and
+validated semantic/motion styles, but exclude gripper traces by default. Trace labels
+can still support VLA training and controlled steering tests.
 
 Deploy the checkpoint with main's `lerobot-rollout --interactive=true --inference.type=sync`
 and the external planner adapter. Astra selects among styles this checkpoint has

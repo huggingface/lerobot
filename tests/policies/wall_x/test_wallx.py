@@ -36,6 +36,7 @@ from lerobot.policies.wall_x.constant import WALL_X_PROMPT_SEGMENTS  # noqa: E40
 from lerobot.policies.wall_x.modeling_wall_x import Qwen2_5_VLMoEForAction, WallXPolicy  # noqa: E402
 from lerobot.policies.wall_x.processor_wall_x import (  # noqa: E402
     WallXPromptProcessorStep,
+    WallXTokenizerStep,
     make_wall_x_pre_post_processors,
 )
 from lerobot.policies.wall_x.qwen_model import Qwen2_5_VLMoEModel, Qwen2_5_VLTextConfig  # noqa: E402
@@ -368,6 +369,33 @@ def test_wall_x_loads_an_explicit_external_recipe(tmp_path):
 
     assert config.recipe is not None
     assert config.recipe["messages"] is not None
+
+
+def test_native_base_revision_is_separate_from_finetuned_checkpoint_revision(monkeypatch):
+    captured = {}
+
+    class Model(torch.nn.Module):
+        def to_bfloat16_for_selected_params(self):
+            pass
+
+    def load(**kwargs):
+        captured.update(kwargs)
+        return Model()
+
+    monkeypatch.setattr(Qwen2_5_VLMoEForAction, "from_pretrained", load)
+    config = WallXConfig(
+        device="cpu", base_model_revision="native-base-sha", pretrained_revision="finetuned-sha"
+    )
+    config.input_features = {
+        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(14,)),
+        "observation.images.base": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 480, 640)),
+    }
+    config.output_features = {"action": PolicyFeature(type=FeatureType.ACTION, shape=(14,))}
+    WallXPolicy(config)
+    preprocessor, _ = make_wall_x_pre_post_processors(config=config)
+    tokenizer = next(step for step in preprocessor.steps if isinstance(step, WallXTokenizerStep))
+    assert captured["revision"] == tokenizer.processor_revision == "native-base-sha"
+    assert config.pretrained_revision == "finetuned-sha"
 
 
 @require_cuda

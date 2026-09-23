@@ -26,7 +26,7 @@ uv run examples/rebot_agent/train_wall_oss_flow.py --gpus 4 --steering-manifest 
 
 Use a fresh output directory for each launch. Check finite losses, memory, held-out
 loss, and checkpoint reload after the smoke test before launching the full run.
-`training.json` pins the source dataset and configures WALL-OSS-Flow, using native
+`training.json` pins the dataset and native base-model revision and configures WALL-OSS-Flow, using native
 `policy.pretrained_name_or_path` initialization. The 14 ReBot dimensions are padded
 and masked internally. The full run defaults to 20,000 steps and batch one per GPU;
 these are starting settings that still require hardware validation.
@@ -54,8 +54,10 @@ observations. After `/start`, the external planner keeps the VLA idle until you 
 ```
 
 Astra observes and emits a command, the VLA acts, and Astra observes again. Extend
-`planner.styles` to `motion`, `point`, `trace`, and `combination` only for a checkpoint
-trained and validated on those styles. `/subtask <text>` switches to human language
+`planner.styles` to `motion`, `point`, and `combination` only for a checkpoint
+trained and validated on those styles. Following the paper's final planner, leave
+`trace` disabled by default; use it only in controlled, validated experiments.
+`/subtask <text>` switches to human language
 steering; `/reset` ends the segment; `/stop` closes the session. Planner failures,
 uncertainty, or a reported completion hold action production; resume with an explicit
 new `/autosteer` or `/subtask`. Completion is an assessment, not a verified success label.

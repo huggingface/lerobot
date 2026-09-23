@@ -80,6 +80,21 @@ def test_camera_scoped_points_keep_original_coordinate_frame():
         SteeringCommands(data)
 
 
+def test_coverage_detects_absent_episodes_holes_and_out_of_range_intervals():
+    index = SteeringCommands(manifest())
+    assert index.coverage({3: 5})["complete"]
+    report = index.coverage({3: 7, 4: 9})
+    assert not report["complete"]
+    assert report["covered_frames"] == 5
+    assert report["total_frames"] == 16
+    assert report["gaps"] == [
+        {"episode_index": 3, "start_frame": 5, "end_frame": 7},
+        {"episode_index": 4, "start_frame": 0, "end_frame": 9},
+    ]
+    with pytest.raises(ValueError, match="exceeds"):
+        index.coverage({3: 4})
+
+
 def test_fk_uses_calibrated_measured_joints_and_rejects_reversals(tmp_path):
     module = runpy.run_path(str(Path(__file__).parents[2] / "examples/rebot_agent/fk_motion.py"))
     urdf = tmp_path / "test.urdf"

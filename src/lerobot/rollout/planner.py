@@ -120,6 +120,7 @@ class VisionLanguagePlanner:
                 "Use only the allowed, trained styles. Task commands express the goal; subtasks express one semantic step; "
                 "motions describe arm-specific movement; points identify visible targets; traces describe a gripper path; "
                 "combinations join compatible styles. Name the left or right arm when relevant. "
+                "Unless trace is an allowed style, do not generate gripper paths, including in combinations. "
                 "For visual commands return the camera and ordered integer [x, y] points in original pixels, "
                 "separately from command wording. Do not put coordinates in the command string: the runtime inserts them. "
                 "For other commands use camera=null and points=[]. "
@@ -165,7 +166,16 @@ class VisionLanguagePlanner:
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a") as stream:
                 stream.write(
-                    json.dumps({"goal": goal, "session": session, "model": self.config.model, **decision})
+                    json.dumps(
+                        {
+                            "event": "planner_proposal",
+                            "response_id": result.get("id"),
+                            "goal": goal,
+                            "session": session,
+                            "model": self.config.model,
+                            **decision,
+                        }
+                    )
                     + "\n"
                 )
         if decision.get("status") != "continue":
@@ -176,6 +186,8 @@ class VisionLanguagePlanner:
             "points": decision.get("points", []),
         }
         if render["points"]:
+            if len(render["points"]) > 1 and "trace" not in self.config.styles:
+                raise ValueError("Multi-point paths require explicitly enabled trace steering")
             camera = decision.get("camera")
             if camera not in self.config.camera_keys:
                 raise ValueError("Planner selected an unknown camera")

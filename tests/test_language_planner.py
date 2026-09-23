@@ -96,6 +96,10 @@ def test_planner_sends_named_images_and_bounded_history_without_action_tools(mon
     decision["points"] = [[64, 24]]
     with pytest.raises(ValueError, match="outside"):
         planner(obs, "goal", 2)
+    planner.config.styles.append("combination")
+    decision.update(style="combination", points=[[32, 24], [33, 25]])
+    with pytest.raises(ValueError, match="trace steering"):
+        planner(obs, "goal", 2)
 
 
 def test_four_gpu_training_config_uses_main_parser(tmp_path):
@@ -103,6 +107,7 @@ def test_four_gpu_training_config_uses_main_parser(tmp_path):
     config, argv = module["prepare_run"](tmp_path, 4, 1, True)
     parsed = draccus.decode(TrainPipelineConfig, config)
     assert parsed.policy.type == "wall_x"
+    assert parsed.policy.base_model_revision == "44e827683819957d8c574e8b746a1a97e77f518a"
     assert parsed.policy.recipe["messages"][0]["stream"] == "low_level"
     assert parsed.steps == parsed.eval_steps == parsed.save_freq == 10
     assert "--nproc-per-node=4" in argv

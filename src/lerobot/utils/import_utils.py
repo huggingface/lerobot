@@ -150,6 +150,7 @@ _av_available = is_package_available("av")
 _pynput_available = is_package_available("pynput")
 _pygame_available = is_package_available("pygame")
 _qwen_vl_utils_available = is_package_available("qwen-vl-utils", import_name="qwen_vl_utils")
+_sam2_available = is_package_available("SAM-2", import_name="sam2")
 _grpc_available = is_package_available("grpcio", import_name="grpc")
 _wallx_deps_available = (
     _transformers_available and _peft_available and _torchdiffeq_available and _qwen_vl_utils_available

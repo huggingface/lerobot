@@ -100,7 +100,7 @@ def make_wall_x_pre_post_processors(
         WallXPromptProcessorStep(image_keys=list(config.image_features), chunk_size=config.chunk_size),
         WallXTokenizerStep(
             processor_name=config.pretrained_name_or_path,
-            processor_revision=config.pretrained_revision,
+            processor_revision=config.base_model_revision or config.pretrained_revision,
             action_tokenizer_name=config.action_tokenizer_path,
             image_keys=list(config.image_features),
             chunk_size=config.chunk_size,
