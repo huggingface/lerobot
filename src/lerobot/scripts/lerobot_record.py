@@ -110,11 +110,14 @@ from lerobot.datasets import (
     safe_stop_image_writer,
 )
 from lerobot.processor import (
+    DataProcessorPipeline,
+    IdentityProcessorStep,
     RobotAction,
     RobotObservation,
     RobotProcessorPipeline,
     make_default_processors,
 )
+from lerobot.processor.converters import robot_action_observation_to_transition, transition_to_robot_action
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -287,6 +290,18 @@ def record_loop(
     if timer is None:
         timer = CycleTimer(fps, records_data=dataset is not None)
 
+    # Only the canonical identity robot-action pipeline preserves the recording
+    # representation. Matching field names is not enough: a processor can keep
+    # the same keys while changing units or semantics.
+    record_sent_action = (
+        type(robot_action_processor) is DataProcessorPipeline
+        and all(type(step) is IdentityProcessorStep for step in robot_action_processor.steps)
+        and robot_action_processor.to_transition is robot_action_observation_to_transition
+        and robot_action_processor.to_output is transition_to_robot_action
+        and not robot_action_processor.before_step_hooks
+        and not robot_action_processor.after_step_hooks
+    )
+
     no_action_count = 0
     timestamp = 0
     start_episode_t = time.perf_counter()
@@ -354,24 +369,10 @@ def record_loop(
             # the hardware boundary.
             sent_action = robot.send_action(robot_action_to_send)
 
-        # The dataset schema is defined by the recording-side processor. Some
-        # configurations (for example end-effector teleoperation) transform that
-        # representation again before sending joint commands to the robot. Use
-        # the returned command only when it can populate the configured action
-        # schema; otherwise preserve the recording representation.
-        recorded_action = sent_action
+        # Preserve the recording representation unless the robot processor is
+        # known to leave it unchanged. Matching field names cannot establish units.
+        recorded_action = sent_action if record_sent_action else action_values
         if dataset is not None:
-            required_action_names = {
-                name
-                for key, feature in dataset.features.items()
-                if key.startswith(ACTION)
-                and feature["dtype"] == "float32"
-                and len(feature["shape"]) == 1
-                for name in feature["names"]
-            }
-            if not required_action_names.issubset(sent_action):
-                recorded_action = action_values
-
             with timer.section("record"):
                 action_frame = build_dataset_frame(dataset.features, recorded_action, prefix=ACTION)
                 frame = {**observation_frame, **action_frame, "task": single_task}
