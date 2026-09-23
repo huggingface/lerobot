@@ -891,7 +891,7 @@ choices = {
     for registry in (OptimizerConfig, LRSchedulerConfig)
 }
 tables = {registry.__name__: registry.POLICY_CHOICES for registry in (OptimizerConfig, LRSchedulerConfig)}
-step_table = {n: "lerobot." + m for n, m in BUILTIN_STEP_MODULES.items()}
+step_table = {n: "lerobot." + m for n, m in BUILTIN_STEP_MODULES.items() if m.startswith("policies.")}
 print(json.dumps([steps, step_table, choices, tables, renamed, BUILTIN_POLICY_PACKAGES]))
 """
     result = run_python(code)

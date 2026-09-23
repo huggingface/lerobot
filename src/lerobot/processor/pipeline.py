@@ -40,17 +40,14 @@ from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar, TypedDict, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, TypeVar, cast
 
-import torch
 from huggingface_hub import hf_hub_download, snapshot_download
-from safetensors.torch import load_file, save_file
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import (
     EnvAction,
     EnvTransition,
-    PolicyAction,
     RobotAction,
     RobotObservation,
     TransitionKey,
@@ -61,10 +58,16 @@ from lerobot.utils.import_utils import import_on_demand
 
 from .converters import batch_to_transition, create_transition, transition_to_batch
 
-# The step names the policy packages register, each with the module under `lerobot.` that registers it, so a
-# name can be looked up without importing every policy. A class from another module that registers one of these
-# names gets a "reserved" error until `unregister` releases the name.
-# tests/configs/test_policy_registration.py keeps it in sync.
+if TYPE_CHECKING:
+    import torch
+
+    from lerobot.lerobot_types import PolicyAction
+
+# The step names that lerobot.processor and the policy packages register, each with the module under
+# `lerobot.` that registers it, so a name can be looked up without importing every module (most import
+# torch). A class from another module that registers one of these names gets a "reserved" error until
+# `unregister` releases the name. tests/configs/test_policy_registration.py and
+# tests/processor/test_pipeline.py keep it in sync.
 BUILTIN_STEP_MODULES = {
     "cosmos3_idle_frame_processor": "policies.cosmos3.processor_cosmos3",
     "cosmos3_libero_action_processor": "policies.cosmos3.processor_cosmos3",
@@ -149,6 +152,39 @@ BUILTIN_STEP_MODULES = {
     "xvla_image_to_float": "policies.xvla.processor_xvla",
     "xvla_imagenet_normalize": "policies.xvla.processor_xvla",
     "xvla_rotation_6d_to_axis_angle": "policies.xvla.processor_xvla",
+    "to_batch_processor": "processor.batch_processor",
+    "to_batch_processor_action": "processor.batch_processor",
+    "to_batch_processor_complementary_data": "processor.batch_processor",
+    "to_batch_processor_observation": "processor.batch_processor",
+    "map_delta_action_to_robot_action": "processor.delta_action_processor",
+    "map_tensor_to_delta_action_dict": "processor.delta_action_processor",
+    "device_processor": "processor.device_processor",
+    "isaaclab_arena_processor": "processor.env_processor",
+    "libero_processor": "processor.env_processor",
+    "numpy2torch_action_processor": "processor.gym_action_processor",
+    "torch2numpy_action_processor": "processor.gym_action_processor",
+    "add_teleop_action_as_complementary_data": "processor.hil_processor",
+    "add_teleop_action_as_info": "processor.hil_processor",
+    "gripper_penalty_processor": "processor.hil_processor",
+    "gym_hil_adapter_processor": "processor.hil_processor",
+    "image_crop_resize_processor": "processor.hil_processor",
+    "intervention_action_processor": "processor.hil_processor",
+    "reward_classifier_processor": "processor.hil_processor",
+    "time_limit_processor": "processor.hil_processor",
+    "image_augmentation_processor": "processor.image_augmentation_processor",
+    "smolvla_new_line_processor": "processor.newline_task_processor",
+    "normalizer_processor": "processor.normalize_processor",
+    "unnormalizer_processor": "processor.normalize_processor",
+    "observation_processor": "processor.observation_processor",
+    "policy_action_to_robot_action_processor": "processor.policy_robot_bridge",
+    "robot_action_to_policy_action_processor": "processor.policy_robot_bridge",
+    "absolute_actions_processor": "processor.relative_action_processor",
+    "relative_actions_processor": "processor.relative_action_processor",
+    "rename_observations_processor": "processor.rename_processor",
+    "render_runtime_messages_processor": "processor.render_messages_processor",
+    "render_training_messages_processor": "processor.render_messages_processor",
+    "action_tokenizer_processor": "processor.tokenizer_processor",
+    "tokenizer_processor": "processor.tokenizer_processor",
 }
 
 # Generic type variables for pipeline input and output.
@@ -283,7 +319,8 @@ class ProcessorStepRegistry:
     def clear(cls) -> None:
         """Clears all processor steps from the registry.
 
-        Built-in names given up with `unregister` are reserved again.
+        Built-in names given up with `unregister` are reserved again. A built-in step whose module is not
+        imported yet registers again the first time its name is used.
         """
         cls._registry.clear()
         cls._released.clear()
@@ -728,6 +765,9 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                 step_entry["artifacts"] = artifacts
 
         for state_key, step_state_dict in pipeline_state_dict.items():
+            # Imported here, so saving a pipeline without state does not load torch.
+            from safetensors.torch import save_file
+
             state_filename = f"{state_key}.safetensors"
             save_file(step_state_dict, save_directory / state_filename)
 
@@ -1492,6 +1532,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                 **hub_download_kwargs,
             )
 
+        from safetensors.torch import load_file
+
         step_instance.load_state_dict(load_file(state_path))
 
     @classmethod
@@ -2124,6 +2166,8 @@ class PolicyActionProcessorStep(ProcessorStep, ABC):
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Applies the `action` method to the transition's action, ensuring it's a `PolicyAction`."""
+        import torch
+
         self._current_transition = transition.copy()
         new_transition = self._current_transition
 
