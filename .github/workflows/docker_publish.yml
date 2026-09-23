@@ -14,8 +14,6 @@
 
 # This workflow handles Docker image publishing & testing.
 name: Docker Publish & Test
-permissions:
-  contents: read
 
 on:
   # Allows running this workflow manually from the Actions tab
@@ -37,9 +35,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
   # This job builds a CPU image for testing & distribution
   build-docker-cpu:
+    permissions:
+      contents: read
     name: Build CPU Docker
     runs-on:
       group: aws-general-8-plus
@@ -75,6 +77,8 @@ jobs:
 
   # This job builds a GPU image for testing & distribution
   build-docker-gpu:
+    permissions:
+      contents: read
     name: Build GPU Docker
     runs-on:
       group: aws-general-8-plus
@@ -110,6 +114,7 @@ jobs:
 
   # This job runs the E2E tests + pytest with all extras in the CPU image
   cpu-tests:
+    permissions: {}
     name: CPU Tests
     needs: [build-docker-cpu]
     runs-on:
@@ -143,6 +148,7 @@ jobs:
 
   # This job runs the E2E tests + pytest with all extras in the GPU image
   gpu-tests:
+    permissions: {}
     name: GPU Tests
     needs: [build-docker-gpu]
     runs-on:
@@ -176,6 +182,7 @@ jobs:
 
   # This job runs multi-GPU training tests with 4 GPUs
   multi-gpu-tests:
+    permissions: {}
     name: Multi-GPU Tests
     needs: [build-docker-gpu]
     runs-on:
