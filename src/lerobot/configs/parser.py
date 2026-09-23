@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import contextlib
+import dataclasses
 import importlib
 import inspect
 import json
@@ -23,7 +25,7 @@ from functools import wraps
 from pathlib import Path
 from pkgutil import ModuleInfo
 from types import ModuleType
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar, cast, get_args, get_type_hints
 
 import draccus
 import yaml  # type: ignore[import-untyped]
@@ -204,6 +206,37 @@ def get_yaml_overrides(field_name: str) -> list[str]:
 
 def get_type_arg(field_name: str, args: Sequence[str] | None = None) -> str | None:
     return parse_arg(f"{field_name}.{draccus.CHOICE_TYPE_KEY}", args)
+
+
+def load_selected_choices(config_class: type, cli_args: Sequence[str], config_path: str | None) -> None:
+    """Look up the choice named by each `<field>.type`, given on the command line or in the config file,
+    before draccus builds its parser, so a registry that loads its choices on demand has registered it.
+    For `--help` without a type, or a name it does not know, such a registry loads all its choices, so the
+    help or draccus's error lists them."""
+    show_help = "--help" in cli_args or "-h" in cli_args
+    file_config: dict[str, Any] = {}
+    if (
+        config_path
+        and Path(config_path).suffix.lower() in (".json", ".yaml", ".yml")
+        and Path(config_path).is_file()
+    ):
+        with open(config_path) as f:
+            file_config = yaml.safe_load(f) or {}
+    hints = get_type_hints(config_class)
+    for field in dataclasses.fields(config_class):
+        name = get_type_arg(field.name, cli_args)
+        if name is None and isinstance(file_config.get(field.name), dict):
+            name = file_config[field.name].get(draccus.CHOICE_TYPE_KEY)
+        for choice_type in get_args(hints[field.name]) or (hints[field.name],):
+            if not draccus.utils.is_choice_type(choice_type):
+                continue
+            if name is not None:
+                with contextlib.suppress(KeyError):
+                    choice_type.get_choice_class(name)
+            unknown = name is not None and name not in choice_type.get_known_choices()
+            if (unknown or (name is None and show_help)) and hasattr(choice_type, "load_all_choices"):
+                # Load every choice, so draccus lists them all in the help or in its unknown-name error.
+                choice_type.load_all_choices()
 
 
 def _register_scoped_actions(
@@ -408,6 +441,7 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
                         # add the relevant CLI arg to the error message
                         raise PluginLoadError(f"{e}\nFailed plugin CLI Arg: {plugin_cli_arg}") from e
                     cli_args = filter_arg(plugin_cli_arg, cli_args)
+                load_selected_choices(argtype, cli_args, parse_arg("config_path", cli_args))
                 if "--help" in cli_args or "-h" in cli_args:
                     print_scoped_help(argtype, cli_args)
                     sys.exit(0)

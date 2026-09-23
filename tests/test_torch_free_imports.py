@@ -66,6 +66,8 @@ if attempts:
         "lerobot.scripts.lerobot_find_port",
         "lerobot.scripts.lerobot_setup_can",
         "lerobot.scripts.lerobot_setup_motors",
+        "lerobot.configs",
+        "lerobot.policies",
     ],
 )
 def test_imports_without_torch(module):
