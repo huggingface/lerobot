@@ -6,6 +6,8 @@ import math
 
 
 def render_steering_command(command: dict) -> str:
+    if "points_by_frame" in command:
+        raise ValueError("Resolve points_by_frame to the sampled frame before rendering")
     text = command["text"]
     if not isinstance(text, str) or not text.strip() or len(text) > 1000:
         raise ValueError("Steering text must contain 1–1000 characters")

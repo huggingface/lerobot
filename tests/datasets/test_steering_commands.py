@@ -118,6 +118,134 @@ def test_camera_scoped_points_keep_original_coordinate_frame():
         SteeringCommands(data)
 
 
+def moving_point_manifest():
+    data = manifest()
+    data["segments"][0]["commands"] = [
+        {
+            "style": "point",
+            "text": "pick at the first point and place at the second point",
+            "evidence": {"source": "reviewed object tracks"},
+            "camera": "observation.images.base",
+            "image_size": [640, 480],
+            "points_by_frame": {str(frame): [[100 + frame, 200], [300, 150]] for frame in range(5)},
+        }
+    ]
+    return data
+
+
+def test_moving_points_follow_sample_frame_without_shortening_action_chunk():
+    data = moving_point_manifest()
+    before = copy.deepcopy(data)
+    index = SteeringCommands(data)
+    action = torch.arange(56).reshape(4, 14).float()
+    for frame in (1, 2):
+        sample = {"index": frame, "episode_index": 3, "frame_index": frame, "task": "task", "action": action}
+        result = index.sample(sample, 0, deterministic=True, action_offsets=[0, 1, 2, 3])
+        assert f"[{100 + frame}, 200], [300, 150]" in result["task"]
+        assert result["action"] is action
+        assert result["action_is_pad"].tolist() == [False, False, False, frame == 2]
+        assert index.at(3, frame)[0]["points"] == [[100 + frame, 200], [300, 150]]
+    assert data == before
+    profile = index.annotation_profile()
+    assert profile["coordinate_frames_by_camera_style"]["observation.images.base"]["point"] == 5
+    assert profile["expected_style_fraction_given_steering"]["point"] == 1
+
+
+@pytest.mark.parametrize("bad_frame", [None, [], [[640, 200]], [[float("nan"), 200]]])
+def test_missing_or_invalid_moving_geometry_is_never_filled(bad_frame):
+    data = moving_point_manifest()
+    data["segments"][0]["commands"][0]["points_by_frame"]["2"] = bad_frame
+    with pytest.raises(ValueError):
+        SteeringCommands(data)
+
+
+def test_moving_geometry_rejects_wrong_frames_and_unresolved_rendering():
+    from lerobot.utils.steering import render_steering_command
+
+    for removed, added in [("2", None), ("2", "5"), ("2", "02"), ("2", 2)]:
+        data = moving_point_manifest()
+        series = data["segments"][0]["commands"][0]["points_by_frame"]
+        points = series.pop(removed)
+        if added is not None:
+            series[added] = points
+        with pytest.raises(ValueError, match="exactly every frame"):
+            SteeringCommands(data)
+    data = moving_point_manifest()
+    command = data["segments"][0]["commands"][0]
+    with pytest.raises(ValueError, match="Resolve"):
+        render_steering_command({**command, "style": "combination"})
+    command["points"] = [[1, 2]]
+    with pytest.raises(ValueError, match="either static"):
+        SteeringCommands(data)
+    data = moving_point_manifest()
+    data["segments"][0]["commands"][0]["points_by_frame"]["2"] = [[100, 200]]
+    with pytest.raises(ValueError, match="same target count"):
+        SteeringCommands(data)
+
+
+@pytest.mark.parametrize("shape", [[480, 640, 3], [240, 320, 3]])
+def test_moving_coordinates_check_actual_dataset_camera_shape(monkeypatch, tmp_path, shape):
+    path = tmp_path / "moving.json"
+    path.write_text(json.dumps(moving_point_manifest()))
+
+    def init(dataset, repo_id, **kwargs):
+        dataset.repo_id = repo_id
+        dataset.episodes = [3]
+        dataset.delta_timestamps = None
+        dataset.meta = SimpleNamespace(
+            fps=30,
+            episodes={3: {"length": 5}},
+            features={"observation.images.base": {"shape": shape}},
+        )
+
+    monkeypatch.setattr("lerobot.datasets.language_task.RecipeTaskDataset.__init__", init)
+    if shape == [240, 320, 3]:
+        with pytest.raises(ValueError, match="camera dimensions"):
+            SteeringCommandDataset("test/data", revision="abc", steering_manifest=str(path))
+    else:
+        dataset = SteeringCommandDataset("test/data", revision="abc", steering_manifest=str(path))
+        assert dataset.steering_coverage["expected_style_fraction"]["point"] == 0.8
+
+
+def test_composition_keeps_per_frame_geometry_for_targets_traces_and_combinations():
+    compose = runpy.run_path(str(Path(__file__).parents[2] / "examples/rebot_agent/prepare_steering.py"))[
+        "compose_segment"
+    ]
+    series = {"0": [[100, 200], [300, 150]], "1": [[110, 210], [300, 150]]}
+    features = {
+        "episode_index": 3,
+        "start_frame": 0,
+        "end_frame": 2,
+        "subtask": "place tape in bin",
+        "subtask_evidence": "video",
+        "views": [
+            {
+                "camera": "observation.images.base",
+                "image_size": [640, 480],
+                "targets": [
+                    {"points_by_frame": series, "instruction": "pick and place", "evidence": "tracks"}
+                ],
+                "traces": [{"points_by_frame": series, "arm": "left", "evidence": "gripper tracks"}],
+            }
+        ],
+    }
+    before = copy.deepcopy(features)
+    segment = compose(features)
+    assert features == before
+    assert [c["style"] for c in segment["commands"]] == [
+        "subtask",
+        "point",
+        "combination",
+        "trace",
+        "combination",
+    ]
+    assert all(c["points_by_frame"] == series and "points" not in c for c in segment["commands"][1:])
+    segment["review"] = {"verdict": "accepted", "reviewer": "test-only"}
+    data = manifest()
+    data["segments"] = [segment]
+    assert all(c["points"] == series["1"] for c in SteeringCommands(data).at(3, 1)[1:])
+
+
 @pytest.mark.parametrize("geometry", [{"point": [100, 200]}, {"points": [[100, 200], [300, 150]]}])
 def test_composition_preserves_target_order_and_combined_grounding(geometry):
     compose = runpy.run_path(str(Path(__file__).parents[2] / "examples/rebot_agent/prepare_steering.py"))[

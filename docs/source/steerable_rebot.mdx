@@ -356,6 +356,23 @@ does not establish that a pick-and-place occurred, and coordinates from one fram
 must not be reused across intervals where their targets move. Existing `point`
 features remain supported. Supplying both `point` and `points` is rejected.
 
+For targets that move within an action-consistent interval, use `points_by_frame`
+instead of static `point` or `points`. It maps every absolute episode frame index
+(as a JSON string) to that observation's ordered pixel pairs, for example
+`{"120": [[100, 200], [300, 150]], "121": [[104, 202], [300, 150]]}` for interval
+`[120, 122)`. The first pair can follow the picked object while the second follows
+the destination. Targets, gripper traces, and their combined commands support this
+format. Preserve object/arm identity and ordering across every entry.
+
+Training resolves geometry at the sampled frame while keeping the original reviewed
+interval for action-chunk masking. It does not split a moving target into one-frame
+action targets or reuse its first-frame coordinates. Missing, empty, extra, or
+out-of-image entries fail validation; split intervals at unsupported visibility gaps
+and review the available alternatives instead of interpolating coordinates. Static
+and per-frame geometry cannot be supplied together. The annotation profile and camera
+dimension checks include both forms. Per-frame geometry remains extracted evidence,
+not annotation approval; all generated commands still require attributed review.
+
 ```bash
 uv run examples/rebot_agent/prepare_steering.py \
   --features /path/to/grounded_features.json \

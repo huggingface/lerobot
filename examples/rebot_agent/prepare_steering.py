@@ -37,15 +37,19 @@ def compose_segment(features: dict) -> dict:
     for view in features.get("views", []):
         common = {k: view[k] for k in ("camera", "image_size")}
         for target in view.get("targets", []):
-            if ("point" in target) == ("points" in target):
-                raise ValueError("A target command needs either one point or an ordered points list")
-            points = target["points"] if "points" in target else [target["point"]]
+            if sum(key in target for key in ("point", "points", "points_by_frame")) != 1:
+                raise ValueError("A target needs either one point, ordered points, or points_by_frame")
+            geometry = (
+                {"points_by_frame": target["points_by_frame"]}
+                if "points_by_frame" in target
+                else {"points": target["points"] if "points" in target else [target["point"]]}
+            )
             commands.append(
                 {
                     **common,
                     "style": "point",
                     "text": target["instruction"],
-                    "points": points,
+                    **geometry,
                     "evidence": target["evidence"],
                 }
             )
@@ -54,12 +58,16 @@ def compose_segment(features: dict) -> dict:
                     **common,
                     "style": "combination",
                     "text": f"{features['subtask']}; {target['instruction']}",
-                    "points": points,
+                    **geometry,
                     "evidence": [features["subtask_evidence"], target["evidence"]],
                 }
             )
         for trace in view.get("traces", []):
-            if trace["arm"] not in ("left", "right") or len(trace["points"]) < 2:
+            if ("points" in trace) == ("points_by_frame" in trace):
+                raise ValueError("A trace needs either points or points_by_frame")
+            geometry = {key: trace[key] for key in ("points", "points_by_frame") if key in trace}
+            paths = trace["points_by_frame"].values() if "points_by_frame" in trace else [trace["points"]]
+            if trace["arm"] not in ("left", "right") or any(len(points) < 2 for points in paths):
                 raise ValueError("A ReBot trace needs an arm and at least two ordered points")
             text = f"move the {trace['arm']} gripper along"
             commands.append(
@@ -67,7 +75,7 @@ def compose_segment(features: dict) -> dict:
                     **common,
                     "style": "trace",
                     "text": text,
-                    "points": trace["points"],
+                    **geometry,
                     "evidence": trace["evidence"],
                 }
             )
@@ -76,7 +84,7 @@ def compose_segment(features: dict) -> dict:
                     **common,
                     "style": "combination",
                     "text": f"{features['subtask']}; {text}",
-                    "points": trace["points"],
+                    **geometry,
                     "evidence": [features["subtask_evidence"], trace["evidence"]],
                 }
             )

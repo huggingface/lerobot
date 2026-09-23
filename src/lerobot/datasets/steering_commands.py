@@ -19,6 +19,15 @@ from .language_task import RecipeTaskDataset
 STYLES = {"subtask", "motion", "point", "trace", "combination"}
 
 
+def _command_at_frame(command: dict, frame: int) -> dict:
+    if "points_by_frame" not in command:
+        return command
+    return {
+        **{key: value for key, value in command.items() if key != "points_by_frame"},
+        "points": command["points_by_frame"][str(frame)],
+    }
+
+
 def _validate_fk_evidence(evidence):
     """A visual command review cannot establish unknown encoder zeros or base axes."""
     if isinstance(evidence, list):
@@ -59,7 +68,23 @@ class SteeringCommands:
                 if not command.get("evidence"):
                     raise ValueError("Each steering command needs grounding provenance")
                 _validate_fk_evidence(command["evidence"])
-                render_steering_command(command)
+                if "points_by_frame" in command:
+                    geometry = command["points_by_frame"]
+                    if "points" in command or not isinstance(geometry, dict):
+                        raise ValueError("Use either static points or a points_by_frame mapping")
+                    if set(geometry) != {str(frame) for frame in range(start, end)}:
+                        raise ValueError("points_by_frame must cover exactly every frame of its interval")
+                    for frame in range(start, end):
+                        if not geometry[str(frame)]:
+                            raise ValueError("Missing per-frame geometry; split or review the interval")
+                        render_steering_command(_command_at_frame(command, frame))
+                    if (
+                        command["style"] == "point"
+                        and len({len(points) for points in geometry.values()}) != 1
+                    ):
+                        raise ValueError("Per-frame pointing must keep the same target count and ordering")
+                else:
+                    render_steering_command(command)
             self.episodes.setdefault(episode, []).append(span)
         for episode, spans in self.episodes.items():
             spans.sort(key=lambda s: s["start_frame"])
@@ -75,7 +100,7 @@ class SteeringCommands:
         return spans[index]
 
     def at(self, episode: int, frame: int) -> list[dict]:
-        return self.span_at(episode, frame)["commands"]
+        return [_command_at_frame(command, frame) for command in self.span_at(episode, frame)["commands"]]
 
     def annotation_profile(self, episodes=None) -> dict:
         """Describe labels and expected command sampling, not learned robot capabilities."""
@@ -98,7 +123,7 @@ class SteeringCommands:
                 for camera, style in {
                     (command["camera"], command["style"])
                     for command in span["commands"]
-                    if command.get("points")
+                    if command.get("points") or command.get("points_by_frame")
                 }:
                     camera_frames.setdefault(camera, dict.fromkeys(frames, 0))[style] += length
         return {
@@ -156,7 +181,7 @@ class SteeringCommands:
         result = dict(sample)
         if not use_task:
             index = int(rng.integers(len(commands))) if deterministic else int(rng.randint(len(commands)))
-            result["task"] = render_steering_command(commands[index])
+            result["task"] = render_steering_command(_command_at_frame(commands[index], frame))
         if action_offsets is not None:
             action = sample["action"]
             if not isinstance(action, torch.Tensor) or action.ndim not in (1, 2):
@@ -235,7 +260,7 @@ class SteeringCommandDataset(RecipeTaskDataset):
         for spans in self.steering.episodes.values():
             for span in spans:
                 for command in span["commands"]:
-                    if command.get("points"):
+                    if command.get("points") or command.get("points_by_frame"):
                         feature = self.meta.features.get(command["camera"], {})
                         width, height = command["image_size"]
                         if tuple(feature.get("shape", ())) != (height, width, 3):
