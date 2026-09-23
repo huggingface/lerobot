@@ -143,6 +143,7 @@ def test_fk_uses_calibrated_measured_joints_and_rejects_reversals(tmp_path):
         "calibration": "test calibration",
         "frame": "left_base",
         "urdf": str(urdf),
+        "calibration_status": "verified",
         "joint_names": ["joint"],
         "state_keys": ["left.joint"],
         "signs": [-1],
@@ -162,8 +163,42 @@ def test_fk_uses_calibrated_measured_joints_and_rejects_reversals(tmp_path):
     motion = extract([[0], [np.pi / 2]], ["left.joint"], config, kinematics=Kinematics())
     assert motion[0]["text"] == "move the left gripper left"
     assert motion[0]["evidence"]["displacement_m"][0] == pytest.approx(-0.9)
+    assert motion[0]["evidence"]["calibration_status"] == "verified"
+    assert motion[0]["evidence"]["joint_mapping"]["units"] == "radians"
+    assert motion[0]["evidence"]["joint_mapping"]["offset_degrees"] == [10]
     with pytest.raises(ValueError, match="reversing"):
         extract([[0], [np.pi / 2], [0.1]], ["left.joint"], config, kinematics=Kinematics())
+    for status in ("unverified", None):
+        config["calibration_status"] = status
+        with pytest.raises(ValueError, match="verified calibration"):
+            extract([[0], [np.pi / 2]], ["left.joint"], config, kinematics=Kinematics())
+        positions = module["measured_positions"](
+            [[0], [np.pi / 2]], ["left.joint"], config, kinematics=Kinematics()
+        )
+        assert positions[-1, 0] - positions[0, 0] == pytest.approx(-0.9)
+
+
+@pytest.mark.parametrize("style", ["motion", "combination"])
+@pytest.mark.parametrize("status", [None, "unverified", "verified"])
+def test_accepted_visual_review_does_not_override_fk_calibration(style, status):
+    data = manifest()
+    evidence = {
+        "method": "measured-joint FK",
+        "calibration": "fixture calibration",
+        "calibration_status": status,
+    }
+    data["segments"][0]["commands"] = [
+        {
+            "style": style,
+            "text": "move the left gripper upward",
+            "evidence": evidence if style == "motion" else ["fixture video", [evidence]],
+        }
+    ]
+    if status == "verified":
+        SteeringCommands(data)
+    else:
+        with pytest.raises(ValueError, match="verified calibration"):
+            SteeringCommands(data)
 
 
 def test_annotation_profile_weights_frames_and_variants_and_excludes_other_episodes():

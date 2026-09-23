@@ -259,12 +259,24 @@ points from the task description is not equivalent.
 
 `fk_motion.extract_motion` accepts measured state trajectories, state feature names,
 and explicit `arm`, `units`, `urdf`, `joint_names`, `state_keys`, `signs`,
-`offset_degrees`, `tool_frame`, `frame`, `calibration`, `deadband_m`, and three
+`offset_degrees`, `tool_frame`, `frame`, `calibration`, `calibration_status`, `deadband_m`, and three
 `axis_directions` mappings (`positive`/`negative`). It converts units, runs FK, rejects
-substantial reversals, and returns motion entries with displacement and URDF hash.
+substantial reversals, and returns motion entries with displacement, URDF hash,
+joint mapping, axis conventions, and calibration provenance. Emitting language labels
+requires `calibration_status="verified"`: verify the recording's joint signs/zeros
+and the named base-frame axis-to-language convention, not just the URDF filename.
+The training command loader also rejects missing/unverified calibration on FK
+evidence, including evidence nested in combined commands. A VLM accepting the
+visible command does not override this requirement. Use `measured_positions` and
+the segmentation CLI for nominal, explicitly unverified diagnostic calculations.
 It currently describes translations only; rotations and open/closed gripper labels
 need additional validated extraction. No URDF or calibration is guessed. Image
 projection is not part of this helper.
+
+The ReBot B601 driver's calibration routine sets zero positions inside each motor
+and then saves `homing_offset=0` in its calibration metadata. Finding that file
+alone does not establish the physical zero pose used for earlier recordings.
+Validate the recorded setup; do not recalibrate or move the arms to inspect it.
 
 The same file provides offline `segment_motion` and a CLI to find interval candidates:
 

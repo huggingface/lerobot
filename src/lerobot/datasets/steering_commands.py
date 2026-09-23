@@ -19,6 +19,19 @@ from .language_task import RecipeTaskDataset
 STYLES = {"subtask", "motion", "point", "trace", "combination"}
 
 
+def _validate_fk_evidence(evidence):
+    """A visual command review cannot establish unknown encoder zeros or base axes."""
+    if isinstance(evidence, list):
+        for source in evidence:
+            _validate_fk_evidence(source)
+    elif (
+        isinstance(evidence, dict)
+        and evidence.get("method") == "measured-joint FK"
+        and (evidence.get("calibration_status") != "verified" or not evidence.get("calibration"))
+    ):
+        raise ValueError("FK steering commands require verified calibration provenance")
+
+
 class SteeringCommands:
     """Index half-open frame intervals; every alternative labels the same demonstrated actions."""
 
@@ -45,6 +58,7 @@ class SteeringCommands:
                     raise ValueError("Invalid steering command")
                 if not command.get("evidence"):
                     raise ValueError("Each steering command needs grounding provenance")
+                _validate_fk_evidence(command["evidence"])
                 render_steering_command(command)
             self.episodes.setdefault(episode, []).append(span)
         for episode, spans in self.episodes.items():

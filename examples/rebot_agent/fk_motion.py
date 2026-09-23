@@ -65,6 +65,10 @@ def measured_positions(states, state_names: list[str], config: dict, *, kinemati
 
 def extract_motion(states, state_names: list[str], config: dict, *, kinematics=None) -> list[dict]:
     """Return measured Cartesian direction labels in the explicitly named base frame."""
+    if config.get("calibration_status") != "verified":
+        raise ValueError(
+            "FK motion labels require verified calibration; use measured_positions for diagnostics"
+        )
     positions = measured_positions(states, state_names, config, kinematics=kinematics)
     urdf = Path(config["urdf"])
     delta = positions[-1] - positions[0]
@@ -87,8 +91,14 @@ def extract_motion(states, state_names: list[str], config: dict, *, kinematics=N
                     "method": "measured-joint FK",
                     "urdf_sha256": hashlib.sha256(urdf.read_bytes()).hexdigest(),
                     "calibration": config["calibration"],
+                    "calibration_status": config["calibration_status"],
                     "frame": config["frame"],
                     "tool_frame": config["tool_frame"],
+                    "joint_mapping": {
+                        key: config[key]
+                        for key in ("units", "state_keys", "joint_names", "signs", "offset_degrees")
+                    },
+                    "axis_directions": config["axis_directions"],
                     "displacement_m": delta.tolist(),
                 },
             }
