@@ -133,6 +133,30 @@ def test_native_seed_correction_retains_model_attribution_only_at_anchor(sample)
         assert obj["seed_review"] == (review if index == 0 else None)
 
 
+def test_native_temporal_prompt_stays_on_its_frame_with_complete_offline_provenance(sample):
+    api, dataset, extraction, output, path = sample
+    selected_path = extraction / "clip/task_objects.json"
+    selected = json.loads(selected_path.read_text())
+    prompt = {
+        "frame_index": 2,
+        "point": [2, 2],
+        "review": {"reviewer": {"kind": "model", "id": "test"}, "accepted_training_labels": False},
+    }
+    selected["objects"][0]["tracking_prompts"] = [prompt]
+    selected_path.write_text(json.dumps(selected))
+    _, provenance = api["collect_candidates"]([extraction], json.loads((dataset / "source.json").read_text()))
+    assert provenance[0]["clips"][0]["tracking_prompts"] == {"1": [prompt]}
+    api["export_dataset"](dataset, [extraction], output)
+    events = pq.read_table(output / "data/chunk-000/file-000.parquet")["language_events"].to_pylist()
+    for index, rows in enumerate(events[:3]):
+        obj = json.loads(
+            next(r["content"] for r in rows if r["style"] == "vqa" and r["role"] == "assistant")
+        )["detections"][0]
+        assert obj["tracking_prompt"] == (prompt if index == 2 else None)
+        assert obj["review"] == "pending"
+        assert obj["mask_present"] == (index != 1)
+
+
 def test_native_export_binds_reviewed_identity_to_original_model_evidence(sample):
     api, dataset, extraction, output, path = sample
     identification = {

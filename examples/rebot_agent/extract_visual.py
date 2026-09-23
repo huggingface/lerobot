@@ -389,7 +389,7 @@ def prepare_required(parent: Path, output: Path, names: list[str], *, source: st
 
 
 def prepare_reviewed_points(parent: Path, output: Path, review_path: Path) -> dict:
-    """Apply attributed seed corrections in a fresh extraction, never approving tracks."""
+    """Apply attributed initial or later point corrections without approving tracks."""
     if output.exists() or parent.resolve() in output.resolve().parents:
         raise ValueError("Use a fresh output outside the parent extraction")
     original = json.loads((parent / "extraction.json").read_text())
@@ -408,15 +408,33 @@ def prepare_reviewed_points(parent: Path, output: Path, review_path: Path) -> di
         name, object_id = correction["clip"], correction["object_id"]
         if name not in clips or Path(name).name != name:
             raise ValueError("Unknown or invalid clip path")
-        if type(object_id) is not int or (name, object_id) in seen:
-            raise ValueError("Invalid or duplicate corrected object identity")
-        seen.add((name, object_id))
         clip = clips[name]
+        frame_index = correction.get("frame_index")
+        if "frame_index" in correction:
+            matches = [i for i, frame in enumerate(clip["frames"]) if frame["frame_index"] == frame_index]
+            if type(frame_index) is not int or len(matches) != 1:
+                raise ValueError("Correction frame must be an exported episode-local frame")
+            index = matches[0]
+        else:
+            index = 0
+        if type(object_id) is not int or (name, object_id, index) in seen:
+            raise ValueError("Invalid or duplicate corrected object identity")
+        seen.add((name, object_id, index))
         point_path = parent / name / "point.json"
         if correction["source_point_sha256"] != sha256(point_path):
             raise ValueError("Seed review refers to stale point predictions")
-        if correction["frame_sha256"] != clip["frames"][0]["sha256"]:
-            raise ValueError("Seed review must refer to the first source frame")
+        if correction["frame_sha256"] != clip["frames"][index]["sha256"]:
+            raise ValueError(
+                "Seed review must refer to the selected source frame (first source frame by default)"
+            )
+        if index:
+            tracks = parent / name / "tracks.json"
+            if not tracks.exists() or correction.get("source_tracks_sha256") != sha256(tracks):
+                raise ValueError("Temporal correction requires the reviewed source tracks hash")
+            if correction["point"] is None:
+                raise ValueError(
+                    "Temporal correction needs a visible material point; null cannot assert absence"
+                )
         if not correction.get("reason", "").strip():
             raise ValueError("Seed correction requires visual evidence or an uncertainty reason")
         point = correction["point"]
@@ -434,19 +452,32 @@ def prepare_reviewed_points(parent: Path, output: Path, review_path: Path) -> di
         if len(matches) != 1 or matches[0]["name"] != correction["name"]:
             raise ValueError("Corrected object identity differs from the source prediction")
         obj = matches[0]
+        attribution = {
+            "reviewer": reviewer,
+            "correction": correction,
+            "review_sha256": sha256(review_path),
+            "accepted_training_labels": False,
+        }
+        if index:
+            prompts = obj.setdefault("tracking_prompts", [])
+            if any(p["frame_index"] == frame_index for p in prompts):
+                raise ValueError("Duplicate temporal correction; review from the original parent instead")
+            prompts.append({"frame_index": frame_index, "point": point, "review": attribution})
+            prompts.sort(key=lambda p: p["frame_index"])
+            continue
         previous = dict(obj)
         obj.update(
             point=point,
             point_source=f"{reviewer['kind']}_review",
             seed_review={
-                "reviewer": reviewer,
-                "correction": correction,
+                **attribution,
                 "original_prediction": previous,
-                "review_sha256": sha256(review_path),
-                "accepted_training_labels": False,
             },
         )
     selected_clips = [clip for clip in original["clips"] if clip["path"] in selected]
+    for clip in selected_clips:
+        for obj in selected[clip["path"]]["objects"]:
+            tracking_prompts(obj, clip)
     verify_frames(parent, {"clips": selected_clips})
     manifest = {
         **original,
@@ -642,8 +673,51 @@ def run_molmo(output: Path, manifest: dict, stage: str, model, *, point_target: 
         write_json(target, {**result, "model": manifest["models"][stage], "review": "pending"})
 
 
+def tracking_prompts(obj: dict, clip: dict) -> list[tuple[int, list]]:
+    """Map attributed offline corrections to SAM2 frame indices without filling visibility gaps."""
+    prompts = obj.get("tracking_prompts", [])
+    if not prompts:
+        return []
+    if obj["point"] is None:
+        raise ValueError("Temporal correction requires an existing initial seed")
+    indices = {frame["frame_index"]: i for i, frame in enumerate(clip["frames"])}
+    result, seen = [], set()
+    for prompt in prompts:
+        frame_index, point = prompt["frame_index"], prompt["point"]
+        if type(frame_index) is not int or frame_index not in indices or indices[frame_index] == 0:
+            raise ValueError("Temporal correction frame must be an exported frame after the initial seed")
+        if frame_index in seen:
+            raise ValueError("Duplicate temporal correction frame")
+        seen.add(frame_index)
+        if (
+            not isinstance(point, list)
+            or len(point) != 2
+            or any(
+                isinstance(v, bool) or not isinstance(v, (int, float)) or not np.isfinite(v) or not 0 <= v < n
+                for v, n in zip(point, clip["image_size"], strict=True)
+            )
+        ):
+            raise ValueError("Temporal correction must use original image coordinates")
+        review = prompt["review"]
+        correction = review["correction"]
+        if (
+            review["reviewer"].get("kind") not in {"human", "model"}
+            or not review["reviewer"].get("id", "").strip()
+            or review.get("accepted_training_labels") is not False
+            or correction["frame_sha256"] != clip["frames"][indices[frame_index]]["sha256"]
+            or correction["frame_index"] != frame_index
+            or correction["point"] != point
+            or correction["object_id"] != obj["object_id"]
+            or correction["name"] != obj["name"]
+        ):
+            raise ValueError("Temporal correction disagrees with its attributed review")
+        result.append((indices[frame_index], point))
+    return sorted(result)
+
+
 def track_clip(directory: Path, clip: dict, predictor):
     points = json.loads((directory / "point.json").read_text())
+    corrections = {obj["object_id"]: tracking_prompts(obj, clip) for obj in points["objects"]}
     objects = [obj for obj in points["objects"] if obj["point"] is not None]
     missing = [
         {
@@ -683,6 +757,17 @@ def track_clip(directory: Path, clip: dict, predictor):
             points=np.asarray([obj["point"]], dtype=np.float32),
             labels=np.ones(1, dtype=np.int32),
         )
+    # Offline labels may use later visible frames. Add all conditioning prompts before
+    # propagation; never interpret a missing mask as a request to invent an object.
+    for obj in objects:
+        for index, point in corrections[obj["object_id"]]:
+            predictor.add_new_points_or_box(
+                state,
+                frame_idx=index,
+                obj_id=obj["object_id"],
+                points=np.asarray([point], dtype=np.float32),
+                labels=np.ones(1, dtype=np.int32),
+            )
     rows = []
     names = {obj["object_id"]: obj["name"] for obj in objects}
     for index, object_ids, logits in predictor.propagate_in_video(state):
@@ -746,7 +831,9 @@ def main():
         help="Use completed points to recover missing candidates while parent tracking is still running",
     )
     parser.add_argument(
-        "--seed-review", type=Path, help="Attributed seed corrections for prepare-reviewed-points"
+        "--seed-review",
+        type=Path,
+        help="Attributed initial/later point corrections for prepare-reviewed-points",
     )
     parser.add_argument("--objects", nargs="+", help="Instruction-named candidates to retry when missing")
     parser.add_argument("--identification-review", type=Path, help="Attributed object-name corrections")

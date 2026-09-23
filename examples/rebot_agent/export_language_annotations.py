@@ -106,6 +106,11 @@ def collect_candidates(extractions: list[Path], source: dict):
                     "filter_sha256": digest(directory / "task_objects.json"),
                     "identification_sha256": identity_hash,
                     "identification": identification,
+                    "tracking_prompts": {
+                        str(object_id): candidate["tracking_prompts"]
+                        for object_id, candidate in names.items()
+                        if candidate.get("tracking_prompts")
+                    },
                 }
             )
             for index, frame in enumerate(frames):
@@ -164,6 +169,14 @@ def collect_candidates(extractions: list[Path], source: dict):
                             if index == 0
                             else None,
                             "seed_review": candidate.get("seed_review") if index == 0 else None,
+                            "tracking_prompt": next(
+                                (
+                                    prompt
+                                    for prompt in candidate.get("tracking_prompts", [])
+                                    if prompt["frame_index"] == frame["frame_index"]
+                                ),
+                                None,
+                            ),
                             "mask_present": obj["mask_present"],
                             "mask_area_fraction": obj["area_fraction"],
                             "missing_reason": obj.get("missing_reason"),

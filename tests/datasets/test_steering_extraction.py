@@ -172,6 +172,104 @@ def test_uncertain_review_can_withdraw_a_seed_without_inventing_visibility(extra
     assert obj["point"] is None and obj["point_source"] == "model_review"
 
 
+@pytest.fixture
+def temporal_review_case(extractor, seed_review_case):
+    parent, output, path, review = seed_review_case
+    image = parent / "clip/frames/000001.jpg"
+    Image.new("RGB", (8, 6), "red").save(image)
+    manifest_path = parent / "extraction.json"
+    manifest = json.loads(manifest_path.read_text())
+    frames = manifest["clips"][0]["frames"]
+    frames[0]["frame_index"] = 300
+    frames.append({"frame_index": 303, "sha256": extractor["sha256"](image)})
+    manifest_path.write_text(json.dumps(manifest))
+    tracks = parent / "clip/tracks.json"
+    tracks.write_text('{"review": "pending"}')
+    review["parent_manifest_sha256"] = extractor["sha256"](manifest_path)
+    review["corrections"][0].update(
+        frame_index=303,
+        frame_sha256=extractor["sha256"](image),
+        source_tracks_sha256=extractor["sha256"](tracks),
+        reason="Visible object has reappeared but its original track is missing",
+    )
+    return parent, output, path, review
+
+
+def test_temporal_correction_preserves_seed_and_uses_local_sam_index(extractor, temporal_review_case):
+    parent, output, path, review = temporal_review_case
+    path.write_text(json.dumps(review))
+    before = {p: p.read_bytes() for p in parent.rglob("*") if p.is_file()}
+    manifest = extractor["prepare_reviewed_points"](parent, output, path)
+    assert all(p.read_bytes() == content for p, content in before.items())
+    directory = output / "clip"
+    obj = json.loads((directory / "point.json").read_text())["objects"][0]
+    assert obj["point"] == [4, 3]
+    prompt = obj["tracking_prompts"][0]
+    assert prompt["frame_index"] == 303 and prompt["point"] == [2, 3]
+    assert prompt["review"]["reviewer"] == review["reviewer"]
+    assert not prompt["review"]["accepted_training_labels"]
+    calls = []
+
+    class Predictor:
+        def init_state(self, **kwargs):
+            return {}
+
+        def add_new_points_or_box(self, state, **kwargs):
+            calls.append((kwargs["frame_idx"], kwargs["obj_id"], kwargs["points"].tolist()))
+
+        def propagate_in_video(self, state):
+            assert calls == [(0, 1, [[4, 3]]), (1, 1, [[2, 3]])]
+            for index in range(2):
+                yield index, [1], torch.full((1, 1, 6, 8), -1.0)
+
+    extractor["track_clip"](directory, manifest["clips"][0], Predictor())
+    tracks = json.loads((directory / "tracks.json").read_text())
+    assert tracks["objects"][0] == obj
+    assert [f["frame_index"] for f in tracks["frames"]] == [300, 303]
+    assert all(not f["objects"][0]["mask_present"] for f in tracks["frames"])
+
+
+@pytest.mark.parametrize(
+    "field,value,error",
+    [
+        ("frame_index", 301, "exported episode-local frame"),
+        ("frame_index", True, "exported episode-local frame"),
+        ("frame_sha256", "stale", "selected source frame"),
+        ("source_tracks_sha256", "stale", "source tracks hash"),
+        ("point", None, "visible material point"),
+        ("point", [float("nan"), 1], "image coordinates"),
+    ],
+)
+def test_bad_temporal_review_has_no_side_effects(extractor, temporal_review_case, field, value, error):
+    parent, output, path, review = temporal_review_case
+    review["corrections"][0][field] = value
+    path.write_text(json.dumps(review))
+    with pytest.raises(ValueError, match=error):
+        extractor["prepare_reviewed_points"](parent, output, path)
+    assert not output.exists()
+
+
+def test_temporal_correction_cannot_revive_withdrawn_identity(extractor, temporal_review_case):
+    parent, output, path, review = temporal_review_case
+    correction = dict(review["corrections"][0])
+    frame = json.loads((parent / "extraction.json").read_text())["clips"][0]["frames"][0]
+    correction.update(frame_index=300, frame_sha256=frame["sha256"], point=None)
+    review["corrections"].append(correction)
+    path.write_text(json.dumps(review))
+    with pytest.raises(ValueError, match="existing initial seed"):
+        extractor["prepare_reviewed_points"](parent, output, path)
+    assert not output.exists()
+
+
+def test_duplicate_temporal_correction_is_rejected(extractor, temporal_review_case):
+    parent, output, path, review = temporal_review_case
+    review["corrections"].append(dict(review["corrections"][0]))
+    path.write_text(json.dumps(review))
+    with pytest.raises(ValueError, match="duplicate corrected object"):
+        extractor["prepare_reviewed_points"](parent, output, path)
+    assert not output.exists()
+
+
 @pytest.mark.parametrize(
     "raw",
     ["[tape, bin]", '{"taskObjects": ["tape", "bin"], "taskStatus": "completed"}'],

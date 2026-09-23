@@ -189,6 +189,26 @@ composing point/motion/trace commands. Object trajectories are not gripper traje
 The paper trained DETR on 100 manually labeled Bridge gripper images; ReBot needs its
 own reviewed per-arm labels and a validated detector. Generic COCO DETR is insufficient.
 
+A correct first-frame seed can still drift to a gripper or fail to recover after
+occlusion. Use `extract_visual.py prepare-reviewed-points --parent PARENT --output FRESH
+--seed-review REVIEW.json` to retrack a separate copy with attributed corrections.
+The review contains `parent_manifest_sha256`, a `reviewer` (`kind: model` or `human`,
+plus `id`), and `corrections`. Each correction identifies `clip`, `object_id`, `name`,
+`source_point_sha256`, `frame_sha256`, a material `point: [x, y]`, and a visual `reason`.
+Omitting `frame_index` corrects the initial seed; a null initial point withdraws it.
+For a later correction, include the absolute episode-local `frame_index` and
+`source_tracks_sha256` of the inspected track. The frame must exist in the extraction,
+and the point must lie on visibly identified material in original image coordinates.
+A later null point cannot assert absence, and a withdrawn identity cannot be revived.
+
+Run `track` and `filter-objects` on the new extraction, then inspect the result before
+accepting any interval. SAM2 receives the initial seed and later conditioning points
+before propagation. This is offline annotation repair and can use future frames;
+it does not change runtime observations. Native language export preserves the complete
+correction history in its provenance and the correction on its own frame in the VQA
+answer. It retains missing masks and prefix-only traces; corrections never approve
+training labels or certify every frame between prompts.
+
 ### Review and fit the ReBot gripper detector
 
 Prepare 100 real images across 25 training episodes and all three views:
