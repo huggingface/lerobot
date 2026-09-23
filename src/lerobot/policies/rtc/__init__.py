@@ -14,12 +14,19 @@
 
 """Real-Time Chunking (RTC) utilities for action-chunking policies."""
 
-from .action_interpolator import ActionInterpolator
-from .action_queue import ActionQueue
+from lerobot.utils.import_utils import LAZY_IMPORTS, lazy_getattr
+
 from .configuration_rtc import RTCConfig
 from .latency_tracker import LatencyTracker
-from .modeling_rtc import RTCProcessor
-from .relative import reanchor_relative_rtc_prefix
+
+# These import torch, so they are imported the first time one of them is used.
+if LAZY_IMPORTS:
+    from .action_interpolator import ActionInterpolator
+    from .action_queue import ActionQueue
+    from .modeling_rtc import RTCProcessor
+    from .relative import reanchor_relative_rtc_prefix
+else:
+    __getattr__ = lazy_getattr(__name__)
 
 __all__ = [
     "ActionInterpolator",

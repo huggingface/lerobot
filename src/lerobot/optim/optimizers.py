@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import abc
+import builtins
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -51,6 +52,15 @@ class OptimizerConfig(draccus.ChoiceRegistry, abc.ABC):
     @property
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
+
+    @classmethod
+    def get_choice_class(cls, name: str) -> builtins.type["OptimizerConfig"]:
+        # Some policy packages register their own choices here, and policies load on demand.
+        if name not in cls._choice_registry:
+            from lerobot.configs.policies import PreTrainedConfig
+
+            PreTrainedConfig.load_all_choices()
+        return super().get_choice_class(name)
 
     @property
     def builds_multiple_optimizers(self) -> bool:

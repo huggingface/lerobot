@@ -554,6 +554,8 @@ markers = [
 python_version = "3.12"
 ignore_missing_imports = true
 follow_imports = "skip"
+# `if LAZY_IMPORTS:` blocks are for type checkers, and their `else:` branch runs only at runtime.
+always_true = ["LAZY_IMPORTS"]
 # Paths the hook checks as a whole (pass_filenames: false); keep its `files` pattern in sync.
 files = ["src/lerobot", "scripts", "utils", "conftest.py", "setup.py"]
 exclude = ['_pb2(_grpc)?\.py$']

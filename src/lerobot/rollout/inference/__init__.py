@@ -18,6 +18,8 @@ Concrete backends (``sync``, ``rtc``, ...) expose the same small interface so
 rollout strategies never branch on which backend is in use.
 """
 
+from lerobot.utils.import_utils import LAZY_IMPORTS, lazy_getattr
+
 from .base import InferenceEngine, PolicyQuery, QueryAnswer, QueryKind
 from .factory import (
     InferenceEngineConfig,
@@ -25,8 +27,13 @@ from .factory import (
     SyncInferenceConfig,
     create_inference_engine,
 )
-from .rtc import RTCInferenceEngine
-from .sync import SyncInferenceEngine
+
+# These import torch, so they are imported the first time one of them is used.
+if LAZY_IMPORTS:
+    from .rtc import RTCInferenceEngine
+    from .sync import SyncInferenceEngine
+else:
+    __getattr__ = lazy_getattr(__name__)
 
 __all__ = [
     "InferenceEngine",
