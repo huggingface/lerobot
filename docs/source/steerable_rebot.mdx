@@ -132,6 +132,7 @@ USE_TF=0 uv run --no-sync --with-requirements examples/rebot_agent/molmo-require
 USE_TF=0 uv run --no-sync --with-requirements examples/rebot_agent/molmo-requirements.txt \
   examples/rebot_agent/extract_visual.py point --output outputs/rebot_visual
 uv run examples/rebot_agent/extract_visual.py track --output outputs/rebot_visual
+uv run examples/rebot_agent/extract_visual.py filter-objects --output outputs/rebot_visual
 ```
 
 Use stride 1 and all three cameras for full temporal extraction after inspecting the
@@ -147,6 +148,21 @@ before resuming pointing. This CPU-only step keeps the raw response, model ident
 previous file hash and error, and parser hash. It changes only failed, unreviewed results
 with no dependent points/tracks. Ambiguous lists remain failed; recovering syntax does
 not verify that the named objects exist or are relevant.
+
+The CPU-only `filter-objects` stage follows Appendix A-C's name-in-task heuristic,
+using the annotated subtask for each clip. It writes `task_objects.json` beside the
+untouched raw tracks and a `task_object_filter.json` summary. Matching ignores case
+and punctuation but requires the complete object name at word boundaries. It does
+not infer synonyms: a predicted "basket" does not match "bin". Excluded candidates,
+original IDs, missing points/masks, timestamps and source hashes remain available.
+An empty result for a return-home instruction is valid; it does not supply a target
+for a pointing command. Any missing required pick/place object needs further grounding.
+
+This filter cannot detect a plausible name pointing to the wrong object. In the first
+five-episode ReBot pilot, a "black block" seed tracked the remote control while the
+demonstrated small block moved into the bin. Other sampled tracks followed the tape
+roll and green cloth from table to bin. Review seed identity and motion throughout
+the clip; neither name matching nor a nonempty mask establishes action alignment.
 
 These are **unreviewed features**, not automatically equivalent action instructions.
 Inspect overlays and split long semantic spans into action-consistent intervals before

@@ -146,6 +146,56 @@ def mask_summary(mask: np.ndarray) -> dict:
     }
 
 
+def object_mentioned(name: str, instruction: str) -> bool:
+    """Paper's name-in-task heuristic, with case/punctuation normalization and word boundaries."""
+    words = re.findall(r"\w+", name.casefold())
+    task = re.findall(r"\w+", instruction.casefold())
+    return bool(words) and any(task[i : i + len(words)] == words for i in range(len(task)))
+
+
+def filter_objects(output: Path, manifest: dict) -> dict:
+    """Write task-relevant candidate tracks separately; this never approves visual grounding."""
+    clips = []
+    for clip in manifest["clips"]:
+        directory = output / clip["path"]
+        source_path = directory / "tracks.json"
+        tracks = json.loads(source_path.read_text())
+        selected = [obj for obj in tracks["objects"] if object_mentioned(obj["name"], clip["subtask"])]
+        ids = {obj["object_id"] for obj in selected}
+        frames = [
+            {**frame, "objects": [obj for obj in frame["objects"] if obj["object_id"] in ids]}
+            for frame in tracks["frames"]
+        ]
+        rejected = [obj for obj in tracks["objects"] if obj["object_id"] not in ids]
+        result = {
+            "status": "unreviewed",
+            "filter": "normalized_whole_name_in_subtask_v1",
+            "instruction": clip["subtask"],
+            "source_tracks_sha256": sha256(source_path),
+            "source_manifest_sha256": sha256(output / "extraction.json"),
+            "script_sha256": sha256(Path(__file__)),
+            "objects": selected,
+            "excluded_objects": rejected,
+            "frames": frames,
+        }
+        write_json(directory / "task_objects.json", result)
+        clips.append(
+            {
+                "clip": clip["path"],
+                "candidate_objects": len(tracks["objects"]),
+                "retained_objects": len(selected),
+                "excluded_objects": len(rejected),
+                "missing_points": sum(obj["point"] is None for obj in selected),
+                "missing_masks": sum(not obj["mask_present"] for f in frames for obj in f["objects"]),
+                "tracked_object_frames": sum(len(f["objects"]) for f in frames),
+                "review": "pending",
+            }
+        )
+    report = {"status": "unreviewed", "source": manifest["source"], "clips": clips}
+    write_json(output / "task_object_filter.json", report)
+    return report
+
+
 def prepare(root: Path, output: Path, episodes: list[int], cameras: list[str], stride: int):
     """Materialize timestamp-aligned, original-size frames using main's dataset reader."""
     # Preparation uses main's Hub/dataset stack. Legacy Molmo inference runs from the
@@ -354,7 +404,9 @@ def track_clip(directory: Path, clip: dict, predictor):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=["prepare", "identify", "reparse-identify", "point", "track"])
+    parser.add_argument(
+        "stage", choices=["prepare", "identify", "reparse-identify", "point", "track", "filter-objects"]
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--dataset-root", type=Path)
     parser.add_argument("--episodes", type=int, nargs="+", default=[0, 1, 2, 3, 4])
@@ -374,7 +426,7 @@ def main():
     # This file also records the script used when running remotely from an uncommitted checkout.
     provenance = {
         "script_sha256": sha256(Path(__file__)),
-        "device": "cpu" if args.stage == "reparse-identify" else args.device,
+        "device": "cpu" if args.stage in ("reparse-identify", "filter-objects") else args.device,
         "models": manifest["models"],
     }
     for package in ("torch", "transformers", "huggingface-hub", "tensorflow-cpu", "SAM-2"):
@@ -383,6 +435,9 @@ def main():
     write_json(args.output / f"{args.stage}_runtime.json", provenance)
     if args.stage == "reparse-identify":
         print(json.dumps(reparse_identification(args.output, manifest)), flush=True)
+        return
+    if args.stage == "filter-objects":
+        print(json.dumps(filter_objects(args.output, manifest)), flush=True)
         return
     if args.stage in ("identify", "point"):
         run_molmo(args.output, manifest, args.stage, Molmo(manifest["models"][args.stage], args.device))

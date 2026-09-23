@@ -146,3 +146,54 @@ def test_molmo_constructor_uses_real_dependency_guard(extractor, monkeypatch):
     assert (
         processor.from_pretrained.call_args.kwargs["revision"] == extractor["MODELS"]["identify"]["revision"]
     )
+
+
+def test_task_relevance_does_not_match_partial_words_or_invent_synonyms(extractor):
+    matches = extractor["object_mentioned"]
+    assert matches("Black Bin", "Place the tape in the black bin.")
+    assert matches("tape roll", "Pick up the tape-roll.")
+    assert not matches("hat", "Put that block away.")
+    assert not matches("basket", "Place the tape in the black bin.")
+    assert not matches("bin", "Return to Home Position")
+    assert not matches("", "Move to the bin")
+
+
+def test_postfilter_keeps_raw_evidence_ids_and_missing_points(extractor, tmp_path):
+    directory = tmp_path / "clip"
+    directory.mkdir()
+    objects = [
+        {"object_id": 1, "name": "wall", "point": [1, 2]},
+        {"object_id": 2, "name": "tape", "point": [3, 4]},
+        {"object_id": 3, "name": "bin", "point": None},
+    ]
+    tracks = {
+        "objects": objects,
+        "frames": [
+            {
+                "frame_index": 15,
+                "timestamp": 0.5,
+                "objects": [
+                    {"object_id": 1, "mask_present": True},
+                    {"object_id": 2, "mask_present": False},
+                ],
+            }
+        ],
+    }
+    source = directory / "tracks.json"
+    source.write_text(json.dumps(tracks))
+    source_hash = extractor["sha256"](source)
+    manifest = {
+        "source": {"repo_id": "test"},
+        "clips": [{"path": "clip", "subtask": "Put tape into the bin"}],
+    }
+    (tmp_path / "extraction.json").write_text(json.dumps(manifest))
+    report = extractor["filter_objects"](tmp_path, manifest)
+    result = json.loads((directory / "task_objects.json").read_text())
+    assert result["status"] == "unreviewed"
+    assert result["objects"] == objects[1:]
+    assert result["excluded_objects"] == objects[:1]
+    assert result["frames"][0]["frame_index"] == 15
+    assert result["frames"][0]["objects"] == [{"object_id": 2, "mask_present": False}]
+    assert report["clips"][0]["missing_points"] == 1
+    assert report["clips"][0]["missing_masks"] == 1
+    assert result["source_tracks_sha256"] == source_hash == extractor["sha256"](source)
