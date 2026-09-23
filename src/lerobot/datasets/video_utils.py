@@ -15,7 +15,7 @@
 # limitations under the License.
 import contextlib
 import glob
-import importlib
+import importlib.util
 import logging
 import os
 import queue
@@ -28,7 +28,7 @@ from dataclasses import asdict, dataclass, field
 from fractions import Fraction
 from pathlib import Path
 from threading import Lock
-from typing import Any, BinaryIO, ClassVar
+from typing import Any, BinaryIO, ClassVar, cast
 
 import av
 import fsspec
@@ -280,9 +280,10 @@ class VideoDecoderCache:
     def __init__(self, max_size: int | None | object = _SENTINEL):
         if max_size is VideoDecoderCache._SENTINEL:
             max_size = _default_max_cache_size()
+        max_size = cast(int | None, max_size)
         if max_size is not None and max_size <= 0:
             raise ValueError(f"max_size must be positive or None; got {max_size}")
-        self.max_size: int | None = max_size  # type: ignore[assignment]
+        self.max_size: int | None = max_size
         self._cache: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
         self._lock = Lock()
 
@@ -485,8 +486,8 @@ def encode_video_frames(
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Get input frames
-    is_depth = isinstance(video_encoder, DepthEncoderConfig)
-    suffix = ".png" if not is_depth else ".tiff"
+    depth_encoder = video_encoder if isinstance(video_encoder, DepthEncoderConfig) else None
+    suffix = ".tiff" if depth_encoder is not None else ".png"
     template = "frame-" + ("[0-9]" * 6) + suffix
     input_list = sorted(
         glob.glob(str(imgs_dir / template)), key=lambda x: int(x.split("-")[-1].split(".")[0])
@@ -514,14 +515,14 @@ def encode_video_frames(
         # Loop through input frames and encode them
         for input_data in input_list:
             with Image.open(input_data) as input_image:
-                if is_depth:
+                if depth_encoder is not None:
                     input_frame = quantize_depth(
                         np.array(input_image),
-                        depth_min=video_encoder.depth_min,
-                        depth_max=video_encoder.depth_max,
-                        shift=video_encoder.shift,
-                        use_log=video_encoder.use_log,
-                        pix_fmt=video_encoder.pix_fmt,
+                        depth_min=depth_encoder.depth_min,
+                        depth_max=depth_encoder.depth_max,
+                        shift=depth_encoder.shift,
+                        use_log=depth_encoder.use_log,
+                        pix_fmt=depth_encoder.pix_fmt,
                         video_backend="pyav",
                     )
                 else:
@@ -706,7 +707,7 @@ def concatenate_video_files(
     with tempfile.NamedTemporaryFile(mode="w", suffix=".ffconcat", delete=False) as tmp_concatenate_file:
         tmp_concatenate_file.write("ffconcat version 1.0\n")
         for input_path in input_video_paths:
-            tmp_concatenate_file.write(f"file '{str(input_path.resolve())}'\n")
+            tmp_concatenate_file.write(f"file '{Path(input_path).resolve()}'\n")
         tmp_concatenate_file.flush()
         tmp_concatenate_path = tmp_concatenate_file.name
 
@@ -776,7 +777,9 @@ class _CameraEncoderThread(threading.Thread):
         self.video_path = video_path
         self.fps = fps
         self.video_encoder = video_encoder
-        self.is_depth = isinstance(video_encoder, DepthEncoderConfig)
+        self._depth_encoder: DepthEncoderConfig | None = (
+            video_encoder if isinstance(video_encoder, DepthEncoderConfig) else None
+        )
         self.frame_queue = frame_queue
         self.result_queue = result_queue
         self.stop_event = stop_event
@@ -810,11 +813,11 @@ class _CameraEncoderThread(threading.Thread):
                     if frame_data.ndim == 3 and frame_data.shape[0] in (1, 3):
                         # CHW -> HWC
                         frame_data = frame_data.transpose(1, 2, 0)
-                    if not self.is_depth and frame_data.dtype != np.uint8:
+                    if self._depth_encoder is None and frame_data.dtype != np.uint8:
                         frame_data = (frame_data * 255).astype(np.uint8)
 
                 # Open container on first frame (to get width/height)
-                if container is None:
+                if container is None or output_stream is None:
                     height, width = frame_data.shape[:2]
                     Path(self.video_path).parent.mkdir(parents=True, exist_ok=True)
                     container = av.open(str(self.video_path), "w")
@@ -829,17 +832,17 @@ class _CameraEncoderThread(threading.Thread):
                     output_stream.time_base = Fraction(1, self.fps)
 
                 # Encode frame with explicit timestamps
-                if not self.is_depth:
+                if self._depth_encoder is None:
                     pil_img = Image.fromarray(frame_data)
                     video_frame = av.VideoFrame.from_image(pil_img)
                 else:
                     video_frame = quantize_depth(
                         frame_data,
-                        depth_min=self.video_encoder.depth_min,
-                        depth_max=self.video_encoder.depth_max,
-                        shift=self.video_encoder.shift,
-                        use_log=self.video_encoder.use_log,
-                        video_backend=self.video_encoder.video_backend,
+                        depth_min=self._depth_encoder.depth_min,
+                        depth_max=self._depth_encoder.depth_max,
+                        shift=self._depth_encoder.shift,
+                        use_log=self._depth_encoder.use_log,
+                        video_backend=self._depth_encoder.video_backend,
                     )
                 video_frame.pts = frame_count
                 video_frame.time_base = Fraction(1, self.fps)
@@ -858,7 +861,7 @@ class _CameraEncoderThread(threading.Thread):
                 frame_count += 1
 
             # Flush encoder
-            if output_stream is not None:
+            if container is not None and output_stream is not None:
                 packet = output_stream.encode()
                 if packet:
                     container.mux(packet)
@@ -1031,7 +1034,7 @@ class StreamingVideoEncoder:
         if not self._episode_active:
             raise RuntimeError("No active episode to finish.")
 
-        results = {}
+        results: dict[str, tuple[Path, dict | None]] = {}
 
         # Report dropped frames
         for video_key, count in self._dropped_frames.items():

@@ -446,6 +446,23 @@ def test_running_quantile_stats_variance_with_large_offset(dtype, offset, batch_
     np.testing.assert_array_equal(data, original)
 
 
+@pytest.mark.parametrize("num_batches", [1, 5])
+def test_running_quantile_stats_constant_float32_normalizes_to_zero(num_batches):
+    value = np.float32(0.5465297297297298)
+    data = np.full((54550, 7), value, dtype=np.float32)
+    running_stats = RunningQuantileStats()
+    for batch in np.array_split(data, num_batches):
+        running_stats.update(batch)
+
+    stats = running_stats.get_statistics()
+    np.testing.assert_array_equal(stats["mean"], np.full(7, value, dtype=np.float64))
+    np.testing.assert_array_equal(stats["std"], np.zeros(7))
+    normalized = (data[0] - stats["mean"].astype(np.float32)) / (
+        stats["std"].astype(np.float32) + np.float32(1e-8)
+    )
+    np.testing.assert_array_equal(normalized, np.zeros(7, dtype=np.float32))
+
+
 def test_get_feature_stats_preserves_small_variations_in_float32():
     data = np.array([[10000.0], [10001.0], [10002.0]], dtype=np.float32)
     stats = get_feature_stats(data, axis=0, keepdims=False)
