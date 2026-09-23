@@ -550,6 +550,11 @@ class SACAlgorithm(RLAlgorithm):
         ``log_alpha`` is restored via ``Parameter.data.copy_`` so the
         ``temperature`` optimizer's reference to the parameter object stays
         valid after resume.
+
+        Encoders are not part of the bundle (``_strip_encoder_keys``), so after restoring
+        the critic tensors the target encoders are re-synced from the online encoders —
+        whose weights the checkpoint restores through the policy — while the restored,
+        deliberately lagged target heads are kept as-is.
         """
         critic_ensemble_state = _split_prefix(state_dict, "critic_ensemble.")
         critic_target_state = _split_prefix(state_dict, "critic_target.")
