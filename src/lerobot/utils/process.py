@@ -20,6 +20,8 @@ import multiprocessing
 import os
 import signal
 import sys
+import threading
+from multiprocessing.synchronize import Event as MpEvent
 
 
 def ensure_multiprocessing_start_method(start_method: str | None) -> None:
@@ -59,16 +61,15 @@ class ProcessSignalHandler:
 
     _SUPPORTED_SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT")
 
-    def __init__(self, use_threads: bool, display_pid: bool = False):
+    def __init__(self, use_threads: bool, display_pid: bool = False) -> None:
         # TODO: Check if we can use Event from threading since Event from
         # multiprocessing is the a clone of threading.Event.
         # https://docs.python.org/3/library/multiprocessing.html#multiprocessing.Event
+        self.shutdown_event: threading.Event | MpEvent
         if use_threads:
-            from threading import Event
+            self.shutdown_event = threading.Event()
         else:
-            from multiprocessing import Event
-
-        self.shutdown_event = Event()
+            self.shutdown_event = multiprocessing.Event()
         self._counter: int = 0
         self._display_pid = display_pid
 

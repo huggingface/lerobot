@@ -242,6 +242,12 @@ fastwam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
 ]
+# flux3 (FLUX 3 Action): Qwen3-VL text encoder via transformers. The video
+# VAE additionally needs NATTEN (`natten`, torch-matched wheel, not on PyPI for every platform): see
+# docs/source/flux3.mdx.
+flux3 = [
+    "lerobot[transformers-dep]",
+]
 evo1 = ["lerobot[transformers-dep]"]
 hilserl = ["lerobot[transformers-dep]", "lerobot[dataset]", "gym-hil>=0.1.14,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen-vl-utils-dep]"]
@@ -329,6 +335,7 @@ all = [
     "lerobot[molmoact2]",
     "lerobot[smolvla]",
     "lerobot[fastwam]",
+    "lerobot[flux3]",
     "lerobot[groot]",
     "lerobot[xvla]",
     "lerobot[evo1]",
@@ -513,7 +520,10 @@ default.extend-ignore-identifiers-re = [
     "OT_VALUE",
     "VanderBilt",
     "seperated_timestep",
+    "nd",  # einsum output axes "...nd" in the vendored FLUX 3 Action transformer
+    "EmbedND",
 ]
+default.extend-words = { nd = "nd" }
 
 # Docstring coverage gate. `fail-under` is a RATCHET, not a target: it is set just below the currently
 # measured coverage so it passes today, and is raised in the same PR that documents a module. Never set it
@@ -559,6 +569,10 @@ module = "lerobot.*"
 ignore_errors = true
 
 [[tool.mypy.overrides]]
+module = "lerobot.common.*"
+ignore_errors = false
+
+[[tool.mypy.overrides]]
 module = "lerobot.envs.*"
 ignore_errors = false
 
@@ -576,15 +590,22 @@ disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.utils.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.utils.*"
+ignore_errors = false
 
 [[tool.mypy.overrides]]
 module = "lerobot.configs.*"
 ignore_errors = false
 
 # extra strictness for configs
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "lerobot.lerobot_types"
+ignore_errors = false
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true
@@ -610,9 +631,9 @@ ignore_errors = false
 # module = "lerobot.processor.*"
 # ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.datasets.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.datasets.*"
+ignore_errors = false
 
 [[tool.mypy.overrides]]
 module = "lerobot.cameras.*"
@@ -626,9 +647,9 @@ ignore_errors = false
 # module = "lerobot.robots.*"
 # ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.teleoperators.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.teleoperators.*"
+ignore_errors = false
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.policies.*"

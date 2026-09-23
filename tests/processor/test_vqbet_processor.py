@@ -118,7 +118,7 @@ def test_vqbet_processor_with_images():
     # Check that data is batched
     assert processed[OBS_STATE].shape == (1, 8)
     assert processed[OBS_IMAGE].shape == (1, 3, 224, 224)
-    assert processed[TransitionKey.ACTION.value].shape == (1, 7)
+    assert processed[TransitionKey.ACTION].shape == (1, 7)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -150,10 +150,10 @@ def test_vqbet_processor_cuda():
     # Check that data is on CUDA
     assert processed[OBS_STATE].device.type == "cuda"
     assert processed[OBS_IMAGE].device.type == "cuda"
-    assert processed[TransitionKey.ACTION.value].device.type == "cuda"
+    assert processed[TransitionKey.ACTION].device.type == "cuda"
 
     # Process through postprocessor
-    postprocessed = postprocessor(processed[TransitionKey.ACTION.value])
+    postprocessed = postprocessor(processed[TransitionKey.ACTION])
 
     # Check that action is back on CPU
     assert postprocessed.device.type == "cpu"
@@ -189,7 +189,7 @@ def test_vqbet_processor_accelerate_scenario():
     # Check that data stays on same GPU
     assert processed[OBS_STATE].device == device
     assert processed[OBS_IMAGE].device == device
-    assert processed[TransitionKey.ACTION.value].device == device
+    assert processed[TransitionKey.ACTION].device == device
 
 
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires at least 2 GPUs")
@@ -222,7 +222,7 @@ def test_vqbet_processor_multi_gpu():
     # Check that data stays on cuda:1
     assert processed[OBS_STATE].device == device
     assert processed[OBS_IMAGE].device == device
-    assert processed[TransitionKey.ACTION.value].device == device
+    assert processed[TransitionKey.ACTION].device == device
 
 
 def test_vqbet_processor_without_stats():
@@ -280,7 +280,7 @@ def test_vqbet_processor_save_and_load():
         processed = loaded_preprocessor(batch)
         assert processed[OBS_STATE].shape == (1, 8)
         assert processed[OBS_IMAGE].shape == (1, 3, 224, 224)
-        assert processed[TransitionKey.ACTION.value].shape == (1, 7)
+        assert processed[TransitionKey.ACTION].shape == (1, 7)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -333,7 +333,7 @@ def test_vqbet_processor_mixed_precision():
     # Check that data is converted to float16
     assert processed[OBS_STATE].dtype == torch.float16
     assert processed[OBS_IMAGE].dtype == torch.float16
-    assert processed[TransitionKey.ACTION.value].dtype == torch.float16
+    assert processed[TransitionKey.ACTION].dtype == torch.float16
 
 
 def test_vqbet_processor_large_batch():
@@ -364,7 +364,7 @@ def test_vqbet_processor_large_batch():
     # Check that batch dimension is preserved
     assert processed[OBS_STATE].shape == (batch_size, 8)
     assert processed[OBS_IMAGE].shape == (batch_size, 3, 224, 224)
-    assert processed[TransitionKey.ACTION.value].shape == (batch_size, 7)
+    assert processed[TransitionKey.ACTION].shape == (batch_size, 7)
 
 
 def test_vqbet_processor_sequential_processing():
@@ -396,7 +396,7 @@ def test_vqbet_processor_sequential_processing():
     for result in results:
         assert result[OBS_STATE].shape == (1, 8)
         assert result[OBS_IMAGE].shape == (1, 3, 224, 224)
-        assert result[TransitionKey.ACTION.value].shape == (1, 7)
+        assert result[TransitionKey.ACTION].shape == (1, 7)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -452,7 +452,7 @@ def test_vqbet_processor_bfloat16_device_float32_normalizer():
     # Verify: DeviceProcessor → bfloat16, NormalizerProcessor adapts → final output is bfloat16
     assert processed[OBS_STATE].dtype == torch.bfloat16
     assert processed[OBS_IMAGE].dtype == torch.bfloat16  # IDENTITY normalization still gets dtype conversion
-    assert processed[TransitionKey.ACTION.value].dtype == torch.bfloat16
+    assert processed[TransitionKey.ACTION].dtype == torch.bfloat16
 
     # Verify normalizer automatically adapted its internal state
     assert normalizer_step.dtype == torch.bfloat16
