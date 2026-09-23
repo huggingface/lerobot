@@ -24,10 +24,99 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 import lerobot.datasets.streaming_dataset as streaming_dataset_module
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset, get_streaming_consumer_shards
 from lerobot.datasets.utils import safe_shard
 from lerobot.utils.constants import ACTION
 from tests.fixtures.constants import DUMMY_REPO_ID
+
+STREAMING_NUMERIC_FEATURES = {
+    "observation.state": {"dtype": "float32", "shape": (1,), "names": None},
+    "action": {"dtype": "float32", "shape": (1,), "names": None},
+}
+
+
+def test_streaming_consumer_shards_are_disjoint_and_complete():
+    assignments = [
+        set(
+            get_streaming_consumer_shards(
+                num_source_shards=7,
+                rank=rank,
+                world_size=2,
+                worker_id=worker_id,
+                num_workers=2,
+            )
+        )
+        for rank in range(2)
+        for worker_id in range(2)
+    ]
+
+    assert not any(
+        left & right for index, left in enumerate(assignments) for right in assignments[index + 1 :]
+    )
+    assert set().union(*assignments) == set(range(7))
+
+
+def test_streaming_consumer_with_no_source_shard_is_empty():
+    assert (
+        get_streaming_consumer_shards(
+            num_source_shards=2,
+            rank=1,
+            world_size=2,
+            worker_id=1,
+            num_workers=2,
+        )
+        == []
+    )
+
+
+def test_streaming_iteration_partitions_numeric_source_shards_across_consumers(tmp_path, monkeypatch):
+    root = tmp_path / "numeric-stream"
+    repo_id = "test/numeric-stream"
+    writer = LeRobotDataset.create(
+        repo_id,
+        fps=30,
+        features=STREAMING_NUMERIC_FEATURES,
+        root=root,
+        use_videos=False,
+        data_files_size_in_mb=0.0001,
+    )
+    for episode_index in range(4):
+        for frame_index in range(2):
+            writer.add_frame(
+                {
+                    "observation.state": np.array([episode_index], dtype=np.float32),
+                    "action": np.array([frame_index], dtype=np.float32),
+                    "task": "task",
+                }
+            )
+        writer.save_episode()
+    writer.finalize()
+
+    all_indices = set()
+    consumer_indices = []
+    for rank in range(2):
+        for worker_id in range(2):
+            monkeypatch.setattr(
+                streaming_dataset_module,
+                "get_streaming_consumer_identity",
+                lambda rank=rank, worker_id=worker_id: (rank, 2, worker_id, 2),
+            )
+            dataset = StreamingLeRobotDataset(
+                repo_id,
+                root=root,
+                buffer_size=16,
+                max_num_shards=4,
+                shuffle=False,
+            )
+            indices = {int(frame["index"]) for frame in dataset}
+            consumer_indices.append(indices)
+            all_indices.update(indices)
+
+    assert all_indices == set(range(8))
+    assert not any(
+        left & right for index, left in enumerate(consumer_indices) for right in consumer_indices[index + 1 :]
+    )
 
 
 def get_frames_expected_order(streaming_ds: StreamingLeRobotDataset) -> list[int]:
