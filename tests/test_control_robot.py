@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import re
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -25,6 +26,8 @@ pytest.importorskip("deepdiff", reason="deepdiff is required (install lerobot[ha
 
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.processor import make_default_processors
+from lerobot.processor.converters import transition_to_robot_action
+from lerobot.processor.pipeline import IdentityProcessorStep, RobotActionProcessorStep
 from lerobot.robots import make_robot_from_config
 from lerobot.scripts.lerobot_calibrate import CalibrateConfig, calibrate
 from lerobot.scripts.lerobot_record import RecordConfig, record, record_loop
@@ -306,34 +309,66 @@ def test_record_loop_records_the_action_returned_by_robot():
     assert all(frame["action"][0] == pytest.approx(0.5) for frame in recorded_frames)
 
 
-def test_record_loop_preserves_recording_representation_when_robot_processor_changes_semantics():
+@pytest.mark.parametrize(
+    "processor_kind",
+    ["conversion", "identity_before", "identity_after", "callable", "output_converter", "identity_subclass"],
+)
+def test_record_loop_preserves_units_when_action_names_match(processor_kind):
+    class RadiansToDegreesStep(RobotActionProcessorStep):
+        def action(self, action):
+            return {key: math.degrees(value) for key, value in action.items()}
+
+        def transform_features(self, features):
+            return features
+
     robot = make_robot_from_config(MockRobotConfig(n_motors=1, random_values=False, static_values=[0.0]))
     teleop = make_teleoperator_from_config(
-        MockTeleopConfig(n_motors=1, random_values=False, static_values=[2.0])
+        MockTeleopConfig(n_motors=1, random_values=False, static_values=[0.5])
     )
-    robot.connect()
-    teleop.connect()
+    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
+    conversion = RadiansToDegreesStep()
+    if processor_kind == "callable":
 
-    teleop_action_processor, _, robot_observation_processor = make_default_processors()
+        def robot_action_processor(action_and_observation):
+            return conversion.action(action_and_observation[0])
 
-    # Keep the same field name while changing the command value. Field-name
-    # compatibility alone must not make this transformed command a training label.
-    def robot_action_processor(_):
-        return {"motor_1.pos": 0.25}
+    elif processor_kind == "output_converter":
+        robot_action_processor.to_output = lambda transition: conversion.action(
+            transition_to_robot_action(transition)
+        )
+    elif processor_kind == "identity_subclass":
 
-    robot.send_action = lambda action: action
+        class ConvertingIdentityStep(IdentityProcessorStep):
+            def __call__(self, transition):
+                return conversion(transition)
 
-    dataset_features = {
-        **hw_to_dataset_features(robot.action_features, ACTION, use_video=False),
-        **hw_to_dataset_features(robot.observation_features, OBS_STR, use_video=False),
-    }
+        robot_action_processor.steps = [ConvertingIdentityStep()]
+    else:
+        steps = [conversion]
+        if processor_kind == "identity_before":
+            steps.insert(0, IdentityProcessorStep())
+        elif processor_kind == "identity_after":
+            steps.append(IdentityProcessorStep())
+        robot_action_processor.steps = steps
+
+    sent_actions = []
+
+    def send_action(action):
+        sent_actions.append(action.copy())
+        return action
+
+    robot.send_action = send_action
     recorded_frames = []
     dataset = SimpleNamespace(
         fps=30,
-        features=dataset_features,
+        features={
+            **hw_to_dataset_features(robot.action_features, ACTION, use_video=False),
+            **hw_to_dataset_features(robot.observation_features, OBS_STR, use_video=False),
+        },
         add_frame=recorded_frames.append,
     )
-
+    robot.connect()
+    teleop.connect()
     try:
         record_loop(
             robot=robot,
@@ -352,7 +387,10 @@ def test_record_loop_preserves_recording_representation_when_robot_processor_cha
         robot.disconnect()
 
     assert recorded_frames
-    assert all(frame["action"][0] == pytest.approx(2.0) for frame in recorded_frames)
+    assert sent_actions
+    # The robot receives degrees, but the dataset must retain its original radians.
+    assert all(next(iter(action.values())) == pytest.approx(math.degrees(0.5)) for action in sent_actions)
+    assert all(frame[ACTION][0] == pytest.approx(0.5) for frame in recorded_frames)
 
 
 def test_record_loop_preserves_recording_representation_when_sent_schema_differs():
