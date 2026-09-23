@@ -720,9 +720,18 @@ class LeRobotDatasetMetadata:
                 ``video.*`` entries (see :func:`get_video_info`).
             preserve_keys: Keys whose existing values are kept instead of being
                 recomputed. ``None`` (default) recomputes every key.
+
+        Raises:
+            NotImplementedError: For non-default storage formats, which manage
+                their own video info.
+            ValueError: If ``video_key`` is not a video key of the dataset, or
+                if the dataset stores no videos (no ``video_path`` template).
         """
         if self.storage_format != DEFAULT_STORAGE_FORMAT:
-            return
+            raise NotImplementedError(
+                f"update_video_info() is only supported for the {DEFAULT_STORAGE_FORMAT!r} storage format, "
+                f"not {self.storage_format!r}."
+            )
         if video_key is not None and video_key not in self.video_keys:
             raise ValueError(f"Video key {video_key} not found in dataset")
 
