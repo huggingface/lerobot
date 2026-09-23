@@ -70,3 +70,30 @@ The initial external-planner adapter uses synchronous inference: robot action
 production waits while the API call runs. It reuses main's queue invalidation and
 language switching. The interval is seconds of execution, not the paper's exact
 20-step cadence. Measure latency and command compliance before tuning it.
+
+## Store grounded geometry in native language annotations
+
+```bash
+uv run examples/rebot_agent/export_language_annotations.py \
+  --dataset-root /path/to/source_dataset \
+  --extractions outputs/rebot_visual outputs/rebot_required_objects \
+  --output outputs/rebot_grounding_candidates
+```
+
+The exporter creates a derived LeRobot dataset with `language_events` in its data
+Parquet files. It uses the existing camera-tagged `vqa` events for bounding boxes,
+mask-centroid points, and first-frame Molmo pointing seeds, plus `trace` events for
+observed object trajectories. JSON `content` retains original image dimensions,
+object identity, half-open `xyxy` boxes, `xy` points, missing detections, interval,
+review status, and hashes. One VQA pair per camera/frame keeps native recipe lookup
+unambiguous. Source language, actions, states, episode IDs, and timestamps are preserved;
+conflicting existing VQA/trace rows cause an error before export.
+
+These exports contain **unreviewed candidates**, not accepted steering commands.
+Object tracks are not gripper tracks. Each stored trajectory ends at its event frame,
+retains missing samples, and contains no future points. A Molmo seed is recorded only
+on the frame where it was inferred; later points are explicitly mask centroids.
+`meta/grounding_provenance.json` records models, input hashes, and extraction roots.
+Videos are symlinked to the local source dataset: copy the actual videos when moving
+or publishing the derived dataset. No upload is performed. The original dataset and
+running training jobs remain unchanged.

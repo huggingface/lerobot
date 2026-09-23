@@ -69,7 +69,11 @@ must keep verified geometry and semantic meaning unchanged.
 
 Have Astra review command/feature alignment against timestamped video and report
 accepted, rejected, or uncertain, with concise visual evidence. Audit a human sample;
-Astra is not ground truth. Save provenance, source revision, intervals, original
+Astra is not ground truth. Store bounding boxes, pointing coordinates, and traces in native LeRobot language
+annotation columns (camera-tagged `vqa`/`trace` events with JSON content); keep source
+data intact and distinguish unreviewed evidence from accepted commands. Raw extractor
+sidecars support auditing but do not replace the dataset annotations.
+Save provenance, source revision, intervals, original
 features, review responses, coverage, and rejection counts. Preserve source data.
 Close annotation gaps before training the full mixture; never silently substitute
 generic commands for missing reviewed styles. Offline future frames may help labels,
