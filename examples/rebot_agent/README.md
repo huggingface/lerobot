@@ -9,6 +9,11 @@ See [the guide](../../docs/source/steerable_rebot.mdx) for the paper mapping, da
 contract, annotation review, training, and physical evaluation. The reusable research
 and deployment goal is [astra_goal.md](astra_goal.md).
 
+For the physical comparison, use `physical_eval.py` and the guide's validation
+milestone: 50 preplanned attempts, an append-only journal, separate operator/model
+labels, and reports that retain failures and unknowns. It records evidence around
+main's rollout; it does not start the robot or turn planner assessments into success labels.
+
 ## Train on the science cluster
 
 Connect with `sft ssh hpc-cluster-science-login-81-129`, obtain a single-node scheduler

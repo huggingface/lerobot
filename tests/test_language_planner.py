@@ -57,6 +57,46 @@ def test_manual_language_override_discards_in_flight_plan():
     assert not engine.planner_halted
 
 
+def test_planner_audit_times_returns_holds_and_failures_without_claiming_execution(monkeypatch, tmp_path):
+    decision = {
+        "command": "reach for tape",
+        "camera": None,
+        "points": [],
+        "point_mode": None,
+        "style": "subtask",
+        "assessment": "tape visible",
+        "status": "continue",
+    }
+    post = Mock(
+        side_effect=lambda *a, **kw: Mock(
+            json=lambda: {
+                "status": "completed",
+                "id": "test-response",
+                "output": [{"content": [{"type": "output_text", "text": json.dumps(decision)}]}],
+            }
+        )
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "test-only-secret")
+    monkeypatch.setattr("lerobot.rollout.planner.requests.post", post)
+    log = tmp_path / "planner.jsonl"
+    planner = VisionLanguagePlanner(PlannerConfig(camera_keys=["base"], log_path=str(log)))
+    obs = {"base": np.zeros((48, 64, 3), dtype=np.uint8)}
+    planner(obs, "goal", 1)
+    decision["status"] = "uncertain"
+    with pytest.raises(ValueError, match="Planner stopped"):
+        planner(obs, "goal", 1)
+    post.side_effect = TimeoutError("test-only-secret must not enter the journal")
+    with pytest.raises(TimeoutError):
+        planner(obs, "goal", 1)
+    events = [json.loads(line) for line in log.read_text().splitlines()]
+    terminal = [e for e in events if "elapsed_s" in e]
+    assert [e["event"] for e in terminal] == ["planner_returned", "planner_hold", "planner_error"]
+    assert all(e["elapsed_s"] >= 0 and e["started_at"] <= e["ended_at"] for e in terminal)
+    assert len({e["request_id"] for e in terminal}) == 3
+    assert terminal[0]["execution_verified"] is False
+    assert "test-only-secret" not in log.read_text()
+
+
 def test_planner_sends_named_images_and_bounded_history_without_action_tools(monkeypatch):
     calls = []
     decision = {

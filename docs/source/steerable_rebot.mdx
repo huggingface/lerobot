@@ -396,6 +396,78 @@ Measure completion, instruction compliance, arm/direction/point accuracy, comman
 switching, planning latency, and performance on distractors and paraphrases. Preserve
 failure/unknown outcomes. Store Astra's assessment separately from an operator label.
 
-Current hardware work remains: cluster access, actual training and checkpoint reload,
-visual feature extraction, authoritative ReBot URDF/calibration, and robot/camera
-configuration. No physical success improvement is claimed by these code paths alone.
+`examples/rebot_agent/physical_eval.py` provides an append-only evaluation journal
+on Linux/macOS. It does not launch or control the robot. Prepare a JSON list of
+17 real reset scenarios before collecting results. Each scenario needs a unique
+`id`, `task`, `reset_instructions`, `success_rubric`, and `tags`. Across the list,
+include `paraphrase`, `distractor`, `novel_object`, and `multi_step`. Verify that
+objects tagged novel were actually withheld from training. Reuse the same object
+layout, instruction, and rubric for every condition within a scenario.
+
+```bash
+uv run examples/rebot_agent/physical_eval.py plan \
+  --input scenarios.json --plan evaluation_plan.json --seed 42
+```
+
+The fixed schedule contains 16 matched triplets and one task-only/full-style pair:
+17 task-only, 16 semantic, and 17 full-style attempts. Triplet orders are
+counterbalanced; the final pair's order is seeded. Reports expose the incomplete
+triplet and compute pairwise comparisons only where both scheduled conditions ran.
+Do not change the plan after collection begins; the journal binds every event to
+its hash. Use a new experiment to evaluate an improved checkpoint.
+
+For each scheduled attempt, reset the scene and capture initial-state evidence.
+Create `run.json` with `checkpoint_sha256`, `rollout_config_sha256`, `reset_operator`,
+`initial_state_evidence`, `dataset_root`, and `planner_log`. Hash the actual model
+weights and full rollout configuration. Use a fresh dataset root and planner log
+for each attempt, and retain the initial images, config, and checkpoint reference.
+These provenance declarations still require a subsequent artifact audit.
+
+```bash
+# Journal the attempt BEFORE starting policy action production.
+uv run examples/rebot_agent/physical_eval.py begin --plan evaluation_plan.json \
+  --journal attempts.jsonl --attempt-id attempt_001 --input run.json
+```
+
+Use main's interactive synchronous rollout with `--strategy.type=sentry` and
+`--dataset.push_to_hub=false` to retain frames, including failed attempts. Match
+`--dataset.root` and `--planner.log_path` to this attempt's journal entry. For
+task-only control, disable the external planner and set `--task` to the fixed
+scenario instruction. For semantic planning, enable only task/subtask styles.
+For the full condition, enable only styles and coordinate cameras the checkpoint
+has learned and passed validation. Keep the same time limit, cameras, action cadence,
+and human stop/reset controls across conditions. Record any manual language override
+as part of the evidence; a returned planner command does not prove it was executed.
+
+After `/stop` or an error, append an `end` event using the same CLI and an input
+JSON containing `reason`: `completed`, `timeout`, `operator_stop`, `runtime_error`,
+or `interrupted`. This records how the attempt ended, not whether it succeeded.
+An unclosed attempt remains visible and must be ended before starting another.
+Never replace a failure by reusing its ID. Attach `recording` evidence with
+`dataset_root`, `episode_indices`, and `evidence_sha256` of an archived recording
+manifest. Include every saved episode if recording rotated during the attempt.
+
+Append `operator` or `model` events with `outcome` (`success`, `failure`, or `unknown`),
+`reviewer`, and `evidence`. **Only a human reviewer supplies `operator` events.**
+Keep Astra assessments under `model`, even when they agree with a human. Optional
+`metrics` map `command_compliance`, `arm_accuracy`, `direction_accuracy`,
+`point_accuracy`, or `language_recovery` to nonnegative `correct`, `incorrect`, and
+`unknown` counts under a predeclared rubric. Omit inapplicable metrics rather than
+marking them correct. Corrections append new events, retaining the earlier labels.
+
+```bash
+uv run examples/rebot_agent/physical_eval.py report --plan evaluation_plan.json \
+  --journal attempts.jsonl > evaluation_report.json
+```
+
+The report retains all started attempts, unstarted slots, unknown outcomes, and
+operator metric coverage. Success-rate bounds include unknowns in their denominator;
+known-pair differences disclose excluded unknown pairs. Planner logs report full-call
+latency, holds/errors, unfinished calls, proposed styles, and proposed style switches.
+These are planning diagnostics, not action-execution or physical-success labels.
+Audit the recordings and reset evidence before interpreting journal counts as the
+50 real-world trials required by this experiment.
+
+Completing the experiment requires trained and reloadable checkpoints, reviewed visual
+features, validated ReBot URDF/calibration and camera configuration, and the recorded
+physical comparisons. These code paths alone do not establish improved physical success.

@@ -8,7 +8,10 @@ import base64
 import io
 import json
 import os
+import time
+import uuid
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -90,6 +93,50 @@ class VisionLanguagePlanner:
         self._session: tuple[str, int] | None = None
 
     def __call__(self, observation: dict, goal: str, session: int) -> str:
+        started = time.perf_counter()
+        audit = {
+            "request_id": uuid.uuid4().hex,
+            "started_at": datetime.now(UTC).isoformat(),
+            "goal": goal,
+            "session": session,
+            "model": self.config.model,
+        }
+        self._log("planner_request", audit)
+        try:
+            command = self._plan(observation, goal, session, audit)
+        except Exception as exc:
+            self._log(
+                "planner_hold"
+                if audit.get("planner_status") in {"complete", "uncertain"}
+                else "planner_error",
+                {
+                    **audit,
+                    "elapsed_s": time.perf_counter() - started,
+                    "ended_at": datetime.now(UTC).isoformat(),
+                    "error_type": type(exc).__name__,
+                },
+            )
+            raise
+        self._log(
+            "planner_returned",
+            {
+                **audit,
+                "elapsed_s": time.perf_counter() - started,
+                "ended_at": datetime.now(UTC).isoformat(),
+                "command": command,
+                "execution_verified": False,
+            },
+        )
+        return command
+
+    def _log(self, event: str, payload: dict) -> None:
+        if self.config.log_path:
+            path = Path(self.config.log_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a") as stream:
+                stream.write(json.dumps({**payload, "event": event}) + "\n")
+
+    def _plan(self, observation: dict, goal: str, session: int, audit: dict) -> str:
         if self._session != (goal, session):
             self._history.clear()
             self._session = (goal, session)
@@ -172,23 +219,8 @@ class VisionLanguagePlanner:
         decision = json.loads(text)
         if decision.get("style") not in self.config.styles or not isinstance(decision.get("command"), str):
             raise ValueError("Invalid planner command/style")
-        if self.config.log_path:
-            path = Path(self.config.log_path)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a") as stream:
-                stream.write(
-                    json.dumps(
-                        {
-                            "event": "planner_proposal",
-                            "response_id": result.get("id"),
-                            "goal": goal,
-                            "session": session,
-                            "model": self.config.model,
-                            **decision,
-                        }
-                    )
-                    + "\n"
-                )
+        audit["planner_status"] = decision.get("status")
+        self._log("planner_proposal", {**decision, **audit, "response_id": result.get("id")})
         if decision.get("status") != "continue":
             raise ValueError(f"Planner stopped: {decision.get('status')}: {decision.get('assessment')}")
         render = {
