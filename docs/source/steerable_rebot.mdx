@@ -164,6 +164,25 @@ demonstrated small block moved into the bin. Other sampled tracks followed the t
 roll and green cloth from table to bin. Review seed identity and motion throughout
 the clip; neither name matching nor a nonempty mask establishes action alignment.
 
+For an instruction-named object omitted by the identifier, create a separate recovery
+extraction after filtering the parent:
+
+```bash
+uv run examples/rebot_agent/extract_visual.py prepare-required \
+  --parent outputs/rebot_visual --output outputs/rebot_bins --objects bin
+# Run the existing point, track and filter-objects stages on outputs/rebot_bins.
+```
+
+This selects only matching instructions whose filtered candidates lack a grounded
+point for the requested name. It copies and verifies the original frames, records
+parent hashes, and explicitly marks identification as instruction-derived with no
+identification model. Molmo still has to localize the candidate, and missing points
+remain missing. Return-home clips are not given a bin target merely because one is in
+the scene. Recovery outputs remain unreviewed and never overwrite or automatically
+merge the parent tracks; object IDs are local to each extraction and clip. This is a
+repair step for omissions found in the ReBot pilot, rather than a claim that language
+establishes object presence or that the paper includes this recovery stage.
+
 These are **unreviewed features**, not automatically equivalent action instructions.
 Inspect overlays and split long semantic spans into action-consistent intervals before
 composing point/motion/trace commands. Object trajectories are not gripper trajectories.

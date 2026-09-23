@@ -12,6 +12,7 @@ import hashlib
 import importlib.metadata
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -194,6 +195,74 @@ def filter_objects(output: Path, manifest: dict) -> dict:
     report = {"status": "unreviewed", "source": manifest["source"], "clips": clips}
     write_json(output / "task_object_filter.json", report)
     return report
+
+
+def prepare_required(parent: Path, output: Path, names: list[str]) -> dict:
+    """Retry missing instruction-named candidates in a separate extraction, without inventing visibility."""
+    if not names or any(not name.strip() for name in names) or len(set(names)) != len(names):
+        raise ValueError("Provide distinct nonempty required object names")
+    manifest_path = parent / "extraction.json"
+    original = json.loads(manifest_path.read_text())
+    verify_frames(parent, original)
+    manifest_hash = sha256(manifest_path)
+    selected = []
+    for clip in original["clips"]:
+        directory = parent / clip["path"]
+        filtered_path = directory / "task_objects.json"
+        filtered = json.loads(filtered_path.read_text())
+        if (
+            filtered["source_tracks_sha256"] != sha256(directory / "tracks.json")
+            or filtered["source_manifest_sha256"] != manifest_hash
+        ):
+            raise ValueError("Run filter-objects again: parent candidate filtering is stale")
+        missing = [
+            name
+            for name in names
+            if object_mentioned(name, clip["subtask"])
+            and not any(
+                obj["point"] is not None and object_mentioned(name, obj["name"])
+                for obj in filtered["objects"]
+            )
+        ]
+        if missing:
+            selected.append((clip, missing, sha256(filtered_path)))
+    if not selected:
+        raise ValueError("No missing instruction-named candidates matched the requested objects")
+    output.mkdir(parents=True, exist_ok=False)
+    manifest = {
+        **{key: original[key] for key in ("version", "source")},
+        "models": {**original["models"], "identify": None},
+        "review": "pending",
+        "preparation": {
+            "method": "missing_instruction_named_candidates",
+            "parent_manifest_sha256": manifest_hash,
+            "script_sha256": sha256(Path(__file__)),
+            "requested_objects": names,
+            "note": "Names come from instructions, not visual identification. Pointing/tracking still require review.",
+        },
+        "clips": [],
+    }
+    for clip, missing, filtered_hash in selected:
+        directory = output / clip["path"]
+        directory.mkdir()
+        shutil.copytree(parent / clip["path"] / "frames", directory / "frames")
+        write_json(
+            directory / "identify.json",
+            {
+                "method": "instruction_named_candidate",
+                "objects": missing,
+                "prompt": None,
+                "raw": None,
+                "error": None,
+                "model": None,
+                "review": "pending",
+                "parent_filtered_sha256": filtered_hash,
+                "instruction": clip["subtask"],
+            },
+        )
+        manifest["clips"].append(clip)
+    write_json(output / "extraction.json", manifest)
+    return manifest
 
 
 def prepare(root: Path, output: Path, episodes: list[int], cameras: list[str], stride: int):
@@ -405,10 +474,21 @@ def track_clip(directory: Path, clip: dict, predictor):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "stage", choices=["prepare", "identify", "reparse-identify", "point", "track", "filter-objects"]
+        "stage",
+        choices=[
+            "prepare",
+            "prepare-required",
+            "identify",
+            "reparse-identify",
+            "point",
+            "track",
+            "filter-objects",
+        ],
     )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--dataset-root", type=Path)
+    parser.add_argument("--parent", type=Path, help="Existing filtered extraction for prepare-required")
+    parser.add_argument("--objects", nargs="+", help="Instruction-named candidates to retry when missing")
     parser.add_argument("--episodes", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     parser.add_argument("--cameras", nargs="+", default=["observation.images.base"])
     parser.add_argument(
@@ -416,6 +496,12 @@ def main():
     )
     parser.add_argument("--device", default="cuda:0")
     args = parser.parse_args()
+    if args.stage == "prepare-required":
+        if args.parent is None or not args.objects:
+            parser.error("prepare-required requires --parent and --objects")
+        manifest = prepare_required(args.parent, args.output, args.objects)
+        print(json.dumps({"clips": len(manifest["clips"]), "review": "pending"}), flush=True)
+        return
     if args.stage == "prepare":
         if args.dataset_root is None:
             parser.error("prepare requires --dataset-root")
@@ -423,6 +509,8 @@ def main():
         return
     manifest = json.loads((args.output / "extraction.json").read_text())
     verify_frames(args.output, manifest)
+    if args.stage in ("identify", "reparse-identify") and manifest["models"]["identify"] is None:
+        raise ValueError("This recovery extraction uses instruction-named candidates; continue with point")
     # This file also records the script used when running remotely from an uncommitted checkout.
     provenance = {
         "script_sha256": sha256(Path(__file__)),
