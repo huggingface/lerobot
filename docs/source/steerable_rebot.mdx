@@ -359,7 +359,17 @@ action production, and cadence is configured in execution seconds rather than th
 paper's 20 environment steps. This timing difference needs physical measurement.
 
 After multi-style training, enable `task`, `subtask`, `motion`, `point`, and `combination`
-as validated. Keep gripper traces out of the default off-the-shelf planner: Appendix B
+as validated. Coordinate commands additionally require an explicit list of cameras
+whose geometry the checkpoint has learned, for example
+`--planner.grounding_camera_keys='["base"]'`. Keep `planner.camera_keys` set to all
+useful observation views: the planner can inspect wrist images while being restricted
+to base-view coordinates. The adapter enforces this both in its response schema and
+when reading the response. An observed camera is not automatically a trained grounding
+view. Object/destination point pairs use `point_mode=targets`; gripper paths use
+`point_mode=path` and require trace steering. This permits source/destination pointing
+without accidentally enabling trajectory commands.
+
+Keep gripper traces out of the default off-the-shelf planner: Appendix B
 excluded them because the VLM struggled to generate them. Trace labels can still serve
 policy training and controlled tests. Our original-pixel, named-camera command format
 adapts the paper's 0–255 convention; keep it consistent at training and inference.

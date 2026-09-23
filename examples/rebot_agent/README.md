@@ -59,7 +59,11 @@ observations. After `/start`, the external planner keeps the VLA idle until you 
 
 Astra observes and emits a command, the VLA acts, and Astra observes again. Extend
 `planner.styles` to `motion`, `point`, and `combination` only for a checkpoint
-trained and validated on those styles. Following the paper's final planner, leave
+trained and validated on those styles. For coordinate commands, also set
+`--planner.grounding_camera_keys='["base"]'` (or the other views actually trained
+and validated for coordinates). The planner still observes every `camera_keys` view.
+Source/destination target pairs are supported without enabling gripper paths.
+Following the paper's final planner, leave
 `trace` disabled by default; use it only in controlled, validated experiments.
 `/subtask <text>` switches to human language
 steering; `/reset` ends the segment; `/stop` closes the session. Planner failures,

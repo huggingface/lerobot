@@ -25,6 +25,8 @@ class PlannerConfig:
     api_base: str = "https://api.openai.com/v1"
     api_key_env: str = "OPENAI_API_KEY"
     camera_keys: list[str] = field(default_factory=lambda: ["base", "left_wrist", "right_wrist"])
+    # Observation views may exceed the views with trained coordinate commands.
+    grounding_camera_keys: list[str] = field(default_factory=list)
     # Enable additional styles only after training and validating their annotations.
     styles: list[str] = field(default_factory=lambda: ["task", "subtask"])
     history_turns: int = 4
@@ -43,6 +45,10 @@ class PlannerConfig:
             "combination",
         }:
             raise ValueError("Unknown or empty planner command styles")
+        if set(self.grounding_camera_keys) - set(self.camera_keys):
+            raise ValueError("Grounding cameras must be included in planner observation cameras")
+        if set(self.styles) & {"point", "trace"} and not self.grounding_camera_keys:
+            raise ValueError("Point/trace steering requires explicit trained grounding_camera_keys")
 
 
 def image_content(frame, camera: str) -> list[dict]:
@@ -98,16 +104,17 @@ class VisionLanguagePlanner:
             "additionalProperties": False,
             "properties": {
                 "command": {"type": "string"},
-                "camera": {"type": ["string", "null"], "enum": [*self.config.camera_keys, None]},
+                "camera": {"type": ["string", "null"], "enum": [*self.config.grounding_camera_keys, None]},
                 "points": {
                     "type": "array",
                     "items": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2},
                 },
+                "point_mode": {"type": ["string", "null"], "enum": ["targets", "path", None]},
                 "style": {"type": "string", "enum": self.config.styles},
                 "assessment": {"type": "string"},
                 "status": {"type": "string", "enum": ["continue", "complete", "uncertain"]},
             },
-            "required": ["command", "camera", "points", "style", "assessment", "status"],
+            "required": ["command", "camera", "points", "point_mode", "style", "assessment", "status"],
         }
         payload = {
             "model": self.config.model,
@@ -123,7 +130,11 @@ class VisionLanguagePlanner:
                 "Unless trace is an allowed style, do not generate gripper paths, including in combinations. "
                 "For visual commands return the camera and ordered integer [x, y] points in original pixels, "
                 "separately from command wording. Do not put coordinates in the command string: the runtime inserts them. "
-                "For other commands use camera=null and points=[]. "
+                "Only use the cameras allowed by the camera schema for coordinate commands; other views provide context. "
+                "Set point_mode=targets for object/destination keypoints (including a source and destination pair); "
+                "use wording that identifies each point's role in order. Set point_mode=path for gripper trajectories. "
+                "Point style uses targets; trace style uses path; combination may use either if allowed. "
+                "For other commands use camera=null, points=[], and point_mode=null. "
                 "Do not infer grasp success from closure alone or treat a previous command as executed evidence. "
                 "Adapt the command abstraction when progress stalls. Give a brief observable assessment. "
                 "If complete or unable to choose a grounded command, set status accordingly; this stops planning and motion. "
@@ -186,14 +197,24 @@ class VisionLanguagePlanner:
             "points": decision.get("points", []),
         }
         if render["points"]:
-            if len(render["points"]) > 1 and "trace" not in self.config.styles:
-                raise ValueError("Multi-point paths require explicitly enabled trace steering")
+            mode = decision.get("point_mode")
+            style = decision["style"]
+            if mode not in {"targets", "path"} or style not in {"point", "trace", "combination"}:
+                raise ValueError("Coordinate commands require a visual style and an explicit point mode")
+            if (style == "point" and mode != "targets") or (style == "trace" and mode != "path"):
+                raise ValueError("Point mode does not match the command style")
+            if mode == "path" and ("trace" not in self.config.styles or len(render["points"]) < 2):
+                raise ValueError(
+                    "Gripper paths require explicitly enabled trace steering and at least two points"
+                )
             camera = decision.get("camera")
-            if camera not in self.config.camera_keys:
-                raise ValueError("Planner selected an unknown camera")
+            if camera not in self.config.grounding_camera_keys:
+                raise ValueError("Planner selected a camera without trained coordinate grounding")
             shape = observation[camera].shape
             height, width = shape[:2] if shape[-1] == 3 else shape[1:]
             render.update(camera=camera, image_size=[width, height])
+        elif decision.get("camera") is not None or decision.get("point_mode") is not None:
+            raise ValueError("Commands without points must have null camera and point mode")
         command = render_steering_command(render)
         self._history.extend([user, {"role": "assistant", "content": text}])
         self._history = self._history[-2 * self.config.history_turns :] if self.config.history_turns else []

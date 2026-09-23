@@ -63,6 +63,7 @@ def test_planner_sends_named_images_and_bounded_history_without_action_tools(mon
         "command": "reach for tape",
         "camera": None,
         "points": [],
+        "point_mode": None,
         "style": "subtask",
         "assessment": "tape visible",
         "status": "continue",
@@ -93,13 +94,14 @@ def test_planner_sends_named_images_and_bounded_history_without_action_tools(mon
     with pytest.raises(ValueError, match="Planner stopped"):
         planner(obs, "goal", 2)
     planner.config.styles.append("point")
-    decision.update(status="continue", style="point", camera="base", points=[[32, 24]])
+    planner.config.grounding_camera_keys.append("base")
+    decision.update(status="continue", style="point", camera="base", points=[[32, 24]], point_mode="targets")
     assert planner(obs, "goal", 2) == "In base view (64x48 pixels), reach for tape: [32, 24]."
     decision["points"] = [[64, 24]]
     with pytest.raises(ValueError, match="outside"):
         planner(obs, "goal", 2)
     planner.config.styles.append("combination")
-    decision.update(style="combination", points=[[32, 24], [33, 25]])
+    decision.update(style="combination", points=[[32, 24], [33, 25]], point_mode="path")
     with pytest.raises(ValueError, match="trace steering"):
         planner(obs, "goal", 2)
 
@@ -161,3 +163,51 @@ def test_rebot_task_branch_corrects_source_task_in_both_training_conditions(tmp_
     assert (
         task_from_recipe(sample, TrainingRecipe.from_dict(rich["dataset"]["task_recipe"]))["task"] == expected
     )
+
+
+def test_grounding_camera_configuration_requires_explicit_observed_views():
+    with pytest.raises(ValueError, match="explicit trained"):
+        PlannerConfig(styles=["point"])
+    with pytest.raises(ValueError, match="included"):
+        PlannerConfig(camera_keys=["base"], grounding_camera_keys=["left_wrist"])
+
+
+def test_planner_observes_all_views_but_limits_coordinate_commands(monkeypatch):
+    config = PlannerConfig(
+        camera_keys=["base", "left_wrist"], grounding_camera_keys=["base"], styles=["point", "combination"]
+    )
+    planner = VisionLanguagePlanner(config)
+    observation = {key: np.zeros((48, 64, 3), dtype=np.uint8) for key in config.camera_keys}
+    decision = {
+        "command": "move the object at the first point to the second point",
+        "style": "point",
+        "camera": "base",
+        "points": [[10, 20], [30, 40]],
+        "point_mode": "targets",
+        "assessment": "both targets visible",
+        "status": "continue",
+    }
+    requests = []
+
+    def post(url, **kwargs):
+        requests.append(kwargs["json"])
+        return Mock(
+            json=lambda: {
+                "status": "completed",
+                "output": [{"content": [{"type": "output_text", "text": json.dumps(decision)}]}],
+            }
+        )
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-only")
+    monkeypatch.setattr("lerobot.rollout.planner.requests.post", post)
+    assert "[10, 20], [30, 40]" in planner(observation, "goal", 1)
+    payload = requests[0]
+    assert sum(c["type"] == "input_image" for c in payload["input"][0]["content"]) == 2
+    assert payload["text"]["format"]["schema"]["properties"]["camera"]["enum"] == ["base", None]
+    decision["camera"] = "left_wrist"
+    with pytest.raises(ValueError, match="without trained coordinate"):
+        planner(observation, "goal", 1)
+    decision.update(camera="base", style="combination", point_mode="path")
+    with pytest.raises(ValueError, match="trace steering"):
+        planner(observation, "goal", 1)
+    assert len(planner._history) == 2  # Rejected proposals never become issued-command history.
