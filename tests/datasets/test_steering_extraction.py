@@ -120,6 +120,11 @@ def test_tracking_preserves_source_time_identity_and_missing_masks(extractor, tm
     assert second["centroid"] is None
     assert not second["mask_present"]
     assert result["status"] == "unreviewed"
+    for frame in result["frames"]:
+        assert len(frame["objects"]) == 2
+        assert frame["objects"][1]["object_id"] == 2
+        assert frame["objects"][1]["mask_path"] is None
+        assert frame["objects"][1]["missing_reason"] == "no_point_seed"
     assert np.asarray(Image.open(tmp_path / second["mask_path"])).sum() == 0
 
 
@@ -238,3 +243,19 @@ def test_required_candidates_retry_only_missing_task_objects_without_rewriting_e
     with pytest.raises(ValueError, match="stale"):
         extractor["prepare_required"](parent, tmp_path / "stale", ["bin"])
     assert not (tmp_path / "stale").exists()
+
+
+def test_unlocalized_clip_preserves_every_source_frame_without_invoking_tracker(extractor, tmp_path):
+    objects = [{"object_id": 1, "name": "bin", "point": None}]
+    (tmp_path / "point.json").write_text(json.dumps({"objects": objects}))
+    frames = [{"frame_index": 6, "timestamp": 0.2}, {"frame_index": 9, "timestamp": 0.3}]
+    predictor = Mock()
+    extractor["track_clip"](tmp_path, {"frames": frames, "image_size": [8, 6]}, predictor)
+    assert not predictor.mock_calls
+    result = json.loads((tmp_path / "tracks.json").read_text())
+    assert result["status"] == "no_grounded_objects"
+    assert [{k: r[k] for k in ("frame_index", "timestamp")} for r in result["frames"]] == frames
+    for frame in result["frames"]:
+        assert frame["objects"][0]["centroid"] is None
+        assert frame["objects"][0]["mask_path"] is None
+        assert frame["objects"][0]["missing_reason"] == "no_point_seed"

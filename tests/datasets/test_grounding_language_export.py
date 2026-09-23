@@ -204,3 +204,30 @@ def test_export_rejects_invalid_input_before_creating_dataset(sample, failure):
     with pytest.raises(ValueError):
         api["export_dataset"](dataset, [extraction], output)
     assert not output.exists()
+
+
+def test_export_retains_unlocalized_objects_with_explicit_null_geometry(sample):
+    api, dataset, extraction, output, path = sample
+    selected_path = extraction / "clip/task_objects.json"
+    selected = json.loads(selected_path.read_text())
+    selected["objects"][0]["point"] = None
+    for frame in selected["frames"]:
+        frame["objects"][0].update(
+            mask_present=False,
+            centroid=None,
+            bbox_xyxy=None,
+            mask_path=None,
+            missing_reason="no_point_seed",
+            area_fraction=0.0,
+        )
+    selected_path.write_text(json.dumps(selected))
+    api["export_dataset"](dataset, [extraction], output)
+    events = pq.read_table(output / "data/chunk-000/file-000.parquet")["language_events"].to_pylist()
+    for frame in events[:3]:
+        answer = json.loads(
+            next(r["content"] for r in frame if r["style"] == "vqa" and r["role"] == "assistant")
+        )
+        obj = answer["detections"][0]
+        assert obj["bbox"] is None and obj["point"] is None and obj["seed_point"] is None
+        assert obj["missing_reason"] == "no_point_seed"
+        assert obj["evidence"]["mask_sha256"] is None

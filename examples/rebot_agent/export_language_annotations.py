@@ -123,13 +123,15 @@ def collect_candidates(extractions: list[Path], source: dict):
                         raise ValueError("Mask presence disagrees with geometry")
                     if not obj["mask_present"] and (point is not None or box is not None):
                         raise ValueError("Absent mask cannot supply geometry")
+                    if obj["mask_present"] and not obj["mask_path"]:
+                        raise ValueError("Present mask requires a source mask artifact")
                     identity = f"{manifest_hash}:{clip['path']}:{object_id}"
                     evidence = {
                         "extraction_sha256": manifest_hash,
                         "clip": clip["path"],
                         "source_frame_sha256": frame["sha256"],
                         "mask_path": obj["mask_path"],
-                        "mask_sha256": digest(directory / obj["mask_path"]),
+                        "mask_sha256": digest(directory / obj["mask_path"]) if obj["mask_path"] else None,
                         "interval": {"start_frame": clip["start_frame"], "end_frame": clip["end_frame"]},
                     }
                     bucket["detections"].append(
@@ -146,6 +148,7 @@ def collect_candidates(extractions: list[Path], source: dict):
                             "seed_point_source": "molmo" if index == 0 else None,
                             "mask_present": obj["mask_present"],
                             "mask_area_fraction": obj["area_fraction"],
+                            "missing_reason": obj.get("missing_reason"),
                             "visibility": "unknown",
                             "review": "pending",
                             "evidence": evidence,

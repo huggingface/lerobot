@@ -418,10 +418,27 @@ def run_molmo(output: Path, manifest: dict, stage: str, model):
 def track_clip(directory: Path, clip: dict, predictor):
     points = json.loads((directory / "point.json").read_text())
     objects = [obj for obj in points["objects"] if obj["point"] is not None]
+    missing = [
+        {
+            "object_id": obj["object_id"],
+            "mask_present": False,
+            "centroid": None,
+            "bbox_xyxy": None,
+            "area_fraction": 0.0,
+            "mask_path": None,
+            "missing_reason": "no_point_seed",
+        }
+        for obj in points["objects"]
+        if obj["point"] is None
+    ]
     if not objects:
         write_json(
             directory / "tracks.json",
-            {"status": "no_grounded_objects", "objects": points["objects"], "frames": []},
+            {
+                "status": "no_grounded_objects",
+                "objects": points["objects"],
+                "frames": [{**frame, "objects": missing} for frame in clip["frames"]],
+            },
         )
         return
     masks_dir = directory / "masks"
@@ -444,6 +461,8 @@ def track_clip(directory: Path, clip: dict, predictor):
     for index, object_ids, logits in predictor.propagate_in_video(state):
         if index != len(rows) or index >= len(clip["frames"]):
             raise ValueError("SAM2 output is not aligned with exported frames")
+        if set(map(int, object_ids)) != set(names) or len(object_ids) != len(names):
+            raise ValueError("SAM2 object identities differ from the supplied seeds")
         masks = logits.detach().cpu().numpy()[:, 0] > 0
         if tuple(masks.shape[1:]) != tuple(reversed(clip["image_size"])):
             raise ValueError("SAM2 changed the original mask coordinate frame")
@@ -461,6 +480,8 @@ def track_clip(directory: Path, clip: dict, predictor):
                 draw.rectangle(summary["bbox_xyxy"], outline="red", width=2)
                 draw.ellipse((x - 3, y - 3, x + 3, y + 3), fill="yellow")
                 draw.text((x + 4, y), names[object_id], fill="yellow", stroke_width=1, stroke_fill="black")
+        row["objects"].extend(missing)
+        row["objects"].sort(key=lambda obj: obj["object_id"])
         if index % 10 == 0 or index == len(clip["frames"]) - 1:
             overlay.save(overlays / f"{index:06d}.jpg")
         rows.append(row)
