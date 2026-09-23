@@ -112,7 +112,7 @@ def format_big_number(num, precision=0):
     return num
 
 
-def say(text: str, blocking: bool = False):
+def say(text: str, blocking: bool = False) -> None:
     system = platform.system()
 
     if system == "Darwin":
@@ -138,7 +138,10 @@ def say(text: str, blocking: bool = False):
         if blocking:
             subprocess.run(cmd, check=True, timeout=5)
         else:
-            subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0)
+            creationflags = 0
+            if sys.platform == "win32":
+                creationflags = subprocess.CREATE_NO_WINDOW
+            subprocess.Popen(cmd, creationflags=creationflags)
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
         logging.warning("Text-to-speech command failed: %s | Error: %s", cmd, e)
 
@@ -197,7 +200,7 @@ def is_valid_numpy_dtype_string(dtype_str: str) -> bool:
 
 
 def enter_pressed() -> bool:
-    if platform.system() == "Windows":
+    if sys.platform == "win32":
         import msvcrt
 
         if msvcrt.kbhit():
@@ -205,7 +208,8 @@ def enter_pressed() -> bool:
             return key in (b"\r", b"\n")  # enter key
         return False
     else:
-        return select.select([sys.stdin], [], [], 0)[0] and sys.stdin.readline().strip() == ""
+        ready, _, _ = select.select([sys.stdin], [], [], 0)
+        return bool(ready) and sys.stdin.readline().strip() == ""
 
 
 def move_cursor_up(lines):
@@ -223,7 +227,7 @@ def get_elapsed_time_in_days_hours_minutes_seconds(elapsed_time_s: float):
     return days, hours, minutes, seconds
 
 
-def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
+def flatten_dict(d: dict[str, Any], parent_key: str = "", sep: str = "/") -> dict[str, Any]:
     """Flatten a nested dictionary by joining keys with a separator.
 
     Example:
@@ -239,7 +243,7 @@ def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
     Returns:
         dict: A flattened dictionary.
     """
-    items = []
+    items: list[tuple[str, Any]] = []
     for k, v in d.items():
         new_key = f"{parent_key}{sep}{k}" if parent_key else k
         if isinstance(v, dict):
@@ -249,7 +253,7 @@ def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
     return dict(items)
 
 
-def unflatten_dict(d: dict, sep: str = "/") -> dict:
+def unflatten_dict(d: dict[str, Any], sep: str = "/") -> dict[str, Any]:
     """Unflatten a dictionary with delimited keys into a nested dictionary.
 
     Example:
@@ -264,7 +268,7 @@ def unflatten_dict(d: dict, sep: str = "/") -> dict:
     Returns:
         dict: A nested dictionary.
     """
-    outdict = {}
+    outdict: dict[str, Any] = {}
     for key, value in d.items():
         parts = key.split(sep)
         d_inner = outdict

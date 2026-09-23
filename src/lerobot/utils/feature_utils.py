@@ -21,6 +21,7 @@ in the codebase – including modules that are part of the *minimal* install –
 without triggering the ``lerobot.datasets`` package guard.
 """
 
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
@@ -45,8 +46,8 @@ def _validate_feature_names(features: dict[str, dict]) -> None:
 
 
 def hw_to_dataset_features(
-    hw_features: dict[str, type | tuple], prefix: str, use_video: bool = True
-) -> dict[str, dict]:
+    hw_features: Mapping[str, type | tuple[int, ...] | PolicyFeature], prefix: str, use_video: bool = True
+) -> dict[str, dict[str, Any]]:
     """Convert hardware-specific features to a LeRobot dataset feature dictionary.
 
     This function takes a dictionary describing hardware outputs (like joint states
@@ -56,8 +57,8 @@ def hw_to_dataset_features(
     treated as RGB.
 
     Args:
-        hw_features (dict): Dictionary mapping feature names to their type (float for
-            joints) or shape (tuple for images).
+        hw_features (Mapping): Mapping from feature names to their type (``float`` for joints),
+            shape (tuple for images), or a :class:`PolicyFeature` (non-visual ones count as joints).
         prefix (str): The prefix to add to the feature keys (e.g., "observation"
             or "action").
         use_video (bool): If True, image features are marked as "video", otherwise "image".
@@ -65,7 +66,7 @@ def hw_to_dataset_features(
     Returns:
         dict: A LeRobot features dictionary. Depth cameras carry ``info["is_depth_map"] = True``.
     """
-    features = {}
+    features: dict[str, dict[str, Any]] = {}
     joint_fts = {
         key: ftype
         for key, ftype in hw_features.items()
