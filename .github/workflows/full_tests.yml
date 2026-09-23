@@ -32,8 +32,6 @@ on:
       - "uv.lock"
       - "Makefile"
 
-permissions:
-  contents: read
 
 # Sets up the environment variables
 env:
@@ -46,11 +44,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
 
   # This job runs the E2E tests + pytest with all extras
   # It runs everytime a PR is approved or a push to main
   full-tests:
+    permissions:
+      contents: read
     name: Full Tests
     runs-on: ubuntu-latest
     if: |
@@ -108,6 +110,8 @@ jobs:
   # It runs everytime a PR is approved or a push to main
   # TODO(Steven): For now we skip this job for community PRs
   build-and-push-docker:
+    permissions:
+      contents: read
     name: Build and Push Docker
     runs-on:
       group: aws-general-8-plus
@@ -164,6 +168,7 @@ jobs:
   # This job runs pytest with all extras in a GPU enabled host
   # It runs everytime a test image is created
   gpu-tests:
+    permissions: {}
     name: GPU Tests
     needs: [build-and-push-docker]
     runs-on:
@@ -200,6 +205,7 @@ jobs:
   # This job deletes the test image recently created
   # It runs everytime after the gpu-tests have finished
   delete-pr-image:
+    permissions: {}
     name: Delete PR Image
     needs: [gpu-tests, build-and-push-docker]
     if: always() && ((github.event.review.state == 'approved') || (github.event_name == 'workflow_dispatch')) && needs.build-and-push-docker.result == 'success'

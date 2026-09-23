@@ -982,7 +982,7 @@ def test_query_reaches_the_preprocessor_as_complementary_data():
 
     query = PolicyQuery(kind=QueryKind.VQA, text="is the cube in the box?")
     batch = InferenceEngine._mark_query({"observation.state": np.zeros(2), "task": "tidy"}, query)
-    complementary = batch_to_transition(batch)[TransitionKey.COMPLEMENTARY_DATA.value]
+    complementary = batch_to_transition(batch)[TransitionKey.COMPLEMENTARY_DATA]
 
     assert complementary[QUERY_KIND] == QueryKind.VQA.value
     assert complementary[QUERY_TEXT] == "is the cube in the box?"
@@ -1315,7 +1315,7 @@ def _make_rtc_engine(rtc_queue_threshold: int = 30, chunk_len: int = 10):
         postprocessor=_IdentityPipeline(),
         robot_wrapper=SimpleNamespace(robot_type="mock", action_features={}),
         rtc_config=RTCConfig(enabled=True, execution_horizon=8, max_guidance_weight=1.0),
-        hw_features={
+        dataset_features={
             "observation.state": {"dtype": "float32", "shape": (2,), "names": ["j1.pos", "j2.pos"]},
         },
         task="task A",
