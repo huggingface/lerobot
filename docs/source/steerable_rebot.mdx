@@ -111,8 +111,10 @@ up to four task-relevant objects with MolmoE-1B-0924, points to them with Molmo-
 and tracks the resulting seeds with SAM2.1. Each model is pinned to a Hub revision.
 Run stages separately so only one extractor occupies GPU memory at a time. Preparation
 needs dataset dependencies; model stages additionally need the models' dependencies
-and SAM2. Use an isolated annotation environment: compatibility between Molmo's remote
-code and the training environment's Transformers version still needs GPU validation.
+and SAM2. Molmo's remote code fails to load in the training stack's Transformers 5.5
+(`all_tied_weights_keys` is missing). Use the separate pinned Molmo dependency overlay
+for identification and pointing. Those stages consume exported frames and do not
+import main's dataset/Hub stack. Preparation and VLA training keep LeRobot's lockfile.
 The SAM2 reference code reviewed here is
 `facebookresearch/sam2@2b90b9f5ceec907a1c18123530e92e794ad901a4`.
 
@@ -125,8 +127,10 @@ uv run examples/rebot_agent/extract_visual.py prepare \
   --dataset-root /path/to/pinned_dataset --output outputs/rebot_visual \
   --episodes 0 1 2 3 4 --cameras observation.images.base --stride 15
 # Inside a GPU allocation with annotation dependencies installed:
-uv run examples/rebot_agent/extract_visual.py identify --output outputs/rebot_visual
-uv run examples/rebot_agent/extract_visual.py point --output outputs/rebot_visual
+USE_TF=0 uv run --no-sync --with-requirements examples/rebot_agent/molmo-requirements.txt \
+  examples/rebot_agent/extract_visual.py identify --output outputs/rebot_visual
+USE_TF=0 uv run --no-sync --with-requirements examples/rebot_agent/molmo-requirements.txt \
+  examples/rebot_agent/extract_visual.py point --output outputs/rebot_visual
 uv run examples/rebot_agent/extract_visual.py track --output outputs/rebot_visual
 ```
 

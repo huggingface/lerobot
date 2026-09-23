@@ -20,8 +20,6 @@ import torch
 from huggingface_hub import hf_hub_download
 from PIL import Image, ImageDraw
 
-from lerobot.annotations.steerable_pipeline.frames import VideoFrameProvider, _frame_to_pil
-from lerobot.annotations.steerable_pipeline.reader import iter_episodes, reconstruct_subtask_spans
 from lerobot.utils.import_utils import _sam2_available, _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -104,6 +102,11 @@ def mask_summary(mask: np.ndarray) -> dict:
 
 def prepare(root: Path, output: Path, episodes: list[int], cameras: list[str], stride: int):
     """Materialize timestamp-aligned, original-size frames using main's dataset reader."""
+    # Preparation uses main's Hub/dataset stack. Legacy Molmo inference runs from the
+    # exported frames in its own dependency overlay, which cannot import that stack.
+    from lerobot.annotations.steerable_pipeline.frames import VideoFrameProvider, _frame_to_pil
+    from lerobot.annotations.steerable_pipeline.reader import iter_episodes, reconstruct_subtask_spans
+
     source = json.loads((root / "source.json").read_text())
     if not source.get("repo_id") or not re.fullmatch(r"[0-9a-f]{40}", source.get("revision", "")):
         raise ValueError("source.json must identify the downloaded dataset and immutable revision")
@@ -328,7 +331,7 @@ def main():
         "device": args.device,
         "models": manifest["models"],
     }
-    for package in ("torch", "transformers", "SAM-2"):
+    for package in ("torch", "transformers", "huggingface-hub", "tensorflow-cpu", "SAM-2"):
         with contextlib.suppress(importlib.metadata.PackageNotFoundError):
             provenance[package] = importlib.metadata.version(package)
     write_json(args.output / f"{args.stage}_runtime.json", provenance)

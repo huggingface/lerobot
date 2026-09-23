@@ -1,0 +1,7 @@
+# Molmo's September 2024 remote model code uses the Transformers 4 loading API.
+# Use only for identify/point, as an overlay; preparation/training use LeRobot's lock.
+transformers==4.45.2
+huggingface-hub==0.36.0
+# The remote-code import checker requires this conditional image-resize dependency.
+tensorflow-cpu==2.20.0; sys_platform == "linux"
+tensorflow==2.20.0; sys_platform == "darwin"
