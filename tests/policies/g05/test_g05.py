@@ -47,7 +47,7 @@ from lerobot.policies.g05.modeling_g05 import (
     G05Policy,
     G05TextGeneration,
 )
-from lerobot.policies.g05.processor_g05 import G05TokenizerStep
+from lerobot.policies.g05.processor_g05 import G05RelativeJointActionsStep, G05TokenizerStep
 from lerobot.policies.g05.tokenizer_g05 import (
     G05_INPUT_IDS,
     G05_LABELS,
@@ -61,6 +61,7 @@ from lerobot.processor import (
     RenderRuntimeMessagesStep,
     RenderTrainingMessagesStep,
 )
+from lerobot.processor.converters import create_transition
 from lerobot.utils.constants import (
     ACTION,
     MESSAGES_RENDERED,
@@ -1609,3 +1610,39 @@ def test_with_text_reports_no_text_for_system1():
     assert G05Policy.predict_action_chunk(Stub(), {}, with_text=True)[1] is None
     # Without the flag the bare chunk comes back, as every other policy returns.
     assert isinstance(G05Policy.predict_action_chunk(Stub(), {}), torch.Tensor)
+
+
+def test_relative_anchor_is_held_while_a_chunk_is_in_flight():
+    """Re-anchoring mid-chunk accumulates commands and jumps at the chunk seam.
+
+    Each action in a chunk is a delta from the state observed when the chunk was
+    predicted. The preprocessor runs every tick, so without the in-flight guard the
+    anchor follows the robot and every delta is added to the position the previous
+    action already reached.
+    """
+    from lerobot.processor.relative_action_processor import to_absolute_actions
+
+    step = G05RelativeJointActionsStep(enabled=True)
+    queued = {"n": 0}
+    step.bind_action_queue(lambda: queued["n"])
+
+    position = torch.zeros(1, 6)
+    delta = torch.full((1, 6), 1.0)
+    commanded = []
+    for _ in range(9):
+        step(create_transition(observation={OBS_STATE: position}))
+        if queued["n"] == 0:  # select_action refills the queue
+            queued["n"] = 4
+        position = to_absolute_actions(delta, step.get_cached_state(), step._build_mask(6))
+        queued["n"] -= 1
+        commanded.append(position[0, 0].item())
+
+    # One step per chunk, not a per-tick ramp.
+    assert commanded == [1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0, 3.0]
+
+
+def test_relative_anchor_uses_the_last_proprio_history_step():
+    step = G05RelativeJointActionsStep(enabled=True, num_obs_steps=3)
+    history = torch.stack([torch.full((6,), float(i)) for i in (1, 2, 3)])
+    step(create_transition(observation={OBS_STATE: history}))
+    assert torch.equal(step.get_cached_state(), torch.full((6,), 3.0))

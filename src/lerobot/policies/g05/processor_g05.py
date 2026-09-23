@@ -517,8 +517,12 @@ class G05RelativeJointActionsStep(RelativeActionsProcessorStep):
             and state.shape[-2] == self.num_obs_steps
         ):
             state = state[-1]
-        # Always cache state for the paired AbsoluteActionsProcessorStep.
-        if state is not None:
+        # Hold the anchor for as long as the policy is still serving the chunk that was
+        # generated against it; a fresh chunk re-anchors when the queue drains. Mirrors
+        # `RelativeActionsProcessorStep`: re-anchoring every tick makes each action in a
+        # chunk relative to the position the previous one already reached, so commands
+        # accumulate across the chunk and jump at the seam.
+        if state is not None and not self._chunk_in_flight():
             self._last_state = state
         if not self.enabled:
             return transition
