@@ -8,4 +8,6 @@ blend:
   high_level_task:
     weight: 0.2
     messages:
-      - {role: user, content: "${task}", stream: low_level}
+      # The source task incorrectly specifies blocks and a green bin. Use the
+      # demonstrated behavior without imposing an unsupported object set/color.
+      - {role: user, content: "Pick up objects from the table and place them into the bin.", stream: low_level}

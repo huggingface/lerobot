@@ -6,6 +6,8 @@ https://github.com/steerable-policies/steerable-policies-bridge
 (reference revision b95286e7823e1f05e490a96ae98f7a3e3ac396f8).
 
 Use LeRobot main's existing language runtime and training stack wherever possible.
+Work only on `codex/rebot-physical-agent-loop`. Do not create, reopen, or merge pull
+requests. The earlier draft PR was closed at the user's request; preserve the branch.
 The VLA is the sole robot-action controller. Astra receives current images, the overall
 task, and a bounded history of observations and issued commands; it chooses the next
 steering instruction and evaluates progress. Do not build a hybrid action arbitration

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ReBot gripper review</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font: 16px/1.5 system-ui, sans-serif; background: #f5f5f1; color: #1d2931; max-width: 1100px; margin: 24px auto; padding: 0 20px; }
+    h1 { margin-bottom: 6px; } p { margin: 8px 0; }
+    .bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 14px 0; }
+    button, select, input { font: inherit; padding: 8px 12px; border: 1px solid #aeb8bc; border-radius: 6px; background: white; }
+    button { cursor: pointer; } button.primary { color: white; background: #14665f; border-color: #14665f; }
+    button:disabled { opacity: .45; cursor: default; }
+    canvas { display: block; max-width: 100%; height: auto; background: #ddd; cursor: crosshair; touch-action: none; border-radius: 8px; }
+    .workspace { display: grid; grid-template-columns: minmax(0, 720px) 1fr; gap: 20px; }
+    .card { background: white; padding: 16px; border: 1px solid #d8dfdf; border-radius: 10px; }
+    .arm { margin: 16px 0; padding-left: 10px; border-left: 4px solid #0071bc; }
+    .arm.right { border-color: #ba3b65; } select { width: 100%; }
+    .muted { color: #58696f; font-size: 14px; } #notice { min-height: 24px; color: #913b16; }
+    label { display: block; margin: 8px 0; } input[type=checkbox] { margin-right: 8px; }
+    @media (max-width: 820px) { .workspace { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <h1>ReBot gripper review</h1>
+  <p>Label the visible gripper jaws, excluding the wrist body. Left/right means the <strong>physical arm identity</strong>, not its position in the image.</p>
+  <p class="muted">Do not guess through occlusion. Choose “Uncertain” when arm identity or boundaries cannot be determined; the entire image will be excluded from detector training.</p>
+  <div class="bar">
+    <label>Reviewer <input id="reviewer" placeholder="Your name or reviewer ID" autocomplete="off"></label>
+    <button id="import">Import saved labels</button><input id="file" type="file" accept="application/json" hidden>
+    <button id="export">Export labels</button><span id="progress"></span>
+  </div>
+  <div class="workspace">
+    <section class="card"><p id="caption"></p><canvas id="canvas" width="640" height="480" aria-label="Gripper image. Select an arm, then drag to draw its box."></canvas><p id="source" class="muted"></p></section>
+    <section class="card">
+      <strong>Draw a box for</strong>
+      <div class="bar"><button id="left">Left arm</button><button id="right">Right arm</button></div>
+      <div class="arm"><strong>Left gripper</strong><select id="left-state" aria-label="Left gripper visibility"><option value="unlabeled">Not yet labeled</option><option value="visible">Visible — draw a box</option><option value="not_visible">Not visible</option><option value="uncertain">Uncertain</option></select><div id="left-box" class="muted"></div></div>
+      <div class="arm right"><strong>Right gripper</strong><select id="right-state" aria-label="Right gripper visibility"><option value="unlabeled">Not yet labeled</option><option value="visible">Visible — draw a box</option><option value="not_visible">Not visible</option><option value="uncertain">Uncertain</option></select><div id="right-box" class="muted"></div></div>
+      <label><input id="identity" type="checkbox">I verified the physical arm identity of every visible gripper.</label>
+      <button id="confirm" class="primary">Confirm this image</button><p id="review-status" class="muted"></p>
+    </section>
+  </div>
+  <div class="bar"><button id="previous">Previous</button><button id="next">Next</button><button id="unreviewed">Next unreviewed</button></div>
+  <p id="notice" role="status"></p>
+  <p class="muted">Edits are kept in this browser when storage is available. Export a JSON file to preserve your work and transfer it to training. Confirmed labels are human annotations; no model prediction is pre-accepted.</p>
+  <script>
+    const payload = /* PACK_DATA */ null;
+    const $ = id => document.getElementById(id);
+    if (!payload) throw new Error("Generate this review pack with gripper_labels.py prepare.");
+    const pack = payload.pack, arms = ["left", "right"], key = "rebot-grippers-" + payload.pack_sha256;
+    let labels = { version: 1, pack_sha256: payload.pack_sha256, images: pack.images.map(im => ({ id: im.id, arms: Object.fromEntries(arms.map(arm => [arm, { visibility: "unlabeled", bbox_xyxy: null }])), review: { kind: "human", reviewer: "", confirmed: false, arm_identity_verified: false } })) };
+    let index = 0, active = "left", start = null, preview = null, imageReady = false;
+    const image = new Image(), canvas = $("canvas"), ctx = canvas.getContext("2d");
+    function validateImported(candidate) {
+      if (candidate.version !== 1 || candidate.pack_sha256 !== payload.pack_sha256 || !Array.isArray(candidate.images) || candidate.images.length !== pack.images.length) throw new Error("Labels belong to a different image pack.");
+      candidate.images.forEach((row, i) => {
+        if (row.id !== pack.images[i].id || !row.review || row.review.kind !== "human") throw new Error("Invalid image or review entry.");
+        arms.forEach(arm => {
+          const a = row.arms?.[arm], size = pack.images[i];
+          if (!a || !["visible", "not_visible", "uncertain", "unlabeled"].includes(a.visibility)) throw new Error("Invalid visibility label.");
+          if (a.bbox_xyxy !== null) {
+            const b = a.bbox_xyxy;
+            if (!Array.isArray(b) || b.length !== 4 || !b.every(Number.isFinite) || b[0] < 0 || b[1] < 0 || b[2] > size.width || b[3] > size.height || b[2] <= b[0] || b[3] <= b[1]) throw new Error("Invalid box.");
+          }
+        });
+      });
+      return candidate;
+    }
+    try { const saved = localStorage.getItem(key); if (saved) labels = validateImported(JSON.parse(saved)); } catch (_) { $("notice").textContent = "Saved browser state could not be loaded. Import an exported file to resume."; }
+    function persist() { try { localStorage.setItem(key, JSON.stringify(labels)); } catch (_) { $("notice").textContent = "Browser storage is unavailable; export your labels before closing."; } }
+    function row() { return labels.images[index]; }
+    function changed() { row().review.confirmed = false; row().review.arm_identity_verified = false; $("identity").checked = false; persist(); controls(); draw(); }
+    function controls() {
+      arms.forEach(arm => { $(arm).className = active === arm ? "primary" : ""; $(arm + "-state").value = row().arms[arm].visibility; $(arm + "-box").textContent = row().arms[arm].bbox_xyxy?.join(", ") || "No box"; });
+      $("progress").textContent = `${labels.images.filter(r => r.review.confirmed).length} / ${pack.images.length} confirmed`;
+      $("review-status").textContent = row().review.confirmed ? `Confirmed by ${row().review.reviewer}` : "Not confirmed";
+      $("previous").disabled = index === 0; $("next").disabled = index === pack.images.length - 1;
+    }
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height); if (!imageReady) return; ctx.drawImage(image, 0, 0);
+      arms.forEach(arm => { const b = preview && arm === active ? preview : row().arms[arm].bbox_xyxy; if (!b) return; ctx.strokeStyle = arm === "left" ? "#159bea" : "#fa5d90"; ctx.lineWidth = 3; ctx.strokeRect(b[0], b[1], b[2] - b[0], b[3] - b[1]); ctx.fillStyle = ctx.strokeStyle; ctx.font = "bold 16px sans-serif"; ctx.fillText(arm, b[0] + 3, Math.max(16, b[1] - 5)); });
+    }
+    function load() {
+      const im = pack.images[index]; start = preview = null; imageReady = false; canvas.width = im.width; canvas.height = im.height;
+      $("caption").textContent = `Image ${index + 1} of ${pack.images.length} · ${im.camera.replace("observation.images.", "")}`;
+      $("source").textContent = `Episode ${im.episode_index} · frame ${im.frame_index} · ${im.timestamp.toFixed(3)} s · detector ${im.split}`;
+      $("identity").checked = row().review.arm_identity_verified; if (row().review.reviewer) $("reviewer").value = row().review.reviewer;
+      image.onload = () => { imageReady = true; draw(); }; image.onerror = () => { $("notice").textContent = "Image failed to load. Keep the images directory beside review.html."; };
+      image.src = im.file_name; controls(); draw();
+    }
+    function coordinates(event) { const r = canvas.getBoundingClientRect(); return [Math.round(Math.max(0, Math.min(canvas.width, (event.clientX - r.left) * canvas.width / r.width))), Math.round(Math.max(0, Math.min(canvas.height, (event.clientY - r.top) * canvas.height / r.height)))]; }
+    function box(a, b) { return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])]; }
+    canvas.onpointerdown = e => { if (!imageReady || e.button !== 0) return; start = coordinates(e); canvas.setPointerCapture(e.pointerId); };
+    canvas.onpointermove = e => { if (!start) return; preview = box(start, coordinates(e)); draw(); };
+    canvas.onpointerup = e => { if (!start) return; const b = box(start, coordinates(e)); start = preview = null; if (b[2] > b[0] && b[3] > b[1]) { row().arms[active] = { visibility: "visible", bbox_xyxy: b }; changed(); } else draw(); };
+    canvas.onpointercancel = () => { start = preview = null; draw(); };
+    arms.forEach(arm => { $(arm).onclick = () => { active = arm; controls(); }; $(arm + "-state").onchange = () => { const visibility = $(arm + "-state").value; row().arms[arm].visibility = visibility; if (visibility !== "visible") row().arms[arm].bbox_xyxy = null; changed(); }; });
+    $("confirm").onclick = () => {
+      const reviewer = $("reviewer").value.trim(), visible = arms.some(arm => row().arms[arm].visibility === "visible");
+      if (!reviewer || arms.some(arm => row().arms[arm].visibility === "unlabeled" || (row().arms[arm].visibility === "visible" && !row().arms[arm].bbox_xyxy)) || (visible && !$("identity").checked)) { $("notice").textContent = "Enter a reviewer, label both arms, and verify identity for visible grippers."; return; }
+      row().review = { kind: "human", reviewer, confirmed: true, arm_identity_verified: $("identity").checked, reviewed_at: new Date().toISOString() }; persist(); controls(); $("notice").textContent = "Image confirmed. Export labels to save a transferable copy.";
+    };
+    $("previous").onclick = () => { if (index > 0) { index--; load(); } };
+    $("next").onclick = () => { if (index + 1 < pack.images.length) { index++; load(); } };
+    $("unreviewed").onclick = () => { for (let step = 1; step <= pack.images.length; step++) { const i = (index + step) % pack.images.length; if (!labels.images[i].review.confirmed) { index = i; load(); return; } } $("notice").textContent = "Every image has been reviewed."; };
+    $("export").onclick = () => { const url = URL.createObjectURL(new Blob([JSON.stringify(labels, null, 2)], { type: "application/json" })); const a = document.createElement("a"); a.href = url; a.download = "rebot_gripper_labels.json"; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); };
+    $("import").onclick = () => $("file").click();
+    $("file").onchange = async () => { try { labels = validateImported(JSON.parse(await $("file").files[0].text())); persist(); load(); $("notice").textContent = "Labels imported."; } catch (error) { $("notice").textContent = error.message; } $("file").value = ""; };
+    load();
+  </script>
+</body>
+</html>

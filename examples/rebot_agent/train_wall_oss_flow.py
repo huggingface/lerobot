@@ -39,9 +39,8 @@ def prepare_run(
         config["dataset"]["steering_manifest"] = str(steering_manifest.resolve())
         config["dataset"]["steering_task_probability"] = 0.2
         config["dataset"]["image_transforms"] = {"enable": False}
-        config["dataset"]["task_recipe"] = {
-            "messages": [{"role": "user", "content": "${task}", "stream": "low_level"}]
-        }
+        # Keep the same corrected task conditioning in both experiment arms.
+        config["dataset"]["task_recipe"] = asdict(recipe.blend["high_level_task"])
     config["policy"].update(type="wall_x", pretrained_name_or_path=candidate["base_model"])
     config.update(batch_size=batch_size, output_dir=str(output / "training"))
     config["accelerator"] = {"mixed_precision": "bf16"}

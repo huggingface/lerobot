@@ -26,7 +26,7 @@ training code consumes precomputed annotations; it is not a complete ReBot extra
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | VLA and robot       | Existing WALL-OSS-Flow and bimanual ReBot support in main; adaptations from the paper's OpenVLA/Pi0.5 and WidowX                       |
 | Semantic labels     | Existing timestamped dataset annotations and main's annotation reader/decoder                                                          |
-| Visual grounding    | Staged Molmo identification/pointing and SAM2 mask tracking; ReBot-trained DETR gripper localization remains to implement and validate |
+| Visual grounding    | Staged Molmo/SAM2 extraction and DETR gripper fitting/extraction from reviewed per-arm boxes; trained extractors still need validation |
 | Motion grounding    | `fk_motion.py` uses calibrated measured joints and main's `RobotKinematics`; actual URDF/calibration are required                      |
 | Command composition | `prepare_steering.py` builds grounded template variants; a VLM paraphrasing stage is still an extension                                |
 | Annotation review   | Astra inspects timestamped source images and proposed commands; accepted/uncertain/rejected results are saved                          |
@@ -43,6 +43,13 @@ The source is `pepijn223/rebot_diverse_picking_100_annotated`, pinned to
 `93c97807c46535745d0587d4296416bf2d4aa80d`. Keep the last ten episodes held out.
 The semantic baseline uses `dataset.task_recipe` with 80% active subtask / 20% task.
 The task adapter leaves observations, actions, and source annotations unchanged.
+
+The source's sole canonical task says "blocks" and "green bin", which conflicts with
+the pilot video and its object-specific subtask annotations. Both experiment conditions
+therefore use "Pick up objects from the table and place them into the bin." for the
+20% overall-task branch. This avoids imposing an unsupported object set or bin color;
+it is an experiment recipe correction, not a rewrite of the source dataset. The
+policy's `${task}` pass-through still receives the selected subtask or steering command.
 
 The richer model takes a JSON `dataset.steering_manifest`. Each half-open interval
 `[start_frame, end_frame)` uses episode-local frame indices, and has:
@@ -135,6 +142,60 @@ Inspect overlays and split long semantic spans into action-consistent intervals 
 composing point/motion/trace commands. Object trajectories are not gripper trajectories.
 The paper trained DETR on 100 manually labeled Bridge gripper images; ReBot needs its
 own reviewed per-arm labels and a validated detector. Generic COCO DETR is insufficient.
+
+### Review and fit the ReBot gripper detector
+
+Prepare 100 real images across 25 training episodes and all three views:
+
+```bash
+uv run examples/rebot_agent/gripper_labels.py prepare \
+  --dataset-root /path/to/pinned_dataset --output outputs/gripper_review
+```
+
+Open `outputs/gripper_review/review.html` in a browser. Draw tight boxes around visible
+gripper jaws, excluding the wrist body. Assign physical left/right arm identity, not
+image-left/image-right. Record each arm as visible, not visible, or uncertain. Confirm
+images under a reviewer ID and export the label JSON. The tool supports local browser
+drafts and importing exported labels. It does not pre-accept model predictions.
+
+The default pack contains 80 detector-training and 20 detector-validation images,
+separated by whole episode; all are outside VLA holdout episodes 90–99. All three
+camera streams must be downloaded for the selected episodes. The exporter requires
+review of every image and excludes an entire image when either arm is uncertain,
+so uncertainty never becomes an empty negative target. It preserves source hashes,
+the exact reviewed labels, and the source pack alongside COCO annotations.
+
+```bash
+uv run examples/rebot_agent/gripper_labels.py export \
+  --pack outputs/gripper_review/pack.json \
+  --labels /path/to/rebot_gripper_labels.json --output outputs/gripper_coco
+# On one GPU inside the science-cluster allocation, after copying the image pack:
+uv run examples/rebot_agent/gripper_detector.py train \
+  --labels /path/to/gripper_coco --image-root /path/to/gripper_review \
+  --output outputs/gripper_smoke --smoke
+uv run examples/rebot_agent/gripper_detector.py train \
+  --labels /path/to/gripper_coco --image-root /path/to/gripper_review \
+  --output outputs/gripper_detr --epochs 50
+uv run examples/rebot_agent/gripper_detector.py extract \
+  --checkpoint outputs/gripper_detr/checkpoint \
+  --visual outputs/rebot_visual --output outputs/gripper_tracks
+```
+
+The auxiliary detector uses pinned `facebook/detr-resnet-50`, replacing its COCO
+classification head with the two gripper classes. Its initial training settings are
+50 epochs, batch size 2, learning rates 1e-4/1e-5 for non-backbone/backbone weights,
+and gradient clipping at 0.1; these still require tuning on the GPU allocation.
+Install the DETR dependencies documented by Transformers (including its backbone
+and matching-loss dependencies). Validation reports per-arm precision/recall at
+IoU 0.5 and center error on matches; this is not COCO mAP. Checkpoint save/reload is
+tested by re-evaluating the restored model and processor. The smoke option trains
+at most two batches and evaluates the detector validation split.
+
+Extraction preserves timestamps, camera/arm identity, confidence scores, and weight
+hashes. Low-confidence, ambiguous, and invalid detections remain missing. Scores are
+not calibrated visibility probabilities. Outputs remain unreviewed evidence: inspect
+gripper overlays and tracking continuity before using centers as trace labels. No
+occlusion interpolation or object-track substitution is performed.
 
 Extract features on a small diverse episode subset first. Each entry in the input
 feature JSON has `episode_index`, `start_frame`, `end_frame`, `subtask`, and

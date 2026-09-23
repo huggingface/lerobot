@@ -10,6 +10,8 @@ import numpy as np
 import pytest
 
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.datasets.language_task import task_from_recipe
+from lerobot.datasets.recipe import TrainingRecipe
 from lerobot.policies.wall_x.configuration_wall_x import WallXConfig  # noqa: F401
 from lerobot.rollout.inference.sync import SyncInferenceEngine
 from lerobot.rollout.planner import PlannerConfig, VisionLanguagePlanner
@@ -113,3 +115,31 @@ def test_four_gpu_training_config_uses_main_parser(tmp_path):
     assert "--nproc-per-node=4" in argv
     with pytest.raises(ValueError):
         module["prepare_run"](tmp_path, 5, 1, True)
+
+
+def test_rebot_task_branch_corrects_source_task_in_both_training_conditions(tmp_path):
+    module = runpy.run_path(str(Path(__file__).parents[1] / "examples/rebot_agent/train_wall_oss_flow.py"))
+    config, _ = module["prepare_run"](tmp_path, 1, 1, True)
+    recipe = TrainingRecipe.from_dict(config["dataset"]["task_recipe"])
+    sample = {
+        "task": "Pick up all blocks on the table and place them into the green bin.",
+        "timestamp": 0,
+        "index": 0,
+    }
+    expected = "Pick up objects from the table and place them into the bin."
+    assert task_from_recipe(sample, recipe.blend["high_level_task"])["task"] == expected
+    # Empty coverage will fail in the dataset loader; it suffices to inspect launch conditioning here.
+    path = tmp_path / "manifest.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "source": {k: config["dataset"][k] for k in ("repo_id", "revision")},
+                "segments": [],
+            }
+        )
+    )
+    rich, _ = module["prepare_run"](tmp_path, 1, 1, True, path)
+    assert (
+        task_from_recipe(sample, TrainingRecipe.from_dict(rich["dataset"]["task_recipe"]))["task"] == expected
+    )

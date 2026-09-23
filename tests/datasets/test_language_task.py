@@ -31,7 +31,8 @@ def sample(index=0, timestamp=1.0):
 def test_recipe_blend_conditions_actions_at_both_abstraction_levels(recipe):
     counts = Counter(task_from_recipe(sample(i), recipe)["task"] for i in range(10000))
     assert 7800 < counts["pick the tape"] < 8200
-    assert 1800 < counts["put everything in the bin"] < 2200
+    assert 1800 < counts["Pick up objects from the table and place them into the bin."] < 2200
+    assert "put everything in the bin" not in counts
     assert "pick the remote" not in counts
 
 

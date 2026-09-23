@@ -1,0 +1,212 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+# Licensed under the Apache License, Version 2.0.
+"""Prepare a real-image gripper review pack and export reviewed per-arm DETR labels."""
+
+import argparse
+import hashlib
+import json
+from pathlib import Path
+
+import numpy as np
+
+from lerobot.annotations.steerable_pipeline.frames import VideoFrameProvider, _frame_to_pil
+from lerobot.annotations.steerable_pipeline.reader import iter_episodes
+from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+
+ARMS = ("left", "right")
+
+
+def digest(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def prepare(root: Path, output: Path, episodes: list[int], per_episode: int = 4):
+    """Stratify views/times and split detector evaluation by episode, outside VLA holdout."""
+    source = json.loads((root / "source.json").read_text())
+    if not source.get("repo_id") or not source.get("revision"):
+        raise ValueError("A pinned dataset source.json is required")
+    info = json.loads((root / "meta/info.json").read_text())
+    holdout = list(range(info["total_episodes"] - 10, info["total_episodes"]))
+    if len(episodes) < 5 or len(set(episodes)) != len(episodes) or per_episode < 1:
+        raise ValueError("Select at least five distinct episodes and a positive frame count")
+    if set(episodes) & set(holdout):
+        raise ValueError("VLA-held-out episodes must not fit the gripper detector")
+    records = list(iter_episodes(root, only_episodes=tuple(episodes)))
+    if sorted(record.episode_index for record in records) != sorted(episodes):
+        raise ValueError("Requested episodes are missing or duplicated across shards")
+    provider = VideoFrameProvider(root, video_backend="pyav", cache_size=8)
+    cameras = [f"observation.images.{name}" for name in ("base", "left_wrist", "right_wrist")]
+    if not set(cameras).issubset(provider.camera_keys):
+        raise ValueError("The ReBot label pack requires base and both wrist cameras")
+    metadata = LeRobotDatasetMetadata(repo_id=source["repo_id"], root=root)
+    missing = sorted(
+        {
+            str(metadata.get_video_file_path(ep, camera))
+            for ep in episodes
+            for camera in cameras
+            if not (root / metadata.get_video_file_path(ep, camera)).exists()
+        }
+    )
+    if missing:
+        raise ValueError(f"Download the required video shards before preparing labels: {missing}")
+    output.mkdir(parents=True, exist_ok=False)
+    (output / "images").mkdir()
+    manifest = {"version": 1, "source": source, "vla_holdout_episodes": holdout, "images": []}
+    for ep_offset, record in enumerate(sorted(records, key=lambda r: r.episode_index)):
+        indices = np.linspace(
+            0.1 * (record.row_count - 1), 0.9 * (record.row_count - 1), per_episode, dtype=int
+        )
+        for offset, row_index in enumerate(indices):
+            camera = cameras[(ep_offset + offset) % len(cameras)]
+            timestamp = float(record.frame_timestamps[row_index])
+            frames = provider.frames_at(record, [timestamp], camera)
+            if len(frames) != 1:
+                raise ValueError(f"Missing source image for episode {record.episode_index}: {camera}")
+            image = _frame_to_pil(frames[0]).convert("RGB")
+            image_id = len(manifest["images"])
+            filename = f"images/{image_id:04d}.jpg"
+            image.save(output / filename, quality=95)
+            manifest["images"].append(
+                {
+                    "id": image_id,
+                    "file_name": filename,
+                    "sha256": digest(output / filename),
+                    "width": image.width,
+                    "height": image.height,
+                    "episode_index": record.episode_index,
+                    "frame_index": int(record.frame_indices[row_index]),
+                    "timestamp": timestamp,
+                    "camera": camera,
+                    "split": "validation" if ep_offset % 5 == 4 else "train",
+                }
+            )
+    pack_path = output / "pack.json"
+    pack_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    payload = json.dumps({"pack_sha256": digest(pack_path), "pack": manifest}).replace("<", "\\u003c")
+    template = Path(__file__).with_name("gripper_review.html").read_text()
+    (output / "review.html").write_text(template.replace("/* PACK_DATA */ null", payload))
+    return manifest
+
+
+def export_coco(pack_path: Path, labels_path: Path, output: Path) -> dict:
+    """Never turn unreviewed/uncertain arms into empty negative detector targets."""
+    manifest = json.loads(pack_path.read_text())
+    labels = json.loads(labels_path.read_text())
+    if labels.get("version") != 1 or labels.get("pack_sha256") != digest(pack_path):
+        raise ValueError("Labels do not match this exact image pack")
+    by_id = {row["id"]: row for row in labels["images"]}
+    if len(by_id) != len(labels["images"]) or set(by_id) != {im["id"] for im in manifest["images"]}:
+        raise ValueError("Labels must contain every pack image exactly once")
+    categories = [{"id": i, "name": f"{arm}_gripper"} for i, arm in enumerate(ARMS)]
+    datasets = {
+        split: {"images": [], "annotations": [], "categories": categories}
+        for split in ("train", "validation")
+    }
+    excluded = []
+    split_episodes = {split: set() for split in datasets}
+    for image in manifest["images"]:
+        if image["episode_index"] in manifest["vla_holdout_episodes"]:
+            raise ValueError("Pack contains a VLA-held-out episode")
+        if digest(pack_path.parent / image["file_name"]) != image["sha256"]:
+            raise ValueError("A source image changed after pack creation")
+        row = by_id[image["id"]]
+        review = row.get("review", {})
+        if review.get("kind") != "human" or not review.get("reviewer") or not review.get("confirmed"):
+            raise ValueError(f"Image {image['id']} requires attributed human review")
+        if set(row.get("arms", {})) != set(ARMS):
+            raise ValueError("Both physical arms must have explicit visibility labels")
+        annotations = []
+        uncertain = False
+        for category, arm in enumerate(ARMS):
+            label = row["arms"][arm]
+            visibility = label.get("visibility")
+            if visibility not in ("visible", "not_visible", "uncertain"):
+                raise ValueError("Unlabeled arms cannot become negative examples")
+            uncertain |= visibility == "uncertain"
+            box = label.get("bbox_xyxy")
+            if visibility != "visible":
+                if box is not None:
+                    raise ValueError("Non-visible/uncertain grippers must not have boxes")
+                continue
+            if not review.get("arm_identity_verified"):
+                raise ValueError("Verify physical arm identity, not its image-left/image-right location")
+            if not isinstance(box, list) or len(box) != 4 or not all(type(v) in (int, float) for v in box):
+                raise ValueError("Visible grippers require numeric XYXY boxes")
+            x1, y1, x2, y2 = box
+            if not np.isfinite(box).all() or not (
+                0 <= x1 < x2 <= image["width"] and 0 <= y1 < y2 <= image["height"]
+            ):
+                raise ValueError("Gripper box is invalid or outside the original image")
+            annotations.append(
+                {
+                    "image_id": image["id"],
+                    "category_id": category,
+                    "bbox": [x1, y1, x2 - x1, y2 - y1],
+                    "area": (x2 - x1) * (y2 - y1),
+                    "iscrowd": 0,
+                }
+            )
+        if uncertain:
+            excluded.append(image["id"])
+            continue
+        split = image["split"]
+        split_episodes[split].add(image["episode_index"])
+        dataset = datasets[split]
+        dataset["images"].append(image)
+        for annotation in annotations:
+            dataset["annotations"].append({"id": len(dataset["annotations"]), **annotation})
+    if split_episodes["train"] & split_episodes["validation"]:
+        raise ValueError("Detector train/validation episodes overlap")
+    for split, dataset in datasets.items():
+        if {a["category_id"] for a in dataset["annotations"]} != {0, 1}:
+            raise ValueError(f"{split} needs visible reviewed examples for each physical arm")
+    report = {
+        "pack_sha256": digest(pack_path),
+        "labels_sha256": digest(labels_path),
+        "excluded_uncertain_images": excluded,
+        "splits": {
+            k: {
+                "images": len(v["images"]),
+                "boxes": len(v["annotations"]),
+                "episodes": sorted(split_episodes[k]),
+            }
+            for k, v in datasets.items()
+        },
+    }
+    output.mkdir(parents=True, exist_ok=False)
+    (output / "source_pack.json").write_bytes(pack_path.read_bytes())
+    (output / "reviewed_labels.json").write_bytes(labels_path.read_bytes())
+    for split, dataset in datasets.items():
+        dataset["info"] = {
+            "source": manifest["source"],
+            "image_root": str(pack_path.parent.resolve()),
+            **report,
+        }
+        (output / f"{split}.json").write_text(json.dumps(dataset, indent=2) + "\n")
+    (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
+    return report
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    pack = commands.add_parser("prepare")
+    pack.add_argument("--dataset-root", type=Path, required=True)
+    pack.add_argument("--output", type=Path, required=True)
+    pack.add_argument("--episodes", nargs="+", type=int, default=list(range(25)))
+    pack.add_argument("--per-episode", type=int, default=4)
+    export = commands.add_parser("export")
+    export.add_argument("--pack", type=Path, required=True)
+    export.add_argument("--labels", type=Path, required=True)
+    export.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    if args.command == "prepare":
+        result = prepare(args.dataset_root, args.output, args.episodes, args.per_episode)
+        print(f"Prepared {len(result['images'])} images. Open {args.output / 'review.html'}.")
+    else:
+        print(json.dumps(export_coco(args.pack, args.labels, args.output), indent=2))
+
+
+if __name__ == "__main__":
+    main()
