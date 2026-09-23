@@ -33,11 +33,16 @@ from lerobot.policies.wall_x import (
     WallXConfig,  # noqa: E402
 )
 from lerobot.policies.wall_x.constant import WALL_X_PROMPT_SEGMENTS  # noqa: E402
-from lerobot.policies.wall_x.modeling_wall_x import Qwen2_5_VLMoEForAction, WallXPolicy  # noqa: E402
+from lerobot.policies.wall_x.modeling_wall_x import (  # noqa: E402
+    ActionHead,
+    Qwen2_5_VLMoEForAction,
+    WallXPolicy,
+)
 from lerobot.policies.wall_x.processor_wall_x import (  # noqa: E402
     WallXPromptProcessorStep,
     WallXTokenizerStep,
     make_wall_x_pre_post_processors,
+    mask_padded_actions,
 )
 from lerobot.policies.wall_x.qwen_model import Qwen2_5_VLMoEModel, Qwen2_5_VLTextConfig  # noqa: E402
 from lerobot.policies.wall_x.utils import get_wallx_normal_text, preprocesser_call  # noqa: E402
@@ -50,6 +55,43 @@ from lerobot.processor import (  # noqa: E402
 from lerobot.utils.constants import MESSAGES_RENDERED, QUERY_KIND, QUERY_TEXT  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 from tests.utils import require_cuda, require_hf_token  # noqa: E402
+
+
+def test_temporal_padding_removes_future_targets_without_modifying_the_dataset():
+    action = torch.tensor([[[1.0, 2.0], [30.0, 40.0], [50.0, 60.0]]])
+    pad = torch.tensor([[False, True, True]])
+    processed, mask = mask_padded_actions(action, pad)
+    assert torch.equal(action, torch.tensor([[[1.0, 2.0], [30.0, 40.0], [50.0, 60.0]]]))
+    assert torch.equal(processed, torch.tensor([[[1.0, 2.0], [0.0, 0.0], [0.0, 0.0]]]))
+    assert mask.tolist() == [[[1.0, 1.0], [0.0, 0.0], [0.0, 0.0]]]
+    changed_future = action.clone()
+    changed_future[:, 1:] = -999
+    assert torch.equal(mask_padded_actions(changed_future, pad)[0], processed)
+    with pytest.raises(ValueError, match="at least one valid"):
+        mask_padded_actions(action, torch.ones_like(pad))
+    with pytest.raises(ValueError, match="boolean"):
+        mask_padded_actions(action, pad.float())
+
+
+def test_flow_loss_ignores_invalid_targets_and_weights_short_horizons_equally():
+    head = ActionHead(SimpleNamespace(dof_config={"arm": 4}, agent_pos_config={"arm": 4}, hidden_size=4))
+    torch.nn.init.zeros_(head.action_proj_back.weight)
+    hidden = torch.ones(8, 4)
+    flow = torch.ones(8, 4, requires_grad=True)
+    mask = torch.zeros(2, 4, 4)
+    mask[0, :, :2] = 1
+    mask[1, 0, :2] = 1
+    loss = head.flow_loss(hidden, flow, mask).reshape(2, 4, 4)
+    # Preserve spatial-padding weight 2/4, with no temporal penalty for the short row.
+    torch.testing.assert_close(loss.mean(dim=(1, 2)), torch.tensor([0.5, 0.5]))
+    loss.mean().backward()
+    assert not flow.grad.reshape(2, 4, 4)[mask == 0].any()
+    changed = flow.detach().reshape(2, 4, 4).clone()
+    changed[mask == 0] = 10000
+    torch.testing.assert_close(head.flow_loss(hidden, changed.reshape(8, 4), mask).reshape(2, 4, 4), loss)
+    full_mask = mask[:1].expand(2, -1, -1).clone()
+    legacy = (head.action_proj_back(hidden) - flow).square() * full_mask.reshape(8, 4)
+    torch.testing.assert_close(head.flow_loss(hidden, flow, full_mask), legacy)
 
 
 def test_moe_model_captures_requested_hidden_states_and_attentions():

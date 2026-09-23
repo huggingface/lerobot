@@ -272,10 +272,17 @@ measured deltas, source/config/URDF hashes and per-frame FK/gripper arrays. Nomi
 runs remain explicitly unverified, and no run produces accepted training labels.
 Filtering uses future demonstration observations and must never run as a live planner.
 
-Check command validity across the policy's entire action chunk before training atomic
-instructions. A candidate interval can be shorter than WALL-OSS-Flow's 32-frame chunk;
-substituting its language while supervising later, contradictory motions is invalid.
-The current command-substitution adapter does not yet enforce this temporal constraint.
+The command adapter combines episode padding with an `action_is_pad` mask for targets
+outside the selected reviewed interval, using the dataset's actual action offsets.
+Source action values remain unchanged. Overall-task samples retain their original
+episode mask; steering samples can have shorter valid horizons without changing the
+80/20 sampling ratio. Every sample must retain at least one valid target.
+WALL-OSS-Flow zeroes masked targets before noisy action embedding and excludes them
+from its loss. Loss averages over valid time steps per sample, preserving the existing
+spatial-padding weight, so short commands are not downweighted by their duration.
+The FAST-token supervision path rejects temporal padding; other policies must explicitly
+honor `action_is_pad` before using this adapter. This masking is a WALL-OSS action-chunk
+adaptation, not part of the released Bridge command substitution implementation.
 
 Seeed publishes the [B601-DM URDF](https://github.com/Seeed-Projects/reBot-DevArm/blob/b8286c70e67bd20623212d409cbf2c79322570bc/Rebot_Arm_description/DM/urdf/ReBot_Arm_DM.urdf).
 Its arm joints are `joint1`–`joint6`, base `base_link`, and tool `end_link`.

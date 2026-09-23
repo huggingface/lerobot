@@ -235,6 +235,12 @@ class ActionHead(nn.Module):
         loss = functional.mse_loss(action_pred, flow, reduction="none")
 
         if dof_mask is not None:
+            # Retain the original spatial-padding weighting, but average each
+            # sample over its valid time steps. Otherwise short steering commands
+            # would receive less weight merely because their valid horizon is short.
+            if dof_mask.ndim == 3:
+                valid_steps = dof_mask.bool().any(dim=-1).sum(dim=-1).clamp_min(1)
+                dof_mask = dof_mask * (dof_mask.shape[1] / valid_steps)[:, None, None]
             dof_mask = dof_mask.reshape(-1, dof_mask.shape[-1]).to(torch.float32)
             loss = loss * dof_mask
 

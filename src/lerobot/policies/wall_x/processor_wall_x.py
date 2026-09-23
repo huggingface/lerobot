@@ -60,6 +60,26 @@ else:
     AutoProcessor = None
 
 
+def mask_padded_actions(
+    action: torch.Tensor, padding: torch.Tensor | None
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Remove invalid temporal targets and DOFs from both flow inputs and supervision."""
+    dof_mask = ~torch.isnan(action)
+    if padding is not None:
+        if (
+            not isinstance(padding, torch.Tensor)
+            or padding.dtype != torch.bool
+            or padding.shape != action.shape[:2]
+        ):
+            raise ValueError("WALL-X action_is_pad must be a boolean [batch, chunk] tensor")
+        dof_mask = dof_mask & ~padding.to(action.device).unsqueeze(-1)
+        if not dof_mask.any(dim=-1).any(dim=-1).all():
+            raise ValueError("WALL-X needs at least one valid action per supervised sample")
+    # Keep raw dataset tensors unchanged. Invalid future targets must not enter the
+    # noisy action embeddings, even though their output losses are also masked.
+    return action.masked_fill(~dof_mask, 0), dof_mask.float()
+
+
 def make_wall_x_pre_post_processors(
     config: WallXConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
@@ -459,8 +479,12 @@ class WallXTokenizerStep(ProcessorStep):
 
         if action is not None:
             action = action.unsqueeze(1) if action.dim() == 2 else action
-            dof_mask = (~torch.isnan(action)).float()
-            action = action.nan_to_num(nan=0.0)
+            padding = complementary.get("action_is_pad")
+            if self.use_fast_tokenizer and padding is not None and padding.any():
+                raise ValueError(
+                    "Temporal action padding is supported by WALL-X flow, not FAST token supervision"
+                )
+            action, dof_mask = mask_padded_actions(action, padding)
             if action.shape[-1] < self.max_action_dim:
                 pad = self.max_action_dim - action.shape[-1]
                 action = torch.nn.functional.pad(action, (0, pad))

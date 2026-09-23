@@ -7,9 +7,11 @@ import json
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from lerobot.utils.steering import render_steering_command
 
+from .feature_utils import get_delta_indices
 from .language_task import RecipeTaskDataset
 
 STYLES = {"subtask", "motion", "point", "trace", "combination"}
@@ -49,12 +51,15 @@ class SteeringCommands:
                 raise ValueError("Overlapping steering intervals are ambiguous")
             self.starts[episode] = [s["start_frame"] for s in spans]
 
-    def at(self, episode: int, frame: int) -> list[dict]:
+    def span_at(self, episode: int, frame: int) -> dict:
         spans = self.episodes.get(episode, [])
         index = bisect.bisect_right(self.starts.get(episode, []), frame) - 1
         if index < 0 or frame >= spans[index]["end_frame"]:
             raise ValueError(f"Missing reviewed steering commands for episode {episode}, frame {frame}")
-        return spans[index]["commands"]
+        return spans[index]
+
+    def at(self, episode: int, frame: int) -> list[dict]:
+        return self.span_at(episode, frame)["commands"]
 
     def coverage(self, episode_lengths: dict[int, int]) -> dict:
         """Check every requested frame before training, including wholly absent episodes."""
@@ -79,19 +84,46 @@ class SteeringCommands:
             "gaps": gaps,
         }
 
-    def sample(self, sample: dict, task_probability: float, *, deterministic: bool = False) -> dict:
-        commands = self.at(int(sample["episode_index"]), int(sample["frame_index"]))
+    def sample(
+        self,
+        sample: dict,
+        task_probability: float,
+        *,
+        deterministic: bool = False,
+        action_offsets: list[int] | None = None,
+    ) -> dict:
+        frame = int(sample["frame_index"])
+        span = self.span_at(int(sample["episode_index"]), frame)
+        commands = span["commands"]
         # Training uses the worker-seeded RNG on every visit, like Bridge. Evaluation is frame-stable.
         rng = np.random.default_rng(int(sample["index"])) if deterministic else np.random
-        if rng.random() < task_probability:
-            return sample
-        index = int(rng.integers(len(commands))) if deterministic else int(rng.randint(len(commands)))
-        command = commands[index]
-        return {**sample, "task": render_steering_command(command)}
+        use_task = rng.random() < task_probability
+        result = dict(sample)
+        if not use_task:
+            index = int(rng.integers(len(commands))) if deterministic else int(rng.randint(len(commands)))
+            result["task"] = render_steering_command(commands[index])
+        if action_offsets is not None:
+            action = sample["action"]
+            if not isinstance(action, torch.Tensor) or action.ndim not in (1, 2):
+                raise ValueError("Steering supervision requires a single action or an action chunk tensor")
+            steps = 1 if action.ndim == 1 else action.shape[0]
+            if len(action_offsets) != steps or any(type(offset) is not int for offset in action_offsets):
+                raise ValueError("Action offsets must match the actual dataset action horizon")
+            pad = sample.get("action_is_pad", torch.zeros(steps, dtype=torch.bool, device=action.device))
+            if not isinstance(pad, torch.Tensor) or pad.dtype != torch.bool or pad.numel() != steps:
+                raise ValueError("action_is_pad must be a boolean per-action mask")
+            pad = pad.reshape(steps).clone()
+            if not use_task:
+                indices = frame + torch.tensor(action_offsets, device=pad.device)
+                pad |= (indices < span["start_frame"]) | (indices >= span["end_frame"])
+            if pad.all():
+                raise ValueError("No demonstrated actions remain inside the selected command interval")
+            result["action_is_pad"] = pad
+        return result
 
 
 class SteeringCommandDataset(RecipeTaskDataset):
-    """Reuse LeRobot decoding and recipe task fallback; change only the conditioning instruction."""
+    """Reuse decoding and recipe tasks; mask chunk targets outside reviewed steering intervals."""
 
     def __init__(
         self, *args, steering_manifest: str, task_probability: float = 0.2, deterministic=False, **kwargs
@@ -102,6 +134,9 @@ class SteeringCommandDataset(RecipeTaskDataset):
         if not 0 <= task_probability <= 1:
             raise ValueError("task_probability must be in [0, 1]")
         super().__init__(*args, **kwargs)
+        self.steering_action_offsets = get_delta_indices(self.delta_timestamps or {}, self.meta.fps).get(
+            "action", [0]
+        )
         if (
             self.repo_id != self.steering.source["repo_id"]
             or kwargs.get("revision") != self.steering.source["revision"]
@@ -128,5 +163,8 @@ class SteeringCommandDataset(RecipeTaskDataset):
         if isinstance(idx, slice):
             return [self[i] for i in range(*idx.indices(len(self)))]
         return self.steering.sample(
-            super().__getitem__(idx), self.task_probability, deterministic=self.deterministic
+            super().__getitem__(idx),
+            self.task_probability,
+            deterministic=self.deterministic,
+            action_offsets=self.steering_action_offsets,
         )

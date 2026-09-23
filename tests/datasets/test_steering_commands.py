@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 
 from lerobot.datasets.steering_commands import SteeringCommands
 
@@ -60,6 +61,41 @@ def test_missing_and_unreviewed_commands_fail_instead_of_changing_the_mixture():
     data["segments"].append(copy.deepcopy(data["segments"][0]))
     with pytest.raises(ValueError, match="Overlapping"):
         SteeringCommands(data)
+
+
+def test_command_mask_uses_real_offsets_preserves_targets_and_episode_padding():
+    index = SteeringCommands(manifest())
+    action = torch.arange(8).reshape(4, 2).float()
+    original_pad = torch.tensor([False, False, True, False])
+    sample = {
+        "episode_index": 3,
+        "frame_index": 2,
+        "task": "overall task",
+        "action": action,
+        "action_is_pad": original_pad,
+    }
+    command = index.sample(sample, 0, action_offsets=[-2, 0, 2, 4])
+    assert command["action"] is action
+    assert command["action_is_pad"].tolist() == [False, False, True, True]
+    assert original_pad.tolist() == [False, False, True, False]
+    task = index.sample(sample, 1, action_offsets=[-2, 0, 2, 4])
+    assert task["task"] == "overall task"
+    assert torch.equal(task["action_is_pad"], original_pad)
+    with pytest.raises(ValueError, match="No demonstrated"):
+        index.sample(sample, 0, action_offsets=[3, 4, 5, 6])
+    with pytest.raises(ValueError, match="horizon"):
+        index.sample(sample, 0, action_offsets=[0])
+
+
+def test_command_mask_does_not_cross_interval_start_or_end():
+    data = manifest()
+    data["segments"][0].update(start_frame=3, end_frame=5)
+    result = SteeringCommands(data).sample(
+        {"episode_index": 3, "frame_index": 3, "task": "task", "action": torch.zeros(4, 2)},
+        0,
+        action_offsets=[-1, 0, 1, 2],
+    )
+    assert result["action_is_pad"].tolist() == [True, False, False, True]
 
 
 def test_camera_scoped_points_keep_original_coordinate_frame():
