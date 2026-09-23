@@ -94,6 +94,7 @@ from .policy_robot_bridge import (
 from .relative_action_processor import (
     AbsoluteActionsProcessorStep,
     RelativeActionsProcessorStep,
+    bind_relative_anchor,
     to_absolute_actions,
     to_relative_actions,
 )
@@ -139,6 +140,7 @@ __all__ = [
     "make_policy_processor_pipelines",
     "AbsoluteActionsProcessorStep",
     "RelativeActionsProcessorStep",
+    "bind_relative_anchor",
     "MapDeltaActionToRobotActionStep",
     "MapTensorToDeltaActionDictStep",
     "NewLineTaskProcessorStep",
