@@ -274,6 +274,8 @@ class ActionQueue:
                     indexes_diff,
                     real_delay,
                 )
-                return real_delay
+                # Never discard more than was actually consumed, or the queue splices ahead
+                # of the physical pose.
+                return min(real_delay, indexes_diff)
 
         return effective_delay
