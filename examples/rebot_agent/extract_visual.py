@@ -840,6 +840,33 @@ def track_clip(directory: Path, clip: dict, predictor):
     )
 
 
+def select_tracking_shard(manifest: dict, manifest_hash: str, plan: dict, shard_index: int) -> dict:
+    """Select disjoint clip work without changing extraction identities or source metadata."""
+    if not isinstance(plan, dict) or set(plan) != {"manifest_sha256", "shards"}:
+        raise ValueError("Tracking plan requires manifest_sha256 and shards")
+    if plan["manifest_sha256"] != manifest_hash:
+        raise ValueError("Tracking plan is stale for this extraction")
+    shards = plan["shards"]
+    if not isinstance(shards, list) or not shards:
+        raise ValueError("Tracking plan needs nonempty shards")
+    if type(shard_index) is not int or not 0 <= shard_index < len(shards):
+        raise ValueError("Tracking shard index is outside the plan")
+    clips = {clip["path"]: clip for clip in manifest["clips"]}
+    if len(clips) != len(manifest["clips"]):
+        raise ValueError("Extraction contains duplicate clip paths")
+    seen = set()
+    for shard in shards:
+        if not isinstance(shard, list) or not shard:
+            raise ValueError("Each tracking shard must be a nonempty list of clip paths")
+        for name in shard:
+            if not isinstance(name, str) or name not in clips:
+                raise ValueError("Tracking plan contains an unknown clip")
+            if name in seen:
+                raise ValueError("Tracking shards must not overlap or repeat clips")
+            seen.add(name)
+    return {**manifest, "clips": [clips[name] for name in shards[shard_index]]}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -879,6 +906,8 @@ def main():
         "--stride", type=int, default=1, help="1 preserves all frames; larger values are pilot-only"
     )
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--tracking-plan", type=Path, help="Hash-bound JSON plan of disjoint tracking shards")
+    parser.add_argument("--tracking-shard", type=int, help="Zero-based shard index within --tracking-plan")
     parser.add_argument(
         "--point-target",
         choices=["object", "material"],
@@ -886,6 +915,10 @@ def main():
         help="Molmo point prompt: material requests a visible solid surface for SAM2 seeds; still requires review",
     )
     args = parser.parse_args()
+    if (args.tracking_plan is None) != (args.tracking_shard is None):
+        parser.error("tracking-plan and tracking-shard must be supplied together")
+    if args.tracking_plan is not None and args.stage != "track":
+        parser.error("tracking-plan only applies to the track stage")
     if args.stage == "review-identify" and args.identification_review is None:
         parser.error("review-identify requires --identification-review")
     if args.stage == "prepare-reviewed-points":
@@ -905,7 +938,15 @@ def main():
             parser.error("prepare requires --dataset-root")
         prepare(args.dataset_root, args.output, args.episodes, args.cameras, args.stride)
         return
-    manifest = json.loads((args.output / "extraction.json").read_text())
+    manifest_path = args.output / "extraction.json"
+    manifest = json.loads(manifest_path.read_text())
+    plan_hash = None
+    if args.tracking_plan is not None:
+        plan_bytes = args.tracking_plan.read_bytes()
+        plan_hash = hashlib.sha256(plan_bytes).hexdigest()
+        manifest = select_tracking_shard(
+            manifest, sha256(manifest_path), json.loads(plan_bytes), args.tracking_shard
+        )
     verify_frames(args.output, manifest)
     if args.stage == "point":
         verify_point_target(args.output, manifest, args.point_target)
@@ -927,7 +968,16 @@ def main():
             provenance[package] = importlib.metadata.version(package)
     if args.stage == "point":
         provenance["point_target"] = args.point_target
-    write_json(args.output / f"{args.stage}_runtime.json", provenance)
+    runtime_path = args.output / f"{args.stage}_runtime.json"
+    if plan_hash is not None:
+        provenance["tracking_plan"] = {
+            "sha256": plan_hash,
+            "manifest_sha256": sha256(manifest_path),
+            "shard_index": args.tracking_shard,
+            "clips": [clip["path"] for clip in manifest["clips"]],
+        }
+        runtime_path = args.output / f"track_runtime_{plan_hash}_{args.tracking_shard}.json"
+    write_json(runtime_path, provenance)
     if args.stage == "reparse-identify":
         print(json.dumps(reparse_identification(args.output, manifest)), flush=True)
         return

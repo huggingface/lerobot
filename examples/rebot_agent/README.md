@@ -157,6 +157,23 @@ extraction. It does not alter the running parent or establish object visibility.
 Run `point`, `track`, and `filter-objects` on the new extraction and review its masks
 before accepting annotations.
 
+For parallel SAM2 tracking, use a shared JSON plan whose `manifest_sha256` matches
+the exact `extraction.json` bytes and whose `shards` are nonempty lists of disjoint
+clip paths. Include only unfinished clips when resuming. Each worker runs:
+
+```bash
+uv run examples/rebot_agent/extract_visual.py track --output outputs/rebot_visual \
+  --tracking-plan outputs/tracking_plan.json --tracking-shard 0
+```
+
+Use a different zero-based shard index for each worker. The extractor rejects stale
+plans, unknown clips, and overlap anywhere in the plan; it records runtime provenance
+separately for each plan hash and shard. Already completed tracks are retained. Stop
+any earlier unsharded worker before starting the shards, and run only one worker per
+shard against an extraction. After all workers finish, run `filter-objects` once on
+the complete extraction. Sharding does not change source images, object IDs, model
+checkpoints, or the extraction manifest.
+
 ```bash
 uv run examples/rebot_agent/export_language_annotations.py \
   --dataset-root /path/to/source_dataset \

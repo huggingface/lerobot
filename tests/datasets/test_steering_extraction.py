@@ -1,5 +1,6 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 # Licensed under the Apache License, Version 2.0.
+import copy
 import json
 import runpy
 from pathlib import Path
@@ -14,6 +15,96 @@ from PIL import Image
 @pytest.fixture
 def extractor():
     return runpy.run_path(str(Path(__file__).parents[2] / "examples/rebot_agent/extract_visual.py"))
+
+
+def test_tracking_plan_selects_disjoint_work_without_changing_manifest(extractor):
+    manifest = {"source": {"revision": "pinned"}, "clips": [{"path": "a"}, {"path": "b"}, {"path": "done"}]}
+    before = copy.deepcopy(manifest)
+    plan = {"manifest_sha256": "hash", "shards": [["b"], ["a"]]}
+    select = extractor["select_tracking_shard"]
+    assert select(manifest, "hash", plan, 0) == {**manifest, "clips": [{"path": "b"}]}
+    assert select(manifest, "hash", plan, 1) == {**manifest, "clips": [{"path": "a"}]}
+    assert manifest == before
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"manifest_sha256": "stale"},
+        {"shards": [["a"], ["a"]]},
+        {"shards": [["a", "a"]]},
+        {"shards": [["unknown"]]},
+        {"shards": [[None]]},
+        {"shards": [[]]},
+        {"shards": []},
+        {"shards": "a"},
+        {"extra": "ignored?"},
+    ],
+)
+def test_tracking_plan_rejects_stale_overlapping_or_invalid_work(extractor, change):
+    plan = {"manifest_sha256": "hash", "shards": [["a"], ["b"]], **change}
+    with pytest.raises(ValueError):
+        extractor["select_tracking_shard"]({"clips": [{"path": "a"}, {"path": "b"}]}, "hash", plan, 0)
+
+
+@pytest.mark.parametrize("index", [-1, 2, True, "0"])
+def test_tracking_plan_rejects_invalid_shard_index(extractor, index):
+    with pytest.raises(ValueError):
+        extractor["select_tracking_shard"](
+            {"clips": [{"path": "a"}]}, "hash", {"manifest_sha256": "hash", "shards": [["a"]]}, index
+        )
+
+
+def test_tracking_shards_keep_separate_runtime_records_and_skip_completed_clips(
+    extractor, tmp_path, monkeypatch
+):
+    manifest = {"models": extractor["MODELS"], "clips": []}
+    for name in ["done", "a", "b"]:
+        directory = tmp_path / name / "frames"
+        directory.mkdir(parents=True)
+        image = directory / "000000.jpg"
+        Image.new("RGB", (8, 6)).save(image)
+        manifest["clips"].append({"path": name, "frames": [{"sha256": extractor["sha256"](image)}]})
+    manifest_path = tmp_path / "extraction.json"
+    manifest_path.write_text(json.dumps(manifest))
+    original = manifest_path.read_bytes()
+    (tmp_path / "done/tracks.json").write_text('{"unchanged": true}')
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({"manifest_sha256": extractor["sha256"](manifest_path), "shards": [["done", "a"], ["b"]]})
+    )
+    track = Mock()
+    namespace = extractor["main"].__globals__
+    for name, value in {
+        "require_package": Mock(),
+        "hf_hub_download": Mock(return_value="weights"),
+        "build_sam2_video_predictor": Mock(),
+        "track_clip": track,
+    }.items():
+        monkeypatch.setitem(namespace, name, value)
+    for index in range(2):
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "extract_visual.py",
+                "track",
+                "--output",
+                str(tmp_path),
+                "--device",
+                "cpu",
+                "--tracking-plan",
+                str(plan_path),
+                "--tracking-shard",
+                str(index),
+            ],
+        )
+        extractor["main"]()
+    assert [call.args[1]["path"] for call in track.call_args_list] == ["a", "b"]
+    records = sorted(tmp_path.glob("track_runtime_*.json"))
+    assert len(records) == 2 and not (tmp_path / "track_runtime.json").exists()
+    assert [json.loads(p.read_text())["tracking_plan"]["shard_index"] for p in records] == [0, 1]
+    assert manifest_path.read_bytes() == original
+    assert (tmp_path / "done/tracks.json").read_text() == '{"unchanged": true}'
 
 
 def test_molmo_percentages_are_scaled_and_ambiguous_points_are_missing(extractor):
