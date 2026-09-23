@@ -26,30 +26,51 @@ from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn.functional as functional
 from huggingface_hub import snapshot_download
 from safetensors.torch import load_file
 from torch import Tensor, nn
-from transformers import DynamicCache
-from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig, Qwen3_5VisionConfig
-from transformers.models.qwen3_5.modeling_qwen3_5 import (
-    Qwen3_5Attention,
-    Qwen3_5DecoderLayer,
-    Qwen3_5GatedDeltaNet,
-    Qwen3_5MLP,
-    Qwen3_5RMSNorm,
-    Qwen3_5TextRotaryEmbedding,
-    Qwen3_5VisionModel,
-    Qwen3_5VisionRotaryEmbedding,
-    apply_rotary_pos_emb_vision,
-)
+
+from lerobot.utils.import_utils import _transformers_available, require_package
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import DynamicCache
+    from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig, Qwen3_5VisionConfig
+    from transformers.models.qwen3_5.modeling_qwen3_5 import (
+        Qwen3_5Attention,
+        Qwen3_5DecoderLayer,
+        Qwen3_5GatedDeltaNet,
+        Qwen3_5MLP,
+        Qwen3_5RMSNorm,
+        Qwen3_5TextRotaryEmbedding,
+        Qwen3_5VisionModel,
+        Qwen3_5VisionRotaryEmbedding,
+        apply_rotary_pos_emb_vision,
+    )
+
+    from lerobot.policies.pi_gemma import PiGemmaRMSNorm
+else:
+    # `pi_gemma` subclasses Transformers classes at module scope, so importing it
+    # without the extra raises; PiGemmaRMSNorm is only used at runtime.
+    PiGemmaRMSNorm = None
+    DynamicCache = None
+    Qwen3_5TextConfig = None
+    Qwen3_5VisionConfig = None
+    Qwen3_5Attention = None
+    Qwen3_5DecoderLayer = None
+    Qwen3_5MLP = None
+    Qwen3_5RMSNorm = None
+    Qwen3_5TextRotaryEmbedding = None
+    Qwen3_5VisionModel = None
+    Qwen3_5VisionRotaryEmbedding = None
+    apply_rotary_pos_emb_vision = None
+    Qwen3_5GatedDeltaNet = nn.Module  # subclassed at module scope
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.optim.optimizers import OptimizerParams
-from lerobot.policies.pi_gemma import PiGemmaRMSNorm
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, MESSAGES_RENDERED, OBS_STATE
 from lerobot.utils.device_utils import resolve_safetensors_device
@@ -1718,6 +1739,7 @@ class G05Policy(PreTrainedPolicy):
         **kwargs,
     ):
         """Build the policy and its native backend."""
+        require_package("transformers", extra="g05")
         super().__init__(config)
         config.validate_features()
         self.backend = backend if backend is not None else _native_backend(config, checkpoint_dir)
