@@ -52,7 +52,8 @@ def init_rerun(
     require_package("rerun-sdk", extra="viz", import_name="rerun")
     import rerun as rr
 
-    log_rerun_data.blueprint = None  # Reset blueprint cache for new session
+    # Reset the blueprint cache for the new session.
+    log_rerun_data.blueprint = None  # type: ignore[attr-defined]
 
     batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "8000")
     os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
@@ -104,7 +105,7 @@ def _ensure_blueprint(observation_paths: set[str], action_paths: set[str], image
     import rerun as rr
 
     blueprint = _build_blueprint(observation_paths, action_paths, image_paths)
-    log_rerun_data.blueprint = blueprint
+    log_rerun_data.blueprint = blueprint  # type: ignore[attr-defined]
     rr.send_blueprint(blueprint)
 
 
