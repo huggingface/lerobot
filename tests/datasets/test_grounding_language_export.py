@@ -248,3 +248,124 @@ def test_export_retains_unlocalized_objects_with_explicit_null_geometry(sample):
         assert obj["bbox"] is None and obj["point"] is None and obj["seed_point"] is None
         assert obj["missing_reason"] == "no_point_seed"
         assert obj["evidence"]["mask_sha256"] is None
+
+
+@pytest.fixture
+def gripper_predictions(sample, tmp_path):
+    api, _, extraction, _, _ = sample
+    visual = json.loads((extraction / "extraction.json").read_text())
+    clip = visual["clips"][0]
+    root = tmp_path / "grippers"
+    root.mkdir()
+    prediction = {
+        "source": visual["source"],
+        "episode_index": 0,
+        "camera": clip["camera"],
+        "image_size": clip["image_size"],
+        "checkpoint_hashes": {"model.safetensors": "a" * 64},
+        "frames": [
+            {
+                **frame,
+                "arms": {
+                    "left_gripper": {
+                        "status": "detected" if i != 1 else "ambiguous",
+                        "score": 0.9,
+                        "bbox_xyxy": [1, 1, 5, 3] if i != 1 else None,
+                    },
+                    "right_gripper": {"status": "missing", "score": None, "bbox_xyxy": None},
+                },
+            }
+            for i, frame in enumerate(clip["frames"])
+        ],
+    }
+    manifest = {
+        "kind": "gripper_predictions",
+        "source": visual["source"],
+        "visual_manifest_sha256": api["digest"](extraction / "extraction.json"),
+        "checkpoint_hashes": prediction["checkpoint_hashes"],
+        "review": "pending",
+        "clips": [{"path": "clip", "sha256": ""}],
+    }
+
+    def save():
+        (root / "clip.json").write_text(json.dumps(prediction))
+        manifest["clips"][0]["sha256"] = api["digest"](root / "clip.json")
+        (root / "gripper_manifest.json").write_text(json.dumps(manifest))
+
+    save()
+    return root, manifest, prediction, save
+
+
+def test_gripper_native_export_keeps_arm_identity_missing_samples_and_object_paths_separate(
+    sample, gripper_predictions
+):
+    api, dataset, extraction, output, path = sample
+    root, _, _, _ = gripper_predictions
+    before = path.read_bytes()
+    api["export_dataset"](dataset, [extraction], output, [root])
+    table = pq.read_table(output / "data/chunk-000/file-000.parquet")
+    assert table.schema.field("language_events").type == language_events_arrow_type()
+    assert path.read_bytes() == before
+    assert table.drop(["language_events"]).equals(pq.read_table(path).drop(["language_events"]))
+    for i, rows in enumerate(table["language_events"].to_pylist()[:3]):
+        answer = json.loads(
+            next(r["content"] for r in rows if r["style"] == "vqa" and r["role"] == "assistant")
+        )
+        assert len(answer["detections"]) == 3
+        left = next(d for d in answer["detections"] if d["label"] == "left_gripper")
+        assert left["entity"] == "gripper" and left["arm"] == "left"
+        assert left["point"] == ([3.0, 2.0] if i != 1 else None)
+        assert left["point_source"] == "detector_box_center"
+        assert left["review"] == "pending" and left["visibility"] == "unknown"
+        assert answer["accepted_training_labels"] is False
+        traces = json.loads(next(r["content"] for r in rows if r["style"] == "trace"))["trajectories"]
+        assert [t["entity"] for t in traces] == ["object", "gripper", "gripper"]
+        assert all(max(s["frame_index"] for s in t["samples"]) == i for t in traces)
+        assert all(s["point"] is None for s in traces[2]["samples"])
+        if i >= 1:
+            assert traces[1]["samples"][1]["point"] is None
+    provenance = json.loads((output / "meta/grounding_provenance.json").read_text())
+    assert provenance["gripper_extractions"][0]["manifest_sha256"] == api["digest"](
+        root / "gripper_manifest.json"
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["manifest", "source", "frame", "arm", "bounds", "status", "score", "checkpoint", "camera", "duplicate"],
+)
+def test_gripper_native_export_rejects_misaligned_or_ambiguous_evidence(sample, gripper_predictions, case):
+    api, dataset, extraction, output, _ = sample
+    root, manifest, prediction, save = gripper_predictions
+    left = prediction["frames"][0]["arms"]["left_gripper"]
+    if case == "manifest":
+        manifest["visual_manifest_sha256"] = "changed"
+    elif case == "source":
+        prediction["source"] = {"repo_id": "other", "revision": "other"}
+    elif case == "frame":
+        prediction["frames"][0]["timestamp"] = 0.25
+    elif case == "arm":
+        del prediction["frames"][0]["arms"]["right_gripper"]
+    elif case == "bounds":
+        left["bbox_xyxy"][2] = 20
+    elif case == "status":
+        left["status"] = "ambiguous"
+    elif case == "score":
+        left["score"] = float("nan")
+    elif case == "checkpoint":
+        prediction["checkpoint_hashes"] = {"model.safetensors": "b" * 64}
+    elif case == "camera":
+        prediction["camera"] = "observation.images.left_wrist"
+    save()
+    with pytest.raises(ValueError):
+        api["export_dataset"](dataset, [extraction], output, [root, root] if case == "duplicate" else [root])
+    assert not output.exists()
+
+
+def test_gripper_native_export_detects_changed_prediction_bytes(sample, gripper_predictions):
+    api, dataset, extraction, output, _ = sample
+    root, _, _, _ = gripper_predictions
+    (root / "clip.json").write_text("{}")
+    with pytest.raises(ValueError, match="changed after extraction"):
+        api["export_dataset"](dataset, [extraction], output, [root])
+    assert not output.exists()

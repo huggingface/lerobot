@@ -110,6 +110,13 @@ uv run examples/rebot_agent/export_language_annotations.py \
   --output outputs/rebot_grounding_candidates
 ```
 
+After fitting and extracting the ReBot gripper detector, add
+`--grippers outputs/gripper_tracks` to the same export command. A completed detector
+extraction writes `gripper_manifest.json`, binding prediction files to the exact visual
+manifest, checkpoint weights, and configuration. Partial or mismatched extractions
+cannot be exported. Use a fresh derived dataset when adding grippers to a previous
+object-only export.
+
 The exporter creates a derived LeRobot dataset with `language_events` in its data
 Parquet files. It uses the existing camera-tagged `vqa` events for bounding boxes,
 mask-centroid points, and first-frame Molmo pointing seeds, plus `trace` events for
@@ -127,3 +134,10 @@ on the frame where it was inferred; later points are explicitly mask centroids.
 Videos are symlinked to the local source dataset: copy the actual videos when moving
 or publishing the derived dataset. No upload is performed. The original dataset and
 running training jobs remain unchanged.
+
+Gripper entries additionally carry `entity: "gripper"`, physical `arm`, detection
+status, confidence, and `point_source: "detector_box_center"`. Their observed paths
+remain distinct from object trajectories. Missing, ambiguous, or invalid predictions
+retain null geometry in both VQA and trajectory samples; detection does not establish
+verified visibility or arm identity. These predictions still require annotation review,
+even when the detector was fitted on human-reviewed images.

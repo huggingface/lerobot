@@ -263,6 +263,16 @@ def extract(args):
     if not weights:
         raise ValueError("Checkpoint must contain safetensors weights for provenance")
     args.output.mkdir(parents=True, exist_ok=False)
+    export_manifest = {
+        "kind": "gripper_predictions",
+        "source": manifest["source"],
+        "visual_manifest_sha256": file_hash(args.visual / "extraction.json"),
+        "checkpoint_hashes": weights,
+        "config_sha256": file_hash(args.checkpoint / "config.json"),
+        "extractor_sha256": file_hash(Path(__file__)),
+        "review": "pending",
+        "clips": [],
+    }
     for clip in manifest["clips"]:
         rows = []
         overlay_dir = args.output / clip["path"]
@@ -308,6 +318,11 @@ def extract(args):
             "frames": rows,
         }
         (args.output / f"{clip['path']}.json").write_text(json.dumps(result, indent=2) + "\n")
+        export_manifest["clips"].append(
+            {"path": clip["path"], "sha256": file_hash(args.output / f"{clip['path']}.json")}
+        )
+    # Only a complete extraction can be exported into the dataset's language events.
+    (args.output / "gripper_manifest.json").write_text(json.dumps(export_manifest, indent=2) + "\n")
 
 
 def main():

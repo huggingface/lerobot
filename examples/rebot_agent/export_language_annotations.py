@@ -2,8 +2,8 @@
 # Licensed under the Apache License, Version 2.0.
 """Export visual candidates into a derived dataset's native LeRobot language columns.
 
-VQA events contain boxes and points; trace events contain observed object trajectories.
-These are unreviewed extractor evidence, not accepted steering commands or gripper paths.
+VQA events contain boxes and points; trace events distinguish objects from grippers.
+These are unreviewed extractor evidence, not accepted steering commands.
 The source dataset is never rewritten. Videos are referenced locally through a symlink.
 """
 
@@ -138,6 +138,7 @@ def collect_candidates(extractions: list[Path], source: dict):
                         {
                             "label": candidate["name"],
                             "object_id": identity,
+                            "entity": "object",
                             "bbox_format": "xyxy",
                             "bbox": box,
                             "bbox_max_exclusive": True,
@@ -190,7 +191,7 @@ def native_rows(bucket: dict, camera: str) -> list[dict]:
         row(
             "vqa",
             "user",
-            "Report the candidate object boxes, mask-centroid points, and available pointing seeds in this view.",
+            "Report candidate object and gripper boxes, their reference points, and available pointing seeds in this view.",
         ),
         row("vqa", "assistant", json.dumps({**common, "detections": bucket["detections"]}, sort_keys=True)),
         row(
@@ -202,6 +203,127 @@ def native_rows(bucket: dict, camera: str) -> list[dict]:
             ),
         ),
     ]
+
+
+def collect_grippers(roots: list[Path], extractions: list[Path], source: dict, events: dict) -> list[dict]:
+    """Keep detector arm identities and missing samples explicit in native VQA/trace events."""
+    visuals = {digest(root / "extraction.json"): root for root in extractions}
+    provenance, seen = [], set()
+    for root in roots:
+        manifest_path = root / "gripper_manifest.json"
+        manifest = read_json(manifest_path)
+        visual_hash = manifest["visual_manifest_sha256"]
+        if (
+            manifest["kind"] != "gripper_predictions"
+            or manifest["source"] != source
+            or visual_hash not in visuals
+        ):
+            raise ValueError("Gripper extraction must match the source and an exported visual manifest")
+        if visual_hash in seen:
+            raise ValueError("Duplicate gripper extraction for the same visual manifest")
+        seen.add(visual_hash)
+        visual_root = visuals[visual_hash]
+        visual = read_json(visual_root / "extraction.json")
+        clips = {clip["path"]: clip for clip in visual["clips"]}
+        if len(manifest["clips"]) != len(clips) or {c["path"] for c in manifest["clips"]} != set(clips):
+            raise ValueError("Gripper extraction must contain every visual clip exactly once")
+        manifest_hash = digest(manifest_path)
+        provenance.append(
+            {"manifest_sha256": manifest_hash, "manifest": manifest, "artifact_root": str(root.resolve())}
+        )
+        for record in manifest["clips"]:
+            path = root / f"{record['path']}.json"
+            if digest(path) != record["sha256"]:
+                raise ValueError("Gripper predictions changed after extraction")
+            prediction = read_json(path)
+            clip = clips[record["path"]]
+            validate_camera_field("vqa", clip["camera"])
+            if (
+                prediction["source"] != source
+                or prediction["checkpoint_hashes"] != manifest["checkpoint_hashes"]
+            ):
+                raise ValueError("Gripper prediction provenance differs from its manifest")
+            if any(prediction[k] != clip[k] for k in ("episode_index", "camera", "image_size")):
+                raise ValueError("Gripper camera/episode geometry differs from visual extraction")
+            if [
+                {k: f[k] for k in ("frame_index", "timestamp", "sha256")} for f in prediction["frames"]
+            ] != clip["frames"]:
+                raise ValueError("Gripper frames do not match visual extraction")
+            histories = defaultdict(list)
+            for index, frame in enumerate(prediction["frames"]):
+                image = visual_root / clip["path"] / "frames" / f"{index:06d}.jpg"
+                if digest(image) != frame["sha256"]:
+                    raise ValueError("Gripper source image changed")
+                if set(frame["arms"]) != {"left_gripper", "right_gripper"}:
+                    raise ValueError("Both physical arms require explicit detection status")
+                key = (clip["episode_index"], frame["frame_index"], clip["camera"])
+                bucket = events.setdefault(
+                    key,
+                    {
+                        "timestamp": frame["timestamp"],
+                        "image_size": clip["image_size"],
+                        "detections": [],
+                        "traces": [],
+                    },
+                )
+                if bucket["timestamp"] != frame["timestamp"] or bucket["image_size"] != clip["image_size"]:
+                    raise ValueError("Gripper and object coordinates are not aligned")
+                if any(d.get("entity") == "gripper" for d in bucket["detections"]):
+                    raise ValueError("Overlapping gripper predictions for the same camera frame")
+                for name, arm in frame["arms"].items():
+                    status, score = arm["status"], arm["score"]
+                    if status not in {"detected", "missing", "ambiguous", "invalid"}:
+                        raise ValueError("Unknown gripper detection status")
+                    if score is not None and (
+                        type(score) not in (int, float) or not math.isfinite(score) or not 0 <= score <= 1
+                    ):
+                        raise ValueError("Invalid gripper confidence")
+                    box = coordinates(arm["bbox_xyxy"], clip["image_size"], box=True)
+                    if (status == "detected") != (box is not None) or (
+                        status == "detected" and score is None
+                    ):
+                        raise ValueError("Gripper status disagrees with geometry/confidence")
+                    point = [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2] if box else None
+                    identity = f"{manifest_hash}:{clip['path']}:{name}"
+                    bucket["detections"].append(
+                        {
+                            "label": name,
+                            "object_id": identity,
+                            "entity": "gripper",
+                            "arm": name.removesuffix("_gripper"),
+                            "bbox_format": "xyxy",
+                            "bbox": box,
+                            "bbox_max_exclusive": True,
+                            "point_format": "xy",
+                            "point": point,
+                            "point_source": "detector_box_center",
+                            "status": status,
+                            "score": score,
+                            "visibility": "unknown",
+                            "review": "pending",
+                            "evidence": {
+                                "gripper_manifest_sha256": manifest_hash,
+                                "predictions_sha256": record["sha256"],
+                                "source_frame_sha256": frame["sha256"],
+                                "visual_manifest_sha256": visual_hash,
+                            },
+                        }
+                    )
+                    histories[name].append(
+                        {"frame_index": frame["frame_index"], "timestamp": frame["timestamp"], "point": point}
+                    )
+                    bucket["traces"].append(
+                        {
+                            "label": name,
+                            "object_id": identity,
+                            "entity": "gripper",
+                            "arm": name.removesuffix("_gripper"),
+                            "point_format": "xy",
+                            "samples": list(histories[name]),
+                            "review": "pending",
+                        }
+                    )
+    return provenance
 
 
 def event_array(rows: list[list[dict]]) -> pa.Array:
@@ -233,13 +355,16 @@ def event_array(rows: list[list[dict]]) -> pa.Array:
     return pa.array(serialized, type=storage).cast(canonical)
 
 
-def export_dataset(dataset: Path, extractions: list[Path], output: Path) -> dict:
+def export_dataset(
+    dataset: Path, extractions: list[Path], output: Path, grippers: list[Path] | None = None
+) -> dict:
     dataset, output = dataset.resolve(), output.resolve()
     if output.exists() or dataset in output.parents:
         raise ValueError("Output must be a fresh directory outside the source dataset")
     source = read_json(dataset / "source.json")
     source = {k: source[k] for k in ("repo_id", "revision")}
     events, provenance = collect_candidates(extractions, source)
+    gripper_provenance = collect_grippers(grippers or [], extractions, source, events)
     info = read_json(dataset / "meta/info.json")
     by_frame = defaultdict(dict)
     for (episode, frame, camera), bucket in events.items():
@@ -312,6 +437,7 @@ def export_dataset(dataset: Path, extractions: list[Path], output: Path) -> dict
         "source": source,
         "source_data_sha256": shard_hashes,
         "extractions": provenance,
+        "gripper_extractions": gripper_provenance,
         "annotated_frames": len(seen),
         "camera_frames": len(events),
         "language_rows_added": 3 * len(events),
@@ -331,8 +457,11 @@ def main():
     parser.add_argument("--dataset-root", type=Path, required=True)
     parser.add_argument("--extractions", type=Path, nargs="+", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--grippers", type=Path, nargs="+", help="Optional completed gripper_detector.py extractions"
+    )
     args = parser.parse_args()
-    print(json.dumps(export_dataset(args.dataset_root, args.extractions, args.output)))
+    print(json.dumps(export_dataset(args.dataset_root, args.extractions, args.output, args.grippers)))
 
 
 if __name__ == "__main__":

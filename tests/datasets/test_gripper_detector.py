@@ -1,7 +1,9 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 # Licensed under the Apache License, Version 2.0.
+import json
 import runpy
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -85,3 +87,35 @@ def test_detr_processor_backward_and_reload_with_two_arm_and_empty_targets(detec
     assert restored.config.id2label == detector["LABELS"]
     with torch.no_grad():
         torch.testing.assert_close(restored(**inputs).logits, expected)
+    # Exercise the actual extraction handoff, including its completion manifest.
+    visual = tmp_path / "visual"
+    frames = visual / "clip/frames"
+    frames.mkdir(parents=True)
+    image.save(frames / "000000.jpg")
+    frame = {"frame_index": 0, "timestamp": 0.0, "sha256": detector["file_hash"](frames / "000000.jpg")}
+    manifest = {
+        "source": {"repo_id": "fixture", "revision": "fixture"},
+        "clips": [
+            {
+                "path": "clip",
+                "episode_index": 0,
+                "camera": "observation.images.base",
+                "image_size": [16, 12],
+                "frames": [frame],
+            }
+        ],
+    }
+    (visual / "extraction.json").write_text(json.dumps(manifest))
+    output = tmp_path / "predictions"
+    detector["extract"](
+        SimpleNamespace(
+            checkpoint=tmp_path, visual=visual, output=output, device="cpu", threshold=0.7, margin=0.1
+        )
+    )
+    exported = json.loads((output / "gripper_manifest.json").read_text())
+    assert exported["visual_manifest_sha256"] == detector["file_hash"](visual / "extraction.json")
+    assert exported["clips"] == [{"path": "clip", "sha256": detector["file_hash"](output / "clip.json")}]
+    assert exported["config_sha256"] == detector["file_hash"](tmp_path / "config.json")
+    prediction = json.loads((output / "clip.json").read_text())
+    assert {k: prediction["frames"][0][k] for k in frame} == frame
+    assert set(prediction["frames"][0]["arms"]) == {"left_gripper", "right_gripper"}
