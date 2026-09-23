@@ -590,6 +590,13 @@ disallow_incomplete_defs = true
 check_untyped_defs = true
 
 [[tool.mypy.overrides]]
+module = "lerobot.lerobot_types"
+ignore_errors = false
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
 module = "lerobot.distributed.*"
 ignore_errors = false
 
