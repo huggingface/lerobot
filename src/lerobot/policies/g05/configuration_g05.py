@@ -25,9 +25,6 @@ from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import ConstantWithWarmupSchedulerConfig, LRSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
-G05_SOURCE_REVISION = "b34966f387dd2ae0f003143b81494afd9213e613"
-G05_HUB_REVISION = "e312be81e90c56a55bcb26b57429bd39a335b449"
-
 
 def _g05_default_recipe() -> dict:
     """G0.5's native BBox/Subtask chain-of-thought supervision.
@@ -228,12 +225,9 @@ class G05Config(PreTrainedConfig):
     normalization_mode: str = "checkpoint"
     normalization_clip: tuple[float, float] | None = None
     use_relative_actions: bool = False
-    # Class attribute (not a config field): training overrides target this registered step.
-    relative_actions_step_key = "g05_relative_joint_actions"
     relative_exclude_joints: tuple[str, ...] = ()
     action_feature_names: tuple[str, ...] = ()
     use_stepwise_action_norm: bool = False
-    gripper_indices: tuple[int, ...] = (6,)
     joint_signs: tuple[float, ...] = ()
     joint_offsets: tuple[float, ...] = ()
     libero_gripper_binarize: bool = False
@@ -245,11 +239,8 @@ class G05Config(PreTrainedConfig):
     num_input_images: int = 0
     num_prompt_images: int = 0
 
-    author_source_revision: str = G05_SOURCE_REVISION
-    source_checkpoint_revision: str = G05_HUB_REVISION
     author_model_config: dict[str, Any] = field(default_factory=dict)
     processor_metadata: dict[str, Any] = field(default_factory=dict)
-    action_codec_metadata: dict[str, Any] = field(default_factory=dict)
     prompt_template: str = ""
     use_language_recipe: bool = False
     recipe_path: str | None = None

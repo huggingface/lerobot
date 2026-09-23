@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -35,7 +37,6 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5VisionRotaryEmbedding,
 )
 
-from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.g05.configuration_g05 import G05_CAMERA_PROFILES, G05_EMBODIMENT_MAPPINGS, G05Config
@@ -1353,7 +1354,7 @@ def test_from_pretrained_constructs_on_meta_and_assigns_directly(tmp_path: Path,
     reference.save_pretrained(tmp_path)
     constructed_on_meta = False
 
-    def make_tiny_backend(config):
+    def make_tiny_backend(config, checkpoint_dir):
         nonlocal constructed_on_meta
         backend = TinyG05Backend()
         constructed_on_meta = next(backend.parameters()).is_meta
@@ -1414,32 +1415,79 @@ def test_training_forward_uses_policy_autocast_context(monkeypatch):
     assert autocast_calls == [{"device_type": "cpu", "dtype": torch.bfloat16, "enabled": False}]
 
 
-def test_save_pretrained_copies_required_gated_sidecars_portably(tmp_path: Path):
-    source = tmp_path / "checkpoint"
-    processor = source / "hf_processor"
+def _write_sidecars(root: Path) -> None:
+    """Create the two checkpoint sidecars G0.5 declares as processor artifacts."""
+    processor = root / "hf_processor"
     processor.mkdir(parents=True)
     (processor / "tokenizer.json").write_text("{}")
-    tokenizer = source / "action_tokenizer.safetensors"
-    save_file({"codec.weight": torch.ones(2)}, tokenizer)
-    for name in ("LICENSE-G0.5", "NOTICE"):
-        (source / name).write_text("{}")
-    config = _config(
-        author_model_config={
-            "hf_processor_path": str(processor),
-            "AT_CONFIG": {"ckpt_dir": str(tokenizer)},
-        }
+    save_file({"codec.weight": torch.ones(2)}, root / "action_tokenizer.safetensors")
+
+
+def test_tokenizer_step_saves_sidecars_as_declared_artifacts(tmp_path: Path):
+    source = tmp_path / "checkpoint"
+    _write_sidecars(source)
+    step = G05TokenizerStep(
+        processor_dir=str(source / "hf_processor"),
+        action_tokenizer_path=str(source / "action_tokenizer.safetensors"),
     )
     output = tmp_path / "saved"
+    output.mkdir()
 
-    G05Policy(config, backend=TinyG05Backend()).save_pretrained(output)
+    artifacts = step.save_artifacts(output)
 
+    assert artifacts == {
+        "processor_dir": "hf_processor",
+        "action_tokenizer_path": "action_tokenizer.safetensors",
+    }
     assert (output / "hf_processor" / "tokenizer.json").is_file()
     assert (output / "action_tokenizer.safetensors").is_file()
-    assert (output / "LICENSE-G0.5").is_file()
-    loaded_config = PreTrainedConfig.from_pretrained(output)
-    assert isinstance(loaded_config, G05Config)
-    assert loaded_config.author_model_config["hf_processor_path"] == "hf_processor"
-    assert loaded_config.author_model_config["AT_CONFIG"]["ckpt_dir"] == "action_tokenizer.safetensors"
+
+
+def test_tokenizer_step_declares_nothing_without_a_packaged_checkpoint(tmp_path: Path):
+    step = G05TokenizerStep(
+        processor_dir=str(tmp_path / "missing" / "hf_processor"),
+        action_tokenizer_path=str(tmp_path / "missing" / "action_tokenizer.safetensors"),
+    )
+    output = tmp_path / "saved"
+    output.mkdir()
+
+    assert step.save_artifacts(output) == {}
+
+
+def test_saved_pipeline_reloads_sidecars_from_a_copied_checkpoint(tmp_path: Path):
+    """A copy of a checkpoint must read its own sidecars, not the original's."""
+    source = tmp_path / "checkpoint"
+    _write_sidecars(source)
+    pipeline = PolicyProcessorPipeline[dict, dict](
+        steps=[
+            G05TokenizerStep(
+                processor_dir=str(source / "hf_processor"),
+                action_tokenizer_path=str(source / "action_tokenizer.safetensors"),
+            )
+        ],
+        name="policy_preprocessor",
+    )
+    saved = tmp_path / "saved"
+    pipeline.save_pretrained(saved, config_filename="policy_preprocessor.json")
+
+    serialized = json.loads((saved / "policy_preprocessor.json").read_text())
+    entry = serialized["steps"][0]
+    assert entry["config"]["processor_dir"] == "hf_processor"
+    assert entry["config"]["action_tokenizer_path"] == "action_tokenizer.safetensors"
+    assert entry["artifacts"] == {
+        "processor_dir": "hf_processor",
+        "action_tokenizer_path": "action_tokenizer.safetensors",
+    }
+    assert str(tmp_path) not in (saved / "policy_preprocessor.json").read_text()
+
+    copied = tmp_path / "copied"
+    shutil.copytree(saved, copied)
+    shutil.rmtree(source)
+    reloaded = PolicyProcessorPipeline.from_pretrained(copied, config_filename="policy_preprocessor.json")
+
+    step = reloaded.steps[0]
+    assert Path(step.processor_dir) == copied / "hf_processor"
+    assert Path(step.action_tokenizer_path) == copied / "action_tokenizer.safetensors"
 
 
 def test_tiny_fixed_batch_overfit_reduces_loss():

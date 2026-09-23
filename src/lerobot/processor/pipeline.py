@@ -1083,10 +1083,18 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                 resolved_path = base_path / artifact_path if base_path is not None else artifact_path
                 if not resolved_path.exists() and not is_local:
                     repository_path = Path(config_filename).parent / artifact_path
+                    # A declared artifact is either a directory to pull whole, or a single
+                    # file; globbing a file as `<name>/**` matches nothing and the download
+                    # silently fetches none of it.
+                    allow_patterns = (
+                        repository_path.as_posix()
+                        if artifact_path.suffix
+                        else f"{repository_path.as_posix()}/**"
+                    )
                     snapshot_download(
                         repo_id=model_id,
                         repo_type="model",
-                        allow_patterns=f"{repository_path.as_posix()}/**",
+                        allow_patterns=allow_patterns,
                         **hub_download_kwargs,
                     )
 

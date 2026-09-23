@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,7 +28,6 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 import torchvision.transforms.functional as vision_functional
-from huggingface_hub import snapshot_download
 from torch import Tensor
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
@@ -1004,13 +1004,6 @@ def make_g05_pre_post_processors_from_pretrained(
         preprocessor_config_filename=preprocessor_config_filename,
         postprocessor_config_filename=postprocessor_config_filename,
     )
-    for step in preprocessor.steps:
-        if isinstance(step, G05TokenizerStep):
-            # The tokenizer bundle and action tokenizer ship inside the checkpoint, so follow the
-            # checkpoint being loaded instead of the path baked in when it was first saved. A copy
-            # of a checkpoint would otherwise keep fetching them from the repository it came from.
-            step.checkpoint_path = str(pretrained_path)
-            step.revision = revision
     return reconcile_g05_processors(config, preprocessor, postprocessor)
 
 
@@ -1117,15 +1110,11 @@ def make_g05_pre_post_processors(
             )
         )
     steps.append(DeviceProcessorStep(device=config.device))
-    checkpoint_path = str(config.pretrained_path) if config.pretrained_path is not None else ""
-    if not checkpoint_path:
-        processor_path = Path(str(config.author_model_config.get("hf_processor_path", "")))
-        if processor_path.name == "hf_processor":
-            checkpoint_path = str(processor_path.parent)
+    checkpoint_root = Path(str(config.pretrained_path)) if config.pretrained_path is not None else Path()
     steps.append(
         G05TokenizerStep(
-            checkpoint_path=checkpoint_path,
-            revision=config.pretrained_revision,
+            processor_dir=str(checkpoint_root / "hf_processor"),
+            action_tokenizer_path=str(checkpoint_root / "action_tokenizer.safetensors"),
             policy_config=_tokenizer_policy_config(config),
         )
     )
@@ -1583,12 +1572,15 @@ class G05Tokenizer:
 class G05TokenizerStep(ProcessorStep):
     """Build the checkpoint-native G0.5 token sequence in the input pipeline."""
 
-    checkpoint_path: str
+    # Declared artifacts: saved into the checkpoint by `save_artifacts` and handed
+    # back as resolved absolute paths by the pipeline loader, which downloads them
+    # from the Hub when the pipeline is loaded from a repo id.
+    processor_dir: str
+    action_tokenizer_path: str
     # Not serialized: the live G05Config owns these fields and re-injects them on
     # load via `_tokenizer_policy_config`, so a pipeline restored from JSON builds
     # this step without them and is filled in by `reconcile_g05_processors`.
     policy_config: dict[str, Any] = field(default_factory=dict)
-    revision: str | None = None
     _tokenizer: G05Tokenizer | None = field(default=None, init=False, repr=False)
     _action_codec: Any = field(default=None, init=False, repr=False)
     _model_config: dict[str, Any] | None = field(default=None, init=False, repr=False)
@@ -1596,34 +1588,38 @@ class G05TokenizerStep(ProcessorStep):
     def get_config(self) -> dict[str, Any]:
         """Return this step's serializable configuration."""
         return {
-            "checkpoint_path": self.checkpoint_path,
-            "revision": self.revision,
+            "processor_dir": self.processor_dir,
+            "action_tokenizer_path": self.action_tokenizer_path,
         }
 
-    def _resolve_checkpoint(self) -> Path:
-        """Return the local checkpoint directory, downloading the tokenizer files if needed."""
-        if not self.checkpoint_path:
-            raise ValueError(
-                "G0.5 tokenization requires a checkpoint path so the serialized tokenizer and "
-                "ActionCodec can be loaded."
-            )
-        path = Path(self.checkpoint_path)
-        if path.is_dir():
-            return path
-        return Path(
-            snapshot_download(
-                repo_id=self.checkpoint_path,
-                revision=self.revision,
-                allow_patterns=["hf_processor/*", "action_tokenizer.safetensors"],
-            )
-        )
+    def save_artifacts(self, save_directory: Path) -> dict[str, str]:
+        """Copy the tokenizer bundle and ActionCodec weights into the checkpoint.
+
+        A pipeline built from a config without a packaged checkpoint has nothing to
+        copy; it declares no artifact and keeps the configured paths, so building a
+        pipeline for inspection stays possible without the sidecars on disk.
+        """
+        artifacts: dict[str, str] = {}
+        processor_dir = Path(self.processor_dir)
+        target_processor = save_directory / "hf_processor"
+        if processor_dir.is_dir():
+            if processor_dir.resolve() != target_processor.resolve():
+                shutil.copytree(processor_dir, target_processor, dirs_exist_ok=True)
+            artifacts["processor_dir"] = "hf_processor"
+
+        action_tokenizer_path = Path(self.action_tokenizer_path)
+        target_tokenizer = save_directory / "action_tokenizer.safetensors"
+        if action_tokenizer_path.is_file():
+            if action_tokenizer_path.resolve() != target_tokenizer.resolve():
+                shutil.copy2(action_tokenizer_path, target_tokenizer)
+            artifacts["action_tokenizer_path"] = "action_tokenizer.safetensors"
+        return artifacts
 
     def _get_tokenizer(self) -> G05Tokenizer:
         """Build the tokenizer on first use and cache it on the step."""
         if self._tokenizer is not None:
             return self._tokenizer
-        root = self._resolve_checkpoint()
-        processor_path = root if root.name == "hf_processor" else root / "hf_processor"
+        processor_path = Path(self.processor_dir)
         model_config = dict(self.policy_config["author_model_config"])
         model_config.update(
             {
@@ -1631,10 +1627,6 @@ class G05TokenizerStep(ProcessorStep):
                 "predict_cot": self.policy_config["predict_cot"],
             }
         )
-        model_config["hf_processor_path"] = str(processor_path)
-        action_config = dict(model_config.get("AT_CONFIG") or {})
-        action_config["ckpt_dir"] = str(root / "action_tokenizer.safetensors")
-        model_config["AT_CONFIG"] = action_config
         self._model_config = model_config
         self._tokenizer = G05Tokenizer(processor_path, model_config)
         return self._tokenizer
@@ -1646,14 +1638,14 @@ class G05TokenizerStep(ProcessorStep):
             if self._model_config is None:
                 raise RuntimeError("G0.5 tokenizer model config was not initialized.")
             action_config = self._model_config.get("AT_CONFIG")
-            checkpoint = Path(str((action_config or {}).get("ckpt_dir", "")))
-            if not checkpoint.is_file():
+            if not Path(self.action_tokenizer_path).is_file():
                 return None
             from .modeling_g05 import G05NativeActionCodec
 
             self._action_codec = G05NativeActionCodec.load(
                 action_config,
                 action_token_begin=tokenizer.action_token_begin,
+                ckpt_path=self.action_tokenizer_path,
             )
         move = getattr(self._action_codec, "to", None)
         if callable(move):

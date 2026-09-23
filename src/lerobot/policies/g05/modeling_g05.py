@@ -21,7 +21,6 @@ from __future__ import annotations
 import itertools
 import json
 import math
-import shutil
 import time
 from collections import deque
 from collections.abc import Mapping
@@ -1254,10 +1253,11 @@ class G05NativeActionCodec:
         config: Mapping[str, Any],
         *,
         action_token_begin: int,
+        ckpt_path: str | Path,
     ) -> G05NativeActionCodec:
         """Load the codec weights from the checkpoint."""
         codec = cls(config, action_token_begin=action_token_begin)
-        state_dict = load_file(Path(str(config["ckpt_dir"])), device="cpu")
+        state_dict = load_file(Path(str(ckpt_path)), device="cpu")
         codec.module.load_state_dict(state_dict, strict=True)
         codec.module.eval()
         return codec
@@ -1731,10 +1731,12 @@ class G05NativeBackend(nn.Module):
         *,
         vocab_size: int,
         processor_path: str | Path,
+        action_tokenizer_path: str | Path,
     ) -> None:
         """Store the model configuration and build the native model."""
         super().__init__()
         self.model_config = dict(model_config)
+        self.action_tokenizer_path = Path(action_tokenizer_path)
         self.model = G05NativeModel(self.model_config, vocab_size=vocab_size)
         attention_implementation = str(self.model_config.get("attn_implementation", "eager"))
         self.model.vlm.config._attn_implementation = attention_implementation
@@ -1747,13 +1749,16 @@ class G05NativeBackend(nn.Module):
             )
         self.action_tokenizer = None
         action_config = self.model_config.get("AT_CONFIG")
-        if isinstance(action_config, Mapping):
-            checkpoint = Path(str(action_config.get("ckpt_dir", "")))
-            if checkpoint.is_file() and not next(self.model.parameters()).is_meta:
-                self.action_tokenizer = G05NativeActionCodec.load(
-                    action_config,
-                    action_token_begin=self.processor.action_token_begin,
-                )
+        if (
+            isinstance(action_config, Mapping)
+            and self.action_tokenizer_path.is_file()
+            and not next(self.model.parameters()).is_meta
+        ):
+            self.action_tokenizer = G05NativeActionCodec.load(
+                action_config,
+                action_token_begin=self.processor.action_token_begin,
+                ckpt_path=self.action_tokenizer_path,
+            )
         self._last_vision_grids: list[tuple[int, int, int]] = []
 
     def materialize_runtime_buffers(self, device: torch.device | str) -> None:
@@ -1885,9 +1890,10 @@ class G05NativeBackend(nn.Module):
         return parameter_groups
 
     @classmethod
-    def from_config(cls, model_config: Mapping[str, Any]) -> G05NativeBackend:
+    def from_config(cls, model_config: Mapping[str, Any], checkpoint_dir: str | Path) -> G05NativeBackend:
         """Build the backend from the checkpoint's model configuration."""
-        processor_path = Path(str(model_config["hf_processor_path"]))
+        checkpoint_dir = Path(checkpoint_dir)
+        processor_path = checkpoint_dir / "hf_processor"
         tokenizer_config = processor_path / "tokenizer_config.json"
         if not tokenizer_config.is_file():
             raise FileNotFoundError(f"G0.5 tokenizer config not found: {tokenizer_config}")
@@ -1905,7 +1911,12 @@ class G05NativeBackend(nn.Module):
         marker_count = len(neural_parts) * residuals + len(rule_parts)
         # Action-code tokens, group markers, <EOV>, and the MLP <state> token.
         vocab_size = base_vocab_size + codebook_size + marker_count + 2
-        return cls(model_config, vocab_size=vocab_size, processor_path=processor_path)
+        return cls(
+            model_config,
+            vocab_size=vocab_size,
+            processor_path=processor_path,
+            action_tokenizer_path=checkpoint_dir / "action_tokenizer.safetensors",
+        )
 
     @staticmethod
     def _patchify(images: Tensor, patch_size: int, temporal_patch_size: int, merge_size: int) -> Tensor:
@@ -2855,12 +2866,18 @@ class G05NativeBackend(nn.Module):
         return loss, loss_dict
 
 
-def _native_backend(config: G05Config) -> nn.Module:
+def _native_backend(config: G05Config, checkpoint_dir: str | Path | None) -> nn.Module:
     """Build the native backend for a policy config."""
     if not config.author_model_config:
         raise ValueError(
             "G0.5 author_model_config is empty. Load a packaged checkpoint, or "
             "inject a backend explicitly for testing."
+        )
+    if checkpoint_dir is None:
+        raise ValueError(
+            "G0.5 needs the checkpoint directory holding hf_processor/ and "
+            "action_tokenizer.safetensors. Load a packaged checkpoint with "
+            "from_pretrained(), or inject a backend explicitly for testing."
         )
     model_config = dict(config.author_model_config)
     model_config.update(
@@ -2872,7 +2889,7 @@ def _native_backend(config: G05Config) -> nn.Module:
             "return_continuous_action": config.return_continuous_action,
         }
     )
-    return G05NativeBackend.from_config(model_config)
+    return G05NativeBackend.from_config(model_config, checkpoint_dir)
 
 
 def _first_cot_text(metadata: Mapping[str, Any]) -> str | None:
@@ -2893,11 +2910,18 @@ class G05Policy(PreTrainedPolicy):
     config_class = G05Config
     name = "g05"
 
-    def __init__(self, config: G05Config, backend: nn.Module | None = None, **kwargs):
+    def __init__(
+        self,
+        config: G05Config,
+        backend: nn.Module | None = None,
+        *,
+        checkpoint_dir: str | Path | None = None,
+        **kwargs,
+    ):
         """Build the policy and its native backend."""
         super().__init__(config)
         config.validate_features()
-        self.backend = backend if backend is not None else _native_backend(config)
+        self.backend = backend if backend is not None else _native_backend(config, checkpoint_dir)
         if not isinstance(self.backend, nn.Module):
             raise TypeError(f"G0.5 backend must be an nn.Module, got {type(self.backend)}.")
         self._action_queue: deque[Tensor] = deque()
@@ -2952,6 +2976,8 @@ class G05Policy(PreTrainedPolicy):
         """Load a policy, downloading the checkpoint when needed."""
         resolved_path = Path(pretrained_name_or_path)
         if not resolved_path.is_dir():
+            # The backend reads hf_processor/tokenizer_config.json to size the vocabulary
+            # before any weight is loaded, so both sidecars must be on disk up front.
             resolved_path = Path(
                 snapshot_download(
                     repo_id=str(pretrained_name_or_path),
@@ -2971,81 +2997,23 @@ class G05Policy(PreTrainedPolicy):
             )
         if not isinstance(config, G05Config):
             raise TypeError(f"Expected a G05Config, got {type(config).__name__}.")
-        author_config = dict(config.author_model_config)
-        author_config["hf_processor_path"] = str(resolved_path / "hf_processor")
-        at_config = dict(author_config.get("AT_CONFIG") or {})
-        at_config["ckpt_dir"] = str(resolved_path / "action_tokenizer.safetensors")
-        author_config["AT_CONFIG"] = at_config
-        author_config["pretrained_model_path"] = None
-        config.author_model_config = author_config
         with torch.device("meta"):
             policy = super().from_pretrained(
                 resolved_path,
                 config=config,
+                checkpoint_dir=resolved_path,
                 **kwargs,
             )
         if isinstance(policy.backend, G05NativeBackend) and policy.backend.action_tokenizer is None:
             action_config = policy.backend.model_config.get("AT_CONFIG")
-            if isinstance(action_config, Mapping) and Path(str(action_config.get("ckpt_dir", ""))).is_file():
+            if isinstance(action_config, Mapping) and policy.backend.action_tokenizer_path.is_file():
+                # The backend is built on meta, where the codec cannot load, so bind it here.
                 policy.backend.action_tokenizer = G05NativeActionCodec.load(
                     action_config,
                     action_token_begin=policy.backend.processor.action_token_begin,
+                    ckpt_path=policy.backend.action_tokenizer_path,
                 ).to(next(policy.backend.parameters()).device)
         return policy
-
-    def _save_pretrained(self, save_directory: Path) -> None:
-        """Save the policy and the author's model configuration."""
-        super()._save_pretrained(save_directory)
-        author_config = dict(self.config.author_model_config)
-        processor_value = author_config.get("hf_processor_path")
-        processor_path = Path(str(processor_value)) if processor_value else None
-        at_config = dict(author_config.get("AT_CONFIG") or {})
-        tokenizer_value = at_config.get("ckpt_dir")
-        tokenizer_path = Path(str(tokenizer_value)) if tokenizer_value else None
-        roots = [
-            path.parent for path in (processor_path, tokenizer_path) if path is not None and path.exists()
-        ]
-
-        if (
-            processor_path is not None
-            and processor_path.is_dir()
-            and processor_path.resolve() != (save_directory / "hf_processor").resolve()
-        ):
-            shutil.copytree(processor_path, save_directory / "hf_processor", dirs_exist_ok=True)
-        if (
-            tokenizer_path is not None
-            and tokenizer_path.is_file()
-            and tokenizer_path.resolve() != (save_directory / "action_tokenizer.safetensors").resolve()
-        ):
-            shutil.copy2(tokenizer_path, save_directory / "action_tokenizer.safetensors")
-        for name in (
-            "g05_dataset_stats.json",
-            "author_config.yaml",
-            "LICENSE-G0.5",
-            "LICENSE_QWEN3_5.txt",
-            "THIRD_PARTY_NOTICES.md",
-            "NOTICE",
-            "README.md",
-        ):
-            source = next((root / name for root in roots if (root / name).is_file()), None)
-            if source is not None and source.resolve() != (save_directory / name).resolve():
-                shutil.copy2(source, save_directory / name)
-
-        # Serialized paths are portable sidecar names. Local/Hub loading resolves them
-        # against the downloaded checkpoint directory before constructing the native model.
-        if (processor_path is not None and processor_path.exists()) or (
-            tokenizer_path is not None and tokenizer_path.exists()
-        ):
-            portable = dict(author_config)
-            portable["hf_processor_path"] = "hf_processor"
-            portable_at = dict(portable.get("AT_CONFIG") or {})
-            portable_at["ckpt_dir"] = "action_tokenizer.safetensors"
-            portable["AT_CONFIG"] = portable_at
-            portable["pretrained_model_path"] = None
-            runtime_config = self.config.author_model_config
-            self.config.author_model_config = portable
-            self.config._save_pretrained(save_directory)
-            self.config.author_model_config = runtime_config
 
     def reset(self) -> None:
         """Clear the queued actions and any backend state."""
