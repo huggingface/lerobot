@@ -438,6 +438,10 @@ def prepare_reviewed_points(parent: Path, output: Path, review_path: Path) -> di
         if not correction.get("reason", "").strip():
             raise ValueError("Seed correction requires visual evidence or an uncertainty reason")
         point = correction["point"]
+        negatives = correction.get("negative_points", [])
+        if "negative_points" in correction and not index:
+            raise ValueError("Negative points require an explicit later-frame correction")
+        validate_negative_points(point, negatives, clip["image_size"])
         if point is not None and (
             not isinstance(point, list)
             or len(point) != 2
@@ -462,7 +466,14 @@ def prepare_reviewed_points(parent: Path, output: Path, review_path: Path) -> di
             prompts = obj.setdefault("tracking_prompts", [])
             if any(p["frame_index"] == frame_index for p in prompts):
                 raise ValueError("Duplicate temporal correction; review from the original parent instead")
-            prompts.append({"frame_index": frame_index, "point": point, "review": attribution})
+            prompts.append(
+                {
+                    "frame_index": frame_index,
+                    "point": point,
+                    **({"negative_points": negatives} if negatives else {}),
+                    "review": attribution,
+                }
+            )
             prompts.sort(key=lambda p: p["frame_index"])
             continue
         previous = dict(obj)
@@ -673,7 +684,29 @@ def run_molmo(output: Path, manifest: dict, stage: str, model, *, point_target: 
         write_json(target, {**result, "model": manifest["models"][stage], "review": "pending"})
 
 
-def tracking_prompts(obj: dict, clip: dict) -> list[tuple[int, list]]:
+def validate_negative_points(point, negatives, size):
+    """Negative clicks exclude visible neighboring material; they never assert object absence."""
+    if not isinstance(negatives, list):
+        raise ValueError("Negative points must be a list of original-image coordinates")
+    if negatives and point is None:
+        raise ValueError("Negative points require a positive visible-object point")
+    seen = []
+    for negative in negatives:
+        if (
+            not isinstance(negative, list)
+            or len(negative) != 2
+            or any(
+                isinstance(v, bool) or not isinstance(v, (int, float)) or not np.isfinite(v) or not 0 <= v < n
+                for v, n in zip(negative, size, strict=True)
+            )
+            or negative == point
+            or negative in seen
+        ):
+            raise ValueError("Negative points must be distinct, finite original-image coordinates")
+        seen.append(negative)
+
+
+def tracking_prompts(obj: dict, clip: dict) -> list[tuple[int, list, list]]:
     """Map attributed offline corrections to SAM2 frame indices without filling visibility gaps."""
     prompts = obj.get("tracking_prompts", [])
     if not prompts:
@@ -684,6 +717,8 @@ def tracking_prompts(obj: dict, clip: dict) -> list[tuple[int, list]]:
     result, seen = [], set()
     for prompt in prompts:
         frame_index, point = prompt["frame_index"], prompt["point"]
+        negatives = prompt.get("negative_points", [])
+        validate_negative_points(point, negatives, clip["image_size"])
         if type(frame_index) is not int or frame_index not in indices or indices[frame_index] == 0:
             raise ValueError("Temporal correction frame must be an exported frame after the initial seed")
         if frame_index in seen:
@@ -707,11 +742,12 @@ def tracking_prompts(obj: dict, clip: dict) -> list[tuple[int, list]]:
             or correction["frame_sha256"] != clip["frames"][indices[frame_index]]["sha256"]
             or correction["frame_index"] != frame_index
             or correction["point"] != point
+            or correction.get("negative_points", []) != negatives
             or correction["object_id"] != obj["object_id"]
             or correction["name"] != obj["name"]
         ):
             raise ValueError("Temporal correction disagrees with its attributed review")
-        result.append((indices[frame_index], point))
+        result.append((indices[frame_index], point, negatives))
     return sorted(result)
 
 
@@ -760,13 +796,13 @@ def track_clip(directory: Path, clip: dict, predictor):
     # Offline labels may use later visible frames. Add all conditioning prompts before
     # propagation; never interpret a missing mask as a request to invent an object.
     for obj in objects:
-        for index, point in corrections[obj["object_id"]]:
+        for index, point, negatives in corrections[obj["object_id"]]:
             predictor.add_new_points_or_box(
                 state,
                 frame_idx=index,
                 obj_id=obj["object_id"],
-                points=np.asarray([point], dtype=np.float32),
-                labels=np.ones(1, dtype=np.int32),
+                points=np.asarray([point, *negatives], dtype=np.float32),
+                labels=np.asarray([1, *([0] * len(negatives))], dtype=np.int32),
             )
     rows = []
     names = {obj["object_id"]: obj["name"] for obj in objects}

@@ -152,6 +152,7 @@ def test_seed_corrections_preserve_parent_and_model_attribution(extractor, seed_
         ("name", "different object", "object identity"),
         ("point", [8, 3], "image coordinates"),
         ("point", [True, 3], "image coordinates"),
+        ("negative_points", [[6, 4]], "later-frame"),
     ],
 )
 def test_invalid_seed_review_creates_no_output(extractor, seed_review_case, field, value, error):
@@ -195,8 +196,13 @@ def temporal_review_case(extractor, seed_review_case):
     return parent, output, path, review
 
 
-def test_temporal_correction_preserves_seed_and_uses_local_sam_index(extractor, temporal_review_case):
+@pytest.mark.parametrize("negatives", [[], [[6, 4], [7, 5]]])
+def test_temporal_correction_preserves_seed_and_uses_local_sam_index(
+    extractor, temporal_review_case, negatives
+):
     parent, output, path, review = temporal_review_case
+    if negatives:
+        review["corrections"][0]["negative_points"] = negatives
     path.write_text(json.dumps(review))
     before = {p: p.read_bytes() for p in parent.rglob("*") if p.is_file()}
     manifest = extractor["prepare_reviewed_points"](parent, output, path)
@@ -206,6 +212,7 @@ def test_temporal_correction_preserves_seed_and_uses_local_sam_index(extractor, 
     assert obj["point"] == [4, 3]
     prompt = obj["tracking_prompts"][0]
     assert prompt["frame_index"] == 303 and prompt["point"] == [2, 3]
+    assert prompt.get("negative_points", []) == negatives
     assert prompt["review"]["reviewer"] == review["reviewer"]
     assert not prompt["review"]["accepted_training_labels"]
     calls = []
@@ -215,10 +222,15 @@ def test_temporal_correction_preserves_seed_and_uses_local_sam_index(extractor, 
             return {}
 
         def add_new_points_or_box(self, state, **kwargs):
-            calls.append((kwargs["frame_idx"], kwargs["obj_id"], kwargs["points"].tolist()))
+            calls.append(
+                (kwargs["frame_idx"], kwargs["obj_id"], kwargs["points"].tolist(), kwargs["labels"].tolist())
+            )
 
         def propagate_in_video(self, state):
-            assert calls == [(0, 1, [[4, 3]]), (1, 1, [[2, 3]])]
+            assert calls == [
+                (0, 1, [[4, 3]], [1]),
+                (1, 1, [[2, 3], *negatives], [1, *([0] * len(negatives))]),
+            ]
             for index in range(2):
                 yield index, [1], torch.full((1, 1, 6, 8), -1.0)
 
@@ -238,6 +250,12 @@ def test_temporal_correction_preserves_seed_and_uses_local_sam_index(extractor, 
         ("source_tracks_sha256", "stale", "source tracks hash"),
         ("point", None, "visible material point"),
         ("point", [float("nan"), 1], "image coordinates"),
+        ("negative_points", [[2, 3]], "distinct"),
+        ("negative_points", [[6, 4], [6, 4]], "distinct"),
+        ("negative_points", [[8, 2]], "coordinates"),
+        ("negative_points", [[float("nan"), 2]], "coordinates"),
+        ("negative_points", [[True, 2]], "coordinates"),
+        ("negative_points", None, "list"),
     ],
 )
 def test_bad_temporal_review_has_no_side_effects(extractor, temporal_review_case, field, value, error):
@@ -247,6 +265,21 @@ def test_bad_temporal_review_has_no_side_effects(extractor, temporal_review_case
     with pytest.raises(ValueError, match=error):
         extractor["prepare_reviewed_points"](parent, output, path)
     assert not output.exists()
+
+
+def test_negative_points_cannot_change_after_their_review(extractor, temporal_review_case):
+    parent, output, path, review = temporal_review_case
+    review["corrections"][0]["negative_points"] = [[6, 4]]
+    path.write_text(json.dumps(review))
+    manifest = extractor["prepare_reviewed_points"](parent, output, path)
+    point_path = output / "clip/point.json"
+    points = json.loads(point_path.read_text())
+    points["objects"][0]["tracking_prompts"][0]["negative_points"] = [[7, 4]]
+    point_path.write_text(json.dumps(points))
+    predictor = Mock()
+    with pytest.raises(ValueError, match="attributed review"):
+        extractor["track_clip"](output / "clip", manifest["clips"][0], predictor)
+    assert not predictor.mock_calls
 
 
 def test_temporal_correction_cannot_revive_withdrawn_identity(extractor, temporal_review_case):

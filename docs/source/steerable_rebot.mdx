@@ -208,6 +208,13 @@ For a later correction, include the absolute episode-local `frame_index` and
 `source_tracks_sha256` of the inspected track. The frame must exist in the extraction,
 and the point must lie on visibly identified material in original image coordinates.
 A later null point cannot assert absence, and a withdrawn identity cannot be revived.
+Later corrections can also include `negative_points: [[x, y], ...]` on visible
+neighboring objects or background that the current mask wrongly includes. Keep the
+positive point on the intended object and explain both in the review's `reason`.
+The adapter sends the positive point with SAM2 label 1 and these exclusion points
+with label 0, using the same original-image coordinates. It rejects duplicate,
+out-of-frame, nonfinite, or contradictory clicks and checks them against their saved
+review. Negative clicks are currently supported only on explicit later frames.
 
 Run `track` and `filter-objects` on the new extraction, then inspect the result before
 accepting any interval. SAM2 receives the initial seed and later conditioning points

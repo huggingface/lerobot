@@ -141,6 +141,7 @@ def test_native_temporal_prompt_stays_on_its_frame_with_complete_offline_provena
     prompt = {
         "frame_index": 2,
         "point": [2, 2],
+        "negative_points": [[6, 4]],
         "review": {"reviewer": {"kind": "model", "id": "test"}, "accepted_training_labels": False},
     }
     selected["objects"][0]["tracking_prompts"] = [prompt]
