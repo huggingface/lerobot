@@ -318,22 +318,26 @@ def test_finalize_then_read_roundtrip(tmp_path):
 
 
 class DummyWriter(BaseDatasetWriter):
-    """Minimal in-memory writer used to exercise the registry.
+    """Minimal in-memory writer that records the lifecycle calls LeRobotDataset drives.
 
-    Implements only the abstract core; the optional staging/encoding hooks
-    (start/stop_image_writer, flush/cancel_pending_videos) inherit the base
-    no-op defaults, verifying they are genuinely optional.
+    Implements the abstract core and overrides ``start_image_writer`` to record it;
+    the remaining optional hooks (``stop_image_writer``, ``flush``/``cancel_pending_videos``)
+    inherit the base no-op defaults, verifying they are genuinely optional.
     """
 
     def __init__(self, **kwargs):
         self.kwargs = kwargs
         self.episode_buffer = None
+        self.added_frames = []
+        self.saved_episodes = 0
+        self.image_writer_args = None
+        self.finalized = False
 
     def add_frame(self, frame):
-        pass
+        self.added_frames.append(frame)
 
     def save_episode(self, episode_data=None, parallel_encoding=True):
-        pass
+        self.saved_episodes += 1
 
     def clear_episode_buffer(self, delete_images=True):
         pass
@@ -341,8 +345,11 @@ class DummyWriter(BaseDatasetWriter):
     def cleanup_interrupted_episode(self, episode_index):
         pass
 
+    def start_image_writer(self, num_processes=0, num_threads=4):
+        self.image_writer_args = (num_processes, num_threads)
+
     def finalize(self):
-        pass
+        self.finalized = True
 
 
 def test_make_dataset_writer_default_returns_default_writer(tmp_path):
@@ -402,5 +409,59 @@ def test_register_dataset_writer_selects_custom_writer(monkeypatch):
             register_dataset_writer("dummyfmt", "some.other.module")
         with pytest.raises(ValueError, match="already registered"):
             register_dataset_writer(DEFAULT_STORAGE_FORMAT, "dummyfmt_writer")
+    finally:
+        _DATASET_WRITER_MODULES.pop("dummyfmt", None)
+
+
+def test_create_and_resume_with_custom_storage_format(tmp_path, monkeypatch):
+    """End-to-end: create()/resume() forward constructor args, persist storage_format,
+    start optional hooks, delegate the recording lifecycle, and reselect the custom
+    writer from persisted metadata."""
+    module = types.ModuleType("dummyfmt_writer")
+    module.DATASET_WRITER = DummyWriter
+    monkeypatch.setitem(sys.modules, "dummyfmt_writer", module)
+    register_dataset_writer("dummyfmt", "dummyfmt_writer")
+    root = tmp_path / "ds"
+    try:
+        dataset = LeRobotDataset.create(
+            repo_id=DUMMY_REPO_ID,
+            fps=DEFAULT_FPS,
+            features=SIMPLE_FEATURES,
+            root=root,
+            storage_format="dummyfmt",
+            image_writer_threads=2,
+        )
+
+        # Writer resolved through the registry with forwarded constructor args
+        writer = dataset.writer
+        assert isinstance(writer, DummyWriter)
+        assert writer.kwargs["meta"] is dataset.meta
+        assert writer.kwargs["root"] == dataset.root
+        assert set(writer.kwargs) >= {
+            "rgb_encoder",
+            "depth_encoder",
+            "encoder_threads",
+            "batch_encoding_size",
+            "streaming_encoder",
+        }
+        # Optional hook started through the integration path
+        assert writer.image_writer_args == (0, 2)
+        # storage_format persisted so the backend is resolvable on reload
+        assert dataset.meta.storage_format == "dummyfmt"
+
+        # Recording lifecycle is delegated to the custom writer
+        for _ in range(3):
+            dataset.add_frame(_make_frame(SIMPLE_FEATURES))
+        dataset.save_episode()
+        dataset.finalize()
+        assert len(writer.added_frames) == 3
+        assert writer.saved_episodes == 1
+        assert writer.finalized
+
+        # resume() reselects the custom writer from persisted metadata
+        resumed = LeRobotDataset.resume(repo_id=DUMMY_REPO_ID, root=root)
+        assert isinstance(resumed.writer, DummyWriter)
+        assert resumed.meta.storage_format == "dummyfmt"
+        assert resumed.writer.kwargs["initial_frames"] == resumed.meta.total_frames
     finally:
         _DATASET_WRITER_MODULES.pop("dummyfmt", None)
