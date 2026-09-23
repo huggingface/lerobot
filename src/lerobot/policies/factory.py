@@ -48,6 +48,7 @@ from lerobot.utils.import_utils import _peft_available, require_package
 
 from .evo1.configuration_evo1 import Evo1Config
 from .groot.configuration_groot import GrootConfig
+from .lingbot_vla_v2.configuration_lingbot_vla_v2 import LingbotVLAV2Config
 from .molmoact2.configuration_molmoact2 import MolmoAct2Config
 from .pretrained import PreTrainedPolicy
 from .utils import validate_visual_features_consistency
@@ -178,6 +179,10 @@ def make_pre_post_processors(
     Raises:
         ValueError: If no processor factory exists for the given policy configuration type.
     """
+    # NOTE: the `ProcessorStep`s are expected to be registered already — every
+    # policy package imports its `processor_*` module from its `__init__.py`,
+    # which `import lerobot.policies` runs — so no per-policy module import is
+    # needed here.
     if pretrained_path:
         if isinstance(policy_cfg, GrootConfig):
             from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
@@ -196,6 +201,25 @@ def make_pre_post_processors(
                 postprocessor_config_filename=kwargs.get(
                     "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
                 ),
+            )
+
+        if isinstance(policy_cfg, LingbotVLAV2Config):
+            from .lingbot_vla_v2.processor_lingbot_vla_v2 import (
+                make_lingbot_vla_v2_pre_post_processors_from_pretrained,
+            )
+
+            return make_lingbot_vla_v2_pre_post_processors_from_pretrained(
+                config=policy_cfg,
+                pretrained_path=pretrained_path,
+                preprocessor_overrides=kwargs.get("preprocessor_overrides"),
+                postprocessor_overrides=kwargs.get("postprocessor_overrides"),
+                preprocessor_config_filename=kwargs.get(
+                    "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+                ),
+                postprocessor_config_filename=kwargs.get(
+                    "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+                ),
+                pretrained_revision=pretrained_revision,
             )
 
         if isinstance(policy_cfg, MolmoAct2Config):
@@ -217,12 +241,16 @@ def make_pre_post_processors(
                 ),
             )
 
+        preprocessor_overrides = kwargs.get("preprocessor_overrides", {})
+        postprocessor_overrides = kwargs.get("postprocessor_overrides", {})
+
+
         preprocessor = PolicyProcessorPipeline.from_pretrained(
             pretrained_model_name_or_path=pretrained_path,
             config_filename=kwargs.get(
                 "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
             ),
-            overrides=kwargs.get("preprocessor_overrides", {}),
+            overrides=preprocessor_overrides,
             to_transition=batch_to_transition,
             to_output=transition_to_batch,
             revision=pretrained_revision,
@@ -232,7 +260,7 @@ def make_pre_post_processors(
             config_filename=kwargs.get(
                 "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
             ),
-            overrides=kwargs.get("postprocessor_overrides", {}),
+            overrides=postprocessor_overrides,
             to_transition=policy_action_to_transition,
             to_output=transition_to_policy_action,
             revision=pretrained_revision,
