@@ -16,9 +16,11 @@ main's rollout; it does not start the robot or turn planner assessments into suc
 
 [`evaluation_scenarios.draft.json`](evaluation_scenarios.draft.json) supplies a concrete
 17-scenario starting draft: familiar targets, paraphrases, distractors, physical-arm
-selection, ordered tasks, and proposed novel spoon/sponge targets. Its objects and
+selection, ordered tasks, and a pastry brush and tea strainer as proposed novel targets. Its objects and
 reset layouts still need an operator check on the actual table. The novel targets
-are proposals, not verified inventory or novelty claims. Confirm their absence from
+are proposals, not verified inventory or novelty claims. Training annotations name
+spoons and sponges; brush and strainer terms were absent from the text audit. Text
+absence alone does not establish visual novelty. Confirm their absence from
 the training demonstrations and retain that evidence before using those tags.
 Photograph each finalized reset, keep the 90-second limit fixed across conditions,
 and freeze the resulting plan before collection. The last cap/cloth scenario receives

@@ -203,10 +203,10 @@
     "novelty_verification": null
   },
   {
-    "id": "novel_spoon",
-    "task": "Put the wooden spoon into the bin.",
+    "id": "novel_brush",
+    "task": "Put the silicone pastry brush into the bin.",
     "targets": [
-      "wooden spoon"
+      "silicone pastry brush"
     ],
     "distractors": [],
     "tags": [
@@ -214,15 +214,20 @@
     ],
     "time_limit_s": 90,
     "readiness": "draft_operator_scene_check_required",
-    "reset_instructions": "After inventory/novelty verification, lay the spoon flat at the photographed pose. It must fit completely inside the bin. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
-    "success_rubric": "The spoon is released wholly inside the bin. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
-    "novelty_verification": "Pending: verify this physical target was absent from training demonstrations 0-89; retain inventory/video evidence. Do not claim novelty from its name alone."
+    "reset_instructions": "After inventory/novelty verification, lay the brush flat at the photographed pose. It must fit completely inside the bin. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "The brush is released wholly inside the bin. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": "Pending: brush/strainer terms are absent from the 499 source subtask annotations, but text absence does not prove visual novelty. Verify the actual object was absent from training demonstrations 0-89 and retain inventory/video evidence.",
+    "text_inventory_source": {
+      "repo_id": "pepijn223/rebot_diverse_picking_100_annotated",
+      "revision": "93c97807c46535745d0587d4296416bf2d4aa80d",
+      "text_screen_only": true
+    }
   },
   {
-    "id": "novel_spoon_paraphrase",
-    "task": "Clear the wooden spoon from the table by moving it into the black container.",
+    "id": "novel_brush_paraphrase",
+    "task": "Clear the silicone pastry brush from the table by moving it into the black container.",
     "targets": [
-      "wooden spoon"
+      "silicone pastry brush"
     ],
     "distractors": [],
     "tags": [
@@ -231,15 +236,20 @@
     ],
     "time_limit_s": 90,
     "readiness": "draft_operator_scene_check_required",
-    "reset_instructions": "Reuse the verified object and exact photographed novel_spoon layout. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
-    "success_rubric": "The spoon is released wholly inside the bin. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
-    "novelty_verification": "Pending: verify this physical target was absent from training demonstrations 0-89; retain inventory/video evidence. Do not claim novelty from its name alone."
+    "reset_instructions": "Reuse the verified object and exact photographed novel_brush layout. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "The brush is released wholly inside the bin. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": "Pending: brush/strainer terms are absent from the 499 source subtask annotations, but text absence does not prove visual novelty. Verify the actual object was absent from training demonstrations 0-89 and retain inventory/video evidence.",
+    "text_inventory_source": {
+      "repo_id": "pepijn223/rebot_diverse_picking_100_annotated",
+      "revision": "93c97807c46535745d0587d4296416bf2d4aa80d",
+      "text_screen_only": true
+    }
   },
   {
-    "id": "novel_sponge_select",
-    "task": "Put the sponge into the bin and leave the white tape roll on the table.",
+    "id": "novel_strainer_select",
+    "task": "Put the tea strainer into the bin and leave the white tape roll on the table.",
     "targets": [
-      "sponge"
+      "tea strainer"
     ],
     "distractors": [
       "white tape roll"
@@ -250,16 +260,21 @@
     ],
     "time_limit_s": 90,
     "readiness": "draft_operator_scene_check_required",
-    "reset_instructions": "After inventory/novelty verification, put a dry sponge and the tape roll separately at their photographed poses. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
-    "success_rubric": "The sponge is released wholly inside the bin; the tape remains on the table. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
-    "novelty_verification": "Pending: verify this physical target was absent from training demonstrations 0-89; retain inventory/video evidence. Do not claim novelty from its name alone."
+    "reset_instructions": "After inventory/novelty verification, put an empty small mesh tea strainer and the tape roll separately at their photographed poses. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "The tea strainer is released wholly inside the bin; the tape remains on the table. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": "Pending: brush/strainer terms are absent from the 499 source subtask annotations, but text absence does not prove visual novelty. Verify the actual object was absent from training demonstrations 0-89 and retain inventory/video evidence.",
+    "text_inventory_source": {
+      "repo_id": "pepijn223/rebot_diverse_picking_100_annotated",
+      "revision": "93c97807c46535745d0587d4296416bf2d4aa80d",
+      "text_screen_only": true
+    }
   },
   {
-    "id": "cup_then_novel_spoon",
-    "task": "First put the white cup into the bin, then put the wooden spoon into the bin.",
+    "id": "cup_then_novel_brush",
+    "task": "First put the white cup into the bin, then put the silicone pastry brush into the bin.",
     "targets": [
       "white cup",
-      "wooden spoon"
+      "silicone pastry brush"
     ],
     "distractors": [],
     "tags": [
@@ -268,9 +283,14 @@
     ],
     "time_limit_s": 90,
     "readiness": "draft_operator_scene_check_required",
-    "reset_instructions": "Use the verified spoon, set the empty cup upright, and place the spoon separately. Check that both fit inside the bin together. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
-    "success_rubric": "Both objects are released wholly inside the bin, with cup release preceding spoon release. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
-    "novelty_verification": "Pending: verify this physical target was absent from training demonstrations 0-89; retain inventory/video evidence. Do not claim novelty from its name alone."
+    "reset_instructions": "Use the verified brush, set the empty cup upright, and place the brush separately. Check that both fit inside the bin together. Before every condition, empty the bin, restore its fixed pose, restore all listed object poses from the scenario reset photograph, and use the same operator-verified arm starting configuration. Capture base and both wrist images before starting.",
+    "success_rubric": "Both objects are released wholly inside the bin, with cup release preceding brush release. Score from synchronized recordings within a fixed 90-second attempt limit. Incidental contact alone is not a transfer. No operator may complete the task for the robot. If decisive release/order evidence is occluded or missing, label the outcome unknown rather than infer it.",
+    "novelty_verification": "Pending: brush/strainer terms are absent from the 499 source subtask annotations, but text absence does not prove visual novelty. Verify the actual object was absent from training demonstrations 0-89 and retain inventory/video evidence.",
+    "text_inventory_source": {
+      "repo_id": "pepijn223/rebot_diverse_picking_100_annotated",
+      "revision": "93c97807c46535745d0587d4296416bf2d4aa80d",
+      "text_screen_only": true
+    }
   },
   {
     "id": "cap_then_cloth",
