@@ -17,6 +17,16 @@ def main():
 
     model = SmolVLAPolicy.from_pretrained(model_id)
 
+    # NOTE: a checkpoint trained on several datasets stores one set of normalization
+    # statistics per dataset, and which one to normalize with cannot be inferred here.
+    # Loading such a checkpoint without supplying statistics raises a ValueError listing
+    # the datasets it holds. Pass the statistics of the dataset you are actually running
+    # against, e.g. from a local dataset:
+    #
+    #     from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    #     stats = LeRobotDataset("<your-dataset-repo-id>").meta.stats
+    #     preprocessor_overrides={..., "normalizer_processor": {"stats": stats}}
+    #     postprocessor_overrides={"unnormalizer_processor": {"stats": stats}}
     preprocess, postprocess = make_pre_post_processors(
         model.config,
         model_id,
