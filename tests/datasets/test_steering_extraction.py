@@ -39,10 +39,16 @@ def test_object_selection_does_not_silently_truncate_or_invent_identities(extrac
         "bin",
     ]
     assert parse(" [remote, tape, cracker, screwdriver]") == ["remote", "tape", "cracker", "screwdriver"]
+    assert parse(
+        'Based on the image: {"upcomingTask": "Return to Home Position", '
+        '"taskObjects": ["plastic container", "green object", "blue object", "white object"], '
+        '"taskStatus": "in progress"} This list includes four objects.'
+    ) == ["plastic container", "green object", "blue object", "white object"]
     for raw in [
         '["tape", "tape"]',
         '["1", "2", "3", "4", "5"]',
         '{"names": []}',
+        '{"objects": ["tape"], "taskObjects": ["bin"]}',
         "[null]",
         '["tape"] ["bin"]',
         '[remote, "tape"]',
@@ -166,14 +172,18 @@ def test_uncertain_review_can_withdraw_a_seed_without_inventing_visibility(extra
     assert obj["point"] is None and obj["point_source"] == "model_review"
 
 
-def test_reparse_preserves_model_response_and_records_recovery(extractor, tmp_path):
+@pytest.mark.parametrize(
+    "raw",
+    ["[tape, bin]", '{"taskObjects": ["tape", "bin"], "taskStatus": "completed"}'],
+)
+def test_reparse_preserves_model_response_and_records_recovery(extractor, tmp_path, raw):
     directory = tmp_path / "clip"
     directory.mkdir()
     target = directory / "identify.json"
     result = {
         "model": extractor["MODELS"]["identify"],
         "review": "pending",
-        "raw": "[tape, bin]",
+        "raw": raw,
         "prompt": "original prompt",
         "objects": [],
         "error": "old parse failure",
@@ -186,6 +196,7 @@ def test_reparse_preserves_model_response_and_records_recovery(extractor, tmp_pa
     assert report[0]["status"] == "reparsed"
     assert restored["raw"] == result["raw"] and restored["prompt"] == result["prompt"]
     assert restored["objects"] == ["tape", "bin"] and restored["review"] == "pending"
+    assert "taskStatus" not in restored
     assert restored["format_recovery"]["previous_file_sha256"] == old_hash
     # A retry must not overwrite provenance or re-query successful identification.
     assert extractor["reparse_identification"](tmp_path, manifest) == []

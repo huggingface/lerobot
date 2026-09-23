@@ -75,8 +75,13 @@ def parse_objects(text: str) -> list[str]:
             value, end = json.JSONDecoder().raw_decode(text, start.start())
             if re.search(r"[\[{]", text[end:]):
                 raise ValueError("Ambiguous multiple object lists") from None
-    if isinstance(value, dict) and "objects" in value:
-        value = value["objects"]
+    if isinstance(value, dict):
+        # Observed Molmo responses use either key. Recover only the explicit name
+        # list, never accompanying claims about task progress or completion.
+        keys = [key for key in ("objects", "taskObjects") if key in value]
+        if len(keys) != 1:
+            raise ValueError("Expected exactly one explicit object-name list")
+        value = value[keys[0]]
     if not isinstance(value, list) or len(value) > 4:
         raise ValueError("Expected a JSON list of up to four object names")
     if any(not isinstance(name, str) or not name.strip() or len(name) > 150 for name in value):
