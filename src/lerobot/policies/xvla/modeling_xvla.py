@@ -418,7 +418,10 @@ class XVLAPolicy(PreTrainedPolicy):
             actions = self._get_action_chunk(batch)
             self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
 
-        return self._queues[ACTION].popleft()
+        action = self._queues[ACTION].popleft()
+        if self.config.action_feature is not None and action.shape[-1] > self.config.action_feature.shape[-1]:
+            action = action[..., : self.config.action_feature.shape[-1]]
+        return action
 
     @classmethod
     def from_pretrained(
