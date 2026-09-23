@@ -1168,39 +1168,6 @@ def _joint_frame_output_step(config: G05Config) -> ProcessorStep:
     )
 
 
-def insert_g05_joint_frame_steps(
-    config: G05Config,
-    preprocessor: PolicyProcessorPipeline,
-    postprocessor: PolicyProcessorPipeline,
-) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
-    """One-time structural fix for a checkpoint published before the joint frame
-    was identified, run via ``update_checkpoint_joint_frame.py``. Rebuilds any
-    step already present rather than duplicating it, so it's safe to re-run.
-    """
-
-    input_steps = [step for step in preprocessor.steps if not isinstance(step, _G05JointFrameMixin)]
-    anchor = next(
-        (idx for idx, step in enumerate(input_steps) if isinstance(step, RelativeActionsProcessorStep)),
-        None,
-    )
-    if anchor is None:
-        raise ValueError("G0.5 preprocessor has no relative-actions step to anchor the joint frame against.")
-    input_steps[anchor:anchor] = _joint_frame_input_steps(config)
-    preprocessor.steps = input_steps
-
-    output_steps = [step for step in postprocessor.steps if not isinstance(step, _G05JointFrameMixin)]
-    absolute = next(
-        (idx + 1 for idx, step in enumerate(output_steps) if isinstance(step, AbsoluteActionsProcessorStep)),
-        None,
-    )
-    if absolute is None:
-        raise ValueError("G0.5 postprocessor has no absolute-actions step to anchor the joint frame against.")
-    output_steps.insert(absolute, _joint_frame_output_step(config))
-    postprocessor.steps = output_steps
-
-    return preprocessor, postprocessor
-
-
 @dataclass
 @ProcessorStepRegistry.register(name="g05_tokenizer")
 class G05TokenizerStep(ProcessorStep):
