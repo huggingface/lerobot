@@ -318,7 +318,7 @@ class RolloutController:
         sequencer does not survive a segment; it is also stopped by :meth:`reset` and
         :meth:`set_task`.  Same guards and rejection values as :meth:`ask`.
         """
-        if not self._ctx.policy.inference.supports_text_queries:
+        if not self._ctx.policy.inference.supports_planning:
             return AskResult.UNSUPPORTED
         with self._control_lock:
             if not self._running.is_set():

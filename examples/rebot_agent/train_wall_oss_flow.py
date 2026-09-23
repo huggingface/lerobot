@@ -17,16 +17,31 @@ from pathlib import Path
 from lerobot.datasets.recipe import TrainingRecipe
 
 
-def prepare_run(output: Path, gpus: int, batch_size: int, smoke: bool) -> tuple[dict, list[str]]:
+def prepare_run(
+    output: Path, gpus: int, batch_size: int, smoke: bool, steering_manifest: Path | None = None
+) -> tuple[dict, list[str]]:
     """Resolve the checked-in recipe and build a bounded, single-node torchrun command."""
     if gpus not in range(1, 5) or batch_size < 1:
         raise ValueError("Use one to four GPUs and a positive per-GPU batch size")
     workspace = Path(__file__).resolve().parents[2]
-    session = json.loads((workspace / "examples/rebot_agent/session.json").read_text())
+    session = json.loads((workspace / "examples/rebot_agent/training.json").read_text())
     candidate = next(c for c in session["candidates"] if c["name"] == "wall_oss_flow_80_20_v1")
     config = candidate["training"]
     recipe = TrainingRecipe.from_yaml(workspace / candidate["recipe_path"])
     config["dataset"]["task_recipe"] = asdict(recipe)
+    if steering_manifest is not None:
+        from lerobot.datasets.steering_commands import SteeringCommands
+
+        manifest = json.loads(steering_manifest.read_text())
+        SteeringCommands(manifest)
+        if any(manifest["source"].get(k) != config["dataset"][k] for k in ("repo_id", "revision")):
+            raise ValueError("Steering manifest source differs from the training dataset")
+        config["dataset"]["steering_manifest"] = str(steering_manifest.resolve())
+        config["dataset"]["steering_task_probability"] = 0.2
+        config["dataset"]["image_transforms"] = {"enable": False}
+        config["dataset"]["task_recipe"] = {
+            "messages": [{"role": "user", "content": "${task}", "stream": "low_level"}]
+        }
     config["policy"].update(type="wall_x", pretrained_name_or_path=candidate["base_model"])
     config.update(batch_size=batch_size, output_dir=str(output / "training"))
     config["accelerator"] = {"mixed_precision": "bf16"}
@@ -44,9 +59,12 @@ def main():
     parser.add_argument("--batch-size", type=int, default=1, help="Per-GPU micro-batch size")
     parser.add_argument("--smoke", action="store_true", help="Ten steps, validation, and checkpoint save")
     parser.add_argument("--dry-run", action="store_true", help="Write config and command without training")
+    parser.add_argument(
+        "--steering-manifest", type=Path, help="Reviewed multi-style commands; omit for the semantic baseline"
+    )
     args = parser.parse_args()
     output = args.output.resolve()
-    config, argv = prepare_run(output, args.gpus, args.batch_size, args.smoke)
+    config, argv = prepare_run(output, args.gpus, args.batch_size, args.smoke, args.steering_manifest)
     workspace = Path(__file__).resolve().parents[2]
     git = shutil.which("git")
     if git is None:
@@ -57,6 +75,10 @@ def main():
         if torch.cuda.device_count() < args.gpus:
             parser.error("Fewer CUDA GPUs are visible than requested; run inside the scheduler allocation")
     output.mkdir(parents=True, exist_ok=False)
+    if args.steering_manifest is not None:
+        manifest_copy = output / "steering_manifest.json"
+        shutil.copyfile(args.steering_manifest, manifest_copy)
+        config["dataset"]["steering_manifest"] = str(manifest_copy)
     (output / "config.json").write_text(json.dumps(config, indent=2) + "\n")
     revision = subprocess.check_output([git, "rev-parse", "HEAD"], cwd=workspace, text=True).strip()
     patch = subprocess.check_output([git, "diff", "HEAD", "--binary"], cwd=workspace)

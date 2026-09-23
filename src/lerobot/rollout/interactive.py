@@ -133,7 +133,7 @@ class InteractiveSession:
             "autosteer": (
                 self._cmd_autosteer,
                 " <goal>|off",
-                "let the policy pick its own subtasks toward a high-level goal",
+                "choose steering instructions toward a high-level goal",
             ),
             "reset": (self._cmd_reset, "", "stop movement, return to initial position, restore the task"),
             "stop": (self._cmd_stop, "", "end the session and shut down"),

@@ -30,12 +30,21 @@ from .dataset_metadata import LeRobotDatasetMetadata
 from .language_task import RecipeTaskDataset
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
+from .steering_commands import SteeringCommandDataset
 from .storage import DEFAULT_STORAGE_FORMAT, load_dataset_metadata
 from .streaming_dataset import StreamingLeRobotDataset
 from .utils import resolve_episode_indices
 
 
-def _training_dataset(cfg: TrainPipelineConfig):
+def _training_dataset(cfg: TrainPipelineConfig, *, evaluation=False):
+    if cfg.dataset.steering_manifest is not None:
+        return partial(
+            SteeringCommandDataset,
+            task_recipe=cfg.dataset.task_recipe,
+            steering_manifest=cfg.dataset.steering_manifest,
+            task_probability=cfg.dataset.steering_task_probability,
+            deterministic=evaluation,
+        )
     if cfg.dataset.task_recipe is not None:
         return partial(RecipeTaskDataset, task_recipe=cfg.dataset.task_recipe)
     return LeRobotDataset
@@ -262,7 +271,7 @@ def make_train_eval_datasets(
         repo_type=cfg.dataset.repo_type,
     )
 
-    eval_dataset = _training_dataset(cfg)(
+    eval_dataset = _training_dataset(cfg, evaluation=True)(
         cfg.dataset.repo_id,
         root=cfg.dataset.root,
         episodes=eval_episodes,

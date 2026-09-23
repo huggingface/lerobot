@@ -1,0 +1,45 @@
+{
+  "candidates": [
+    {
+      "name": "wall_oss_flow_80_20_v1",
+      "base_model": "x-square-robot/wall-oss-flow",
+      "policy_type": "wall_x",
+      "recipe_path": "examples/rebot_agent/steerable_80_20.yaml",
+      "training": {
+        "dataset": {
+          "repo_id": "pepijn223/rebot_diverse_picking_100_annotated",
+          "revision": "93c97807c46535745d0587d4296416bf2d4aa80d",
+          "eval_split": 0.1
+        },
+        "policy": {
+          "device": "cuda",
+          "input_features": {},
+          "output_features": {},
+          "push_to_hub": false,
+          "prediction_mode": "diffusion",
+          "attn_implementation": "eager",
+          "recipe": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "${task}",
+                "stream": "low_level"
+              }
+            ]
+          },
+          "text_loss_weight": 0.0,
+          "flow_loss_weight": 1.0
+        },
+        "steps": 20000,
+        "batch_size": 1,
+        "num_workers": 4,
+        "save_freq": 5000,
+        "env_eval_freq": 0,
+        "eval_steps": 1000,
+        "wandb": {
+          "enable": false
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,179 @@
+# Steerable ReBot with a high-level vision-language planner
+
+Train WALL-OSS-Flow to follow diverse steering commands, then use Astra to choose
+those commands from images. LeRobot's existing rollout controller, inference engine,
+processors, and language runtime execute the VLA. The planner only supplies text.
+
+The experiment files live in `examples/rebot_agent/`. `astra_goal.md` is the reusable
+goal prompt; `training.json` and `train_wall_oss_flow.py` configure the first fine-tune.
+
+## Relationship to Steerable Policies
+
+Follow [the paper](https://arxiv.org/html/2602.13193v3) and
+[Bridge implementation](https://github.com/steerable-policies/steerable-policies-bridge),
+reviewed at `b95286e7823e1f05e490a96ae98f7a3e3ac396f8`.
+Its `RLDSBatchTransform` finds the frame's subtask, samples a command from the
+associated list, and uses it for ordinary behavioral cloning. The architecture
+does not require a second source of robot actions.
+
+The paper extracts objects with Molmo, propagates masks with SAM2, localizes grippers
+with DETR, derives motion language, decomposes episodes into subtasks, and composes
+multiple equivalent steering styles. It uses a VLM both to compose commands and, at
+runtime, to select commands using observation/command history. The released Bridge
+training code consumes precomputed annotations; it is not a complete ReBot extractor.
+
+| Component           | ReBot implementation / current boundary                                                                                |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| VLA and robot       | Existing WALL-OSS-Flow and bimanual ReBot support in main; adaptations from the paper's OpenVLA/Pi0.5 and WidowX       |
+| Semantic labels     | Existing timestamped dataset annotations and main's annotation reader/decoder                                          |
+| Visual grounding    | Requires ReBot object masks/tracks and per-arm gripper tracks; Molmo/SAM2/DETR execution is not implemented by this PR |
+| Motion grounding    | `fk_motion.py` uses calibrated measured joints and main's `RobotKinematics`; actual URDF/calibration are required      |
+| Command composition | `prepare_steering.py` builds grounded template variants; a VLM paraphrasing stage is still an extension                |
+| Annotation review   | Astra inspects timestamped source images and proposed commands; accepted/uncertain/rejected results are saved          |
+| Training            | Fresh uniform sampling among reviewed alternatives on each visit; 20% overall tasks is our chosen mixture              |
+| Planning            | Astra through main's `/autosteer`, with bounded visual history; VLA remains the action controller                      |
+
+This is a paper-guided adaptation, not a completed reproduction. Configuring visual
+styles does not generate their training labels. Start with the semantic baseline;
+enable the richer model only after reviewing its grounded annotations.
+
+## Training data and command contract
+
+The source is `pepijn223/rebot_diverse_picking_100_annotated`, pinned to
+`93c97807c46535745d0587d4296416bf2d4aa80d`. Keep the last ten episodes held out.
+The semantic baseline uses `dataset.task_recipe` with 80% active subtask / 20% task.
+The task adapter leaves observations, actions, and source annotations unchanged.
+
+The richer model takes a JSON `dataset.steering_manifest`. Each half-open interval
+`[start_frame, end_frame)` uses episode-local frame indices, and has:
+
+```json
+{
+  "version": 1,
+  "source": { "repo_id": "owner/dataset", "revision": "PINNED_COMMIT" },
+  "segments": [
+    {
+      "episode_index": 0,
+      "start_frame": 0,
+      "end_frame": 20,
+      "review": {
+        "verdict": "accepted",
+        "reviewer": "REVIEWER_MODEL",
+        "notes": "Visible evidence"
+      },
+      "commands": [
+        {
+          "style": "point",
+          "text": "reach with the left gripper to",
+          "camera": "observation.images.base",
+          "image_size": [640, 480],
+          "points": [[100, 200]],
+          "evidence": {
+            "extractor": "TRACKER_CHECKPOINT",
+            "track_id": "object_1"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+This is a schema illustration, not annotations for the supplied dataset. Styles are
+`subtask`, `motion`, `point`, `trace`, and `combination`. Visual commands keep ordered
+points separately from wording. The renderer prefixes the camera and original image
+size, then inserts the coordinates. Points refer to relevant targets; traces refer
+to the gripper's path. Do not substitute one for the other.
+
+Every command requires grounding provenance. Overlapping intervals, unreviewed
+segments, out-of-image points, source revision mismatches, and missing sampled-frame
+coverage fail explicitly. The loader checks visual dimensions against dataset metadata.
+Image augmentations are disabled for this configuration because independent cropping
+would invalidate coordinate labels. WALL-OSS's fixed image processing remains in use;
+command coordinates consistently refer to the original named view at train and test.
+
+Training samples uniformly from a frame's command list on every visit, using the
+worker-seeded RNG, with 20% task conditioning. Evaluation selection is deterministic
+per frame. Set task probability to zero for an all-steering ablation. This differs
+from main's recipe blend alone, whose per-index choices repeat across visits.
+
+## Prepare and review grounded features
+
+Extract features on a small diverse episode subset first. Each entry in the input
+feature JSON has `episode_index`, `start_frame`, `end_frame`, `subtask`, and
+`subtask_evidence`. Optional `motions` entries carry `text` and `evidence`. Optional
+`views` carry `camera`, `image_size`, `targets`, and `traces`:
+
+- Each target has a grounded `point`, an imperative `instruction`, and `evidence`.
+- Each trace has `arm` (`left`/`right`), ordered `points`, and `evidence`.
+- Evidence should retain extractor model/revision, track identity, visibility/quality,
+  time alignment, and coordinate transforms. Reject ambiguous gripper identities.
+
+The top-level `source` is the pinned dataset identity, and `segments` contains these
+entries. Generate this artifact from actual extractors; a language model guessing
+points from the task description is not equivalent.
+
+`fk_motion.extract_motion` accepts measured state trajectories, state feature names,
+and explicit `arm`, `units`, `urdf`, `joint_names`, `state_keys`, `signs`,
+`offset_degrees`, `tool_frame`, `frame`, `calibration`, `deadband_m`, and three
+`axis_directions` mappings (`positive`/`negative`). It converts units, runs FK, rejects
+substantial reversals, and returns motion entries with displacement and URDF hash.
+Segment motion changes before using it. It currently describes translations only;
+rotation and gripper-state labels need additional validated extraction. No URDF or
+calibration is guessed. Image projection is not part of this helper.
+
+Compose and review with:
+
+```bash
+uv run examples/rebot_agent/prepare_steering.py \
+  --features /path/to/grounded_features.json \
+  --dataset-root /path/to/pinned_dataset_copy \
+  --output outputs/rebot_steering_review --model gpt-6-astra
+```
+
+The script uses `OPENAI_API_KEY`. It saves all reviews and an accepted-only manifest
+without rewriting the dataset. Rejected intervals become coverage gaps that must be
+fixed before training. The reviewer sees up to six timestamped frames per segment;
+this can miss short events, so manually audit overlays and command boundaries, and
+shorten segments where needed. Astra agreement is not ground truth. Offline review
+may inspect future demonstration frames; live planning receives only current images.
+
+## Train and deploy
+
+Follow `examples/rebot_agent/README.md` for the science-cluster launcher. It supports
+one to four GPUs, BF16 DDP, a ten-step smoke test, and a full training run. It records
+the configuration, code revision, diff, and a copy of the reviewed manifest. Source
+dataset identity is pinned; capture the resolved base-model revision in the run's
+provenance before a production training run.
+
+After validating checkpoint reload, add these flags to an existing calibrated
+ReBot rollout command with `--policy.path=/path/to/checkpoint`:
+
+```bash
+--interactive=true --inference.type=sync --planner.enabled=true \
+--planner.model=gpt-6-astra --planner.camera_keys='["base","left_wrist","right_wrist"]' \
+--planner.styles='["task","subtask"]' --autosteer_interval_s=2
+```
+
+Enter `/start`, then `/autosteer <overall goal>`. The external planner holds action
+production until its first command. It uses the existing text-query channel; task
+changes invalidate queued VLA actions. `/vqa` still queries the policy's own text
+head. Human `/subtask` overrides planning. A stopped/failed planner holds new action
+production until a fresh instruction, and its history resets for a new planning
+session. Use `--planner.log_path=...` to retain decisions and visible assessments.
+
+Initially external planning supports only synchronous inference with `interpolation_multiplier=1`. API latency pauses
+action production, and cadence is configured in execution seconds rather than the
+paper's 20 environment steps. This timing difference needs physical measurement.
+
+## Validation milestone
+
+Evaluate 50 attempts with known resets and an outcome rubric. Compare task-only,
+semantic-subtask Astra planning, and all validated styles under matched conditions.
+Measure completion, instruction compliance, arm/direction/point accuracy, command
+switching, planning latency, and performance on distractors and paraphrases. Preserve
+failure/unknown outcomes. Store Astra's assessment separately from an operator label.
+
+Current hardware work remains: cluster access, actual training and checkpoint reload,
+visual feature extraction, authoritative ReBot URDF/calibration, and robot/camera
+configuration. No physical success improvement is claimed by these code paths alone.

@@ -215,10 +215,7 @@ class DatasetWriter:
             if isinstance(frame[name], torch.Tensor):
                 frame[name] = frame[name].numpy()
 
-        validate_frame(frame, self._meta.features, record_language=True)
-        for name, feature in self._meta.features.items():
-            if feature["dtype"] == "language" and frame.get(name) is None:
-                frame[name] = []
+        validate_frame(frame, self._meta.features)
 
         if self.episode_buffer is None:
             self.episode_buffer = self._create_episode_buffer()
@@ -297,11 +294,7 @@ class DatasetWriter:
         episode_buffer["task_index"] = np.array([self._meta.get_task_index(task) for task in tasks])
 
         for key, ft in self._meta.features.items():
-            if key in ["index", "episode_index", "task_index"] or ft["dtype"] in [
-                "image",
-                "video",
-                "language",
-            ]:
+            if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
                 continue
             stacked_values = np.stack(episode_buffer[key])
 

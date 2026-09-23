@@ -30,6 +30,7 @@ from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
 
 from .inference import InferenceEngineConfig, SyncInferenceConfig
+from .planner import PlannerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -308,6 +309,7 @@ class RolloutConfig:
     # queries, measured from the moment a subtask is applied.  Lower values
     # re-plan sooner but spend more of the loop generating text instead of acting.
     autosteer_interval_s: float = 10.0
+    planner: PlannerConfig = field(default_factory=PlannerConfig)
     # Robot commands sent per policy action.  Values > 1 linearly interpolate
     # between consecutive policy actions for smoother motion: commands go to
     # the robot at ``fps × multiplier`` Hz while policy inference and dataset
@@ -347,6 +349,14 @@ class RolloutConfig:
         """Validate config invariants and load the policy config from ``--policy.path``."""
         if self.interpolation_multiplier < 1:
             raise ValueError(f"interpolation_multiplier must be >= 1, got {self.interpolation_multiplier}")
+        if self.planner.enabled and (
+            not self.interactive
+            or not isinstance(self.inference, SyncInferenceConfig)
+            or self.interpolation_multiplier != 1
+        ):
+            raise ValueError(
+                "External planner requires interactive sync inference and interpolation_multiplier=1"
+            )
 
         # --- Strategy capabilities ---
         # Read off the strategy's declarations, never its concrete type, so a

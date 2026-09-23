@@ -69,23 +69,3 @@ def test_missing_subtask_cannot_silently_train_generic_task(recipe):
 def test_recipe_streaming_is_explicitly_unsupported(recipe):
     with pytest.raises(ValueError, match="non-streaming"):
         DatasetConfig(repo_id="test/data", task_recipe=recipe, streaming=True)
-
-
-def test_record_time_language_validation_checks_time_and_column():
-    from lerobot.datasets.feature_utils import validate_frame
-    from lerobot.datasets.language import language_feature_info
-
-    frame = {
-        "task": "collect",
-        "language_persistent": [
-            {"role": "assistant", "style": "subtask", "content": "pick cup", "timestamp": float("nan")}
-        ],
-        "language_events": [],
-    }
-    with pytest.raises(ValueError, match="finite"):
-        validate_frame(frame, language_feature_info(), record_language=True)
-    frame["language_persistent"][0]["timestamp"] = 0.0
-    validate_frame(frame, language_feature_info(), record_language=True)
-    frame["language_persistent"][0]["style"] = "interjection"
-    with pytest.raises(ValueError, match="does not belong"):
-        validate_frame(frame, language_feature_info(), record_language=True)

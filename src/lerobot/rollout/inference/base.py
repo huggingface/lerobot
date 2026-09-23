@@ -135,6 +135,24 @@ class InferenceEngine(abc.ABC):
         self._autosteer_goal: str | None = None
         self._autosteer_interval_s: float = 0.0
         self._autosteer_due_at: float = 0.0
+        self._language_planner: Callable[[dict, str, int], str] | None = None
+        self._planner_session = 0
+        self._planner_halted = False
+
+    def set_language_planner(self, planner: Callable[[dict, str, int], str]) -> None:
+        """Attach a language-only planner before starting synchronous inference."""
+        if not self.control_thread_owns_policy:
+            raise ValueError("External planning currently requires synchronous inference")
+        self._language_planner = planner
+        self._planner_halted = True
+
+    @property
+    def supports_planning(self) -> bool:
+        return self._language_planner is not None or self.supports_text_queries
+
+    @property
+    def planner_halted(self) -> bool:
+        return self._planner_halted
 
     # ------------------------------------------------------------------
     # Task (language instruction)
@@ -152,6 +170,7 @@ class InferenceEngine(abc.ABC):
         Callable from any thread.  Returns ``True`` when the value actually changed.
         """
         with self._task_lock:
+            self._planner_halted = False
             if task == self._task:
                 return False
             previous, self._task = self._task, task
@@ -240,6 +259,8 @@ class InferenceEngine(abc.ABC):
         """
         with self._query_lock:
             self._autosteer_goal = goal
+            self._planner_session += 1
+            self._planner_halted = self._language_planner is not None
             self._autosteer_interval_s = max(0.0, interval_s)
             # Due immediately: first subtask requested on the next control tick.
             self._autosteer_due_at = time.perf_counter()
@@ -333,7 +354,20 @@ class InferenceEngine(abc.ABC):
         if query is None:
             return False
         try:
-            text = self._generate_text(obs_processed, query)
+            if query.kind is QueryKind.NEXT_SUBTASK and self._language_planner is not None:
+                with self._query_lock:
+                    if self._autosteer_goal != query.text:
+                        self._query_in_flight = False
+                        return True
+                    session = self._planner_session
+                    self._planner_halted = True
+                text = self._language_planner(obs_processed, query.text, session)
+                with self._query_lock:
+                    if session != self._planner_session:
+                        self._query_in_flight = False
+                        return True
+            else:
+                text = self._generate_text(obs_processed, query)
             if not isinstance(text, str) or not text.strip():
                 # Fail here so garbage becomes an error answer instead of steering the
                 # robot and labeling recorded frames.
@@ -389,6 +423,10 @@ class InferenceEngine(abc.ABC):
             live = self._autosteer_goal == query.text
             if live:
                 self.set_task(subtask)
+                if self._language_planner is not None:
+                    # Replan from a fresh observation after API latency even if wording is unchanged.
+                    with self._task_lock:
+                        self._task_changed = True
                 # Armed only now, so the interval measures motion between subtasks.
                 self._autosteer_due_at = time.perf_counter() + self._autosteer_interval_s
             else:

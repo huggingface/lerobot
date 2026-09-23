@@ -97,6 +97,38 @@ def _fsdp_plugin(accelerator: "Accelerator") -> object:
     return plugin
 
 
+def _inner_optimizer(optimizer: torch.optim.Optimizer) -> torch.optim.Optimizer:
+    """The torch optimizer underneath accelerate's wrapper, for the DCP channel only.
+
+    torch's optimizer DCP APIs call ``_init_optim_state``, which materializes an empty
+    optimizer state by running one zero-gradient, zero-lr ``optimizer.step()``. Routed through
+    an ``AcceleratedOptimizer`` that carries an fp16 ``GradScaler``, that dummy step goes
+    through the scaler: it asserts outright while the scaler is still lazily uninitialized, and
+    — once initialized — silently advances the scale and resets the growth tracker, so a
+    resume would change the very loss scale it just restored. (accelerate's own
+    ``Accelerator.load_state`` pre-initializes the scaler to dodge the assert and hits the
+    second failure mode instead.)
+
+    Unwrapping is safe and complete: the wrapper only interposes on ``step``/``zero_grad``,
+    delegates ``state``, ``param_groups``, ``state_dict`` and ``load_state_dict`` verbatim, and
+    ``accelerator.prepare()`` has already rebound the param groups to DTensors. The one thing
+    bypassed is the wrapper's XLA device placement in ``load_state_dict``, which the sharded
+    path (CUDA-only) never needs. Training itself keeps using the wrapper.
+
+    Args:
+        optimizer (torch.optim.Optimizer): The prepared optimizer, wrapped or not.
+
+    Returns:
+        torch.optim.Optimizer: The innermost torch optimizer.
+    """
+    from accelerate.optimizer import AcceleratedOptimizer
+
+    # `while`, mirroring accelerate's own unwrap idiom: a wrapper may be nested.
+    while isinstance(optimizer, AcceleratedOptimizer):
+        optimizer = optimizer.optimizer
+    return optimizer
+
+
 def save_sharded_model(accelerator: "Accelerator", model: nn.Module, output_dir: Path) -> None:
     """Write the DCP model shards (`pytorch_model_fsdp_0/`). Collective: call on all ranks.
 
@@ -143,7 +175,14 @@ def save_sharded_optimizer(
     """
     from accelerate.utils import save_fsdp_optimizer
 
-    save_fsdp_optimizer(_fsdp_plugin(accelerator), accelerator, optimizer, model, str(output_dir))
+    # Unwrapped: this path can reach torch's `_init_optim_state` too. It bails out early when
+    # any parameter still holds a gradient, so a save mid-accumulation-window is not the case
+    # to worry about; what does reach the dummy step is an optimizer whose state is empty
+    # after `zero_grad()` — every update so far skipped, or a stateless optimizer such as
+    # momentum-free SGD, which never populates `state` at all. See `_inner_optimizer`.
+    save_fsdp_optimizer(
+        _fsdp_plugin(accelerator), accelerator, _inner_optimizer(optimizer), model, str(output_dir)
+    )
 
 
 def load_sharded_optimizer(
@@ -166,8 +205,15 @@ def load_sharded_optimizer(
 
     # Exact shard directory for the same reason as load_sharded_model: accelerate's substring
     # check ("optimizer" in the path) would misread e.g. --job_name=optimizer_sweep run paths.
+    # Unwrapped optimizer: torch's `_init_optim_state` runs a dummy step here (the state is
+    # always empty on a fresh resume), which must not reach the fp16 scaler — see
+    # `_inner_optimizer`.
     load_fsdp_optimizer(
-        _fsdp_plugin(accelerator), accelerator, optimizer, model, str(input_dir / f"{OPTIMIZER_NAME}_0")
+        _fsdp_plugin(accelerator),
+        accelerator,
+        _inner_optimizer(optimizer),
+        model,
+        str(input_dir / f"{OPTIMIZER_NAME}_0"),
     )
 
 

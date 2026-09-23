@@ -67,6 +67,8 @@
     title: MolmoAct2
   - local: vla_jepa
     title: VLA-JEPA
+  - local: lawam
+    title: LaWAM
   - local: eo1
     title: EO-1
   - local: lingbot_va
@@ -93,10 +95,10 @@
     title: TOPReward
   title: "Reward Models"
 - sections:
-  - local: physical_agent_loop
-    title: Physical Agent Improvement Loop
   - local: inference
     title: Policy Deployment (lerobot-rollout)
+  - local: steerable_rebot
+    title: Steerable ReBot with Astra
   - local: async
     title: Use Async Inference
   - local: rtc

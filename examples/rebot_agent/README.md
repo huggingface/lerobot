@@ -1,60 +1,66 @@
-# ReBot physical agent experiment
+# Steerable ReBot policy with Astra planning
 
-Start with [the physical agent guide](../../docs/source/physical_agent_loop.mdx).
-`session.json` pins the annotated dataset and defines WALL-OSS-Flow, SmolVLA, and Pi0.5 candidates.
-`steerable_80_20.yaml` trains actions on subtask instructions (80%) and overall tasks
-(20%) through LeRobot's existing weighted recipe renderer.
+This experiment uses LeRobot main's datasets, language recipes, WALL-OSS-Flow,
+processors, rollout strategies, and `/autosteer` controller. Astra chooses a steering
+instruction from images and recent observation/command history. The VLA produces
+all robot actions. There is no separate hybrid runtime or direct-action tool service.
 
-The selected first model is **WALL-OSS-Flow**: `/train wall_oss_flow_80_20_v1`.
-Install the `wallx` and `training` extras on the training host. Its native base loads
-with `policy.type=wall_x` and `policy.pretrained_name_or_path`, using the candidate's
-`policy_type` field. A trained LeRobot checkpoint uses the ordinary `base_model` path
-without this field. This candidate replaces WALL-X's default text-target recipe with
-a low-level task pass-through; the dataset's 80/20 recipe selects the action instruction.
-The 14 ReBot
-dimensions are padded/masked to 20 internally and action outputs remain 14-dimensional.
-The example starts with batch size one; profile the actual host before increasing it.
+See [the guide](../../docs/source/steerable_rebot.mdx) for the paper mapping, data
+contract, annotation review, training, and physical evaluation. The reusable research
+and deployment goal is [astra_goal.md](astra_goal.md).
 
-For the science cluster, enter through `sft ssh hpc-cluster-science-login-81-129`
-and use its scheduler to allocate at most four H100 GPUs on one node. Install the
-environment with `uv sync --locked --extra training --extra wallx`. The launcher below
-runs inside an existing allocation; it does not submit a scheduler job or select a
-partition. From the repository root:
+## Train on the science cluster
+
+Connect with `sft ssh hpc-cluster-science-login-81-129`, obtain a single-node scheduler
+allocation of **at most four H100s**, then install `uv sync --locked --extra training
+--extra wallx`. This launcher runs inside that allocation; it does not allocate GPUs.
 
 ```bash
-# Inspect locally without loading a model or using GPUs.
-uv run examples/rebot_agent/train_wall_oss_flow.py --gpus 4 --smoke --dry-run --output outputs/rebot_wall_preview
-# Inside the allocated GPU job: ten steps, held-out validation, and a checkpoint save.
-uv run examples/rebot_agent/train_wall_oss_flow.py --gpus 4 --smoke --output outputs/rebot_wall_smoke
-# After checking finite losses, memory use, and checkpoint reload, launch the full run.
-uv run examples/rebot_agent/train_wall_oss_flow.py --gpus 4 --output outputs/rebot_wall_v1
+# Inspect configuration without loading a model.
+uv run examples/rebot_agent/train_wall_oss_flow.py --gpus 4 --smoke --dry-run --output outputs/wall_preview
+# Semantic baseline: 80% current subtask / 20% overall task.
+uv run examples/rebot_agent/train_wall_oss_flow.py --gpus 4 --smoke --output outputs/wall_smoke
+# Richer model: 80% uniformly sampled reviewed commands / 20% task.
+uv run examples/rebot_agent/train_wall_oss_flow.py --gpus 4 --steering-manifest /path/to/reviewed/steering_manifest.json --output outputs/wall_steerable
 ```
 
-Use a fresh output directory for each launch. The launcher records its configuration,
-code revision, tracked diff, and argument vector, and propagates training failures to
-the scheduler. It uses DDP and BF16 with a per-GPU batch size of one (effective batch
-four on four GPUs); the smoke test must establish whether this fits the allocated
-hardware. GPU execution and checkpoint reload still require validation on the cluster.
+Use a fresh output directory for each launch. Check finite losses, memory, held-out
+loss, and checkpoint reload after the smoke test before launching the full run.
+`training.json` pins the source dataset and configures WALL-OSS-Flow, using native
+`policy.pretrained_name_or_path` initialization. The 14 ReBot dimensions are padded
+and masked internally. The full run defaults to 20,000 steps and batch one per GPU;
+these are starting settings that still require hardware validation.
 
-Run `lerobot-rollout --agent_config=examples/rebot_agent/session.json` on the host
-that will train or control the robot. Training can start before any checkpoint exists.
-Before a physical rollout, replace the arm/camera placeholders and register a trained
-checkpoint. The checked-in file does not contain installation calibration or credentials.
+## Use Astra through the language runtime
 
-[astra_goal.md](astra_goal.md) is the reusable system/goal prompt for the complete
-physical improvement loop. It also directs Astra to adapt Steerable Policies to our
-data using the ReBot URDF, forward kinematics, and multiple aligned semantic, motion,
-gripper, and calibrated visual command streams. This is an implementation objective;
-the prompt itself does not generate those annotations. Paste it into an external
-agent's goal, or configure the built-in live supervisor with:
+Add these options to your existing, calibrated `lerobot-rollout` command, keeping
+its robot ports/cameras and trained `--policy.path`:
 
-```json
-"supervisor": {
-  "model": "gpt-6-astra",
-  "prompt_path": "examples/rebot_agent/astra_goal.md",
-  "timeout_s": 30
-}
+```bash
+--interactive=true --inference.type=sync --interpolation_multiplier=1 \
+--planner.enabled=true --planner.model=gpt-6-astra \
+--planner.camera_keys='["base","left_wrist","right_wrist"]' \
+--planner.styles='["task","subtask"]' \
+--planner.log_path=outputs/rebot_planner/decisions.jsonl \
+--autosteer_interval_s=2
 ```
 
-The built-in supervisor polls active robot sessions. An external experiment agent
-uses the same prompt and tool API to drive training and improvement between sessions.
+Set `OPENAI_API_KEY` on the robot host. Use an API model ID available to that account;
+model access has not been tested here. Camera keys refer to processed robot
+observations. After `/start`, the external planner keeps the VLA idle until you enter:
+
+```text
+/autosteer Put the white tape roll into the black bin.
+```
+
+Astra observes and emits a command, the VLA acts, and Astra observes again. Extend
+`planner.styles` to `motion`, `point`, `trace`, and `combination` only for a checkpoint
+trained and validated on those styles. `/subtask <text>` switches to human language
+steering; `/reset` ends the segment; `/stop` closes the session. Planner failures,
+uncertainty, or a reported completion hold action production; resume with an explicit
+new `/autosteer` or `/subtask`. Completion is an assessment, not a verified success label.
+
+The initial external-planner adapter uses synchronous inference: robot action
+production waits while the API call runs. It reuses main's queue invalidation and
+language switching. The interval is seconds of execution, not the paper's exact
+20-step cadence. Measure latency and command compliance before tuning it.

@@ -58,6 +58,8 @@ class DatasetConfig:
     # Render an action-conditioning recipe into the task input of ordinary VLA policies.
     # Serialized in train_config so the instruction mixture is reproducible.
     task_recipe: dict | None = None
+    steering_manifest: str | None = None
+    steering_task_probability: float = 0.2
 
     def __post_init__(self) -> None:
         if self.repo_type not in ("dataset", "bucket"):
@@ -68,6 +70,13 @@ class DatasetConfig:
             )
         if self.task_recipe is not None and self.streaming:
             raise ValueError("task_recipe currently requires a non-streaming dataset")
+        if self.steering_manifest is not None:
+            if self.streaming or self.task_recipe is None or self.image_transforms.enable:
+                raise ValueError(
+                    "steering_manifest requires a task recipe, non-streaming data, and disabled image transforms"
+                )
+            if not 0 <= self.steering_task_probability <= 1:
+                raise ValueError("steering_task_probability must be in [0, 1]")
         if self.depth_output_unit not in (DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT):
             raise ValueError(
                 f"depth_output_unit must be '{DEPTH_METER_UNIT}' or '{DEPTH_MILLIMETER_UNIT}', got {self.depth_output_unit!r}"
