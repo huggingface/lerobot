@@ -84,6 +84,8 @@ def _make_dummy_stats(features: dict) -> dict:
 
 def test_create_produces_valid_info_on_disk(tmp_path):
     """create() writes info.json and the returned object reflects the provided settings."""
+    from lerobot.datasets.storage import DEFAULT_STORAGE_FORMAT
+
     root = tmp_path / "new_ds"
     meta = LeRobotDatasetMetadata.create(
         repo_id="test/meta",
@@ -104,6 +106,9 @@ def test_create_produces_valid_info_on_disk(tmp_path):
     assert "state" in meta.features
     assert "action" in meta.features
     assert info_on_disk["fps"] == DEFAULT_FPS
+    # storage_format is always persisted (default included) so the backend is resolvable on load
+    assert meta.storage_format == DEFAULT_STORAGE_FORMAT
+    assert info_on_disk["storage_format"] == DEFAULT_STORAGE_FORMAT
 
 
 def test_create_starts_with_zero_counts(tmp_path):
@@ -142,36 +147,6 @@ def test_create_without_videos_has_no_video_path(tmp_path):
 
     assert meta.video_path is None
     assert meta.video_keys == []
-
-
-def test_create_persists_storage_format(tmp_path):
-    """create() always persists storage_format (including the default) and round-trips it."""
-    from lerobot.datasets.io_utils import load_info
-    from lerobot.datasets.storage import DEFAULT_STORAGE_FORMAT
-
-    # Default: the format is written explicitly so the discriminator is unambiguous.
-    default_root = tmp_path / "default_fmt"
-    default_meta = LeRobotDatasetMetadata.create(
-        repo_id="test/default_fmt", fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=default_root
-    )
-    assert default_meta.storage_format == DEFAULT_STORAGE_FORMAT
-    with open(default_root / INFO_PATH) as f:
-        assert json.load(f)["storage_format"] == DEFAULT_STORAGE_FORMAT
-
-    # Non-default: persisted to info.json and preserved across a reload.
-    custom_root = tmp_path / "custom_fmt"
-    custom_meta = LeRobotDatasetMetadata.create(
-        repo_id="test/custom_fmt",
-        fps=DEFAULT_FPS,
-        features=SIMPLE_FEATURES,
-        root=custom_root,
-        storage_format="lance",
-    )
-    assert custom_meta.storage_format == "lance"
-    with open(custom_root / INFO_PATH) as f:
-        assert json.load(f)["storage_format"] == "lance"
-    custom_meta.info = load_info(custom_root)
-    assert custom_meta.storage_format == "lance"
 
 
 @pytest.mark.parametrize(

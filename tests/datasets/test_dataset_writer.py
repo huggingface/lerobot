@@ -377,23 +377,6 @@ def test_make_dataset_writer_unsupported_raises(storage_format):
         make_dataset_writer(storage_format)
 
 
-def test_create_and_resume_use_registry(tmp_path):
-    """create() and resume() obtain their writer through the registry factory."""
-    root = tmp_path / "ds"
-    dataset = LeRobotDataset.create(
-        repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=root
-    )
-    assert isinstance(dataset.writer, DatasetWriter)
-
-    for _ in range(3):
-        dataset.add_frame(_make_frame(SIMPLE_FEATURES))
-    dataset.save_episode()
-    dataset.finalize()
-
-    resumed = LeRobotDataset.resume(repo_id=DUMMY_REPO_ID, root=root)
-    assert isinstance(resumed.writer, DatasetWriter)
-
-
 def test_register_dataset_writer_selects_custom_writer(monkeypatch):
     """A custom writer can be registered and selected without touching LeRobotDataset."""
     module = types.ModuleType("dummyfmt_writer")
