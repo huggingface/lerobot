@@ -72,6 +72,8 @@ def test_native_task_vae_disables_droid_chunking():
 
 @pytest.fixture(autouse=True)
 def task_vae(monkeypatch, fake_text_encoder):
+    # Restore the global precision setting changed by the trainer.
+    monkeypatch.setattr(torch.backends.cuda.matmul, "allow_tf32", torch.backends.cuda.matmul.allow_tf32)
     monkeypatch.setattr(Flux3Policy, "_build_video_vae", lambda self, cfg: TaskVideoVAE())
 
 
