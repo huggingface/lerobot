@@ -243,9 +243,39 @@ and explicit `arm`, `units`, `urdf`, `joint_names`, `state_keys`, `signs`,
 `offset_degrees`, `tool_frame`, `frame`, `calibration`, `deadband_m`, and three
 `axis_directions` mappings (`positive`/`negative`). It converts units, runs FK, rejects
 substantial reversals, and returns motion entries with displacement and URDF hash.
-Segment motion changes before using it. It currently describes translations only;
-rotation and gripper-state labels need additional validated extraction. No URDF or
-calibration is guessed. Image projection is not part of this helper.
+It currently describes translations only; rotations and open/closed gripper labels
+need additional validated extraction. No URDF or calibration is guessed. Image
+projection is not part of this helper.
+
+The same file provides offline `segment_motion` and a CLI to find interval candidates:
+
+```bash
+uv run examples/rebot_agent/fk_motion.py \
+  --dataset-root /path/to/pinned_dataset --config /path/to/motion_config.json \
+  --output outputs/rebot_motion_pilot --episodes 0 1 2 3 4
+```
+
+The config contains `arms.left` and `arms.right`, with the FK fields above plus
+`gripper_state_key` and an explicit `calibration_status` (`verified` or `unverified`).
+`segmentation` requires `translation_speed_m_s` and `gripper_speed_deg_s`. Its defaults
+are a five-sample median velocity window, `minimum_duration_s=0.15`,
+`translation_reversal_m=0.01`, and `gripper_reversal_deg=10.0`. These are starting
+heuristics, not calibrated ReBot constants. Inspect the pilot before selecting them.
+
+Each arm/axis is debounced separately. Raw excursions above the displacement deadband
+retain boundaries even when shorter than the velocity filter window. Subtask boundaries
+are always retained. Short intervals and disagreements with raw measurements are flagged;
+the final frame is preserved as unresolved because it has no outgoing observation.
+Intervals partition all frames without assigning open/closed, object identity, grasp
+success, or camera-space directions. Outputs include raw and filtered numeric signs,
+measured deltas, source/config/URDF hashes and per-frame FK/gripper arrays. Nominal mapping
+runs remain explicitly unverified, and no run produces accepted training labels.
+Filtering uses future demonstration observations and must never run as a live planner.
+
+Check command validity across the policy's entire action chunk before training atomic
+instructions. A candidate interval can be shorter than WALL-OSS-Flow's 32-frame chunk;
+substituting its language while supervising later, contradictory motions is invalid.
+The current command-substitution adapter does not yet enforce this temporal constraint.
 
 Seeed publishes the [B601-DM URDF](https://github.com/Seeed-Projects/reBot-DevArm/blob/b8286c70e67bd20623212d409cbf2c79322570bc/Rebot_Arm_description/DM/urdf/ReBot_Arm_DM.urdf).
 Its arm joints are `joint1`–`joint6`, base `base_link`, and tool `end_link`.
