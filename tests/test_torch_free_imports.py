@@ -69,9 +69,11 @@ if attempts:
         "lerobot.scripts.lerobot_find_port",
         "lerobot.scripts.lerobot_setup_can",
         "lerobot.scripts.lerobot_setup_motors",
+        "lerobot.scripts.lerobot_teleoperate",
         "lerobot.configs",
         "lerobot.policies",
         "lerobot.inference",
+        "lerobot.processor",
         pytest.param(
             "lerobot.scripts.lerobot_rollout",
             marks=pytest.mark.skipif(not _datasets_available, reason="datasets not installed"),
@@ -80,6 +82,6 @@ if attempts:
 )
 def test_imports_without_torch(module):
     result = subprocess.run(
-        [sys.executable, "-c", IMPORT_WITHOUT_TORCH, module], capture_output=True, text=True
+        [sys.executable, "-c", IMPORT_WITHOUT_TORCH, module], capture_output=True, text=True, timeout=300
     )
     assert result.returncode == 0, result.stderr
