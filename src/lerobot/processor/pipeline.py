@@ -38,17 +38,14 @@ from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar, TypedDict, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, TypeVar, cast
 
-import torch
 from huggingface_hub import hf_hub_download, snapshot_download
-from safetensors.torch import load_file, save_file
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import (
     EnvAction,
     EnvTransition,
-    PolicyAction,
     RobotAction,
     RobotObservation,
     TransitionKey,
@@ -57,6 +54,11 @@ from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.hub import HubMixin
 
 from .converters import batch_to_transition, create_transition, transition_to_batch
+
+if TYPE_CHECKING:
+    import torch
+
+    from lerobot.lerobot_types import PolicyAction
 
 # Generic type variables for pipeline input and output.
 TInput = TypeVar("TInput")
@@ -92,6 +94,12 @@ class ProcessorStepRegistry:
             """The actual decorator that performs the registration."""
             registration_name = name if name is not None else step_class.__name__
 
+            if registration_name not in cls._registry and not step_class.__module__.startswith("lerobot."):
+                # Built-in names stay reserved: the built-in steps register first, so a plugin reusing one fails.
+                cls._import_builtin_steps()
+                from lerobot.configs.policies import PreTrainedConfig
+
+                PreTrainedConfig.load_all_choices()
             if registration_name in cls._registry:
                 raise ValueError(
                     f"Processor step '{registration_name}' is already registered. "
@@ -119,8 +127,10 @@ class ProcessorStepRegistry:
             KeyError: If the name is not found in the registry.
         """
         if name not in cls._registry:
-            # A policy's steps register when its package is imported, and a saved pipeline records only the
-            # step name, so import the built-in policies before giving up.
+            # A saved pipeline records only the step name, so import the built-in steps, then the
+            # built-in policies, before giving up.
+            cls._import_builtin_steps()
+        if name not in cls._registry:
             from lerobot.configs.policies import PreTrainedConfig
 
             PreTrainedConfig.load_all_choices()
@@ -145,7 +155,16 @@ class ProcessorStepRegistry:
     @classmethod
     def list(cls) -> list[str]:
         """Returns a list of all registered processor step names."""
+        cls._import_builtin_steps()
         return list(cls._registry.keys())
+
+    @staticmethod
+    def _import_builtin_steps() -> None:
+        """Import everything lerobot.processor exports, since its steps register when their module is imported."""
+        import lerobot.processor
+
+        for export in lerobot.processor.__all__:
+            getattr(lerobot.processor, export)
 
     @classmethod
     def clear(cls) -> None:
@@ -592,6 +611,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                 step_entry["artifacts"] = artifacts
 
         for state_key, step_state_dict in pipeline_state_dict.items():
+            from safetensors.torch import save_file
+
             state_filename = f"{state_key}.safetensors"
             save_file(step_state_dict, save_directory / state_filename)
 
@@ -1345,6 +1366,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                 **hub_download_kwargs,
             )
 
+        from safetensors.torch import load_file
+
         step_instance.load_state_dict(load_file(state_path))
 
     @classmethod
@@ -1977,6 +2000,8 @@ class PolicyActionProcessorStep(ProcessorStep, ABC):
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Applies the `action` method to the transition's action, ensuring it's a `PolicyAction`."""
+        import torch
+
         self._current_transition = transition.copy()
         new_transition = self._current_transition
 

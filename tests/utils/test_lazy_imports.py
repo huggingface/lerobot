@@ -31,6 +31,8 @@ LAZY_MODULES = [
     "lerobot.lerobot_types",
     "lerobot.policies",
     "lerobot.policies.rtc",
+    "lerobot.processor",
+    "lerobot.processor.converters",
     "lerobot.utils",
     pytest.param("lerobot.rollout", marks=NEEDS_DATASETS),
     pytest.param("lerobot.rollout.inference", marks=NEEDS_DATASETS),
@@ -112,7 +114,7 @@ def _resolve_type_checking_block(tree: ast.Module, package: str) -> tuple[dict, 
 
 
 def _names_read_at_runtime(tree: ast.Module) -> set[str]:
-    """Names the module reads when it runs, leaving out `if TYPE_CHECKING:` blocks and annotations."""
+    """Names read at run time, outside `if TYPE_CHECKING:` blocks, annotations and a function's imports."""
     skipped = [
         stmt
         for node in ast.walk(tree)
@@ -125,6 +127,15 @@ def _names_read_at_runtime(tree: ast.Module) -> set[str]:
         elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             skipped.append(node.returns)
     ignored = {id(n) for root in skipped if root is not None for n in ast.walk(root)}
+    for function in ast.walk(tree):
+        if isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
+            imported = {
+                (alias.asname or alias.name).split(".")[0]
+                for node in ast.walk(function)
+                if isinstance(node, ast.Import | ast.ImportFrom)
+                for alias in node.names
+            }
+            ignored |= {id(n) for n in ast.walk(function) if isinstance(n, ast.Name) and n.id in imported}
     return {
         n.id
         for n in ast.walk(tree)
@@ -139,6 +150,7 @@ def test_lazy_exports_match_the_type_checking_imports(module_name):
     modules, exports = _resolve_type_checking_block(tree, module.__package__)
     assert exports
     assert set(dir(module)) - set(vars(module)) == set(exports)
+    assert set(getattr(module, "__all__", ())) <= set(dir(module))
     for name, obj in exports.items():
         assert getattr(module, name) is obj, name
     # Resolved names never become globals, so module code behaves the same whatever was used first.
