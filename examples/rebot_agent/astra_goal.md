@@ -29,7 +29,8 @@ and evaluation evidence. Its success judgments remain distinct from operator lab
   `x-square-robot/wall-oss-flow`. No trained ReBot checkpoint was available initially.
 - Training: science cluster via `sft ssh hpc-cluster-science-login-81-129`, at most
   four H100 GPUs through its scheduler. Never train on the login node. Reuse existing
-  jobs/checkpoints; the last connection attempt timed out at the private SSH address.
+  jobs/checkpoints; inspect current scheduler state before launching or resuming work.
+  A failed observation request does not mean the job stopped.
 - Keep the last ten source episodes held out, with stable episode identities.
 - Start with 80% semantic subtasks / 20% overall tasks as a control. The target model
   uses 80% diverse grounded steering commands / 20% overall tasks. This ratio and
@@ -94,6 +95,11 @@ can still support VLA training and controlled steering tests.
 Deploy the checkpoint with main's `lerobot-rollout --interactive=true --inference.type=sync`
 and the external planner adapter. Astra selects among styles this checkpoint has
 actually learned; visual history helps it change abstraction when progress stalls.
+Verify camera views against the dataset and confirm physical wrist identities before
+rollout. Device indices and USB serial names can collide or change; use verified
+physical device paths and inspect current images. Keep the existing robot environment
+intact, check storage before transferring weights, and validate imports and checkpoint
+inference in the deployment environment before connecting the arms.
 Preserve human stop/reset and language overrides. Keep API calls bounded. A planning
 failure, uncertainty, or completion assessment should hold action production pending
 an explicit next instruction. Do not confuse an issued command with observed execution.
