@@ -100,6 +100,8 @@ class WallXConfig(PreTrainedConfig):
     # itself with the recipe it was trained on.
     recipe: dict | None = field(default_factory=_wall_x_default_recipe)
     tokenizer_max_length: int = 768
+    # Checkpoint-owned formatting: old checkpoints keep original-pixel text unchanged.
+    steering_coordinate_format: str = "original_pixels"
     text_temperature: float = 0.0
     text_top_p: float = 1.0
     flow_loss_weight: float = 1.0
@@ -125,6 +127,8 @@ class WallXConfig(PreTrainedConfig):
             self.recipe = asdict(resolve_recipe_override(self.recipe, self.recipe_path))
 
         # Input validation
+        if self.steering_coordinate_format not in {"original_pixels", "native_points_v1"}:
+            raise ValueError("Unknown WALL-X steering_coordinate_format")
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
                 f"The chunk size is the upper bound for the number of action steps per model invocation. Got "

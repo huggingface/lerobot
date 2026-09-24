@@ -179,11 +179,13 @@ def test_planner_sends_named_images_and_bounded_history_without_action_tools(mon
         planner(obs, "goal", 2)
 
 
-def test_four_gpu_training_config_uses_main_parser(tmp_path):
+@pytest.mark.parametrize("coordinate_format", ["original_pixels", "native_points_v1"])
+def test_four_gpu_training_config_uses_main_parser(tmp_path, coordinate_format):
     module = runpy.run_path(str(Path(__file__).parents[1] / "examples/rebot_agent/train_wall_oss_flow.py"))
-    config, argv = module["prepare_run"](tmp_path, 4, 1, True)
+    config, argv = module["prepare_run"](tmp_path, 4, 1, True, coordinate_format=coordinate_format)
     parsed = draccus.decode(TrainPipelineConfig, config)
     assert parsed.policy.type == "wall_x"
+    assert parsed.policy.steering_coordinate_format == coordinate_format
     assert parsed.policy.base_model_revision == "44e827683819957d8c574e8b746a1a97e77f518a"
     assert parsed.policy.recipe["messages"][0]["stream"] == "low_level"
     assert parsed.steps == parsed.eval_steps == parsed.save_freq == 10

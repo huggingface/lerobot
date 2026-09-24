@@ -25,10 +25,13 @@ def prepare_run(
     steering_manifest: Path | None = None,
     skip_uncovered: bool = False,
     style_weights: dict[str, float] | None = None,
+    coordinate_format: str = "original_pixels",
 ) -> tuple[dict, list[str]]:
     """Resolve the checked-in recipe and build a bounded, single-node torchrun command."""
     if gpus not in range(1, 5) or batch_size < 1:
         raise ValueError("Use one to four GPUs and a positive per-GPU batch size")
+    if coordinate_format not in {"original_pixels", "native_points_v1"}:
+        raise ValueError("Unknown steering coordinate format")
     if skip_uncovered and steering_manifest is None:
         raise ValueError("--skip-uncovered requires --steering-manifest")
     if style_weights is not None and steering_manifest is None:
@@ -55,7 +58,11 @@ def prepare_run(
         config["dataset"]["image_transforms"] = {"enable": False}
         # Keep the same corrected task conditioning in both experiment arms.
         config["dataset"]["task_recipe"] = asdict(recipe.blend["high_level_task"])
-    config["policy"].update(type="wall_x", pretrained_name_or_path=candidate["base_model"])
+    config["policy"].update(
+        type="wall_x",
+        pretrained_name_or_path=candidate["base_model"],
+        steering_coordinate_format=coordinate_format,
+    )
     config.update(batch_size=batch_size, output_dir=str(output / "training"))
     config["accelerator"] = {"mixed_precision": "bf16"}
     if smoke:
@@ -102,6 +109,12 @@ def main():
     parser.add_argument(
         "--style-weights", type=Path, help="JSON of relative weights for all five steering styles"
     )
+    parser.add_argument(
+        "--coordinate-format",
+        choices=["original_pixels", "native_points_v1"],
+        default="original_pixels",
+        help="Checkpoint-owned coordinate encoding; native_points_v1 scales named-camera points before tokenization",
+    )
     args = parser.parse_args()
     output = args.output.resolve()
     config, argv = prepare_run(
@@ -112,6 +125,7 @@ def main():
         args.steering_manifest,
         args.skip_uncovered,
         json.loads(args.style_weights.read_text()) if args.style_weights else None,
+        args.coordinate_format,
     )
     workspace = Path(__file__).resolve().parents[2]
     git = shutil.which("git")

@@ -430,6 +430,48 @@ def process_grounding_points(
     return processed_text
 
 
+def process_steering_points(text: str, dimensions_by_camera: dict[str, tuple[int, int, int, int]]) -> str:
+    """Adapt the shared original-pixel steering template to WALL-X's resized point tags.
+
+    Only camera-qualified commands emitted by ``render_steering_command`` are adapted.
+    This runs after legacy grounding conversion, so the new tags are scaled exactly once.
+    Dataset annotations and planner inputs remain in the original camera coordinates.
+    """
+    prefix = r"In (?P<camera>[^\n<>]+?) view \((?P<width>\d+)x(?P<height>\d+) pixels\), "
+    pattern = re.compile(
+        prefix + r"(?P<instruction>[^<>]*?): " + r"(?P<points>\[\d+, \d+\](?:, \[\d+, \d+\])*)\."
+    )
+    prefixes = list(re.finditer(prefix, text))
+    matches = list(pattern.finditer(text))
+    if [match.start() for match in prefixes] != [match.start() for match in matches]:
+        raise ValueError("Malformed camera-qualified steering coordinates")
+
+    def convert(match: re.Match) -> str:
+        camera = "observation.images." + match["camera"]
+        if camera not in dimensions_by_camera:
+            raise ValueError(f"Steering camera {camera!r} is absent from the policy observation")
+        height, width, resized_height, resized_width = dimensions_by_camera[camera]
+        if (int(match["width"]), int(match["height"])) != (width, height):
+            raise ValueError(f"Steering coordinates do not match {camera!r} source dimensions")
+        points = []
+        for x, y in re.findall(r"\[(\d+), (\d+)\]", match["points"]):
+            x, y = int(x), int(y)
+            if not (0 <= x < width and 0 <= y < height):
+                raise ValueError("Steering point lies outside its source camera")
+            points.append(
+                process_grounding_points(
+                    f"<point>[{x}, {y}]</point>", height, width, resized_height, resized_width, "qwen2_5"
+                )
+            )
+        label = img_key_mapping([camera])[0]
+        return (
+            f"In {label} ({resized_width}x{resized_height} pixels), "
+            f"{match['instruction']}: {', '.join(points)}."
+        )
+
+    return pattern.sub(convert, text)
+
+
 def get_frame_instruction(
     instruction_info: dict[str, Any],
     frame_idx: int | None = None,

@@ -50,6 +50,22 @@ uv run examples/rebot_agent/train_wall_oss_flow.py --gpus 4 --steering-manifest 
 
 Use a fresh output directory for each launch. Check finite losses, memory, held-out
 loss, and checkpoint reload after the smoke test before launching the full run.
+For a **new** coordinate-grounded fine-tune, add
+`--coordinate-format native_points_v1`. The saved WALL-X preprocessor converts
+the shared camera-qualified steering template from original-image pixels to
+`<point>` tags in that camera's resized image coordinates. For example,
+`[290, 178]` in a 640×480 base image becomes `<point>[114, 73]</point>`
+in WALL-X's 252×196 input, and the prompt's stated dimensions change with it.
+Each camera uses its own resize dimensions; missing cameras, mismatched source
+dimensions and out-of-bounds points raise an error. Point order is preserved for
+pick/place pairs and traces. Source annotations and planner inputs stay in original
+pixels. Training and rollout load the same saved processor option.
+
+The default `original_pixels` preserves existing checkpoints' ordinary-text
+coordinate format. Do not enable the new format only at deployment for an old
+checkpoint. Native tags do not add a coordinate-prediction loss or establish
+spatial compliance; validate the new format with the model before training/deployment.
+
 The smoke run evaluates 20 held-out samples, saves step 10, then starts a fresh
 process through main's checkpoint resume path for one further update and validation.
 It writes `smoke_completed.json` only if both processes succeed. This is a bounded

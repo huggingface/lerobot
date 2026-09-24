@@ -51,6 +51,7 @@ from .utils import (
     prepare_wall_x_image_inputs,
     preprocesser_call,
     process_grounding_points,
+    process_steering_points,
     replace_action_token,
 )
 
@@ -128,6 +129,7 @@ def make_wall_x_pre_post_processors(
             max_action_dim=config.max_action_dim,
             output_action_dim=config.output_features[ACTION].shape[0],
             tokenizer_max_length=config.tokenizer_max_length,
+            steering_coordinate_format=config.steering_coordinate_format,
             use_fast_tokenizer=config.use_fast_tokenizer,
         ),
         steps.to_device,
@@ -376,6 +378,7 @@ class WallXTokenizerStep(ProcessorStep):
     use_fast_tokenizer: bool = False
     action_tokenizer_name: str | None = None
     processor_revision: str | None = None
+    steering_coordinate_format: str = "original_pixels"
     _processor: Any = field(default=None, init=False, repr=False)
     _action_tokenizer: Any = field(default=None, init=False, repr=False)
 
@@ -391,6 +394,7 @@ class WallXTokenizerStep(ProcessorStep):
             "use_fast_tokenizer": self.use_fast_tokenizer,
             "action_tokenizer_name": self.action_tokenizer_name,
             "processor_revision": self.processor_revision,
+            "steering_coordinate_format": self.steering_coordinate_format,
         }
 
     def _get_processors(self):
@@ -413,7 +417,12 @@ class WallXTokenizerStep(ProcessorStep):
     def _texts_and_target_spans(
         prompt_segments: list[list[dict[str, str | bool]]],
         dimensions: tuple[int, int, int, int],
+        *,
+        steering_coordinate_format: str = "original_pixels",
+        dimensions_by_camera: dict[str, tuple[int, int, int, int]] | None = None,
     ) -> tuple[list[str], list[list[tuple[int, int]]]]:
+        if steering_coordinate_format not in {"original_pixels", "native_points_v1"}:
+            raise ValueError("Unknown WALL-X steering_coordinate_format")
         orig_height, orig_width, resized_height, resized_width = dimensions
         texts: list[str] = []
         target_spans: list[list[tuple[int, int]]] = []
@@ -431,6 +440,8 @@ class WallXTokenizerStep(ProcessorStep):
                 text = process_grounding_points(
                     text, orig_height, orig_width, resized_height, resized_width, MODEL_TYPE
                 )
+                if steering_coordinate_format == "native_points_v1":
+                    text = process_steering_points(text, dimensions_by_camera or {})
                 pieces.append(text)
                 if target:
                     spans.append((length, length + len(text)))
@@ -464,7 +475,10 @@ class WallXTokenizerStep(ProcessorStep):
                 "WALL-X needs prompt segments from WallXPromptProcessorStep before tokenization."
             )
         texts, target_spans = self._texts_and_target_spans(
-            prompt_segments, (orig_height, orig_width, resized_height, resized_width)
+            prompt_segments,
+            (orig_height, orig_width, resized_height, resized_width),
+            steering_coordinate_format=self.steering_coordinate_format,
+            dimensions_by_camera=dimensions,
         )
 
         agent_pos = state.unsqueeze(1) if state.dim() == 2 else state
