@@ -107,13 +107,16 @@ def extract_motion(states, state_names: list[str], config: dict, *, kinematics=N
     return result
 
 
-def extract_gripper_motion(states, state_names: list[str], config: dict) -> list[dict]:
+def extract_gripper_motion(states, state_names: list[str], config: dict, *, actions=None) -> list[dict]:
     """Describe a short measured opening/closing interval using reviewed angle semantics.
 
     This needs no Cartesian calibration, but the named arm, units and opening sign
     must be grounded independently. A model review stays a model review. Returned
     features are candidates for command/video review, never proof of grasp success.
     Include the closing observation after the interval's final action-owning frame.
+    For training commands, pass absolute position action targets in the same named
+    columns and units, with one fewer row than states. A still-moving gripper may
+    already have received a reversing target; such intervals must be split or skipped.
     """
     arm, units = config.get("arm"), config.get("units")
     key = config.get("state_key")
@@ -161,6 +164,24 @@ def extract_gripper_motion(states, state_names: list[str], config: dict) -> list
     reversal = float((np.maximum.accumulate(directed) - directed).max())
     if travel > 1.5 * abs(delta) or reversal >= threshold:
         raise ValueError("Split this reversing gripper trajectory before assigning a command")
+    action_alignment = {"checked": False}
+    if actions is not None:
+        targets = np.asarray(actions, dtype=float)
+        if targets.shape != (len(values) - 1, len(state_names)) or not np.isfinite(targets).all():
+            raise ValueError("Need one finite absolute position action per outgoing observation")
+        targets = targets[:, state_names.index(key)]
+        if units == "radians":
+            targets = np.rad2deg(targets)
+        signed_lead = (targets - angles[:-1]) * np.sign(delta)
+        if np.any(signed_lead < 0):
+            raise ValueError("Action targets oppose measured gripper motion; split or skip this interval")
+        action_alignment = {
+            "checked": True,
+            "action_type": "absolute position",
+            "sample_count": len(targets),
+            "minimum_signed_lead_degrees": float(signed_lead.min()),
+            "targets_float64_le_degrees_sha256": hashlib.sha256(targets.astype("<f8").tobytes()).hexdigest(),
+        }
     verb = "open" if delta * opening_sign > 0 else "close"
     return [
         {
@@ -178,6 +199,7 @@ def extract_gripper_motion(states, state_names: list[str], config: dict) -> list
                 "measured_travel_degrees": travel,
                 "sample_count": len(angles),
                 "angles_float64_le_sha256": hashlib.sha256(angles.astype("<f8").tobytes()).hexdigest(),
+                "action_alignment": action_alignment,
                 "review": "pending",
                 "accepted_training_labels": False,
             },

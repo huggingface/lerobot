@@ -94,6 +94,12 @@ uncertain labels. Measured gripper state can support opening/closing commands ev
 when the gripper is outside a wrist image, provided its state key, physical arm, and
 opening sign are verified. Leave unsupported image coordinates missing; measured
 gripper motion alone does not establish grasp success.
+When forming motion training commands with `extract_gripper_motion`, also pass the
+recorded absolute position `actions`, with the same joint columns and units and one
+fewer row than the measured states. The extractor rejects targets that already ask
+for the opposite direction even though the observed gripper is still moving. Split
+or skip those intervals; state-only extraction records that action alignment was
+not checked and remains a candidate feature.
 
 `offline_steering_eval.py` compares prompts on fixed held-out observations. Supply an
 evaluation-only steering manifest containing episodes 90–99. Without `--checkpoint`,

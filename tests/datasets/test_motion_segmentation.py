@@ -274,6 +274,45 @@ def test_gripper_hold_is_not_an_open_or_close_command(gripper_extractor, gripper
     assert gripper_extractor([[0], [-0.2], [0]], ["left_gripper.pos"], gripper_config) == []
 
 
+@pytest.mark.parametrize("units", ["degrees", "radians"])
+@pytest.mark.parametrize("direction", [-1, 1])
+def test_gripper_training_targets_match_named_arm_and_recorded_units(
+    gripper_extractor, gripper_config, units, direction
+):
+    states = np.array([[100, 0], [80, 30], [60, 60]], dtype=float)
+    targets = np.array([[20, 40], [10, 70]], dtype=float)
+    states[:, 1] *= direction
+    targets[:, 1] *= direction
+    gripper_config["units"] = units
+    if units == "radians":
+        states, targets = np.deg2rad(states), np.deg2rad(targets)
+    result = gripper_extractor(
+        states, ["right_gripper.pos", "left_gripper.pos"], gripper_config, actions=targets
+    )
+    alignment = result[0]["evidence"]["action_alignment"]
+    assert alignment["checked"] and alignment["sample_count"] == 2
+    assert alignment["minimum_signed_lead_degrees"] == pytest.approx(40)
+    assert len(alignment["targets_float64_le_degrees_sha256"]) == 64
+    assert not result[0]["evidence"]["accepted_training_labels"]
+
+
+def test_gripper_observation_lag_cannot_hide_a_reversing_training_target(gripper_extractor, gripper_config):
+    # Measured positions keep opening, but the last target already asks for closing.
+    states = [[0], [-30], [-60]]
+    without_targets = gripper_extractor(states, ["left_gripper.pos"], gripper_config)
+    assert not without_targets[0]["evidence"]["action_alignment"]["checked"]
+    with pytest.raises(ValueError, match="Action targets oppose"):
+        gripper_extractor(states, ["left_gripper.pos"], gripper_config, actions=[[-40], [-25]])
+
+
+@pytest.mark.parametrize("targets", [[[-40]], [[-40], [-70], [-80]], [[-40], [float("nan")]]])
+def test_gripper_action_evidence_requires_exact_outgoing_frame_alignment(
+    gripper_extractor, gripper_config, targets
+):
+    with pytest.raises(ValueError, match="one finite absolute position action"):
+        gripper_extractor([[0], [-30], [-60]], ["left_gripper.pos"], gripper_config, actions=targets)
+
+
 @pytest.mark.parametrize(
     "changes",
     [
