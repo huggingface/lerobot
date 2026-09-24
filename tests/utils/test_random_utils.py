@@ -155,12 +155,13 @@ def test_seeded_context_restores_rng_after_exception(fixed_seed, error_type):
     torch.testing.assert_close(torch.rand(3), expected[2], rtol=0, atol=0)
 
 
-def test_seeded_context_restores_rng_after_invalid_seed(fixed_seed):
+@pytest.mark.parametrize("seed", [-1, 2**32])
+def test_seeded_context_restores_rng_after_invalid_seed(fixed_seed, seed):
     original = get_rng_state()
     expected = (random.random(), np.random.rand(), torch.rand(3))
     set_rng_state(original)
 
-    with pytest.raises(ValueError), seeded_context(-1):
+    with pytest.raises(ValueError), seeded_context(seed):
         pytest.fail("An invalid NumPy seed must fail before entering the context")
 
     assert random.random() == expected[0]
@@ -168,15 +169,39 @@ def test_seeded_context_restores_rng_after_invalid_seed(fixed_seed):
     torch.testing.assert_close(torch.rand(3), expected[2], rtol=0, atol=0)
 
 
-def test_nested_seeded_context_restores_outer_rng_after_exception(fixed_seed):
+@pytest.mark.parametrize("inner_seed, error_type", [(456, RuntimeError), (-1, ValueError)])
+def test_nested_seeded_context_restores_outer_rng_after_exception(fixed_seed, inner_seed, error_type):
     with seeded_context(123):
         original = get_rng_state()
         expected = (random.random(), np.random.rand(), torch.rand(3))
         set_rng_state(original)
 
-        with pytest.raises(RuntimeError, match="inner context failed"), seeded_context(456):
-            raise RuntimeError("inner context failed")
+        with pytest.raises(error_type), seeded_context(inner_seed):
+            raise error_type("inner context failed")
 
         assert random.random() == expected[0]
         assert np.random.rand() == expected[1]
         torch.testing.assert_close(torch.rand(3), expected[2], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_seeded_context_preserves_gaussian_caches(fixed_seed, fail):
+    random.gauss(0, 1)
+    np.random.standard_normal()
+    original = get_rng_state()
+    expected_python = [random.gauss(0, 1) for _ in range(6)]
+    expected_numpy = np.random.standard_normal(6)
+    set_rng_state(original)
+
+    try:
+        with seeded_context(1337):
+            random.gauss(0, 1)
+            np.random.standard_normal()
+            if fail:
+                raise RuntimeError("context failed")
+    except RuntimeError:
+        if not fail:
+            raise
+
+    assert [random.gauss(0, 1) for _ in range(6)] == expected_python
+    np.testing.assert_array_equal(np.random.standard_normal(6), expected_numpy)
