@@ -420,3 +420,13 @@ task group and that its dataset factory reproduces the planned development split
 Verify the actual dataloaders match, then run forward/backward/save/reload smoke tests
 before launching the two jobs. This is a diagnostic comparison: missing trace or other
 annotation coverage still needs to be completed for the full steering experiment.
+
+For checkpoint selection, filter the steering manifest to the planned development
+episodes and pass `--development-episodes EPISODE ...` to `offline_steering_eval.py`.
+Use this same manifest, seed and anchor count for both models at every comparison
+checkpoint. The evaluator rejects final episodes 90–99 in development panels, samples
+outside the declared holdouts, and checkpoints whose saved training split contains
+any declared evaluation episode. It checks the split before loading model weights.
+Without this option, evaluation still defaults to final episodes 90–99. Record that
+development results inform checkpoint selection; do not present them as final-test
+performance or select a schedule from the final-test scores.

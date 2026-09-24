@@ -3,6 +3,7 @@
 """Offline comparisons must not leak training episodes or compare unmatched targets."""
 
 import copy
+import json
 import runpy
 from pathlib import Path
 from types import SimpleNamespace
@@ -117,3 +118,47 @@ def test_saved_split_cannot_label_training_data_as_heldout(api):
     assert api["training_episodes"]({"eval_split": 0.1}, meta) == list(range(90))
     assert 98 in api["training_episodes"]({}, meta)
     assert 98 not in api["training_episodes"]({"exclude_episodes": list(range(90, 100))}, meta)
+
+
+def test_development_panel_uses_explicit_episode_identities(api, manifest):
+    manifest["segments"][0]["episode_index"] = 6
+    manifest["segments"][1]["episode_index"] = 50
+    panel = api["make_panel"](manifest, development_episodes=[50, 6])
+    assert panel["evaluation_split"] == "development"
+    assert panel["heldout_episodes"] == [50, 6]
+    assert api["evaluation_episodes"](panel, trained_episodes=[0, 1, 2]) == [6, 50]
+    assert panel["prompt_counts"] == {"task": 5, "subtask": 5, "motion": 2}
+    with pytest.raises(ValueError, match="training split"):
+        api["evaluation_episodes"](panel, trained_episodes=[0, 6])
+
+
+@pytest.mark.parametrize("episodes", [[], [6, 6], [90], [-1], [100], [True], [6.0]])
+def test_invalid_development_holdouts_are_rejected(api, manifest, episodes):
+    with pytest.raises(ValueError, match="held-out"):
+        api["make_panel"](manifest, development_episodes=episodes)
+
+
+def test_loaded_panel_cannot_hide_training_samples_behind_final_declaration(api, manifest):
+    panel = api["make_panel"](manifest)
+    panel["samples"][0]["episode_index"] = 6
+    with pytest.raises(ValueError, match="outside the declared"):
+        api["evaluation_episodes"](panel, trained_episodes=list(range(90)))
+
+
+def test_leaking_checkpoint_is_rejected_before_model_or_optional_dependencies(
+    api, manifest, tmp_path, monkeypatch
+):
+    manifest["segments"][0]["episode_index"] = 6
+    manifest["segments"][1]["episode_index"] = 50
+    panel = api["make_panel"](manifest, development_episodes=[6, 50])
+    (tmp_path / "train_config.json").write_text(json.dumps({"dataset": manifest["source"]}))
+    meta = SimpleNamespace(total_episodes=100, episodes=[{"tasks": ["pick"]} for _ in range(100)])
+    evaluate = api["evaluate"]
+    monkeypatch.setitem(evaluate.__globals__, "LeRobotDatasetMetadata", lambda *args, **kwargs: meta)
+
+    def unexpected_model_dependency(*args, **kwargs):
+        pytest.fail("A leaking checkpoint must fail before loading model dependencies")
+
+    monkeypatch.setitem(evaluate.__globals__, "require_package", unexpected_model_dependency)
+    with pytest.raises(ValueError, match="training split"):
+        evaluate(panel, tmp_path, tmp_path, tmp_path / "output.json", "cpu")

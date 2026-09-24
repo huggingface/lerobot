@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.datasets.steering_commands import STYLES, SteeringCommands
 from lerobot.datasets.utils import resolve_episode_indices
 from lerobot.policies import make_pre_post_processors
@@ -36,13 +36,50 @@ def digest(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def make_panel(manifest: dict, anchors_per_style: int = 3, seed: int = 7) -> dict:
+def evaluation_episodes(panel: dict, trained_episodes: list[int] | None = None) -> list[int]:
+    """Check declared and actual holdouts, including panels loaded from disk."""
+    declared = panel["heldout_episodes"]
+    split = panel.get("evaluation_split", "final")
+    allowed = set(HELDOUT_EPISODES) if split == "final" else set(range(90))
+    if (
+        split not in {"final", "development"}
+        or not declared
+        or any(type(ep) is not int for ep in declared)
+        or len(set(declared)) != len(declared)
+        or not set(declared) <= allowed
+    ):
+        raise ValueError("Invalid held-out episodes for the declared evaluation split")
+    samples = panel["samples"]
+    if not samples or any(type(sample["episode_index"]) is not int for sample in samples):
+        raise ValueError("Evaluation requires samples with integer episode identities")
+    actual = {sample["episode_index"] for sample in samples}
+    if not actual <= set(declared):
+        raise ValueError("Evaluation samples fall outside the declared held-out episodes")
+    if trained_episodes is not None and set(trained_episodes) & set(declared):
+        raise ValueError("Checkpoint training split includes evaluation episodes")
+    return sorted(actual)
+
+
+def make_panel(
+    manifest: dict,
+    anchors_per_style: int = 3,
+    seed: int = 7,
+    *,
+    development_episodes: list[int] | None = None,
+) -> dict:
     """Choose deterministic anchors per episode/style, then pair every available prompt."""
     if not 1 <= anchors_per_style <= 10:
         raise ValueError("Use one to ten anchors per episode/style")
     index = SteeringCommands(manifest)
-    if not index.episodes or not set(index.episodes) <= set(HELDOUT_EPISODES):
-        raise ValueError("Evaluation manifest must contain only held-out episodes 90–99")
+    split = "final" if development_episodes is None else "development"
+    declared = list(HELDOUT_EPISODES) if development_episodes is None else list(development_episodes)
+    evaluation_episodes(
+        {
+            "evaluation_split": split,
+            "heldout_episodes": declared,
+            "samples": [{"episode_index": ep} for ep in index.episodes],
+        }
+    )
     anchors = set()
     for ep, spans in index.episodes.items():
         for style in sorted(STYLES):
@@ -81,7 +118,8 @@ def make_panel(manifest: dict, anchors_per_style: int = 3, seed: int = 7) -> dic
     return {
         "version": 1,
         "source": index.source,
-        "heldout_episodes": list(HELDOUT_EPISODES),
+        "evaluation_split": split,
+        "heldout_episodes": declared,
         "anchors_per_style_per_episode": anchors_per_style,
         "seed": seed,
         "annotation_profile": index.annotation_profile(),
@@ -157,22 +195,27 @@ def training_episodes(config: dict, metadata) -> list[int]:
 
 
 def evaluate(panel: dict, checkpoint: Path, dataset_root: Path, output: Path, device: str) -> dict:
-    require_package("transformers", extra="wallx")
-    require_package("peft", extra="wallx")
-    require_package("torchdiffeq", extra="wallx")
-    require_package("qwen-vl-utils", extra="wallx", import_name="qwen_vl_utils")
+    episodes = evaluation_episodes(panel)
     if output.exists():
         raise FileExistsError(output)
     training = json.loads((checkpoint / "train_config.json").read_text())
     if any(training["dataset"].get(k) != panel["source"][k] for k in ("repo_id", "revision")):
         raise ValueError("Checkpoint training source differs from evaluation source")
+    metadata = LeRobotDatasetMetadata(
+        panel["source"]["repo_id"], root=dataset_root, revision=panel["source"]["revision"]
+    )
+    trained_episodes = training_episodes(training["dataset"], metadata)
+    evaluation_episodes(panel, trained_episodes)
+    require_package("transformers", extra="wallx")
+    require_package("peft", extra="wallx")
+    require_package("torchdiffeq", extra="wallx")
+    require_package("qwen-vl-utils", extra="wallx", import_name="qwen_vl_utils")
     policy = WallXPolicy.from_pretrained(checkpoint).to(device).eval()
     pre, post = make_pre_post_processors(
         policy.config,
         pretrained_path=str(checkpoint),
         preprocessor_overrides={"device_processor": {"device": device}},
     )
-    episodes = sorted({s["episode_index"] for s in panel["samples"]})
     ds = LeRobotDataset(
         panel["source"]["repo_id"],
         root=dataset_root,
@@ -183,9 +226,6 @@ def evaluate(panel: dict, checkpoint: Path, dataset_root: Path, output: Path, de
     )
     if ds.meta.fps != 30 or policy.config.output_features["action"].shape != (14,):
         raise ValueError("This evaluation expects the recorded ReBot 30 Hz, 14-dimensional action space")
-    trained_episodes = training_episodes(training["dataset"], ds.meta)
-    if set(trained_episodes) & set(panel["heldout_episodes"]):
-        raise ValueError("Checkpoint training split includes evaluation episodes")
     scale = torch.as_tensor(ds.meta.stats["action"]["std"]).float().reshape(-1)
     rows = []
     for anchor in panel["samples"]:
@@ -269,10 +309,21 @@ def main():
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--anchors-per-style", type=int, default=3)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument(
+        "--development-episodes",
+        type=int,
+        nargs="+",
+        help="Explicit development holdouts (0–89); default evaluation uses final episodes 90–99",
+    )
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Use a fresh output file")
-    panel = make_panel(json.loads(args.manifest.read_text()), args.anchors_per_style, args.seed)
+    panel = make_panel(
+        json.loads(args.manifest.read_text()),
+        args.anchors_per_style,
+        args.seed,
+        development_episodes=args.development_episodes,
+    )
     panel["manifest_sha256"] = digest(args.manifest)
     if args.checkpoint:
         if not args.dataset_root:
