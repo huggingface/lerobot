@@ -20,11 +20,10 @@ import time
 from functools import cached_property
 from typing import TYPE_CHECKING
 
-from lerobot.cameras import DepthCamera, make_cameras_from_configs
+from lerobot.cameras import make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors import MotorCalibration
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
-from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import _motorbridge_available, require_package
 
 from ..robot import Robot
@@ -147,8 +146,6 @@ class RebotB601Follower(Robot):
                 return
 
         logger.info(f"\nRunning calibration of {self}")
-        if self.bus is None:
-            raise DeviceNotConnectedError(f"{self} motor bus is not initialized")
         self.bus.disable_all()
         print(
             "\nCalibration: set zero position.\n"
@@ -188,8 +185,6 @@ class RebotB601Follower(Robot):
             )
         use_mit = self.config.control_mode == "mit"
         gripper_use_mit = self.config.gripper_control_mode == "mit"
-        if self.bus is None:
-            raise DeviceNotConnectedError(f"{self} motor bus is not initialized")
         self.bus.enable_all()
         for motor_name, motor in self.motors.items():
             if motor_name == GRIPPER_MOTOR:
@@ -211,15 +206,11 @@ class RebotB601Follower(Robot):
     @check_if_not_connected
     def disable_torque(self) -> None:
         """Disable motor torque so the arm can be moved by hand (read-only debugging)."""
-        if self.bus is None:
-            raise DeviceNotConnectedError(f"{self} motor bus is not initialized")
         self.bus.disable_all()
         logger.info(f"{self} torque disabled.")
 
     def _present_pos(self) -> dict[str, float]:
         """Read present joint positions in degrees."""
-        if self.bus is None:
-            raise DeviceNotConnectedError(f"{self} motor bus is not initialized")
         for motor in self.motors.values():
             motor.request_feedback()
         try:
@@ -247,7 +238,7 @@ class RebotB601Follower(Robot):
                 dt_ms = (time.perf_counter() - start) * 1e3
                 logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
-            if isinstance(cam, DepthCamera) and cam.use_depth:
+            if getattr(cam, "use_depth", False):
                 start = time.perf_counter()
                 obs_dict[f"{cam_key}_depth"] = cam.read_latest_depth()
                 dt_ms = (time.perf_counter() - start) * 1e3
@@ -320,8 +311,6 @@ class RebotB601Follower(Robot):
 
     @check_if_not_connected
     def disconnect(self) -> None:
-        if self.bus is None:
-            raise DeviceNotConnectedError(f"{self} motor bus is not initialized")
         for motor in self.motors.values():
             if self.config.disable_torque_on_disconnect:
                 motor.disable()

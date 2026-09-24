@@ -17,7 +17,6 @@
 import json
 import logging
 from functools import cached_property
-from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
@@ -26,12 +25,6 @@ from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.errors import DeviceNotConnectedError
-from lerobot.utils.import_utils import _zmq_available, require_package
-
-if TYPE_CHECKING or _zmq_available:
-    import zmq
-else:
-    zmq = None
 
 from ..robot import Robot
 from .config_lekiwi import LeKiwiClientConfig
@@ -41,8 +34,9 @@ class LeKiwiClient(Robot):
     config_class = LeKiwiClientConfig
     name = "lekiwi_client"
 
-    def __init__(self, config: LeKiwiClientConfig) -> None:
-        require_package("pyzmq", extra="lekiwi", import_name="zmq")
+    def __init__(self, config: LeKiwiClientConfig):
+        import zmq
+
         self._zmq = zmq
         super().__init__(config)
         self.config = config
@@ -65,13 +59,13 @@ class LeKiwiClient(Robot):
         self.polling_timeout_ms = config.polling_timeout_ms
         self.connect_timeout_s = config.connect_timeout_s
 
-        self.zmq_context: zmq.Context | None = None
-        self.zmq_cmd_socket: zmq.Socket | None = None
-        self.zmq_observation_socket: zmq.Socket | None = None
+        self.zmq_context = None
+        self.zmq_cmd_socket = None
+        self.zmq_observation_socket = None
 
-        self.last_frames: dict[str, np.ndarray] = {}
+        self.last_frames = {}
 
-        self.last_remote_state: RobotObservation = {}
+        self.last_remote_state = {}
 
         # Define three speed levels and a current index
         self.speed_levels = [
@@ -82,7 +76,7 @@ class LeKiwiClient(Robot):
         self.speed_index = 0  # Start at slow
 
         self._is_connected = False
-        self.logs: dict[str, float] = {}
+        self.logs = {}
 
     @cached_property
     def _state_ft(self) -> dict[str, type]:
@@ -106,7 +100,7 @@ class LeKiwiClient(Robot):
         return tuple(self._state_ft.keys())
 
     @cached_property
-    def _cameras_ft(self) -> dict[str, tuple]:
+    def _cameras_ft(self) -> dict[str, tuple[int, int, int]]:
         return {name: (cfg.height, cfg.width, 3) for name, cfg in self.config.cameras.items()}
 
     @cached_property
@@ -123,8 +117,7 @@ class LeKiwiClient(Robot):
 
     @property
     def is_calibrated(self) -> bool:
-        # Calibration lives on the host; the client has nothing to calibrate.
-        return True
+        pass
 
     @check_if_already_connected
     def connect(self) -> None:
@@ -157,9 +150,6 @@ class LeKiwiClient(Robot):
 
     def _poll_and_get_latest_message(self) -> list[bytes] | None:
         """Polls the ZMQ socket for a limited time and returns the latest message's frames."""
-        if self.zmq_observation_socket is None:
-            raise DeviceNotConnectedError(f"{self} observation socket is not initialized")
-
         zmq = self._zmq
         poller = zmq.Poller()
         poller.register(self.zmq_observation_socket, zmq.POLLIN)
@@ -317,7 +307,7 @@ class LeKiwiClient(Robot):
             "theta.vel": theta_cmd,
         }
 
-    def configure(self) -> None:
+    def configure(self):
         pass
 
     @check_if_not_connected
@@ -337,8 +327,6 @@ class LeKiwiClient(Robot):
         # scalars; json.dumps only serializes Python primitives, so coerce each value to a
         # plain float before sending.
         action = {key: float(value) for key, value in action.items()}
-        if self.zmq_cmd_socket is None:
-            raise DeviceNotConnectedError(f"{self} command socket is not initialized")
         self.zmq_cmd_socket.send_string(json.dumps(action))  # action is in motor space
 
         # TODO(Steven): Remove the np conversion when it is possible to record a non-numpy array value
@@ -349,11 +337,9 @@ class LeKiwiClient(Robot):
         return action_sent
 
     @check_if_not_connected
-    def disconnect(self) -> None:
+    def disconnect(self):
         """Cleans ZMQ comms"""
 
-        if self.zmq_observation_socket is None or self.zmq_cmd_socket is None or self.zmq_context is None:
-            raise DeviceNotConnectedError(f"{self} ZMQ sockets are not initialized")
         self.zmq_observation_socket.close()
         self.zmq_cmd_socket.close()
         self.zmq_context.term()

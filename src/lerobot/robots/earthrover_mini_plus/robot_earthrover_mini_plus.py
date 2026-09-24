@@ -21,9 +21,8 @@ from functools import cached_property
 
 import cv2
 import numpy as np
-import requests  # type: ignore[import-untyped]
+import requests
 
-from lerobot.cameras import Camera
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.errors import DeviceNotConnectedError
@@ -92,7 +91,7 @@ class EarthRoverMiniPlus(Robot):
     config_class = EarthRoverMiniPlusConfig
     name = "earthrover_mini_plus"
 
-    def __init__(self, config: EarthRoverMiniPlusConfig) -> None:
+    def __init__(self, config: EarthRoverMiniPlusConfig):
         """Initialize EarthRover Mini Plus robot.
 
         Args:
@@ -104,7 +103,7 @@ class EarthRoverMiniPlus(Robot):
 
         # Empty cameras dict for compatibility with recording script
         # Cameras are accessed directly via SDK, not through Camera objects
-        self.cameras: dict[str, Camera] = {}
+        self.cameras = {}
         self._is_connected = False
 
         # Cache for camera frames (fallback when requests fail)
@@ -283,7 +282,7 @@ class EarthRoverMiniPlus(Robot):
             All SDK values are normalized to appropriate ranges for dataset recording.
         """
 
-        observation: RobotObservation = {}
+        observation = {}
 
         # Get camera images from SDK
         frames = self._get_camera_frames()
