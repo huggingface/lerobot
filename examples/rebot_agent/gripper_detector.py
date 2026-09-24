@@ -34,6 +34,24 @@ def file_hash(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def checkpoint_provenance(path: Path) -> dict:
+    """Identify a two-arm warm start; this does not resume optimizer state."""
+    config = json.loads((path / "config.json").read_text())
+    if config.get("id2label") != {str(k): v for k, v in LABELS.items()}:
+        raise ValueError("Warm-start training requires a per-arm ReBot detector checkpoint")
+    weights = sorted(path.glob("*.safetensors"))
+    if not weights:
+        raise ValueError("Warm-start checkpoint must contain safetensors weights")
+    return {
+        "kind": "warm_start",
+        "checkpoint": str(path.resolve()),
+        "checkpoint_hashes": {p.name: file_hash(p) for p in weights},
+        "config_sha256": file_hash(path / "config.json"),
+        "processor_sha256": file_hash(path / "preprocessor_config.json"),
+        "optimizer_restored": False,
+    }
+
+
 class GripperDataset(Dataset):
     def __init__(self, path: Path, image_root: Path | None = None):
         self.data = json.loads(path.read_text())
@@ -172,15 +190,26 @@ def train(args):
     for filename, key in (("reviewed_labels.json", "labels_sha256"), ("source_pack.json", "pack_sha256")):
         if file_hash(args.labels / filename) != train_set.data["info"][key]:
             raise ValueError("Reviewed labels or source pack differ from the detector export")
+    initialization = (
+        checkpoint_provenance(args.checkpoint)
+        if args.checkpoint is not None
+        else {"kind": "pretrained", "model": BASE_MODEL, "revision": BASE_REVISION}
+    )
     args.output.mkdir(parents=True, exist_ok=False)
-    processor = AutoImageProcessor.from_pretrained(BASE_MODEL, revision=BASE_REVISION)
-    model = DetrForObjectDetection.from_pretrained(
-        BASE_MODEL,
-        revision=BASE_REVISION,
-        id2label=LABELS,
-        label2id={v: k for k, v in LABELS.items()},
-        ignore_mismatched_sizes=True,
-    ).to(args.device)
+    if args.checkpoint is not None:
+        processor = AutoImageProcessor.from_pretrained(args.checkpoint, local_files_only=True)
+        model = DetrForObjectDetection.from_pretrained(args.checkpoint, local_files_only=True).to(args.device)
+    else:
+        processor = AutoImageProcessor.from_pretrained(BASE_MODEL, revision=BASE_REVISION)
+        model = DetrForObjectDetection.from_pretrained(
+            BASE_MODEL,
+            revision=BASE_REVISION,
+            id2label=LABELS,
+            label2id={v: k for k, v in LABELS.items()},
+            ignore_mismatched_sizes=True,
+        ).to(args.device)
+    if model.config.id2label != LABELS:
+        raise ValueError("Training requires a two-arm gripper classifier")
     loaders = [
         DataLoader(
             ds, batch_size=args.batch_size, shuffle=shuffle, collate_fn=partial(collate, processor=processor)
@@ -199,8 +228,9 @@ def train(args):
     ]
     optimizer = torch.optim.AdamW(params, weight_decay=1e-4)
     provenance = {
-        "base_model": BASE_MODEL,
-        "base_revision": BASE_REVISION,
+        "base_model": BASE_MODEL if args.checkpoint is None else None,
+        "base_revision": BASE_REVISION if args.checkpoint is None else None,
+        "initialization": initialization,
         "labels_sha256": train_set.data["info"]["labels_sha256"],
         "pack_sha256": train_set.data["info"]["pack_sha256"],
         "script_sha256": file_hash(Path(__file__)),

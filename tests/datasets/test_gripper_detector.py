@@ -83,6 +83,11 @@ def test_detr_processor_backward_and_reload_with_two_arm_and_empty_targets(detec
         expected = model(**inputs).logits
     model.save_pretrained(tmp_path)
     processor.save_pretrained(tmp_path)
+    provenance = detector["checkpoint_provenance"](tmp_path)
+    assert provenance["optimizer_restored"] is False
+    assert provenance["checkpoint_hashes"] == {
+        "model.safetensors": detector["file_hash"](tmp_path / "model.safetensors")
+    }
     restored = transformers.DetrForObjectDetection.from_pretrained(tmp_path, local_files_only=True).eval()
     assert restored.config.id2label == detector["LABELS"]
     with torch.no_grad():
@@ -119,3 +124,9 @@ def test_detr_processor_backward_and_reload_with_two_arm_and_empty_targets(detec
     prediction = json.loads((output / "clip.json").read_text())
     assert {k: prediction["frames"][0][k] for k in frame} == frame
     assert set(prediction["frames"][0]["arms"]) == {"left_gripper", "right_gripper"}
+
+
+def test_warm_start_rejects_generic_or_mislabeled_checkpoint(detector, tmp_path):
+    (tmp_path / "config.json").write_text(json.dumps({"id2label": {"0": "person", "1": "bicycle"}}))
+    with pytest.raises(ValueError, match="per-arm ReBot"):
+        detector["checkpoint_provenance"](tmp_path)

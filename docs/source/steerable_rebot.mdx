@@ -326,6 +326,12 @@ IoU 0.5 and center error on matches; this is not COCO mAP. Checkpoint save/reloa
 tested by re-evaluating the restored model and processor. The smoke option trains
 at most two batches and evaluates the detector validation split.
 
+When adding reviewed examples, pass `--checkpoint /path/to/previous/checkpoint` to
+`train` to initialize from the existing two-arm detector. This starts a new optimizer;
+it does not resume an interrupted job. The new run records the parent weights,
+configuration, and processor hashes along with the revised labels. Keep detector
+validation episodes separate when extending the annotation pack.
+
 Extraction preserves timestamps, camera/arm identity, confidence scores, and weight
 hashes. Low-confidence, ambiguous, and invalid detections remain missing. Scores are
 not calibrated visibility probabilities. Outputs remain unreviewed evidence: inspect
