@@ -61,6 +61,8 @@ class DatasetConfig:
     steering_manifest: str | None = None
     steering_task_probability: float = 0.2
     steering_required_styles: list[str] = field(default_factory=list)
+    # Exclude unreviewed frame anchors from both train and eval sampling; never fill their labels.
+    steering_skip_uncovered: bool = False
 
     def __post_init__(self) -> None:
         if self.repo_type not in ("dataset", "bucket"):
@@ -71,6 +73,8 @@ class DatasetConfig:
             )
         if self.task_recipe is not None and self.streaming:
             raise ValueError("task_recipe currently requires a non-streaming dataset")
+        if self.steering_skip_uncovered and self.steering_manifest is None:
+            raise ValueError("steering_skip_uncovered requires a steering_manifest")
         if self.steering_manifest is not None:
             if self.streaming or self.task_recipe is None or self.image_transforms.enable:
                 raise ValueError(

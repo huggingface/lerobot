@@ -59,6 +59,16 @@ execution check; it does not replace full held-out validation or physical evalua
 and masked internally. The full run defaults to 20,000 steps and batch one per GPU;
 these are starting settings that still require hardware validation.
 
+When uncertain annotations must be skipped, add `--skip-uncovered` with the steering
+manifest. Training and held-out evaluation then sample only reviewed frame intervals;
+the 80/20 mixture applies within that subset. Original episode identities, observations,
+action chunks, and temporal queries stay intact. Steering action targets outside each
+command interval remain masked. `steering_coverage.json` records excluded frames and
+the available styles separately for each split; sparse labels do not establish a
+learned capability. Required styles are checked on training episodes, while held-out
+evaluation reports the styles actually available there. Without this explicit option,
+missing coverage remains an error.
+
 Restoring a complete WALL-X policy checkpoint reads the pinned base repository's
 configuration and processor assets without fetching its weights again. Non-strict
 partial restores still load base weights to fill missing tensors; strict restores

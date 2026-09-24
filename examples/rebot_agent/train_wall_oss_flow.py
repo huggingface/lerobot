@@ -18,11 +18,18 @@ from lerobot.datasets.recipe import TrainingRecipe
 
 
 def prepare_run(
-    output: Path, gpus: int, batch_size: int, smoke: bool, steering_manifest: Path | None = None
+    output: Path,
+    gpus: int,
+    batch_size: int,
+    smoke: bool,
+    steering_manifest: Path | None = None,
+    skip_uncovered: bool = False,
 ) -> tuple[dict, list[str]]:
     """Resolve the checked-in recipe and build a bounded, single-node torchrun command."""
     if gpus not in range(1, 5) or batch_size < 1:
         raise ValueError("Use one to four GPUs and a positive per-GPU batch size")
+    if skip_uncovered and steering_manifest is None:
+        raise ValueError("--skip-uncovered requires --steering-manifest")
     workspace = Path(__file__).resolve().parents[2]
     session = json.loads((workspace / "examples/rebot_agent/training.json").read_text())
     candidate = next(c for c in session["candidates"] if c["name"] == "wall_oss_flow_80_20_v1")
@@ -38,6 +45,7 @@ def prepare_run(
             raise ValueError("Steering manifest source differs from the training dataset")
         config["dataset"]["steering_manifest"] = str(steering_manifest.resolve())
         config["dataset"]["steering_task_probability"] = 0.2
+        config["dataset"]["steering_skip_uncovered"] = skip_uncovered
         config["dataset"]["steering_required_styles"] = ["subtask", "motion", "point", "trace", "combination"]
         config["dataset"]["image_transforms"] = {"enable": False}
         # Keep the same corrected task conditioning in both experiment arms.
@@ -81,9 +89,16 @@ def main():
     parser.add_argument(
         "--steering-manifest", type=Path, help="Reviewed multi-style commands; omit for the semantic baseline"
     )
+    parser.add_argument(
+        "--skip-uncovered",
+        action="store_true",
+        help="Sample only reviewed frame intervals and report exclusions",
+    )
     args = parser.parse_args()
     output = args.output.resolve()
-    config, argv = prepare_run(output, args.gpus, args.batch_size, args.smoke, args.steering_manifest)
+    config, argv = prepare_run(
+        output, args.gpus, args.batch_size, args.smoke, args.steering_manifest, args.skip_uncovered
+    )
     workspace = Path(__file__).resolve().parents[2]
     git = shutil.which("git")
     if git is None:

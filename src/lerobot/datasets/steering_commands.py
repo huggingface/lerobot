@@ -15,6 +15,7 @@ from lerobot.utils.steering import render_steering_command
 
 from .feature_utils import get_delta_indices
 from .language_task import RecipeTaskDataset
+from .sampler import EpisodeAwareSampler
 
 STYLES = {"subtask", "motion", "point", "trace", "combination"}
 
@@ -211,6 +212,7 @@ class SteeringCommandDataset(RecipeTaskDataset):
         steering_manifest: str,
         task_probability: float = 0.2,
         required_styles: list[str] | None = None,
+        skip_uncovered: bool = False,
         deterministic=False,
         **kwargs,
     ):
@@ -221,6 +223,7 @@ class SteeringCommandDataset(RecipeTaskDataset):
             raise ValueError("Unknown required steering style")
         self.task_probability = task_probability
         self.deterministic = deterministic
+        self.skip_uncovered = skip_uncovered
         if not 0 <= task_probability <= 1:
             raise ValueError("task_probability must be in [0, 1]")
         super().__init__(*args, **kwargs)
@@ -234,10 +237,12 @@ class SteeringCommandDataset(RecipeTaskDataset):
             raise ValueError("Steering manifest does not match the pinned dataset")
         episodes = self.episodes if self.episodes is not None else range(self.meta.total_episodes)
         report = self.steering.coverage({ep: int(self.meta.episodes[ep]["length"]) for ep in episodes})
-        if not report["complete"]:
+        if not report["complete"] and not skip_uncovered:
             raise ValueError(
                 f"Missing reviewed steering coverage: {len(report['gaps'])} gaps; first: {report['gaps'][0]}"
             )
+        if not report["covered_frames"]:
+            raise ValueError("No reviewed steering frames in the selected episodes")
         missing = set(required_styles) & set(report["annotation_profile"]["missing_styles"])
         if missing:
             raise ValueError(f"Required steering styles absent from selected episodes: {sorted(missing)}")
@@ -247,6 +252,8 @@ class SteeringCommandDataset(RecipeTaskDataset):
             "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
             "task_probability": self.task_probability,
             "required_styles": required_styles,
+            "skip_uncovered": skip_uncovered,
+            "excluded_frames": report["total_frames"] - report["covered_frames"],
             "expected_style_fraction": {
                 "task": self.task_probability,
                 **{
@@ -267,6 +274,37 @@ class SteeringCommandDataset(RecipeTaskDataset):
                             raise ValueError(
                                 "Steering coordinates do not match the dataset camera dimensions"
                             )
+
+    def make_steering_sampler(
+        self, *, shuffle: bool = False, seed: int = 0, drop_n_last_frames: int = 0
+    ) -> EpisodeAwareSampler:
+        """Sample original row positions within reviewed intervals, preserving temporal queries.
+
+        Episode tail dropping is applied once per episode, not once per annotation.
+        The existing sampler supplies deterministic shuffling and checkpoint resume.
+        """
+        if drop_n_last_frames < 0:
+            raise ValueError("drop_n_last_frames must be non-negative")
+        episodes = self.episodes if self.episodes is not None else range(self.meta.total_episodes)
+        starts, ends = [], []
+        for episode in episodes:
+            metadata = self.meta.episodes[episode]
+            origin = int(metadata["dataset_from_index"])
+            last_frame = int(metadata["length"]) - drop_n_last_frames
+            for span in self.steering.episodes.get(episode, []):
+                end = min(span["end_frame"], last_frame)
+                if span["start_frame"] < end:
+                    starts.append(origin + span["start_frame"])
+                    ends.append(origin + end)
+        if not starts:
+            raise ValueError("No reviewed steering frames remain after episode tail dropping")
+        return EpisodeAwareSampler(
+            starts,
+            ends,
+            shuffle=shuffle,
+            seed=seed,
+            absolute_to_relative_idx=self.absolute_to_relative_idx,
+        )
 
     def __getitem__(self, idx):
         if isinstance(idx, slice):

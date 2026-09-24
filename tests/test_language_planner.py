@@ -233,6 +233,11 @@ def test_rebot_task_branch_corrects_source_task_in_both_training_conditions(tmp_
         )
     )
     rich, _ = module["prepare_run"](tmp_path, 1, 1, True, path)
+    assert rich["dataset"]["steering_skip_uncovered"] is False
+    partial, _ = module["prepare_run"](tmp_path, 1, 1, True, path, skip_uncovered=True)
+    assert partial["dataset"]["steering_skip_uncovered"] is True
+    with pytest.raises(ValueError, match="requires --steering-manifest"):
+        module["prepare_run"](tmp_path, 1, 1, True, skip_uncovered=True)
     assert set(rich["dataset"]["steering_required_styles"]) == {
         "subtask",
         "motion",

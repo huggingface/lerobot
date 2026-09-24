@@ -315,15 +315,21 @@ def make_dataloaders(
         # BatchSamplerShard without needing a `generator` attribute to synchronize an RNG, and
         # resume is sample-exact.
         shuffle = False
-        sampler = EpisodeAwareSampler(
-            dataset.meta.episodes["dataset_from_index"],
-            dataset.meta.episodes["dataset_to_index"],
-            episode_indices_to_use=dataset.episodes,
-            drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
-            shuffle=True,
-            seed=cfg.seed if cfg.seed is not None else 0,
-            absolute_to_relative_idx=dataset.absolute_to_relative_idx,
-        )
+        sampler_options = {
+            "drop_n_last_frames": getattr(active_cfg, "drop_n_last_frames", 0),
+            "shuffle": True,
+            "seed": cfg.seed if cfg.seed is not None else 0,
+        }
+        if isinstance(dataset, SteeringCommandDataset):
+            sampler = dataset.make_steering_sampler(**sampler_options)
+        else:
+            sampler = EpisodeAwareSampler(
+                dataset.meta.episodes["dataset_from_index"],
+                dataset.meta.episodes["dataset_to_index"],
+                episode_indices_to_use=dataset.episodes,
+                absolute_to_relative_idx=dataset.absolute_to_relative_idx,
+                **sampler_options,
+            )
         if cfg.resume and step > 0:
             # The resume offset depends on the (dp_world_size, batch_size) that produced `step`,
             # so use the values recorded in the checkpoint (falling back to the current ones for
@@ -380,15 +386,24 @@ def make_dataloaders(
     eval_dataloader = None
     if eval_dataset is not None:
         eval_ds = eval_dataset
+        eligible = (
+            eval_dataset.make_steering_sampler().indices
+            if isinstance(eval_dataset, SteeringCommandDataset)
+            else None
+        )
         if cfg.max_eval_samples > 0 and hasattr(eval_dataset, "hf_dataset"):
             task_arr = eval_dataset.hf_dataset.data.column("task_index").to_numpy()
+            if eligible is not None:
+                task_arr = task_arr[eligible]
             unique_tasks = sorted(set(task_arr.tolist()))
             per_task = max(1, cfg.max_eval_samples // len(unique_tasks))
             selected: list[int] = []
             for t in unique_tasks:
                 frames = (task_arr == t).nonzero()[0][:per_task]
-                selected.extend(frames.tolist())
+                selected.extend(frames.tolist() if eligible is None else [eligible[i] for i in frames])
             eval_ds = torch.utils.data.Subset(eval_dataset, selected)
+        elif eligible is not None:
+            eval_ds = torch.utils.data.Subset(eval_dataset, eligible)
 
         eval_collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
         eval_dataloader = torch.utils.data.DataLoader(
@@ -602,6 +617,9 @@ def train(cfg: TrainPipelineConfig):
         step = resume_before_prepare(cfg)  # step + RNG only; sharded state loads after prepare
 
     dataloader, eval_dataloader = make_dataloaders(cfg, dataset, eval_dataset, step, parallel_dims)
+    training_frames = (
+        len(dataloader.sampler) if isinstance(dataset, SteeringCommandDataset) else dataset.num_frames
+    )
 
     # --- prepare & resume phase 2 ---------------------------------------------------------------
     # The FSDP wrap-unit class names resolve right before prepare: user override, else the
@@ -653,6 +671,8 @@ def train(cfg: TrainPipelineConfig):
             )
         logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
         logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
+        if isinstance(dataset, SteeringCommandDataset):
+            logging.info("Reviewed steering frame anchors sampled per epoch: %d", training_frames)
         logging.info(f"{dataset.num_episodes=}")
         logging.info(
             f"Effective batch size: {cfg.batch_size} x {parallel_dims.dp_world_size} dp workers "
@@ -751,7 +771,7 @@ def train(cfg: TrainPipelineConfig):
 
     train_tracker = MetricsTracker(
         cfg.batch_size,
-        dataset.num_frames,
+        training_frames,
         dataset.num_episodes,
         train_metrics,
         initial_step=step,
