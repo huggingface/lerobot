@@ -279,7 +279,12 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         if self.lerobot_features is None:
             raise RuntimeError(_POLICY_NOT_LOADED)
 
-        if observations_similar(obs, previous_obs, lerobot_features=self.lerobot_features):
+        if observations_similar(
+            obs,
+            previous_obs,
+            lerobot_features=self.lerobot_features,
+            atol=self.config.obs_similarity_atol,
+        ):
             self.logger.debug(
                 f"Skipping observation #{obs.get_timestep()} - Observation too similar to last obs predicted!"
             )
