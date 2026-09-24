@@ -203,7 +203,7 @@ def _get_pi_gemma_decoder_layer_base():
     return _PiGemmaDecoderLayerBase
 
 
-class PiGemmaModel(GemmaModel):  # type: ignore[misc]
+class PiGemmaModel(GemmaModel):
     """
     GemmaModel extended with AdaRMS (adaptive RMSNorm) and gated residuals when config.use_adarms is True.
     """
@@ -339,7 +339,7 @@ class PiGemmaModel(GemmaModel):  # type: ignore[misc]
         )
 
 
-class PiGemmaForCausalLM(GemmaForCausalLM):  # type: ignore[misc]
+class PiGemmaForCausalLM(GemmaForCausalLM):
     """
     Causal LM wrapper using PiGemmaModel as the backbone, for consistency with GemmaForCausalLM
     and the language model used in pi0_fast. Use this for the action expert in pi0/pi05.

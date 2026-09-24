@@ -250,8 +250,8 @@ def _load_robotwin_setup_kwargs(task_name: str) -> dict[str, Any]:
 
     import os
 
-    import yaml  # type: ignore[import-untyped]
-    from envs import CONFIGS_PATH  # type: ignore[import-not-found]
+    import yaml
+    from envs import CONFIGS_PATH
 
     task_config = "demo_clean"
     with open(os.path.join(CONFIGS_PATH, f"{task_config}.yml"), encoding="utf-8") as f:

@@ -62,7 +62,7 @@ import tqdm
 from datasets import Dataset, Features, Image
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
-from requests import HTTPError  # type: ignore[import-untyped]
+from requests import HTTPError
 
 from lerobot.datasets import CODEBASE_VERSION, LeRobotDataset, aggregate_stats
 from lerobot.datasets.io_utils import (
