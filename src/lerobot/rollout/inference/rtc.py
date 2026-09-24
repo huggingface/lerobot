@@ -250,8 +250,7 @@ class RTCInferenceEngine(InferenceEngine):
 
         # Processor introspection for relative-action re-anchoring.
         self._relative_step = next(
-            (s for s in preprocessor.steps if isinstance(s, RelativeActionsProcessorStep) and s.enabled),
-            None,
+            (s for s in preprocessor.get_steps(RelativeActionsProcessorStep) if s.enabled), None
         )
         self._normalizer_step = preprocessor.get_step(NormalizerProcessorStep)
         if self._relative_step is not None:

@@ -1678,7 +1678,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
     @overload
     def get_steps(self, step_type: str) -> list[ProcessorStep]: ...
 
-    def get_steps(self, step_type: type[ProcessorStep] | str) -> list[ProcessorStep]:
+    def get_steps(self, step_type: type[TStep] | str) -> list[TStep] | list[ProcessorStep]:
         """Returns every step matching ``step_type``, in pipeline order.
 
         Args:

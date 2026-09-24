@@ -147,6 +147,12 @@ class _AnchorPipeline:
         self._step = step
         self._is_preprocessor = is_preprocessor
 
+    def get_steps(self, step_type):
+        return [s for s in self.steps if isinstance(s, step_type)]
+
+    def get_step(self, step_type):
+        return next(iter(self.get_steps(step_type)), None)
+
     def __call__(self, data):
         from lerobot.lerobot_types import TransitionKey
 
