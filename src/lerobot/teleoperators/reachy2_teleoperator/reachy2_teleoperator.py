@@ -149,6 +149,8 @@ class Reachy2Teleoperator(Teleoperator):
     @check_if_not_connected
     def get_action(self) -> dict[str, float]:
         start = time.perf_counter()
+        if self.reachy is None:
+            raise DeviceNotConnectedError(f"{self} is not connected. Run `.connect()` first.")
 
         joint_action: dict[str, float] = {}
         vel_action: dict[str, float] = {}
@@ -173,5 +175,5 @@ class Reachy2Teleoperator(Teleoperator):
         raise NotImplementedError
 
     def disconnect(self) -> None:
-        if self.is_connected:
+        if self.reachy is not None and self.reachy.is_connected():
             self.reachy.disconnect()

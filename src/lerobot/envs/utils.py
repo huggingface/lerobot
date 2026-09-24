@@ -369,10 +369,10 @@ def _(env: gym.Env) -> None:
 def _load_module_from_path(path: str, module_name: str | None = None):
     module_name = module_name or f"hub_env_{os.path.basename(path).replace('.', '_')}"
     spec = importlib.util.spec_from_file_location(module_name, path)
-    if spec is None:
+    if spec is None or spec.loader is None:
         raise ImportError(f"Could not load module spec for {module_name} from {path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)  # type: ignore
+    spec.loader.exec_module(module)
     return module
 
 

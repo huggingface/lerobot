@@ -228,14 +228,14 @@ class FlowmatchingActionHead(nn.Module):
             )
 
         if horizon > 1:
-            self.action_encoder = MultiEmbodimentActionEncoder(
+            self.action_encoder: MultiEmbodimentActionEncoder | None = MultiEmbodimentActionEncoder(
                 action_dim=self.per_action_dim,
                 embed_dim=embed_dim,
                 hidden_dim=embed_dim,
                 horizon=horizon,
                 num_categories=num_categories,
             )
-            self.single_action_proj = None
+            self.single_action_proj: nn.Linear | None = None
         else:
             self.action_encoder = None
             self.single_action_proj = nn.Linear(self.per_action_dim, self.embed_dim)
