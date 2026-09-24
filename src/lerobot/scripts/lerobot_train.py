@@ -62,6 +62,8 @@ from lerobot.configs import JobConfig, parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
 from lerobot.datasets.factory import make_train_eval_datasets
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.multi_dataset import MultiLeRobotDataset
 from lerobot.distributed import (
     ParallelDims,
     finalize_sharded_policy,
@@ -74,6 +76,7 @@ from lerobot.jobs import submit_to_hf
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.policies.factory import ProcessorConfigKwargs
+from lerobot.processor import ImageAugmentationProcessorStep
 from lerobot.processor.rename_processor import rename_batch_keys, rename_stats
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
@@ -130,6 +133,40 @@ def _make_eval_envs(cfg: TrainPipelineConfig) -> Iterator[dict[str, dict[int, An
         yield envs
     finally:
         close_envs(envs)
+
+
+def _make_image_augmentation(
+    cfg: TrainPipelineConfig,
+    dataset: LeRobotDataset | MultiLeRobotDataset,
+    device: torch.device,
+    process_index: int,
+) -> ImageAugmentationProcessorStep | None:
+    """Build the step that augments training batches on the device, or `None` on the dataloader backend.
+
+    Applied to training batches only, before the policy preprocessor; held-out evaluation batches never
+    pass through it and the policy's own preprocessor is not modified. The step is called on the batch
+    dict directly (`step.observation(batch)`) rather than through a `PolicyProcessorPipeline`: the
+    pipeline's batch-to-transition conversion keeps `observation.*` keys and a fixed list of others only,
+    which would drop un-prefixed camera keys (such as `image`) and custom columns before `rename_map`
+    gets to see them.
+    """
+    image_transforms = cfg.dataset.image_transforms
+    if not (image_transforms.enable and image_transforms.backend == "gpu"):
+        return None
+    if dataset.image_transforms is not None:
+        raise ValueError(
+            "image_transforms.backend='gpu' augments on the device, but the dataset already carries "
+            "image_transforms that run in the DataLoader workers. Use one or the other."
+        )
+    image_keys = [key for key in dataset.meta.camera_keys if key not in dataset.meta.depth_keys]
+    return ImageAugmentationProcessorStep(
+        config=image_transforms,
+        image_keys=image_keys,
+        device=str(device),
+        chunk_size=image_transforms.gpu_chunk_size,
+        compile_model=image_transforms.gpu_compile,
+        seed=None if cfg.seed is None else cfg.seed + process_index,
+    )
 
 
 def _preprocess_dataset_batch(
@@ -608,6 +645,10 @@ def train(cfg: TrainPipelineConfig):
             **processor_kwargs,
         )
 
+    image_augmentation = _make_image_augmentation(cfg, dataset, device, accelerator.process_index)
+    if image_augmentation is not None and is_main_process():
+        logging.info(f"Image transforms run on {device} for {image_augmentation.image_keys}")
+
     # Created BEFORE prepare on the unsharded parameters — accelerate's FSDP2 path requires the
     # model and optimizer in one prepare() call and rebinds the param groups itself.
     if is_main_process():
@@ -796,6 +837,8 @@ def train(cfg: TrainPipelineConfig):
         batch = next(dl_iter)
         preprocessing_start = time.perf_counter()
         train_tracker.dataloading_s = preprocessing_start - step_start
+        if image_augmentation is not None:
+            batch = image_augmentation.observation(batch)
         batch = _preprocess_dataset_batch(batch, dataset.meta.camera_keys, cfg.rename_map, preprocessor)
         train_tracker.preprocessing_s = time.perf_counter() - preprocessing_start
 

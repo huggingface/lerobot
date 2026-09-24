@@ -37,14 +37,15 @@ from torchvision.transforms import ToPILImage
 
 from lerobot.configs import DatasetConfig
 from lerobot.datasets import LeRobotDataset
-from lerobot.transforms import (
-    ImageTransforms,
-    ImageTransformsConfig,
-    make_transform_from_config,
-)
+from lerobot.transforms import ImageTransformConfig, ImageTransforms, ImageTransformsConfig
 
 OUTPUT_DIR = Path("outputs/image_transforms")
 to_pil = ToPILImage()
+
+
+def _single_transform(tf_cfg: ImageTransformConfig) -> ImageTransforms:
+    """The per-sample transform for one configured type, always applied."""
+    return ImageTransforms(ImageTransformsConfig(enable=True, max_num_transforms=1, tfs={"single": tf_cfg}))
 
 
 def save_all_transforms(cfg: ImageTransformsConfig, original_frame, output_dir, n_examples):
@@ -73,7 +74,7 @@ def save_each_transform(cfg: ImageTransformsConfig, original_frame, output_dir, 
         output_dir_single = output_dir / tf_name
         output_dir_single.mkdir(parents=True, exist_ok=True)
 
-        tf = make_transform_from_config(tf_cfg)
+        tf = _single_transform(tf_cfg)
         for i in range(1, n_examples + 1):
             transformed_frame = tf(original_frame)
             to_pil(transformed_frame).save(output_dir_single / f"{i}.png", quality=100)
@@ -89,9 +90,9 @@ def save_each_transform(cfg: ImageTransformsConfig, original_frame, output_dir, 
             tf_cfg_kwgs_max[key] = [max_, max_]
             tf_cfg_kwgs_avg[key] = [avg, avg]
 
-        tf_min = make_transform_from_config(replace(tf_cfg, **{"kwargs": tf_cfg_kwgs_min}))
-        tf_max = make_transform_from_config(replace(tf_cfg, **{"kwargs": tf_cfg_kwgs_max}))
-        tf_avg = make_transform_from_config(replace(tf_cfg, **{"kwargs": tf_cfg_kwgs_avg}))
+        tf_min = _single_transform(replace(tf_cfg, **{"kwargs": tf_cfg_kwgs_min}))
+        tf_max = _single_transform(replace(tf_cfg, **{"kwargs": tf_cfg_kwgs_max}))
+        tf_avg = _single_transform(replace(tf_cfg, **{"kwargs": tf_cfg_kwgs_avg}))
 
         tf_frame_min = tf_min(original_frame)
         tf_frame_max = tf_max(original_frame)
