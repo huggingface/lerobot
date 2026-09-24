@@ -259,6 +259,26 @@ identity before confirmation. Exported labels retain the chosen model proposal a
 its source hash separately from the human review. Rendering suggestions does not
 change existing browser drafts or the image pack.
 
+To help identify the physical arms, add the other two camera views from each
+annotation's exact recorded frame:
+
+```bash
+uv run examples/rebot_agent/gripper_labels.py context \
+  --dataset-root /path/to/pinned_dataset --pack outputs/gripper_review/pack.json \
+  --output outputs/gripper_review/camera_context.json
+uv run examples/rebot_agent/gripper_labels.py review \
+  --pack outputs/gripper_review/pack.json --context outputs/gripper_review/camera_context.json \
+  --suggestions /path/to/model_suggestions.json \
+  --output outputs/gripper_review/review_with_suggestions.html
+```
+
+Context images appear below the annotation canvas. Draw boxes and label visibility
+only for the large image; visibility in another camera does not establish visibility
+in the target image. The source revision, frame indices, timestamps, image hashes,
+and camera identities are checked. The original pack and browser storage key remain
+unchanged, so existing drafts and labels remain usable. Newly confirmed reviews
+retain the context manifest hash and view records. Context never confirms a label.
+
 The default pack contains 80 detector-training and 20 detector-validation images,
 separated by whole episode; all are outside VLA holdout episodes 90–99. All three
 camera streams must be downloaded for the selected episodes. The exporter requires

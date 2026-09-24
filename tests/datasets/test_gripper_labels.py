@@ -3,6 +3,7 @@
 import json
 import runpy
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
@@ -190,3 +191,122 @@ def test_confirmed_fixture_retains_model_proposal_provenance(label_pack, tmp_pat
     run_export(label_pack, tmp_path)
     reviewed = json.loads((tmp_path / "export/reviewed_labels.json").read_text())
     assert reviewed["images"][0]["arms"]["left"]["model_proposal"] == proposal
+
+
+@pytest.fixture
+def camera_context(label_pack, tmp_path):
+    module, pack_path, _ = label_pack
+    pack = json.loads(pack_path.read_text())
+    for i, image in enumerate(pack["images"]):
+        image.update(frame_index=10 + i, timestamp=(10 + i) / 30, camera=module["CAMERAS"][i])
+    pack_path.write_text(json.dumps(pack))
+    context = {"version": 1, "pack_sha256": module["digest"](pack_path), "images": []}
+    for image in pack["images"]:
+        row = {k: image[k] for k in ("id", "episode_index", "frame_index", "timestamp")}
+        row.update(image_sha256=image["sha256"], views=[])
+        for camera in set(module["CAMERAS"]) - {image["camera"]}:
+            path = tmp_path / f"context_{image['id']}_{camera}.jpg"
+            Image.new("RGB", (16, 12), "green").save(path)
+            row["views"].append(
+                {
+                    "camera": camera,
+                    "file_name": path.name,
+                    "sha256": module["digest"](path),
+                    "width": 16,
+                    "height": 12,
+                }
+            )
+        context["images"].append(row)
+    path = tmp_path / "context.json"
+    path.write_text(json.dumps(context))
+    return path, context
+
+
+def test_camera_context_preserves_pack_and_label_storage_identity(label_pack, camera_context, tmp_path):
+    module, pack_path, labels = label_pack
+    original_pack, original_labels = pack_path.read_bytes(), json.dumps(labels)
+    path, context = camera_context
+    output = tmp_path / "context_review.html"
+    module["render_review"](pack_path, output, context_path=path)
+    assert pack_path.read_bytes() == original_pack and json.dumps(labels) == original_labels
+    html = output.read_text()
+    assert "/* CAMERA_CONTEXT */ null" not in html
+    assert context["images"][0]["views"][0]["file_name"] in html
+    assert module["digest"](path) in html
+    assert 'key = "rebot-grippers-" + payload.pack_sha256' in html
+    assert not (tmp_path / "reviewed_labels.json").exists()
+
+
+@pytest.mark.parametrize(
+    "case", ["timestamp", "frame", "camera", "bytes", "dimensions", "pack", "missing", "duplicate", "outside"]
+)
+def test_invalid_camera_context_rejected_before_render(label_pack, camera_context, tmp_path, case):
+    module, pack_path, _ = label_pack
+    path, context = camera_context
+    row = context["images"][0]
+    view = row["views"][0]
+    if case == "timestamp":
+        row["timestamp"] += 1 / 30
+    elif case == "frame":
+        row["frame_index"] += 1
+    elif case == "camera":
+        view["camera"] = json.loads(pack_path.read_text())["images"][0]["camera"]
+    elif case == "bytes":
+        Image.new("RGB", (16, 12), "red").save(tmp_path / view["file_name"])
+    elif case == "dimensions":
+        view["width"] += 1
+    elif case == "pack":
+        context["pack_sha256"] = "stale"
+    elif case == "missing":
+        context["images"].pop()
+    elif case == "duplicate":
+        context["images"].append(row)
+    else:
+        view["file_name"] = "../outside.jpg"
+    path.write_text(json.dumps(context))
+    output = tmp_path / "context_review.html"
+    with pytest.raises(ValueError):
+        module["render_review"](pack_path, output, context_path=path)
+    assert not output.exists()
+
+
+def test_context_extraction_requests_exact_timestamp_in_other_views(
+    label_pack, camera_context, tmp_path, monkeypatch
+):
+    module, pack_path, _ = label_pack
+    pack = json.loads(pack_path.read_text())
+    (tmp_path / "source.json").write_text(json.dumps(pack["source"]))
+    records = [
+        SimpleNamespace(
+            episode_index=im["episode_index"],
+            frame_indices=(im["frame_index"],),
+            frame_timestamps=(im["timestamp"],),
+        )
+        for im in pack["images"]
+    ]
+    calls = []
+
+    class Provider:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def frames_at(self, record, timestamps, camera):
+            calls.append((record.episode_index, timestamps, camera))
+            return [Image.new("RGB", (16, 12), "blue")]
+
+    globals_ = module["prepare_context"].__globals__
+    monkeypatch.setitem(globals_, "iter_episodes", lambda *a, **kw: iter(records))
+    monkeypatch.setitem(globals_, "VideoFrameProvider", Provider)
+    before = pack_path.read_bytes()
+    output = tmp_path / "extracted_context.json"
+    module["prepare_context"](tmp_path, pack_path, output)
+    assert pack_path.read_bytes() == before
+    assert calls == [
+        (im["episode_index"], [im["timestamp"]], camera)
+        for im in pack["images"]
+        for camera in module["CAMERAS"]
+        if camera != im["camera"]
+    ]
+    assert len(module["read_context"](pack_path, output)["images"]) == 3
+    with pytest.raises(ValueError, match="fresh context"):
+        module["prepare_context"](tmp_path, pack_path, output)

@@ -19,6 +19,8 @@
     .arm.right { border-color: #ba3b65; } select { width: 100%; }
     .muted { color: #58696f; font-size: 14px; } #notice { min-height: 24px; color: #913b16; }
     label { display: block; margin: 8px 0; } input[type=checkbox] { margin-right: 8px; }
+    .context-views { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .context-views figure { margin: 0; } .context-views img { display: block; width: 100%; border-radius: 6px; }
     @media (max-width: 820px) { .workspace { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -32,7 +34,7 @@
     <button id="export">Export labels</button><span id="progress"></span>
   </div>
   <div class="workspace">
-    <section class="card"><p id="caption"></p><canvas id="canvas" width="640" height="480" aria-label="Gripper image. Select an arm, then drag to draw its box."></canvas><p id="source" class="muted"></p></section>
+    <section class="card"><p id="caption"></p><canvas id="canvas" width="640" height="480" aria-label="Gripper image. Select an arm, then drag to draw its box."></canvas><p id="source" class="muted"></p><section id="camera-context" hidden><p>Other cameras at the same recorded frame</p><p class="muted">Use these views to check arm identity. Draw boxes only on the large image above; visibility labels describe that image alone.</p><div id="context-views" class="context-views"></div></section></section>
     <section class="card">
       <strong>Draw a box for</strong>
       <div class="bar"><button id="left">Left arm</button><button id="right">Right arm</button></div>
@@ -49,10 +51,12 @@
   <script>
     const payload = /* PACK_DATA */ null;
     const suggestionPayload = /* MODEL_SUGGESTIONS */ null;
+    const contextPayload = /* CAMERA_CONTEXT */ null;
     const $ = id => document.getElementById(id);
     if (!payload) throw new Error("Generate this review pack with gripper_labels.py prepare.");
     const pack = payload.pack, arms = ["left", "right"], key = "rebot-grippers-" + payload.pack_sha256;
     const suggestionsById = new Map((suggestionPayload?.images || []).map(row => [row.id, row]));
+    const contextById = new Map((contextPayload?.images || []).map(row => [row.id, row]));
     let labels = { version: 1, pack_sha256: payload.pack_sha256, images: pack.images.map(im => ({ id: im.id, arms: Object.fromEntries(arms.map(arm => [arm, { visibility: "unlabeled", bbox_xyxy: null }])), review: { kind: "human", reviewer: "", confirmed: false, arm_identity_verified: false } })) };
     let index = 0, active = "left", start = null, preview = null, imageReady = false;
     const image = new Image(), canvas = $("canvas"), ctx = canvas.getContext("2d");
@@ -106,6 +110,13 @@
       const im = pack.images[index]; start = preview = null; imageReady = false; canvas.width = im.width; canvas.height = im.height;
       $("caption").textContent = `Image ${index + 1} of ${pack.images.length} · ${im.camera.replace("observation.images.", "")}`;
       $("source").textContent = `Episode ${im.episode_index} · frame ${im.frame_index} · ${im.timestamp.toFixed(3)} s · detector ${im.split}`;
+      const context = contextById.get(im.id), views = $("context-views"); views.replaceChildren(); $("camera-context").hidden = !context;
+      (context?.views || []).forEach(view => {
+        const figure = document.createElement("figure"), img = document.createElement("img"), caption = document.createElement("figcaption");
+        img.src = view.file_name; img.alt = `${view.camera.replace("observation.images.", "")} · episode ${im.episode_index}, frame ${im.frame_index}`;
+        img.onerror = () => { caption.textContent += " — image failed to load"; };
+        caption.className = "muted"; caption.textContent = img.alt; figure.append(img, caption); views.append(figure);
+      });
       $("identity").checked = row().review.arm_identity_verified; if (row().review.reviewer) $("reviewer").value = row().review.reviewer;
       image.onload = () => { imageReady = true; draw(); }; image.onerror = () => { $("notice").textContent = "Image failed to load. Keep the images directory beside review.html."; };
       image.src = im.file_name; controls(); draw();
@@ -120,7 +131,10 @@
     $("confirm").onclick = () => {
       const reviewer = $("reviewer").value.trim(), visible = arms.some(arm => row().arms[arm].visibility === "visible");
       if (!reviewer || arms.some(arm => row().arms[arm].visibility === "unlabeled" || (row().arms[arm].visibility === "visible" && !row().arms[arm].bbox_xyxy)) || (visible && !$("identity").checked)) { $("notice").textContent = "Enter a reviewer, label both arms, and verify identity for visible grippers."; return; }
-      row().review = { kind: "human", reviewer, confirmed: true, arm_identity_verified: $("identity").checked, reviewed_at: new Date().toISOString() }; persist(); controls(); $("notice").textContent = "Image confirmed. Export labels to save a transferable copy.";
+      row().review = { kind: "human", reviewer, confirmed: true, arm_identity_verified: $("identity").checked, reviewed_at: new Date().toISOString() };
+      const context = contextById.get(pack.images[index].id);
+      if (context) row().review.camera_context = { source_sha256: contextPayload.source_sha256, ...context };
+      persist(); controls(); $("notice").textContent = "Image confirmed. Export labels to save a transferable copy.";
     };
     $("previous").onclick = () => { if (index > 0) { index--; load(); } };
     $("next").onclick = () => { if (index + 1 < pack.images.length) { index++; load(); } };

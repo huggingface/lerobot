@@ -8,12 +8,14 @@ import json
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 from lerobot.annotations.steerable_pipeline.frames import VideoFrameProvider, _frame_to_pil
 from lerobot.annotations.steerable_pipeline.reader import iter_episodes
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 
 ARMS = ("left", "right")
+CAMERAS = tuple(f"observation.images.{name}" for name in ("base", "left_wrist", "right_wrist"))
 
 
 def digest(path: Path) -> str:
@@ -21,7 +23,99 @@ def digest(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def render_review(pack_path: Path, output: Path, suggestions_path: Path | None = None):
+def read_context(pack_path: Path, context_path: Path) -> dict:
+    """Validate companion views without changing the pack or human-label identity."""
+    pack = json.loads(pack_path.read_text())
+    context = json.loads(context_path.read_text())
+    if context.get("version") != 1 or context.get("pack_sha256") != digest(pack_path):
+        raise ValueError("Context does not match this image pack")
+    rows = {row["id"]: row for row in context["images"]}
+    if len(rows) != len(context["images"]) or set(rows) != {im["id"] for im in pack["images"]}:
+        raise ValueError("Context must contain every pack image exactly once")
+    for image in pack["images"]:
+        row = rows[image["id"]]
+        if any(row[k] != image[k] for k in ("episode_index", "frame_index", "timestamp")):
+            raise ValueError("Context must come from the same recorded frame")
+        if row.get("image_sha256") != image["sha256"]:
+            raise ValueError("Context target image changed")
+        if digest(pack_path.parent / image["file_name"]) != image["sha256"]:
+            raise ValueError("A source image changed after pack creation")
+        views = row["views"]
+        if len(views) != 2 or {v["camera"] for v in views} != set(CAMERAS) - {image["camera"]}:
+            raise ValueError("Context requires the other two camera views")
+        for view in views:
+            name = Path(view["file_name"])
+            path = (pack_path.parent / name).resolve()
+            if name.is_absolute() or not path.is_relative_to(pack_path.parent.resolve()):
+                raise ValueError("Context images must be stored inside the review pack")
+            if digest(path) != view["sha256"]:
+                raise ValueError("Context image bytes changed")
+            with Image.open(path) as frame:
+                if frame.size != (view["width"], view["height"]):
+                    raise ValueError("Context image dimensions changed")
+    return {**context, "source_sha256": digest(context_path)}
+
+
+def prepare_context(root: Path, pack_path: Path, output: Path) -> dict:
+    """Add synchronized camera context while preserving the original annotation pack."""
+    pack_path, output = pack_path.resolve(), output.resolve()
+    if output.parent != pack_path.parent:
+        raise ValueError("Write context beside the image pack")
+    pack = json.loads(pack_path.read_text())
+    source = json.loads((root / "source.json").read_text())
+    if any(source[k] != pack["source"][k] for k in ("repo_id", "revision")):
+        raise ValueError("Context requires the same pinned source dataset")
+    episodes = tuple(sorted({im["episode_index"] for im in pack["images"]}))
+    found = list(iter_episodes(root, only_episodes=episodes))
+    records = {r.episode_index: r for r in found}
+    if len(found) != len(episodes) or set(records) != set(episodes):
+        raise ValueError("Context source episodes are missing or duplicated")
+    for image in pack["images"]:
+        record = records[image["episode_index"]]
+        indices = np.flatnonzero(np.asarray(record.frame_indices) == image["frame_index"])
+        if len(indices) != 1 or float(record.frame_timestamps[indices[0]]) != image["timestamp"]:
+            raise ValueError("Context source frame/timestamp does not match the pack")
+        if image["camera"] not in CAMERAS or digest(pack_path.parent / image["file_name"]) != image["sha256"]:
+            raise ValueError("Invalid or changed annotation image")
+    directory = output.with_suffix("")
+    if output.exists() or directory.exists():
+        raise ValueError("Use a fresh context output path")
+    provider = VideoFrameProvider(root, video_backend="pyav", cache_size=8)
+    directory.mkdir()
+    context = {"version": 1, "pack_sha256": digest(pack_path), "images": []}
+    for image in pack["images"]:
+        row = {k: image[k] for k in ("id", "episode_index", "frame_index", "timestamp")}
+        row.update(image_sha256=image["sha256"], views=[])
+        for camera in CAMERAS:
+            if camera == image["camera"]:
+                continue
+            frames = provider.frames_at(records[image["episode_index"]], [image["timestamp"]], camera)
+            if len(frames) != 1:
+                raise ValueError("Missing synchronized context frame")
+            frame = _frame_to_pil(frames[0]).convert("RGB")
+            path = directory / f"{image['id']:04d}_{camera.rsplit('.', 1)[-1]}.jpg"
+            frame.save(path, quality=95)
+            row["views"].append(
+                {
+                    "camera": camera,
+                    "file_name": path.relative_to(pack_path.parent).as_posix(),
+                    "sha256": digest(path),
+                    "width": frame.width,
+                    "height": frame.height,
+                }
+            )
+        context["images"].append(row)
+    output.write_text(json.dumps(context, indent=2) + "\n")
+    read_context(pack_path, output)
+    return context
+
+
+def render_review(
+    pack_path: Path,
+    output: Path,
+    suggestions_path: Path | None = None,
+    context_path: Path | None = None,
+):
     """Show unassigned model boxes without modifying any human labels or confirmations."""
     if output.resolve().suffix != ".html" or output.resolve().parent != pack_path.resolve().parent:
         raise ValueError("Write the review HTML beside its image pack")
@@ -66,11 +160,13 @@ def render_review(pack_path: Path, output: Path, suggestions_path: Path | None =
         suggestions = {**suggestions, "source_sha256": digest(suggestions_path)}
     payload = json.dumps({"pack_sha256": digest(pack_path), "pack": pack}).replace("<", "\\u003c")
     suggestion_payload = json.dumps(suggestions).replace("<", "\\u003c")
+    context = read_context(pack_path, context_path) if context_path is not None else None
+    context_payload = json.dumps(context).replace("<", "\\u003c")
     template = Path(__file__).with_name("gripper_review.html").read_text()
     output.write_text(
-        template.replace("/* PACK_DATA */ null", payload).replace(
-            "/* MODEL_SUGGESTIONS */ null", suggestion_payload
-        )
+        template.replace("/* PACK_DATA */ null", payload)
+        .replace("/* MODEL_SUGGESTIONS */ null", suggestion_payload)
+        .replace("/* CAMERA_CONTEXT */ null", context_payload)
     )
 
 
@@ -254,17 +350,25 @@ def main():
     review = commands.add_parser("review")
     review.add_argument("--pack", type=Path, required=True)
     review.add_argument("--suggestions", type=Path)
+    review.add_argument("--context", type=Path)
     review.add_argument(
         "--output", type=Path, required=True, help="HTML beside the pack, so image paths resolve"
     )
+    context = commands.add_parser("context", help="Add the other camera views at each annotation frame")
+    context.add_argument("--dataset-root", type=Path, required=True)
+    context.add_argument("--pack", type=Path, required=True)
+    context.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "prepare":
         result = prepare(args.dataset_root, args.output, args.episodes, args.per_episode)
         print(f"Prepared {len(result['images'])} images. Open {args.output / 'review.html'}.")
     elif args.command == "export":
         print(json.dumps(export_coco(args.pack, args.labels, args.output), indent=2))
+    elif args.command == "context":
+        result = prepare_context(args.dataset_root, args.pack, args.output)
+        print(f"Prepared synchronized camera context for {len(result['images'])} annotation images.")
     else:
-        render_review(args.pack, args.output, args.suggestions)
+        render_review(args.pack, args.output, args.suggestions, args.context)
 
 
 if __name__ == "__main__":
