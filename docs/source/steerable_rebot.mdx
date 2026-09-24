@@ -554,7 +554,12 @@ action production, and cadence is configured in execution seconds rather than th
 paper's 20 environment steps. This timing difference needs physical measurement.
 
 After multi-style training, enable `task`, `subtask`, `motion`, `point`, and `combination`
-as validated. Coordinate commands additionally require an explicit list of cameras
+as validated. Motion steering also requires `--planner.motion_commands` containing
+the atomic commands learned by that checkpoint. For a gripper-only motion vocabulary,
+list the supported left/right open/close commands explicitly; do not enable Cartesian
+direction instructions merely because the `motion` style has training coverage.
+Motion proposals outside this list are rejected before becoming issued commands.
+Coordinate commands additionally require an explicit list of cameras
 whose geometry the checkpoint has learned, for example
 `--planner.grounding_camera_keys='["base"]'`. Keep `planner.camera_keys` set to all
 useful observation views: the planner can inspect wrist images while being restricted

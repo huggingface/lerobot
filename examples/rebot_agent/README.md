@@ -187,6 +187,11 @@ trained and validated on those styles. For coordinate commands, also set
 `--planner.grounding_camera_keys='["base"]'` (or the other views actually trained
 and validated for coordinates). The planner still observes every `camera_keys` view.
 Source/destination target pairs are supported without enabling gripper paths.
+When enabling `motion`, provide `--planner.motion_commands` with the atomic commands
+present in that checkpoint's training manifest. For the matched gripper-only experiment:
+`--planner.motion_commands='["open the left gripper","close the left gripper","open the right gripper","close the right gripper"]'`.
+The planner receives this vocabulary and rejects motion-style proposals outside it.
+Enabling gripper commands does not establish support for Cartesian direction commands.
 Following the paper's final planner, leave
 `trace` disabled by default; use it only in controlled, validated experiments.
 `/subtask <text>` switches to human language

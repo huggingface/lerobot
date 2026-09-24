@@ -32,6 +32,8 @@ class PlannerConfig:
     grounding_camera_keys: list[str] = field(default_factory=list)
     # Enable additional styles only after training and validating their annotations.
     styles: list[str] = field(default_factory=lambda: ["task", "subtask"])
+    # Atomic motion wording supported by the deployed checkpoint, taken from its training manifest.
+    motion_commands: list[str] = field(default_factory=list)
     history_turns: int = 4
     timeout_s: float = 30.0
     log_path: str | None = None
@@ -52,6 +54,13 @@ class PlannerConfig:
             raise ValueError("Grounding cameras must be included in planner observation cameras")
         if set(self.styles) & {"point", "trace"} and not self.grounding_camera_keys:
             raise ValueError("Point/trace steering requires explicit trained grounding_camera_keys")
+        if "motion" in self.styles and not self.motion_commands:
+            raise ValueError("Motion steering requires explicit trained motion_commands")
+        if any(
+            not isinstance(command, str) or not command.strip() or command != command.strip()
+            for command in self.motion_commands
+        ) or len(set(self.motion_commands)) != len(self.motion_commands):
+            raise ValueError("motion_commands must contain distinct nonempty trimmed strings")
 
     def require_api_key(self) -> str:
         """Resolve the current credential without caching it or contacting the endpoint."""
@@ -204,6 +213,13 @@ class VisionLanguagePlanner:
                 }
             },
         }
+        payload["instructions"] += (
+            " The checkpoint's supported atomic motion commands are: "
+            + json.dumps(self.config.motion_commands)
+            + ". For motion style, copy exactly one of these commands. Do not invent other atomic "
+            "movements, including inside subtasks or combinations. An empty list means no atomic motion "
+            "commands are supported. Semantic object manipulation goals and allowed visual targets remain available."
+        )
         key = self.config.require_api_key()
         response = requests.post(
             self.config.api_base.rstrip("/") + "/responses",
@@ -228,6 +244,8 @@ class VisionLanguagePlanner:
         self._log("planner_proposal", {**decision, **audit, "response_id": result.get("id")})
         if decision.get("status") != "continue":
             raise ValueError(f"Planner stopped: {decision.get('status')}: {decision.get('assessment')}")
+        if decision["style"] == "motion" and decision["command"] not in self.config.motion_commands:
+            raise ValueError("Planner selected a motion command outside the checkpoint's trained vocabulary")
         render = {
             "text": decision["command"],
             "style": decision["style"],

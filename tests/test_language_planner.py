@@ -275,6 +275,49 @@ def test_grounding_camera_configuration_requires_explicit_observed_views():
         PlannerConfig(camera_keys=["base"], grounding_camera_keys=["left_wrist"])
 
 
+def test_motion_style_requires_the_checkpoint_command_vocabulary():
+    with pytest.raises(ValueError, match="explicit trained motion_commands"):
+        PlannerConfig(styles=["motion"])
+    for commands in [[""], [" open the left gripper"], ["close", "close"], [None]]:
+        with pytest.raises(ValueError, match="distinct nonempty trimmed"):
+            PlannerConfig(styles=["motion"], motion_commands=commands)
+
+
+def test_planner_rejects_untrained_motion_without_issuing_it(monkeypatch):
+    calls = []
+    config = PlannerConfig(camera_keys=["base"], styles=["motion"], motion_commands=["open the left gripper"])
+    planner = VisionLanguagePlanner(config)
+    decision = {
+        "command": "move the left gripper upward",
+        "style": "motion",
+        "camera": None,
+        "points": [],
+        "point_mode": None,
+        "assessment": "gripper visible",
+        "status": "continue",
+    }
+
+    def post(url, **kwargs):
+        calls.append(kwargs["json"])
+        return Mock(
+            json=lambda: {
+                "status": "completed",
+                "output": [{"content": [{"type": "output_text", "text": json.dumps(decision)}]}],
+            }
+        )
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-only")
+    monkeypatch.setattr("lerobot.rollout.planner.requests.post", post)
+    observation = {"base": np.zeros((48, 64, 3), dtype=np.uint8)}
+    with pytest.raises(ValueError, match="trained vocabulary"):
+        planner(observation, "goal", 1)
+    assert planner._history == []
+    assert '"open the left gripper"' in calls[0]["instructions"]
+    decision["command"] = "open the left gripper"
+    assert planner(observation, "goal", 1) == "open the left gripper"
+    assert len(planner._history) == 2
+
+
 def test_planner_observes_all_views_but_limits_coordinate_commands(monkeypatch):
     config = PlannerConfig(
         camera_keys=["base", "left_wrist"], grounding_camera_keys=["base"], styles=["point", "combination"]
