@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import errno
 import json
+import os
 import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -281,6 +282,68 @@ def test_sidecar_replacement_preserves_live_arrays(tmp_path: Path) -> None:
     new = EpisodeVideoManifest.load_file_sidecar(path)
     np.testing.assert_array_equal(next(iter(old.values())).mp4.sample_pts, [0.0])
     np.testing.assert_array_equal(next(iter(new.values())).mp4.sample_pts, [42.0])
+
+
+@pytest.mark.parametrize("warm", [False, True])
+def test_sidecar_generation_uses_open_file_not_stale_path_attributes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, warm: bool
+) -> None:
+    path = tmp_path / "index.npz"
+    _write_valid(path, _spec())
+    stale_stat = path.stat()
+    old = EpisodeVideoManifest.load_file_sidecar(path) if warm else None
+    replacement = _record()
+    replacement.mp4.sample_pts[0] = 42.0
+    EpisodeVideoManifest.save_file_sidecar(path, [replacement], spec=_spec())
+    original_stat = Path.stat
+
+    def stale_path_stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:
+        # Model a shared filesystem's stale pathname attributes, not stale file data.
+        return stale_stat if self == path else original_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stale_path_stat)
+    new = EpisodeVideoManifest.load_file_sidecar(path)
+    np.testing.assert_array_equal(next(iter(new.values())).mp4.sample_pts, [42.0])
+    if old is not None:
+        np.testing.assert_array_equal(next(iter(old.values())).mp4.sample_pts, [0.0])
+
+
+def test_sidecar_payload_does_not_reuse_stale_path_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "index.npz"
+    _write_valid(path, _spec("old"))
+    stale_stat = path.stat()
+    _mapped_index.mapped_sidecar(path)
+    _write_valid(path, _spec("new"))
+    original_stat = Path.stat
+
+    def stale_path_stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:
+        return stale_stat if self == path else original_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stale_path_stat)
+    assert _mapped_index.sidecar_payload(path)["sidecar"]["revision"] == "new"
+
+
+def test_source_change_during_conversion_is_not_published(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "index.npz"
+    _write_valid(path, _spec())
+    validate = _mapped_index._validate_arrays
+
+    def change_after_array_read(arrays: dict[str, np.ndarray]) -> None:
+        validate(arrays)
+        # Mutate the real, still-open source after its arrays have been read.
+        with path.open("ab") as changed:
+            changed.write(b"concurrent mutation")
+
+    monkeypatch.setattr(_mapped_index, "_validate_arrays", change_after_array_read)
+    with pytest.raises(OSError, match="changed during index conversion"):
+        _mapped_index.mapped_sidecar(path)
+    cache = tmp_path / "cache-home" / "streaming-indexes"
+    assert not list(cache.glob("*.bin"))
+    assert not list(cache.glob("*.index.tmp"))
 
 
 def test_sidecar_load_projects_source_files(tmp_path: Path) -> None:

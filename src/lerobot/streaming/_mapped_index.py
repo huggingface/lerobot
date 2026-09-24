@@ -42,7 +42,9 @@ def _signature(stat: os.stat_result) -> tuple[int, ...]:
 
 def _cache_path(path: Path, signature: tuple[int, ...] | None = None) -> Path:
     """Choose a generation-specific path for the derived read-only index."""
-    signature = _signature(path.stat()) if signature is None else signature
+    if signature is None:
+        with path.open("rb") as source:
+            signature = _signature(os.fstat(source.fileno()))
     digest = hashlib.sha256(repr(signature).encode()).hexdigest()[:24]
     cache_root = Path(os.environ.get("HF_LEROBOT_HOME", str(Path(HF_HOME) / "lerobot"))).expanduser()
     return cache_root / "streaming-indexes" / f"mp4-{digest}.bin"
@@ -124,58 +126,61 @@ def mapped_sidecar(path: Path) -> tuple[Path, dict[str, Any]]:
     Only index metadata is cached, never video payloads. Each source generation gets
     a different file: replacing a sidecar cannot invalidate live array views.
     """
-    signature = _signature(path.stat())
-    destination = _cache_path(path, signature)
+    # Shared filesystems can retain stale pathname attributes until the file is
+    # opened. Identify and read the same descriptor, including across the lock wait.
+    with path.open("rb") as source:
+        signature = _signature(os.fstat(source.fileno()))
+        destination = _cache_path(path, signature)
 
-    def cached() -> dict[str, Any] | None:
-        """Return valid cached metadata or signal that conversion is needed."""
-        try:
-            return _read_metadata(destination)
-        except (OSError, ValueError, KeyError, TypeError):
-            return None
+        def cached() -> dict[str, Any] | None:
+            """Return valid cached metadata or signal that conversion is needed."""
+            try:
+                return _read_metadata(destination)
+            except (OSError, ValueError, KeyError, TypeError):
+                return None
 
-    payload = cached()
-    if payload is not None:
-        return destination, payload
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with FileLock(str(destination) + ".lock", timeout=30 * 60):
         payload = cached()
         if payload is not None:
             return destination, payload
-        temporary: Path | None = None
-        try:
-            with path.open("rb") as source, np.load(source, allow_pickle=False) as data:
-                if _signature(os.fstat(source.fileno())) != signature:
-                    raise OSError("MP4 sidecar changed before index conversion")
-                payload = json.loads(bytes(data["manifest_json"]).decode("utf-8"))
-                if payload.get("version") != 3 or not isinstance(payload.get("sidecar"), dict):
-                    raise ValueError(f"Unsupported MP4 sidecar schema in {path}")
-                with tempfile.NamedTemporaryFile(
-                    dir=destination.parent, suffix=".index.tmp", delete=False
-                ) as out:
-                    temporary = Path(out.name)
-                    for file_index, item in enumerate(payload["files"]):
-                        arrays = {name: data[f"{file_index}/{name}"] for name in ARRAY_NAMES}
-                        _validate_arrays(arrays)
-                        Mp4Index.from_dict(item["mp4"], arrays)
-                        item["arrays"] = {}
-                        for name, array in arrays.items():
-                            out.write(b"\0" * (-out.tell() % 8))
-                            item["arrays"][name] = [out.tell(), array.size, array.dtype.str]
-                            out.write(array.tobytes())
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with FileLock(str(destination) + ".lock", timeout=30 * 60):
+            payload = cached()
+            if payload is not None:
+                return destination, payload
+            temporary: Path | None = None
+            try:
+                with np.load(source, allow_pickle=False) as data:
                     if _signature(os.fstat(source.fileno())) != signature:
-                        raise OSError("MP4 sidecar changed during index conversion")
-                    metadata = json.dumps(payload, separators=(",", ":")).encode()
-                    out.write(metadata)
-                    out.write(len(metadata).to_bytes(8, "little"))
-                    out.write(_MAGIC)
-                    out.flush()
-                    os.fsync(out.fileno())
-            os.replace(temporary, destination)
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
-    return destination, payload
+                        raise OSError("MP4 sidecar changed before index conversion")
+                    payload = json.loads(bytes(data["manifest_json"]).decode("utf-8"))
+                    if payload.get("version") != 3 or not isinstance(payload.get("sidecar"), dict):
+                        raise ValueError(f"Unsupported MP4 sidecar schema in {path}")
+                    with tempfile.NamedTemporaryFile(
+                        dir=destination.parent, suffix=".index.tmp", delete=False
+                    ) as out:
+                        temporary = Path(out.name)
+                        for file_index, item in enumerate(payload["files"]):
+                            arrays = {name: data[f"{file_index}/{name}"] for name in ARRAY_NAMES}
+                            _validate_arrays(arrays)
+                            Mp4Index.from_dict(item["mp4"], arrays)
+                            item["arrays"] = {}
+                            for name, array in arrays.items():
+                                out.write(b"\0" * (-out.tell() % 8))
+                                item["arrays"][name] = [out.tell(), array.size, array.dtype.str]
+                                out.write(array.tobytes())
+                        if _signature(os.fstat(source.fileno())) != signature:
+                            raise OSError("MP4 sidecar changed during index conversion")
+                        metadata = json.dumps(payload, separators=(",", ":")).encode()
+                        out.write(metadata)
+                        out.write(len(metadata).to_bytes(8, "little"))
+                        out.write(_MAGIC)
+                        out.flush()
+                        os.fsync(out.fileno())
+                os.replace(temporary, destination)
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+        return destination, payload
 
 
 def mapped_arrays(buffer: np.memmap[Any, Any], item: dict[str, Any]) -> dict[str, NDArray[np.generic]]:
