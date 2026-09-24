@@ -399,3 +399,24 @@ the compiler neither interpolates points nor silently shortens their action hori
 Subtask, point, and combined command candidates still require a separate visual
 command review. This does not supply calibrated motion commands or gripper traces,
 and it does not satisfy the full-mixture training requirements by itself.
+
+# Comparing semantic and multi-style training on matched data
+
+Use `python -m examples.rebot_agent.prepare_matched_training --manifest REVIEWED.json
+--output NEW_DIRECTORY --development-episodes EPISODE ...` from the repository root
+to prepare two configurations without launching training. Choose development episodes
+inside 0–89 before examining their predictions. The tool removes final held-out episodes
+90–99 and intervals that lack a reviewed semantic command, then gives both models the
+same remaining intervals, action-boundary masks, frame sampler seed and 20% task branch.
+The semantic control repeats reviewed instructions to preserve the alternative counts
+and random-number consumption of the steering manifest. Do not enable style weights
+for this comparison.
+
+Both configurations use `native_points_v1` and a schedule of approximately two passes
+over the shared training frames. Quarter-pass checkpoints include approximately
+0.25, 0.5, 1 and 2 passes; additional periodic checkpoints are also saved. The native
+trainer holds out the final episodes in each task group, so verify the source has one
+task group and that its dataset factory reproduces the planned development split.
+Verify the actual dataloaders match, then run forward/backward/save/reload smoke tests
+before launching the two jobs. This is a diagnostic comparison: missing trace or other
+annotation coverage still needs to be completed for the full steering experiment.
