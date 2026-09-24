@@ -182,16 +182,14 @@ def create_camera_instance(cam_meta: dict[str, Any], *, warmup_s: int = 1) -> di
             logger.warning(f"Unknown camera type: {cam_type} for ID {cam_id}. Skipping.")
             return None
 
-        if instance:
-            logger.info(f"Connecting to {cam_type} camera: {cam_id}...")
-            instance.connect(warmup=True)
-            return {"instance": instance, "meta": cam_meta}
+        logger.info(f"Connecting to {cam_type} camera: {cam_id}...")
+        instance.connect(warmup=True)
+        return {"instance": instance, "meta": cam_meta}
     except Exception as e:
         logger.error(f"Failed to connect or configure {cam_type} camera {cam_id}: {e}")
         if instance and instance.is_connected:
             instance.disconnect()
         return None
-    return None
 
 
 def process_camera_image(cam_dict: dict[str, Any], output_dir: Path, current_time: float) -> None:

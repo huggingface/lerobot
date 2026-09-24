@@ -563,7 +563,14 @@ extra_checks = true
 strict_bytes = true
 strict_equality = true
 local_partial_types = true
-enable_error_code = ["deprecated", "exhaustive-match", "redundant-self", "truthy-iterable", "unused-awaitable"]
+enable_error_code = [
+    "deprecated",
+    "exhaustive-match",
+    "redundant-self",
+    "truthy-bool",
+    "truthy-iterable",
+    "unused-awaitable",
+]
 
 # One ruleset for all checked code. Excluded: lerobot.rl (not typed yet) and the vendored
 # molmoact2_hf_model (kept verbatim so upstream syncs stay clean).
