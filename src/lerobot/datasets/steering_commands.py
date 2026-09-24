@@ -271,8 +271,14 @@ class SteeringCommandDataset(RecipeTaskDataset):
     def __getitem__(self, idx):
         if isinstance(idx, slice):
             return [self[i] for i in range(*idx.indices(len(self)))]
+        return self._apply_steering(super().__getitem__(idx))
+
+    def __getitems__(self, indices: list[int]) -> list[dict]:
+        return [self._apply_steering(sample) for sample in super().__getitems__(indices)]
+
+    def _apply_steering(self, sample: dict) -> dict:
         return self.steering.sample(
-            super().__getitem__(idx),
+            sample,
             self.task_probability,
             deterministic=self.deterministic,
             action_offsets=self.steering_action_offsets,

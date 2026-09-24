@@ -2,11 +2,14 @@
 # Licensed under the Apache License, Version 2.0.
 from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+import torch
 
 from lerobot.configs.default import DatasetConfig
-from lerobot.datasets.language_task import task_from_recipe
+from lerobot.datasets.language_task import RecipeTaskDataset, task_from_recipe
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.recipe import TrainingRecipe
 
 
@@ -70,3 +73,21 @@ def test_missing_subtask_cannot_silently_train_generic_task(recipe):
 def test_recipe_streaming_is_explicitly_unsupported(recipe):
     with pytest.raises(ValueError, match="non-streaming"):
         DatasetConfig(repo_id="test/data", task_recipe=recipe, streaming=True)
+
+
+def test_dataloader_batch_applies_recipe_and_preserves_actions(monkeypatch):
+    rows = [sample(timestamp=1), sample(index=1, timestamp=10)]
+    reader = SimpleNamespace(
+        get_items=lambda indices: [rows[i] for i in indices],
+        get_item=lambda index: rows[index],
+    )
+    monkeypatch.setattr(LeRobotDataset, "_ensure_reader", lambda self: reader)
+    dataset = object.__new__(RecipeTaskDataset)
+    dataset.task_recipe = TrainingRecipe.from_dict(
+        {"messages": [{"role": "user", "content": "${subtask}", "stream": "low_level"}]}
+    )
+    loader = torch.utils.data.DataLoader(dataset, sampler=[0, 1], batch_size=2, collate_fn=list)
+    batch = next(iter(loader))
+    assert [row["task"] for row in batch] == ["pick the tape", "pick the remote"]
+    assert all(row["action"] is original["action"] for row, original in zip(batch, rows, strict=True))
+    assert [row["task"] for row in rows] == ["put everything in the bin"] * 2

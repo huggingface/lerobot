@@ -51,3 +51,8 @@ class RecipeTaskDataset(LeRobotDataset):
         if isinstance(idx, slice):
             return [self[i] for i in range(*idx.indices(len(self)))]
         return task_from_recipe(super().__getitem__(idx), self.task_recipe)
+
+    def __getitems__(self, indices: list[int]) -> list[dict]:
+        # DataLoader uses this batch path instead of __getitem__. Keep the reader's
+        # batched decoding, but apply the same instruction recipe to every sample.
+        return [task_from_recipe(sample, self.task_recipe) for sample in super().__getitems__(indices)]

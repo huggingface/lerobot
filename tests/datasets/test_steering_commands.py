@@ -10,6 +10,8 @@ import numpy as np
 import pytest
 import torch
 
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.recipe import TrainingRecipe
 from lerobot.datasets.steering_commands import SteeringCommandDataset, SteeringCommands
 
 
@@ -472,3 +474,41 @@ def test_required_styles_use_selected_split_and_profile_includes_task_mixture(mo
     assert profile["expected_style_fraction"]["point"] == 0
     assert profile["required_styles"] == ["motion", "subtask"]
     assert len(profile["manifest_sha256"]) == 64
+
+
+@pytest.mark.parametrize("task_probability", [0, 1])
+def test_dataloader_batch_applies_steering_and_command_boundary_mask(monkeypatch, task_probability):
+    rows = [
+        {
+            "index": i,
+            "episode_index": 3,
+            "frame_index": frame,
+            "timestamp": frame / 30,
+            "task": "original task",
+            "action": torch.ones(4, 2),
+            "action_is_pad": torch.zeros(4, dtype=torch.bool),
+        }
+        for i, frame in enumerate([1, 4])
+    ]
+    reader = SimpleNamespace(
+        get_items=lambda indices: [rows[i] for i in indices], get_item=lambda index: rows[index]
+    )
+    monkeypatch.setattr(LeRobotDataset, "_ensure_reader", lambda self: reader)
+    dataset = object.__new__(SteeringCommandDataset)
+    dataset.task_recipe = TrainingRecipe.from_dict(
+        {"messages": [{"role": "user", "content": "corrected overall task", "stream": "low_level"}]}
+    )
+    data = manifest()
+    data["segments"][0]["commands"] = data["segments"][0]["commands"][:1]
+    dataset.steering = SteeringCommands(data)
+    dataset.task_probability = task_probability
+    dataset.deterministic = True
+    dataset.steering_action_offsets = [0, 1, 2, 3]
+    loader = torch.utils.data.DataLoader(dataset, sampler=[0, 1], batch_size=2, collate_fn=list)
+    batch = next(iter(loader))
+    expected = "corrected overall task" if task_probability else "reach for the tape"
+    assert [row["task"] for row in batch] == [expected, expected]
+    assert not batch[0]["action_is_pad"].any()
+    assert batch[1]["action_is_pad"].tolist() == [False] + [not task_probability] * 3
+    assert all(row["action"] is original["action"] for row, original in zip(batch, rows, strict=True))
+    assert not rows[1]["action_is_pad"].any()
