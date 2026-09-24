@@ -17,9 +17,10 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, BinaryIO, NotRequired, TypedDict
 
 from lerobot.streaming.manifest import EpisodeVideoManifest
 from lerobot.streaming.mp4 import Mp4SampleSlice, synthesize_mp4
@@ -27,8 +28,28 @@ from lerobot.streaming.range_fetch import make_range_fetcher
 
 if TYPE_CHECKING:
     import torch
+    from torchcodec.decoders import VideoDecoder
 
 logger = logging.getLogger(__name__)
+
+
+class _VideoPayload(TypedDict):
+    """Synthesized video bytes with optional build timings consumed on insertion."""
+
+    bytes: bytes
+    _timings: NotRequired[dict[str, float]]
+
+
+@dataclass
+class _DecoderEntry:
+    """Keep serialization attached to the decoder, including after LRU eviction."""
+
+    decoder: VideoDecoder | _PyAVVideoDecoder
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def close(self) -> None:
+        """Close the underlying decoder while preserving its backend's lease rules."""
+        _close_decoder(self.decoder)
 
 
 class EpisodeByteCache:
@@ -51,7 +72,7 @@ class EpisodeByteCache:
         video_backend: str = "torchcodec",
         tolerance_s: float = 1e-4,
         token: str | bool | None = None,
-    ):
+    ) -> None:
         """Configure byte fetching, synthesis, decoder limits, and backend selection."""
         if byte_budget <= 0:
             raise ValueError("byte_budget must be positive")
@@ -80,15 +101,13 @@ class EpisodeByteCache:
         self.video_backend = video_backend
         self.tolerance_s = tolerance_s
         self._pool = ThreadPoolExecutor(max_workers=workers)
-        self._cache: OrderedDict[tuple[int, str], dict[str, Any]] = OrderedDict()
-        self._decoders: OrderedDict[tuple[int, str], Any] = OrderedDict()
-        self._decoder_locks: dict[tuple[int, str], threading.Lock] = {}
+        self._cache: OrderedDict[tuple[int, str], _VideoPayload] = OrderedDict()
+        self._decoders: OrderedDict[tuple[int, str], _DecoderEntry] = OrderedDict()
         self._futures: dict[tuple[int, str], Future[None]] = {}
         self._reservations: OrderedDict[int, int] = OrderedDict()
         self._reserved_bytes = 0
         self._retained_episodes: dict[int, int] = {}
         self._decoder_fallback_count = 0
-        self._fallback_decoders: set[tuple[int, str]] = set()
         self._fallback_warning_emitted = False
         self._bytes = 0
         self._lock = threading.RLock()
@@ -112,10 +131,8 @@ class EpisodeByteCache:
             decoders = list(self._decoders.values())
             self._cache.clear()
             self._decoders.clear()
-            self._decoder_locks.clear()
             self._futures.clear()
             self._retained_episodes.clear()
-            self._fallback_decoders.clear()
             self._bytes = 0
             self._reservations.clear()
             self._reserved_bytes = 0
@@ -127,7 +144,7 @@ class EpisodeByteCache:
         """Return this cache as a context manager."""
         return self
 
-    def __exit__(self, *_exc) -> None:
+    def __exit__(self, *_exc: object) -> None:
         """Close the cache when leaving its context."""
         self.close()
 
@@ -221,15 +238,20 @@ class EpisodeByteCache:
         """Return the synthesized MP4 bytes for one episode camera."""
         return self._get_entry(episode_index, camera_key)["bytes"]
 
-    def get_decoder(self, episode_index: int, camera_key: str) -> Any:
-        """Return or open the bounded cached decoder for one episode camera."""
+    def get_decoder(self, episode_index: int, camera_key: str) -> VideoDecoder | _PyAVVideoDecoder:
+        """Return or open the cached decoder for one episode camera.
+
+        The returned handle is borrowed and may be evicted later. Use get_frames for
+        lease-protected, serialized decoding rather than retaining this handle across requests.
+        """
         self.retain_episode(episode_index)
         try:
-            return self._get_decoder(episode_index, camera_key)
+            return self._get_decoder_entry(episode_index, camera_key).decoder
         finally:
             self.release_episode(episode_index)
 
-    def _get_decoder(self, episode_index: int, camera_key: str) -> Any:
+    def _get_decoder_entry(self, episode_index: int, camera_key: str) -> _DecoderEntry:
+        """Reuse or open a decoder, resolving concurrent opens before LRU eviction."""
         key = (episode_index, camera_key)
         entry = self._get_entry(episode_index, camera_key)
         with self._lock:
@@ -238,7 +260,7 @@ class EpisodeByteCache:
                 self._decoders.move_to_end(key)
                 return decoder
 
-        decoder = self._open_decoder(key, entry["bytes"])
+        decoder = _DecoderEntry(self._open_decoder(key, entry["bytes"]))
         with self._lock:
             existing = self._decoders.get(key)
             if existing is not None:
@@ -247,13 +269,12 @@ class EpisodeByteCache:
                 return existing
             self._decoders[key] = decoder
             while len(self._decoders) > self.max_open_decoders:
-                evicted_key, evicted_decoder = self._decoders.popitem(last=False)
-                self._decoder_locks.pop(evicted_key, None)
-                self._fallback_decoders.discard(evicted_key)
+                _, evicted_decoder = self._decoders.popitem(last=False)
                 _close_decoder(evicted_decoder)
         return decoder
 
-    def _open_decoder(self, key: tuple[int, str], data: bytes) -> Any:
+    def _open_decoder(self, key: tuple[int, str], data: bytes) -> VideoDecoder | _PyAVVideoDecoder:
+        """Open an episode decoder, falling back to PyAV if TorchCodec rejects the bytes."""
         try:
             if self.video_backend == "torchcodec":
                 return open_video_decoder(io.BytesIO(data))
@@ -270,7 +291,6 @@ class EpisodeByteCache:
                 ) from fallback_error
             with self._lock:
                 self._decoder_fallback_count += 1
-                self._fallback_decoders.add(key)
                 should_warn = not self._fallback_warning_emitted
                 self._fallback_warning_emitted = True
             if should_warn:
@@ -284,7 +304,22 @@ class EpisodeByteCache:
             return decoder
 
     def get_frames(self, episode_index: int, camera_key: str, timestamps: list[float]) -> torch.Tensor:
-        """Decode source-timeline timestamps from an episode-local MP4."""
+        """Decode source-timeline timestamps from an episode-local MP4.
+
+        Args:
+            episode_index (`int`):
+                Episode identifier present in the manifest.
+            camera_key (`str`):
+                Video feature key identifying the camera.
+            timestamps (`list[float]`):
+                Nonempty request in source-video seconds, including the episode's video offset.
+
+        Returns:
+            `torch.Tensor`: Uint8 RGB frames in request order with shape (frames, channels, height, width).
+
+        Note:
+            The episode's bytes remain retained for the request, and access to its decoder is serialized.
+        """
         self.retain_episode(episode_index)
         try:
             return self._get_frames(episode_index, camera_key, timestamps)
@@ -292,16 +327,14 @@ class EpisodeByteCache:
             self.release_episode(episode_index)
 
     def _get_frames(self, episode_index: int, camera_key: str, timestamps: list[float]) -> torch.Tensor:
-        key = (episode_index, camera_key)
+        """Translate source timestamps and serialize access to the leased decoder."""
         span = self.manifest.lookup(episode_index, camera_key)
         local_ts = [ts - span.source_start_pts for ts in timestamps]
-        decoder, release = self._decoder_for_frames(episode_index, camera_key)
-        with self._lock:
-            uses_pyav_timestamps = self.video_backend == "pyav" and key not in self._fallback_decoders
-            decode_lock = self._decoder_locks.setdefault(key, threading.Lock())
+        entry, release = self._decoder_for_frames(episode_index, camera_key)
+        decoder = entry.decoder
         try:
-            with decode_lock:
-                if uses_pyav_timestamps:
+            with entry.lock:
+                if self.video_backend == "pyav":
                     return decoder.get_frames_played_at(local_ts, tolerance_s=self.tolerance_s).data
                 metadata = decoder.metadata
                 fps = getattr(metadata, "average_fps", None)
@@ -321,25 +354,25 @@ class EpisodeByteCache:
 
     def _decoder_for_frames(
         self, episode_index: int, camera_key: str
-    ) -> tuple[Any, Callable[[], None] | None]:
+    ) -> tuple[_DecoderEntry, Callable[[], None] | None]:
+        """Lease a decoder and retry if eviction wins the race with acquisition."""
         key = (episode_index, camera_key)
         while True:
-            decoder = self.get_decoder(episode_index, camera_key)
+            entry = self._get_decoder_entry(episode_index, camera_key)
+            decoder = entry.decoder
             acquire = getattr(decoder, "acquire", None)
             if acquire is None:
-                return decoder, None
+                return entry, None
             try:
                 acquire()
             except RuntimeError:
                 # The decoder was evicted between lookup and lease acquisition. Remove a stale
                 # cached reference if it raced with close, then retry with a fresh decoder.
                 with self._lock:
-                    if self._decoders.get(key) is decoder:
+                    if self._decoders.get(key) is entry:
                         self._decoders.pop(key)
-                        self._decoder_locks.pop(key, None)
-                        self._fallback_decoders.discard(key)
                 continue
-            return decoder, decoder.release
+            return entry, decoder.release
 
     def timing_summary(self) -> dict[str, float]:
         """Return accumulated cache and range-fetch timings."""
@@ -352,6 +385,7 @@ class EpisodeByteCache:
         return summary
 
     def _submit_locked(self, episode_index: int, camera_key: str) -> Future[None]:
+        """Schedule one camera fetch at most once while the cache lock is held."""
         key = (episode_index, camera_key)
         future = self._futures.get(key)
         if future is None:
@@ -361,10 +395,12 @@ class EpisodeByteCache:
         return future
 
     def _notify_fetch_done(self, _future: Future[None]) -> None:
+        """Wake admissions blocked on a pending episode fetch."""
         with self._space_available:
             self._space_available.notify_all()
 
     def _reserve_locked(self, episode_index: int) -> bool:
+        """Reserve an episode's indexed bytes, evicting only unleased completed work."""
         if self._closed:
             raise RuntimeError("Episode byte cache is closed")
         if episode_index in self._reservations:
@@ -392,7 +428,8 @@ class EpisodeByteCache:
         self._reserved_bytes += size
         return True
 
-    def _get_entry(self, episode_index: int, camera_key: str) -> dict[str, Any]:
+    def _get_entry(self, episode_index: int, camera_key: str) -> _VideoPayload:
+        """Wait for one camera payload while retaining its episode reservation."""
         self.retain_episode(episode_index)
         try:
             key = (episode_index, camera_key)
@@ -408,6 +445,7 @@ class EpisodeByteCache:
 
     def _fetch_and_store(self, episode_index: int, camera_key: str) -> None:
         # Futures carry no payload: the accounted cache is the sole owner of completed bytes.
+        """Store a synthesized payload under its reservation and accumulate timings."""
         entry = self._fetch_and_synthesize(episode_index, camera_key)
         store_start = time.perf_counter()
         with self._lock:
@@ -428,6 +466,7 @@ class EpisodeByteCache:
                 self._timing_totals["jobs"] += 1
 
     def _evict_episode_locked(self, episode_index: int) -> None:
+        """Remove an unleased episode's bytes, futures and decoders under the cache lock."""
         self._reserved_bytes -= self._reservations.pop(episode_index)
         for camera_key in self.manifest.video_keys:
             key = (episode_index, camera_key)
@@ -436,12 +475,11 @@ class EpisodeByteCache:
                 self._bytes -= len(entry["bytes"])
             self._futures.pop(key, None)
             decoder = self._decoders.pop(key, None)
-            self._decoder_locks.pop(key, None)
-            self._fallback_decoders.discard(key)
             if decoder is not None:
                 _close_decoder(decoder)
 
-    def _fetch_and_synthesize(self, episode_index: int, camera_key: str) -> dict[str, Any]:
+    def _fetch_and_synthesize(self, episode_index: int, camera_key: str) -> _VideoPayload:
+        """Fetch a camera span and wrap it in a standalone MP4 with timing metadata."""
         lookup_start = time.perf_counter()
         span = self.manifest.lookup(episode_index, camera_key)
         file_record = self.manifest.file_lookup(span.file_id)
@@ -463,7 +501,7 @@ class EpisodeByteCache:
         synthesize_start = time.perf_counter()
         mp4_bytes = synthesize_mp4(file_record.mp4, sample_slice, payload)
         synthesize_s = time.perf_counter() - synthesize_start
-        entry: dict[str, Any] = {
+        entry: _VideoPayload = {
             "bytes": mp4_bytes,
             "_timings": {
                 "lookup_s": lookup_s,
@@ -477,7 +515,8 @@ class EpisodeByteCache:
 class _PyAVVideoDecoder:
     """Small seekable PyAV adapter matching the TorchCodec calls used by the byte cache."""
 
-    def __init__(self, file_like_or_bytesio: Any):
+    def __init__(self, file_like_or_bytesio: BinaryIO) -> None:
+        """Open a seekable in-memory video and initialize decoder lifetime accounting."""
         import av
 
         self._source = file_like_or_bytesio
@@ -505,12 +544,14 @@ class _PyAVVideoDecoder:
         self._closed = False
 
     def acquire(self) -> None:
+        """Retain the decoder for an active request, rejecting a closing decoder."""
         with self._state_lock:
             if self._close_requested or self._closed:
                 raise RuntimeError("PyAV decoder is closing")
             self._users += 1
 
     def release(self) -> None:
+        """Release a request lease and finish any deferred close after the last user."""
         with self._state_lock:
             self._users -= 1
             if self._users < 0:
@@ -519,6 +560,7 @@ class _PyAVVideoDecoder:
                 self._close_resources()
 
     def get_frames_at(self, *, indices: list[int]) -> SimpleNamespace:
+        """Decode zero-based frame indices in request order as uint8 RGB tensors."""
         if not indices:
             import torch
 
@@ -532,6 +574,7 @@ class _PyAVVideoDecoder:
         *,
         tolerance_s: float,
     ) -> SimpleNamespace:
+        """Decode local timestamps in seconds within the requested tolerance."""
         return self._get_frames_played_at(timestamps, tolerance_s=tolerance_s)
 
     def _get_frames_played_at(
@@ -540,6 +583,7 @@ class _PyAVVideoDecoder:
         *,
         tolerance_s: float,
     ) -> SimpleNamespace:
+        """Seek once and decode through the requested window under the decode lock."""
         import torch
 
         first_ts = min(timestamps)
@@ -577,12 +621,14 @@ class _PyAVVideoDecoder:
         return SimpleNamespace(data=torch.stack([loaded_frames[index] for index in closest]))
 
     def close(self) -> None:
+        """Request closure, deferring resource release until active leases finish."""
         with self._state_lock:
             self._close_requested = True
             if self._users == 0:
                 self._close_resources()
 
     def _close_resources(self) -> None:
+        """Close the container and its source once, under the state lock."""
         if self._closed:
             return
         self._container.close()
@@ -592,7 +638,8 @@ class _PyAVVideoDecoder:
         self._closed = True
 
 
-def _close_decoder(decoder: Any) -> None:
+def _close_decoder(decoder: object) -> None:
+    """Close a backend handle when supported without masking another failure."""
     close = getattr(decoder, "close", None)
     if close is not None:
         try:
@@ -601,10 +648,10 @@ def _close_decoder(decoder: Any) -> None:
             logger.debug("Failed to close video decoder", exc_info=True)
 
 
-def open_video_decoder(file_like_or_bytesio, frame_mappings=None, *, backend: str = "torchcodec"):
+def open_video_decoder(
+    file_like_or_bytesio: BinaryIO, *, backend: str = "torchcodec"
+) -> VideoDecoder | _PyAVVideoDecoder:
     """Open a TorchCodec or PyAV decoder over synthesized MP4 bytes."""
-    if frame_mappings is not None:
-        raise ValueError("Synthesized episode videos use a local timeline; pass frame_mappings=None.")
     if backend == "pyav":
         return _PyAVVideoDecoder(file_like_or_bytesio)
     if backend != "torchcodec":

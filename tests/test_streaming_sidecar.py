@@ -15,6 +15,7 @@ import json
 import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -84,6 +85,28 @@ def test_sidecar_cache_path_is_revision_keyed(tmp_path: Path) -> None:
 
     assert first != second
     assert first.parent == second.parent
+
+
+def test_source_generation_round_trip_and_replacement(tmp_path: Path) -> None:
+    original = _spec()
+    video = original.source_files[0][0]
+    first = replace(original, source_fingerprints=((video, "hash-one"),))
+    second = replace(original, source_fingerprints=((video, "hash-two"),))
+    built = []
+
+    def build(path: Path, spec: SidecarSpec) -> None:
+        built.append(spec)
+        _write_valid(path, spec)
+
+    first_path = ensure_mp4_sidecar(first, tmp_path, build=build)
+    assert ensure_mp4_sidecar(first, tmp_path, build=build) == first_path
+    second_path = ensure_mp4_sidecar(second, tmp_path, build=build)
+    assert built == [first, second]
+    assert first_path != second_path
+    assert SidecarSpec.from_dict(second.to_dict()) == second
+    assert not EpisodeVideoManifest.validate_file_sidecar(first_path, second)
+    assert EpisodeVideoManifest.validate_file_sidecar(second_path, second)
+    assert EpisodeVideoManifest.validate_file_sidecar(first_path, first)
 
 
 def test_ensure_reuses_valid_local_sidecar(tmp_path: Path) -> None:

@@ -78,7 +78,12 @@ from lerobot.processor.rename_processor import rename_batch_keys, rename_stats
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR
-from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
+from lerobot.utils.import_utils import (
+    _accelerate_available,
+    _peft_available,
+    register_third_party_plugins,
+    require_package,
+)
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
@@ -93,6 +98,9 @@ if TYPE_CHECKING or _peft_available:
     from peft import PeftModel
 else:
     PeftModel = None
+
+if TYPE_CHECKING or _accelerate_available:
+    from accelerate.utils import send_to_device
 
 from .lerobot_eval import eval_policy_all
 
@@ -775,8 +783,6 @@ def train(cfg: TrainPipelineConfig):
         step_start = time.perf_counter()
         batch = next(dl_iter)
         if cfg.dataset.streaming:
-            from accelerate.utils import send_to_device  # noqa: PLC0415
-
             batch = send_to_device(batch, device, non_blocking=device.type == "cuda")
         preprocessing_start = time.perf_counter()
         train_tracker.dataloading_s = preprocessing_start - step_start

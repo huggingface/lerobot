@@ -18,7 +18,8 @@ from lerobot.configs.default import DatasetConfig
 from lerobot.datasets import factory
 
 
-def test_factory_wires_production_streaming_settings(monkeypatch):
+@pytest.mark.parametrize("repo_type", ["dataset", "bucket"])
+def test_factory_wires_production_streaming_settings(monkeypatch: pytest.MonkeyPatch, repo_type: str) -> None:
     captured = {}
 
     class DummyStreamingDataset:
@@ -27,18 +28,19 @@ def test_factory_wires_production_streaming_settings(monkeypatch):
             captured["kwargs"] = kwargs
             self.meta = SimpleNamespace(camera_keys=[], depth_keys=[], stats={})
 
-    monkeypatch.setattr(
-        factory,
-        "load_dataset_metadata",
-        lambda *args, **kwargs: SimpleNamespace(storage_format="lerobot", total_episodes=1),
-    )
+    def load_metadata(repo_id: str, **kwargs: object) -> SimpleNamespace:
+        captured["metadata_repo_id"] = repo_id
+        captured["metadata_kwargs"] = kwargs
+        return SimpleNamespace(storage_format="lerobot", total_episodes=1)
+
+    monkeypatch.setattr(factory, "load_dataset_metadata", load_metadata)
     monkeypatch.setattr(factory, "resolve_delta_timestamps", lambda *args, **kwargs: {"action": [0.0]})
     monkeypatch.setattr(factory, "StreamingLeRobotDataset", DummyStreamingDataset)
     dataset_config = DatasetConfig(
         repo_id="owner/dataset",
+        repo_type=repo_type,
         streaming=True,
         video_backend="pyav",
-        streaming_data_root="memory://payload",
         streaming_episode_pool_size=7,
         streaming_sampling_strategy="round_robin",
         streaming_prefetch_episodes=3,
@@ -61,7 +63,10 @@ def test_factory_wires_production_streaming_settings(monkeypatch):
 
     assert isinstance(dataset, DummyStreamingDataset)
     assert captured["args"] == ("owner/dataset",)
-    assert captured["kwargs"]["data_root"] == "memory://payload"
+    assert captured["kwargs"]["repo_type"] == repo_type
+    assert "data_root" not in captured["kwargs"]
+    assert captured["metadata_repo_id"] == "owner/dataset"
+    assert captured["metadata_kwargs"]["repo_type"] == repo_type
     assert captured["kwargs"]["episode_pool_size"] == 7
     assert captured["kwargs"]["sampling_strategy"] == "round_robin"
     assert captured["kwargs"]["prefetch_episodes"] == 3

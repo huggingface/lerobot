@@ -170,7 +170,6 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 return_uint8=True,
                 depth_output_unit=cfg.dataset.depth_output_unit,
                 video_backend=cfg.dataset.video_backend,
-                data_root=cfg.dataset.streaming_data_root,
                 episode_pool_size=cfg.dataset.streaming_episode_pool_size,
                 sampling_strategy=cfg.dataset.streaming_sampling_strategy,
                 prefetch_episodes=cfg.dataset.streaming_prefetch_episodes,

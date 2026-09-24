@@ -14,6 +14,7 @@ from collections.abc import Mapping, Sequence
 from typing import Literal
 
 import numpy as np
+from numpy.typing import NDArray
 
 
 class ExactCoveragePool:
@@ -56,8 +57,28 @@ class ExactCoveragePool:
         episode_byte_sizes: Mapping[int, int] | None = None,
         byte_budget: int | None = None,
         sampling_strategy: Literal["remaining", "round_robin"] = "remaining",
-    ):
-        """Build a seeded admission plan under optional compressed-byte limits."""
+    ) -> None:
+        """Build a seeded admission plan under optional compressed-byte limits.
+
+        Args:
+            episode_frame_counts (`Sequence[tuple[int, int]]`):
+                Episode identifiers and their anchor counts. Non-positive counts are omitted.
+            pool_size (`int`):
+                Maximum resident episodes, clamped to at least one.
+            seed (`int`):
+                Base seed for episode admission and per-episode anchor permutations.
+            epoch (`int`, *optional*, defaults to `0`):
+                Coverage epoch combined with the seed to choose the sample order.
+            episode_byte_sizes (`Mapping[int, int] | None`, *optional*):
+                Indexed compressed-video sizes; required when byte_budget is set.
+            byte_budget (`int | None`, *optional*):
+                Maximum summed bytes of resident episodes, or None for a slot-only bound.
+            sampling_strategy (`Literal["remaining", "round_robin"]`, *optional*, defaults to `"remaining"`):
+                Remaining-anchor weighting or one anchor per episode in each shuffled round.
+
+        Raises:
+            ValueError: If the strategy or byte limits are invalid, or an episode exceeds the budget.
+        """
         if sampling_strategy not in ("remaining", "round_robin"):
             raise ValueError("sampling_strategy must be 'remaining' or 'round_robin'")
         self.sampling_strategy = sampling_strategy
@@ -89,12 +110,8 @@ class ExactCoveragePool:
                     f"Episode {episode} requires {size} bytes, exceeding the byte budget {byte_budget}"
                 )
 
-        # Preserve the full seeded order for benchmark/tooling compatibility. Byte-aware admission
-        # may temporarily skip an entry, but every episode remains in this deterministic frontier.
-        self.admission_order: list[int] = order.tolist()
-        self._pending: list[int] = list(self.admission_order)
-        self._admitted_count = 0
-        self._remaining: dict[int, tuple[np.ndarray, int]] = {}
+        self._pending: list[int] = order.tolist()
+        self._remaining: dict[int, tuple[NDArray[np.int64], int]] = {}
         self._remaining_total = 0
         self._resident_bytes = 0
         self.newly_admitted: list[int] = []
@@ -102,6 +119,7 @@ class ExactCoveragePool:
         self._admit_available()
 
     def _admit_available(self) -> None:
+        """Admit pending episodes that fit both the slot and indexed-byte limits."""
         while len(self._remaining) < self.pool_size and self._pending:
             available_bytes = None if self._byte_budget is None else self._byte_budget - self._resident_bytes
             pending_index = next(
@@ -117,23 +135,17 @@ class ExactCoveragePool:
 
             episode = self._pending.pop(pending_index)
             frame_count = self._counts[episode]
-            frames = np.arange(frame_count, dtype=np.int64)
+            frames: NDArray[np.int64] = np.arange(frame_count, dtype=np.int64)
             self._rng.shuffle(frames)
             self._remaining[episode] = (frames, frame_count)
             self._remaining_total += frame_count
             self._resident_bytes += self._byte_sizes[episode]
-            self._admitted_count += 1
             self.newly_admitted.append(episode)
 
     @property
     def remaining_total(self) -> int:
-        """Return the number of frames not yet emitted."""
+        """Return the number of unsampled anchors in the currently resident episodes."""
         return self._remaining_total
-
-    @property
-    def admitted_count(self) -> int:
-        """Number of episodes pulled from the admission order so far (pool fills + rotations)."""
-        return self._admitted_count
 
     @property
     def resident(self) -> list[int]:

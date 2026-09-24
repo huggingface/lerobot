@@ -31,8 +31,9 @@ from lerobot.utils.constants import ACTION
 from lerobot.utils.feature_utils import dataset_to_policy_features
 
 
-def main():
+def main() -> None:
     # Create a directory to store the training checkpoint.
+    """Train a short ACT example using the episode-scoped streaming reader."""
     output_directory = Path("outputs/train/example_streaming_dataset")
     output_directory.mkdir(parents=True, exist_ok=True)
 

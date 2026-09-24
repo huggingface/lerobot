@@ -27,8 +27,10 @@ from lerobot.streaming.sidecar import SidecarSpec
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse the explicit sidecar build and optional publication arguments."""
     parser = argparse.ArgumentParser(description="Build a reusable MP4 byte-index sidecar for streaming.")
     parser.add_argument("--repo-id", required=True)
+    parser.add_argument("--repo-type", choices=("dataset", "bucket"), default="dataset")
     parser.add_argument("--revision", default=None)
     parser.add_argument("--data-root", required=True)
     parser.add_argument("--output", required=True)
@@ -41,6 +43,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def push_sidecar(local_path: str, spec: SidecarSpec) -> list[str]:
+    """Publish a sidecar to its HF data root when explicitly requested."""
     if not spec.data_root.startswith("hf://"):
         raise ValueError("--push currently supports only hf:// data roots")
 
@@ -51,9 +54,10 @@ def push_sidecar(local_path: str, spec: SidecarSpec) -> list[str]:
 
 
 def main() -> None:
+    """Build a local index and publish only a full-dataset sidecar when requested."""
     args = parse_args()
 
-    meta = LeRobotDatasetMetadata(args.repo_id, revision=args.revision)
+    meta = LeRobotDatasetMetadata(args.repo_id, revision=args.revision, repo_type=args.repo_type)
     meta.ensure_readable()
     total = (
         int(meta.total_episodes) if args.episodes is None else min(args.episodes, int(meta.total_episodes))
@@ -68,6 +72,7 @@ def main() -> None:
             revision=spec.revision,
             data_root=spec.data_root,
             source_files=tuple(item for item in spec.source_files if item[0] in selected_paths),
+            source_fingerprints=tuple(item for item in spec.source_fingerprints if item[0] in selected_paths),
         )
 
     start = time.perf_counter()

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from zipfile import BadZipFile
 
 import numpy as np
+from numpy.typing import NDArray
 
 from lerobot.streaming._mapped_index import (
     mapped_arrays,
@@ -73,8 +74,8 @@ class EpisodeVideoManifest:
         *,
         video_keys: list[str],
         files: list[VideoFileRecord],
-        spans: dict[str, np.ndarray],
-    ):
+        spans: dict[str, NDArray[np.generic]],
+    ) -> None:
         """Store video keys, indexed source files, and episode span arrays."""
         self.video_keys = list(video_keys)
         self._camera_to_id = {key: idx for idx, key in enumerate(self.video_keys)}
@@ -127,7 +128,7 @@ class EpisodeVideoManifest:
 
         total = int(meta.total_episodes)
         num_cameras = len(video_keys)
-        spans: dict[str, np.ndarray] = {
+        spans: dict[str, NDArray[np.generic]] = {
             "file_id": np.zeros((total, num_cameras), dtype=np.int32),
             "mdat_offset": np.zeros((total, num_cameras), dtype=np.int64),
             "mdat_length": np.zeros((total, num_cameras), dtype=np.int64),
@@ -177,6 +178,7 @@ class EpisodeVideoManifest:
         max_probe_bytes: int,
         token: str | bool | None,
     ) -> list[VideoFileRecord]:
+        """Index unique source files concurrently and return records sorted by path."""
         fetcher = make_range_fetcher(
             data_root,
             range_backend=range_backend,
@@ -185,6 +187,7 @@ class EpisodeVideoManifest:
         )
 
         def build_file(path: str) -> VideoFileRecord:
+            """Resolve a source size and parse its MP4 sample tables."""
             file_size = fetcher.info_size(path)
             mp4 = fetch_mp4_index(
                 path,
@@ -254,7 +257,7 @@ class EpisodeVideoManifest:
                 for record in records
             ],
         }
-        arrays = {}
+        arrays: dict[str, Any] = {}
         for file_idx, record in enumerate(records):
             arrays[f"{file_idx}/sample_pts"] = record.mp4.sample_pts
             arrays[f"{file_idx}/sample_durations"] = record.mp4.sample_durations

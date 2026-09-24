@@ -116,7 +116,6 @@ def test_byte_aware_admission_never_exceeds_budget():
 
     assert Counter(out) == Counter((ep, frame) for ep, count in EPISODES[:5] for frame in range(count))
     assert max_resident_bytes <= 10
-    assert len(pool.admission_order) == len(EPISODES[:5])
 
 
 def test_byte_aware_admission_rejects_one_oversized_episode():

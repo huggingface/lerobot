@@ -203,8 +203,7 @@ def test_decoder_falls_back_to_pyav_when_torchcodec_rejects_mini_mp4(monkeypatch
     class FakeDecoder:
         pass
 
-    def open_decoder(_data, frame_mappings=None, *, backend="torchcodec"):
-        assert frame_mappings is None
+    def open_decoder(_data, *, backend="torchcodec"):
         opened_backends.append(backend)
         if backend == "torchcodec":
             raise ValueError("No valid stream found")
@@ -235,7 +234,7 @@ def test_torchcodec_frame_indices_are_clamped_to_decoder_bounds(monkeypatch, tmp
             "lookup",
             lambda *_args: type("Span", (), {"source_start_pts": 0.0})(),
         )
-        monkeypatch.setattr(cache, "_decoder_for_frames", lambda *_args: (FakeDecoder(), None))
+        monkeypatch.setattr(cache, "_open_decoder", lambda *_args: FakeDecoder())
 
         cache.get_frames(0, "camera", [-0.1, 1.0])
 
@@ -269,7 +268,7 @@ def test_frame_reads_serialize_access_to_each_decoder(monkeypatch, tmp_path):
             lambda *_args: type("Span", (), {"source_start_pts": 0.0})(),
         )
         decoder = FakeDecoder()
-        monkeypatch.setattr(cache, "_decoder_for_frames", lambda *_args: (decoder, None))
+        monkeypatch.setattr(cache, "_open_decoder", lambda *_args: decoder)
 
         with ThreadPoolExecutor(max_workers=2) as executor:
             futures = [executor.submit(cache.get_frames, 0, "camera", [0.1]) for _ in range(2)]

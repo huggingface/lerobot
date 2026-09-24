@@ -20,6 +20,7 @@ from typing import Any
 import numpy as np
 from filelock import FileLock
 from huggingface_hub.constants import HF_HOME
+from numpy.typing import NDArray
 
 from lerobot.streaming.mp4 import Mp4Index
 
@@ -35,10 +36,12 @@ _MAGIC = b"LRIDX001"
 
 
 def _signature(stat: os.stat_result) -> tuple[int, ...]:
+    """Identify a local sidecar generation without reading its contents."""
     return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
 
 
 def _cache_path(path: Path, signature: tuple[int, ...] | None = None) -> Path:
+    """Choose a generation-specific path for the derived read-only index."""
     signature = _signature(path.stat()) if signature is None else signature
     digest = hashlib.sha256(repr(signature).encode()).hexdigest()[:24]
     cache_root = Path(os.environ.get("HF_LEROBOT_HOME", str(Path(HF_HOME) / "lerobot"))).expanduser()
@@ -46,6 +49,7 @@ def _cache_path(path: Path, signature: tuple[int, ...] | None = None) -> Path:
 
 
 def _read_metadata(path: Path) -> dict[str, Any]:
+    """Read the index footer and validate array bounds before mapping."""
     with path.open("rb") as source:
         size = os.fstat(source.fileno()).st_size
         source.seek(-16, os.SEEK_END)
@@ -105,7 +109,8 @@ def validate_source_arrays(path: Path, payload: dict[str, Any]) -> None:
             Mp4Index.from_dict(item["mp4"], arrays)
 
 
-def _validate_arrays(arrays: dict[str, np.ndarray]) -> None:
+def _validate_arrays(arrays: dict[str, NDArray[np.generic]]) -> None:
+    """Check numeric one-dimensional arrays and consistent sample counts."""
     for name, array in arrays.items():
         if array.ndim != 1 or array.dtype.kind not in "iuf":
             raise ValueError(f"Invalid MP4 sample array: {name}")
@@ -123,6 +128,7 @@ def mapped_sidecar(path: Path) -> tuple[Path, dict[str, Any]]:
     destination = _cache_path(path, signature)
 
     def cached() -> dict[str, Any] | None:
+        """Return valid cached metadata or signal that conversion is needed."""
         try:
             return _read_metadata(destination)
         except (OSError, ValueError, KeyError, TypeError):
@@ -172,7 +178,7 @@ def mapped_sidecar(path: Path) -> tuple[Path, dict[str, Any]]:
     return destination, payload
 
 
-def mapped_arrays(buffer: np.memmap, item: dict[str, Any]) -> dict[str, np.ndarray]:
+def mapped_arrays(buffer: np.memmap[Any, Any], item: dict[str, Any]) -> dict[str, NDArray[np.generic]]:
     """Return views whose base retains the single shared read-only mapping."""
     return {
         name: np.ndarray((count,), dtype=np.dtype(dtype), buffer=buffer, offset=offset)

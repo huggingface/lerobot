@@ -16,23 +16,25 @@ import os
 import posixpath
 import threading
 import time
+from collections import OrderedDict
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
-from types import MethodType
-from typing import Any
+from typing import BinaryIO
 from urllib.parse import quote, urljoin, urlparse
 from uuid import uuid4
 
 import fsspec
 import httpx
 from huggingface_hub import HfApi, HfFileSystem, constants
-from huggingface_hub.utils import get_session, hf_raise_for_status
+from huggingface_hub.utils import hf_raise_for_status
 
 _HTTP_FAILURE_LOG_LOCK = threading.Lock()
 
 
-def _get_header(headers: Any, name: str) -> str | None:
+def _get_header(headers: Mapping[str, str], name: str) -> str | None:
+    """Read a header from the mapping exposed by the HTTP backend."""
     if hasattr(headers, "get"):
         return headers.get(name)
     lower_name = name.lower()
@@ -43,6 +45,7 @@ def _get_header(headers: Any, name: str) -> str | None:
 
 
 def _ensure_request_id(headers: dict[str, str]) -> str:
+    """Reuse or add a request identifier for retry diagnostics."""
     request_id = _get_header(headers, "X-Amzn-Trace-Id") or _get_header(headers, "X-Request-Id")
     if request_id is None:
         request_id = str(uuid4())
@@ -60,8 +63,9 @@ def _log_http_failure(
     status_code: int | None = None,
     exception: Exception | None = None,
     attempt: int | None = None,
-    response_headers: Any | None = None,
+    response_headers: Mapping[str, str] | None = None,
 ) -> None:
+    """Append optional HTTP failure diagnostics when logging is configured."""
     log_path = os.environ.get("LEROBOT_HTTP_FAILURE_LOG")
     if not log_path:
         return
@@ -113,9 +117,13 @@ class ThreadLocalRangeFetcher:
         *,
         block_size: int = 2**20,
         cache_type: str = "none",
+        max_open_files: int = 8,
         token: str | bool | None = None,
-    ):
-        """Configure independent thread-local handles for a data root."""
+    ) -> None:
+        """Keep at most max_open_files source handles per fetch worker."""
+        if max_open_files <= 0:
+            raise ValueError("max_open_files must be positive")
+        self.max_open_files = max_open_files
         self.data_root = str(data_root).rstrip("/")
         storage_options = {"token": token} if token is not None and self.data_root.startswith("hf://") else {}
         self.fs, self._root_path = fsspec.core.url_to_fs(self.data_root, **storage_options)
@@ -126,7 +134,7 @@ class ThreadLocalRangeFetcher:
         self.cache_type = cache_type
         self._local = threading.local()
         self._handles_lock = threading.Lock()
-        self._all_handles: dict[int, Any] = {}
+        self._all_handles: dict[int, BinaryIO] = {}
         self._timing_lock = threading.Lock()
         self._timing_totals = {
             "range_jobs": 0.0,
@@ -137,24 +145,33 @@ class ThreadLocalRangeFetcher:
         }
 
     def _url(self, relative_path: str) -> str:
+        """Resolve a dataset-relative path for the configured filesystem."""
         if self._is_local:
             return str(Path(self._root_path) / relative_path)
         return posixpath.join(self._root_path.rstrip("/"), relative_path.lstrip("/"))
 
-    def _handle(self, relative_path: str):
-        handles = getattr(self._local, "handles", None)
+    def _handle(self, relative_path: str) -> BinaryIO:
+        """Reuse this thread's source handle and evict its least recently used handles."""
+        handles: OrderedDict[str, BinaryIO] | None = getattr(self._local, "handles", None)
         if handles is None:
-            handles = {}
+            handles = OrderedDict()
             self._local.handles = handles
         handle = handles.get(relative_path)
         if handle is None or getattr(handle, "closed", False):
             handle = self.fs.open(
                 self._url(relative_path), "rb", block_size=self.block_size, cache_type=self.cache_type
             )
-            self._instrument_hf_handle(handle)
             handles[relative_path] = handle
             with self._handles_lock:
                 self._all_handles[id(handle)] = handle
+            while len(handles) > self.max_open_files:
+                _, evicted = handles.popitem(last=False)
+                try:
+                    evicted.close()
+                finally:
+                    with self._handles_lock:
+                        self._all_handles.pop(id(evicted), None)
+        handles.move_to_end(relative_path)
         return handle
 
     def info_size(self, relative_path: str) -> int:
@@ -182,142 +199,10 @@ class ThreadLocalRangeFetcher:
         return data
 
     def _record_timing(self, **kwargs: float) -> None:
+        """Accumulate fetch counters under the timing lock."""
         with self._timing_lock:
             for key, value in kwargs.items():
                 self._timing_totals[key] = self._timing_totals.get(key, 0.0) + value
-
-    def _instrument_hf_handle(self, handle: Any) -> None:
-        if getattr(handle, "_lerobot_range_timing", False):
-            return
-        if not hasattr(handle, "_request_with_retry"):
-            return
-
-        def request_with_retry(
-            handle_self,
-            method: str,
-            url: str,
-            *,
-            headers: dict[str, str],
-            follow_redirects: bool | None = None,
-            max_retries: int = 5,
-        ) -> httpx.Response:
-            from huggingface_hub.hf_file_system import _RANGE_RETRY_EXCEPTIONS, _RANGE_RETRY_STATUS_CODES
-
-            method_key = method.lower()
-            sleep_time = 1.0
-            retry_attempts = 0.0
-            retry_sleep_s = 0.0
-            failed_attempt_s = 0.0
-            exception_attempts = 0.0
-            extra_counts: dict[str, float] = {}
-            call_start = time.perf_counter()
-            request_kwargs: dict[str, Any] = {
-                "headers": headers,
-                "timeout": constants.HF_HUB_DOWNLOAD_TIMEOUT,
-            }
-            _ensure_request_id(headers)
-            if follow_redirects is not None:
-                request_kwargs["follow_redirects"] = follow_redirects
-
-            for attempt in range(max_retries + 1):
-                attempt_start = time.perf_counter()
-                try:
-                    response = get_session().request(method, url, **request_kwargs)
-                except _RANGE_RETRY_EXCEPTIONS as exc:
-                    attempt_s = time.perf_counter() - attempt_start
-                    failed_attempt_s += attempt_s
-                    exception_attempts += 1.0
-                    key = f"range_hffs_{method_key}_exception_{type(exc).__name__}"
-                    extra_counts[key] = extra_counts.get(key, 0.0) + 1.0
-                    _log_http_failure(
-                        backend="hffs",
-                        method=method,
-                        url=url,
-                        headers=headers,
-                        elapsed_s=attempt_s,
-                        exception=exc,
-                        attempt=attempt,
-                    )
-                    if attempt == max_retries:
-                        self._record_hffs_request_timing(
-                            method_key,
-                            time.perf_counter() - call_start,
-                            retry_attempts,
-                            retry_sleep_s,
-                            failed_attempt_s,
-                            exception_attempts,
-                            None,
-                            0,
-                            extra_counts,
-                        )
-                        raise
-                else:
-                    elapsed = time.perf_counter() - attempt_start
-                    if response.status_code not in _RANGE_RETRY_STATUS_CODES or attempt == max_retries:
-                        self._record_hffs_request_timing(
-                            method_key,
-                            time.perf_counter() - call_start,
-                            retry_attempts,
-                            retry_sleep_s,
-                            failed_attempt_s,
-                            exception_attempts,
-                            response.status_code,
-                            len(response.content),
-                            extra_counts,
-                        )
-                        return response
-
-                    failed_attempt_s += elapsed
-                    key = f"range_hffs_{method_key}_failed_status_{response.status_code}"
-                    extra_counts[key] = extra_counts.get(key, 0.0) + 1.0
-                    response.close()
-
-                    _log_http_failure(
-                        backend="hffs",
-                        method=method,
-                        url=url,
-                        headers=headers,
-                        elapsed_s=elapsed,
-                        status_code=response.status_code,
-                        attempt=attempt,
-                        response_headers=response.headers,
-                    )
-
-                time.sleep(sleep_time)
-                retry_attempts += 1.0
-                retry_sleep_s += sleep_time
-                sleep_time = min(8.0, sleep_time * 2)
-
-            raise RuntimeError("unreachable")
-
-        handle._request_with_retry = MethodType(request_with_retry, handle)
-        handle._lerobot_range_timing = True
-
-    def _record_hffs_request_timing(
-        self,
-        method_key: str,
-        total_s: float,
-        retry_attempts: float,
-        retry_sleep_s: float,
-        failed_attempt_s: float,
-        exception_attempts: float,
-        status_code: int | None,
-        byte_count: int,
-        extra_counts: dict[str, float],
-    ) -> None:
-        timings = {
-            f"range_hffs_{method_key}_requests": 1.0,
-            f"range_hffs_{method_key}_s": total_s,
-            f"range_hffs_{method_key}_retries": retry_attempts,
-            f"range_hffs_{method_key}_retry_sleep_s": retry_sleep_s,
-            f"range_hffs_{method_key}_failed_attempt_s": failed_attempt_s,
-            f"range_hffs_{method_key}_exception_attempts": exception_attempts,
-            f"range_hffs_{method_key}_bytes": float(byte_count),
-        }
-        if status_code is not None:
-            timings[f"range_hffs_{method_key}_status_{status_code}"] = 1.0
-        timings.update(extra_counts)
-        self._record_timing(**timings)
 
     def timing_summary(self) -> dict[str, float]:
         """Return accumulated range and HTTP retry timings."""
@@ -340,11 +225,6 @@ class ThreadLocalRangeFetcher:
 class NativeHTTPRangeFetcher:
     """Direct pooled HTTP range reader for hf:// paths."""
 
-    _GLOBAL_SOURCE_URLS: dict[tuple[str, str], str] = {}
-    _GLOBAL_RESOLVED_URLS: dict[tuple[str, str], str] = {}
-    _GLOBAL_SIZES: dict[tuple[str, str], int] = {}
-    _GLOBAL_LOCK = threading.Lock()
-
     _RETRYABLE_EXCEPTIONS = (
         httpx.ConnectError,
         httpx.ConnectTimeout,
@@ -365,7 +245,7 @@ class NativeHTTPRangeFetcher:
         subrange_parts: int = 1,
         subrange_min_bytes: int = 8 * 1024 * 1024,
         token: str | bool | None = None,
-    ):
+    ) -> None:
         """Configure direct pooled range requests for an HF object-store root."""
         self.data_root = str(data_root).rstrip("/")
         if not self.data_root.startswith("hf://"):
@@ -417,11 +297,14 @@ class NativeHTTPRangeFetcher:
             "range_failed_requests": 0.0,
         }
 
-    def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
+    def _request(
+        self, method: str, url: str, *, headers: Mapping[str, str], follow_redirects: bool
+    ) -> httpx.Response:
+        """Retry transport failures up to the configured request budget."""
         last_exc: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
-                return self.client.request(method, url, **kwargs)
+                return self.client.request(method, url, headers=headers, follow_redirects=follow_redirects)
             except self._RETRYABLE_EXCEPTIONS as exc:
                 last_exc = exc
                 if attempt >= self.max_retries:
@@ -431,18 +314,18 @@ class NativeHTTPRangeFetcher:
             raise RuntimeError("HTTP request failed without an exception")
         raise last_exc
 
-    def _cache_key(self, relative_path: str) -> tuple[str, str]:
-        return self.data_root, relative_path
-
     def _path(self, relative_path: str) -> str:
+        """Join the HF data root and a dataset-relative source path."""
         return f"{self.data_root}/{relative_path}"
 
     def _bucket_path(self, relative_path: str) -> str:
+        """Include the configured bucket prefix in an object path."""
         if self._bucket_prefix:
             return f"{self._bucket_prefix}/{relative_path}"
         return relative_path
 
     def _headers_for(self, request_url: str, source_url: str) -> dict[str, str]:
+        """Drop Hub authorization when a request targets a different host."""
         headers = self.api._build_hf_headers()
         if urlparse(request_url).netloc != urlparse(source_url).netloc:
             headers.pop("authorization", None)
@@ -450,45 +333,29 @@ class NativeHTTPRangeFetcher:
         return headers
 
     def _source_url(self, relative_path: str) -> str:
+        """Cache the Hub URL used to resolve one source object."""
         with self._lock:
             source = self._source_urls.get(relative_path)
             if source is not None:
                 return source
-        key = self._cache_key(relative_path)
-        with self._GLOBAL_LOCK:
-            source = self._GLOBAL_SOURCE_URLS.get(key)
-        if source is None:
-            if self._bucket_id is not None:
-                source = (
-                    f"{constants.ENDPOINT}/buckets/{self._bucket_id}/resolve/"
-                    f"{quote(self._bucket_path(relative_path))}"
-                )
-            else:
-                if self.fs is None:
-                    raise RuntimeError("HfFileSystem fallback was not initialized")
-                source = self.fs.url(self._path(relative_path))
-            with self._GLOBAL_LOCK:
-                self._GLOBAL_SOURCE_URLS[key] = source
+        if self._bucket_id is not None:
+            source = (
+                f"{constants.ENDPOINT}/buckets/{self._bucket_id}/resolve/"
+                f"{quote(self._bucket_path(relative_path))}"
+            )
+        else:
+            if self.fs is None:
+                raise RuntimeError("HfFileSystem fallback was not initialized")
+            source = self.fs.url(self._path(relative_path))
         with self._lock:
             self._source_urls[relative_path] = source
             return source
 
     def _resolve_url(self, relative_path: str, *, refresh: bool = False) -> str:
+        """Resolve or refresh a source URL and cache its advertised size."""
         with self._lock:
             if not refresh and relative_path in self._resolved_urls:
                 return self._resolved_urls[relative_path]
-        key = self._cache_key(relative_path)
-        if not refresh:
-            with self._GLOBAL_LOCK:
-                resolved = self._GLOBAL_RESOLVED_URLS.get(key)
-                size = self._GLOBAL_SIZES.get(key)
-            if resolved is not None:
-                with self._lock:
-                    self._resolved_urls[relative_path] = resolved
-                    if size is not None:
-                        self._sizes[relative_path] = size
-                return resolved
-
         source = self._source_url(relative_path)
         response = self._request("HEAD", source, headers=self.api._build_hf_headers(), follow_redirects=False)
         try:
@@ -499,10 +366,6 @@ class NativeHTTPRangeFetcher:
                 self._resolved_urls[relative_path] = resolved
                 if "Content-Length" in response.headers:
                     self._sizes[relative_path] = int(response.headers["Content-Length"])
-            with self._GLOBAL_LOCK:
-                self._GLOBAL_RESOLVED_URLS[key] = resolved
-                if "Content-Length" in response.headers:
-                    self._GLOBAL_SIZES[key] = int(response.headers["Content-Length"])
             return resolved
         finally:
             response.close()
@@ -513,14 +376,6 @@ class NativeHTTPRangeFetcher:
             size = self._sizes.get(relative_path)
             if size is not None:
                 return size
-        key = self._cache_key(relative_path)
-        with self._GLOBAL_LOCK:
-            size = self._GLOBAL_SIZES.get(key)
-        if size is not None:
-            with self._lock:
-                self._sizes[relative_path] = size
-            return size
-
         resolved = self._resolve_url(relative_path)
         source = self._source_url(relative_path)
         response = self._request(
@@ -531,8 +386,6 @@ class NativeHTTPRangeFetcher:
             size = int(response.headers["Content-Length"])
             with self._lock:
                 self._sizes[relative_path] = size
-            with self._GLOBAL_LOCK:
-                self._GLOBAL_SIZES[key] = size
             return size
         finally:
             response.close()
@@ -554,6 +407,7 @@ class NativeHTTPRangeFetcher:
         return b"".join(future.result() for future in futures)
 
     def _read_range_single(self, relative_path: str, offset: int, length: int) -> bytes:
+        """Read one range, refreshing an expired URL once before failing."""
         resolve_start = time.perf_counter()
         resolved = self._resolve_url(relative_path)
         source = self._source_url(relative_path)
@@ -584,6 +438,7 @@ class NativeHTTPRangeFetcher:
         return payload
 
     def _read_range_response(self, url: str, headers: dict[str, str]) -> tuple[bytes, int, dict[str, float]]:
+        """Retry transient range failures and return payload, status and timings."""
         last_exc: Exception | None = None
         retry_attempts = 0.0
         retry_sleep_s = 0.0
@@ -665,6 +520,7 @@ class NativeHTTPRangeFetcher:
     def _read_range_response_once(
         self, url: str, headers: dict[str, str]
     ) -> tuple[bytes, int, dict[str, float]]:
+        """Read one HTTP response while measuring header, body and join time."""
         header_start = time.perf_counter()
         with self.client.stream("GET", url, headers=headers) as response:
             header_s = time.perf_counter() - header_start
@@ -712,6 +568,7 @@ class NativeHTTPRangeFetcher:
             )
 
     def _record_timing(self, **kwargs: float) -> None:
+        """Accumulate request counters under the timing lock."""
         with self._timing_lock:
             for key, value in kwargs.items():
                 self._timing_totals[key] = self._timing_totals.get(key, 0.0) + value
@@ -724,7 +581,7 @@ class NativeHTTPRangeFetcher:
     def close(self) -> None:
         """Close the HTTP client and subrange executor."""
         if self._subrange_pool is not None:
-            self._subrange_pool.shutdown(wait=False, cancel_futures=True)
+            self._subrange_pool.shutdown(wait=True, cancel_futures=True)
         self.client.close()
 
 
@@ -738,7 +595,7 @@ def make_range_fetcher(
     native_http_retries: int = 4,
     native_http_subranges: int = 1,
     token: str | bool | None = None,
-):
+) -> ThreadLocalRangeFetcher | NativeHTTPRangeFetcher:
     """Construct the configured local/fsspec or native-HTTP range reader."""
     if range_backend == "fsspec":
         return ThreadLocalRangeFetcher(data_root, token=token)

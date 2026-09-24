@@ -29,13 +29,13 @@ from tests.fixtures.constants import DUMMY_REPO_ID
 
 @pytest.mark.parametrize("token", ["hf_test_token", True, False])
 @pytest.mark.parametrize("from_local", [False, True])
-def test_streaming_dataset_forwards_token_to_metadata_without_retaining_it(
+def test_streaming_dataset_forwards_token_to_metadata_and_remote_worker_io(
     tmp_path, monkeypatch, token, from_local
 ):
     requested_root = tmp_path / "local" if from_local else None
     metadata = SimpleNamespace(
         repo_id=DUMMY_REPO_ID,
-        root=requested_root or tmp_path / "snapshot",
+        root=requested_root or tmp_path / "snapshots" / ("a" * 40),
         revision=streaming_dataset_module.CODEBASE_VERSION,
         _version=streaming_dataset_module.CODEBASE_VERSION,
         features={},
@@ -61,7 +61,10 @@ def test_streaming_dataset_forwards_token_to_metadata_without_retaining_it(
         token=token,
     )
     assert ensure_sidecar.call_args.kwargs["token"] is (None if from_local else token)
-    assert not hasattr(dataset, "_token")
+    assert dataset._streaming_io_token is (None if from_local else token)
+    assert dataset._data_root == (
+        str(requested_root) if from_local else f"hf://datasets/{DUMMY_REPO_ID}@{'a' * 40}"
+    )
 
 
 def test_single_frame_consistency(tmp_path, lerobot_dataset_factory):

@@ -15,12 +15,14 @@
 # limitations under the License.
 import io
 import os
+import warnings
 from collections import deque
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterator, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import ExitStack, closing
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import datasets
 import numpy as np
@@ -49,6 +51,8 @@ from .video_utils import decode_video_frames_pyav
 
 @dataclass(frozen=True)
 class _EpisodeData:
+    """Keep an episode table and zero-copy column views under the same lifetime."""
+
     dataset: datasets.Dataset
     columns: dict[str, datasets.Dataset]
 
@@ -71,7 +75,7 @@ def _balanced_episode_shards(
     return shards
 
 
-class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
+class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
     """Episode-scoped streaming reader for LeRobot datasets.
 
     Metadata is cached locally, while each rank reads only the Parquet rows and MP4 byte ranges
@@ -110,7 +114,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         repo_id: str,
         root: str | Path | None = None,
         episodes: list[int] | None = None,
-        image_transforms: Callable | None = None,
+        image_transforms: Callable[[torch.Tensor], torch.Tensor] | None = None,
         delta_timestamps: dict[str, list[float]] | None = None,
         tolerance_s: float = 1e-4,
         revision: str | None = None,
@@ -138,56 +142,72 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         native_http_connections: int | None = None,
         native_http_subranges: int = 1,
         sampling_strategy: Literal["remaining", "round_robin"] = "remaining",
-    ):
-        """Initialize a StreamingLeRobotDataset.
+    ) -> None:
+        """Initialize an episode-scoped streaming reader.
 
         Args:
-            repo_id (str): This is the repo id that will be used to fetch the dataset.
-            root (Path | None, optional): Local directory to use for local datasets. When omitted, Hub
-                metadata is resolved through a revision-safe snapshot cache under
-                ``$HF_LEROBOT_HOME/hub``.
-            episodes (list[int] | None, optional): If specified, this will only load episodes specified by
-                their episode_index in this list.
-            image_transforms (Callable | None, optional): Transform to apply to image data.
-            tolerance_s (float, optional): Tolerance in seconds for timestamp matching.
-            revision (str, optional): Git revision id (branch name, tag, or commit hash).
-            force_cache_sync (bool, optional): Flag to sync and refresh local files first.
-            streaming (bool, optional): Compatibility flag retained by the public API.
-            buffer_size (int, optional): Compatibility setting used to derive the default episode pool size.
-            max_num_shards (int, optional): Maximum number of concurrent episode loading workers.
-            seed (int, optional): Reproducibility random seed.
-            rng (np.random.Generator | None, optional): Random number generator.
-            shuffle (bool, optional): Whether to shuffle the dataset across exhaustions. Defaults to True.
-            depth_output_unit (str, optional): Physical unit depth maps are dequantized to ("m" or "mm").
-                Defaults to "mm".
-            video_backend (str | None, optional): Decoder backend for synthesized episode videos.
-                Defaults to the same platform-safe backend as map-style loading. If TorchCodec
-                rejects a synthesized MP4, the byte cache falls back to its bounded PyAV decoder.
-            data_root (str | Path | None, optional): Dataset payload root. Supports local paths, ``hf://``,
-                and fsspec URLs.
-            episode_pool_size (int | None, optional): Number of complete episodes in the sampling pool.
-            sampling_strategy: ``remaining`` samples proportional to remaining resident frames.
-                ``round_robin`` shuffles residents each round and samples each once. Newly admitted
-                episodes join the next round. Resume requires the same strategy and planner settings.
-            prefetch_episodes (int, optional): Episodes prefetched beyond the active pool.
-            byte_budget_gb (float, optional): Per-rank upper bound for synthesized episode video bytes.
-            decode_threads (int, optional): Parallel sample assembly and video decode workers.
-            decoded_queue_size (int, optional): Maximum number of decoded samples produced ahead
-                of the consumer. Results are yielded in exact planner order.
-            max_open_decoders (int | None, optional): Maximum number of open video decoders per
-                rank. By default every camera in the configured episode pool can remain open.
-            native_http_connections (int | None, optional): Native HTTP connection limit per rank.
-                ``None`` preserves the fetcher's worker-derived default.
-            native_http_subranges (int, optional): Concurrent HTTP subranges per video range read.
-            repeat (bool, optional): Repeat rank-local exact-coverage epochs without yielding a
-                short final training batch. The training factory enables this; direct iteration is
-                finite by default.
-            repo_type: "dataset" (default) or "bucket" for an HF Storage Bucket.
-            token: Authentication token used while streaming this dataset from
-                the Hub. Pass a string token, ``True`` to require the locally
-                stored token, ``False`` to disable authentication, or ``None``
-                to use the Hugging Face Hub default. The token is not retained
-                on the dataset instance after initialization.
+            repo_id (`str`):
+                Hub dataset or bucket identifier.
+            root (`str | Path | None`, *optional*):
+                Local dataset directory, or local metadata cache in bucket mode.
+            episodes (`list[int] | None`, *optional*):
+                Episode indices to select; None selects the complete dataset.
+            image_transforms (`Callable[[torch.Tensor], torch.Tensor] | None`, *optional*):
+                Transform applied to decoded RGB images in planned sample order.
+            delta_timestamps (`dict[str, list[float]] | None`, *optional*):
+                Per-feature history or future offsets in seconds, padded at episode boundaries.
+            tolerance_s (`float`, *optional*, defaults to `1e-4`):
+                Maximum timestamp error allowed when matching decoded frames.
+            revision (`str | None`, *optional*):
+                Hub revision to resolve to an immutable dataset commit.
+            force_cache_sync (`bool`, *optional*, defaults to `False`):
+                Refresh locally cached dataset metadata.
+            streaming (`bool`, *optional*, defaults to `True`):
+                Compatibility flag retained by the public API.
+            buffer_size (`int`, *optional*, defaults to `1000`):
+                Legacy setting used to derive the pool size when episode_pool_size is omitted.
+            max_num_shards (`int`, *optional*, defaults to `16`):
+                Maximum internal episode-fetch concurrency, not DataLoader process count.
+            seed (`int`, *optional*, defaults to `42`):
+                Seed for deterministic episode admission and anchor sampling.
+            rng (`np.random.Generator | None`, *optional*):
+                Deprecated and ignored; set seed instead.
+            shuffle (`bool`, *optional*, defaults to `True`):
+                Advance the seeded sample plan between epochs; False replays the same plan.
+            return_uint8 (`bool`, *optional*, defaults to `False`):
+                Return RGB pixels as uint8 instead of float32 values in [0, 1].
+            depth_output_unit (`str`, *optional*):
+                Physical output unit for depth maps: "mm" by default, or "m".
+            video_backend (`str | None`, *optional*):
+                RGB decoder backend. None uses the platform-safe default; TorchCodec failures
+                fall back to PyAV. Depth videos use PyAV.
+            data_root (`str | Path | None`, *optional*):
+                Payload root override for direct Python use; accepts local paths and fsspec URLs.
+            episode_pool_size (`int | None`, *optional*):
+                Maximum active episodes per rank, also limited by the compressed-byte budget.
+            prefetch_episodes (`int`, *optional*, defaults to `8`):
+                Pending episodes eligible for speculative prefetch beyond the active pool.
+            byte_budget_gb (`float`, *optional*, defaults to `8.0`):
+                Per-rank reservation limit in GiB for synthesized video bytes, not total RAM.
+            repeat (`bool`, *optional*, defaults to `False`):
+                Repeat rank-local coverage epochs, allowing batches to span epoch boundaries.
+            repo_type (`Literal["dataset", "bucket"]`, *optional*, defaults to `"dataset"`):
+                Whether repo_id identifies a dataset repository or a Storage Bucket.
+            token (`str | bool | None`, *optional*):
+                Hub authentication retained for worker I/O, never serialized into sidecars.
+            decode_threads (`int`, *optional*, defaults to `2`):
+                Parallel sample-assembly and video-decode workers.
+            decoded_queue_size (`int`, *optional*, defaults to `8`):
+                Maximum samples prepared ahead, delivered in planner order.
+            max_open_decoders (`int | None`, *optional*):
+                Decoder-count cap; None allows one per active episode-camera pair.
+            native_http_connections (`int | None`, *optional*):
+                Per-rank HTTP connection limit; None derives it from fetch concurrency.
+            native_http_subranges (`int`, *optional*, defaults to `1`):
+                Maximum concurrent subrequests for one sufficiently large byte range.
+            sampling_strategy (`Literal["remaining", "round_robin"]`, *optional*, defaults to `"remaining"`):
+                Weight episodes by remaining anchors, or draw one anchor per episode each
+                shuffled round. Neither strategy is a global uniform shuffle.
         """
         super().__init__()
         if repo_type not in ("dataset", "bucket"):
@@ -203,7 +223,12 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.tolerance_s = tolerance_s
         self.revision = revision if revision else CODEBASE_VERSION
         self.seed = seed
-        self.rng = rng if rng is not None else np.random.default_rng(seed)
+        if rng is not None:
+            warnings.warn(
+                "rng is deprecated and has no effect; use seed for reproducible streaming order.",
+                FutureWarning,
+                stacklevel=2,
+            )
         self.shuffle = shuffle
 
         self.streaming = streaming
@@ -314,6 +339,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             self.meta,
             requested_root=self._requested_root,
             configured_data_root=str(data_root) if data_root is not None else None,
+            token=self._streaming_io_token,
         )
         sidecar_backend = range_backend_for_root(self._data_root)
         self._sidecar_path = ensure_dataset_mp4_sidecar(
@@ -329,14 +355,17 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
     @property
     def num_frames(self) -> int:
+        """Return the frame count across all selected episodes, before rank sharding."""
         return sum(self._episode_frame_count(episode) for episode in self._selected_episodes)
 
     @property
     def num_episodes(self) -> int:
+        """Return the number of selected episodes across all ranks."""
         return len(self._selected_episodes)
 
     @property
     def fps(self) -> int:
+        """Return the dataset's recording frame rate."""
         return self.meta.fps
 
     @property
@@ -344,22 +373,25 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         """Physical unit (``"m"`` or ``"mm"``) depth maps are returned in on read."""
         return self._depth_output_unit
 
-    def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        """Yield rank-local samples for one coverage epoch, or repeat when configured."""
         if self.repeat:
             return self._repeat_iterator()
         return self._iter_once()
 
-    def _repeat_iterator(self) -> Iterator[dict[str, torch.Tensor]]:
+    def _repeat_iterator(self) -> Generator[dict[str, Any], None, None]:
+        """Repeat nonempty rank-local epochs and close each iterator on early exit."""
         while True:
-            iterator = self._iter_once()
-            try:
-                first = next(iterator)
-            except StopIteration:
-                return
-            yield first
-            yield from iterator
+            with closing(self._iter_once()) as iterator:
+                try:
+                    first = next(iterator)
+                except StopIteration:
+                    return
+                yield first
+                yield from iterator
 
-    def _iter_once(self) -> Iterator[dict[str, torch.Tensor]]:
+    def _iter_once(self) -> Generator[dict[str, Any], None, None]:
+        """Yield one rank-local coverage plan with bounded prefetch and ordered decoding."""
         epoch = self._next_epoch if self.shuffle else 0
         self._active_epoch = epoch
 
@@ -377,102 +409,116 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             worker_epoch_delta, resume_offset = divmod(resume_offset, consumer_frame_count)
         else:
             worker_epoch_delta = 0
-        epoch += worker_epoch_delta
+        if self.shuffle:
+            epoch += worker_epoch_delta
+        self._state_offset = resume_offset
         self._active_epoch = epoch
         if self.shuffle:
             self._next_epoch = epoch + 1
 
         max_workers = min(self.max_num_shards, max(1, self.episode_pool_size + self.prefetch_episodes))
-        video_cache = self._make_video_cache(consumer_episodes, max_workers)
-        episode_byte_sizes = (
-            {episode: video_cache.manifest.episode_byte_size(episode) for episode in consumer_episodes}
-            if video_cache is not None
-            else None
-        )
-        planner = ExactCoveragePool(
-            [(episode, self._episode_frame_count(episode)) for episode in consumer_episodes],
-            pool_size=self.episode_pool_size,
-            sampling_strategy=self.sampling_strategy,
-            seed=self.seed,
-            epoch=epoch,
-            episode_byte_sizes=episode_byte_sizes,
-            byte_budget=self.byte_budget if episode_byte_sizes is not None else None,
-        )
-        for _ in range(resume_offset):
-            try:
-                next(planner)
-            except StopIteration:
-                return
-        planner.newly_admitted.clear()
-        planner.evicted.clear()
-
-        parquet_reader = EpisodeParquetReader(
-            self._data_root,
-            columns=self._projected_columns,
-            token=self._streaming_io_token,
-        )
-        parquet_executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="lerobot-parquet")
-        decode_executor = ThreadPoolExecutor(
-            max_workers=self.decode_threads,
-            thread_name_prefix="lerobot-decode",
-        )
-        episode_futures: dict[int, Future[_EpisodeData]] = {}
-        decoded_futures: deque[Future[dict]] = deque()
-        scheduled_episodes: set[int] = set()
-        retained_video_episodes: set[int] = set()
-        if video_cache is not None:
-            for episode_index in planner.resident:
-                video_cache.retain_episode(episode_index, wait=True)
-                retained_video_episodes.add(episode_index)
-
-        def submit(episode_index: int) -> Future[_EpisodeData]:
-            future = episode_futures.get(episode_index)
-            if future is None:
-                future = parquet_executor.submit(self._load_episode_dataset, parquet_reader, episode_index)
-                episode_futures[episode_index] = future
-            return future
-
-        def schedule_frontier() -> None:
-            frontier = [*planner.resident, *planner.prefetch_candidates(self.prefetch_episodes)]
-            for episode_index in frontier:
-                if episode_index in scheduled_episodes:
-                    continue
-                submit(episode_index)
-                if video_cache is not None and not video_cache.submit_prefetch(episode_index):
-                    continue
-                scheduled_episodes.add(episode_index)
-
-        def decode_item(
-            episode_future: Future[_EpisodeData],
-            episode_index: int,
-            frame_index: int,
-        ) -> dict:
-            return self._make_episode_item(
-                episode_future.result(),
-                episode_index,
-                frame_index,
-                video_cache=video_cache,
-                apply_image_transforms=False,
-            )
-
-        def update_frontier() -> None:
-            for evicted_episode in planner.evicted:
-                episode_futures.pop(evicted_episode, None)
-                if video_cache is not None and evicted_episode in retained_video_episodes:
-                    video_cache.release_episode(evicted_episode)
-                    retained_video_episodes.remove(evicted_episode)
+        with ExitStack() as resources:
+            video_cache = self._make_video_cache(consumer_episodes, max_workers)
             if video_cache is not None:
-                for admitted_episode in planner.newly_admitted:
-                    if admitted_episode not in retained_video_episodes:
-                        # The last anchor may still be decoding after planner eviction.
-                        # Wait for its byte lease before admitting the replacement.
-                        video_cache.retain_episode(admitted_episode, wait=True)
-                        retained_video_episodes.add(admitted_episode)
-            planner.evicted.clear()
+                resources.callback(video_cache.close)
+            episode_byte_sizes = (
+                {episode: video_cache.manifest.episode_byte_size(episode) for episode in consumer_episodes}
+                if video_cache is not None
+                else None
+            )
+            planner = ExactCoveragePool(
+                [(episode, self._episode_frame_count(episode)) for episode in consumer_episodes],
+                pool_size=self.episode_pool_size,
+                sampling_strategy=self.sampling_strategy,
+                seed=self.seed,
+                epoch=epoch,
+                episode_byte_sizes=episode_byte_sizes,
+                byte_budget=self.byte_budget if episode_byte_sizes is not None else None,
+            )
+            for _ in range(resume_offset):
+                try:
+                    next(planner)
+                except StopIteration:
+                    return
             planner.newly_admitted.clear()
-            schedule_frontier()
+            planner.evicted.clear()
 
-        try:
+            parquet_reader = EpisodeParquetReader(
+                self._data_root,
+                columns=self._projected_columns,
+                token=self._streaming_io_token,
+            )
+            parquet_executor = ThreadPoolExecutor(
+                max_workers=max_workers, thread_name_prefix="lerobot-parquet"
+            )
+            resources.callback(parquet_executor.shutdown, wait=True, cancel_futures=True)
+            decode_executor = ThreadPoolExecutor(
+                max_workers=self.decode_threads,
+                thread_name_prefix="lerobot-decode",
+            )
+            resources.callback(decode_executor.shutdown, wait=True, cancel_futures=True)
+            episode_futures: dict[int, Future[_EpisodeData]] = {}
+            decoded_futures: deque[Future[dict[str, Any]]] = deque()
+            scheduled_episodes: set[int] = set()
+            retained_video_episodes: set[int] = set()
+            if video_cache is not None:
+                for episode_index in planner.resident:
+                    video_cache.retain_episode(episode_index, wait=True)
+                    retained_video_episodes.add(episode_index)
+
+            def submit(episode_index: int) -> Future[_EpisodeData]:
+                """Reuse or schedule the table load for an admitted episode."""
+                future = episode_futures.get(episode_index)
+                if future is None:
+                    future = parquet_executor.submit(
+                        self._load_episode_dataset, parquet_reader, episode_index
+                    )
+                    episode_futures[episode_index] = future
+                return future
+
+            def schedule_frontier() -> None:
+                """Prefetch tables and video ranges from the same bounded admission frontier."""
+                frontier = [*planner.resident, *planner.prefetch_candidates(self.prefetch_episodes)]
+                for episode_index in frontier:
+                    if episode_index in scheduled_episodes:
+                        continue
+                    submit(episode_index)
+                    if video_cache is not None and not video_cache.submit_prefetch(episode_index):
+                        continue
+                    scheduled_episodes.add(episode_index)
+
+            def decode_item(
+                episode_future: Future[_EpisodeData],
+                episode_index: int,
+                frame_index: int,
+            ) -> dict[str, Any]:
+                """Assemble a planned sample after its episode table is ready."""
+                return self._make_episode_item(
+                    episode_future.result(),
+                    episode_index,
+                    frame_index,
+                    video_cache=video_cache,
+                    apply_image_transforms=False,
+                )
+
+            def update_frontier() -> None:
+                """Release drained episodes and schedule newly admitted or prefetched episodes."""
+                for evicted_episode in planner.evicted:
+                    episode_futures.pop(evicted_episode, None)
+                    if video_cache is not None and evicted_episode in retained_video_episodes:
+                        video_cache.release_episode(evicted_episode)
+                        retained_video_episodes.remove(evicted_episode)
+                if video_cache is not None:
+                    for admitted_episode in planner.newly_admitted:
+                        if admitted_episode not in retained_video_episodes:
+                            # The last anchor may still be decoding after planner eviction.
+                            # Wait for its byte lease before admitting the replacement.
+                            video_cache.retain_episode(admitted_episode, wait=True)
+                            retained_video_episodes.add(admitted_episode)
+                planner.evicted.clear()
+                planner.newly_admitted.clear()
+                schedule_frontier()
+
             schedule_frontier()
             planner_exhausted = False
             while decoded_futures or not planner_exhausted:
@@ -498,11 +544,16 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                             video_cache.release_episode(episode_index)
                         raise
                     if video_cache is not None:
-                        decoded_future.add_done_callback(
-                            lambda _future, retained_episode=episode_index, retained_cache=video_cache: (
-                                retained_cache.release_episode(retained_episode)
-                            )
-                        )
+
+                        def release_video_episode(
+                            _future: Future[dict[str, Any]],
+                            retained_episode: int = episode_index,
+                            retained_cache: EpisodeByteCache = video_cache,
+                        ) -> None:
+                            """Release this sample's byte lease when its decode future completes."""
+                            retained_cache.release_episode(retained_episode)
+
+                        decoded_future.add_done_callback(release_video_episode)
                     decoded_futures.append(decoded_future)
                     update_frontier()
 
@@ -514,17 +565,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 yield item
             self._active_epoch = epoch + 1 if self.shuffle else 0
             self._state_offset = 0
-        finally:
-            for future in decoded_futures:
-                future.cancel()
-            decode_executor.shutdown(wait=True, cancel_futures=True)
-            for future in episode_futures.values():
-                future.cancel()
-            parquet_executor.shutdown(wait=True, cancel_futures=True)
-            if video_cache is not None:
-                video_cache.close()
 
     def _rank_episodes(self) -> tuple[list[int], int, int]:
+        """Resolve the distributed rank and its deterministic, frame-balanced episode shard."""
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             rank = torch.distributed.get_rank()
             world_size = torch.distributed.get_world_size()
@@ -538,6 +581,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         return shards[rank], rank, world_size
 
     def _episode_frame_count(self, episode_index: int) -> int:
+        """Return the complete episode length from its absolute dataset boundaries."""
         episode = self.meta.episodes[episode_index]
         return int(episode["dataset_to_index"] - episode["dataset_from_index"])
 
@@ -556,6 +600,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         reader: EpisodeParquetReader,
         episode_index: int,
     ) -> _EpisodeData:
+        """Load one episode and retain projected column views for temporal queries."""
         table = reader.read_episode(
             self.meta.get_data_file_path(episode_index),
             episode_index=episode_index,
@@ -577,6 +622,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         episode_indices: list[int],
         workers: int,
     ) -> EpisodeByteCache | None:
+        """Build the rank-local video manifest and its bounded byte cache."""
         if self._sidecar_path is None or not episode_indices:
             return None
         range_backend = range_backend_for_root(self._data_root)
@@ -611,7 +657,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         *,
         video_cache: EpisodeByteCache | None,
         apply_image_transforms: bool = True,
-    ) -> dict:
+    ) -> dict[str, Any]:
+        """Assemble an anchor's temporal windows, padding masks and decoded camera frames."""
         episode_dataset = episode_data.dataset
         item = episode_dataset[frame_index]
         episode = self.meta.episodes[episode_index]
@@ -692,7 +739,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             )
         return item
 
-    def _apply_image_transforms(self, item: dict) -> None:
+    def _apply_image_transforms(self, item: dict[str, Any]) -> None:
+        """Transform RGB images in place, leaving physical depth values unchanged."""
         if self.image_transforms is None:
             return
         for camera_key in self.meta.camera_keys:
@@ -701,6 +749,15 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             item[camera_key] = self.image_transforms(item[camera_key])
 
     def state_dict(self) -> dict[str, int]:
+        """Return the iterator's current rank-local position.
+
+        Returns:
+            `dict[str, int]`: Epoch, yielded-sample offset and resume batch size.
+
+        Note:
+            With DataLoader prefetch, yielded samples may not yet have been consumed by training.
+            The training pipeline restores its position from completed steps instead.
+        """
         return {
             "epoch": self._active_epoch,
             "offset": self._state_offset,
@@ -708,6 +765,19 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         }
 
     def load_state_dict(self, state: dict[str, int]) -> None:
+        """Restore the next iterator's anchor position without fetching skipped samples.
+
+        Args:
+            state (`dict[str, int]`):
+                Rank-local epoch, sample offset and batch size. Missing keys default to 0, 0 and 1.
+
+        Raises:
+            ValueError: If the epoch or offset is negative, or the batch size is not positive.
+
+        Note:
+            Reproducing anchor order requires the same dataset, seed, sampler, pool settings and
+            distributed topology. Random image transforms are not restored by this method.
+        """
         epoch = int(state.get("epoch", 0))
         offset = int(state.get("offset", 0))
         batch_size = int(state.get("batch_size", 1))
@@ -722,6 +792,15 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self._state_offset = offset
 
     def set_epoch(self, epoch: int) -> None:
+        """Select a non-negative epoch and reset the rank-local resume offset.
+
+        Args:
+            epoch (`int`):
+                Coverage epoch used to seed the next sample plan when shuffle is enabled.
+
+        Raises:
+            ValueError: If epoch is negative.
+        """
         if epoch < 0:
             raise ValueError("epoch must be non-negative")
         self._next_epoch = epoch

@@ -15,9 +15,10 @@ import json
 import logging
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from filelock import FileLock, Timeout
@@ -40,6 +41,7 @@ class SidecarSpec:
     data_root: str
     source_files: tuple[tuple[str, int | None], ...]
     schema_version: int = SIDECAR_SCHEMA_VERSION
+    source_fingerprints: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         """Validate and normalize the immutable source-file list."""
@@ -53,6 +55,12 @@ class SidecarSpec:
         if any(not path or size is not None and size < 0 for path, size in normalized):
             raise ValueError("source file paths must be non-empty and sizes must be non-negative")
         object.__setattr__(self, "source_files", normalized)
+        fingerprints = tuple(sorted(self.source_fingerprints))
+        if fingerprints and {path for path, _value in fingerprints} != {path for path, _ in normalized}:
+            raise ValueError("Source fingerprints must cover every source file")
+        if any(not value for _path, value in fingerprints):
+            raise ValueError("Source fingerprints must not be empty")
+        object.__setattr__(self, "source_fingerprints", fingerprints)
 
     def to_dict(self) -> dict[str, object]:
         """Serialize the sidecar specification."""
@@ -62,15 +70,21 @@ class SidecarSpec:
             "revision": self.revision,
             "data_root": self.data_root,
             "source_files": [{"path": path, "size": size} for path, size in self.source_files],
+            "source_fingerprints": dict(self.source_fingerprints),
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> SidecarSpec:
+    def from_dict(cls, data: Mapping[str, Any]) -> SidecarSpec:
         """Parse and validate a serialized sidecar specification."""
         source_files = data.get("source_files")
         if not isinstance(source_files, list):
             raise ValueError("MP4 sidecar source_files must be a list")
         parsed_files: list[tuple[str, int | None]] = []
+        fingerprints = data.get("source_fingerprints", {})
+        if not isinstance(fingerprints, dict) or any(
+            not isinstance(path, str) or not isinstance(value, str) for path, value in fingerprints.items()
+        ):
+            raise ValueError("Invalid MP4 source fingerprints")
         for item in source_files:
             if not isinstance(item, dict) or not isinstance(item.get("path"), str):
                 raise ValueError("Invalid MP4 sidecar source file entry")
@@ -82,6 +96,7 @@ class SidecarSpec:
             revision=str(data["revision"]),
             data_root=str(data["data_root"]),
             source_files=tuple(parsed_files),
+            source_fingerprints=tuple(fingerprints.items()),
         )
 
     def with_source_files(self, source_files: tuple[tuple[str, int], ...]) -> SidecarSpec:
@@ -92,6 +107,7 @@ class SidecarSpec:
             data_root=self.data_root,
             source_files=source_files,
             schema_version=self.schema_version,
+            source_fingerprints=self.source_fingerprints,
         )
 
     def matches(self, candidate: SidecarSpec) -> bool:
@@ -101,6 +117,7 @@ class SidecarSpec:
             or self.repo_id != candidate.repo_id
             or self.revision != candidate.revision
             or self.data_root != candidate.data_root
+            or self.source_fingerprints != candidate.source_fingerprints
         ):
             return False
         expected = dict(self.source_files)
@@ -122,6 +139,7 @@ def sidecar_cache_path(cache_root: str | Path, spec: SidecarSpec) -> Path:
             "repo_id": spec.repo_id,
             "revision": spec.revision,
             "data_root": spec.data_root,
+            **({"source_fingerprints": dict(spec.source_fingerprints)} if spec.source_fingerprints else {}),
         },
         sort_keys=True,
         separators=(",", ":"),

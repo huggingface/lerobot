@@ -15,7 +15,7 @@ import threading
 import time
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import BinaryIO
 
 import fsspec
 import pyarrow as pa
@@ -34,7 +34,7 @@ class EpisodeParquetReader:
         token: str | bool | None = None,
         max_retries: int = 4,
         retry_backoff_s: float = 0.05,
-    ):
+    ) -> None:
         """Configure projected episode reads from a local or fsspec root."""
         if not columns:
             raise ValueError("EpisodeParquetReader requires at least one projected column")
@@ -60,7 +60,26 @@ class EpisodeParquetReader:
         episode_index: int,
         expected_rows: int,
     ) -> pa.Table:
-        """Read and validate one complete episode with column projection."""
+        """Read and validate one complete episode with column projection.
+
+        Args:
+            relative_path (`str | Path`):
+                Parquet path relative to this reader's data root.
+            episode_index (`int`):
+                Episode identifier used for row-group pruning and row filtering.
+            expected_rows (`int`):
+                Positive episode length from the dataset metadata.
+
+        Returns:
+            `pyarrow.Table`: The selected episode's projected columns in source row order.
+
+        Raises:
+            ValueError: If required columns are absent or the returned episode is incomplete.
+
+        Note:
+            Missing or overlapping row-group statistics require broader projected reads before
+            filtering. Only the validated complete episode is retained by the caller.
+        """
         if expected_rows <= 0:
             raise ValueError(f"Episode {episode_index} must contain at least one row")
 
@@ -83,7 +102,8 @@ class EpisodeParquetReader:
             table = table.drop_columns(["episode_index"])
         return table
 
-    def _open_with_retry(self, path: str) -> Any:
+    def _open_with_retry(self, path: str) -> BinaryIO:
+        """Open a binary source, retrying stale Hub directory-cache misses."""
         for attempt in range(self._max_retries + 1):
             try:
                 if self._open_lock is None:
@@ -99,6 +119,7 @@ class EpisodeParquetReader:
 
     @staticmethod
     def _candidate_row_groups(parquet: pq.ParquetFile, episode_index: int) -> list[int]:
+        """Keep groups whose episode bounds overlap or whose statistics are missing."""
         episode_column = next(
             index
             for index in range(parquet.metadata.num_columns)
@@ -122,6 +143,7 @@ class EpisodeParquetReader:
         expected_rows: int,
         relative_path: str | Path,
     ) -> None:
+        """Reject missing, foreign or out-of-order episode rows."""
         actual_rows = len(table)
         if actual_rows != expected_rows:
             raise ValueError(

@@ -54,8 +54,6 @@ class DatasetConfig:
     # Has no effect on datasets without depth cameras.
     depth_output_unit: str = DEFAULT_DEPTH_UNIT
     streaming: bool = False
-    # Optional data-plane root used by training-time streaming. Metadata still resolves from repo_id/root.
-    streaming_data_root: str | None = None
     # Number of complete episodes mixed by the rank-level exact-coverage sampler.
     streaming_episode_pool_size: int = 32
     # Round-robin trades frame-weighted sampling for more even resident-episode mixing.

@@ -14,8 +14,10 @@ import struct
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from functools import cached_property
+from typing import Any, Literal, overload
 
 import numpy as np
+from numpy.typing import NDArray
 
 
 @dataclass(frozen=True)
@@ -68,15 +70,16 @@ class Mp4Index:
     width: int
     height: int
     stsd_body: bytes
-    sample_pts: np.ndarray
-    sample_durations: np.ndarray
-    sample_composition_offsets: np.ndarray
-    sample_sizes: np.ndarray
-    sample_offsets: np.ndarray
-    sync_samples: np.ndarray
+    sample_pts: NDArray[np.float64]
+    sample_durations: NDArray[np.int64]
+    sample_composition_offsets: NDArray[np.int64]
+    sample_sizes: NDArray[np.int64]
+    sample_offsets: NDArray[np.int64]
+    sync_samples: NDArray[np.int64]
 
     @cached_property
     def _has_composition_offsets(self) -> bool:
+        """Cache whether presentation order differs from decode order."""
         return bool(np.any(self.sample_composition_offsets))
 
     def sample_slice(
@@ -148,7 +151,7 @@ class Mp4Index:
             source_start_pts=float(self.sample_pts[lo]),
         )
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize scalar MP4 metadata; sample arrays are stored separately."""
         return {
             "file_path": self.file_path,
@@ -169,7 +172,7 @@ class Mp4Index:
         }
 
     @classmethod
-    def from_dict(cls, data: dict, arrays: dict[str, np.ndarray]) -> Mp4Index:
+    def from_dict(cls, data: dict[str, Any], arrays: dict[str, NDArray[Any]]) -> Mp4Index:
         """Reconstruct an MP4 index from scalar metadata and sample arrays."""
         return cls(
             file_path=data["file_path"],
@@ -237,6 +240,7 @@ def _fetch_tail_moov_index(
     file_size: int,
     max_probe_bytes: int,
 ) -> Mp4Index | None:
+    """Probe after the media payload for a complete movie box, if available."""
     mdat_box = _one(top_boxes, b"mdat")
     if mdat_box is None or mdat_box.end >= file_size:
         return None
@@ -303,6 +307,7 @@ def _parse_mp4_index_from_layout(
     moov: bytes,
     mdat_box: Box,
 ) -> Mp4Index:
+    """Build a video-track index from movie metadata and media payload bounds."""
     mvhd_timescale, mvhd_duration = _parse_mvhd(_find_descendant(moov, [b"mvhd"]))
     trak_box, trak_payload = _find_video_trak(moov)
     _ = trak_box
@@ -320,7 +325,7 @@ def _parse_mp4_index_from_layout(
     sync_samples = _parse_stss(stbl, len(sample_sizes))
 
     sample_durations = _expand_stts(stts, len(sample_sizes))
-    sample_pts_units = np.empty(len(sample_durations), dtype=np.int64)
+    sample_pts_units: NDArray[np.int64] = np.empty(len(sample_durations), dtype=np.int64)
     if len(sample_durations):
         sample_pts_units[0] = 0
         if len(sample_durations) > 1:
@@ -367,7 +372,7 @@ def synthesize_mp4(index: Mp4Index, sample_slice: Mp4SampleSlice, mdat_payload: 
 
     offsets = index.sample_offsets[lo:hi]
     sizes = index.sample_sizes[lo:hi]
-    rel_offsets = offsets - sample_slice.byte_offset
+    rel_offsets: NDArray[np.int64] = offsets - sample_slice.byte_offset
     if int(rel_offsets.min()) != 0:
         raise ValueError("Sample slice must start at the minimum referenced sample offset")
     if int((rel_offsets + sizes).max()) > len(mdat_payload):
@@ -400,7 +405,7 @@ def synthesized_mp4_size(index: Mp4Index, sample_slice: Mp4SampleSlice) -> int:
 
     offsets = index.sample_offsets[lo:hi]
     sizes = index.sample_sizes[lo:hi]
-    rel_offsets = offsets - sample_slice.byte_offset
+    rel_offsets: NDArray[np.int64] = offsets - sample_slice.byte_offset
     if int(rel_offsets.min()) != 0:
         raise ValueError("Sample slice must start at the minimum referenced sample offset")
     if int((rel_offsets + sizes).max()) > sample_slice.byte_length:
@@ -455,6 +460,7 @@ def iter_boxes(
 
 
 def _find_video_trak(moov: bytes) -> tuple[Box, bytes]:
+    """Return the first video track and its payload, or raise if absent."""
     for trak in _children(moov, 0, len(moov)):
         if trak.type != b"trak":
             continue
@@ -466,6 +472,7 @@ def _find_video_trak(moov: bytes) -> tuple[Box, bytes]:
 
 
 def _find_descendant(data: bytes, path: list[bytes]) -> bytes:
+    """Follow a sequence of box types and return the innermost payload."""
     current = data
     for typ in path:
         box = _find_child(current, typ)
@@ -474,6 +481,7 @@ def _find_descendant(data: bytes, path: list[bytes]) -> bytes:
 
 
 def _find_child(data: bytes, typ: bytes) -> Box:
+    """Find the first direct child of a given type, or raise if absent."""
     for box in _children(data, 0, len(data)):
         if box.type == typ:
             return box
@@ -481,10 +489,20 @@ def _find_child(data: bytes, typ: bytes) -> Box:
 
 
 def _children(data: bytes, start: int, end: int) -> Iterable[Box]:
+    """Iterate child boxes using offsets relative to the supplied buffer."""
     return iter_boxes(data, start, end, absolute_base=0)
 
 
+@overload
+def _one(boxes: list[Box], typ: bytes, *, required: Literal[True] = True) -> Box: ...
+
+
+@overload
+def _one(boxes: list[Box], typ: bytes, *, required: Literal[False]) -> Box | None: ...
+
+
 def _one(boxes: list[Box], typ: bytes, *, required: bool = True) -> Box | None:
+    """Return the first matching box, raising when a required box is absent."""
     matches = [box for box in boxes if box.type == typ]
     if not matches and required:
         raise ValueError(f"Missing MP4 box {typ.decode('latin1')}")
@@ -492,11 +510,13 @@ def _one(boxes: list[Box], typ: bytes, *, required: bool = True) -> Box | None:
 
 
 def _payload(parent: bytes, typ: bytes) -> bytes:
+    """Return a required child box's contents without its header."""
     box = _find_child(parent, typ)
     return parent[box.payload_start : box.end]
 
 
 def _parse_mvhd(payload: bytes) -> tuple[int, int]:
+    """Read the movie timescale and duration in movie ticks."""
     version = payload[0]
     if version == 1:
         return struct.unpack_from(">IQ", payload, 20)
@@ -504,6 +524,7 @@ def _parse_mvhd(payload: bytes) -> tuple[int, int]:
 
 
 def _parse_mdhd(payload: bytes) -> tuple[int, int]:
+    """Read the media timescale and duration in media ticks."""
     version = payload[0]
     if version == 1:
         return struct.unpack_from(">IQ", payload, 20)
@@ -511,6 +532,7 @@ def _parse_mdhd(payload: bytes) -> tuple[int, int]:
 
 
 def _parse_tkhd(payload: bytes) -> dict[str, int]:
+    """Read the track identifier, duration and integer pixel dimensions."""
     version = payload[0]
     if version == 1:
         track_id = struct.unpack_from(">I", payload, 20)[0]
@@ -524,12 +546,14 @@ def _parse_tkhd(payload: bytes) -> dict[str, int]:
 
 
 def _parse_stsd_codec(stsd_body: bytes) -> str:
+    """Read the first sample entry's four-character codec identifier."""
     if len(stsd_body) < 16:
         return "unknown"
     return stsd_body[12:16].decode("latin1")
 
 
 def _parse_stts(payload: bytes) -> list[tuple[int, int]]:
+    """Read run-length encoded sample counts and decode durations."""
     count = struct.unpack_from(">I", payload, 4)[0]
     out = []
     offset = 8
@@ -539,7 +563,8 @@ def _parse_stts(payload: bytes) -> list[tuple[int, int]]:
     return out
 
 
-def _parse_ctts(stbl: bytes, sample_count: int) -> np.ndarray:
+def _parse_ctts(stbl: bytes, sample_count: int) -> NDArray[np.int64]:
+    """Expand composition offsets to signed media ticks for every sample."""
     box = _one(list(_children(stbl, 0, len(stbl))), b"ctts", required=False)
     if box is None:
         return np.zeros(sample_count, dtype=np.int64)
@@ -555,6 +580,7 @@ def _parse_ctts(stbl: bytes, sample_count: int) -> np.ndarray:
 
 
 def _parse_edit_offset(trak: bytes, movie_timescale: int, media_timescale: int) -> float:
+    """Resolve a rate-one edit timeline to a seconds offset, rejecting other layouts."""
     edts = _one(list(_children(trak, 0, len(trak))), b"edts", required=False)
     if edts is None:
         return 0.0
@@ -579,8 +605,9 @@ def _parse_edit_offset(trak: bytes, movie_timescale: int, media_timescale: int) 
     return empty_duration / movie_timescale - entries[0][1] / media_timescale
 
 
-def _expand_stts(entries: list[tuple[int, int]], sample_count: int) -> np.ndarray:
-    values = np.empty(sample_count, dtype=np.int64)
+def _expand_stts(entries: list[tuple[int, int]], sample_count: int) -> NDArray[np.int64]:
+    """Expand timing runs and validate their total sample count."""
+    values: NDArray[np.int64] = np.empty(sample_count, dtype=np.int64)
     pos = 0
     for count, delta in entries:
         values[pos : pos + count] = delta
@@ -590,7 +617,8 @@ def _expand_stts(entries: list[tuple[int, int]], sample_count: int) -> np.ndarra
     return values
 
 
-def _parse_stsz(payload: bytes) -> np.ndarray:
+def _parse_stsz(payload: bytes) -> NDArray[np.int64]:
+    """Read each compressed sample's size in bytes."""
     sample_size, sample_count = struct.unpack_from(">II", payload, 4)
     if sample_size:
         return np.full(sample_count, sample_size, dtype=np.int64)
@@ -603,6 +631,7 @@ def _parse_stsz(payload: bytes) -> np.ndarray:
 
 
 def _parse_stsc(payload: bytes) -> list[tuple[int, int, int]]:
+    """Read chunk starts, samples per chunk and sample-description indices."""
     count = struct.unpack_from(">I", payload, 4)[0]
     out = []
     offset = 8
@@ -612,7 +641,8 @@ def _parse_stsc(payload: bytes) -> list[tuple[int, int, int]]:
     return out
 
 
-def _parse_chunk_offsets(stbl: bytes) -> np.ndarray:
+def _parse_chunk_offsets(stbl: bytes) -> NDArray[np.int64]:
+    """Read absolute chunk byte offsets from either 32-bit or 64-bit tables."""
     with_stco = None
     with_co64 = None
     for box in _children(stbl, 0, len(stbl)):
@@ -633,7 +663,8 @@ def _parse_chunk_offsets(stbl: bytes) -> np.ndarray:
     )
 
 
-def _parse_stss(stbl: bytes, sample_count: int) -> np.ndarray:
+def _parse_stss(stbl: bytes, sample_count: int) -> NDArray[np.int64]:
+    """Return zero-based keyframe indices, treating an absent table as all-sync."""
     for box in _children(stbl, 0, len(stbl)):
         if box.type == b"stss":
             payload = stbl[box.payload_start : box.end]
@@ -646,11 +677,12 @@ def _parse_stss(stbl: bytes, sample_count: int) -> np.ndarray:
 
 
 def _sample_offsets(
-    stsc: list[tuple[int, int, int]], chunk_offsets: np.ndarray, sample_sizes: np.ndarray
-) -> np.ndarray:
+    stsc: list[tuple[int, int, int]], chunk_offsets: NDArray[np.int64], sample_sizes: NDArray[np.int64]
+) -> NDArray[np.int64]:
+    """Expand chunk tables into absolute byte offsets for individual samples."""
     if not stsc:
         raise ValueError("stsc is empty")
-    offsets = np.empty(len(sample_sizes), dtype=np.int64)
+    offsets: NDArray[np.int64] = np.empty(len(sample_sizes), dtype=np.int64)
     sample_idx = 0
     for entry_idx, (first_chunk, samples_per_chunk, _desc_idx) in enumerate(stsc):
         next_first = stsc[entry_idx + 1][0] if entry_idx + 1 < len(stsc) else len(chunk_offsets) + 1
@@ -671,14 +703,15 @@ def _sample_offsets(
 
 def _make_moov(
     index: Mp4Index,
-    durations: np.ndarray,
-    sizes: np.ndarray,
-    rel_offsets: np.ndarray,
-    sync_samples: np.ndarray,
-    composition_offsets: np.ndarray,
+    durations: NDArray[np.int64],
+    sizes: NDArray[np.int64],
+    rel_offsets: NDArray[np.int64],
+    sync_samples: NDArray[np.int64],
+    composition_offsets: NDArray[np.int64],
     *,
     mdat_data_offset: int,
 ) -> bytes:
+    """Build movie metadata for the slice, rebasing offsets and preserving presentation timing."""
     duration = int(durations.sum())
     if np.any(composition_offsets) and len(sync_samples) > 1:
         # Approximate decoders seek using sync samples without scanning packets.
@@ -723,10 +756,12 @@ def _make_moov(
 
 
 def _full_box(typ: bytes, version: int, flags: int, payload: bytes = b"") -> bytes:
+    """Wrap a payload with an ISO BMFF version-and-flags header."""
     return _box(typ, bytes([version]) + flags.to_bytes(3, "big") + payload)
 
 
 def _box(typ: bytes, payload: bytes) -> bytes:
+    """Wrap a payload with a box header, using extended size when needed."""
     size = len(payload) + 8
     if size <= 0xFFFFFFFF:
         return struct.pack(">I4s", size, typ) + payload
@@ -734,6 +769,7 @@ def _box(typ: bytes, payload: bytes) -> bytes:
 
 
 def _mvhd(timescale: int, duration: int, next_track_id: int) -> bytes:
+    """Encode the movie header using the supplied timescale and duration."""
     matrix = struct.pack(">9I", 0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000)
     payload = (
         struct.pack(">IIII", 0, 0, timescale, duration)
@@ -747,6 +783,7 @@ def _mvhd(timescale: int, duration: int, next_track_id: int) -> bytes:
 
 
 def _tkhd(track_id: int, duration: int, width: int, height: int) -> bytes:
+    """Encode an enabled video track header with fixed-point pixel dimensions."""
     matrix = struct.pack(">9I", 0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000)
     payload = (
         struct.pack(">IIIII", 0, 0, track_id, 0, duration)
@@ -759,25 +796,30 @@ def _tkhd(track_id: int, duration: int, width: int, height: int) -> bytes:
 
 
 def _mdhd(timescale: int, duration: int) -> bytes:
+    """Encode the media header with its timescale and duration."""
     return _full_box(b"mdhd", 0, 0, struct.pack(">IIIIH", 0, 0, timescale, duration, 0x55C4) + b"\0\0")
 
 
 def _hdlr() -> bytes:
+    """Encode a video handler descriptor."""
     return _full_box(b"hdlr", 0, 0, b"\0" * 4 + b"vide" + b"\0" * 12 + b"VideoHandler\0")
 
 
 def _vmhd() -> bytes:
+    """Encode the default video media header."""
     return _full_box(b"vmhd", 0, 1, struct.pack(">HHHH", 0, 0, 0, 0))
 
 
 def _dinf() -> bytes:
+    """Mark the synthesized media payload as self-contained."""
     url = _full_box(b"url ", 0, 1)
     dref = _full_box(b"dref", 0, 0, struct.pack(">I", 1) + url)
     return _box(b"dinf", dref)
 
 
-def _stts(durations: np.ndarray) -> bytes:
-    runs = []
+def _stts(durations: NDArray[np.int64]) -> bytes:
+    """Run-length encode sample durations into a decode-time table."""
+    runs: list[list[int]] = []
     for duration in durations.tolist():
         if runs and runs[-1][1] == int(duration):
             runs[-1][0] += 1
@@ -789,7 +831,8 @@ def _stts(durations: np.ndarray) -> bytes:
     return _full_box(b"stts", 0, 0, payload)
 
 
-def _ctts(offsets: np.ndarray) -> bytes:
+def _ctts(offsets: NDArray[np.int64]) -> bytes:
+    """Run-length encode composition offsets, using signed entries when needed."""
     runs: list[list[int]] = []
     for offset in offsets.tolist():
         if runs and runs[-1][1] == offset:
@@ -804,10 +847,12 @@ def _ctts(offsets: np.ndarray) -> bytes:
 
 
 def _stsc_one_sample_per_chunk(sample_count: int) -> bytes:
+    """Encode a sample-to-chunk table with one sample per chunk."""
     return _full_box(b"stsc", 0, 0, struct.pack(">IIII", 1, 1, 1, 1))
 
 
-def _stsz(sizes: np.ndarray) -> bytes:
+def _stsz(sizes: NDArray[np.int64]) -> bytes:
+    """Encode variable compressed sample sizes."""
     return _full_box(
         b"stsz",
         0,
@@ -817,18 +862,21 @@ def _stsz(sizes: np.ndarray) -> bytes:
 
 
 def _stco(values: list[int]) -> bytes:
+    """Encode 32-bit absolute chunk byte offsets."""
     return _full_box(
         b"stco", 0, 0, struct.pack(">I", len(values)) + b"".join(struct.pack(">I", v) for v in values)
     )
 
 
 def _co64(values: list[int]) -> bytes:
+    """Encode 64-bit absolute chunk byte offsets."""
     return _full_box(
         b"co64", 0, 0, struct.pack(">I", len(values)) + b"".join(struct.pack(">Q", v) for v in values)
     )
 
 
-def _stss(values: np.ndarray) -> bytes:
+def _stss(values: NDArray[np.int64]) -> bytes:
+    """Encode one-based keyframe indices in a sync-sample table."""
     return _full_box(
         b"stss",
         0,

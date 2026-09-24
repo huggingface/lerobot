@@ -169,8 +169,9 @@ lerobot-train \
   --output_dir=outputs/train/act_streaming
 ```
 
-Use `--dataset.streaming_data_root=hf://buckets/OWNER/BUCKET/PREFIX` when metadata lives in a
-dataset repository but Parquet and MP4 data are mirrored in an HF Bucket.
+For a complete dataset in an HF Storage Bucket, use `--dataset.repo_id=OWNER/BUCKET`,
+`--dataset.repo_type=bucket` and `--dataset.streaming=true`. The bucket must contain the dataset's
+`meta/` directory as well as its Parquet and video files.
 
 The Python API uses the same implementation:
 
