@@ -51,8 +51,8 @@ class LatencyTracker:
     def __len__(self) -> int:
         return len(self._values)
 
-    def max(self) -> float | None:
-        """Return the maximum latency or None if empty."""
+    def max(self) -> float:
+        """Return the maximum latency recorded so far (0.0 if empty)."""
         return self.max_latency
 
     def percentile(self, q: float) -> float | None:
