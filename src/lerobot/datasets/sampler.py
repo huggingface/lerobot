@@ -39,9 +39,9 @@ class EpisodeAwareSampler:
     Epoch advancement: `__iter__` eagerly advances the epoch, and `set_epoch` / `load_state_dict`
     set it explicitly. Within a single run callers should rely on exactly one of these mechanisms,
     not both: advancing the epoch by hand *and* letting `__iter__` auto-advance over the same
-    iterations would skip or repeat epochs. The training loop drives it purely through `__iter__`
-    (via `cycle`); `set_epoch` / `load_state_dict` are used only to (re)position before iteration
-    starts (e.g. on resume or in tests).
+    iterations would skip or repeat epochs. Accelerate's prepared loader sets the epoch before
+    each iteration. When resuming a prepared loader, restore its epoch and skip batches after
+    sharding rather than slicing this sampler, so even-batch padding retains the epoch prefix.
     """
 
     def __init__(
