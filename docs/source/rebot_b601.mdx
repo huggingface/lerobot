@@ -59,13 +59,23 @@ DM uses its serial bridge by default and can optionally use native CAN. RS requi
 
 The motor family selects the default adapter. To run DM over native CAN instead, add `--robot.can_adapter=socketcan` and use its CAN channel as `--robot.port`.
 
-The `socketcan` configuration name is retained across platforms. Linux uses SocketCAN. macOS requires a compatible PCAN adapter and the MacCAN PCBUSB runtime. Windows native-CAN support is experimental and requires a PEAK PCAN adapter and PCAN-Basic. See the [MotorBridge platform setup](https://github.com/motorbridge/motorbridge/tree/v0.5.1) for installation details.
+### Serial bridge
 
 Use `lerobot-find-port` to identify the DM serial bridge and leader ports. Connect one serial device at a time if their names are difficult to distinguish.
 
 ```bash
 lerobot-find-port
 ```
+
+<Tip warning={true}>
+  On Linux, remove `brltty` (`sudo apt remove brltty`) if it captures a serial
+  device. You may also need temporary access with `sudo chmod 666 /dev/ttyACM*
+  /dev/ttyUSB*`.
+</Tip>
+
+### Native CAN
+
+The `socketcan` configuration name is retained across platforms. Linux uses SocketCAN. macOS requires a compatible PCAN adapter and the MacCAN PCBUSB runtime. Windows native-CAN support is experimental and requires a PEAK PCAN adapter and PCAN-Basic. See the [MotorBridge platform setup](https://github.com/motorbridge/motorbridge/tree/v0.5.1) for installation details.
 
 On Linux, configure each native CAN interface at 1 Mbps before connecting an RS follower:
 
@@ -77,12 +87,6 @@ ip -details link show can0
 ```
 
 Replace `can0` with the channel provided by your CAN backend. Bimanual native-CAN setups need separate channels such as `can0` and `can1` because both arms use the same motor IDs.
-
-<Tip warning={true}>
-  On Linux, remove `brltty` (`sudo apt remove brltty`) if it captures a serial
-  device. You may also need temporary access with `sudo chmod 666 /dev/ttyACM*
-  /dev/ttyUSB*`.
-</Tip>
 
 ## Device types
 
@@ -328,7 +332,8 @@ lerobot-record \
     --display_data=false
 ```
 
-For a bimanual RS setup, set both motor families to `rs` and use separate native CAN channels. A mixed setup can select `dm` for one arm and `rs` for the other.
+> [!TIP]
+> For a bimanual RS setup, set both motor families to `rs` and use separate native CAN channels. A mixed setup can select `dm` for one arm and `rs` for the other.
 
 See [Imitation Learning for Robots](./il_robots) to upload, replay, train, and evaluate a policy.
 
@@ -340,6 +345,7 @@ Both builds expose the same joint names and public positions in degrees. LeRobot
 - RS uses MIT control and a force-limited impedance gripper because MotorBridge does not provide `force_pos` for RobStride. Depending on measured gripper motion, commanded torque is capped at `3.5` N·m while moving or `1.0` N·m while holding. If feedback fails, LeRobot attempts to command zero gripper torque and then disables the arm.
 - `mit_kp`, `mit_kd`, and `pos_vel_velocity` accept either one scalar for every joint or a joint-keyed mapping.
 - `max_relative_target` caps the difference between a command and the latest measured position. For example, `--robot.max_relative_target=5.0` limits every commanded joint to a five-degree change.
+- `joint_limits` optionally overrides the family defaults in public joint degrees.
 
 Follower motor directions are selected internally from the motor family. The leader's `joint_directions` remain configurable if a teleoperation joint moves in the wrong direction.
 

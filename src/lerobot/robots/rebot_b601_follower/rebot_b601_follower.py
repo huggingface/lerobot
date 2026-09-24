@@ -18,7 +18,7 @@ import logging
 import math
 import time
 from functools import cached_property
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from lerobot.cameras import DepthCamera, make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
@@ -31,12 +31,10 @@ from ..robot import Robot
 from ..utils import ensure_safe_goal_position
 from .config_rebot_b601_follower import RebotB601FollowerRobotConfig
 from .motor_family import (
-    ARM_MODE_POS_VEL,
-    GRIPPER_MODE_FORCE_POS,
-    GRIPPER_MODE_MIT_IMPEDANCE,
     GRIPPER_MOTOR,
-    MIT_MODE,
     MOTOR_PROFILES,
+    ArmControlMode,
+    GripperControlMode,
     MotorFamily,
     MotorFamilyProfile,
 )
@@ -70,17 +68,27 @@ class RebotB601Follower(Robot):
 
     config_class = RebotB601FollowerRobotConfig
     name = "rebot_b601_follower"
+    calibration: dict[str, MotorCalibration]
 
     def __init__(self, config: RebotB601FollowerRobotConfig):
         require_package("motorbridge", extra="rebot")
         super().__init__(config)
         self.config = config
         self.profile: MotorFamilyProfile = MOTOR_PROFILES[config.motor_family]
+        # Config normalization expands these values before the robot is built.
+        self._motor_can_ids = cast(dict[str, tuple[int, int]], config.motor_can_ids)
+        self._joint_limits = cast(dict[str, tuple[float, float]], config.joint_limits)
+        self._mit_kp = cast(dict[str, float], config.mit_kp)
+        self._mit_kd = cast(dict[str, float], config.mit_kd)
+        self._pos_vel_velocity = cast(dict[str, float], config.pos_vel_velocity or {})
         self.bus: MotorBridgeController | None = None
         self.motors: dict = {}
-        self.motor_names = list(config.motor_can_ids)
+        self.motor_names = list(self._motor_can_ids)
         self.cameras = make_cameras_from_configs(config.cameras)
-        self._reset_gripper_impedance_state()
+        self._gripper_prev_target_pos: float | None = None
+        self._gripper_prev_target_vel: float | None = None
+        self._gripper_prev_state_pos: float | None = None
+        self._gripper_prev_time: float | None = None
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -132,7 +140,7 @@ class RebotB601Follower(Robot):
             if self.config.motor_family is MotorFamily.DM
             else self.bus.add_robstride_motor
         )
-        for motor_name, (send_id, recv_id) in self.config.motor_can_ids.items():
+        for motor_name, (send_id, recv_id) in self._motor_can_ids.items():
             self.motors[motor_name] = add_motor(send_id, recv_id, self.profile.motor_models[motor_name])
 
         self._reset_gripper_impedance_state()
@@ -180,8 +188,8 @@ class RebotB601Follower(Robot):
         logger.info("Arm zero position set.")
 
         self.calibration = {}
-        for motor_name, (send_id, _recv_id) in self.config.motor_can_ids.items():
-            range_min, range_max = self.config.joint_limits[motor_name]
+        for motor_name, (send_id, _recv_id) in self._motor_can_ids.items():
+            range_min, range_max = self._public_to_motor_limits(motor_name, self._joint_limits[motor_name])
             self.calibration[motor_name] = MotorCalibration(
                 id=send_id,
                 drive_mode=0,
@@ -197,19 +205,34 @@ class RebotB601Follower(Robot):
         """Set each motor's control mode before enabling torque."""
         if self.bus is None:
             raise DeviceNotConnectedError(f"{self} motor bus is not initialized")
+        if self.config.control_mode is ArmControlMode.POS_VEL:
+            missing = [
+                motor_name
+                for motor_name in self.motor_names
+                if motor_name != GRIPPER_MOTOR and motor_name not in self._pos_vel_velocity
+            ]
+            if missing:
+                raise ValueError(f"POS_VEL requires pos_vel_velocity for: {', '.join(missing)}.")
+
+        if self.config.gripper_control_mode is GripperControlMode.FORCE_POS:
+            if GRIPPER_MOTOR not in self._pos_vel_velocity or self.config.gripper_torque_ratio is None:
+                raise ValueError("FORCE_POS requires gripper velocity and torque ratio settings.")
+        elif self.config.gripper_control_mode is GripperControlMode.MIT_IMPEDANCE and (
+            self.config.gripper_torque_limit is None or self.config.gripper_hold_torque_limit is None
+        ):
+            raise ValueError("MIT impedance requires moving and holding gripper torque limits.")
+
         self.bus.disable_all()
         for motor_name, motor in self.motors.items():
-            mode = (
-                self.config.gripper_control_mode if motor_name == GRIPPER_MOTOR else self.config.control_mode
-            )
-            if mode in (MIT_MODE, GRIPPER_MODE_MIT_IMPEDANCE):
-                target_mode = MotorBridgeMode.MIT
-            elif mode == ARM_MODE_POS_VEL:
+            if motor_name == GRIPPER_MOTOR:
+                if self.config.gripper_control_mode is GripperControlMode.FORCE_POS:
+                    target_mode = MotorBridgeMode.FORCE_POS
+                else:
+                    target_mode = MotorBridgeMode.MIT
+            elif self.config.control_mode is ArmControlMode.POS_VEL:
                 target_mode = MotorBridgeMode.POS_VEL
-            elif mode == GRIPPER_MODE_FORCE_POS:
-                target_mode = MotorBridgeMode.FORCE_POS
             else:
-                raise ValueError(f"Unsupported control mode '{mode}'.")
+                target_mode = MotorBridgeMode.MIT
 
             motor.ensure_mode(target_mode)
             logger.debug(f"{motor_name} mode set to {target_mode}")
@@ -227,15 +250,20 @@ class RebotB601Follower(Robot):
         """Request and return the latest motor states from MotorBridge."""
         if self.bus is None:
             raise DeviceNotConnectedError(f"{self} motor bus is not initialized")
-        for motor in self.motors.values():
-            motor.request_feedback()
-        self.bus.poll_feedback_once()
+        try:
+            for motor in self.motors.values():
+                motor.request_feedback()
+            self.bus.poll_feedback_once()
 
-        states = {motor_name: motor.get_state() for motor_name, motor in self.motors.items()}
-        unavailable = [motor_name for motor_name, state in states.items() if state is None]
-        if unavailable:
-            raise RuntimeError(f"No motor feedback available for: {', '.join(unavailable)}.")
-        return states
+            states = {motor_name: motor.get_state() for motor_name, motor in self.motors.items()}
+            unavailable = [motor_name for motor_name, state in states.items() if state is None]
+            if unavailable:
+                raise RuntimeError(f"No motor feedback available for: {', '.join(unavailable)}.")
+            return states
+        except Exception:
+            if self.config.gripper_control_mode is GripperControlMode.MIT_IMPEDANCE:
+                self._stop_after_feedback_error()
+            raise
 
     def _public_to_motor_position(self, motor_name: str, position_deg: float) -> float:
         return position_deg * self.profile.joint_directions[motor_name]
@@ -243,11 +271,17 @@ class RebotB601Follower(Robot):
     def _motor_to_public_position(self, motor_name: str, position_deg: float) -> float:
         return position_deg / self.profile.joint_directions[motor_name]
 
-    def _present_pos(self) -> dict[str, float]:
+    def _public_to_motor_limits(self, motor_name: str, limits: tuple[float, float]) -> tuple[float, float]:
+        motor_limits = tuple(self._public_to_motor_position(motor_name, value) for value in limits)
+        return min(motor_limits), max(motor_limits)
+
+    def _present_pos(self, states: dict[str, Any] | None = None) -> dict[str, float]:
         """Read current positions in the public robot coordinate frame."""
+        if states is None:
+            states = self._read_feedback()
         return {
             motor_name: self._motor_to_public_position(motor_name, math.degrees(state.pos))
-            for motor_name, state in self._read_feedback().items()
+            for motor_name, state in states.items()
         }
 
     @check_if_not_connected
@@ -283,8 +317,10 @@ class RebotB601Follower(Robot):
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
         # Cap relative target when too far from the present position.
+        states = None
         if self.config.max_relative_target is not None:
-            present_pos = self._present_pos()
+            states = self._read_feedback()
+            present_pos = self._present_pos(states)
             goal_present_pos = {key: (goal, present_pos.get(key, goal)) for key, goal in goal_pos.items()}
             relative_limits = self.config.max_relative_target
             if isinstance(relative_limits, dict):
@@ -294,73 +330,61 @@ class RebotB601Follower(Robot):
         sent_pos = {}
         for motor_name, position_deg in goal_pos.items():
             if motor_name in self.motors:
-                sent_pos[motor_name] = self._send_joint(motor_name, position_deg)
+                state = states.get(motor_name) if states is not None else None
+                sent_pos[motor_name] = self._send_joint(motor_name, position_deg, state)
         return {f"{motor}.pos": val for motor, val in sent_pos.items()}
 
-    def _send_joint(self, motor_name: str, position_deg: float) -> float:
+    def _send_joint(self, motor_name: str, position_deg: float, state: Any | None = None) -> float:
         """Send one joint command and return its clipped public position."""
         motor = self.motors[motor_name]
-        motor_position_deg = self._public_to_motor_position(motor_name, position_deg)
 
         # Clip against soft joint limits.
-        limits = self.config.joint_limits.get(motor_name)
+        limits = self._joint_limits.get(motor_name)
         if limits is not None:
             range_min, range_max = limits
-            clipped = max(range_min, min(range_max, motor_position_deg))
-            if clipped != motor_position_deg:
-                logger.debug(f"Clipped {motor_name} from {motor_position_deg:.2f} to {clipped:.2f}")
-            motor_position_deg = clipped
+            clipped = max(range_min, min(range_max, position_deg))
+            if clipped != position_deg:
+                logger.debug(f"Clipped {motor_name} from {position_deg:.2f} to {clipped:.2f}")
+            position_deg = clipped
+        motor_position_deg = self._public_to_motor_position(motor_name, position_deg)
         position_rad = math.radians(motor_position_deg)
 
         if motor_name == GRIPPER_MOTOR:
-            self._send_gripper(position_rad)
-        elif self.config.control_mode == ARM_MODE_POS_VEL:
-            motor.send_pos_vel(position_rad, math.radians(self.config.pos_vel_velocity[motor_name]))
+            self._send_gripper(position_rad, state)
+        elif self.config.control_mode is ArmControlMode.POS_VEL:
+            motor.send_pos_vel(position_rad, math.radians(self._pos_vel_velocity[motor_name]))
         else:
             motor.send_mit(
                 position_rad,
                 0.0,
-                self.config.mit_kp[motor_name],
-                self.config.mit_kd[motor_name],
+                self._mit_kp[motor_name],
+                self._mit_kd[motor_name],
                 0.0,
             )
-        return self._motor_to_public_position(motor_name, motor_position_deg)
+        return position_deg
 
-    def _send_gripper(self, position_rad: float) -> None:
+    def _send_gripper(self, position_rad: float, state: Any | None = None) -> None:
         """Send the gripper command with its configured control mode."""
         motor = self.motors[GRIPPER_MOTOR]
-        if self.config.gripper_control_mode == GRIPPER_MODE_FORCE_POS:
+        if self.config.gripper_control_mode is GripperControlMode.FORCE_POS:
             motor.send_force_pos(
                 position_rad,
-                math.radians(self.config.pos_vel_velocity[GRIPPER_MOTOR]),
-                self.config.gripper_torque_ratio,
+                math.radians(self._pos_vel_velocity[GRIPPER_MOTOR]),
+                cast(float, self.config.gripper_torque_ratio),
             )
-        elif self.config.gripper_control_mode == GRIPPER_MODE_MIT_IMPEDANCE:
-            self._send_gripper_impedance(position_rad)
+        elif self.config.gripper_control_mode is GripperControlMode.MIT_IMPEDANCE:
+            torque = self._gripper_impedance_torque(position_rad, state)
+            motor.send_mit(0.0, 0.0, 0.0, _GRIPPER_IMPEDANCE_DAMPING, torque)
         else:
             motor.send_mit(
                 position_rad,
                 0.0,
-                self.config.mit_kp[GRIPPER_MOTOR],
-                self.config.mit_kd[GRIPPER_MOTOR],
+                self._mit_kp[GRIPPER_MOTOR],
+                self._mit_kd[GRIPPER_MOTOR],
                 0.0,
             )
 
-    def _send_gripper_impedance(self, target_pos_rad: float) -> None:
-        """Send force-limited MIT control for the RobStride gripper.
-
-        MotorBridge supports FORCE_POS for Damiao but not RobStride, so RS uses
-        a bounded feedforward torque computed from position and velocity error.
-        """
-        motor = self.motors[GRIPPER_MOTOR]
-        try:
-            torque = self._gripper_impedance_torque(target_pos_rad)
-        except Exception:
-            self._stop_after_gripper_feedback_error()
-            raise
-        motor.send_mit(0.0, 0.0, 0.0, _GRIPPER_IMPEDANCE_DAMPING, torque)
-
-    def _stop_after_gripper_feedback_error(self) -> None:
+    def _stop_after_feedback_error(self) -> None:
         motor = self.motors[GRIPPER_MOTOR]
         try:
             motor.send_mit(0.0, 0.0, 0.0, _GRIPPER_IMPEDANCE_DAMPING, 0.0)
@@ -373,14 +397,15 @@ class RebotB601Follower(Robot):
             logger.exception("Failed to disable reBot torque after RS gripper feedback loss.")
 
     def _reset_gripper_impedance_state(self) -> None:
-        self._gripper_prev_target_pos: float | None = None
-        self._gripper_prev_target_vel: float | None = None
-        self._gripper_prev_state_pos: float | None = None
-        self._gripper_prev_time: float | None = None
+        self._gripper_prev_target_pos = None
+        self._gripper_prev_target_vel = None
+        self._gripper_prev_state_pos = None
+        self._gripper_prev_time = None
 
-    def _gripper_impedance_torque(self, target_pos_rad: float) -> float:
+    def _gripper_impedance_torque(self, target_pos_rad: float, state: Any | None = None) -> float:
         """Compute a force-limited impedance torque for the gripper."""
-        state = self._read_feedback()[GRIPPER_MOTOR]
+        if state is None:
+            state = self._read_feedback()[GRIPPER_MOTOR]
         now = time.monotonic()
         dt = 0.0 if self._gripper_prev_time is None else now - self._gripper_prev_time
         self._gripper_prev_time = now
@@ -399,15 +424,16 @@ class RebotB601Follower(Robot):
         measured_vel = 0.0 if prev_state_pos is None or dt <= 0.0 else (state.pos - prev_state_pos) / dt
         self._gripper_prev_state_pos = state.pos
 
-        torque = self.config.mit_kp[GRIPPER_MOTOR] * (target_pos_rad - state.pos) + self.config.mit_kd[
-            GRIPPER_MOTOR
-        ] * (target_vel - state.vel)
+        torque = self._mit_kp[GRIPPER_MOTOR] * (target_pos_rad - state.pos) + self._mit_kd[GRIPPER_MOTOR] * (
+            target_vel - state.vel
+        )
 
         limit = (
             self.config.gripper_torque_limit
             if abs(measured_vel) > _GRIPPER_HOLD_VEL_THRESHOLD
             else self.config.gripper_hold_torque_limit
         )
+        limit = cast(float, limit)
         return max(-limit, min(limit, torque))
 
     @check_if_not_connected

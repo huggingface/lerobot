@@ -40,11 +40,19 @@ class MotorFamily(StrEnum):
     RS = "rs"
 
 
-# Control modes.
-MIT_MODE = "mit"
-ARM_MODE_POS_VEL = "pos_vel"
-GRIPPER_MODE_FORCE_POS = "force_pos"
-GRIPPER_MODE_MIT_IMPEDANCE = "mit_impedance"
+class ArmControlMode(StrEnum):
+    """Control modes supported by the arm joints."""
+
+    MIT = "mit"
+    POS_VEL = "pos_vel"
+
+
+class GripperControlMode(StrEnum):
+    """Control modes supported by the gripper."""
+
+    MIT = "mit"
+    FORCE_POS = "force_pos"
+    MIT_IMPEDANCE = "mit_impedance"
 
 
 @dataclass
@@ -55,10 +63,11 @@ class MotorFamilyProfile:
     # Sign from public joint positions to raw motor positions.
     joint_directions: dict[str, float]
     can_adapter: str
-    gripper_control_mode: str
+    gripper_control_mode: GripperControlMode
     motor_can_ids: dict[str, tuple[int, int]]
     mit_kp: dict[str, float]
     mit_kd: dict[str, float]
+    # Soft limits in the public joint coordinate frame.
     joint_limits: dict[str, tuple[float, float]]
     # POS_VEL and FORCE_POS speed limits in deg/s.
     pos_vel_velocity: dict[str, float] | None
@@ -79,7 +88,7 @@ DM_PROFILE = MotorFamilyProfile(
         "gripper": "4310",
     },
     can_adapter="damiao",
-    gripper_control_mode=GRIPPER_MODE_FORCE_POS,
+    gripper_control_mode=GripperControlMode.FORCE_POS,
     motor_can_ids={joint: (motor_id, motor_id + 0x10) for motor_id, joint in enumerate(JOINT_NAMES, start=1)},
     mit_kp={
         "shoulder_pan": 45.0,
@@ -127,7 +136,7 @@ RS_PROFILE = MotorFamilyProfile(
     },
     # MotorBridge native CAN transport.
     can_adapter="socketcan",
-    gripper_control_mode=GRIPPER_MODE_MIT_IMPEDANCE,
+    gripper_control_mode=GripperControlMode.MIT_IMPEDANCE,
     # All motors reply to host ID 0xFD.
     motor_can_ids={joint: (i, 0xFD) for i, joint in enumerate(JOINT_NAMES, start=1)},
     mit_kp={
@@ -148,15 +157,15 @@ RS_PROFILE = MotorFamilyProfile(
         "wrist_roll": 4.0,
         "gripper": 0.05,
     },
-    # Raw limits reflect the reversed motor mounting.
+    # Public limits corresponding to the reversed raw motor ranges.
     joint_limits={
         "shoulder_pan": (-145.0, 145.0),
-        "shoulder_lift": (0.0, 170.0),
-        "elbow_flex": (0.0, 200.0),
-        "wrist_flex": (-80.0, 90.0),
+        "shoulder_lift": (-170.0, 0.0),
+        "elbow_flex": (-200.0, 0.0),
+        "wrist_flex": (-90.0, 80.0),
         "wrist_yaw": (-90.0, 90.0),
         "wrist_roll": (-90.0, 90.0),
-        "gripper": (0.0, 270.0),
+        "gripper": (-270.0, 0.0),
     },
     joint_directions=dict.fromkeys(JOINT_NAMES, -1.0),
     pos_vel_velocity=None,

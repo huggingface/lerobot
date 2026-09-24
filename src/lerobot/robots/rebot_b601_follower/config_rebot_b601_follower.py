@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from lerobot.cameras import CameraConfig
 
 from ..config import RobotConfig
-from .motor_family import MIT_MODE, MOTOR_PROFILES, MotorFamily
+from .motor_family import MOTOR_PROFILES, ArmControlMode, GripperControlMode, MotorFamily
 
 
 @dataclass
@@ -50,10 +50,10 @@ class RebotB601FollowerConfig:
     motor_can_ids: dict[str, tuple[int, int]] | None = None
 
     # Arm mode: "mit" or "pos_vel".
-    control_mode: str = MIT_MODE
+    control_mode: ArmControlMode = ArmControlMode.MIT
 
     # Gripper mode: "mit", "force_pos", or "mit_impedance".
-    gripper_control_mode: str | None = None
+    gripper_control_mode: GripperControlMode | None = None
 
     # MIT gains shared by all joints or keyed by joint name.
     mit_kp: float | dict[str, float] | None = None
@@ -69,11 +69,12 @@ class RebotB601FollowerConfig:
     gripper_torque_limit: float | None = None
     gripper_hold_torque_limit: float | None = None
 
-    # Soft limits in raw motor degrees.
+    # Soft limits in public joint degrees.
     joint_limits: dict[str, tuple[float, float]] | None = None
 
     def __post_init__(self) -> None:
         self.motor_family = MotorFamily(self.motor_family)
+        self.control_mode = ArmControlMode(self.control_mode)
         profile = MOTOR_PROFILES[self.motor_family]
         joints = tuple(profile.motor_models)
 
@@ -85,16 +86,19 @@ class RebotB601FollowerConfig:
 
         if self.gripper_control_mode is None:
             self.gripper_control_mode = profile.gripper_control_mode
+        else:
+            self.gripper_control_mode = GripperControlMode(self.gripper_control_mode)
 
         for name in ("mit_kp", "mit_kd", "pos_vel_velocity"):
             value = getattr(self, name)
+            default = getattr(profile, name)
             if value is None:
-                value = getattr(profile, name)
+                value = default
             if value is not None:
                 if isinstance(value, (int, float)):
                     value = dict.fromkeys(joints, float(value))
                 else:
-                    value = dict(value)
+                    value = {**(default or {}), **value}
                 setattr(self, name, value)
 
         if self.joint_limits is None:
