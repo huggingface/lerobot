@@ -258,7 +258,7 @@ lawam = [
 ]
 
 # Features
-async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
+async = ["lerobot[grpcio-dep]", "lerobot[pyzmq-dep]", "lerobot[matplotlib-dep]"]
 peft = ["lerobot[transformers-dep]", "lerobot[peft-dep]"]
 
 # Annotation pipeline (lerobot-annotate). The only backend is ``openai``,
