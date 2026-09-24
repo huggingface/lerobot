@@ -455,3 +455,34 @@ def test_full_index_cache_does_not_rebuild_valid_source(
     monkeypatch.setattr(_mapped_index.tempfile, "NamedTemporaryFile", full_disk)
     with pytest.raises(OSError, match="free space in HF_LEROBOT_HOME"):
         ensure_mp4_sidecar(spec, tmp_path, build=unexpected_build)
+
+
+@pytest.mark.parametrize("prepare_cache", [False, True])
+def test_sidecar_array_reads_do_not_scan_npz_member_lists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prepare_cache: bool
+) -> None:
+    path = tmp_path / "index.npz"
+    _write_valid(path, _spec())
+    original = np.lib.npyio.NpzFile.__getitem__
+    array_lookups = []
+
+    def counted_lookup(self: np.lib.npyio.NpzFile, key: str) -> np.ndarray:
+        if key != "manifest_json":
+            array_lookups.append(key)
+        return original(self, key)
+
+    monkeypatch.setattr(np.lib.npyio.NpzFile, "__getitem__", counted_lookup)
+    assert EpisodeVideoManifest.validate_file_sidecar(path, _spec(), prepare_cache=prepare_cache)
+    assert array_lookups == []
+
+
+@pytest.mark.parametrize("prepare_cache", [False, True])
+def test_sidecar_rejects_object_arrays_without_publication(tmp_path: Path, prepare_cache: bool) -> None:
+    path = tmp_path / "index.npz"
+    _write_valid(path, _spec())
+    with np.load(path, allow_pickle=False) as data:
+        arrays = {key: data[key] for key in data.files}
+    arrays["0/sample_pts"] = np.array([object()], dtype=object)
+    np.savez_compressed(path, **arrays)
+    assert not EpisodeVideoManifest.validate_file_sidecar(path, _spec(), prepare_cache=prepare_cache)
+    assert not list((tmp_path / "cache-home").glob("**/*.bin"))

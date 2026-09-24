@@ -16,6 +16,7 @@ import os
 import tempfile
 from pathlib import Path
 from typing import Any
+from zipfile import ZipFile
 
 import numpy as np
 from filelock import FileLock
@@ -104,11 +105,20 @@ def sidecar_payload(path: Path) -> dict[str, Any]:
 
 def validate_source_arrays(path: Path, payload: dict[str, Any]) -> None:
     """Check temporary NPZ contents without retaining arrays or creating a cache."""
-    with np.load(path, allow_pickle=False) as data:
+    with ZipFile(path) as archive:
         for file_index, item in enumerate(payload["files"]):
-            arrays = {name: data[f"{file_index}/{name}"] for name in ARRAY_NAMES}
-            _validate_arrays(arrays)
-            Mp4Index.from_dict(item["mp4"], arrays)
+            _read_arrays(archive, file_index, item)
+
+
+def _read_arrays(archive: ZipFile, file_index: int, item: dict[str, Any]) -> dict[str, NDArray[np.generic]]:
+    """Read numeric members directly, without NpzFile's linear filename searches."""
+    arrays = {}
+    for name in ARRAY_NAMES:
+        with archive.open(f"{file_index}/{name}.npy") as member:
+            arrays[name] = np.lib.format.read_array(member, allow_pickle=False)
+    _validate_arrays(arrays)
+    Mp4Index.from_dict(item["mp4"], arrays)
+    return arrays
 
 
 def _validate_arrays(arrays: dict[str, NDArray[np.generic]]) -> None:
@@ -160,9 +170,7 @@ def mapped_sidecar(path: Path) -> tuple[Path, dict[str, Any]]:
                     ) as out:
                         temporary = Path(out.name)
                         for file_index, item in enumerate(payload["files"]):
-                            arrays = {name: data[f"{file_index}/{name}"] for name in ARRAY_NAMES}
-                            _validate_arrays(arrays)
-                            Mp4Index.from_dict(item["mp4"], arrays)
+                            arrays = _read_arrays(data.zip, file_index, item)
                             item["arrays"] = {}
                             for name, array in arrays.items():
                                 out.write(b"\0" * (-out.tell() % 8))
