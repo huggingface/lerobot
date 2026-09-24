@@ -544,9 +544,6 @@ color = true
 paths = ["src/lerobot"]
 exclude = ["src/lerobot/policies/molmoact2/molmoact2_hf_model"]
 
-# TODO: Enable mypy gradually module by module across multiple PRs
-# Uncomment [tool.mypy] first, then uncomment individual module overrides as they get proper type annotations
-
 [tool.pytest.ini_options]
 markers = [
     "multigpu: distributed tests needing 2-4 GPUs (CI: docker_publish.yml lane)",
@@ -557,138 +554,9 @@ markers = [
 python_version = "3.12"
 ignore_missing_imports = true
 follow_imports = "skip"
-# warn_return_any = true
-# warn_unused_configs = true
-# strict = true
-# disallow_untyped_defs = true
-# disallow_incomplete_defs = true
-# check_untyped_defs = true
 
+# One ruleset for all checked code. Excluded: lerobot.rl (not typed yet) and the vendored
+# molmoact2_hf_model (kept verbatim so upstream syncs stay clean).
 [[tool.mypy.overrides]]
-module = "lerobot.*"
+module = ["lerobot.rl.*", "lerobot.policies.molmoact2.molmoact2_hf_model.*"]
 ignore_errors = true
-
-[[tool.mypy.overrides]]
-module = "lerobot.common.*"
-ignore_errors = false
-
-[[tool.mypy.overrides]]
-module = "lerobot.envs.*"
-ignore_errors = false
-
-[[tool.mypy.overrides]]
-module = "lerobot.annotations.*"
-ignore_errors = false
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-
-[[tool.mypy.overrides]]
-module = "lerobot.jobs.*"
-ignore_errors = false
-
-[[tool.mypy.overrides]]
-module = "lerobot.transforms.*"
-ignore_errors = false
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-
-[[tool.mypy.overrides]]
-module = "lerobot.utils.*"
-ignore_errors = false
-
-[[tool.mypy.overrides]]
-module = "lerobot.configs.*"
-ignore_errors = false
-
-# extra strictness for configs
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-
-[[tool.mypy.overrides]]
-module = "lerobot.lerobot_types"
-ignore_errors = false
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-
-[[tool.mypy.overrides]]
-module = "lerobot.distributed.*"
-ignore_errors = false
-
-# extra strictness for the distributed engine
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-
-[[tool.mypy.overrides]]
-module = "lerobot.data_processing.*"
-ignore_errors = false
-
-[[tool.mypy.overrides]]
-module = "lerobot.optim.*"
-ignore_errors = false
-
-[[tool.mypy.overrides]]
-module = "lerobot.rollout.*"
-ignore_errors = false
-
-[[tool.mypy.overrides]]
-module = "lerobot.model.*"
-ignore_errors = false
-
-[[tool.mypy.overrides]]
-module = "lerobot.processor.*"
-ignore_errors = false
-
-[[tool.mypy.overrides]]
-module = "lerobot.datasets.*"
-ignore_errors = false
-
-[[tool.mypy.overrides]]
-module = "lerobot.cameras.*"
-ignore_errors = false
-
-[[tool.mypy.overrides]]
-module = "lerobot.rewards.*"
-ignore_errors = false
-
-[[tool.mypy.overrides]]
-module = "lerobot.motors.*"
-ignore_errors = false
-
-[[tool.mypy.overrides]]
-module = "lerobot.robots.*"
-ignore_errors = false
-
-[[tool.mypy.overrides]]
-module = "lerobot.teleoperators.*"
-ignore_errors = false
-
-[[tool.mypy.overrides]]
-module = "lerobot.policies.*"
-ignore_errors = false
-
-# Vendored from transformers; not type-checked so upstream syncs stay clean.
-[[tool.mypy.overrides]]
-module = "lerobot.policies.molmoact2.molmoact2_hf_model.*"
-ignore_errors = true
-
-# [[tool.mypy.overrides]]
-# module = "lerobot.rl.*"
-# ignore_errors = false
-
-
-[[tool.mypy.overrides]]
-module = "lerobot.async_inference.*"
-ignore_errors = false
-
-[[tool.mypy.overrides]]
-module = "lerobot.transport.*"
-ignore_errors = false
-
-[[tool.mypy.overrides]]
-module = "lerobot.scripts.*"
-ignore_errors = false
