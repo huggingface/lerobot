@@ -338,6 +338,13 @@ not calibrated visibility probabilities. Outputs remain unreviewed evidence: ins
 gripper overlays and tracking continuity before using centers as trace labels. No
 occlusion interpolation or object-track substitution is performed.
 
+Gripper predictions can also be exported without object tracks. Pass the frame
+extraction directories as `--gripper-visuals` and predictions as `--grippers` to
+`export_language_annotations.py`; omit `--extractions` when there are no object
+tracks. The derived dataset still stores camera-tagged boxes, centers, and observed
+trace prefixes in native language events, with missing samples preserved and review
+status pending. Exporting evidence does not approve it as a training command.
+
 Extract features on a small diverse episode subset first. Each entry in the input
 feature JSON has `episode_index`, `start_frame`, `end_frame`, `subtask`, and
 `subtask_evidence`. Optional `motions` entries carry `text` and `evidence`. Optional

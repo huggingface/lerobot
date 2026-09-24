@@ -713,3 +713,40 @@ def test_gripper_native_export_detects_changed_prediction_bytes(sample, gripper_
     with pytest.raises(ValueError, match="changed after extraction"):
         api["export_dataset"](dataset, [extraction], output, [root])
     assert not output.exists()
+
+
+def test_gripper_only_export_needs_no_object_tracks(sample, gripper_predictions):
+    api, dataset, extraction, output, path = sample
+    root, _, _, _ = gripper_predictions
+    for name in ("task_objects.json", "tracks.json"):
+        (extraction / "clip" / name).unlink()
+    api["export_dataset"](dataset, [], output, [root], gripper_visuals=[extraction])
+    table = pq.read_table(output / "data/chunk-000/file-000.parquet")
+    assert table.schema.field("language_events").type == language_events_arrow_type()
+    assert table.drop(["language_events"]).equals(pq.read_table(path).drop(["language_events"]))
+    for i, rows in enumerate(table["language_events"].to_pylist()[:3]):
+        answer = json.loads(
+            next(r["content"] for r in rows if r["style"] == "vqa" and r["role"] == "assistant")
+        )
+        assert [d["entity"] for d in answer["detections"]] == ["gripper", "gripper"]
+        assert answer["accepted_training_labels"] is False
+        traces = json.loads(next(r["content"] for r in rows if r["style"] == "trace"))["trajectories"]
+        assert len(traces) == 2
+        assert all(len(t["samples"]) == i + 1 for t in traces)
+        assert all(s["point"] is None for s in traces[1]["samples"])
+        if i >= 1:
+            assert traces[0]["samples"][1]["point"] is None
+
+
+def test_gripper_only_export_checks_visual_source(sample, gripper_predictions):
+    api, dataset, extraction, output, _ = sample
+    root, manifest, _, save = gripper_predictions
+    path = extraction / "extraction.json"
+    visual = json.loads(path.read_text())
+    visual["source"]["revision"] = "different"
+    path.write_text(json.dumps(visual))
+    manifest["visual_manifest_sha256"] = api["digest"](path)
+    save()
+    with pytest.raises(ValueError, match="Gripper visual source"):
+        api["export_dataset"](dataset, [], output, [root], gripper_visuals=[extraction])
+    assert not output.exists()

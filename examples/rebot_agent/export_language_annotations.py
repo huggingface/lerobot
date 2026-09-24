@@ -310,7 +310,11 @@ def collect_grippers(roots: list[Path], extractions: list[Path], source: dict, e
         seen.add(visual_hash)
         visual_root = visuals[visual_hash]
         visual = read_json(visual_root / "extraction.json")
+        if visual["source"] != source:
+            raise ValueError("Gripper visual source differs from the dataset source")
         clips = {clip["path"]: clip for clip in visual["clips"]}
+        if len(clips) != len(visual["clips"]):
+            raise ValueError("Duplicate clip path in gripper visual extraction")
         if len(manifest["clips"]) != len(clips) or {c["path"] for c in manifest["clips"]} != set(clips):
             raise ValueError("Gripper extraction must contain every visual clip exactly once")
         manifest_hash = digest(manifest_path)
@@ -447,14 +451,19 @@ def export_dataset(
     output: Path,
     grippers: list[Path] | None = None,
     clip_replacements: list[dict] | None = None,
+    gripper_visuals: list[Path] | None = None,
 ) -> dict:
     dataset, output = dataset.resolve(), output.resolve()
     if output.exists() or dataset in output.parents:
         raise ValueError("Output must be a fresh directory outside the source dataset")
+    if not extractions and not grippers:
+        raise ValueError("At least one object or gripper extraction is required")
     source = read_json(dataset / "source.json")
     source = {k: source[k] for k in ("repo_id", "revision")}
     events, provenance = collect_candidates(extractions, source, clip_replacements)
-    gripper_provenance = collect_grippers(grippers or [], extractions, source, events)
+    gripper_provenance = collect_grippers(
+        grippers or [], [*extractions, *(gripper_visuals or [])], source, events
+    )
     info = read_json(dataset / "meta/info.json")
     by_frame = defaultdict(dict)
     for (episode, frame, camera), bucket in events.items():
@@ -546,10 +555,16 @@ def export_dataset(
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-root", type=Path, required=True)
-    parser.add_argument("--extractions", type=Path, nargs="+", required=True)
+    parser.add_argument("--extractions", type=Path, nargs="+", default=[], help="Object-tracking extractions")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
         "--grippers", type=Path, nargs="+", help="Optional completed gripper_detector.py extractions"
+    )
+    parser.add_argument(
+        "--gripper-visuals",
+        type=Path,
+        nargs="+",
+        help="Gripper source frames without object-tracking outputs",
     )
     parser.add_argument(
         "--clip-replacements",
@@ -565,6 +580,7 @@ def main():
                 args.output,
                 args.grippers,
                 read_json(args.clip_replacements) if args.clip_replacements is not None else None,
+                args.gripper_visuals,
             )
         )
     )
