@@ -641,10 +641,24 @@ def test_sync_engine_uses_new_task_and_flushes_precomputed_actions():
     policy.config.use_amp = False
     policy.select_action.return_value = torch.zeros(1, 2)
 
+    class _Postprocessor:
+        """Matches the pipeline interface: callable, and rewindable like the real one."""
+
+        def __init__(self):
+            self.resets = 0
+
+        def __call__(self, action):
+            return action
+
+        def reset(self):
+            self.resets += 1
+
+    postprocessor = _Postprocessor()
+
     engine = SyncInferenceEngine(
         policy=policy,
         preprocessor=lambda obs: obs,
-        postprocessor=lambda action: action,
+        postprocessor=postprocessor,
         dataset_features={
             "action": {"dtype": "float32", "shape": (2,), "names": ["j1.pos", "j2.pos"]},
         },
@@ -668,6 +682,9 @@ def test_sync_engine_uses_new_task_and_flushes_precomputed_actions():
     # without the wider episode reset (which would perturb observation history).
     assert policy.drop_queued_actions.call_count == 1
     assert policy.reset.call_count == 0
+    # Dropping the chunk also rewinds postprocessor steps that track a position inside it,
+    # such as G0.5's per-timestep unnormalizer.
+    assert postprocessor.resets == 1
     assert policy.select_action.call_args[0][0]["task"] == "fold the towel"
 
     # Only the first call after a switch flushes.
