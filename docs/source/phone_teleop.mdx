@@ -29,12 +29,14 @@ Links:
 ### Phone orientation and controls
 
 - Orientation: hold the phone with the screen facing up and the top edge pointing in the same direction as the robot gripper. This ensures calibration aligns the phone’s frame with the robot frame so motion feels natural, see the image below for reference.
-- Enable/disable:
-  - iOS: Hold `B1` to enable teleoperation, release to stop. The first press captures a reference pose.
-  - Android: Press and hold the `Move` button, release to stop. The first press captures a reference pose.
-- Gripper control:
-  - iOS: Analog input `A3` controls the gripper as velocity input.
+- Enable/disable — this is a **dead-man switch, you have to keep it held down for the whole motion**:
+  - iOS: Hold `B1` to move the robot, release to freeze the arm where it is. Each press re-anchors the phone to the arm's current pose, so you can release, bring your hand back to a comfortable spot, press again, and continue — the robot does not jump.
+  - Android: Same with the `Move` button on the WebXR page.
+- Gripper control (works whether or not the enable button is held):
+  - iOS: Analog slider `A3` controls the gripper as a velocity input — push up to open, pull down to close, release to the center to hold.
   - Android: Buttons `A` and `B` act like increment/decrement (A opens, B closes). You can tune velocity in the `GripperVelocityToJoint` step.
+- Grip: hold the phone in **both hands**, one thumb on the enable button (`B1`) and the other on the gripper slider (`A3`), so you can drive the arm and the gripper at the same time without changing grip. Keep the phone flat while you do it — its pose is the command, so re-gripping mid-motion moves the robot.
+- Robot start pose: `teleoperate.py` moves the arm to its [homing pose](./so101#calibrate) on startup (before the phone is calibrated), and on Ctrl+C moves it back to the position it was found in when the script started. Homing commands each body joint to the half-turn value that `set_half_turn_homings()` centred on during calibration — the pose held in the calibration diagram — while the gripper is left where it is so homing never closes it on something. This matters because targets are solved with IK from wherever the arm is when you press the enable button — a folded or fully stretched arm has little room left and runs into its joint limits. The other example scripts (`record.py`, `evaluate.py`, `replay.py`) do not home the arm, so place it there yourself before starting them.
 
 <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/phone_teleop.webp" alt="Phone teleop orientation" title="Phone teleop orientation" width="40%">
 
@@ -65,21 +67,37 @@ Why calibrate? We capture the current pose so subsequent poses are expressed in 
 
 Run on of the examples scripts to teleoperate, record a dataset, replay a dataset or evaluate a policy.
 
-All scripts assume you configured your robot (e.g., SO-100 follower) and set the correct serial port.
+All scripts assume you configured and calibrated your robot (e.g., SO-100 follower).
 
-Additionally you need to **copy the URDF of the robot into the examples folder**. For the examples in this tutorial (using SO100/SO101), copy the `SO101` folder from the [SO-ARM100 repo](https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101) into the `examples/phone_to_so100/` directory, so that the URDF file path becomes `examples/phone_to_so100/SO101/so101_new_calib.urdf`.
+<Tip warning={true}>
 
-- Run this example to teleoperate:
+**You must supply the robot's URDF.** Every example solves inverse kinematics, which needs a kinematic model of the arm, and the URDF is not shipped with LeRobot.
+
+For the SO-100/SO-101 used in this tutorial, copy the `SO101` folder from the [SO-ARM100 repo](https://github.com/TheRobotStudio/SO-ARM100/tree/main/Simulation/SO101) into `examples/phone_to_so100/`,
+so the file lands at `examples/phone_to_so100/SO101/so101_new_calib.urdf`, when being in LeRobot repo:
+
+```bash
+git clone --depth 1 https://github.com/TheRobotStudio/SO-ARM100.git /tmp/SO-ARM100
+cp -r /tmp/SO-ARM100/Simulation/SO101 examples/phone_to_so100/SO101
+```
+
+Point the scripts at a different file with `--urdf` if you store it elsewhere, or if you are driving another arm.
+
+</Tip>
+
+- Run this example to teleoperate, passing the serial port of your follower arm (find it with `lerobot-find-port`):
 
   ```bash
   cd examples/phone_to_so100
-  python teleoperate.py
+  python teleoperate.py --port /dev/tty.usbmodem5A460814411
   ```
+
+  `--id` selects which stored calibration to use, and `--urdf` points at the URDF above.
 
 After running the example:
 
 - Android: after starting the script, open the printed local URL on your phone, tap Start, then press and hold Move.
-- iOS: open HEBI Mobile I/O first; B1 enables motion. A3 controls the gripper.
+- iOS: open HEBI Mobile I/O first; hold B1 down to move the robot. A3 controls the gripper.
 
 Additionally you can customize mapping or safety limits by editing the processor steps shown in the examples. You can also remap inputs (e.g., use a different analog input) or adapt the pipeline to other robots (e.g., LeKiwi) by modifying the input and kinematics steps. More about this in the [Processors for Robots and Teleoperators](./processors_robots_teleop) guide.
 
@@ -121,11 +139,11 @@ Additionally you can customize mapping or safety limits by editing the processor
 
   ```python
   action["enabled"] = enabled
-        action["target_x"] = -pos[1] if enabled else 0.0
-        action["target_y"] = pos[0] if enabled else 0.0
+        action["target_x"] = pos[1] if enabled else 0.0
+        action["target_y"] = -pos[0] if enabled else 0.0
         action["target_z"] = pos[2] if enabled else 0.0
         action["target_wx"] = rotvec[1] if enabled else 0.0
-        action["target_wy"] = rotvec[0] if enabled else 0.0
+        action["target_wy"] = -rotvec[0] if enabled else 0.0
         action["target_wz"] = -rotvec[2] if enabled else 0.0
         action["gripper_vel"] = gripper_vel  # Still send gripper action when disabled
   ```
@@ -193,4 +211,5 @@ We use different IK initial guesses in the kinematic steps. As initial guess eit
 
 - iOS not discovered: ensure HEBI Mobile I/O is open and your laptop/phone are on the same network.
 - Android URL not reachable: check local you used `https` instead of `http`, use the exact IP printed by the script and allow your browser to enter and ignore the certificate issue.
-- Motion feels inverted: adjust the sign flips in `MapPhoneActionToRobotAction` or swap axes to match your setup.
+- Motion feels inverted: check one axis at a time, then adjust the sign flips in `MapPhoneActionToRobotAction` or swap axes to match your setup.
+- The arm barely moves or fights its limits: restart from a mid-range start pose (see above) — IK is solved from the arm's current configuration.
