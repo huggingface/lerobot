@@ -38,6 +38,7 @@ from lerobot.__version__ import __version__
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.types import PolicyFeature
 from lerobot.distributed.checkpoint import (
     is_sharded_module,
     load_sharded_model,
@@ -48,8 +49,10 @@ from lerobot.distributed.checkpoint import (
 from lerobot.distributed.utils import is_main_process
 from lerobot.optim import (
     load_optimizer_state,
+    load_scaler_state,
     load_scheduler_state,
     save_optimizer_state,
+    save_scaler_state,
     save_scheduler_state,
 )
 from lerobot.policies import PreTrainedPolicy
@@ -139,20 +142,22 @@ def save_training_metadata(step: int, save_dir: Path, cfg: TrainPipelineConfig) 
 
     `step` counts loop iterations (= micro-batches), so
     the sampler resume offset is `step x batch_size x dp_world_size` with no grad-accum factor.
-    `grad_accum_steps` and the parallelism snapshot are recorded so a resume can warn precisely
-    when the optimizer-update cadence or the sharding topology changed.
+    `grad_accum_steps`, `mixed_precision` and the parallelism snapshot are recorded so a resume
+    can warn precisely when the optimizer-update cadence, the precision, or the sharding
+    topology changed.
 
     Args:
         step (int): The training step (micro-batch counter) to record.
         save_dir (Path): The `training_state/` directory to write `training_step.json` into.
         cfg (TrainPipelineConfig): The training config whose batch size, gradient-accumulation,
-            and parallelism settings are snapshotted alongside the step.
+            precision, and parallelism settings are snapshotted alongside the step.
     """
     state: dict[str, Any] = {
         "step": step,
         "dp_world_size": cfg.parallelism.dp_world_size,
         "batch_size": cfg.batch_size,
         "grad_accum_steps": cfg.accelerator.gradient_accumulation.steps,
+        "mixed_precision": cfg.accelerator.mixed_precision,
         "parallelism": {
             "dp_replicate": cfg.parallelism.dp_replicate,
             "dp_shard": cfg.parallelism.dp_shard,
@@ -173,8 +178,9 @@ def load_training_metadata(training_state_dir: Path) -> dict[str, Any]:
         training_state_dir (Path): The checkpoint's `training_state/` directory.
 
     Returns:
-        dict[str, Any]: `step` plus the `dp_world_size`, `batch_size`, `grad_accum_steps` and
-            `parallelism` snapshot recorded alongside it (None where not recorded).
+        dict[str, Any]: `step` plus the `dp_world_size`, `batch_size`, `grad_accum_steps`,
+            `mixed_precision` and `parallelism` snapshot recorded alongside it (None where
+            not recorded).
     """
     state = load_json(training_state_dir / TRAINING_STEP)
     return {
@@ -182,6 +188,7 @@ def load_training_metadata(training_state_dir: Path) -> dict[str, Any]:
         "dp_world_size": state.get("dp_world_size", state.get("num_processes")),
         "batch_size": state.get("batch_size"),
         "grad_accum_steps": state.get("grad_accum_steps"),
+        "mixed_precision": state.get("mixed_precision"),
         "parallelism": state.get("parallelism"),
     }
 
@@ -220,7 +227,8 @@ def save_checkpoint(
         ├── optimizer_0/  # DCP optimizer shards (sharded runs)
         ├── rng_state.safetensors  # rng states
         ├── scheduler_state.json  # scheduler state (if scheduler provided)
-        └── training_step.json  # training step + dp_world_size/batch_size/grad_accum + topology
+        ├── scaler_state.json  # fp16 loss-scaler state (mixed_precision=fp16 only)
+        └── training_step.json  # step + dp_world_size/batch_size/grad_accum/precision + topology
 
     Collective: MUST be called on every rank. Rank-0-only writes are gated internally, so the
     call site needs no rank branches.
@@ -329,11 +337,25 @@ def save_training_state(
             save_scheduler_state(scheduler, save_dir)
         if optimizer is not None and not sharded:
             save_optimizer_state(optimizer, save_dir)
+        # Only fp16 has a scaler (accelerate leaves it None otherwise), and its state is
+        # identical on every rank, so the rank-0 write is the whole story.
+        if accelerator is not None and accelerator.scaler is not None:
+            save_scaler_state(accelerator.scaler, save_dir)
 
 
 # ---------------------------------------------------------------------------------------------
 # Two-phase resume
 # ---------------------------------------------------------------------------------------------
+
+
+def _resume_checkpoint_dir(cfg: TrainPipelineConfig) -> Path:
+    """Return the checkpoint directory a resumed run restores from."""
+    if cfg.checkpoint_path is None:
+        raise ValueError(
+            "cfg.checkpoint_path is unset: `--resume=true` needs `--config_path=<checkpoint>` and "
+            "cannot be combined with `--policy.path` / `--reward_model.path`."
+        )
+    return cfg.checkpoint_path
 
 
 def resume_before_prepare(cfg: TrainPipelineConfig) -> int:
@@ -352,10 +374,10 @@ def resume_before_prepare(cfg: TrainPipelineConfig) -> int:
 
     Raises:
         NotADirectoryError: If the checkpoint has no `training_state/` directory.
-        ValueError: If the resumed topology crosses the sharded/non-sharded boundary relative
-            to the one recorded in the checkpoint.
+        ValueError: If `cfg.checkpoint_path` is unset, or if the resumed topology crosses the
+            sharded/non-sharded boundary relative to the one recorded in the checkpoint.
     """
-    training_state_dir = cfg.checkpoint_path / TRAINING_STATE_DIR
+    training_state_dir = _resume_checkpoint_dir(cfg) / TRAINING_STATE_DIR
     if not training_state_dir.is_dir():
         raise NotADirectoryError(training_state_dir)
     metadata = load_training_metadata(training_state_dir)
@@ -375,7 +397,8 @@ def _guard_resume_changes(cfg: TrainPipelineConfig, metadata: dict[str, Any]) ->
       a recorded snapshot skip this check.
     - **One warning** naming every other recorded setting that differs — those changes are
       legal (DCP reshards weights and optimizer state across topologies and the sampler offset
-      adapts), but a changed ``grad_accum_steps`` shifts the optimizer-update cadence, so the
+      adapts), but a changed ``grad_accum_steps`` shifts the optimizer-update cadence and a
+      changed ``mixed_precision`` decides whether the saved loss scale is used at all, so the
       resume says precisely what differs. The sampler-exactness warnings
       (``dp_world_size``/``batch_size``) live with the sampler math in the dataloader factory.
 
@@ -410,6 +433,10 @@ def _guard_resume_changes(cfg: TrainPipelineConfig, metadata: dict[str, Any]) ->
             metadata["grad_accum_steps"],
             cfg.accelerator.gradient_accumulation.steps,
         ),
+        "mixed_precision": (
+            metadata["mixed_precision"],
+            cfg.accelerator.mixed_precision,
+        ),
     }
     if snapshot is not None:
         recorded.update(
@@ -431,7 +458,8 @@ def _guard_resume_changes(cfg: TrainPipelineConfig, metadata: dict[str, Any]) ->
         logging.warning(
             "Resuming with settings that differ from the checkpoint: " + "; ".join(changed) + ". "
             "Topology changes reshard safely via DCP; a changed grad_accum_steps shifts the "
-            "optimizer-update cadence (the step counter keeps counting micro-batches)."
+            "optimizer-update cadence (the step counter keeps counting micro-batches); leaving "
+            "fp16 discards the saved loss scale, and entering it starts from init_scale."
         )
 
 
@@ -442,13 +470,17 @@ def resume_after_prepare(
     optimizer: Optimizer | dict[str, Optimizer],
     scheduler: LRScheduler | None,
 ) -> None:
-    """Phase 2 — after `accelerator.prepare()`: model (DCP) -> optimizer -> scheduler.
+    """Phase 2 — after `accelerator.prepare()`: model (DCP) -> optimizer -> scheduler -> scaler.
 
     Collective under sharding: call on every rank. The model-weight source follows the
     checkpoint's own recorded `checkpoint_format` (on resume, `cfg` was parsed from the
     checkpoint's train_config.json): DCP-bearing formats load shards here into the prepared
     model (whose construction skipped the safetensors load); the safetensors format was already
     loaded by `from_pretrained` before sharding — no model step here.
+
+    The order is a reading convention, not a constraint: the fp16 loss scaler restores last
+    because the DCP optimizer channel is deliberately kept off the scaler's code path
+    (`lerobot.distributed.checkpoint._inner_optimizer`), so nothing here can disturb it.
 
     Args:
         cfg (TrainPipelineConfig): The resumed training config; `cfg.checkpoint_path` locates
@@ -460,10 +492,11 @@ def resume_after_prepare(
         scheduler (LRScheduler | None): The scheduler to restore, or None if the run has none.
 
     Raises:
+        ValueError: If `cfg.checkpoint_path` is unset.
         FileNotFoundError: If the checkpoint format declares DCP model shards but the shard
             directory is missing (e.g. it was pruned before upload).
     """
-    checkpoint_dir = cfg.checkpoint_path
+    checkpoint_dir = _resume_checkpoint_dir(cfg)
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
     training_state_dir = checkpoint_dir / TRAINING_STATE_DIR
     unwrapped = accelerator.unwrap_model(policy)
@@ -490,6 +523,9 @@ def resume_after_prepare(
 
     if scheduler is not None:
         load_scheduler_state(scheduler, training_state_dir)
+
+    if accelerator.scaler is not None:
+        load_scaler_state(accelerator.scaler, training_state_dir)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -670,9 +706,9 @@ _BASE_MODEL_MAPPING = {
 def build_card_context(
     cfg: TrainPipelineConfig | None,
     dataset_meta: "LeRobotDatasetMetadata | None",
-    input_features: dict | None,
-    output_features: dict | None,
-) -> dict:
+    input_features: dict[str, PolicyFeature] | None,
+    output_features: dict[str, PolicyFeature] | None,
+) -> dict[str, Any]:
     """Collect optional data for the model-card template.
 
     Returns plain values only (no Markdown) — the template in
@@ -685,15 +721,17 @@ def build_card_context(
             if available.
         dataset_meta (LeRobotDatasetMetadata | None): Dataset metadata supplying the dataset,
             robot-type, and camera sections, if available.
-        input_features (dict | None): The policy's input feature declarations, if any.
-        output_features (dict | None): The policy's output feature declarations, if any.
+        input_features (dict[str, PolicyFeature] | None): The policy's input feature
+            declarations, if any.
+        output_features (dict[str, PolicyFeature] | None): The policy's output feature
+            declarations, if any.
 
     Returns:
-        dict: Template context with `training`, `input_features`, `output_features`,
+        dict[str, Any]: Template context with `training`, `input_features`, `output_features`,
             `dataset`, `robot_type`, and `cameras` entries; unavailable pieces stay
             empty/None.
     """
-    context = {
+    context: dict[str, Any] = {
         "training": None,
         "input_features": input_features or {},
         "output_features": output_features or {},

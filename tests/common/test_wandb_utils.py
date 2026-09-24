@@ -18,6 +18,8 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, sentinel
 
+import pytest
+
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs.default import WandBConfig
 
@@ -51,7 +53,7 @@ def test_wandb_logger_forwards_resume_and_console_settings(monkeypatch, tmp_path
         output_dir=tmp_path,
         job_name="test-run",
         env=None,
-        policy=SimpleNamespace(type="test-policy"),
+        trainable_config=SimpleNamespace(type="test-policy"),
         is_reward_model_training=False,
         seed=42,
         dataset=None,
@@ -82,7 +84,7 @@ def test_wandb_logger_resumes_with_checkpoint(monkeypatch, tmp_path):
         output_dir=tmp_path,
         job_name="test-run",
         env=None,
-        policy=SimpleNamespace(type="test-policy"),
+        trainable_config=SimpleNamespace(type="test-policy"),
         is_reward_model_training=False,
         seed=42,
         dataset=None,
@@ -93,3 +95,27 @@ def test_wandb_logger_resumes_with_checkpoint(monkeypatch, tmp_path):
     WandBLogger(cfg)
 
     assert wandb.init.call_args.kwargs["resume"] == "must"
+
+
+def test_wandb_logger_resume_without_output_dir_raises(monkeypatch):
+    wandb = MagicMock()
+    monkeypatch.setitem(sys.modules, "wandb", wandb)
+    monkeypatch.setenv("WANDB_SILENT", "False")
+
+    cfg = SimpleNamespace(
+        wandb=WandBConfig(),
+        output_dir=None,
+        job_name="test-run",
+        env=None,
+        trainable_config=SimpleNamespace(type="test-policy"),
+        is_reward_model_training=False,
+        seed=42,
+        dataset=None,
+        resume=True,
+        to_dict=lambda: {},
+    )
+
+    with pytest.raises(ValueError, match=r"cfg\.output_dir"):
+        WandBLogger(cfg)
+
+    wandb.init.assert_not_called()

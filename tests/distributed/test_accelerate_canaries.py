@@ -128,6 +128,85 @@ def test_torch_fsdp2_seams():
     assert {"full_state_dict", "cpu_offload"} <= set(options)
 
 
+def test_fp16_scaler_seams():
+    """The fp16 path: a plain GradScaler for FSDP2, plus the skip flag the loop reads."""
+    from accelerate import Accelerator
+    from accelerate.optimizer import AcceleratedOptimizer
+    from accelerate.utils import GradScalerKwargs
+    from accelerate.utils.fsdp_utils import get_fsdp2_grad_scaler
+
+    # FSDP1's ShardedGradScaler would be wrong for FSDP2 (DTensor gradients unscale natively);
+    # accelerate routes around it through this helper, which LeRobot relies on.
+    assert callable(get_fsdp2_grad_scaler)
+    # The mirrored subset of GradScalerConfig.
+    fields = set(GradScalerKwargs.__dataclass_fields__)
+    assert {"init_scale", "growth_factor", "backoff_factor", "growth_interval"} <= fields
+    # `update_policy` gates the policy's update()/EMA on these.
+    assert isinstance(Accelerator.optimizer_step_was_skipped, property)
+    assert isinstance(AcceleratedOptimizer.step_was_skipped, property)
+
+
+def test_dtensor_reduces_the_overflow_flag():
+    """What makes an overflow on one rank skip the update on all of them.
+
+    `GradScaler.unscale_` inspects gradients through
+    `aten._amp_foreach_non_finite_check_and_unscale_`; DTensor dispatches that op to a handler
+    that reduces the found-inf flag across the mesh. Without it, ranks would disagree about
+    whether to step and the sharded run would silently diverge.
+    """
+    import torch
+    from torch.distributed.tensor import DTensor
+
+    handlers = DTensor._op_dispatcher._custom_op_handlers
+    assert torch.ops.aten._amp_foreach_non_finite_check_and_unscale_.default in handlers
+
+
+def test_dcp_optimizer_init_still_routes_through_the_scaler():
+    """Why `lerobot.distributed.checkpoint` hands DCP the *unwrapped* optimizer.
+
+    torch's optimizer DCP APIs call `_init_optim_state`, which materializes an empty optimizer
+    state with one zero-gradient `optimizer.step()`. Through an `AcceleratedOptimizer` carrying
+    an fp16 scaler, that dummy step enters `GradScaler.step` — which asserts while the scaler
+    is still lazy, and advances the scale once it is not. If this canary stops failing, torch
+    or accelerate has fixed the seam and the unwrap can be reconsidered.
+    """
+    import torch
+    from accelerate import Accelerator
+    from accelerate.optimizer import AcceleratedOptimizer
+    from accelerate.state import AcceleratorState
+    from torch.distributed.checkpoint.state_dict import get_optimizer_state_dict
+
+    Accelerator(cpu=True)  # AcceleratedOptimizer reads the global AcceleratorState
+    try:
+
+        def case():
+            model = torch.nn.Linear(2, 2)
+            scaler = torch.amp.GradScaler("cpu", init_scale=32.0, growth_interval=1)
+            return model, AcceleratedOptimizer(torch.optim.AdamW(model.parameters()), scaler=scaler), scaler
+
+        model, wrapped, scaler = case()
+        with pytest.raises(AssertionError, match="_scale is None"):
+            get_optimizer_state_dict(model, wrapped)
+
+        # Pre-initializing the scaler (what accelerate's own load_state does) only trades the
+        # assert for silent corruption: the dummy step is scaler-stepped and scaler-updated.
+        model, wrapped, scaler = case()
+        scaler.scale(torch.zeros(()))
+        before = scaler.state_dict()
+        get_optimizer_state_dict(model, wrapped)
+        assert scaler.state_dict() != before
+
+        # The unwrapped optimizer leaves the scaler untouched — LeRobot's fix.
+        model, wrapped, scaler = case()
+        scaler.scale(torch.zeros(()))
+        before = scaler.state_dict()
+        state = get_optimizer_state_dict(model, wrapped.optimizer)
+        assert scaler.state_dict() == before
+        assert state["state"]  # the optimizer state really was materialized
+    finally:
+        AcceleratorState._reset_state(reset_partial_state=True)
+
+
 def test_accelerate_version_floor():
     import accelerate
     from packaging import version

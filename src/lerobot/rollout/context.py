@@ -43,12 +43,13 @@ from lerobot.processor import (
     RobotAction,
     RobotObservation,
     RobotProcessorPipeline,
+    bind_relative_anchor,
     make_default_processors,
     rename_stats,
 )
-from lerobot.processor.relative_action_processor import RelativeActionsProcessorStep
 from lerobot.robots import make_robot_from_config
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
+from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
@@ -56,7 +57,6 @@ from .configs import RolloutConfig
 from .inference import (
     InferenceEngine,
     RTCInferenceConfig,
-    SyncInferenceConfig,
     create_inference_engine,
 )
 from .inference.rtc import supports_rtc_inference
@@ -139,49 +139,58 @@ def _validate_trained_rtc_rollout_config(policy_config, inference_config: RTCInf
         )
 
 
-def _resolve_action_key_order(
-    policy_action_names: list[str] | None, dataset_action_names: list[str]
-) -> list[str]:
-    """Choose action name ordering for mapping policy tensor outputs to robot action dicts."""
-    if not policy_action_names:
-        return dataset_action_names
-    policy_action_names = list(policy_action_names)
-    if len(policy_action_names) != len(dataset_action_names):
-        logger.warning(
-            "policy.action_feature_names length (%d) != dataset action dim (%d); using dataset order",
-            len(policy_action_names),
-            len(dataset_action_names),
-        )
-        return dataset_action_names
-    if set(dataset_action_names) != set(policy_action_names):
-        logger.warning("policy.action_feature_names keys don't match dataset; using dataset order")
-        return dataset_action_names
-    return policy_action_names
-
-
-def _align_state_feature_order(
-    observation_features_hw: dict[str, type | tuple], policy_action_names: list[str] | None
+def _align_to_checkpoint_order(
+    features: dict[str, type | tuple], policy_action_names: list[str] | None, *, what: str
 ) -> dict[str, type | tuple]:
-    """Order scalar state features to match the checkpoint's joint order."""
+    """Order ``features`` so its motor entries follow the checkpoint's joint order.
+
+    One rule for both sides: the policy emits and consumes tensors in the order it was
+    trained on, so whichever dict is about to be flattened into a tensor has to match it.
+    Only the scalar motor entries take part; anything else (camera shapes, on the state
+    side) keeps its relative order at the end.
+
+    A set mismatch is left alone rather than forced: extra ``.vel`` channels or an
+    uncommanded base mean the two describe different things, and the robot's own order is
+    the only meaningful one. ``what`` names the side being aligned, so the warning says
+    which of the two reordered.
+    """
     if not policy_action_names:
-        return observation_features_hw
+        return features
 
-    scalar_names = [
-        name for name, feature in observation_features_hw.items() if not isinstance(feature, tuple)
-    ]
-    if set(scalar_names) != set(policy_action_names) or scalar_names == policy_action_names:
-        return observation_features_hw
+    motor_names = [name for name, feature in features.items() if not isinstance(feature, tuple)]
+    if set(motor_names) != set(policy_action_names) or motor_names == policy_action_names:
+        return features
 
-    reordered = {name: observation_features_hw[name] for name in policy_action_names}
-    reordered.update(
-        {name: feature for name, feature in observation_features_hw.items() if name not in reordered}
-    )
     logger.warning(
-        "Robot state order %s differs from checkpoint joint order %s; reordering state",
-        scalar_names,
+        "Robot %s order %s differs from checkpoint joint order %s; reordering %s",
+        what,
+        motor_names,
         policy_action_names,
+        what,
     )
+    reordered = {name: features[name] for name in policy_action_names}
+    reordered.update({name: feature for name, feature in features.items() if name not in reordered})
     return reordered
+
+
+def _assert_state_matches_action_order(dataset_features: dict, ordered_action_keys: list[str]) -> None:
+    """Reject a state layout that is a permutation of the action dispatch order.
+
+    ``send_next_action`` labels the action tensor positionally with ``ordered_action_keys``,
+    so a permuted ``observation.state`` commands every joint with another joint's value.
+    Differing *sets* are legitimate (extra ``.vel`` channels, an uncommanded base) and pass.
+    """
+    state_ft = dataset_features.get(OBS_STATE)
+    if state_ft is None or not ordered_action_keys:
+        return
+    state_names = list(state_ft.get("names") or [])
+    if state_names == ordered_action_keys or set(state_names) != set(ordered_action_keys):
+        return
+    raise ValueError(
+        f"observation.state order {state_names} is a permutation of the action dispatch order "
+        f"{ordered_action_keys}; every joint would be commanded with another joint's value. "
+        "Check policy.action_feature_names against the checkpoint's training dataset."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -307,13 +316,18 @@ def build_rollout_context(
     """Wire up policy, processors, hardware, dataset, and inference engine.
 
     The order is policy-first / hardware-last so a bad ``--policy.path``
-    fails fast without touching the robot.
+    fails fast without touching the robot. A missing policy configuration raises
+    ``ValueError`` before any policy access.
     """
     is_rtc = isinstance(cfg.inference, RTCInferenceConfig)
 
     # --- 1. Policy (heavy I/O, but no hardware yet) -------------------
-    logger.info("Loading policy from '%s'...", cfg.policy.pretrained_path)
     policy_config = cfg.policy
+    if policy_config is None:
+        raise ValueError("--policy.path is required for rollout")
+    logger.info("Loading policy from '%s'...", policy_config.pretrained_path)
+    # Policy constructors and custom processors must use the resolved rollout device too.
+    policy_config.device = cfg.device
 
     if is_rtc:
         _validate_trained_rtc_rollout_config(policy_config, cfg.inference)
@@ -424,9 +438,9 @@ def build_rollout_context(
         if isinstance(v, tuple) or (v is float and k.endswith((".pos", ".vel")))
     }
     policy_action_names = getattr(policy_config, "action_feature_names", None)
-    observation_features_hw = _align_state_feature_order(
-        observation_features_hw,
-        list(policy_action_names) if policy_action_names else None,
+    checkpoint_order = list(policy_action_names) if policy_action_names else None
+    observation_features_hw = _align_to_checkpoint_order(
+        observation_features_hw, checkpoint_order, what="state"
     )
     # Keep both joint-position (.pos) and base-velocity (.vel) action features so
     # mobile manipulators command the base too (e.g. LeKiwi: 6 arm .pos +
@@ -434,6 +448,7 @@ def build_rollout_context(
     # a no-op for them. Without the .vel keys the base velocities are silently
     # dropped from dataset_features[ACTION]/ordered_action_keys and the base never moves.
     action_features_hw = {k: v for k, v in robot.action_features.items() if k.endswith((".pos", ".vel"))}
+    action_features_hw = _align_to_checkpoint_order(action_features_hw, checkpoint_order, what="action")
 
     # The action side is always needed: sync inference reads action names from
     # ``dataset_features[ACTION]`` to map policy tensors back to robot actions.
@@ -450,11 +465,9 @@ def build_rollout_context(
     )
     dataset_features = combine_feature_dicts(action_dataset_features, observation_dataset_features)
     hw_features = hw_to_dataset_features(observation_features_hw, "observation")
-    raw_action_keys = list(action_features_hw.keys())
-    ordered_action_keys = _resolve_action_key_order(
-        list(policy_action_names) if policy_action_names else None,
-        raw_action_keys,
-    )
+    # ``action_features_hw`` is already in checkpoint order, so it *is* the dispatch order.
+    ordered_action_keys = list(action_features_hw)
+    _assert_state_matches_action_order(dataset_features, ordered_action_keys)
 
     # Validate visual features if no rename_map is active
     rename_map = cfg.rename_map
@@ -538,7 +551,7 @@ def build_rollout_context(
 
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=policy_config,
-        pretrained_path=cfg.policy.pretrained_path,
+        pretrained_path=policy_config.pretrained_path,
         pretrained_revision=policy_config.pretrained_revision,
         dataset_stats=dataset_stats,
         preprocessor_overrides={
@@ -547,19 +560,11 @@ def build_rollout_context(
         },
     )
 
-    relative_action_step = next(
-        (
-            step
-            for step in getattr(preprocessor, "steps", ())
-            if isinstance(step, RelativeActionsProcessorStep) and step.enabled
-        ),
-        None,
-    )
-    if isinstance(cfg.inference, SyncInferenceConfig) and relative_action_step is not None:
-        raise NotImplementedError(
-            "SyncInferenceEngine does not support policies with relative actions for now."
-            "Use --inference.type=rtc or remove relative action processor steps from the policy pipeline."
-        )
+    # A relative-action chunk is anchored to the state it was predicted from, and the engines
+    # below rerun the preprocessor once per tick. Hand the step the policy's queue depth so it
+    # holds that anchor until the chunk drains, instead of following the moving arm. Harmless
+    # for the chunk-at-once engines (RTC), whose policy queue is always empty.
+    bind_relative_anchor(policy, preprocessor)
 
     # --- 7. Inference strategy (needs policy + pre/post + hardware) --
     logger.info(
@@ -573,7 +578,6 @@ def build_rollout_context(
         preprocessor=preprocessor,
         postprocessor=postprocessor,
         robot_wrapper=robot_wrapper,
-        hw_features=hw_features,
         dataset_features=dataset_features,
         ordered_action_keys=ordered_action_keys,
         task=task_str,

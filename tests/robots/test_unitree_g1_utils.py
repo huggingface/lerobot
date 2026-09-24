@@ -21,9 +21,15 @@ no onnxruntime, no robot. Tests that need the SDK mocks live in ``test_unitree_g
 and the SONIC decoder tests in ``test_sonic_whole_body.py``.
 """
 
+import sys
+from dataclasses import dataclass, field
+
+import draccus
 import numpy as np
 import pytest
 
+from lerobot.envs.configs import G1EndEffector
+from lerobot.robots import RobotConfig
 from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
 from lerobot.robots.unitree_g1.g1_utils import (
     ISAACLAB_TO_MUJOCO,
@@ -199,3 +205,30 @@ class TestUnitreeG1Config:
     def test_control_dt_is_positive(self):
         cfg = UnitreeG1Config()
         assert cfg.control_dt > 0
+
+    def test_sim_world_is_assembled_from_the_robot_flags(self):
+        cfg = UnitreeG1Config(end_effector="dex3", sim_publish_images=False, sim_camera_port=5600)
+        assert cfg.sim_env.end_effector is G1EndEffector.DEX3
+        assert cfg.sim_env.camera_port == 5600
+        assert cfg.sim_env.publish_images is False
+        assert cfg.sim_env.onscreen is True  # the viewer takes over when nothing is published
+
+    def test_the_robot_still_fits_on_a_command_line(self):
+        """A RobotConfig must not expose an EnvConfig to draccus.
+
+        The parser builds its whole argument tree up front, descending into every choice of
+        every registry it meets. The `gym_manipulator` env carries a RobotConfig, so an env
+        config reachable from a robot config closes a loop and the walk never ends.
+        """
+
+        @dataclass
+        class Wrapper:
+            robot: RobotConfig = field(default_factory=UnitreeG1Config)
+
+        limit = sys.getrecursionlimit()
+        sys.setrecursionlimit(300)  # fail in seconds rather than filling memory
+        try:
+            cfg = draccus.parse(Wrapper, args=["--robot.type=unitree_g1", "--robot.sim_camera_port=5600"])
+        finally:
+            sys.setrecursionlimit(limit)
+        assert cfg.robot.sim_env.camera_port == 5600

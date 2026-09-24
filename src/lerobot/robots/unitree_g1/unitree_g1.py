@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 import numpy as np
 
 from lerobot.cameras import make_cameras_from_configs
+from lerobot.envs.configs import G1EndEffector
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.import_utils import _unitree_sdk_available, require_package
 
@@ -444,17 +445,15 @@ class UnitreeG1(Robot):
         from unitree_sdk2py.idl.default import unitree_hg_msg_dds__HandCmd_ as HandCmd_default
         from unitree_sdk2py.idl.unitree_hg.msg.dds_ import HandCmd_
 
-        # The sim can be built with either end effector and the two want different commands,
-        # so ask it which it has rather than assuming Dex3: driving two prismatic jaws with a
+        # The two end effectors want different commands: driving two prismatic jaws with a
         # finger-curl vector parks one jaw and sends the other to a travel limit, which reads
         # as the gripper sliding sideways instead of closing.
-        sim = getattr(self.sim_env, "sim_env", None)
-        hand_dof = getattr(sim, "num_hand_dof", len(HAND_CURL_CLOSED["left"]))
+        is_dex1 = self.config.end_effector == G1EndEffector.DEX1
 
         for side in ("left", "right"):
             publisher = self._ChannelPublisher(f"rt/dex3/{side}/cmd", HandCmd_)
             publisher.Init()
-            if hand_dof == 2:
+            if is_dex1:
                 at_open, at_closed = (JAW_OPEN,) * 2, (JAW_CLOSED,) * 2
                 # The sim tracks hand targets with a PD whose gains it reads off this very
                 # message, so a command carrying only a position produces no torque at all
@@ -476,7 +475,7 @@ class UnitreeG1(Robot):
 
             self._hand_cmd_pubs[side] = publisher
             self._hand_cmd_msgs[side] = (msg, at_open, at_closed)
-        hands = "Dex1 two-jaw grippers" if hand_dof == 2 else "Dex3 hands"
+        hands = "Dex1 two-jaw grippers" if is_dex1 else "Dex3 hands"
         logger.info(f"[UnitreeG1] gripper commands -> sim {hands} (rt/dex3/{{left,right}}/cmd)")
 
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
@@ -485,7 +484,7 @@ class UnitreeG1(Robot):
             from lerobot.envs import make_env
 
             self._ChannelFactoryInitialize(0, "lo")
-            self._env_wrapper = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
+            self._env_wrapper = make_env(self.config.sim_env, trust_remote_code=True)
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
         else:
