@@ -68,7 +68,14 @@ lerobot-train \
 | `policy.repo_id`              | `your_repo_id`               | Hub destination; use `policy.push_to_hub=false` for local-only runs  |
 
 Environment control mode is configured separately from the policy action representation. Relative mode requires
-matching state/action dimensions and matching relative-action statistics.
+matching state/action dimensions.
+
+### Cameras
+
+The camera set is part of the policy config, and the prompt always renders exactly those cameras. Fine-tuning from
+`lerobot/dm05_base`, which declares none, takes the training dataset's cameras. A fine-tuned checkpoint keeps its
+own camera names: map a dataset with different names onto them with `--rename_map`, for example
+`--rename_map='{"observation.images.top": "observation.images.front"}'`.
 
 ### Normalization statistics
 
