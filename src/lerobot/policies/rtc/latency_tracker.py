@@ -29,8 +29,8 @@ class LatencyTracker:
             most recent ``maxlen`` latencies are kept. If ``None``, keeps all.
     """
 
-    def __init__(self, maxlen: int = 100):
-        self._values = deque(maxlen=maxlen)
+    def __init__(self, maxlen: int = 100) -> None:
+        self._values: deque[float] = deque(maxlen=maxlen)
         self.reset()
 
     def reset(self) -> None:

@@ -274,7 +274,7 @@ def make_policy(
 
     policy_cls = get_policy_class(cfg.type)
 
-    kwargs = {}
+    kwargs: dict[str, Any] = {}
     if ds_meta is not None:
         features = dataset_to_policy_features(ds_meta.features)
     else:

@@ -75,7 +75,8 @@ class _NormalizationMixin:
         features: A dictionary mapping feature names to `PolicyFeature` objects, defining
             the data structure to be processed.
         norm_map: A dictionary mapping `FeatureType` to `NormalizationMode`, specifying
-            which normalization method to use for each type of feature.
+            which normalization method to use for each type of feature. String keys (e.g.
+            from a JSON config) are converted to `FeatureType` in `__post_init__`.
         stats: A dictionary containing the normalization statistics (e.g., mean, std,
             min, max) for each feature.
         device: The PyTorch device on which to store and perform tensor operations.
@@ -90,7 +91,7 @@ class _NormalizationMixin:
     """
 
     features: dict[str, PolicyFeature]
-    norm_map: dict[FeatureType, NormalizationMode]
+    norm_map: dict[FeatureType, NormalizationMode] | dict[str, NormalizationMode]
     stats: dict[str, dict[str, Any]] | None = None
     device: torch.device | str | None = None
     dtype: torch.dtype | None = None
@@ -257,7 +258,9 @@ class _NormalizationMixin:
             "features": {
                 key: {"type": ft.type.value, "shape": ft.shape} for key, ft in self.features.items()
             },
-            "norm_map": {ft_type.value: norm_mode.value for ft_type, norm_mode in self.norm_map.items()},
+            "norm_map": {
+                FeatureType(ft_type).value: norm_mode.value for ft_type, norm_mode in self.norm_map.items()
+            },
         }
         if self.normalize_observation_keys is not None:
             config["normalize_observation_keys"] = sorted(self.normalize_observation_keys)
