@@ -21,6 +21,7 @@ from __future__ import annotations
 import itertools
 import json
 import math
+import shutil
 import time
 from collections import deque
 from collections.abc import Mapping
@@ -1686,6 +1687,13 @@ class G05NativeBackend(nn.Module):
         return loss, loss_dict
 
 
+_SAVED_BY_LEROBOT_NOTICE = (
+    "Modification notice: this checkpoint was re-saved by LeRobot. Its weights, configuration "
+    "and processor files may have been changed (for example by fine-tuning) since the release "
+    "it was loaded from."
+)
+
+
 def _native_backend(config: G05Config, checkpoint_dir: str | Path | None) -> nn.Module:
     """Build the native backend for a policy config."""
     if not config.author_model_config:
@@ -1746,6 +1754,7 @@ class G05Policy(PreTrainedPolicy):
         if not isinstance(self.backend, nn.Module):
             raise TypeError(f"G0.5 backend must be an nn.Module, got {type(self.backend)}.")
         self._action_queue: deque[Tensor] = deque()
+        self._checkpoint_dir = Path(checkpoint_dir) if checkpoint_dir is not None else None
 
     def supports_text_generation(self) -> bool:
         """G0.5 can generate text."""
@@ -1761,6 +1770,28 @@ class G05Policy(PreTrainedPolicy):
         if text is None:
             raise ValueError("G0.5 text generation returned no text.")
         return text
+
+    def _save_pretrained(self, save_directory: Path) -> None:
+        """Save the policy, carrying the checkpoint's licence files alongside the weights."""
+        super()._save_pretrained(save_directory)
+        from lerobot.distributed.utils import is_main_process
+
+        if self._checkpoint_dir is None or not is_main_process():
+            return
+        # Weights loaded from a G0.5 checkpoint stay under the G0.5 Community License
+        # after fine-tuning, and its Section 2.2 requires every redistribution to ship
+        # the agreement, the NOTICE file, and a notice that the files were changed.
+        for name in ("LICENSE-G0.5", "LICENSE_QWEN3_5.txt", "NOTICE"):
+            source, target = self._checkpoint_dir / name, save_directory / name
+            if not source.is_file() or (target.exists() and source.samefile(target)):
+                continue
+            if name == "NOTICE":
+                notice = source.read_text(encoding="utf-8")
+                if _SAVED_BY_LEROBOT_NOTICE not in notice:
+                    notice = f"{notice.rstrip()}\n\n{_SAVED_BY_LEROBOT_NOTICE}\n"
+                target.write_text(notice, encoding="utf-8")
+            else:
+                shutil.copy2(source, target)
 
     @classmethod
     def _load_as_safetensor(

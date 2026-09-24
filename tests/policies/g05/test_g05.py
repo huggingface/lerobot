@@ -1315,6 +1315,97 @@ def test_forward_backward_update_and_save_reload(tmp_path: Path):
     torch.testing.assert_close(actual, expected)
 
 
+_UPSTREAM_NOTICE = "G0.5 is licensed under the G0.5 Community License Agreement."
+
+
+def _release_checkpoint(root: Path) -> Path:
+    G05Policy(_config(), backend=TinyG05Backend()).save_pretrained(root)
+    (root / "LICENSE-G0.5").write_text("G0.5 COMMUNITY LICENSE AGREEMENT\n")
+    (root / "LICENSE_QWEN3_5.txt").write_text("Apache License 2.0\n")
+    (root / "NOTICE").write_text(_UPSTREAM_NOTICE + "\n")
+    return root
+
+
+def test_finetuned_checkpoint_carries_licence_files_and_a_modification_notice(tmp_path: Path):
+    release = _release_checkpoint(tmp_path / "release")
+    policy = G05Policy.from_pretrained(release, backend=TinyG05Backend(), local_files_only=True)
+    policy.save_pretrained(tmp_path / "finetuned")
+    reloaded = G05Policy.from_pretrained(
+        tmp_path / "finetuned", backend=TinyG05Backend(), local_files_only=True
+    )
+    reloaded.save_pretrained(tmp_path / "finetuned_again")
+
+    for saved in (tmp_path / "finetuned", tmp_path / "finetuned_again"):
+        for name in ("LICENSE-G0.5", "LICENSE_QWEN3_5.txt"):
+            assert (saved / name).read_bytes() == (release / name).read_bytes()
+        notice = (saved / "NOTICE").read_text()
+        assert notice.startswith(_UPSTREAM_NOTICE)
+        assert notice.count("Modification notice: this checkpoint was re-saved by LeRobot") == 1
+    assert (release / "NOTICE").read_text() == _UPSTREAM_NOTICE + "\n"
+
+
+def test_resaving_into_the_loaded_checkpoint_leaves_its_notice_alone(tmp_path: Path):
+    release = _release_checkpoint(tmp_path / "release")
+    policy = G05Policy.from_pretrained(release, backend=TinyG05Backend(), local_files_only=True)
+    policy.save_pretrained(release)
+
+    assert (release / "NOTICE").read_text() == _UPSTREAM_NOTICE + "\n"
+
+
+def test_policy_without_a_source_checkpoint_writes_no_licence_files(tmp_path: Path):
+    G05Policy(_config(), backend=TinyG05Backend()).save_pretrained(tmp_path)
+
+    assert not any((tmp_path / name).exists() for name in ("LICENSE-G0.5", "LICENSE_QWEN3_5.txt", "NOTICE"))
+
+
+def test_published_finetune_uploads_licence_files_and_a_g05_card(tmp_path: Path, monkeypatch):
+    from lerobot.common import train_utils
+    from lerobot.configs.default import DatasetConfig
+    from lerobot.configs.train import TrainPipelineConfig
+    from lerobot.utils import hub
+
+    uploads: list[dict[str, str]] = []
+
+    class RecordingHfApi:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def create_repo(self, repo_id, **kwargs):
+            return SimpleNamespace(repo_id=repo_id)
+
+        def upload_folder(self, *, folder_path, **kwargs):
+            uploads.append({p.name: p.read_text(errors="ignore") for p in Path(folder_path).iterdir()})
+            return SimpleNamespace(repo_url=SimpleNamespace(url="https://huggingface.co/user/g05_ft"))
+
+    monkeypatch.setattr(train_utils, "HfApi", RecordingHfApi)
+    monkeypatch.setattr(hub, "HfApi", RecordingHfApi)
+    monkeypatch.setattr(train_utils.ModelCard, "validate", lambda self: None)
+    policy = G05Policy.from_pretrained(
+        _release_checkpoint(tmp_path / "release"), backend=TinyG05Backend(), local_files_only=True
+    )
+    policy.config.repo_id = "user/g05_ft"
+    cfg = TrainPipelineConfig(dataset=DatasetConfig(repo_id="user/dataset"))
+    cfg.parallelism.resolve(1)
+
+    train_utils.publish_trained_model(cfg, policy, None, None, dataset_meta=None)
+
+    model_commit, bundle_commit = uploads
+    assert {"LICENSE-G0.5", "LICENSE_QWEN3_5.txt", "NOTICE", "model.safetensors"} <= set(model_commit)
+    assert "license: other" in bundle_commit["README.md"]
+    assert "G0.5 Community License Agreement" in bundle_commit["README.md"]
+
+
+def test_model_card_uses_the_g05_licence(monkeypatch):
+    from lerobot.common import train_utils
+
+    monkeypatch.setattr(train_utils.ModelCard, "validate", lambda self: None)
+    card = train_utils.generate_model_card(_config())
+
+    assert card.data.license == "other"
+    assert "G0.5 Community License Agreement" in card.text
+    assert "not endorsed by Galaxea" in card.text
+
+
 def test_gated_delta_cached_suffix_matches_tokenwise_decode():
     config = Qwen3_5TextConfig(
         vocab_size=32,

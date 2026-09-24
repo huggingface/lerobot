@@ -206,6 +206,9 @@ class G05Config(PreTrainedConfig):
     state rather than a collection of guessed LeRobot defaults.
     """
 
+    # Fine-tunes stay Derivative Works under the G0.5 Community License, so their
+    # model card must not fall back to the Apache-2.0 default.
+    license: str | None = "other"
     checkpoint_profile: str = "g05-base"
     embodiment: str = "libero"
     action_head: str = "actioncodec"  # actioncodec (AR) or flow (continuous)

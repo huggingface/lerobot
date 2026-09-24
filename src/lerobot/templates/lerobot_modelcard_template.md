@@ -45,6 +45,10 @@ This is a Gaussian Actor policy (Gaussian policy with a tanh squash) — the pol
 [LingBot-VA](https://github.com/Robbyant/lingbot-va) is an autoregressive video-action world-model policy built on the Wan2.2 video-diffusion stack. It interleaves the prediction of future video latents and robot actions in a single autoregressive sequence, feeding observed keyframes back into its KV cache for closed-loop world modeling.
 {% elif model_name == "lawam" %}
 [LaWAM](https://arxiv.org/abs/2606.15768) is a latent world action model that pairs a Qwen3-VL backbone with a latent action/world model and a flow-matching action head for dynamics-aware robot policies.
+{% elif model_name == "g05" %}
+[G0.5](https://huggingface.co/OpenGalaxea/G05) is a vision-language-action model from Galaxea that generates chain-of-thought text and robot actions in a single autoregressive stream on a Qwen3.5 backbone.
+
+This checkpoint is a Derivative Work of G0.5 and is licensed under the **G0.5 Community License Agreement (Non-Commercial + Limited Patent License)**, not Apache-2.0: it may only be used for non-commercial purposes. See `LICENSE-G0.5` and `NOTICE` in this repository. It is not endorsed by Galaxea.
 {% else %}
 This is a **{{ model_name }}** policy trained with [LeRobot](https://github.com/huggingface/lerobot).
 {% endif %}
