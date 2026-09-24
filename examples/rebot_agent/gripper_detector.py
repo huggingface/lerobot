@@ -212,6 +212,8 @@ def train(args):
         "transformers": importlib.metadata.version("transformers"),
         "train_annotations_sha256": file_hash(args.labels / "train.json"),
         "validation_annotations_sha256": file_hash(args.labels / "validation.json"),
+        "label_review_counts": train_set.data["info"].get("review_counts"),
+        "labels_human_verified": train_set.data["info"].get("human_verified"),
     }
     for name in ("train.json", "validation.json", "source_pack.json", "reviewed_labels.json", "report.json"):
         (args.output / name).write_bytes((args.labels / name).read_bytes())
@@ -232,6 +234,9 @@ def train(args):
                 break
         metrics = evaluate(model, processor, loaders[1], args.device, args.threshold, args.margin)
         metrics.update(epoch=epoch, training_loss=float(np.mean(losses)))
+        metrics["reference_review_counts"] = (
+            validation.data["info"].get("review_counts", {}).get("validation")
+        )
         with (args.output / "metrics.jsonl").open("a") as stream:
             stream.write(json.dumps(metrics) + "\n")
         print(json.dumps(metrics), flush=True)

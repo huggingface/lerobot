@@ -69,8 +69,14 @@ The checked-in compiler supplies deterministic grounded variants; richer VLM wor
 must keep verified geometry and semantic meaning unchanged.
 
 Have Astra review command/feature alignment against timestamped video and report
-accepted, rejected, or uncertain, with concise visual evidence. Audit a human sample;
-Astra is not ground truth. Store bounding boxes, pointing coordinates, and traces in native LeRobot language
+accepted, rejected, or uncertain, with concise visual evidence. The operator has
+explicitly declined manual annotation: do not request human boxes, annotation review,
+or label confirmation. Use measured state for gripper opening/closing and calibrated
+FK for end-effector motion. Review visual annotations autonomously; skip uncertain
+labels and report resulting coverage gaps. Model reviews must remain attributed as
+model reviews, never human-verified labels or ground truth. This replaces the earlier
+human annotation sample requirement; it does not waive approval before operating the robot.
+Store bounding boxes, pointing coordinates, and traces in native LeRobot language
 annotation columns (camera-tagged `vqa`/`trace` events with JSON content); keep source
 data intact and distinguish unreviewed evidence from accepted commands. Raw extractor
 sidecars support auditing but do not replace the dataset annotations.

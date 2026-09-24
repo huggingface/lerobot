@@ -53,11 +53,70 @@ def label_pack(tmp_path):
     return module, pack_path, document
 
 
-def run_export(label_pack, tmp_path):
+def run_export(label_pack, tmp_path, **kwargs):
     module, pack_path, labels = label_pack
     path = tmp_path / "labels.json"
     path.write_text(json.dumps(labels))
-    return module["export_coco"](pack_path, path, tmp_path / "export")
+    return module["export_coco"](pack_path, path, tmp_path / "export", **kwargs)
+
+
+def model_review(label_pack):
+    _, pack_path, labels = label_pack
+    images = json.loads(pack_path.read_text())["images"]
+    for row, image in zip(labels["images"], images, strict=True):
+        row["review"].update(
+            kind="model",
+            reviewer="model fixture",
+            notes="Fixture: both jaws visible; arm identities checked in synchronized context.",
+            image_sha256=image["sha256"],
+        )
+
+
+def test_model_review_is_opt_in_and_never_becomes_human_provenance(label_pack, tmp_path):
+    model_review(label_pack)
+    with pytest.raises(ValueError, match="human review"):
+        run_export(label_pack, tmp_path)
+    report = run_export(label_pack, tmp_path, allow_model_review=True)
+    assert report["human_verified"] is False
+    assert report["review_counts"] == {
+        "train": {"human": 0, "model": 2},
+        "validation": {"human": 0, "model": 1},
+    }
+    exported = json.loads((tmp_path / "export/reviewed_labels.json").read_text())
+    assert exported == label_pack[2]
+    for split in ("train", "validation"):
+        dataset = json.loads((tmp_path / f"export/{split}.json").read_text())
+        assert dataset["info"]["human_verified"] is False
+        assert dataset["info"]["review_counts"] == report["review_counts"]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("confirmed", False), ("notes", " "), ("image_sha256", "stale"), ("arm_identity_verified", False)],
+)
+def test_model_review_opt_in_does_not_bypass_evidence_checks(label_pack, tmp_path, field, value):
+    model_review(label_pack)
+    label_pack[2]["images"][0]["review"][field] = value
+    with pytest.raises(ValueError):
+        run_export(label_pack, tmp_path, allow_model_review=True)
+    assert not (tmp_path / "export").exists()
+
+
+def test_uncertain_model_labels_are_excluded_not_negative_targets(label_pack, tmp_path):
+    model_review(label_pack)
+    label_pack[2]["images"][2]["arms"]["left"] = {"visibility": "uncertain", "bbox_xyxy": None}
+    report = run_export(label_pack, tmp_path, allow_model_review=True)
+    assert report["excluded_uncertain_images"] == [2]
+    assert report["review_counts"]["train"] == {"human": 0, "model": 1}
+    assert report["splits"]["train"]["images"] == 1
+
+
+def test_mixed_review_attribution_is_preserved_per_split(label_pack, tmp_path):
+    model_review(label_pack)
+    label_pack[2]["images"][1]["review"]["kind"] = "human"
+    report = run_export(label_pack, tmp_path, allow_model_review=True)
+    assert report["human_verified"] is False
+    assert report["review_counts"]["validation"] == {"human": 1, "model": 0}
 
 
 def test_uncertain_gripper_excludes_whole_image_and_keeps_original_boxes(label_pack, tmp_path):

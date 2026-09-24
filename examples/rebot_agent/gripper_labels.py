@@ -236,7 +236,9 @@ def prepare(root: Path, output: Path, episodes: list[int], per_episode: int = 4)
     return manifest
 
 
-def export_coco(pack_path: Path, labels_path: Path, output: Path) -> dict:
+def export_coco(
+    pack_path: Path, labels_path: Path, output: Path, *, allow_model_review: bool = False
+) -> dict:
     """Never turn unreviewed/uncertain arms into empty negative detector targets."""
     manifest = json.loads(pack_path.read_text())
     labels = json.loads(labels_path.read_text())
@@ -251,6 +253,7 @@ def export_coco(pack_path: Path, labels_path: Path, output: Path) -> dict:
         for split in ("train", "validation")
     }
     excluded = []
+    review_counts = {split: {"human": 0, "model": 0} for split in datasets}
     split_episodes = {split: set() for split in datasets}
     for image in manifest["images"]:
         if image["episode_index"] in manifest["vla_holdout_episodes"]:
@@ -259,8 +262,21 @@ def export_coco(pack_path: Path, labels_path: Path, output: Path) -> dict:
             raise ValueError("A source image changed after pack creation")
         row = by_id[image["id"]]
         review = row.get("review", {})
-        if review.get("kind") != "human" or not review.get("reviewer") or not review.get("confirmed"):
-            raise ValueError(f"Image {image['id']} requires attributed human review")
+        allowed_kinds = {"human", "model"} if allow_model_review else {"human"}
+        if (
+            review.get("kind") not in allowed_kinds
+            or not isinstance(review.get("reviewer"), str)
+            or not review["reviewer"].strip()
+            or review.get("confirmed") is not True
+        ):
+            required = "human or model review" if allow_model_review else "human review"
+            raise ValueError(f"Image {image['id']} requires attributed {required}")
+        if review["kind"] == "model" and (
+            not isinstance(review.get("notes"), str)
+            or not review["notes"].strip()
+            or review.get("image_sha256") != image["sha256"]
+        ):
+            raise ValueError("Model review requires visual evidence notes and the reviewed image hash")
         if set(row.get("arms", {})) != set(ARMS):
             raise ValueError("Both physical arms must have explicit visibility labels")
         annotations = []
@@ -298,6 +314,7 @@ def export_coco(pack_path: Path, labels_path: Path, output: Path) -> dict:
             excluded.append(image["id"])
             continue
         split = image["split"]
+        review_counts[split][review["kind"]] += 1
         split_episodes[split].add(image["episode_index"])
         dataset = datasets[split]
         dataset["images"].append(image)
@@ -311,6 +328,9 @@ def export_coco(pack_path: Path, labels_path: Path, output: Path) -> dict:
     report = {
         "pack_sha256": digest(pack_path),
         "labels_sha256": digest(labels_path),
+        "review_counts": review_counts,
+        "human_verified": all(counts["model"] == 0 for counts in review_counts.values()),
+        "allow_model_review": allow_model_review,
         "excluded_uncertain_images": excluded,
         "splits": {
             k: {
@@ -347,6 +367,11 @@ def main():
     export.add_argument("--pack", type=Path, required=True)
     export.add_argument("--labels", type=Path, required=True)
     export.add_argument("--output", type=Path, required=True)
+    export.add_argument(
+        "--allow-model-review",
+        action="store_true",
+        help="Accept explicitly attributed model reviews; preserve their non-human provenance",
+    )
     review = commands.add_parser("review")
     review.add_argument("--pack", type=Path, required=True)
     review.add_argument("--suggestions", type=Path)
@@ -363,7 +388,12 @@ def main():
         result = prepare(args.dataset_root, args.output, args.episodes, args.per_episode)
         print(f"Prepared {len(result['images'])} images. Open {args.output / 'review.html'}.")
     elif args.command == "export":
-        print(json.dumps(export_coco(args.pack, args.labels, args.output), indent=2))
+        print(
+            json.dumps(
+                export_coco(args.pack, args.labels, args.output, allow_model_review=args.allow_model_review),
+                indent=2,
+            )
+        )
     elif args.command == "context":
         result = prepare_context(args.dataset_root, args.pack, args.output)
         print(f"Prepared synchronized camera context for {len(result['images'])} annotation images.")

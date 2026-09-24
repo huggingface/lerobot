@@ -286,6 +286,20 @@ review of every image and excludes an entire image when either arm is uncertain,
 so uncertainty never becomes an empty negative target. It preserves source hashes,
 the exact reviewed labels, and the source pack alongside COCO annotations.
 
+Human annotation is optional. For an autonomous annotation workflow, a model can
+review the same images and write the label JSON directly with `review.kind: "model"`,
+its `reviewer`, `confirmed: true`, visual evidence `notes`, and the target
+`image_sha256`. Visible labels still require explicit physical arm identity and valid
+boxes. Export these with `--allow-model-review`; unconfirmed proposals remain invalid,
+and uncertain images remain excluded. The export, detector training provenance, and
+validation metrics preserve the review attribution. Metrics against model labels
+measure agreement with those labels, not human-verified detection accuracy.
+
+Gripper opening/closing labels come from measured state and do not require detector
+boxes. Cartesian motion needs calibrated FK; image-coordinate gripper traces need
+visual localization or calibrated projection. Skip unsupported annotations rather
+than inventing geometry or requiring the operator to label them.
+
 ```bash
 uv run examples/rebot_agent/gripper_labels.py export \
   --pack outputs/gripper_review/pack.json \
@@ -474,7 +488,7 @@ library's `dataset.steering_required_styles` defaults to empty for explicitly co
 subset experiments; the ReBot full-mixture launcher sets all five styles.
 Use `--resume` to reuse completed reviews with identical saved input features.
 The reviewer sees up to six timestamped frames per segment;
-this can miss short events, so manually audit overlays and command boundaries, and
+this can miss short events, so inspect overlays and command boundaries, and
 shorten segments where needed. Astra agreement is not ground truth. Offline review
 may inspect future demonstration frames; live planning receives only current images.
 
