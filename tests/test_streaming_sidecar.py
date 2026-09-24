@@ -15,6 +15,8 @@ import json
 import os
 import shutil
 import threading
+import weakref
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -533,3 +535,169 @@ def test_invalid_build_preserves_previous_source_and_mapped_generation(tmp_path:
     np.testing.assert_array_equal(next(iter(old.values())).mp4.sample_pts, [0.0])
     assert len(list((tmp_path / "cache-home").glob("**/*.bin"))) == 1
     assert not list((tmp_path / "cache-home").glob("**/*.index.tmp"))
+
+
+def test_parallel_mapping_is_ordered_and_matches_serial_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "index.npz"
+    records = [_record(f"{index}.mp4") for index in range(12)]
+    for index, record in enumerate(records):
+        record.mp4.sample_pts[0] = index
+    EpisodeVideoManifest.save_file_sidecar(path, records, spec=_spec())
+    serial, _ = _mapped_index.mapped_sidecar(path, workers=1)
+    original = _mapped_index._read_arrays
+    second_started = threading.Event()
+
+    def reversed_read(archive: ZipFile, index: int, item: dict[str, Any]) -> dict[str, np.ndarray]:
+        if index == 0:
+            assert second_started.wait(timeout=5), "Decompression did not overlap"
+        elif index == 1:
+            second_started.set()
+        return original(archive, index, item)
+
+    monkeypatch.setattr(_mapped_index, "_read_arrays", reversed_read)
+    monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path / "parallel"))
+    parallel, _ = _mapped_index.mapped_sidecar(path, workers=4)
+    assert parallel.read_bytes() == serial.read_bytes()
+    mapped = EpisodeVideoManifest.load_file_sidecar(path)
+    for index in range(12):
+        np.testing.assert_array_equal(mapped[f"{index}.mp4"].mp4.sample_pts, [index])
+
+
+@pytest.mark.parametrize("byte_limit", [1, 2048])
+def test_parallel_read_ahead_obeys_count_and_byte_bounds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, byte_limit: int
+) -> None:
+    path = tmp_path / "index.npz"
+    EpisodeVideoManifest.save_file_sidecar(path, [_record(f"{i}.mp4") for i in range(12)], spec=_spec())
+    payload = _mapped_index.sidecar_payload(path)
+    original = _mapped_index._read_arrays
+    started = []
+    lock = threading.Lock()
+
+    def counted_read(archive: ZipFile, index: int, item: dict[str, Any]) -> dict[str, np.ndarray]:
+        with lock:
+            started.append(index)
+        return original(archive, index, item)
+
+    monkeypatch.setattr(_mapped_index, "_read_arrays", counted_read)
+    with ZipFile(path) as archive:
+        size = sum(archive.getinfo(f"0/{name}.npy").file_size for name in _mapped_index.ARRAY_NAMES)
+        iterator = _mapped_index._iter_arrays(
+            archive, payload["files"], workers=4, max_pending_bytes=byte_limit
+        )
+        first = next(iterator)
+        np.testing.assert_array_equal(first["sample_pts"], [0.0])
+        iterator.close()
+    assert len(started) <= min(4, max(1, byte_limit // size))
+
+
+def test_parallel_failure_drains_workers_and_removes_partial_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "index.npz"
+    EpisodeVideoManifest.save_file_sidecar(path, [_record(f"{i}.mp4") for i in range(12)], spec=_spec())
+    original = _mapped_index._read_arrays
+    active = 0
+    lock = threading.Lock()
+
+    def failed_read(archive: ZipFile, index: int, item: dict[str, Any]) -> dict[str, np.ndarray]:
+        nonlocal active
+        with lock:
+            active += 1
+        try:
+            if index == 2:
+                raise ValueError("injected decompression failure")
+            return original(archive, index, item)
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(_mapped_index, "_read_arrays", failed_read)
+    with pytest.raises(ValueError, match="injected decompression failure"):
+        _mapped_index.mapped_sidecar(path, workers=4)
+    assert active == 0
+    assert not list((tmp_path / "cache-home").glob("**/*.bin"))
+    assert not list((tmp_path / "cache-home").glob("**/*.index.tmp"))
+
+
+def test_mapping_rejects_invalid_worker_count(tmp_path: Path) -> None:
+    path = tmp_path / "index.npz"
+    _write_valid(path, _spec())
+    with pytest.raises(ValueError, match="workers"):
+        _mapped_index.mapped_sidecar(path, workers=0)
+
+
+def test_parallel_writer_releases_oversized_record_before_next_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "index.npz"
+    EpisodeVideoManifest.save_file_sidecar(path, [_record(f"{i}.mp4") for i in range(3)], spec=_spec())
+    original_read = _mapped_index._read_arrays
+    original_iter = _mapped_index._iter_arrays
+    references = []
+
+    def read(archive: ZipFile, index: int, item: dict[str, Any]) -> dict[str, np.ndarray]:
+        assert all(reference() is None for reference in references), "Previous oversized record retained"
+        arrays = original_read(archive, index, item)
+        references.append(weakref.ref(arrays["sample_pts"]))
+        return arrays
+
+    def small_budget(
+        archive: ZipFile, files: list[dict[str, Any]], *, workers: int
+    ) -> Iterator[dict[str, np.ndarray]]:
+        return original_iter(archive, files, workers=workers, max_pending_bytes=1)
+
+    monkeypatch.setattr(_mapped_index, "_read_arrays", read)
+    monkeypatch.setattr(_mapped_index, "_iter_arrays", small_budget)
+    _mapped_index.mapped_sidecar(path, workers=4)
+    assert all(reference() is None for reference in references)
+
+
+def test_parallel_write_failure_preserves_old_index_and_drains_workers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _spec()
+    path = sidecar_cache_path(tmp_path, spec)
+    _write_valid(path, _spec("old"))
+    old_bytes = path.read_bytes()
+    old_records = EpisodeVideoManifest.load_file_sidecar(path)
+    original = _mapped_index._read_arrays
+    active = 0
+    lock = threading.Lock()
+
+    class FailedWriteArray(np.ndarray):
+        def tobytes(self, order: str = "C") -> bytes:
+            raise OSError(errno.ENOSPC, "injected write failure")
+
+    def read(archive: ZipFile, index: int, item: dict[str, Any]) -> dict[str, np.ndarray]:
+        nonlocal active
+        with lock:
+            active += 1
+        try:
+            arrays = original(archive, index, item)
+            if index == 0:
+                arrays["sample_pts"] = arrays["sample_pts"].view(FailedWriteArray)
+            return arrays
+        finally:
+            with lock:
+                active -= 1
+
+    def build(target: Path, target_spec: SidecarSpec) -> None:
+        records = [_record(f"{index}.mp4") for index in range(12)]
+        EpisodeVideoManifest.save_file_sidecar(target, records, spec=target_spec)
+
+    # Use a matching 12-file specification so validation reaches the actual writer.
+    spec = replace(spec, source_files=tuple((f"{i}.mp4", 128) for i in range(12)))
+    new_path = sidecar_cache_path(tmp_path, spec)
+    assert new_path == path
+    monkeypatch.setattr(_mapped_index, "_read_arrays", read)
+    with pytest.raises(OSError, match="free space"):
+        ensure_mp4_sidecar(spec, tmp_path, build=build)
+    assert active == 0
+    assert new_path.read_bytes() == old_bytes
+    np.testing.assert_array_equal(next(iter(old_records.values())).mp4.sample_pts, [0.0])
+    assert len(list((tmp_path / "cache-home").glob("**/*.bin"))) == 1
+    assert not list((tmp_path / "cache-home").glob("**/*.index.tmp"))
+    assert not list(new_path.parent.glob("*.tmp.npz"))

@@ -14,6 +14,10 @@ import hashlib
 import json
 import os
 import tempfile
+from collections import deque
+from collections.abc import Iterator
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 from zipfile import ZipFile
@@ -121,6 +125,49 @@ def _read_arrays(archive: ZipFile, file_index: int, item: dict[str, Any]) -> dic
     return arrays
 
 
+def _iter_arrays(
+    archive: ZipFile,
+    files: list[dict[str, Any]],
+    *,
+    workers: int,
+    max_pending_bytes: int = 256 * 1024**2,
+) -> Iterator[dict[str, NDArray[np.generic]]]:
+    """Decompress in parallel with ordered, count- and byte-bounded read-ahead.
+
+    ZIP uncompressed member sizes bound admitted array bytes. An oversized record
+    runs alone. ZipFile serializes shared source seeks, but decompression overlaps;
+    sharing its directory avoids one large member table per worker process.
+    """
+    if workers < 1 or max_pending_bytes < 1:
+        raise ValueError("workers and max_pending_bytes must be positive")
+    if workers == 1:
+        for index, item in enumerate(files):
+            yield _read_arrays(archive, index, item)
+        return
+    pending: deque[tuple[Future[dict[str, NDArray[np.generic]]], int]] = deque()
+    pending_bytes = 0
+    next_index = 0
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="sidecar-index") as executor:
+        try:
+            while next_index < len(files) or pending:
+                while next_index < len(files) and len(pending) < workers:
+                    size = sum(archive.getinfo(f"{next_index}/{name}.npy").file_size for name in ARRAY_NAMES)
+                    if pending and pending_bytes + size > max_pending_bytes:
+                        break
+                    pending.append(
+                        (executor.submit(_read_arrays, archive, next_index, files[next_index]), size)
+                    )
+                    pending_bytes += size
+                    next_index += 1
+                future, size = pending.popleft()
+                yield future.result()
+                del future
+                pending_bytes -= size
+        finally:
+            for future, _ in pending:
+                future.cancel()
+
+
 def _validate_arrays(arrays: dict[str, NDArray[np.generic]]) -> None:
     """Check numeric one-dimensional arrays and consistent sample counts."""
     for name, array in arrays.items():
@@ -130,12 +177,14 @@ def _validate_arrays(arrays: dict[str, NDArray[np.generic]]) -> None:
         raise ValueError("Inconsistent MP4 sample counts")
 
 
-def mapped_sidecar(path: Path) -> tuple[Path, dict[str, Any]]:
+def mapped_sidecar(path: Path, *, workers: int = 4) -> tuple[Path, dict[str, Any]]:
     """Convert once under a lock, then reuse an immutable memory-mappable index.
 
     Only index metadata is cached, never video payloads. Each source generation gets
     a different file: replacing a sidecar cannot invalidate live array views.
     """
+    if workers < 1:
+        raise ValueError("workers must be positive")
     # Shared filesystems can retain stale pathname attributes until the file is
     # opened. Identify and read the same descriptor, including across the lock wait.
     with path.open("rb") as source:
@@ -169,13 +218,17 @@ def mapped_sidecar(path: Path) -> tuple[Path, dict[str, Any]]:
                         dir=destination.parent, suffix=".index.tmp", delete=False
                     ) as out:
                         temporary = Path(out.name)
-                        for file_index, item in enumerate(payload["files"]):
-                            arrays = _read_arrays(data.zip, file_index, item)
-                            item["arrays"] = {}
-                            for name, array in arrays.items():
-                                out.write(b"\0" * (-out.tell() % 8))
-                                item["arrays"][name] = [out.tell(), array.size, array.dtype.str]
-                                out.write(array.tobytes())
+                        with closing(_iter_arrays(data.zip, payload["files"], workers=workers)) as records:
+                            items = iter(payload["files"])
+                            for arrays in records:
+                                item = next(items)
+                                item["arrays"] = {}
+                                for name, array in arrays.items():
+                                    out.write(b"\0" * (-out.tell() % 8))
+                                    item["arrays"][name] = [out.tell(), array.size, array.dtype.str]
+                                    out.write(array.tobytes())
+                                # zip/enumerate retain a tuple with the previous arrays.
+                                del arrays, array
                         if _signature(os.fstat(source.fileno())) != signature:
                             raise OSError("MP4 sidecar changed during index conversion")
                         metadata = json.dumps(payload, separators=(",", ":")).encode()
