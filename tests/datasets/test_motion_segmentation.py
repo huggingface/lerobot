@@ -1,11 +1,104 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 # Licensed under the Apache License, Version 2.0.
 import copy
+import json
 import runpy
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
+import pandas as pd
 import pytest
+
+
+@pytest.fixture
+def gripper_cli(tmp_path, monkeypatch):
+    from lerobot.annotations.steerable_pipeline import reader
+
+    root = tmp_path / "dataset"
+    (root / "meta").mkdir(parents=True)
+    (root / "source.json").write_text(json.dumps({"repo_id": "test/data", "revision": "a" * 40}))
+    names = ["left_gripper.pos", "right_gripper.pos"]
+    (root / "meta/info.json").write_text(json.dumps({"features": {"observation.state": {"names": names}}}))
+    states = np.column_stack(([0, -0.5, -1, -0.5, 0], np.zeros(5)))
+    frame_data = pd.DataFrame({"observation.state": list(states)})
+    data_path = root / "data.json"
+    data_path.write_text(frame_data.to_json())
+    record = SimpleNamespace(
+        episode_index=7,
+        frame_timestamps=np.arange(5) / 30,
+        frame_indices=np.arange(5),
+        data_path=data_path,
+        frames_df=lambda: frame_data,
+    )
+    monkeypatch.setattr(reader, "iter_episodes", lambda *a, **kw: iter([record]))
+    config = {
+        "arms": {
+            arm: {"arm": arm, "units": "radians", "gripper_state_key": f"{arm}_gripper.pos"}
+            for arm in ("left", "right")
+        },
+        "segmentation": {"gripper_speed_deg_s": 30, "median_window": 1},
+    }
+    config_path = tmp_path / "config.json"
+    output = tmp_path / "output"
+    module = runpy.run_path(str(Path(__file__).parents[2] / "examples/rebot_agent/fk_motion.py"))
+
+    def forbidden_fk(*args, **kwargs):
+        pytest.fail("Gripper-only CLI must not compute FK")
+
+    monkeypatch.setitem(module["main"].__globals__, "measured_positions", forbidden_fk)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "fk_motion.py",
+            "--gripper-only",
+            "--dataset-root",
+            str(root),
+            "--config",
+            str(config_path),
+            "--output",
+            str(output),
+            "--episodes",
+            "7",
+        ],
+    )
+
+    def run():
+        config_path.write_text(json.dumps(config))
+        module["main"]()
+
+    return run, config, output, states
+
+
+def test_gripper_only_cli_needs_no_urdf_and_preserves_measured_units(gripper_cli):
+    run, _, output, states = gripper_cli
+    run()
+    report = json.loads((output / "intervals.json").read_text())
+    assert report["gripper_only"] and not report["cartesian_positions_included"]
+    assert report["urdf_sha256"] == {} and not report["accepted_training_labels"]
+    episode = report["episodes"][0]
+    assert episode["episode_index"] == 7
+    arrays = np.load(output / episode["arrays"])
+    assert set(arrays.files) == {"timestamps", "left_gripper_degrees", "right_gripper_degrees"}
+    np.testing.assert_allclose(arrays["left_gripper_degrees"], np.rad2deg(states[:, 0]))
+    intervals = episode["intervals"]
+    assert [i for s in intervals for i in range(s["start_frame"], s["end_frame"])] == list(range(5))
+    assert intervals[-1]["review_flags"] == ["no_outgoing_observation", "missing_or_ambiguous_subtask"]
+    assert all(
+        s["channel_signs"] is None or set(s["channel_signs"]) == {"left.gripper", "right.gripper"}
+        for s in intervals
+    )
+
+
+@pytest.mark.parametrize("change", [{"units": "normalized"}, {"gripper_state_key": "right_gripper.pos"}])
+def test_gripper_only_cli_rejects_wrong_units_or_arm_mapping(gripper_cli, change):
+    run, config, output, _ = gripper_cli
+    config["arms"]["left"].update(change)
+    with pytest.raises(ValueError, match="gripper state key"):
+        run()
+    assert not output.exists()
 
 
 @pytest.fixture

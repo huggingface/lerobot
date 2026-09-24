@@ -353,12 +353,19 @@ def main():
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--episodes", type=int, nargs="+", required=True)
+    parser.add_argument(
+        "--gripper-only",
+        action="store_true",
+        help="Segment measured gripper angles without loading a URDF or computing Cartesian positions",
+    )
     args = parser.parse_args()
     config = json.loads(args.config.read_text())
     source = json.loads((args.dataset_root / "source.json").read_text())
     if not source.get("repo_id") or not re.fullmatch(r"[0-9a-f]{40}", source.get("revision", "")):
         raise ValueError("Dataset source.json must contain a repo ID and immutable revision")
     config["segmentation"] = {
+        # Unused for gripper-only segmentation; retained for the shared helper's interface.
+        **({"translation_speed_m_s": 0.01} if args.gripper_only else {}),
         "median_window": 5,
         "minimum_duration_s": 0.15,
         "translation_reversal_m": 0.01,
@@ -368,11 +375,18 @@ def main():
     info = json.loads((args.dataset_root / "meta/info.json").read_text())
     names = info["features"]["observation.state"]["names"]
     arms = config["arms"]
-    if set(arms) != {"left", "right"} or any(
-        a["arm"] != arm or a.get("calibration_status") not in {"verified", "unverified"}
-        for arm, a in arms.items()
-    ):
-        raise ValueError("Provide both arm mappings and their explicit calibration status")
+    if len(set(names)) != len(names) or set(arms) != {"left", "right"}:
+        raise ValueError("Provide unique state names and both arm mappings")
+    for arm, mapping in arms.items():
+        if (
+            mapping.get("arm") != arm
+            or mapping.get("units") not in {"degrees", "radians"}
+            or mapping.get("gripper_state_key") != f"{arm}_gripper.pos"
+            or mapping["gripper_state_key"] not in names
+        ):
+            raise ValueError("Provide each named gripper state key, arm identity and measured units")
+        if not args.gripper_only and mapping.get("calibration_status") not in {"verified", "unverified"}:
+            raise ValueError("FK requires each arm's explicit calibration status")
     records = list(iter_episodes(args.dataset_root, only_episodes=tuple(args.episodes)))
     if sorted(r.episode_index for r in records) != sorted(set(args.episodes)):
         raise ValueError("Requested complete episodes are missing or split across shards")
@@ -383,9 +397,11 @@ def main():
         "config": config,
         "config_sha256": hashlib.sha256(args.config.read_bytes()).hexdigest(),
         "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-        "urdf_sha256": {
-            arm: hashlib.sha256(Path(a["urdf"]).read_bytes()).hexdigest() for arm, a in arms.items()
-        },
+        "urdf_sha256": {}
+        if args.gripper_only
+        else {arm: hashlib.sha256(Path(a["urdf"]).read_bytes()).hexdigest() for arm, a in arms.items()},
+        "gripper_only": args.gripper_only,
+        "cartesian_positions_included": not args.gripper_only,
         "accepted_training_labels": False,
         "episodes": [],
     }
@@ -395,7 +411,13 @@ def main():
             raise ValueError("Require complete, contiguous episode-local frame indices")
         frame_data = record.frames_df()
         states = np.stack(frame_data["observation.state"])
-        positions = {arm: measured_positions(states, names, a) for arm, a in arms.items()}
+        if states.shape != (len(times), len(names)) or not np.isfinite(states).all():
+            raise ValueError("Measured states must match the episode frames and named features")
+        positions = (
+            {}
+            if args.gripper_only
+            else {arm: measured_positions(states, names, a) for arm, a in arms.items()}
+        )
         grippers = {}
         for arm, a in arms.items():
             values = states[:, names.index(a["gripper_state_key"])].astype(float)

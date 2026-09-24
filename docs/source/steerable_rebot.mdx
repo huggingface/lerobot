@@ -381,6 +381,19 @@ entirely, preserves reversals and semantic boundaries, and leaves the final obse
 unresolved. Review the proposed boundaries and commands before adding their features
 to the training manifest.
 
+The CLI supports the same path with `--gripper-only`. In this mode each arm mapping
+needs only `arm`, `units`, and `gripper_state_key`; no URDF, zero offsets, or Cartesian
+calibration fields are required. Configure `segmentation.gripper_speed_deg_s`.
+The output contains measured gripper-angle arrays and numeric interval proposals,
+with no Cartesian arrays or direction labels. Numeric angle signs become open/close
+language only after the recorded opening-sign convention has been established.
+
+```bash
+uv run examples/rebot_agent/fk_motion.py --gripper-only \
+  --dataset-root /path/to/pinned_dataset --config /path/to/gripper_config.json \
+  --output outputs/rebot_gripper_motion --episodes 0 1 2 3 4
+```
+
 The ReBot B601 driver's calibration routine sets zero positions inside each motor
 and then saves `homing_offset=0` in its calibration metadata. Finding that file
 alone does not establish the physical zero pose used for earlier recordings.
