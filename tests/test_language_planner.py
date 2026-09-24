@@ -195,6 +195,22 @@ def test_four_gpu_training_config_uses_main_parser(tmp_path, coordinate_format):
         module["prepare_run"](tmp_path, 5, 1, True)
 
 
+def test_local_annotation_dataset_source_is_checked_before_training(tmp_path):
+    module = runpy.run_path(str(Path(__file__).parents[1] / "examples/rebot_agent/train_wall_oss_flow.py"))
+    default, _ = module["prepare_run"](tmp_path / "run", 1, 1, True)
+    root = tmp_path / "annotations"
+    (root / "meta").mkdir(parents=True)
+    (root / "meta/info.json").write_text("{}")
+    source = {k: default["dataset"][k] for k in ("repo_id", "revision")}
+    (root / "source.json").write_text(json.dumps(source))
+    config, _ = module["prepare_run"](tmp_path / "run", 1, 1, True, dataset_root=root)
+    assert Path(draccus.decode(TrainPipelineConfig, config).dataset.root) == root.resolve()
+    assert config["dataset"]["revision"] == source["revision"]
+    (root / "source.json").write_text(json.dumps({**source, "revision": "different-recording"}))
+    with pytest.raises(ValueError, match="Local dataset source"):
+        module["prepare_run"](tmp_path / "run", 1, 1, True, dataset_root=root)
+
+
 def test_smoke_reload_requires_saved_checkpoint_and_preserves_topology(tmp_path):
     module = runpy.run_path(str(Path(__file__).parents[1] / "examples/rebot_agent/train_wall_oss_flow.py"))
     config, argv = module["prepare_run"](tmp_path, 4, 1, True)

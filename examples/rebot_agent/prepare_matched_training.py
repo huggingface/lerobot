@@ -60,6 +60,7 @@ def prepare_pair(
     gpus: int = 1,
     batch_size: int = 4,
     seed: int = 7,
+    dataset_root: Path | None = None,
 ) -> tuple[dict, dict, dict]:
     """Return manifests and configs; standard trainer uses the ordered episode tail for dev."""
     control, steering, excluded = paired_manifests(manifest)
@@ -83,7 +84,7 @@ def prepare_pair(
     steps = 8 * quarter_steps
     configs = {}
     for name, commands in [("semantic_control", control), ("steerable", steering)]:
-        config, _ = prepare_run(output / name, gpus, batch_size, smoke=False)
+        config, _ = prepare_run(output / name, gpus, batch_size, smoke=False, dataset_root=dataset_root)
         if any(manifest["source"].get(k) != config["dataset"][k] for k in ("repo_id", "revision")):
             raise ValueError("Manifest source differs from the pinned ReBot training dataset")
         config["dataset"].update(
@@ -164,6 +165,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--dataset-root", type=Path, help="Local native annotation derivative for both runs")
     parser.add_argument("--development-episodes", type=int, nargs="+", required=True)
     parser.add_argument("--gpus", type=int, choices=range(1, 5), default=1)
     parser.add_argument("--batch-size", type=int, default=4)
@@ -175,6 +177,7 @@ def main():
         args.development_episodes,
         gpus=args.gpus,
         batch_size=args.batch_size,
+        dataset_root=args.dataset_root,
     )
     plan["source_manifest_sha256"] = hashlib.sha256(args.manifest.read_bytes()).hexdigest()
     output.mkdir(parents=True, exist_ok=False)

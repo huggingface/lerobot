@@ -1,6 +1,7 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 # Licensed under the Apache License, Version 2.0.
 import copy
+import json
 import math
 
 import draccus
@@ -130,3 +131,15 @@ def test_different_source_is_rejected(tmp_path):
     data["source"]["revision"] = "different-recording"
     with pytest.raises(ValueError, match="Manifest source"):
         prepare_pair(data, tmp_path, [5])
+
+
+def test_pair_uses_the_same_local_annotation_dataset(tmp_path):
+    manifest = reviewed_manifest()
+    root = tmp_path / "native"
+    (root / "meta").mkdir(parents=True)
+    (root / "meta/info.json").write_text("{}")
+    (root / "source.json").write_text(json.dumps(manifest["source"]))
+    _, _, plan = prepare_pair(manifest, tmp_path / "runs", [5], dataset_root=root)
+    for config in plan["configs"].values():
+        assert config["dataset"]["root"] == str(root.resolve())
+        assert config["dataset"]["episodes"] == [2, 9, 5]

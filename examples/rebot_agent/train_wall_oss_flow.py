@@ -26,6 +26,7 @@ def prepare_run(
     skip_uncovered: bool = False,
     style_weights: dict[str, float] | None = None,
     coordinate_format: str = "original_pixels",
+    dataset_root: Path | None = None,
 ) -> tuple[dict, list[str]]:
     """Resolve the checked-in recipe and build a bounded, single-node torchrun command."""
     if gpus not in range(1, 5) or batch_size < 1:
@@ -40,6 +41,14 @@ def prepare_run(
     session = json.loads((workspace / "examples/rebot_agent/training.json").read_text())
     candidate = next(c for c in session["candidates"] if c["name"] == "wall_oss_flow_80_20_v1")
     config = candidate["training"]
+    if dataset_root is not None:
+        dataset_root = dataset_root.resolve()
+        source = json.loads((dataset_root / "source.json").read_text())
+        if any(source.get(k) != config["dataset"][k] for k in ("repo_id", "revision")):
+            raise ValueError("Local dataset source differs from the pinned ReBot training dataset")
+        if not (dataset_root / "meta/info.json").is_file():
+            raise ValueError("Local dataset root must contain meta/info.json")
+        config["dataset"]["root"] = str(dataset_root)
     recipe = TrainingRecipe.from_yaml(workspace / candidate["recipe_path"])
     config["dataset"]["task_recipe"] = asdict(recipe)
     if steering_manifest is not None:
@@ -99,6 +108,9 @@ def main():
     )
     parser.add_argument("--dry-run", action="store_true", help="Write config and command without training")
     parser.add_argument(
+        "--dataset-root", type=Path, help="Local native annotation derivative with matching source.json"
+    )
+    parser.add_argument(
         "--steering-manifest", type=Path, help="Reviewed multi-style commands; omit for the semantic baseline"
     )
     parser.add_argument(
@@ -126,6 +138,7 @@ def main():
         args.skip_uncovered,
         json.loads(args.style_weights.read_text()) if args.style_weights else None,
         args.coordinate_format,
+        args.dataset_root,
     )
     workspace = Path(__file__).resolve().parents[2]
     git = shutil.which("git")

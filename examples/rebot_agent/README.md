@@ -66,6 +66,15 @@ coordinate format. Do not enable the new format only at deployment for an old
 checkpoint. Native tags do not add a coordinate-prediction loss or establish
 spatial compliance; validate the new format with the model before training/deployment.
 
+To use a local dataset containing reviewed native annotations, pass
+`--dataset-root /path/to/native_dataset` to either `train_wall_oss_flow.py` or
+`prepare_matched_training.py`. The root must contain `meta/info.json` and a
+`source.json` matching the pinned recording's Hub ID and revision. The selected
+root is saved in the training configuration and used by both matched runs.
+Pass the reviewed steering manifest separately: stored VQA boxes and points do
+not automatically become action-training instructions. Preserve the declared
+development and final-test split when preparing another experiment.
+
 The smoke run evaluates 20 held-out samples, saves step 10, then starts a fresh
 process through main's checkpoint resume path for one further update and validation.
 It writes `smoke_completed.json` only if both processes succeed. This is a bounded
