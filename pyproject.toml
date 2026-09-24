@@ -554,6 +554,10 @@ markers = [
 python_version = "3.12"
 ignore_missing_imports = true
 follow_imports = "skip"
+warn_redundant_casts = true
+extra_checks = true
+strict_bytes = true
+enable_error_code = ["deprecated", "exhaustive-match", "redundant-self", "truthy-iterable", "unused-awaitable"]
 
 # One ruleset for all checked code. Excluded: lerobot.rl (not typed yet) and the vendored
 # molmoact2_hf_model (kept verbatim so upstream syncs stay clean).
