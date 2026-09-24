@@ -262,8 +262,8 @@ def mask_summary(mask: np.ndarray) -> dict:
 
 def object_mentioned(name: str, instruction: str) -> bool:
     """Paper's name-in-task heuristic, with case/punctuation normalization and word boundaries."""
-    words = re.findall(r"\w+", name.casefold())
-    task = re.findall(r"\w+", instruction.casefold())
+    words = re.findall(r"[^\W_]+", name.casefold())
+    task = re.findall(r"[^\W_]+", instruction.casefold())
     return bool(words) and any(task[i : i + len(words)] == words for i in range(len(task)))
 
 
@@ -283,7 +283,7 @@ def filter_objects(output: Path, manifest: dict) -> dict:
         rejected = [obj for obj in tracks["objects"] if obj["object_id"] not in ids]
         result = {
             "status": "unreviewed",
-            "filter": "normalized_whole_name_in_subtask_v1",
+            "filter": "normalized_whole_name_in_subtask_v2",
             "instruction": clip["subtask"],
             "source_tracks_sha256": sha256(source_path),
             "source_manifest_sha256": sha256(output / "extraction.json"),

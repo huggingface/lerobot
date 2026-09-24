@@ -634,6 +634,11 @@ def test_task_relevance_does_not_match_partial_words_or_invent_synonyms(extracto
     matches = extractor["object_mentioned"]
     assert matches("Black Bin", "Place the tape in the black bin.")
     assert matches("tape roll", "Pick up the tape-roll.")
+    assert matches("white_cable", "Pick up the white cable with the left arm.")
+    assert matches("black bin", "Put the cable into the black_bin.")
+    assert matches("BLUE__BLOCK", "Pick up the blue-block.")
+    assert not matches("red_cube", "Pick up the red cubes.")
+    assert not matches("tape_roll", "Pick up the roll of tape.")
     assert not matches("hat", "Put that block away.")
     assert not matches("basket", "Place the tape in the black bin.")
     assert not matches("bin", "Return to Home Position")
@@ -672,6 +677,7 @@ def test_postfilter_keeps_raw_evidence_ids_and_missing_points(extractor, tmp_pat
     report = extractor["filter_objects"](tmp_path, manifest)
     result = json.loads((directory / "task_objects.json").read_text())
     assert result["status"] == "unreviewed"
+    assert result["filter"] == "normalized_whole_name_in_subtask_v2"
     assert result["objects"] == objects[1:]
     assert result["excluded_objects"] == objects[:1]
     assert result["frames"][0]["frame_index"] == 15
