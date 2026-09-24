@@ -104,6 +104,7 @@ class SyncInferenceEngine(InferenceEngine):
                 # than ``policy.reset``: observation history and other episode state stay.
                 logger.info("Task changed to '%s' — dropping precomputed actions", task)
                 self._policy.drop_queued_actions()
+                self._postprocessor.reset()
             observation = prepare_observation_for_inference(observation, self._device, task, self._robot_type)
             observation = self._preprocessor(observation)
             action = self._policy.select_action(observation)
