@@ -33,6 +33,7 @@ from .components import (
     load_wan_video_dit,
     resolve_wan_dit_paths,
 )
+from .model import sinusoidal_embedding_1d
 from .video_dit import (
     FastWAMAttentionBlock,
     WanContinuousFlowMatchScheduler,
@@ -40,7 +41,6 @@ from .video_dit import (
     gradient_checkpoint_forward,
     modulate,
     precompute_freqs_cis,
-    sinusoidal_embedding_1d,
 )
 
 logger = logging.getLogger(__name__)

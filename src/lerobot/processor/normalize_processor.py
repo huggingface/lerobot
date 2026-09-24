@@ -25,7 +25,7 @@ import torch
 from torch import Tensor
 
 from lerobot.configs import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
-from lerobot.lerobot_types import EnvTransition, TransitionKey
+from lerobot.lerobot_types import EnvTransition, RobotObservation, TransitionKey
 
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDataset
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 from lerobot.utils.constants import ACTION
 
 from .converters import from_tensor_to_numpy, to_tensor
-from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry, RobotObservation
+from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry
 
 
 @dataclass
