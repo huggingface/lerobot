@@ -620,6 +620,10 @@ disallow_incomplete_defs = true
 check_untyped_defs = true
 
 [[tool.mypy.overrides]]
+module = "lerobot.data_processing.*"
+ignore_errors = false
+
+[[tool.mypy.overrides]]
 module = "lerobot.optim.*"
 ignore_errors = false
 
