@@ -20,6 +20,8 @@ import math
 import torch
 import torch.nn as nn
 
+from ..common.flow_matching import sample_beta, sample_noise
+
 logger = logging.getLogger(__name__)
 
 
@@ -344,18 +346,15 @@ class FlowmatchingActionHead(nn.Module):
             fused_tokens, state, embodiment_id, context_mask
         )
 
-        t = (
-            torch.distributions.Beta(2, 2)
-            .sample((batch_size,))
-            .clamp(0.02, 0.98)
-            .to(device)
-            .to(dtype=self.dtype)
-        )
+        # Clamped in float32 before the dtype conversion, as this policy has always done.
+        t = sample_beta(2.0, 2.0, batch_size, device).clamp(0.02, 0.98).to(dtype=self.dtype)
         time_index = (t * 999).long().clamp_(0, 999)
         time_emb = self.time_pos_enc(1000)[:, time_index, :].squeeze(0).to(dtype=context_tokens.dtype)
 
         actions_gt_seq = actions_gt
-        noise = torch.rand_like(actions_gt) * 2 - 1
+        noise = sample_noise(
+            actions_gt.shape, actions_gt.device, dtype=actions_gt.dtype, distribution="uniform"
+        )
         if action_mask is not None:
             action_mask = action_mask.to(dtype=noise.dtype, device=noise.device)
             if action_mask.shape != noise.shape:
@@ -411,7 +410,9 @@ class FlowmatchingActionHead(nn.Module):
         action_dim_total = self.action_dim
         per_action_dim = self.per_action_dim
 
-        action = torch.rand(batch_size, action_dim_total, device=device, dtype=context_tokens.dtype) * 2 - 1
+        action = sample_noise(
+            (batch_size, action_dim_total), device, dtype=context_tokens.dtype, distribution="uniform"
+        )
         action_seq = action.view(batch_size, self.horizon, per_action_dim)
         action_mask = self._expand_action_mask(
             action_mask,
