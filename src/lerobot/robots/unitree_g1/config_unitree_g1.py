@@ -86,6 +86,18 @@ class UnitreeG1Config(RobotConfig):
     # SonicWholeBodyController. None disables it.
     controller: str | None = None
 
+    # Add left/right gripper closedness to the action space, forwarded to the bridge's CAN
+    # hands. Requires run_g1_server.py --grippers on the robot.
+    grippers: bool = False
+
+    # Report the robot's own proprioception -- 29 joint angles, plus gripper closedness when
+    # `grippers` is set -- instead of letting the controller's `observation_ft` replace it.
+    # A token-space controller normally echoes its last decoded token as the state, which is
+    # what a policy trained alongside that controller expects; a policy trained on joint
+    # angles while a token controller drove the body needs the opposite, and the two are
+    # indistinguishable from the controller name alone, so it has to be declared.
+    raw_proprio: bool = False
+
     def __post_init__(self):
         super().__post_init__()
         self.end_effector = G1EndEffector(self.end_effector)  # from Python it is still a string
