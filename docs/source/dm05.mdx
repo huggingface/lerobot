@@ -17,7 +17,7 @@ pip install -e ".[libero,dm05]"     # LIBERO evaluation on Linux
 
 ## Checkpoint
 
-Use `Dexmal/DM05-Lerobot` with `--policy.path`. It is a self-contained LeRobot conversion of the raw OpenDM
+Use `lerobot/dm05_base` with `--policy.path`. It is a self-contained LeRobot conversion of the raw OpenDM
 checkpoint and supports `DM05Policy.from_pretrained()`.
 
 The base config records OpenDM's 14-dimensional state/action contract. DM05's core model supports up to 32
@@ -44,7 +44,7 @@ The LIBERO recipe follows OpenDM:
 lerobot-train \
   --dataset.repo_id=HuggingFaceVLA/libero \
   --dataset.video_backend=pyav \
-  --policy.path=Dexmal/DM05-Lerobot \
+  --policy.path=lerobot/dm05_base \
   --policy.add_state=false \
   --policy.chunk_size=10 \
   --policy.n_action_steps=10 \
@@ -60,7 +60,7 @@ lerobot-train \
 | Parameter                     | LIBERO value                 | Meaning                                                              |
 | ----------------------------- | ---------------------------- | -------------------------------------------------------------------- |
 | `dataset.repo_id`             | `HuggingFaceVLA/libero`      | Standard LeRobot training dataset                                    |
-| `policy.path`                 | `Dexmal/DM05-Lerobot`        | Self-contained base checkpoint                                       |
+| `policy.path`                 | `lerobot/dm05_base`          | Self-contained base checkpoint                                       |
 | `policy.add_state`            | `false`                      | Matches OpenDM's LIBERO prompt without state tokens                  |
 | `policy.use_relative_actions` | `false` (checkpoint default) | Learns stored actions unchanged; relative mode is an explicit opt-in |
 | `policy.chunk_size`           | `10`                         | Number of actions predicted per chunk                                |
@@ -81,12 +81,12 @@ absolute actions rather than to deltas. This costs some signal but trains; it is
 
 ## Evaluation
 
-The LIBERO checkpoint `Dexmal/DM05-Lerobot-LIBERO` was trained for 50,000 steps and evaluated on all 40
+The LIBERO checkpoint `lerobot/dm05_libero` was trained for 50,000 steps and evaluated on all 40
 LIBERO tasks with 5 episodes per task:
 
 ```bash
 MUJOCO_GL=egl lerobot-eval \
-  --policy.path=Dexmal/DM05-Lerobot-LIBERO \
+  --policy.path=lerobot/dm05_libero \
   --env.type=libero \
   --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
   --env.camera_name_mapping='{"agentview_image":"front","robot0_eye_in_hand_image":"wrist"}' \

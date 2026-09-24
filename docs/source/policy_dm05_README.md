@@ -14,7 +14,7 @@ pip install -e ".[libero,dm05]"     # LIBERO evaluation on Linux
 
 ## Checkpoint loading
 
-`Dexmal/DM05` is the raw OpenDM checkpoint. Use the self-contained `Dexmal/DM05-Lerobot` checkpoint with
+`Dexmal/DM05` is the raw OpenDM checkpoint. Use the self-contained `lerobot/dm05_base` checkpoint with
 `DM05Policy.from_pretrained()` or `--policy.path`.
 
 ## Training
@@ -23,7 +23,7 @@ pip install -e ".[libero,dm05]"     # LIBERO evaluation on Linux
 lerobot-train \
   --dataset.repo_id=HuggingFaceVLA/libero \
   --dataset.video_backend=pyav \
-  --policy.path=Dexmal/DM05-Lerobot \
+  --policy.path=lerobot/dm05_base \
   --policy.add_state=false \
   --policy.chunk_size=10 \
   --policy.n_action_steps=10 \
@@ -49,7 +49,7 @@ Reproduce the reported 197/200 LIBERO result with the 50k-step checkpoint:
 
 ```bash
 MUJOCO_GL=egl lerobot-eval \
-  --policy.path=Dexmal/DM05-Lerobot-LIBERO \
+  --policy.path=lerobot/dm05_libero \
   --env.type=libero \
   --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
   --env.camera_name_mapping='{"agentview_image":"front","robot0_eye_in_hand_image":"wrist"}' \
