@@ -689,6 +689,6 @@ ignore_errors = false
 module = "lerobot.transport.*"
 ignore_errors = false
 
-# [[tool.mypy.overrides]]
-# module = "lerobot.scripts.*"
-# ignore_errors = false
+[[tool.mypy.overrides]]
+module = "lerobot.scripts.*"
+ignore_errors = false
