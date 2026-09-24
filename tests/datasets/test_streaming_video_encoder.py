@@ -244,10 +244,10 @@ class TestCameraEncoderThread:
         frame = np.random.randint(0, 255, (8, 8, 3), dtype=np.uint8)
         other = np.random.randint(0, 255, (8, 8, 3), dtype=np.uint8)
 
-        pts = thread._encode(frame, 0, None, stream, stats)  # builds + caches
-        pts = thread._encode(frame, pts, None, stream, stats)  # reuse cache
-        pts = thread._encode(frame, pts, None, stream, stats)  # reuse cache
-        thread._encode(other, pts, None, stream, stats)  # different array -> rebuild
+        pts = thread._encode_frame(frame, 0, None, stream, stats)  # builds + caches
+        pts = thread._encode_frame(frame, pts, None, stream, stats)  # reuse cache
+        pts = thread._encode_frame(frame, pts, None, stream, stats)  # reuse cache
+        thread._encode_frame(other, pts, None, stream, stats)  # different array -> rebuild
 
         assert conversions == 2  # once for `frame`, once for `other`
         assert encoded[0][0] is encoded[1][0] is encoded[2][0]  # same cached VideoFrame reused

@@ -13,6 +13,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import contextlib
 import glob
 import importlib
@@ -47,6 +49,7 @@ from lerobot.configs import (
 )
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
+from .compute_stats import RunningQuantileStats, auto_downsample_height_width
 from .depth_utils import quantize_depth
 from .pyav_utils import get_pix_fmt_channels
 
@@ -791,21 +794,24 @@ class _CameraEncoderThread(threading.Thread):
         self.encoder_threads = encoder_threads
 
         # Fast-path cache for repeated frames: the converted ``av.VideoFrame`` is reused
-        # whenever the same numpy array is encoded again (encoder back-pressure fills gaps by
-        # repeating the previous frame), skipping the expensive image conversion on every
-        # repeat. Repeated frames are also excluded from the running stats.
+        # whenever the same numpy array is encoded again.
         self._cached_frame_data: np.ndarray | None = None
         self._cached_video_frame: av.VideoFrame | None = None
 
-    def _encode(self, frame_data: np.ndarray, pts: int, container, output_stream, stats_tracker) -> int:
+    def _encode_frame(
+        self,
+        frame_data: np.ndarray,
+        pts: int,
+        container: av.Container,
+        output_stream: av.Stream,
+        stats_tracker: RunningQuantileStats,
+    ) -> int:
         """Encode one HWC frame at ``pts`` and fold it into the running stats. Returns ``pts + 1``.
 
         When ``frame_data`` is the same array as the previous call (a repeated frame), the
         cached ``av.VideoFrame`` is reused so only the codec re-encode runs, and the frame is
         excluded from the running stats (repeats are duplicates that would skew the distribution).
         """
-        from .compute_stats import auto_downsample_height_width
-
         is_repeat = frame_data is self._cached_frame_data and self._cached_video_frame is not None
         if is_repeat:
             video_frame = self._cached_video_frame
@@ -838,8 +844,6 @@ class _CameraEncoderThread(threading.Thread):
         return pts + 1
 
     def run(self) -> None:
-        from .compute_stats import RunningQuantileStats
-
         container = None
         output_stream = None
         stats_tracker = RunningQuantileStats()
@@ -860,7 +864,7 @@ class _CameraEncoderThread(threading.Thread):
                 if frame_data is None:
                     # Sentinel: fill a trailing gap, then flush and close
                     while last_frame_data is not None and frame_count < frame_index:
-                        frame_count = self._encode(
+                        frame_count = self._encode_frame(
                             last_frame_data, frame_count, container, output_stream, stats_tracker
                         )
                     break
@@ -891,9 +895,13 @@ class _CameraEncoderThread(threading.Thread):
                 # first delivered frame is filled with that frame (hold-forward).
                 fill = last_frame_data if last_frame_data is not None else frame_data
                 while frame_count < frame_index:
-                    frame_count = self._encode(fill, frame_count, container, output_stream, stats_tracker)
+                    frame_count = self._encode_frame(
+                        fill, frame_count, container, output_stream, stats_tracker
+                    )
 
-                frame_count = self._encode(frame_data, frame_count, container, output_stream, stats_tracker)
+                frame_count = self._encode_frame(
+                    frame_data, frame_count, container, output_stream, stats_tracker
+                )
                 last_frame_data = frame_data
 
             # Flush encoder
@@ -1062,8 +1070,7 @@ class StreamingVideoEncoder:
         self._fed_frames[video_key] = frame_index + 1
         try:
             # Wait at most one frame period for a free slot: long enough to absorb a
-            # one-frame hiccup, short enough to keep the real-time capture loop on cadence
-            # (and to keep the max_repeated_frames guard's wall-time ~ its "seconds of video").
+            # one-frame hiccup, short enough to keep the real-time capture loop on cadence.
             self._frame_queues[video_key].put((frame_index, image.copy()), timeout=1.0 / self.fps)
             self._consecutive_repeats[video_key] = 0
         except queue.Full:
