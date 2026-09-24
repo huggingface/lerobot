@@ -172,14 +172,20 @@ def test_skipping_does_not_bypass_empty_coverage_or_required_style_checks(partia
 def test_skip_config_requires_manifest_and_eval_does_not_require_training_styles():
     with pytest.raises(ValueError, match="requires a steering_manifest"):
         DatasetConfig(repo_id="test/source", steering_skip_uncovered=True)
+    with pytest.raises(ValueError, match="requires a steering_manifest"):
+        DatasetConfig(repo_id="test/source", steering_style_weights={"subtask": 1})
+    weights = {"subtask": 50, "motion": 15, "point": 10, "trace": 1, "combination": 4}
     config = DatasetConfig(
         repo_id="test/source",
         steering_manifest="manifest.json",
         steering_skip_uncovered=True,
         steering_required_styles=["trace"],
+        steering_style_weights=weights,
         task_recipe={"messages": [{"role": "user", "content": "task", "stream": "low_level"}]},
     )
     cfg = SimpleNamespace(dataset=config)
     assert _training_dataset(cfg).keywords["required_styles"] == ["trace"]
     assert _training_dataset(cfg, evaluation=True).keywords["required_styles"] == []
     assert _training_dataset(cfg, evaluation=True).keywords["skip_uncovered"] is True
+    assert _training_dataset(cfg).keywords["style_weights"] == weights
+    assert _training_dataset(cfg, evaluation=True).keywords["style_weights"] == weights

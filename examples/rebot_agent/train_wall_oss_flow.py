@@ -24,12 +24,15 @@ def prepare_run(
     smoke: bool,
     steering_manifest: Path | None = None,
     skip_uncovered: bool = False,
+    style_weights: dict[str, float] | None = None,
 ) -> tuple[dict, list[str]]:
     """Resolve the checked-in recipe and build a bounded, single-node torchrun command."""
     if gpus not in range(1, 5) or batch_size < 1:
         raise ValueError("Use one to four GPUs and a positive per-GPU batch size")
     if skip_uncovered and steering_manifest is None:
         raise ValueError("--skip-uncovered requires --steering-manifest")
+    if style_weights is not None and steering_manifest is None:
+        raise ValueError("--style-weights requires --steering-manifest")
     workspace = Path(__file__).resolve().parents[2]
     session = json.loads((workspace / "examples/rebot_agent/training.json").read_text())
     candidate = next(c for c in session["candidates"] if c["name"] == "wall_oss_flow_80_20_v1")
@@ -37,14 +40,16 @@ def prepare_run(
     recipe = TrainingRecipe.from_yaml(workspace / candidate["recipe_path"])
     config["dataset"]["task_recipe"] = asdict(recipe)
     if steering_manifest is not None:
-        from lerobot.datasets.steering_commands import SteeringCommands
+        from lerobot.datasets.steering_commands import SteeringCommands, validate_style_weights
 
+        validate_style_weights(style_weights)
         manifest = json.loads(steering_manifest.read_text())
         SteeringCommands(manifest)
         if any(manifest["source"].get(k) != config["dataset"][k] for k in ("repo_id", "revision")):
             raise ValueError("Steering manifest source differs from the training dataset")
         config["dataset"]["steering_manifest"] = str(steering_manifest.resolve())
         config["dataset"]["steering_task_probability"] = 0.2
+        config["dataset"]["steering_style_weights"] = style_weights
         config["dataset"]["steering_skip_uncovered"] = skip_uncovered
         config["dataset"]["steering_required_styles"] = ["subtask", "motion", "point", "trace", "combination"]
         config["dataset"]["image_transforms"] = {"enable": False}
@@ -94,10 +99,19 @@ def main():
         action="store_true",
         help="Sample only reviewed frame intervals and report exclusions",
     )
+    parser.add_argument(
+        "--style-weights", type=Path, help="JSON of relative weights for all five steering styles"
+    )
     args = parser.parse_args()
     output = args.output.resolve()
     config, argv = prepare_run(
-        output, args.gpus, args.batch_size, args.smoke, args.steering_manifest, args.skip_uncovered
+        output,
+        args.gpus,
+        args.batch_size,
+        args.smoke,
+        args.steering_manifest,
+        args.skip_uncovered,
+        json.loads(args.style_weights.read_text()) if args.style_weights else None,
     )
     workspace = Path(__file__).resolve().parents[2]
     git = shutil.which("git")

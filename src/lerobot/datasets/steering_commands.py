@@ -5,6 +5,7 @@
 import bisect
 import hashlib
 import json
+import math
 from collections import Counter
 from pathlib import Path
 
@@ -18,6 +19,28 @@ from .language_task import RecipeTaskDataset
 from .sampler import EpisodeAwareSampler
 
 STYLES = {"subtask", "motion", "point", "trace", "combination"}
+
+
+def validate_style_weights(weights: dict[str, float] | None) -> None:
+    if weights is not None and (
+        not isinstance(weights, dict)
+        or set(weights) != STYLES
+        or any(
+            isinstance(w, bool) or not isinstance(w, (int, float)) or not math.isfinite(w) or w <= 0
+            for w in weights.values()
+        )
+    ):
+        raise ValueError(
+            "Provide a finite positive weight for each of subtask, motion, point, trace, combination"
+        )
+
+
+def command_probabilities(commands: list[dict], weights: dict[str, float]) -> np.ndarray:
+    """Weight styles first, then distribute their probability equally among paraphrases."""
+    counts = Counter(command["style"] for command in commands)
+    scale = max(weights[style] for style in counts)
+    mass = np.asarray([weights[c["style"]] / scale / counts[c["style"]] for c in commands])
+    return mass / mass.sum()
 
 
 def _command_at_frame(command: dict, frame: int) -> dict:
@@ -103,8 +126,9 @@ class SteeringCommands:
     def at(self, episode: int, frame: int) -> list[dict]:
         return [_command_at_frame(command, frame) for command in self.span_at(episode, frame)["commands"]]
 
-    def annotation_profile(self, episodes=None) -> dict:
+    def annotation_profile(self, episodes=None, *, style_weights: dict[str, float] | None = None) -> dict:
         """Describe labels and expected command sampling, not learned robot capabilities."""
+        validate_style_weights(style_weights)
         selected = sorted(self.episodes if episodes is None else episodes)
         frames = dict.fromkeys(sorted(STYLES), 0)
         alternatives = dict.fromkeys(frames, 0)
@@ -116,10 +140,16 @@ class SteeringCommands:
                 length = span["end_frame"] - span["start_frame"]
                 total += length
                 counts = Counter(command["style"] for command in span["commands"])
+                probabilities = (
+                    command_probabilities(span["commands"], style_weights)
+                    if style_weights is not None
+                    else np.full(len(span["commands"]), 1 / len(span["commands"]))
+                )
                 for style, count in counts.items():
                     frames[style] += length
                     alternatives[style] += count
-                    expected[style] += length * count / len(span["commands"])
+                for command, probability in zip(span["commands"], probabilities, strict=True):
+                    expected[command["style"]] += length * probability
                 # Count an interval once per camera/style even if it has several paraphrases.
                 for camera, style in {
                     (command["camera"], command["style"])
@@ -137,11 +167,17 @@ class SteeringCommands:
             "expected_style_fraction_given_steering": {
                 style: weight / total if total else 0.0 for style, weight in expected.items()
             },
-            "sampling_assumption": "Uniform covered-frame sampling, then uniform command alternatives; excludes task branch",
+            "sampling_assumption": (
+                "Uniform covered-frame sampling, then style weights renormalized over available styles and uniform variants; excludes task branch"
+                if style_weights is not None
+                else "Uniform covered-frame sampling, then uniform command alternatives; excludes task branch"
+            ),
             "physical_capabilities_verified": False,
         }
 
-    def coverage(self, episode_lengths: dict[int, int]) -> dict:
+    def coverage(
+        self, episode_lengths: dict[int, int], *, style_weights: dict[str, float] | None = None
+    ) -> dict:
         """Check every requested frame before training, including wholly absent episodes."""
         gaps = []
         covered = 0
@@ -162,7 +198,7 @@ class SteeringCommands:
             "covered_frames": covered,
             "total_frames": sum(episode_lengths.values()),
             "gaps": gaps,
-            "annotation_profile": self.annotation_profile(episode_lengths),
+            "annotation_profile": self.annotation_profile(episode_lengths, style_weights=style_weights),
         }
 
     def sample(
@@ -172,7 +208,9 @@ class SteeringCommands:
         *,
         deterministic: bool = False,
         action_offsets: list[int] | None = None,
+        style_weights: dict[str, float] | None = None,
     ) -> dict:
+        validate_style_weights(style_weights)
         frame = int(sample["frame_index"])
         span = self.span_at(int(sample["episode_index"]), frame)
         commands = span["commands"]
@@ -181,7 +219,10 @@ class SteeringCommands:
         use_task = rng.random() < task_probability
         result = dict(sample)
         if not use_task:
-            index = int(rng.integers(len(commands))) if deterministic else int(rng.randint(len(commands)))
+            if style_weights is None:
+                index = int(rng.integers(len(commands))) if deterministic else int(rng.randint(len(commands)))
+            else:
+                index = int(rng.choice(len(commands), p=command_probabilities(commands, style_weights)))
             result["task"] = render_steering_command(_command_at_frame(commands[index], frame))
         if action_offsets is not None:
             action = sample["action"]
@@ -213,6 +254,7 @@ class SteeringCommandDataset(RecipeTaskDataset):
         task_probability: float = 0.2,
         required_styles: list[str] | None = None,
         skip_uncovered: bool = False,
+        style_weights: dict[str, float] | None = None,
         deterministic=False,
         **kwargs,
     ):
@@ -224,6 +266,8 @@ class SteeringCommandDataset(RecipeTaskDataset):
         self.task_probability = task_probability
         self.deterministic = deterministic
         self.skip_uncovered = skip_uncovered
+        validate_style_weights(style_weights)
+        self.style_weights = dict(style_weights) if style_weights is not None else None
         if not 0 <= task_probability <= 1:
             raise ValueError("task_probability must be in [0, 1]")
         super().__init__(*args, **kwargs)
@@ -236,7 +280,9 @@ class SteeringCommandDataset(RecipeTaskDataset):
         ):
             raise ValueError("Steering manifest does not match the pinned dataset")
         episodes = self.episodes if self.episodes is not None else range(self.meta.total_episodes)
-        report = self.steering.coverage({ep: int(self.meta.episodes[ep]["length"]) for ep in episodes})
+        report = self.steering.coverage(
+            {ep: int(self.meta.episodes[ep]["length"]) for ep in episodes}, style_weights=self.style_weights
+        )
         if not report["complete"] and not skip_uncovered:
             raise ValueError(
                 f"Missing reviewed steering coverage: {len(report['gaps'])} gaps; first: {report['gaps'][0]}"
@@ -251,6 +297,7 @@ class SteeringCommandDataset(RecipeTaskDataset):
             "source": self.steering.source,
             "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
             "task_probability": self.task_probability,
+            "style_weights": self.style_weights,
             "required_styles": required_styles,
             "skip_uncovered": skip_uncovered,
             "excluded_frames": report["total_frames"] - report["covered_frames"],
@@ -320,4 +367,5 @@ class SteeringCommandDataset(RecipeTaskDataset):
             self.task_probability,
             deterministic=self.deterministic,
             action_offsets=self.steering_action_offsets,
+            style_weights=self.style_weights,
         )

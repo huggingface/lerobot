@@ -51,6 +51,51 @@ def test_fresh_commands_preserve_action_targets_and_requested_mixture():
     assert index.sample(sample, 0.2, deterministic=True) == index.sample(sample, 0.2, deterministic=True)
 
 
+def test_style_weights_do_not_let_paraphrases_change_style_frequency():
+    data = manifest()
+    commands = data["segments"][0]["commands"]
+    commands.extend({**commands[0], "text": f"reach variant {i}"} for i in range(8))
+    weights = {"subtask": 3, "motion": 1, "point": 1, "trace": 1, "combination": 1}
+    index = SteeringCommands(data)
+    profile = index.annotation_profile(style_weights=weights)
+    assert profile["expected_style_fraction_given_steering"]["subtask"] == pytest.approx(0.75)
+    sample = {"index": 123, "episode_index": 3, "frame_index": 2, "task": "task", "action": torch.zeros(4, 2)}
+    np.random.seed(7)
+    rows = [
+        index.sample(sample, 0.2, style_weights=weights, action_offsets=[0, 1, 2, 3]) for _ in range(4000)
+    ]
+    assert 0.56 < sum(row["task"].startswith("reach") for row in rows) / len(rows) < 0.64
+    assert 0.17 < sum(row["task"] == "task" for row in rows) / len(rows) < 0.23
+    assert all(row["action"] is sample["action"] for row in rows)
+    assert all(
+        row["action_is_pad"].tolist()
+        == ([False] * 4 if row["task"] == "task" else [False, False, False, True])
+        for row in rows
+    )
+    a = index.sample(sample, 0, style_weights=weights, deterministic=True)
+    b = index.sample(sample, 0, style_weights=weights, deterministic=True)
+    assert a["task"] == b["task"]
+
+
+def test_weighted_profile_reports_missing_motion_coverage_instead_of_claiming_target_ratio():
+    data = manifest()
+    extra = copy.deepcopy(data["segments"][0])
+    extra.update(start_frame=5, end_frame=10)
+    extra["commands"] = extra["commands"][:1]
+    data["segments"].append(extra)
+    weights = {"subtask": 1, "motion": 1, "point": 1, "trace": 1, "combination": 1}
+    profile = SteeringCommands(data).coverage({3: 10}, style_weights=weights)["annotation_profile"]
+    assert profile["expected_style_fraction_given_steering"]["motion"] == 0.25
+    assert profile["expected_style_fraction_given_steering"]["subtask"] == 0.75
+
+
+@pytest.mark.parametrize("bad", [0, -1, float("nan"), float("inf"), True])
+def test_invalid_style_weights_fail_before_sampling(bad):
+    weights = {"subtask": bad, "motion": 1, "point": 1, "trace": 1, "combination": 1}
+    with pytest.raises(ValueError, match="finite positive"):
+        SteeringCommands(manifest()).annotation_profile(style_weights=weights)
+
+
 def test_missing_and_unreviewed_commands_fail_instead_of_changing_the_mixture():
     data = manifest()
     data["segments"][0]["review"]["verdict"] = "uncertain"
@@ -504,6 +549,7 @@ def test_dataloader_batch_applies_steering_and_command_boundary_mask(monkeypatch
     dataset.task_probability = task_probability
     dataset.deterministic = True
     dataset.steering_action_offsets = [0, 1, 2, 3]
+    dataset.style_weights = None
     loader = torch.utils.data.DataLoader(dataset, sampler=[0, 1], batch_size=2, collate_fn=list)
     batch = next(iter(loader))
     expected = "corrected overall task" if task_probability else "reach for the tape"

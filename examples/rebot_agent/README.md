@@ -69,6 +69,25 @@ learned capability. Required styles are checked on training episodes, while held
 evaluation reports the styles actually available there. Without this explicit option,
 missing coverage remains an error.
 
+For experiments with more subtask supervision, pass
+`--style-weights examples/rebot_agent/steering_style_weights.json`. This optional
+proposal assigns relative weights of 50 subtask, 15 motion, 10 point, 4 combination,
+and 1 trace; the high-level task still has a separate 20% probability. At each
+reviewed frame, weights are renormalized over the styles actually available there,
+then alternatives within a style are sampled uniformly. Extra paraphrases therefore
+do not increase a style's weight. The reported `expected_style_fraction` accounts
+for coverage: these weights only yield 50/15/10/4/1 percent overall if every sampled
+frame supports every style. Missing motion or trace coverage cannot be fixed by a
+larger weight. Leaving the option unset preserves uniform command sampling.
+
+This weighted proposal is an experiment, not the Steerable Policies paper's recipe.
+[Appendix F](https://arxiv.org/html/2602.13193v3#A6) samples uniformly from the full
+list of task, subtask, and generated commands at each frame. Our separate 20% task
+allocation is also an adaptation. WALL-WM instead describes event-aligned temporal
+caption levels and balances vision–language and action clusters; its
+[Sections 4.3–4.4](https://arxiv.org/html/2606.01955v1#S4.SS3) do not specify a fixed
+percentage for each caption level. Neither approach establishes an optimal ReBot mix.
+
 This ReBot experiment uses autonomous annotation review; the operator does not need
 to draw boxes or confirm labels. Attribute accepted reviews to the model and skip
 uncertain labels. Measured gripper state can support opening/closing commands even

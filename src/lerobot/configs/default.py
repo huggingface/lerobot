@@ -60,6 +60,8 @@ class DatasetConfig:
     task_recipe: dict | None = None
     steering_manifest: str | None = None
     steering_task_probability: float = 0.2
+    # Relative style weights, renormalized over reviewed alternatives at each frame.
+    steering_style_weights: dict[str, float] | None = None
     steering_required_styles: list[str] = field(default_factory=list)
     # Exclude unreviewed frame anchors from both train and eval sampling; never fill their labels.
     steering_skip_uncovered: bool = False
@@ -75,6 +77,8 @@ class DatasetConfig:
             raise ValueError("task_recipe currently requires a non-streaming dataset")
         if self.steering_skip_uncovered and self.steering_manifest is None:
             raise ValueError("steering_skip_uncovered requires a steering_manifest")
+        if self.steering_style_weights is not None and self.steering_manifest is None:
+            raise ValueError("steering_style_weights requires a steering_manifest")
         if self.steering_manifest is not None:
             if self.streaming or self.task_recipe is None or self.image_transforms.enable:
                 raise ValueError(

@@ -45,6 +45,7 @@ def _training_dataset(cfg: TrainPipelineConfig, *, evaluation=False):
             task_probability=cfg.dataset.steering_task_probability,
             required_styles=[] if evaluation else cfg.dataset.steering_required_styles,
             skip_uncovered=cfg.dataset.steering_skip_uncovered,
+            style_weights=cfg.dataset.steering_style_weights,
             deterministic=evaluation,
         )
     if cfg.dataset.task_recipe is not None:
