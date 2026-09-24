@@ -444,3 +444,14 @@ any declared evaluation episode. It checks the split before loading model weight
 Without this option, evaluation still defaults to final episodes 90–99. Record that
 development results inform checkpoint selection; do not present them as final-test
 performance or select a schedule from the final-test scores.
+
+Add `--point-sensitivity` to the offline evaluator to test whether coordinates affect
+predictions. It keeps each recorded observation and noise seed fixed, repeats the
+original point prompt as a control, then mirrors the pick point's horizontal coordinate,
+mirrors the place point's horizontal coordinate, and swaps the two points. Camera,
+instruction wording and image dimensions stay fixed. The report exports every action
+chunk and its normalized change from the original prediction. Perturbed points may
+refer to empty space or infeasible goals, so they are never scored against the recorded
+demonstration. This measures sensitivity only: larger changes do not establish correct
+grounding, command compliance or success. Keep this diagnostic separate from the
+prespecified checkpoint selection score, and use development holdouts while iterating.

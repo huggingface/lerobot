@@ -162,3 +162,92 @@ def test_leaking_checkpoint_is_rejected_before_model_or_optional_dependencies(
     monkeypatch.setitem(evaluate.__globals__, "require_package", unexpected_model_dependency)
     with pytest.raises(ValueError, match="training split"):
         evaluate(panel, tmp_path, tmp_path, tmp_path / "output.json", "cpu")
+
+
+def test_point_interventions_change_coordinates_only_and_keep_repeat_control(api, manifest):
+    manifest["segments"] = [manifest["segments"][0]]
+    manifest["segments"][0]["commands"] = [
+        {
+            "style": "point",
+            "text": "pick at the first point and place at the second",
+            "camera": "observation.images.base",
+            "image_size": [640, 480],
+            "points": [[100, 120], [320, 240]],
+            "evidence": "fixture",
+        }
+    ]
+    original = copy.deepcopy(manifest)
+    panel = api["make_point_sensitivity_panel"](manifest, anchors_per_style=1)
+    assert manifest == original
+    assert panel["diagnostic"] == "point_sensitivity"
+    commands = {c["variant"]: c for c in panel["samples"][0]["commands"]}
+    assert commands["reference"]["task"] == commands["repeat"]["task"]
+    assert commands["mirror_pick_x"]["points"] == [[539, 120], [320, 240]]
+    assert commands["mirror_place_x"]["points"] == [[100, 120], [319, 240]]
+    assert commands["swap_points"]["points"] == [[320, 240], [100, 120]]
+    assert all(
+        c["task"].startswith("In base view (640x480 pixels), pick at the first") for c in commands.values()
+    )
+    assert set(panel["prompt_counts"].values()) == {1}
+
+
+def test_sensitivity_rejects_split_leakage_and_absent_points(api, manifest):
+    with pytest.raises(ValueError, match="No reviewed point"):
+        api["make_point_sensitivity_panel"](manifest)
+    manifest["segments"][0]["episode_index"] = 6
+    with pytest.raises(ValueError, match="held-out"):
+        api["make_point_sensitivity_panel"](manifest)
+
+
+@pytest.fixture
+def sensitivity_rows():
+    return [
+        {
+            "episode_index": 90,
+            "frame_index": 2,
+            "variant": name,
+            "task": "same" if name in {"reference", "repeat"} else name,
+            "seed": 7,
+            "observation_state": [0.0] * 14,
+            "predicted_action_chunk": [[value] * 14] * 2,
+        }
+        for name, value in [
+            ("reference", 1),
+            ("repeat", 1),
+            ("mirror_pick_x", 3),
+            ("mirror_place_x", 5),
+            ("swap_points", 7),
+        ]
+    ]
+
+
+def test_sensitivity_measures_prediction_changes_without_demonstration_labels(api, sensitivity_rows):
+    result = api["point_sensitivity"](sensitivity_rows, torch.full((14,), 2.0))
+    assert {k: v["mean_normalized_rms_change"] for k, v in result.items()} == {
+        "reference": 0,
+        "repeat": 0,
+        "mirror_pick_x": 1,
+        "mirror_place_x": 2,
+        "swap_points": 3,
+    }
+    assert all(
+        "normalized_mse" not in row and "valid_demonstrated_actions" not in row for row in sensitivity_rows
+    )
+
+
+@pytest.mark.parametrize("change", ["seed", "observation", "repeat", "missing", "duplicate", "nonfinite"])
+def test_invalid_sensitivity_controls_are_rejected(api, sensitivity_rows, change):
+    if change == "seed":
+        sensitivity_rows[2]["seed"] += 1
+    elif change == "observation":
+        sensitivity_rows[2]["observation_state"][0] = 1
+    elif change == "repeat":
+        sensitivity_rows[1]["task"] = "different instruction"
+    elif change == "missing":
+        sensitivity_rows.pop()
+    elif change == "duplicate":
+        sensitivity_rows.append(copy.deepcopy(sensitivity_rows[0]))
+    else:
+        sensitivity_rows[2]["predicted_action_chunk"][0][0] = float("nan")
+    with pytest.raises(ValueError):
+        api["point_sensitivity"](sensitivity_rows, torch.ones(14))

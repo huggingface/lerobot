@@ -7,6 +7,7 @@ measure physical success or prove that an alternative valid action is incorrect.
 """
 
 import argparse
+import copy
 import hashlib
 import json
 import math
@@ -153,6 +154,90 @@ def action_errors(prediction, target, padding, *, frame, start, end, scale):
     }
 
 
+def make_point_sensitivity_panel(manifest: dict, **kwargs) -> dict:
+    """Change coordinates alone; perturbed prompts have no demonstrated action target."""
+    panel = make_panel(manifest, **kwargs)
+    index = SteeringCommands(manifest)
+    samples = []
+    for anchor in panel["samples"]:
+        points = [
+            c for c in index.at(anchor["episode_index"], anchor["frame_index"]) if c["style"] == "point"
+        ]
+        if not points:
+            continue
+        if len(points) != 1 or len(points[0]["points"]) != 2:
+            raise ValueError("Point sensitivity requires one ordered pick/place pair per anchor")
+        original = points[0]
+        commands = []
+        for variant in ["reference", "repeat", "mirror_pick_x", "mirror_place_x", "swap_points"]:
+            command = copy.deepcopy(original)
+            if variant.startswith("mirror"):
+                which = 0 if variant == "mirror_pick_x" else 1
+                command["points"][which][0] = command["image_size"][0] - 1 - command["points"][which][0]
+            elif variant == "swap_points":
+                command["points"].reverse()
+            commands.append(
+                {
+                    "style": "point",
+                    "variant": variant,
+                    "task": render_steering_command(command),
+                    "points": command["points"],
+                    "camera": command["camera"],
+                    "image_size": command["image_size"],
+                }
+            )
+        samples.append({**anchor, "commands": commands})
+    if not samples:
+        raise ValueError("No reviewed point commands in this evaluation split")
+    return {
+        **panel,
+        "diagnostic": "point_sensitivity",
+        "samples": samples,
+        "prompt_counts": dict(Counter(c["variant"] for s in samples for c in s["commands"])),
+        "comparison": "Same observation and noise seed; coordinate changes only; identical-prompt repeat control",
+        "limitations": "Perturbed points may refer to empty space or infeasible goals. Output changes measure sensitivity, not correct grounding or command compliance.",
+    }
+
+
+def point_sensitivity(rows: list[dict], scale: torch.Tensor) -> dict:
+    """Compare full predicted chunks to the reference, never to demonstrated actions."""
+    if not rows:
+        raise ValueError("No sensitivity predictions")
+    if scale.shape != (14,) or not torch.isfinite(scale).all() or (scale <= 0).any():
+        raise ValueError("Require 14 finite positive action scales")
+    groups = defaultdict(dict)
+    for row in rows:
+        key = row["episode_index"], row["frame_index"]
+        if row["variant"] in groups[key]:
+            raise ValueError("Duplicate sensitivity variant at an anchor")
+        groups[key][row["variant"]] = row
+    summaries = defaultdict(list)
+    for variants in groups.values():
+        if set(variants) != {"reference", "repeat", "mirror_pick_x", "mirror_place_x", "swap_points"}:
+            raise ValueError("Incomplete sensitivity controls")
+        reference = variants["reference"]
+        if variants["repeat"]["task"] != reference["task"]:
+            raise ValueError("Repeat control must use the identical prompt")
+        baseline = torch.tensor(reference["predicted_action_chunk"], dtype=torch.float64)
+        if baseline.ndim != 2 or baseline.shape[1] != 14 or not len(baseline):
+            raise ValueError("Require predicted [horizon, 14] action chunks")
+        for name, row in variants.items():
+            if row["seed"] != reference["seed"] or row["observation_state"] != reference["observation_state"]:
+                raise ValueError("Sensitivity pairs must share observation and noise seed")
+            prediction = torch.tensor(row["predicted_action_chunk"], dtype=torch.float64)
+            if prediction.shape != baseline.shape or not torch.isfinite(prediction).all():
+                raise ValueError("Invalid predicted sensitivity actions")
+            delta = prediction - baseline
+            row["normalized_rms_change_vs_reference"] = float((delta / scale).square().mean().sqrt())
+            row["mae_change_per_dimension"] = delta.abs().mean(0).tolist()
+            row["max_abs_change"] = float(delta.abs().max())
+            summaries[name].append(row["normalized_rms_change_vs_reference"])
+    return {
+        name: {"anchors": len(values), "mean_normalized_rms_change": sum(values) / len(values)}
+        for name, values in summaries.items()
+    }
+
+
 def summarize(rows: list[dict]) -> dict:
     """Equal-anchor metrics, with paired deltas on exactly the same task anchors."""
     task = {(r["episode_index"], r["frame_index"]): r for r in rows if r["style"] == "task"}
@@ -195,6 +280,9 @@ def training_episodes(config: dict, metadata) -> list[int]:
 
 
 def evaluate(panel: dict, checkpoint: Path, dataset_root: Path, output: Path, device: str) -> dict:
+    sensitivity = panel.get("diagnostic") == "point_sensitivity"
+    if panel.get("diagnostic") not in {None, "point_sensitivity"}:
+        raise ValueError("Unknown offline diagnostic")
     episodes = evaluation_episodes(panel)
     if output.exists():
         raise FileExistsError(output)
@@ -253,14 +341,18 @@ def evaluate(panel: dict, checkpoint: Path, dataset_root: Path, output: Path, de
                 actions = post(policy.predict_action_chunk(inputs)).detach().float().cpu()
             if actions.shape != (1, policy.config.chunk_size, 14) or not torch.isfinite(actions).all():
                 raise ValueError("Invalid inferred action chunk")
-            metrics = action_errors(
-                actions[0],
-                sample["action"],
-                sample["action_is_pad"],
-                frame=frame,
-                start=anchor["start_frame"],
-                end=anchor["end_frame"],
-                scale=scale,
+            metrics = (
+                {}
+                if sensitivity
+                else action_errors(
+                    actions[0],
+                    sample["action"],
+                    sample["action_is_pad"],
+                    frame=frame,
+                    start=anchor["start_frame"],
+                    end=anchor["end_frame"],
+                    scale=scale,
+                )
             )
             rows.append(
                 {
@@ -271,7 +363,15 @@ def evaluate(panel: dict, checkpoint: Path, dataset_root: Path, output: Path, de
                     **metrics,
                     "observation_state": sample["observation.state"].tolist(),
                     "predicted_action_chunk": actions[0].tolist(),
-                    "valid_demonstrated_actions": sample["action"][metrics["valid_action_indices"]].tolist(),
+                    **(
+                        {}
+                        if sensitivity
+                        else {
+                            "valid_demonstrated_actions": sample["action"][
+                                metrics["valid_action_indices"]
+                            ].tolist()
+                        }
+                    ),
                 }
             )
         print(f"Evaluated episode {ep}, frame {frame}: {len(anchor['commands'])} paired prompts", flush=True)
@@ -290,11 +390,19 @@ def evaluate(panel: dict, checkpoint: Path, dataset_root: Path, output: Path, de
             "std": scale.tolist(),
         },
         "samples": rows,
-        "styles": summarize(rows),
+        **(
+            {"point_sensitivity": point_sensitivity(rows, scale)}
+            if sensitivity
+            else {"styles": summarize(rows)}
+        ),
         "optimizer_updates": 0,
         "robot_commands": 0,
         "physical_success_measured": False,
-        "limitations": "Recorded-action agreement only. Anchors are correlated; styles have different coverage. Compare prompt deltas only on paired anchors. No grasp, success, pixel accuracy, or command-compliance claim.",
+        "limitations": (
+            panel["limitations"]
+            if sensitivity
+            else "Recorded-action agreement only. Anchors are correlated; styles have different coverage. Compare prompt deltas only on paired anchors. No grasp, success, pixel accuracy, or command-compliance claim."
+        ),
     }
     output.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
     return report
@@ -310,6 +418,11 @@ def main():
     parser.add_argument("--anchors-per-style", type=int, default=3)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument(
+        "--point-sensitivity",
+        action="store_true",
+        help="Measure response to coordinate changes, without scoring against demonstrations",
+    )
+    parser.add_argument(
         "--development-episodes",
         type=int,
         nargs="+",
@@ -318,10 +431,11 @@ def main():
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Use a fresh output file")
-    panel = make_panel(
+    build_panel = make_point_sensitivity_panel if args.point_sensitivity else make_panel
+    panel = build_panel(
         json.loads(args.manifest.read_text()),
-        args.anchors_per_style,
-        args.seed,
+        anchors_per_style=args.anchors_per_style,
+        seed=args.seed,
         development_episodes=args.development_episodes,
     )
     panel["manifest_sha256"] = digest(args.manifest)
