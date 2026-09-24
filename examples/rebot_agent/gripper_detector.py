@@ -154,6 +154,7 @@ def evaluate(model, processor, loader, device, threshold, margin):
 
 def train(args):
     require_package("transformers", extra="transformers-dep")
+    require_package("timm", extra="timm-dep")
     if args.epochs < 1 or args.batch_size < 1:
         raise ValueError("Use positive epochs and batch size")
     if args.device.startswith("cuda") and not torch.cuda.is_available():
@@ -210,6 +211,7 @@ def train(args):
         "image_root": str(train_set.root.resolve()),
         "torch": str(torch.__version__),
         "transformers": importlib.metadata.version("transformers"),
+        "timm": importlib.metadata.version("timm"),
         "train_annotations_sha256": file_hash(args.labels / "train.json"),
         "validation_annotations_sha256": file_hash(args.labels / "validation.json"),
         "label_review_counts": train_set.data["info"].get("review_counts"),

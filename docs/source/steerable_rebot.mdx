@@ -305,13 +305,13 @@ uv run examples/rebot_agent/gripper_labels.py export \
   --pack outputs/gripper_review/pack.json \
   --labels /path/to/rebot_gripper_labels.json --output outputs/gripper_coco
 # On one GPU inside the science-cluster allocation, after copying the image pack:
-uv run examples/rebot_agent/gripper_detector.py train \
+uv run --extra transformers-dep --extra timm-dep --extra scipy-dep examples/rebot_agent/gripper_detector.py train \
   --labels /path/to/gripper_coco --image-root /path/to/gripper_review \
   --output outputs/gripper_smoke --smoke
-uv run examples/rebot_agent/gripper_detector.py train \
+uv run --extra transformers-dep --extra timm-dep --extra scipy-dep examples/rebot_agent/gripper_detector.py train \
   --labels /path/to/gripper_coco --image-root /path/to/gripper_review \
   --output outputs/gripper_detr --epochs 50
-uv run examples/rebot_agent/gripper_detector.py extract \
+uv run --extra transformers-dep --extra timm-dep examples/rebot_agent/gripper_detector.py extract \
   --checkpoint outputs/gripper_detr/checkpoint \
   --visual outputs/rebot_visual --output outputs/gripper_tracks
 ```
