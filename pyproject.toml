@@ -574,6 +574,10 @@ enable_error_code = [
     "truthy-iterable",
     "unused-awaitable",
 ]
+# Next candidates, each needing a fix PR first (error counts as of 2026-09):
+# warn_unreachable = true          # 39: dead code, mostly unannotated `self.x = None` attributes
+# strict_equality_for_none = true  # 40: keep None guards on config fields, `--field=null` yields None
+# check_untyped_defs = true        # 195: most valuable; decide first how Optional dataset metadata is accessed
 
 # One ruleset for all checked code. Excluded: lerobot.rl (not typed yet) and the vendored
 # molmoact2_hf_model (kept verbatim so upstream syncs stay clean).
