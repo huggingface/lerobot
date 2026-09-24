@@ -135,6 +135,56 @@ def test_native_seed_correction_retains_model_attribution_only_at_anchor(sample)
         assert obj["seed_review"] == (review if index == 0 else None)
 
 
+def test_reviewed_object_selection_exports_provenance_without_rewriting_source_language(sample, tmp_path):
+    api, dataset, extraction, output, path = sample
+    extractor = runpy.run_path(str(Path(__file__).parents[2] / "examples/rebot_agent/extract_visual.py"))
+    manifest_path = extraction / "extraction.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["clips"][0]["subtask"] = "Pick up the block"
+    manifest_path.write_text(json.dumps(manifest))
+    selected = json.loads((extraction / "clip/task_objects.json").read_text())
+    (extraction / "clip/tracks.json").write_text(json.dumps(selected))
+    (extraction / "clip/point.json").write_text(json.dumps({"objects": selected["objects"]}))
+    (extraction / "clip/identify.json").write_text(json.dumps({"objects": ["tape"], "error": None}))
+    review = {
+        "parent_manifest_sha256": api["digest"](manifest_path),
+        "reviewer": {"kind": "model", "id": "test"},
+        "selections": [
+            {
+                "clip": "clip",
+                "source_tracks_sha256": api["digest"](extraction / "clip/tracks.json"),
+                "frame_sha256": manifest["clips"][0]["frames"][0]["sha256"],
+                "object_ids": [1],
+                "subtask": "Pick up the tape",
+                "reason": "The video shows tape, with the block stationary.",
+            }
+        ],
+    }
+    review_path = tmp_path / "review.json"
+    review_path.write_text(json.dumps(review))
+    corrected = tmp_path / "corrected"
+    reviewed_manifest = extractor["prepare_reviewed_objects"](extraction, corrected, review_path)
+    api["export_dataset"](dataset, [corrected], output)
+    native = pq.read_table(output / "data/chunk-000/file-000.parquet")
+    source = pq.read_table(path)
+    for column in source.column_names:
+        if column != "language_events":
+            assert native[column] == source[column]
+    provenance = json.loads((output / "meta/grounding_provenance.json").read_text())
+    assert provenance["extractions"][0]["manifest"] == reviewed_manifest
+    events = native["language_events"].to_pylist()
+    for index, rows in enumerate(events[:3]):
+        annotation = json.loads(
+            next(r["content"] for r in rows if r["style"] == "vqa" and r["role"] == "assistant")
+        )
+        assert not annotation["accepted_training_labels"] and not annotation["human_verified"]
+        obj = annotation["detections"][0]
+        assert obj["label"] == "tape"
+        assert obj["mask_present"] == (index != 1)
+        assert obj["bbox"] == ([1, 1, 4, 4] if index != 1 else None)
+        assert obj["point"] == ([2.0, 2.0] if index != 1 else None)
+
+
 @pytest.fixture
 def replacement(sample, tmp_path):
     api, _, extraction, _, _ = sample

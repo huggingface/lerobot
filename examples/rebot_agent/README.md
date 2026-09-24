@@ -148,6 +148,23 @@ Correcting a seed does not accept the resulting track. Native exports retain thi
 provenance as `seed_point_source` and `seed_review`; model reviews are never relabeled
 as human verification.
 
+When video review identifies an already tracked object that the name-in-subtask
+filter excluded, use `extract_visual.py prepare-reviewed-objects --parent ORIGINAL
+--object-review review.json --output NEW`. This also supports correcting a source
+subtask that describes the wrong demonstrated object. The review JSON contains
+`parent_manifest_sha256`, an attributed `reviewer` (`kind`: `model` or `human`,
+and `id`), and a nonempty `selections` list. Each selection specifies `clip`,
+`source_tracks_sha256`, the first source `frame_sha256`, selected `object_ids`,
+a visual `reason`, and optionally corrected `subtask` text.
+
+This stage copies the original frames, identities, points, masks, and tracks without
+changing their bytes. It preserves the complete parent manifest and review, plus
+the original subtask and artifact hashes in the new manifest. The explicit selection
+survives subsequent `filter-objects` runs. Missing masks stay missing, object names
+stay unchanged, and candidates still require command/geometry review before training.
+The native annotation exporter includes this attribution in its grounding provenance;
+it does not replace the source dataset's language or action columns.
+
 To recover an instruction-named object omitted by identification, use
 `extract_visual.py prepare-required --parent ORIGINAL --output NEW --objects bin`.
 Once every parent clip has a point result, add `--required-source points` to start

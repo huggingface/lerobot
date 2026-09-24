@@ -274,7 +274,13 @@ def filter_objects(output: Path, manifest: dict) -> dict:
         directory = output / clip["path"]
         source_path = directory / "tracks.json"
         tracks = json.loads(source_path.read_text())
-        selected = [obj for obj in tracks["objects"] if object_mentioned(obj["name"], clip["subtask"])]
+        selection = clip.get("object_selection_review")
+        if selection is not None:
+            if selection["source_tracks_sha256"] != sha256(source_path):
+                raise ValueError("Object selection review refers to stale tracks")
+            selected = [obj for obj in tracks["objects"] if obj["object_id"] in selection["object_ids"]]
+        else:
+            selected = [obj for obj in tracks["objects"] if object_mentioned(obj["name"], clip["subtask"])]
         ids = {obj["object_id"] for obj in selected}
         frames = [
             {**frame, "objects": [obj for obj in frame["objects"] if obj["object_id"] in ids]}
@@ -283,7 +289,9 @@ def filter_objects(output: Path, manifest: dict) -> dict:
         rejected = [obj for obj in tracks["objects"] if obj["object_id"] not in ids]
         result = {
             "status": "unreviewed",
-            "filter": "normalized_whole_name_in_subtask_v2",
+            "filter": "attributed_object_selection_v1"
+            if selection
+            else "normalized_whole_name_in_subtask_v2",
             "instruction": clip["subtask"],
             "source_tracks_sha256": sha256(source_path),
             "source_manifest_sha256": sha256(output / "extraction.json"),
@@ -308,6 +316,118 @@ def filter_objects(output: Path, manifest: dict) -> dict:
     report = {"status": "unreviewed", "source": manifest["source"], "clips": clips}
     write_json(output / "task_object_filter.json", report)
     return report
+
+
+def prepare_reviewed_objects(parent: Path, output: Path, review_path: Path) -> dict:
+    """Reuse explicitly reviewed identities, preserving raw tracks and original language."""
+    if output.exists() or parent.resolve() in output.resolve().parents:
+        raise ValueError("Use a fresh output outside the parent extraction")
+    manifest_path = parent / "extraction.json"
+    original = json.loads(manifest_path.read_text())
+    review = json.loads(review_path.read_text())
+    parent_hash = sha256(manifest_path)
+    if review["parent_manifest_sha256"] != parent_hash:
+        raise ValueError("Object review refers to a different parent manifest")
+    reviewer = review["reviewer"]
+    if reviewer.get("kind") not in {"human", "model"} or not reviewer.get("id", "").strip():
+        raise ValueError("Object review requires an attributed human or model reviewer")
+    if not isinstance(review["selections"], list) or not review["selections"]:
+        raise ValueError("Object review requires a nonempty selections list")
+    clips = {clip["path"]: clip for clip in original["clips"]}
+    selected, artifacts = [], {}
+    for selection in review["selections"]:
+        name = selection["clip"]
+        if name not in clips or Path(name).name != name or name in artifacts:
+            raise ValueError("Unknown, invalid, or duplicate clip path")
+        clip = clips[name]
+        directory = parent / name
+        tracks_path = directory / "tracks.json"
+        if selection["source_tracks_sha256"] != sha256(tracks_path):
+            raise ValueError("Object selection review refers to stale tracks")
+        if selection["frame_sha256"] != clip["frames"][0]["sha256"]:
+            raise ValueError("Object review must pin the first source frame")
+        if not selection.get("reason", "").strip():
+            raise ValueError("Object selection requires visual evidence or an uncertainty reason")
+        subtask = selection.get("subtask", clip["subtask"])
+        if not isinstance(subtask, str) or not subtask.strip():
+            raise ValueError("Reviewed subtask must be nonempty text")
+        ids = selection["object_ids"]
+        if (
+            not isinstance(ids, list)
+            or not ids
+            or any(type(value) is not int for value in ids)
+            or len(set(ids)) != len(ids)
+        ):
+            raise ValueError("Select distinct integer object IDs")
+        tracks = json.loads(tracks_path.read_text())
+        source_ids = [obj["object_id"] for obj in tracks["objects"]]
+        if len(set(source_ids)) != len(source_ids) or not set(ids).issubset(source_ids):
+            raise ValueError("Selected identities must exist uniquely in raw tracks")
+        if [{k: f[k] for k in ("frame_index", "timestamp", "sha256")} for f in tracks["frames"]] != clip[
+            "frames"
+        ]:
+            raise ValueError("Tracked frames do not match extraction manifest")
+        files = {"identify.json", "point.json", "tracks.json"}
+        for frame in tracks["frames"]:
+            frame_ids = [obj["object_id"] for obj in frame["objects"]]
+            if len(frame_ids) != len(source_ids) or set(frame_ids) != set(source_ids):
+                raise ValueError("Each raw frame must retain every object, including missing masks")
+            for obj in frame["objects"]:
+                if obj["mask_path"] is not None:
+                    path = Path(obj["mask_path"])
+                    if (
+                        path.is_absolute()
+                        or ".." in path.parts
+                        or directory.resolve() not in (directory / path).resolve().parents
+                    ):
+                        raise ValueError("Mask artifact must stay within the source clip")
+                    files.add(str(path))
+        # Validate every artifact before creating any output; missing geometry stays missing.
+        artifacts[name] = {file: sha256(directory / file) for file in sorted(files)}
+        selected.append(
+            {
+                **clip,
+                "subtask": subtask,
+                "object_selection_review": {
+                    **selection,
+                    "original_subtask": clip["subtask"],
+                    "reviewer": reviewer,
+                    "review_sha256": sha256(review_path),
+                    "source_artifacts_sha256": artifacts[name],
+                    "accepted_training_labels": False,
+                },
+            }
+        )
+    verify_frames(parent, {"clips": selected})
+    manifest = {
+        **original,
+        "clips": selected,
+        "review": "pending",
+        "preparation": {
+            "method": "attributed_object_selection",
+            "parent_manifest_sha256": parent_hash,
+            "review_sha256": sha256(review_path),
+            "script_sha256": sha256(Path(__file__)),
+            "reviewer": reviewer,
+            "accepted_training_labels": False,
+        },
+    }
+    output.mkdir(parents=True)
+    shutil.copy2(manifest_path, output / "parent_extraction.json")
+    shutil.copy2(review_path, output / "object_review.json")
+    for name, files in artifacts.items():
+        directory = output / name
+        shutil.copytree(parent / name / "frames", directory / "frames")
+        for file, expected_hash in files.items():
+            target = directory / file
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(parent / name / file, target)
+            if sha256(target) != expected_hash:
+                raise ValueError("Source artifact changed during review preparation")
+    write_json(output / "extraction.json", manifest)
+    verify_frames(output, manifest)
+    filter_objects(output, manifest)
+    return manifest
 
 
 def prepare_required(parent: Path, output: Path, names: list[str], *, source: str = "task-objects") -> dict:
@@ -875,6 +995,7 @@ def main():
             "prepare",
             "prepare-required",
             "prepare-reviewed-points",
+            "prepare-reviewed-objects",
             "identify",
             "reparse-identify",
             "retry-identify",
@@ -899,6 +1020,9 @@ def main():
         help="Attributed initial/later point corrections for prepare-reviewed-points",
     )
     parser.add_argument("--objects", nargs="+", help="Instruction-named candidates to retry when missing")
+    parser.add_argument(
+        "--object-review", type=Path, help="Attributed track selection and subtask corrections"
+    )
     parser.add_argument("--identification-review", type=Path, help="Attributed object-name corrections")
     parser.add_argument("--episodes", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     parser.add_argument("--cameras", nargs="+", default=["observation.images.base"])
@@ -925,6 +1049,12 @@ def main():
         if args.parent is None or args.seed_review is None:
             parser.error("prepare-reviewed-points requires --parent and --seed-review")
         manifest = prepare_reviewed_points(args.parent, args.output, args.seed_review)
+        print(json.dumps({"clips": len(manifest["clips"]), "review": "pending"}), flush=True)
+        return
+    if args.stage == "prepare-reviewed-objects":
+        if args.parent is None or args.object_review is None:
+            parser.error("prepare-reviewed-objects requires --parent and --object-review")
+        manifest = prepare_reviewed_objects(args.parent, args.output, args.object_review)
         print(json.dumps({"clips": len(manifest["clips"]), "review": "pending"}), flush=True)
         return
     if args.stage == "prepare-required":

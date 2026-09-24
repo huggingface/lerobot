@@ -176,6 +176,141 @@ def test_point_target_resume_preserves_evidence_and_rejects_changed_strategy(ext
 
 
 @pytest.fixture
+def object_review_case(extractor, tmp_path):
+    parent, output = tmp_path / "parent", tmp_path / "reviewed"
+    directory = parent / "clip"
+    (directory / "frames").mkdir(parents=True)
+    (directory / "masks").mkdir()
+    frame_records = []
+    for index in range(2):
+        image = directory / "frames" / f"{index:06d}.jpg"
+        Image.new("RGB", (8, 6)).save(image)
+        frame_records.append(
+            {"frame_index": index, "timestamp": index / 30, "sha256": extractor["sha256"](image)}
+        )
+    Image.new("L", (8, 6), 255).save(directory / "masks/fastener.png")
+    objects = [
+        {"object_id": 1, "name": "blue_block", "point": [1, 1]},
+        {"object_id": 2, "name": "nail", "point": [4, 3]},
+    ]
+    (directory / "identify.json").write_text(json.dumps({"objects": [o["name"] for o in objects]}))
+    (directory / "point.json").write_text(json.dumps({"objects": objects}))
+    tracks = {
+        "objects": objects,
+        "frames": [
+            {
+                **frame,
+                "objects": [
+                    {"object_id": 1, "mask_present": False, "mask_path": None},
+                    {
+                        "object_id": 2,
+                        "mask_present": index == 0,
+                        "mask_path": "masks/fastener.png" if index == 0 else None,
+                    },
+                ],
+            }
+            for index, frame in enumerate(frame_records)
+        ],
+    }
+    (directory / "tracks.json").write_text(json.dumps(tracks))
+    manifest = {
+        "source": {"repo_id": "test", "revision": "pinned"},
+        "models": extractor["MODELS"],
+        "clips": [{"path": "clip", "subtask": "Pick up the blue block", "frames": frame_records}],
+    }
+    (parent / "extraction.json").write_text(json.dumps(manifest))
+    extractor["filter_objects"](parent, manifest)
+    review = {
+        "parent_manifest_sha256": extractor["sha256"](parent / "extraction.json"),
+        "reviewer": {"kind": "model", "id": "test-reviewer"},
+        "selections": [
+            {
+                "clip": "clip",
+                "source_tracks_sha256": extractor["sha256"](directory / "tracks.json"),
+                "frame_sha256": frame_records[0]["sha256"],
+                "object_ids": [2],
+                "subtask": "Pick up the metal fastener",
+                "reason": "Wrist view shows a fastener; the blue block stays on the table.",
+            }
+        ],
+    }
+    review_path = tmp_path / "review.json"
+    review_path.write_text(json.dumps(review))
+    return parent, output, review_path, review
+
+
+def test_reviewed_objects_reuse_raw_tracks_and_preserve_missing_geometry(extractor, object_review_case):
+    parent, output, review_path, review = object_review_case
+    original = {str(p.relative_to(parent)): p.read_bytes() for p in parent.rglob("*") if p.is_file()}
+    manifest = extractor["prepare_reviewed_objects"](parent, output, review_path)
+    clip = manifest["clips"][0]
+    assert clip["subtask"] == "Pick up the metal fastener"
+    attribution = clip["object_selection_review"]
+    assert attribution["original_subtask"] == "Pick up the blue block"
+    assert attribution["reviewer"] == review["reviewer"]
+    assert not attribution["accepted_training_labels"]
+    assert (output / "parent_extraction.json").read_bytes() == original["extraction.json"]
+    assert (output / "object_review.json").read_bytes() == review_path.read_bytes()
+    for file, expected_hash in attribution["source_artifacts_sha256"].items():
+        assert extractor["sha256"](output / "clip" / file) == expected_hash
+        assert (output / "clip" / file).read_bytes() == original[f"clip/{file}"]
+    # Rerunning filtering must retain the explicit selection, not revert to name matching.
+    report = extractor["filter_objects"](output, manifest)
+    result = json.loads((output / "clip/task_objects.json").read_text())
+    assert result["filter"] == "attributed_object_selection_v1"
+    assert result["status"] == "unreviewed"
+    assert [obj["name"] for obj in result["objects"]] == ["nail"]
+    assert [obj["object_id"] for obj in result["excluded_objects"]] == [1]
+    assert result["frames"][1]["objects"] == [{"object_id": 2, "mask_present": False, "mask_path": None}]
+    assert report["clips"][0]["missing_masks"] == 1
+    assert original == {str(p.relative_to(parent)): p.read_bytes() for p in parent.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"source_tracks_sha256": "stale"},
+        {"frame_sha256": "stale"},
+        {"clip": "unknown"},
+        {"object_ids": [99]},
+        {"object_ids": [2, 2]},
+        {"object_ids": [True]},
+        {"object_ids": []},
+        {"subtask": " "},
+        {"reason": ""},
+    ],
+)
+def test_object_review_rejects_invalid_selection_before_writing(extractor, object_review_case, change):
+    parent, output, review_path, review = object_review_case
+    review["selections"][0].update(change)
+    review_path.write_text(json.dumps(review))
+    with pytest.raises(ValueError):
+        extractor["prepare_reviewed_objects"](parent, output, review_path)
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "failure", ["stale_manifest", "no_reviewer", "duplicate", "image_changed", "mask_missing"]
+)
+def test_object_review_requires_attribution_and_unchanged_evidence(extractor, object_review_case, failure):
+    parent, output, review_path, review = object_review_case
+    if failure == "stale_manifest":
+        review["parent_manifest_sha256"] = "stale"
+    elif failure == "no_reviewer":
+        review["reviewer"]["id"] = ""
+    elif failure == "duplicate":
+        review["selections"] *= 2
+    elif failure == "image_changed":
+        (parent / "clip/frames/000000.jpg").write_bytes(b"changed")
+    elif failure == "mask_missing":
+        (parent / "clip/masks/fastener.png").unlink()
+    review_path.write_text(json.dumps(review))
+    with pytest.raises((ValueError, FileNotFoundError)):
+        extractor["prepare_reviewed_objects"](parent, output, review_path)
+    assert not output.exists()
+
+
+@pytest.fixture
 def seed_review_case(extractor, tmp_path):
     parent, output = tmp_path / "parent", tmp_path / "corrected"
     directory = parent / "clip"
