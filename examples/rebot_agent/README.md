@@ -115,6 +115,10 @@ the high-level task. Results include per-dimension action errors, normalized err
 paired differences from task prompting, and annotation coverage. Missing styles
 remain absent. These measurements describe agreement with recorded demonstrations;
 they do not measure physical success or command compliance.
+Each prediction retains its noise seed, current joint state, full predicted action
+chunk, and demonstrated actions at the explicit valid chunk indices. This makes
+individual joint/gripper errors inspectable without treating masked future targets
+as evidence or confusing a predicted action with physical execution.
 
 Restoring a complete WALL-X policy checkpoint reads the pinned base repository's
 configuration and processor assets without fetching its weights again. Non-strict

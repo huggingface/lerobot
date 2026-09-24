@@ -109,6 +109,7 @@ def action_errors(prediction, target, padding, *, frame, start, end, scale):
         raise ValueError("Nonfinite prediction or valid action target")
     return {
         "valid_action_steps": int(valid.sum()),
+        "valid_action_indices": valid.nonzero(as_tuple=True)[0].tolist(),
         "mae_per_dimension": error.abs().mean(0).tolist(),
         "normalized_mse": float((error / scale).square().mean()),
     }
@@ -221,7 +222,19 @@ def evaluate(panel: dict, checkpoint: Path, dataset_root: Path, output: Path, de
                 end=anchor["end_frame"],
                 scale=scale,
             )
-            rows.append({"episode_index": ep, "frame_index": frame, **command, **metrics})
+            rows.append(
+                {
+                    "episode_index": ep,
+                    "frame_index": frame,
+                    "seed": anchor["seed"],
+                    **command,
+                    **metrics,
+                    "observation_state": sample["observation.state"].tolist(),
+                    "predicted_action_chunk": actions[0].tolist(),
+                    "valid_demonstrated_actions": sample["action"][metrics["valid_action_indices"]].tolist(),
+                }
+            )
+        print(f"Evaluated episode {ep}, frame {frame}: {len(anchor['commands'])} paired prompts", flush=True)
     report = {
         "checkpoint": str(checkpoint.resolve()),
         "checkpoint_sha256": digest(checkpoint / "model.safetensors"),

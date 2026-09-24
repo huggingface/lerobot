@@ -67,13 +67,34 @@ def test_error_ignores_out_of_interval_targets_and_episode_padding(api):
     prediction = torch.zeros(4, 2)
     kwargs = {"frame": 4, "start": 4, "end": 6, "scale": torch.tensor([1.0, 2.0])}
     error = api["action_errors"](prediction, target, torch.tensor([False, True, False, True]), **kwargs)
-    assert error == {"valid_action_steps": 1, "mae_per_dimension": [1.0, 2.0], "normalized_mse": 1.0}
+    assert error == {
+        "valid_action_steps": 1,
+        "valid_action_indices": [0],
+        "mae_per_dimension": [1.0, 2.0],
+        "normalized_mse": 1.0,
+    }
     target[1:] = -1e10
     assert error == api["action_errors"](
         prediction, target, torch.tensor([False, True, False, True]), **kwargs
     )
     with pytest.raises(ValueError, match="No valid"):
         api["action_errors"](prediction, target, torch.ones(4, dtype=torch.bool), **kwargs)
+
+
+def test_exported_indices_preserve_holes_in_valid_demonstration_targets(api):
+    target = torch.tensor([[0.0, 0.0], [float("nan"), float("nan")], [2.0, 4.0], [999.0, 999.0]])
+    error = api["action_errors"](
+        torch.zeros_like(target),
+        target,
+        torch.tensor([False, True, False, False]),
+        frame=4,
+        start=4,
+        end=7,
+        scale=torch.tensor([1.0, 2.0]),
+    )
+    assert error["valid_action_indices"] == [0, 2]
+    assert target[error["valid_action_indices"]].tolist() == [[0.0, 0.0], [2.0, 4.0]]
+    assert error["normalized_mse"] == 2.0
 
 
 def test_paired_metric_does_not_compare_different_motion_coverage_or_overweight_paraphrases(api):
