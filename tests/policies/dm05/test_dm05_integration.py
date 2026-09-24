@@ -1048,3 +1048,34 @@ def test_dm05_pretrained_processors_follow_the_active_config(tmp_path):
     pinned, _ = make_pre_post_processors(active, pretrained_path=checkpoint)
     assert _tokenizer_step(pinned).image_keys == ["observation.images.front", "observation.images.wrist"]
     assert f"{MODEL_INPUT_PREFIX}input_ids" in pinned(dict(observation))
+
+
+def test_dm05_dataset_features_keep_pretrained_camera_keys():
+    dataset_features = {
+        OBS_STATE: {"dtype": "float32", "shape": (6,), "names": None},
+        "observation.images.top": {
+            "dtype": "video",
+            "shape": (480, 640, 3),
+            "names": ["height", "width", "channels"],
+        },
+        "observation.images.wrist": {
+            "dtype": "video",
+            "shape": (480, 640, 3),
+            "names": ["height", "width", "channels"],
+        },
+        ACTION: {"dtype": "float32", "shape": (6,), "names": [f"joint_{i}" for i in range(6)]},
+    }
+
+    # A checkpoint with cameras keeps its keys, so --rename_map maps the dataset onto them.
+    pretrained = _dm05_config()
+    pretrained.set_dataset_feature_metadata(dataset_features)
+    assert set(pretrained.input_features) == {OBS_STATE, "observation.images.front"}
+    assert pretrained.input_features[OBS_STATE].shape == (6,)
+    assert pretrained.action_feature_names == [f"joint_{i}" for i in range(6)]
+
+    # A base checkpoint declares no cameras, so it takes the dataset's.
+    base = _dm05_config()
+    base.input_features = {OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(14,))}
+    base.set_dataset_feature_metadata(dataset_features)
+    assert set(base.input_features) == {OBS_STATE, "observation.images.top", "observation.images.wrist"}
+    assert base.input_features[OBS_STATE].shape == (6,)
