@@ -57,6 +57,15 @@ mapping, signs, zero offsets, and measured units. Use main's RobotKinematics for
 kinematics on measured observation.state, separately per arm. Document the base/tool
 frame and axis-to-language convention. Segment reversals and gripper events before
 assigning directions. FK does not identify objects or prove grasp/placement success.
+Infer the recording's zero convention offline from synchronized images and measured
+joint positions, starting with the hypothesis that recorded zero matches URDF zero.
+Fit camera/base alignment separately and check poses excluded from fitting, including
+both arms and independent episodes. Attribute image landmarks to the reviewing model.
+Compare plausible alternate offsets/signs: a small reprojection error alone does not
+identify all joint zeros, especially base yaw and tool roll when camera/tool transforms
+are unknown. Preserve unresolved offsets as uncertainty; do not request manual
+annotation or move the robot to resolve them. Keep nominal FK diagnostic until the
+particular motion direction and frame convention are supported by the evidence.
 Projection into images requires calibrated camera intrinsics/extrinsics, including
 moving wrist-camera transforms; otherwise use visual tracks for points and traces.
 

@@ -411,6 +411,13 @@ The ReBot B601 driver's calibration routine sets zero positions inside each moto
 and then saves `homing_offset=0` in its calibration metadata. Finding that file
 alone does not establish the physical zero pose used for earlier recordings.
 Validate the recorded setup; do not recalibrate or move the arms to inspect it.
+An offline check can start with URDF zero, use measured states to predict poses,
+and fit camera/base alignment to model-reviewed image landmarks. Check excluded
+poses and independent episodes for both arms, and compare alternative signs and
+offsets. Record landmark uncertainty and the assumed camera/tool geometry. A low
+reprojection error alone is insufficient: unknown base yaw can absorb joint-one
+offset, and an unknown rigid tool landmark can absorb joint-six offset. Preserve
+these ambiguities rather than marking a nominal mapping as verified calibration.
 
 The same file provides offline `segment_motion` and a CLI to find interval candidates:
 
