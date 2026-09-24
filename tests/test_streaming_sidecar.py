@@ -18,6 +18,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
+from zipfile import ZipFile
 
 import numpy as np
 import pytest
@@ -486,3 +488,48 @@ def test_sidecar_rejects_object_arrays_without_publication(tmp_path: Path, prepa
     np.savez_compressed(path, **arrays)
     assert not EpisodeVideoManifest.validate_file_sidecar(path, _spec(), prepare_cache=prepare_cache)
     assert not list((tmp_path / "cache-home").glob("**/*.bin"))
+
+
+@pytest.mark.parametrize("published", [False, True])
+def test_resolved_sidecar_decompresses_each_array_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, published: bool
+) -> None:
+    original = _mapped_index._read_arrays
+    reads = []
+
+    def counted_read(archive: ZipFile, index: int, item: dict[str, Any]) -> dict[str, np.ndarray]:
+        reads.append(index)
+        return original(archive, index, item)
+
+    def download(path: Path, spec: SidecarSpec) -> bool:
+        _write_valid(path, spec)
+        return True
+
+    monkeypatch.setattr(_mapped_index, "_read_arrays", counted_read)
+    path = ensure_mp4_sidecar(_spec(), tmp_path, build=_write_valid, download=download if published else None)
+    assert EpisodeVideoManifest.validate_file_sidecar(path, _spec())
+    records = EpisodeVideoManifest.load_file_sidecar(path)
+    np.testing.assert_array_equal(next(iter(records.values())).mp4.sample_pts, [0.0])
+    assert reads == [0]
+    assert len(list((tmp_path / "cache-home").glob("**/*.bin"))) == 1
+
+
+def test_invalid_build_preserves_previous_source_and_mapped_generation(tmp_path: Path) -> None:
+    spec = _spec()
+    path = sidecar_cache_path(tmp_path, spec)
+    _write_valid(path, _spec("older"))
+    old_bytes = path.read_bytes()
+    old = EpisodeVideoManifest.load_file_sidecar(path)
+
+    def invalid_build(target: Path, target_spec: SidecarSpec) -> None:
+        _write_valid(target, target_spec)
+        with np.load(target, allow_pickle=False) as data:
+            arrays = {key: data[key] for key in data.files if key != "0/sample_offsets"}
+        np.savez_compressed(target, **arrays)
+
+    with pytest.raises(ValueError, match="failed revision and source validation"):
+        ensure_mp4_sidecar(spec, tmp_path, build=invalid_build)
+    assert path.read_bytes() == old_bytes
+    np.testing.assert_array_equal(next(iter(old.values())).mp4.sample_pts, [0.0])
+    assert len(list((tmp_path / "cache-home").glob("**/*.bin"))) == 1
+    assert not list((tmp_path / "cache-home").glob("**/*.index.tmp"))

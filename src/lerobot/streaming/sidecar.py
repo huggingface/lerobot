@@ -13,7 +13,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -23,6 +22,7 @@ from uuid import uuid4
 
 from filelock import FileLock, Timeout
 
+from lerobot.streaming._mapped_index import install_sidecar
 from lerobot.streaming.manifest import EpisodeVideoManifest
 
 SIDECAR_SCHEMA_VERSION = 3
@@ -181,17 +181,17 @@ def ensure_mp4_sidecar(
                 if download is not None:
                     logging.info("Looking for published MP4 sidecar for %s@%s", spec.repo_id, spec.revision)
                     if download(temporary, spec) and EpisodeVideoManifest.validate_file_sidecar(
-                        temporary, spec, prepare_cache=False
+                        temporary, spec
                     ):
-                        os.replace(temporary, destination)
+                        install_sidecar(temporary, destination)
                         return destination
                     temporary.unlink(missing_ok=True)
 
                 logging.info("Building MP4 sidecar for %s@%s", spec.repo_id, spec.revision)
                 build(temporary, spec)
-                if not EpisodeVideoManifest.validate_file_sidecar(temporary, spec, prepare_cache=False):
+                if not EpisodeVideoManifest.validate_file_sidecar(temporary, spec):
                     raise ValueError("Built MP4 sidecar failed revision and source validation")
-                os.replace(temporary, destination)
+                install_sidecar(temporary, destination)
                 return destination
             finally:
                 temporary.unlink(missing_ok=True)

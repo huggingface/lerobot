@@ -191,6 +191,27 @@ def mapped_sidecar(path: Path) -> tuple[Path, dict[str, Any]]:
         return destination, payload
 
 
+def install_sidecar(source: Path, destination: Path) -> None:
+    """Atomically install a validated sidecar and retain its prepared mapped index.
+
+    The caller holds the sidecar lock. Renaming changes inode ctime, so transfer
+    the derived file to the post-rename generation instead of decompressing again.
+    """
+    prepared, _ = mapped_sidecar(source)
+    with source.open("rb") as handle:
+        before = os.fstat(handle.fileno())
+        if _cache_path(source, _signature(before)) != prepared:
+            raise OSError("MP4 sidecar changed before installation")
+        os.replace(source, destination)
+        after = os.fstat(handle.fileno())
+        if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+            raise OSError("MP4 sidecar changed during installation")
+        installed = _cache_path(destination, _signature(after))
+        if installed != prepared:
+            with FileLock(str(installed) + ".lock", timeout=30 * 60):
+                os.replace(prepared, installed)
+
+
 def mapped_arrays(buffer: np.memmap[Any, Any], item: dict[str, Any]) -> dict[str, NDArray[np.generic]]:
     """Return views whose base retains the single shared read-only mapping."""
     return {
