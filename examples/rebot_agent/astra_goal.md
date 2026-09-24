@@ -76,13 +76,19 @@ FK for end-effector motion. Review visual annotations autonomously; skip uncerta
 labels and report resulting coverage gaps. Model reviews must remain attributed as
 model reviews, never human-verified labels or ground truth. This replaces the earlier
 human annotation sample requirement; it does not waive approval before operating the robot.
+An out-of-view gripper does not invalidate a measured opening/closing interval when
+the recorded state key, physical arm, and opening sign have been verified. Keep its
+image coordinates missing; gripper state alone does not locate pixels or prove a grasp.
 Store bounding boxes, pointing coordinates, and traces in native LeRobot language
 annotation columns (camera-tagged `vqa`/`trace` events with JSON content); keep source
 data intact and distinguish unreviewed evidence from accepted commands. Raw extractor
 sidecars support auditing but do not replace the dataset annotations.
 Save provenance, source revision, intervals, original
 features, review responses, coverage, and rejection counts. Preserve source data.
-Close annotation gaps before training the full mixture; never silently substitute
+For an intermediate candidate, use `--skip-uncovered` to train on accepted intervals
+without waiting for manual labels. Report the excluded frames and per-style coverage;
+the 80/20 mixture then applies within that reviewed subset. Only describe the result
+as full-coverage training if its annotation gaps are closed; never silently substitute
 generic commands for missing reviewed styles. Offline future frames may help labels,
 but runtime planning and policy observations must contain only currently available data.
 

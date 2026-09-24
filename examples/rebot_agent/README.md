@@ -69,6 +69,13 @@ learned capability. Required styles are checked on training episodes, while held
 evaluation reports the styles actually available there. Without this explicit option,
 missing coverage remains an error.
 
+This ReBot experiment uses autonomous annotation review; the operator does not need
+to draw boxes or confirm labels. Attribute accepted reviews to the model and skip
+uncertain labels. Measured gripper state can support opening/closing commands even
+when the gripper is outside a wrist image, provided its state key, physical arm, and
+opening sign are verified. Leave unsupported image coordinates missing; measured
+gripper motion alone does not establish grasp success.
+
 Restoring a complete WALL-X policy checkpoint reads the pinned base repository's
 configuration and processor assets without fetching its weights again. Non-strict
 partial restores still load base weights to fill missing tensors; strict restores
