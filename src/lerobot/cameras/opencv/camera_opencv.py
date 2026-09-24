@@ -262,7 +262,10 @@ class OpenCVCamera(Camera):
     def _validate_fourcc(self) -> None:
         """Validates and sets the camera's FOURCC code."""
 
-        fourcc_code = cv2.VideoWriter_fourcc(*self.config.fourcc)
+        fourcc = self.config.fourcc
+        if fourcc is None:
+            raise ValueError(f"{self} has no fourcc configured to validate.")
+        fourcc_code = cv2.VideoWriter_fourcc(*fourcc)
 
         if self.videocapture is None:
             raise DeviceNotConnectedError(f"{self} videocapture is not initialized")

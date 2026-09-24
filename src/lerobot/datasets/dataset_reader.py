@@ -359,7 +359,8 @@ class DatasetReader(BaseDatasetReader):
         if hf_dataset is None:
             raise RuntimeError("hf_dataset is not loaded; call load_and_activate() first.")
         transform = hf_dataset.format["format_kwargs"].get("transform")
-        if self._column_views_source is not hf_dataset or self._column_views_transform is not transform:
+        stale = self._column_views_source is not hf_dataset or self._column_views_transform is not transform
+        if stale:
             # hf_dataset was (re)loaded or its transform changed: drop stale views
             self._column_views = {}
             self._column_views_source = hf_dataset
