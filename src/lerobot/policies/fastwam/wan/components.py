@@ -60,7 +60,7 @@ class WanTextEncoder(torch.nn.Module):
     def __init__(
         self,
         dtype: torch.dtype = torch.bfloat16,
-                device: str | torch.device | None = None,
+        device: str | torch.device | None = None,
         *,
         pretrained: torch.nn.Module,
     ) -> None:
