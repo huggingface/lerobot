@@ -100,6 +100,9 @@ rollout. Device indices and USB serial names can collide or change; use verified
 physical device paths and inspect current images. Keep the existing robot environment
 intact, check storage before transferring weights, and validate imports and checkpoint
 inference in the deployment environment before connecting the arms.
+Before connecting or enabling the motors or starting a physical rollout, present the
+exact prepared run to the operator and wait for explicit approval. SSH access and
+non-actuating preparation do not constitute approval to move the robot.
 Preserve human stop/reset and language overrides. Keep API calls bounded. A planning
 failure, uncertainty, or completion assessment should hold action production pending
 an explicit next instruction. Do not confuse an issued command with observed execution.
