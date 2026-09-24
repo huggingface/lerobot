@@ -58,6 +58,8 @@ from .utils import (
 )
 from .video_utils import get_video_info
 
+logger = logging.getLogger(__name__)
+
 CODEBASE_VERSION = "v3.0"
 
 
@@ -424,7 +426,7 @@ class LeRobotDatasetMetadata:
             key for key in self.depth_keys if (self.features[key].get("info") or {}).get("depth_unit") is None
         ]
         if missing_unit_keys:
-            logging.warning(
+            logger.warning(
                 f"Depth feature(s) {missing_unit_keys} have no recorded 'depth_unit' in their info. "
                 f"Depth maps and stats for these keys will be returned AS IS, with no unit conversion "
                 f"to the requested output unit {output_unit!r}. Re-record the dataset or set 'depth_unit' "
@@ -733,7 +735,7 @@ class LeRobotDatasetMetadata:
             )
             canonicalize_depth_marker(feature)
             if had_legacy:
-                logging.warning(f"Migrated legacy depth marker to 'is_depth_map' for feature {key!r}.")
+                logger.warning(f"Migrated legacy depth marker to 'is_depth_map' for feature {key!r}.")
 
     def update_chunk_settings(
         self,

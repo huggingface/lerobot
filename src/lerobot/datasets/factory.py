@@ -33,6 +33,8 @@ from .storage import DEFAULT_STORAGE_FORMAT, load_dataset_metadata
 from .streaming_dataset import StreamingLeRobotDataset
 from .utils import resolve_episode_indices
 
+logger = logging.getLogger(__name__)
+
 
 def resolve_delta_timestamps(
     cfg: PreTrainedConfig | RewardModelConfig,
@@ -181,7 +183,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             image_transforms=image_transforms,
             video_backend=cfg.dataset.video_backend,
         )
-        logging.info(
+        logger.info(
             "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
             f"{pformat(dataset.repo_id_to_index, indent=2)}"
         )
@@ -231,7 +233,7 @@ def make_train_eval_datasets(
             f"eval_split={cfg.dataset.eval_split} leaves 0 training episodes from {len(base_episodes)} total."
         )
 
-    logging.info(
+    logger.info(
         f"Train/eval split: {len(train_episodes)} train, {len(eval_episodes)} eval "
         f"(eval_split={cfg.dataset.eval_split}, {len(task_to_episodes)} tasks)"
     )
