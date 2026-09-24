@@ -76,6 +76,27 @@ when the gripper is outside a wrist image, provided its state key, physical arm,
 opening sign are verified. Leave unsupported image coordinates missing; measured
 gripper motion alone does not establish grasp success.
 
+`offline_steering_eval.py` compares prompts on fixed held-out observations. Supply an
+evaluation-only steering manifest containing episodes 90–99. Without `--checkpoint`,
+it writes the deterministic evaluation panel; with a checkpoint, it predicts action
+chunks from current images/state and each available prompt. Use identical manifest,
+anchor count, and seed for both checkpoints:
+
+```bash
+uv run examples/rebot_agent/offline_steering_eval.py \
+  --manifest /path/to/reviewed_heldout_manifest.json \
+  --checkpoint /path/to/checkpoints/020000/pretrained_model \
+  --dataset-root /path/to/source_dataset \
+  --output /path/to/fresh_evaluation.json
+```
+
+The comparison verifies the checkpoint's saved episode split and uses identical
+noise seeds and valid action horizons for every prompt at each anchor, including
+the high-level task. Results include per-dimension action errors, normalized errors,
+paired differences from task prompting, and annotation coverage. Missing styles
+remain absent. These measurements describe agreement with recorded demonstrations;
+they do not measure physical success or command compliance.
+
 Restoring a complete WALL-X policy checkpoint reads the pinned base repository's
 configuration and processor assets without fetching its weights again. Non-strict
 partial restores still load base weights to fill missing tensors; strict restores

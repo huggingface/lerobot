@@ -1,0 +1,98 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+# Licensed under the Apache License, Version 2.0.
+"""Offline comparisons must not leak training episodes or compare unmatched targets."""
+
+import copy
+import runpy
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+import torch
+
+
+@pytest.fixture
+def api():
+    return runpy.run_path(str(Path(__file__).parents[1] / "examples/rebot_agent/offline_steering_eval.py"))
+
+
+@pytest.fixture
+def manifest():
+    return {
+        "version": 1,
+        "source": {"repo_id": "test/source", "revision": "pinned"},
+        "segments": [
+            {
+                "episode_index": ep,
+                "start_frame": start,
+                "end_frame": end,
+                "review": {"verdict": "accepted", "reviewer": "test fixture"},
+                "commands": [{"style": style, "text": style, "evidence": "fixture"} for style in styles],
+            }
+            for ep, start, end, styles in [(90, 2, 10, ["subtask"]), (98, 7, 9, ["subtask", "motion"])]
+        ],
+    }
+
+
+def test_panel_is_fixed_and_each_style_has_identical_anchor_and_task_reference(api, manifest):
+    original = copy.deepcopy(manifest)
+    panel = api["make_panel"](manifest)
+    assert manifest == original
+    assert panel == api["make_panel"](manifest)
+    assert [(s["episode_index"], s["frame_index"]) for s in panel["samples"]] == [
+        (90, 2),
+        (90, 5),
+        (90, 9),
+        (98, 7),
+        (98, 8),
+    ]
+    assert panel["prompt_counts"] == {"task": 5, "subtask": 5, "motion": 2}
+    assert panel["annotation_profile"]["missing_styles"] == ["combination", "point", "trace"]
+    assert all(s["commands"][0]["style"] == "task" for s in panel["samples"])
+    assert len({s["seed"] for s in panel["samples"]}) == len(panel["samples"])
+
+
+def test_panel_rejects_training_episodes_and_unreviewed_labels(api, manifest):
+    manifest["segments"][0]["episode_index"] = 89
+    with pytest.raises(ValueError, match="held-out"):
+        api["make_panel"](manifest)
+    manifest["segments"][0]["episode_index"] = 90
+    manifest["segments"][0]["review"]["verdict"] = "uncertain"
+    with pytest.raises(ValueError, match="accepted"):
+        api["make_panel"](manifest)
+
+
+def test_error_ignores_out_of_interval_targets_and_episode_padding(api):
+    target = torch.tensor([[1.0, 2.0], [3.0, 4.0], [1000.0, 1000.0], [float("nan"), float("nan")]])
+    prediction = torch.zeros(4, 2)
+    kwargs = {"frame": 4, "start": 4, "end": 6, "scale": torch.tensor([1.0, 2.0])}
+    error = api["action_errors"](prediction, target, torch.tensor([False, True, False, True]), **kwargs)
+    assert error == {"valid_action_steps": 1, "mae_per_dimension": [1.0, 2.0], "normalized_mse": 1.0}
+    target[1:] = -1e10
+    assert error == api["action_errors"](
+        prediction, target, torch.tensor([False, True, False, True]), **kwargs
+    )
+    with pytest.raises(ValueError, match="No valid"):
+        api["action_errors"](prediction, target, torch.ones(4, dtype=torch.bool), **kwargs)
+
+
+def test_paired_metric_does_not_compare_different_motion_coverage_or_overweight_paraphrases(api):
+    rows = [
+        {"episode_index": 90, "frame_index": frame, "style": style, "normalized_mse": mse}
+        for frame, style, mse in [(1, "task", 100), (2, "task", 10), (2, "motion", 3), (2, "motion", 5)]
+    ]
+    summary = api["summarize"](rows)
+    assert summary["task"]["mean_normalized_mse"] == 55
+    assert summary["motion"] == {
+        "anchors": 1,
+        "command_variants": 2,
+        "mean_normalized_mse": 4,
+        "mean_paired_delta_vs_task": -6,
+    }
+
+
+def test_saved_split_cannot_label_training_data_as_heldout(api):
+    meta = SimpleNamespace(total_episodes=100, episodes=[{"tasks": ["pick"]} for _ in range(100)])
+    assert api["training_episodes"]({"eval_split": 0.1}, meta) == list(range(90))
+    assert 98 in api["training_episodes"]({}, meta)
+    assert 98 not in api["training_episodes"]({"exclude_episodes": list(range(90, 100))}, meta)
