@@ -1438,7 +1438,9 @@ class PI05Policy(PreTrainedPolicy):
 
     def _get_default_peft_targets(self) -> dict[str, any]:
         """Return default PEFT target modules for PI0.5 fine-tuning."""
-        common_projections = "state_proj|action_in_proj|action_out_proj|time_mlp_in|time_mlp_out"
+        # Unlike pi0, PI05Pytorch has no `state_proj`: state only enters the model through the
+        # MEM-gated `proprio_history_proj` (handled separately below via `modules_to_save`).
+        common_projections = "action_in_proj|action_out_proj|time_mlp_in|time_mlp_out"
         target_modules = rf"(.*\.gemma_expert\..*\.self_attn\.(q|v)_proj|model\.({common_projections}))"
         # MEM's proprioceptive projection does not exist in `lerobot/pi05_base`, so a
         # LoRA adapter cannot start from pretrained weights for it. Train and save it
