@@ -274,7 +274,9 @@ class TDMPCPolicy(PreTrainedPolicy):
 
         # Randomly select one of the elite actions from the last iteration of MPPI/CEM using the softmax
         # scores from the last iteration.
-        actions = elite_actions[:, torch.multinomial(score.T, 1).squeeze(), torch.arange(batch_size)]
+        actions = elite_actions[
+            :, torch.multinomial(score.T, 1).squeeze(), torch.arange(batch_size, device=device)
+        ]
 
         return actions, mean
 
@@ -317,9 +319,14 @@ class TDMPCPolicy(PreTrainedPolicy):
         if self.config.q_ensemble_size > 2:
             G += (
                 running_discount
-                * torch.min(terminal_values[torch.randint(0, self.config.q_ensemble_size, size=(2,))], dim=0)[
-                    0
-                ]
+                * torch.min(
+                    terminal_values[
+                        torch.randint(
+                            0, self.config.q_ensemble_size, size=(2,), device=terminal_values.device
+                        )
+                    ],
+                    dim=0,
+                )[0]
             )
         else:
             G += running_discount * torch.min(terminal_values, dim=0)[0]
