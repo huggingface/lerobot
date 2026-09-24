@@ -220,14 +220,25 @@ class DM05Config(PreTrainedConfig):
                 raise ValueError("DM05 relative actions do not support MEAN_STD action normalization.")
 
     def set_dataset_feature_metadata(self, features: dict[str, Any]) -> None:
-        """Use the training dataset contract instead of the base checkpoint contract."""
+        """Adopt the training dataset's state shape and, for a base checkpoint, its cameras.
+
+        A checkpoint that declares cameras keeps their keys, so `--rename_map` maps the dataset's
+        cameras onto them as for other pretrained policies. A base checkpoint declares none, so its
+        cameras come from the dataset. `make_policy` already sets the (renamed) output features.
+        """
         policy_features = dataset_to_policy_features(features)
-        self.output_features = {
-            key: feature for key, feature in policy_features.items() if feature.type is FeatureType.ACTION
-        }
-        self.input_features = {
-            key: feature for key, feature in policy_features.items() if key not in self.output_features
-        }
+        input_features = dict(self.input_features or {})
+        if OBS_STATE in policy_features:
+            input_features[OBS_STATE] = policy_features[OBS_STATE]
+        if not any(feature.type is FeatureType.VISUAL for feature in input_features.values()):
+            input_features.update(
+                {
+                    key: feature
+                    for key, feature in policy_features.items()
+                    if feature.type is FeatureType.VISUAL
+                }
+            )
+        self.input_features = input_features
         self.action_feature_names = flatten_feature_names(features.get(ACTION, {}).get("names"))
 
     def get_optimizer_preset(self) -> AdamWConfig:
