@@ -173,7 +173,33 @@ class TDMPCPolicy(PreTrainedPolicy):
             (horizon, batch, action_dim,) tensor for the planned trajectory of actions.
         """
         device = get_device_from_parameters(self)
+        batch_size = z.shape[0]
 
+        if self._prev_mean is None:
+            prev_mean = torch.zeros(
+                self.config.horizon, batch_size, self.config.action_feature.shape[0], device=device
+            )
+        else:
+            prev_mean = self._prev_mean
+
+        actions, mean = self._plan_step(z, prev_mean)
+        self._prev_mean = mean
+        return actions
+
+    @torch.no_grad()
+    def _plan_step(self, z: Tensor, prev_mean: Tensor) -> tuple[Tensor, Tensor]:
+        """Core planning logic, stateless so it can be compiled.
+
+        Args:
+            z: (batch, latent_dim,) tensor for the initial state.
+            prev_mean: (horizon, batch, action_dim,) CEM mean from the previous step, used to warm start
+                planning (all zeros when there is no previous step).
+        Returns:
+            A tuple of:
+                - (horizon, batch, action_dim,) tensor for the planned trajectory of actions.
+                - (horizon, batch, action_dim,) tensor for the updated CEM mean, to warm start the next step.
+        """
+        device = get_device_from_parameters(self)
         batch_size = z.shape[0]
 
         # Sample Nπ trajectories from the policy.
@@ -195,16 +221,14 @@ class TDMPCPolicy(PreTrainedPolicy):
         # In the CEM loop we will need this for a call to estimate_value with the gaussian sampled
         # trajectories.
         z = einops.repeat(z, "b d -> n b d", n=self.config.n_gaussian_samples + self.config.n_pi_samples)
-
         # Model Predictive Path Integral (MPPI) with the cross-entropy method (CEM) as the optimization
         # algorithm.
         # The initial mean and standard deviation for the cross-entropy method (CEM).
         mean = torch.zeros(
             self.config.horizon, batch_size, self.config.action_feature.shape[0], device=device
         )
-        # Maybe warm start CEM with the mean from the previous step.
-        if self._prev_mean is not None:
-            mean[:-1] = self._prev_mean[1:]
+        # Warm start CEM with the mean from the previous step or zeroes if there is no previous step.
+        mean[:-1] = prev_mean[1:]
         std = self.config.max_std * torch.ones_like(mean)
 
         for _ in range(self.config.cem_iterations):
@@ -248,14 +272,11 @@ class TDMPCPolicy(PreTrainedPolicy):
             )
             std = _std.clamp_(self.config.min_std, self.config.max_std)
 
-        # Keep track of the mean for warm-starting subsequent steps.
-        self._prev_mean = mean
-
         # Randomly select one of the elite actions from the last iteration of MPPI/CEM using the softmax
         # scores from the last iteration.
         actions = elite_actions[:, torch.multinomial(score.T, 1).squeeze(), torch.arange(batch_size)]
 
-        return actions
+        return actions, mean
 
     @torch.no_grad()
     def estimate_value(self, z: Tensor, actions: Tensor):
