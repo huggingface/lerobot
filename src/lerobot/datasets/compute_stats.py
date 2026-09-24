@@ -43,6 +43,8 @@ class RunningQuantileStats:
         self._count = 0
         # Per-dimension running statistics; all ``None`` until the first ``update()``.
         self._mean: np.ndarray | None = None
+        self._origin: np.ndarray | None = None
+        self._mean_offset: np.ndarray | None = None
         self._m2: np.ndarray | None = None
         self._min: np.ndarray | None = None
         self._max: np.ndarray | None = None
@@ -66,13 +68,22 @@ class RunningQuantileStats:
 
         if self._mean is not None and vector_length != self._mean.size:
             raise ValueError("The length of new vectors does not match the initialized vector length.")
+        if num_elements == 0:
+            raise ValueError("Cannot update statistics with an empty batch.")
 
-        batch_mean = np.mean(batch, axis=0, dtype=np.float64)
-        batch_m2 = np.var(batch, axis=0, dtype=np.float64, mean=batch_mean[None, :]) * num_elements
+        # Keep batch and running means relative to one fixed origin. Even float64
+        # summation can lose small deviations when every sample has a large offset.
+        origin = batch[0].astype(np.float64) if self._origin is None else self._origin
+        centered = np.subtract(batch, origin, dtype=np.float64)
+        batch_mean_offset = np.mean(centered, axis=0)
+        centered -= batch_mean_offset
+        np.square(centered, out=centered)
+        batch_m2 = np.sum(centered, axis=0)
 
         # First batch: the running statistics are still unset.
-        if self._mean is None or self._m2 is None or self._min is None or self._max is None:
-            self._mean = batch_mean
+        if self._mean_offset is None or self._m2 is None or self._min is None or self._max is None:
+            self._origin = origin
+            self._mean_offset = batch_mean_offset
             self._m2 = batch_m2
             self._min = np.min(batch, axis=0)
             self._max = np.max(batch, axis=0)
@@ -93,11 +104,12 @@ class RunningQuantileStats:
                 self._adjust_histograms()
 
             # Merge centered second moments to avoid cancellation in E[x**2] - E[x]**2.
-            delta = batch_mean - self._mean
+            delta = batch_mean_offset - self._mean_offset
             weight = num_elements / (self._count + num_elements)
             self._m2 += batch_m2 + delta**2 * self._count * weight
-            self._mean += delta * weight
+            self._mean_offset += delta * weight
 
+        self._mean = origin + self._mean_offset
         self._count += num_elements
         self._update_histograms(batch)
 

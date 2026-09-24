@@ -447,9 +447,13 @@ def test_running_quantile_stats_variance_with_large_offset(dtype, offset, batch_
 
 
 @pytest.mark.parametrize("num_batches", [1, 5])
-def test_running_quantile_stats_constant_float32_normalizes_to_zero(num_batches):
-    value = np.float32(0.5465297297297298)
-    data = np.full((54550, 7), value, dtype=np.float32)
+@pytest.mark.parametrize(
+    "dtype, value",
+    [(np.float32, 0.5465297297297298), (np.float64, 0.1), (np.float64, 1e12 + 0.1)],
+)
+def test_running_quantile_stats_constant_normalizes_to_zero(num_batches, dtype, value):
+    value = dtype(value)
+    data = np.full((54550, 7), value, dtype=dtype)
     running_stats = RunningQuantileStats()
     for batch in np.array_split(data, num_batches):
         running_stats.update(batch)
@@ -457,10 +461,46 @@ def test_running_quantile_stats_constant_float32_normalizes_to_zero(num_batches)
     stats = running_stats.get_statistics()
     np.testing.assert_array_equal(stats["mean"], np.full(7, value, dtype=np.float64))
     np.testing.assert_array_equal(stats["std"], np.zeros(7))
-    normalized = (data[0] - stats["mean"].astype(np.float32)) / (
-        stats["std"].astype(np.float32) + np.float32(1e-8)
-    )
-    np.testing.assert_array_equal(normalized, np.zeros(7, dtype=np.float32))
+    normalized = (data[0] - stats["mean"].astype(dtype)) / (stats["std"].astype(dtype) + dtype(1e-8))
+    np.testing.assert_array_equal(normalized, np.zeros(7, dtype=dtype))
+
+
+@pytest.mark.parametrize("num_batches", [1, 7, 4000])
+def test_running_quantile_stats_small_float64_variance_is_batch_independent(num_batches):
+    offset = 1e12 + 0.1
+    # These deviations are exact in float64 at this offset: mean 0, variance 5/64.
+    data = np.tile(offset + np.array([-0.375, -0.125, 0.125, 0.375])[:, None], (1000, 3))
+    original = data.copy()
+    running_stats = RunningQuantileStats(num_quantile_bins=32)
+    for batch in np.array_split(data, num_batches):
+        running_stats.update(batch)
+
+    stats = running_stats.get_statistics()
+    np.testing.assert_array_equal(stats["mean"], np.full(3, offset))
+    np.testing.assert_allclose(stats["std"], np.full(3, np.sqrt(5 / 64)), rtol=1e-12)
+    np.testing.assert_array_equal(stats["count"], [len(data)])
+    np.testing.assert_array_equal(data, original)
+
+
+@pytest.mark.parametrize("invalid_batch", [np.empty((0, 2)), np.ones((1, 3))])
+def test_running_quantile_stats_rejected_update_preserves_state(invalid_batch):
+    data = np.array([[10000.0, 10001.0], [10002.0, 10003.0], [10004.0, 10005.0]])
+    running_stats = RunningQuantileStats()
+    with pytest.raises(ValueError, match="empty batch"):
+        running_stats.update(np.empty((0, 2)))
+    running_stats.update(data[:2])
+    before = running_stats.get_statistics()
+
+    with pytest.raises(ValueError):
+        running_stats.update(invalid_batch)
+    after = running_stats.get_statistics()
+    for key in before:
+        np.testing.assert_array_equal(after[key], before[key])
+
+    running_stats.update(data[2:])
+    stats = running_stats.get_statistics()
+    np.testing.assert_array_equal(stats["mean"], data.mean(axis=0))
+    np.testing.assert_allclose(stats["std"], data.std(axis=0), rtol=1e-12)
 
 
 def test_get_feature_stats_preserves_small_variations_in_float32():
