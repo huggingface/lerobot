@@ -17,6 +17,7 @@
 import logging
 import threading
 from collections import deque
+from collections.abc import Mapping
 from pprint import pformat
 from typing import TYPE_CHECKING
 
@@ -106,7 +107,8 @@ class HomunculusGlove(Teleoperator):
         # running EMA value per joint – lazily initialised on first read
         self._ema: dict[str, float | None] = dict.fromkeys(self._buffers)
 
-        self._state: dict[str, float] | None = None
+        # latest raw joint positions produced by `_read_loop`
+        self._state: dict[str, int] | None = None
         self.new_state_event = threading.Event()
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self._read_loop, daemon=True, name=f"{self} _read_loop")
@@ -197,8 +199,8 @@ class HomunculusGlove(Teleoperator):
         display_len = max(len(key) for key in joints)
 
         start_positions = self._read(joints, normalize=False)
-        mins = start_positions.copy()
-        maxes = start_positions.copy()
+        mins = {joint: int(pos) for joint, pos in start_positions.items()}
+        maxes = mins.copy()
 
         user_pressed_enter = False
         while not user_pressed_enter:
@@ -259,21 +261,22 @@ class HomunculusGlove(Teleoperator):
             self._buffers[joint].append(value)
 
             # initialise on first run
-            if self._ema[joint] is None:
-                self._ema[joint] = float(value)
-            else:
-                self._ema[joint] = self.alpha * value + (1 - self.alpha) * self._ema[joint]
+            prev = self._ema[joint]
+            ema = float(value) if prev is None else self.alpha * value + (1 - self.alpha) * prev
+            self._ema[joint] = ema
 
             # Convert back to int for compatibility with normalization
-            smoothed[joint] = int(round(self._ema[joint]))
+            smoothed[joint] = int(round(ema))
         return smoothed
 
     def _read(
         self, joints: list[str] | None = None, normalize: bool = True, timeout: float = 1
-    ) -> dict[str, int | float]:
+    ) -> Mapping[str, float]:
         """
         Return the most recent (single) values from self.last_d,
         optionally applying calibration.
+
+        Values are the EMA-smoothed integers when `normalize=False` and floats otherwise.
         """
         if not self.new_state_event.wait(timeout=timeout):
             raise TimeoutError(f"{self}: Timed out waiting for state after {timeout}s.")
@@ -290,13 +293,10 @@ class HomunculusGlove(Teleoperator):
             state = {k: v for k, v in state.items() if k in joints}
 
         # Apply EMA smoothing to raw values first
-        state = self._apply_ema(state)
+        smoothed = self._apply_ema(state)
 
         # Then normalize if requested
-        if normalize:
-            state = self._normalize(state)
-
-        return state
+        return self._normalize(smoothed) if normalize else smoothed
 
     def _read_loop(self):
         """
