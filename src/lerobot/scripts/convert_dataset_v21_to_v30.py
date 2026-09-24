@@ -62,7 +62,7 @@ import tqdm
 from datasets import Dataset, Features, Image
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
-from requests import HTTPError  # type: ignore[import-untyped]
+from requests import HTTPError
 
 from lerobot.datasets import CODEBASE_VERSION, LeRobotDataset, aggregate_stats
 from lerobot.datasets.io_utils import (
@@ -71,7 +71,6 @@ from lerobot.datasets.io_utils import (
     get_parquet_file_size_in_mb,
     get_parquet_num_frames,
     load_info,
-    load_json,
     write_episodes,
     write_info,
     write_stats,
@@ -92,6 +91,7 @@ from lerobot.datasets.utils import (
 )
 from lerobot.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
 from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.io_utils import load_json
 from lerobot.utils.utils import flatten_dict, init_logging
 
 logger = logging.getLogger(__name__)

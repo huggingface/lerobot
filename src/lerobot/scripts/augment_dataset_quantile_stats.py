@@ -45,7 +45,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from huggingface_hub import HfApi
-from requests import HTTPError  # type: ignore[import-untyped]
+from requests import HTTPError
 from tqdm import tqdm
 
 from lerobot.datasets import (

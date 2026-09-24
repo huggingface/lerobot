@@ -207,7 +207,7 @@ class RobotClient:
         try:
             observation_iterator = send_bytes_in_chunks(
                 observation_bytes,
-                services_pb2.Observation,  # type: ignore[attr-defined]
+                services_pb2.Observation,
                 log_prefix="[CLIENT] Observation",
                 silent=True,
             )
@@ -282,7 +282,7 @@ class RobotClient:
         while self.running:
             try:
                 # Use StreamActions to get a stream of actions from the server
-                actions_chunk = self.stub.GetActions(services_pb2.Empty())  # type: ignore[attr-defined]
+                actions_chunk = self.stub.GetActions(services_pb2.Empty())
                 if len(actions_chunk.data) == 0:
                     continue  # received `Empty` from server, wait for next call
 

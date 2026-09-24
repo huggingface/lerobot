@@ -18,7 +18,7 @@ import abc
 import warnings
 from typing import Any, Protocol, runtime_checkable
 
-from numpy.typing import NDArray  # type: ignore  # TODO: add type stubs for numpy.typing
+from numpy.typing import NDArray
 
 from .configs import CameraConfig
 
