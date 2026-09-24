@@ -325,6 +325,9 @@ def build_rollout_context(
     policy_config = cfg.policy
     if policy_config is None:
         raise ValueError("--policy.path is required for rollout")
+    if cfg.planner.enabled:
+        # A ReBot connection enables motors; reject missing planner credentials first.
+        cfg.planner.require_api_key()
     logger.info("Loading policy from '%s'...", policy_config.pretrained_path)
     # Policy constructors and custom processors must use the resolved rollout device too.
     policy_config.device = cfg.device

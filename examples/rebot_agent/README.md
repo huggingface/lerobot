@@ -79,7 +79,10 @@ its robot ports/cameras and trained `--policy.path`:
 ```
 
 Set `OPENAI_API_KEY` on the robot host. Use an API model ID available to that account;
-model access has not been tested here. Camera keys refer to processed robot
+model access has not been tested here. Rollout rejects a missing or blank configured
+API key before loading policy weights or connecting hardware. This local check does
+not validate endpoint access or credentials; API failures still hold action production.
+Camera keys refer to processed robot
 observations. After `/start`, the external planner keeps the VLA idle until you enter:
 
 ```text

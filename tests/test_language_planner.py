@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 import json
 import runpy
+import threading
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -16,6 +17,38 @@ from lerobot.policies.wall_x.configuration_wall_x import WallXConfig  # noqa: F4
 from lerobot.rollout.inference.sync import SyncInferenceEngine
 from lerobot.rollout.planner import PlannerConfig, VisionLanguagePlanner
 from tests.test_interactive_rollout import _FakeEngine
+
+
+@pytest.mark.parametrize("credential", [None, "", " \t\n"])
+def test_missing_planner_credential_fails_before_policy_or_hardware(monkeypatch, credential):
+    import lerobot.rollout.context as rollout_context
+    from lerobot.policies.act.configuration_act import ACTConfig
+    from lerobot.rollout import RolloutConfig
+    from tests.mocks.mock_robot import MockRobotConfig
+
+    key_name = "LEROBOT_TEST_PLANNER_KEY"
+    if credential is None:
+        monkeypatch.delenv(key_name, raising=False)
+    else:
+        monkeypatch.setenv(key_name, credential)
+    # A default-endpoint key must not satisfy a separately configured credential.
+    monkeypatch.setenv("OPENAI_API_KEY", "test-only-default")
+    cfg = RolloutConfig(
+        robot=MockRobotConfig(),
+        policy=ACTConfig(device="cpu"),
+        device="cpu",
+        interactive=True,
+        planner=PlannerConfig(enabled=True, api_key_env=key_name),
+    )
+    load_policy, make_robot, post = Mock(), Mock(), Mock()
+    monkeypatch.setattr(rollout_context, "_load_pretrained_policy", load_policy)
+    monkeypatch.setattr(rollout_context, "make_robot_from_config", make_robot)
+    monkeypatch.setattr("lerobot.rollout.planner.requests.post", post)
+    with pytest.raises(ValueError, match=f"Set {key_name}"):
+        rollout_context.build_rollout_context(cfg, threading.Event())
+    load_policy.assert_not_called()
+    make_robot.assert_not_called()
+    post.assert_not_called()
 
 
 def test_external_planning_reuses_task_switch_and_holds_on_failure():

@@ -53,6 +53,13 @@ class PlannerConfig:
         if set(self.styles) & {"point", "trace"} and not self.grounding_camera_keys:
             raise ValueError("Point/trace steering requires explicit trained grounding_camera_keys")
 
+    def require_api_key(self) -> str:
+        """Resolve the current credential without caching it or contacting the endpoint."""
+        key = os.environ.get(self.api_key_env)
+        if not key or not key.strip():
+            raise ValueError(f"Set {self.api_key_env} for the configured planner endpoint")
+        return key
+
 
 def image_content(frame, camera: str) -> list[dict]:
     """Encode a named RGB view without resizing or changing the pixel coordinate frame."""
@@ -197,9 +204,7 @@ class VisionLanguagePlanner:
                 }
             },
         }
-        key = os.environ.get(self.config.api_key_env)
-        if not key:
-            raise ValueError(f"Set {self.config.api_key_env} for the configured planner endpoint")
+        key = self.config.require_api_key()
         response = requests.post(
             self.config.api_base.rstrip("/") + "/responses",
             headers={"Authorization": f"Bearer {key}"},
