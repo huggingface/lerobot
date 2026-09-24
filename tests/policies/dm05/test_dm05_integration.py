@@ -34,6 +34,7 @@ from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTr
 from lerobot.policies.dm05.configuration_dm05 import DM05Config
 from lerobot.policies.dm05.constants import MODEL_INPUT_PREFIX, STATE_BINS
 from lerobot.policies.dm05.conversion_dm05 import (
+    DM05ClipNormalizedProcessorStep,
     DM05StateBinsProcessorStep,
     DM05TokenizerProcessorStep,
 )
@@ -52,6 +53,7 @@ from lerobot.processor import (
     RelativeActionsProcessorStep,
     UnnormalizerProcessorStep,
     bind_relative_anchor,
+    load_pretrained_policy_processors,
 )
 from lerobot.utils.constants import (
     ACTION,
@@ -989,3 +991,60 @@ def test_dm05_padding_mask_excludes_fabricated_targets_and_preserves_sample_weig
     )
     # Preserve DM05's original sample-balanced reduction: (1^2 + 3^2) / 2.
     torch.testing.assert_close(sample_balanced_loss, torch.tensor(5.0))
+
+
+def test_dm05_pretrained_processors_follow_the_active_config(tmp_path):
+    processor_path = tmp_path / "processor"
+    _save_tiny_real_processor(processor_path)
+    stats = {
+        OBS_STATE: {"q01": [-1.0] * 3, "q99": [1.0] * 3},
+        ACTION: {"q01": [-1.0] * 3, "q99": [1.0] * 3},
+    }
+    checkpoint = tmp_path / "checkpoint"
+    for pipeline in make_dm05_pre_post_processors(
+        _dm05_config(processor_name_or_path=str(processor_path)), stats
+    ):
+        pipeline.save_pretrained(checkpoint)
+
+    # A fine-tuning run's config owns the camera set, state prompting and clipping.
+    active = _dm05_config(processor_name_or_path=str(processor_path), add_state=False, norm_clip=False)
+    active.input_features["observation.images.wrist"] = PolicyFeature(
+        type=FeatureType.VISUAL, shape=(3, 2, 2)
+    )
+    preprocessor, _ = make_pre_post_processors(active, pretrained_path=checkpoint)
+    tokenizer = _tokenizer_step(preprocessor)
+    clip = next(step for step in preprocessor.steps if isinstance(step, DM05ClipNormalizedProcessorStep))
+    assert tokenizer.image_keys == ["observation.images.front", "observation.images.wrist"]
+    assert tokenizer.add_state is False
+    assert (clip.clip_state, clip.clip_action) == (False, False)
+
+    # Explicit overrides still win over the config.
+    preprocessor, _ = make_pre_post_processors(
+        active,
+        pretrained_path=checkpoint,
+        preprocessor_overrides={"dm05_tokenizer_processor": {"add_state": True}},
+    )
+    assert _tokenizer_step(preprocessor).add_state is True
+    assert _tokenizer_step(preprocessor).image_keys == [
+        "observation.images.front",
+        "observation.images.wrist",
+    ]
+
+    # A base checkpoint saves no cameras: loaded on its own it refuses to guess them from the
+    # batch, and loaded for fine-tuning it takes the dataset's.
+    config_path = checkpoint / f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+    saved = json.loads(config_path.read_text())
+    tokenizer_entry = next(s for s in saved["steps"] if s["registry_name"] == "dm05_tokenizer_processor")
+    tokenizer_entry["config"]["image_keys"] = None
+    config_path.write_text(json.dumps(saved))
+    observation = {
+        OBS_STATE: torch.zeros(3),
+        "observation.images.front": torch.zeros(3, 16, 16),
+        "observation.images.wrist": torch.zeros(3, 16, 16),
+    }
+    unpinned, _ = load_pretrained_policy_processors(checkpoint)
+    with pytest.raises(ValueError, match="no cameras configured"):
+        unpinned(dict(observation))
+    pinned, _ = make_pre_post_processors(active, pretrained_path=checkpoint)
+    assert _tokenizer_step(pinned).image_keys == ["observation.images.front", "observation.images.wrist"]
+    assert f"{MODEL_INPUT_PREFIX}input_ids" in pinned(dict(observation))

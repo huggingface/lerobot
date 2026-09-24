@@ -32,9 +32,15 @@ from lerobot.processor import (
     RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
+    load_pretrained_policy_processors,
     make_policy_processor_pipelines,
 )
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import (
+    ACTION,
+    OBS_STATE,
+    POLICY_POSTPROCESSOR_DEFAULT_NAME,
+    POLICY_PREPROCESSOR_DEFAULT_NAME,
+)
 
 from .configuration_dm05 import DM05Config
 from .conversion_dm05 import (
@@ -76,6 +82,36 @@ class DM05TaskProcessor(ComplementaryDataProcessorStep):
         return features
 
 
+def dm05_image_keys(config: DM05Config) -> list[str]:
+    """Return the ordered camera set the tokenizer renders, pinned from the policy config.
+
+    Pinned rather than read from each observation, so an extra camera at inference cannot change
+    the prompt with no error. Empty for a base checkpoint, whose cameras come from the dataset.
+    """
+    image_keys = (
+        list(config.image_keys)
+        if config.image_keys
+        else sorted(
+            key for key, feature in config.input_features.items() if feature.type is FeatureType.VISUAL
+        )
+    )
+    if unknown := [key for key in image_keys if key not in config.input_features]:
+        raise ValueError(f"DM05 image_keys are not declared in input_features: {unknown}.")
+    return image_keys
+
+
+def dm05_clip_flags(config: DM05Config) -> dict[str, bool]:
+    """Return which quantile-normalized fields are clipped to the range DM05 was trained on."""
+
+    def clips_quantiles(feature_type: str) -> bool:
+        return config.norm_clip and config.normalization_mapping.get(feature_type) in {
+            NormalizationMode.QUANTILES,
+            NormalizationMode.QUANTILE10,
+        }
+
+    return {"clip_state": clips_quantiles("STATE"), "clip_action": clips_quantiles("ACTION")}
+
+
 def make_dm05_pre_post_processors(
     config: DM05Config,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
@@ -112,26 +148,8 @@ def make_dm05_pre_post_processors(
     if not processor_source:
         raise ValueError("DM05 requires processor_name_or_path when creating a new processor pipeline.")
 
-    # Pin the camera set at construction so it is serialized with the pipeline. Sniffing it from
-    # the observation dict lets an extra inference camera change the prompt with no error.
-    image_keys = (
-        list(config.image_keys)
-        if config.image_keys
-        else sorted(
-            key for key, feature in config.input_features.items() if feature.type is FeatureType.VISUAL
-        )
-    )
-    if not image_keys:
+    if not (image_keys := dm05_image_keys(config)):
         raise ValueError("DM05 requires at least one visual input feature.")
-    if unknown := [key for key in image_keys if key not in config.input_features]:
-        raise ValueError(f"DM05 image_keys are not declared in input_features: {unknown}.")
-
-    def clips_quantiles(feature_type: str) -> bool:
-        """Return whether a normalized feature should be clipped to the model range."""
-        return config.norm_clip and config.normalization_mapping.get(feature_type) in {
-            NormalizationMode.QUANTILES,
-            NormalizationMode.QUANTILE10,
-        }
 
     return make_policy_processor_pipelines(
         input_steps=[
@@ -140,10 +158,7 @@ def make_dm05_pre_post_processors(
             DM05TaskProcessor(),
             relative_actions,
             normalizer,
-            DM05ClipNormalizedProcessorStep(
-                clip_state=clips_quantiles("STATE"),
-                clip_action=clips_quantiles("ACTION"),
-            ),
+            DM05ClipNormalizedProcessorStep(**dm05_clip_flags(config)),
             DM05StateBinsProcessorStep(),
             DeviceProcessorStep(device=config.device),
             DM05TokenizerProcessorStep(
@@ -161,4 +176,49 @@ def make_dm05_pre_post_processors(
                 relative_step=relative_actions,
             ),
         ],
+    )
+
+
+def make_dm05_pre_post_processors_from_pretrained(
+    config: DM05Config,
+    pretrained_path: str,
+    *,
+    revision: str | None = None,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    dataset_meta: Any | None = None,
+    preprocessor_overrides: dict[str, Any] | None = None,
+    postprocessor_overrides: dict[str, Any] | None = None,
+    preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
+    postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
+    """Load the checkpoint's pipelines, re-pinning the settings the active config owns.
+
+    The camera set, state prompting, prompt length and clipping belong to the policy config, so a
+    fine-tuning run honours them instead of the saved values: a base checkpoint picks up the
+    dataset's cameras, and `--policy.add_state=false` takes effect. Loading for eval or resume uses
+    the checkpoint's own config, so this changes nothing there. Explicit overrides still win.
+    """
+    # Fine-tuning stats arrive as the caller's normalizer overrides (lerobot-train injects the
+    # dataset's); eval and resume keep the checkpoint's own, which the model was trained against.
+    del dataset_stats, dataset_meta
+    config_overrides = {
+        "dm05_tokenizer_processor": {
+            "image_keys": dm05_image_keys(config),
+            "add_state": config.add_state,
+            "tokenizer_max_length": config.tokenizer_max_length,
+        },
+        "dm05_clip_normalized_processor": dm05_clip_flags(config),
+    }
+    for step, values in (preprocessor_overrides or {}).items():
+        config_overrides[step] = {**config_overrides.get(step, {}), **values}
+    return load_pretrained_policy_processors(
+        pretrained_path,
+        revision=revision,
+        preprocessor_overrides=config_overrides,
+        postprocessor_overrides=postprocessor_overrides,
+        preprocessor_config_filename=preprocessor_config_filename,
+        postprocessor_config_filename=postprocessor_config_filename,
     )
