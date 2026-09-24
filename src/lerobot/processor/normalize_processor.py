@@ -25,7 +25,7 @@ import torch
 from torch import Tensor
 
 from lerobot.configs import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
-from lerobot.lerobot_types import EnvTransition, PolicyAction, TransitionKey
+from lerobot.lerobot_types import EnvTransition, TransitionKey
 
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDataset
@@ -219,7 +219,7 @@ class _NormalizationMixin:
         if self._stats_explicitly_provided and self.stats is not None:
             # Don't load from state_dict, keep the explicitly provided stats
             # But ensure _tensor_stats is properly initialized
-            self._tensor_stats = to_tensor(self.stats, device=self.device, dtype=self.dtype)  # type: ignore[assignment]
+            self._tensor_stats = to_tensor(self.stats, device=self.device, dtype=self.dtype)
             self._reshape_visual_stats()
             return
 
@@ -482,7 +482,7 @@ class NormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
         if action is None:
             return new_transition
 
-        if not isinstance(action, PolicyAction):
+        if not isinstance(action, torch.Tensor):
             raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
 
         new_transition[TransitionKey.ACTION] = self._normalize_action(action, inverse=False)
@@ -543,7 +543,7 @@ class UnnormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
 
         if action is None:
             return new_transition
-        if not isinstance(action, PolicyAction):
+        if not isinstance(action, torch.Tensor):
             raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
 
         new_transition[TransitionKey.ACTION] = self._normalize_action(action, inverse=True)
@@ -580,5 +580,5 @@ def hotswap_stats(
         if isinstance(step, _NormalizationMixin):
             step.stats = stats
             # Re-initialize tensor_stats on the correct device.
-            step._tensor_stats = to_tensor(stats, device=step.device, dtype=step.dtype)  # type: ignore[assignment]
+            step._tensor_stats = to_tensor(stats, device=step.device, dtype=step.dtype)
     return rp

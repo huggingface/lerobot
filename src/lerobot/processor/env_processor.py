@@ -104,7 +104,8 @@ class LiberoProcessorStep(ObservationProcessorStep):
             shape=(8,),  # [eef_pos(3), axis_angle(3), gripper(2)]
         )
 
-        new_features[FeatureType.STATE] = state_feats
+        # TODO: `features` is keyed by `PipelineFeatureType`; this `FeatureType.STATE` entry never matches.
+        new_features[FeatureType.STATE] = state_feats  # type: ignore[index]
 
         return new_features
 

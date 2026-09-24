@@ -84,8 +84,9 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
 
         observation = raw_observation.copy()
 
-        if self.use_ik_solution and "IK_solution" in self.transition.get(TransitionKey.COMPLEMENTARY_DATA):
-            q_raw = self.transition.get(TransitionKey.COMPLEMENTARY_DATA)["IK_solution"]
+        complementary_data = self.transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if self.use_ik_solution and complementary_data is not None and "IK_solution" in complementary_data:
+            q_raw = complementary_data["IK_solution"]
         else:
             q_raw = np.array(
                 [
@@ -570,7 +571,7 @@ class InverseKinematicsRLStep(ProcessorStep):
     initial_guess_current_joints: bool = True
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        new_transition = dict(transition)
+        new_transition = transition.copy()
         action = new_transition.get(TransitionKey.ACTION)
         if action is None:
             raise ValueError("Action is required for InverseKinematicsEEToJoints")
@@ -625,7 +626,9 @@ class InverseKinematicsRLStep(ProcessorStep):
                 action["gripper.pos"] = float(gripper_pos)
 
         new_transition[TransitionKey.ACTION] = action
-        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None:
+            complementary_data = {}
         complementary_data["IK_solution"] = q_target
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
         return new_transition

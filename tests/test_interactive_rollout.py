@@ -982,7 +982,7 @@ def test_query_reaches_the_preprocessor_as_complementary_data():
 
     query = PolicyQuery(kind=QueryKind.VQA, text="is the cube in the box?")
     batch = InferenceEngine._mark_query({"observation.state": np.zeros(2), "task": "tidy"}, query)
-    complementary = batch_to_transition(batch)[TransitionKey.COMPLEMENTARY_DATA.value]
+    complementary = batch_to_transition(batch)[TransitionKey.COMPLEMENTARY_DATA]
 
     assert complementary[QUERY_KIND] == QueryKind.VQA.value
     assert complementary[QUERY_TEXT] == "is the cube in the box?"
