@@ -187,12 +187,14 @@ def visualize_dataset(
         )
         return None
 
+    repo_id = dataset.repo_id
+
+    rrd_path: Path | None = None
     if save:
         assert output_dir is not None, (
             "Set an output directory where to write .rrd files with `--output-dir path/to/directory`."
         )
-
-    repo_id = dataset.repo_id
+        rrd_path = output_dir / f"{repo_id.replace('/', '_')}_episode_{episode_index}.rrd"
 
     logging.info("Loading dataloader")
     dataloader = torch.utils.data.DataLoader(
@@ -288,10 +290,8 @@ def visualize_dataset(
                 rr.log(SUCCESS, rr.Scalars(batch[SUCCESS][i].item()))
 
     # save .rrd locally
-    if mode == "local" and save:
-        output_dir.mkdir(parents=True, exist_ok=True)
-        repo_id_str = repo_id.replace("/", "_")
-        rrd_path = output_dir / f"{repo_id_str}_episode_{episode_index}.rrd"
+    if mode == "local" and rrd_path is not None:
+        rrd_path.parent.mkdir(parents=True, exist_ok=True)
         rr.save(rrd_path)
         return rrd_path
 
@@ -302,6 +302,8 @@ def visualize_dataset(
                 time.sleep(1)
         except KeyboardInterrupt:
             logger.info("Ctrl-C received. Exiting.")
+
+    return None
 
 
 def main():

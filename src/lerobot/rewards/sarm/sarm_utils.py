@@ -13,20 +13,25 @@
 # limitations under the License.
 
 import random
+from collections.abc import Sequence
+from typing import overload
 
 import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 
+type SubtaskNames = Sequence[str] | np.ndarray
+type SubtaskFrames = Sequence[int] | np.ndarray
+
 
 def find_stage_and_tau(
     current_frame: int,
     episode_length: int,
-    subtask_names: list | None,
-    subtask_start_frames: list | None,
-    subtask_end_frames: list | None,
-    global_subtask_names: list,
-    temporal_proportions: dict,
+    subtask_names: SubtaskNames | None,
+    subtask_start_frames: SubtaskFrames | None,
+    subtask_end_frames: SubtaskFrames | None,
+    global_subtask_names: list[str],
+    temporal_proportions: dict[str, float] | None,
     return_combined: bool = False,
 ) -> tuple[int, float] | float:
     """Find stage and within-stage progress (tau) for a frame.
@@ -52,6 +57,10 @@ def find_stage_and_tau(
         tau = min(1.0, max(0.0, current_frame / max(episode_length - 1, 1)))
     elif subtask_names is None:
         pass  # stage_idx=0, tau=0.0
+    elif subtask_start_frames is None or subtask_end_frames is None:
+        raise ValueError(
+            "subtask_start_frames and subtask_end_frames are required when subtask_names is given"
+        )
     elif current_frame < subtask_start_frames[0]:
         pass  # Before first subtask: stage_idx=0, tau=0.0
     elif current_frame > subtask_end_frames[-1]:
@@ -209,6 +218,20 @@ def pad_state_to_max_dim(state: torch.Tensor, max_state_dim: int) -> torch.Tenso
     return F.pad(state, padding, mode="constant", value=0)
 
 
+@overload
+def temporal_proportions_to_breakpoints(
+    temporal_proportions: dict[str, float] | list[float],
+    subtask_names: list[str] | None = None,
+) -> list[float]: ...
+
+
+@overload
+def temporal_proportions_to_breakpoints(
+    temporal_proportions: None,
+    subtask_names: list[str] | None = None,
+) -> None: ...
+
+
 def temporal_proportions_to_breakpoints(
     temporal_proportions: dict[str, float] | list[float] | None,
     subtask_names: list[str] | None = None,
@@ -237,6 +260,26 @@ def temporal_proportions_to_breakpoints(
     breakpoints[-1] = 1.0
 
     return breakpoints
+
+
+@overload
+def normalize_stage_tau(
+    x: float,
+    num_stages: int | None = None,
+    breakpoints: list[float] | None = None,
+    temporal_proportions: dict[str, float] | list[float] | None = None,
+    subtask_names: list[str] | None = None,
+) -> float: ...
+
+
+@overload
+def normalize_stage_tau(
+    x: torch.Tensor,
+    num_stages: int | None = None,
+    breakpoints: list[float] | None = None,
+    temporal_proportions: dict[str, float] | list[float] | None = None,
+    subtask_names: list[str] | None = None,
+) -> torch.Tensor: ...
 
 
 def normalize_stage_tau(

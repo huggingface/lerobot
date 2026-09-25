@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from .dataset_metadata import LeRobotDatasetMetadata
@@ -106,7 +106,7 @@ def load_dataset_metadata(
     repo_id: str,
     root: str | Path | None = None,
     revision: str | None = None,
-    repo_type: str = "dataset",
+    repo_type: Literal["dataset", "bucket"] = "dataset",
     token: str | bool | None = None,
     force_cache_sync: bool = False,
 ) -> LeRobotDatasetMetadata:
