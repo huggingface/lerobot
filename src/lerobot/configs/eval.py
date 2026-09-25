@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from logging import getLogger
 from pathlib import Path
 
-from lerobot import envs, policies  # noqa: F401
+from lerobot import envs  # noqa: F401
 
 from . import parser
 from .default import EvalConfig

@@ -22,7 +22,7 @@ references the controller, so strategies stay usable non-interactively.  Control
 intent under the controller lock; ``serve()`` is the only place intent becomes motion.
 """
 
-from lerobot.utils.import_utils import require_package
+from lerobot.utils.import_utils import LAZY_IMPORTS, lazy_getattr, require_package
 
 require_package("datasets", extra="dataset")
 
@@ -37,15 +37,6 @@ from .configs import (
     RolloutStrategyConfig,
     SentryStrategyConfig,
 )
-from .context import (
-    DatasetContext,
-    HardwareContext,
-    PolicyContext,
-    ProcessorContext,
-    RolloutContext,
-    RuntimeContext,
-    build_rollout_context,
-)
 from .controller import (
     AskResult,
     LinkedEvent,
@@ -58,21 +49,34 @@ from .inference import (
     QueryAnswer,
     QueryKind,
     RTCInferenceConfig,
-    RTCInferenceEngine,
     SyncInferenceConfig,
-    SyncInferenceEngine,
     create_inference_engine,
 )
 from .interactive import InteractiveSession
-from .strategies import (
-    BaseStrategy,
-    DAggerStrategy,
-    EpisodicStrategy,
-    HighlightStrategy,
-    RolloutStrategy,
-    SentryStrategy,
-    create_strategy,
-)
+
+# These import torch, the dataset stack and the processors, so they are imported the first time one of them is used.
+if LAZY_IMPORTS:
+    from .context import (
+        DatasetContext,
+        HardwareContext,
+        PolicyContext,
+        ProcessorContext,
+        RolloutContext,
+        RuntimeContext,
+        build_rollout_context,
+    )
+    from .inference import RTCInferenceEngine, SyncInferenceEngine
+    from .strategies import (
+        BaseStrategy,
+        DAggerStrategy,
+        EpisodicStrategy,
+        HighlightStrategy,
+        RolloutStrategy,
+        SentryStrategy,
+        create_strategy,
+    )
+else:
+    __getattr__ = lazy_getattr(__name__)
 
 __all__ = [
     "AskResult",

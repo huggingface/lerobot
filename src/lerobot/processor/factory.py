@@ -14,17 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import torch
-
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.lerobot_types import PolicyAction, RobotAction, RobotObservation
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+from lerobot.utils.import_utils import LAZY_IMPORTS, lazy_getattr
 
-from .batch_processor import AddBatchDimensionProcessorStep
 from .converters import (
     batch_to_transition,
     observation_to_transition,
@@ -35,16 +35,33 @@ from .converters import (
     transition_to_policy_action,
     transition_to_robot_action,
 )
-from .device_processor import DeviceProcessorStep
-from .normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep
 from .pipeline import (
     IdentityProcessorStep,
     PolicyProcessorPipeline,
     ProcessorStep,
     RobotProcessorPipeline,
 )
-from .relative_action_processor import AbsoluteActionsProcessorStep, RelativeActionsProcessorStep
 from .rename_processor import RenameObservationsProcessorStep
+
+# The policy processor steps import torch, so each is imported the first time it is used. The aliases mark
+# these as re-exports, which ruff keeps.
+if LAZY_IMPORTS:
+    import torch
+
+    from lerobot.lerobot_types import PolicyAction
+
+    from .batch_processor import AddBatchDimensionProcessorStep as AddBatchDimensionProcessorStep
+    from .device_processor import DeviceProcessorStep as DeviceProcessorStep
+    from .normalize_processor import (
+        NormalizerProcessorStep as NormalizerProcessorStep,
+        UnnormalizerProcessorStep as UnnormalizerProcessorStep,
+    )
+    from .relative_action_processor import (
+        AbsoluteActionsProcessorStep as AbsoluteActionsProcessorStep,
+        RelativeActionsProcessorStep as RelativeActionsProcessorStep,
+    )
+else:
+    __getattr__ = lazy_getattr(__name__)
 
 
 def make_default_teleop_action_processor() -> RobotProcessorPipeline[
@@ -116,6 +133,10 @@ def make_default_policy_processor_steps(
         normalizer_device: Device passed to `NormalizerProcessorStep` (some policies pin
             their normalization stats to the policy device; most leave it unset).
     """
+    from .batch_processor import AddBatchDimensionProcessorStep
+    from .device_processor import DeviceProcessorStep
+    from .normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep
+
     if config.device is None or config.input_features is None or config.output_features is None:
         raise ValueError(
             "PreTrainedConfig.device, input_features and output_features must be resolved before "
@@ -150,6 +171,8 @@ def make_policy_processor_pipelines(
     Uses the standard pipeline names (which determine the serialized JSON filenames on
     the Hub) and the standard policy-action converters on the postprocessor.
     """
+    from lerobot.lerobot_types import PolicyAction
+
     return (
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=input_steps,
@@ -194,6 +217,8 @@ def _reconnect_relative_absolute_steps(
     the RelativeActionsProcessorStep so it can read the cached state at inference time.
     That reference is not serializable, so we re-establish it here after loading.
     """
+    from .relative_action_processor import AbsoluteActionsProcessorStep, RelativeActionsProcessorStep
+
     relative_step = next((s for s in preprocessor.steps if isinstance(s, RelativeActionsProcessorStep)), None)
     if relative_step is None:
         return
@@ -215,6 +240,9 @@ def load_pretrained_policy_processors(
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
     """Load a serialized policy pipeline pair and re-establish links that do not survive saving."""
+    # Register the default steps up front, so loading them does not fall back to importing every policy.
+    from . import batch_processor, device_processor, normalize_processor  # noqa: F401
+
     preprocessor = PolicyProcessorPipeline.from_pretrained(
         pretrained_model_name_or_path=pretrained_path,
         config_filename=preprocessor_config_filename,

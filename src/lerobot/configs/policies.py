@@ -11,10 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import abc
 import builtins
+import importlib
+import importlib.util
 import json
 import os
+import pkgutil
 import tempfile
 from dataclasses import dataclass, field
 from logging import getLogger
@@ -26,12 +31,17 @@ from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
 
-from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
-from lerobot.utils.device_utils import auto_select_torch_device, is_amp_available, is_torch_device_available
 from lerobot.utils.hub import HubMixin
+from lerobot.utils.import_utils import LAZY_IMPORTS, lazy_getattr
 
 from .types import FeatureType, PolicyFeature
+
+# Only type hints here use these, and they import torch, so importing this module does not load them.
+if LAZY_IMPORTS:
+    from lerobot.optim import LRSchedulerConfig, OptimizerConfig
+else:
+    __getattr__ = lazy_getattr(__name__)
 
 T = TypeVar("T", bound="PreTrainedConfig")
 logger = getLogger(__name__)
@@ -83,6 +93,12 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     pretrained_revision: str | None = None
 
     def __post_init__(self) -> None:
+        from lerobot.utils.device_utils import (
+            auto_select_torch_device,
+            is_amp_available,
+            is_torch_device_available,
+        )
+
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
             logger.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
@@ -94,6 +110,29 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
                 f"Automatic Mixed Precision (amp) is not available on device '{self.device}'. Deactivating AMP."
             )
             self.use_amp = False
+
+    @classmethod
+    def get_choice_class(cls, name: str) -> builtins.type[PreTrainedConfig]:
+        # A built-in policy registers when its package, named like the policy, is imported. Import only that one,
+        # and all of them if that does not register the name.
+        if (
+            name not in cls._choice_registry
+            and name.isidentifier()
+            and importlib.util.find_spec(f"lerobot.policies.{name}")
+        ):
+            importlib.import_module(f"lerobot.policies.{name}")
+        if name not in cls._choice_registry:
+            cls.load_all_choices()
+        return super().get_choice_class(name)
+
+    @classmethod
+    def load_all_choices(cls) -> None:
+        """Import every built-in policy package, which registers its config and its processor steps."""
+        import lerobot.policies
+
+        for module in pkgutil.iter_modules(lerobot.policies.__path__, "lerobot.policies."):
+            if module.ispkg:
+                importlib.import_module(module.name)
 
     @property
     def type(self) -> str:
@@ -221,7 +260,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
             raise ValueError(f"Missing 'type' field in {CONFIG_NAME} of {model_id}")
         try:
             config_cls = cls.get_choice_class(policy_type)
-        except Exception as e:
+        except KeyError as e:
             raise ValueError(
                 f"Policy type '{policy_type}' (from {CONFIG_NAME} of {model_id}) is not registered. "
                 f"Available policy types: {cls.get_known_choices()}"

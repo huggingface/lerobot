@@ -18,9 +18,21 @@
 # from lerobot.utils.import_utils import require_package
 # require_package("gymnasium", extra="<update_extra>", import_name="gymnasium")
 
+from lerobot.utils.import_utils import LAZY_IMPORTS, lazy_getattr
+
 from .configs import AlohaEnv, EnvConfig, HILSerlRobotEnvConfig, HubEnvConfig, PushtEnv
-from .factory import make_env, make_env_config, make_env_pre_post_processors
-from .utils import check_env_attributes_and_types, close_envs, env_to_policy_features, preprocess_observation
+
+# These import torch, so they are imported the first time one of them is used.
+if LAZY_IMPORTS:
+    from .factory import make_env, make_env_config, make_env_pre_post_processors
+    from .utils import (
+        check_env_attributes_and_types,
+        close_envs,
+        env_to_policy_features,
+        preprocess_observation,
+    )
+else:
+    __getattr__ = lazy_getattr(__name__)
 
 __all__ = [
     "AlohaEnv",

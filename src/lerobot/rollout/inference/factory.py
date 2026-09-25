@@ -28,14 +28,18 @@ from threading import Event
 
 import draccus
 
-from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.processor import PolicyProcessorPipeline
+from lerobot.utils.import_utils import LAZY_IMPORTS, lazy_getattr
 
 from ..robot_wrapper import ThreadSafeRobot
 from .base import InferenceEngine
-from .rtc import RTCInferenceEngine
-from .sync import SyncInferenceEngine
+
+# Only type hints here use these, and they import torch, so importing this module does not load them.
+if LAZY_IMPORTS:
+    from lerobot.policies.pretrained import PreTrainedPolicy
+    from lerobot.processor import PolicyProcessorPipeline
+else:
+    __getattr__ = lazy_getattr(__name__)
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +102,8 @@ def create_inference_engine(
     """Instantiate the appropriate inference engine from a config object."""
     logger.info("Creating inference engine: %s", config.type)
     if isinstance(config, SyncInferenceConfig):
+        from .sync import SyncInferenceEngine
+
         return SyncInferenceEngine(
             policy=policy,
             preprocessor=preprocessor,
@@ -109,6 +115,8 @@ def create_inference_engine(
             robot_type=robot_wrapper.robot_type,
         )
     if isinstance(config, RTCInferenceConfig):
+        from .rtc import RTCInferenceEngine
+
         return RTCInferenceEngine(
             policy=policy,
             preprocessor=preprocessor,

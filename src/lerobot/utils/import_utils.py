@@ -13,11 +13,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import __future__
+
+import ast
 import importlib
 import importlib.metadata
 import importlib.util
+import inspect
 import logging
-from typing import Any, Literal, overload
+import sys
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from draccus.choice_types import ChoiceRegistry
 
@@ -174,6 +180,83 @@ _grpc_available = is_package_available("grpcio", import_name="grpc")
 _wallx_deps_available = (
     _transformers_available and _peft_available and _torchdiffeq_available and _qwen_vl_utils_available
 )
+
+
+# Imports under `if LAZY_IMPORTS:` do not run when their module is imported, and type checkers read them as usual. The
+# block's `else: __getattr__ = lazy_getattr(__name__)` runs the import of a name when another module first uses it, so
+# the module's own code must import such a name where it uses it.
+LAZY_IMPORTS = TYPE_CHECKING
+
+
+def _lazy_imports(module_name: str) -> dict[str, ast.Module]:
+    """Map each name declared under `if LAZY_IMPORTS:` in a module to the code that declares it.
+
+    That is its import statement, or the whole block for a name the block assigns, since the assignment may use the
+    block's imports.
+    """
+    tree = ast.parse(inspect.getsource(sys.modules[module_name]))
+    code: dict[str, ast.Module] = {}
+    for block in tree.body:
+        if not (
+            isinstance(block, ast.If) and isinstance(block.test, ast.Name) and block.test.id == "LAZY_IMPORTS"
+        ):
+            continue
+        for stmt in block.body:
+            targets = [stmt.target] if isinstance(stmt, ast.AnnAssign) else getattr(stmt, "targets", [])
+            if isinstance(stmt, ast.Import | ast.ImportFrom) and all(
+                alias.name != "*" for alias in stmt.names
+            ):
+                # One import per name, so using one name does not also load the others it is listed with.
+                for alias in stmt.names:
+                    one: ast.stmt = (
+                        ast.ImportFrom(module=stmt.module, names=[alias], level=stmt.level)
+                        if isinstance(stmt, ast.ImportFrom)
+                        else ast.Import(names=[alias])
+                    )
+                    name = (alias.asname or alias.name).split(".")[0]
+                    body = code[name].body if name in code else []
+                    code[name] = ast.Module(body=[*body, ast.copy_location(one, stmt)], type_ignores=[])
+            elif isinstance(stmt, ast.AnnAssign | ast.Assign) and all(
+                isinstance(t, ast.Name) for t in targets
+            ):
+                names = [t.id for t in targets if isinstance(t, ast.Name)]
+                code |= dict.fromkeys(names, ast.Module(body=block.body, type_ignores=[]))
+            else:
+                raise TypeError(
+                    f"{module_name}, line {stmt.lineno}: `if LAZY_IMPORTS:` can only hold imports of named objects "
+                    f"and assignments to plain names."
+                )
+    return code
+
+
+def lazy_getattr(module_name: str) -> Callable[[str], Any]:
+    """Return a module `__getattr__` that runs the `if LAZY_IMPORTS:` import of a name the first time it is used."""
+    lazy_imports: dict[str, ast.Module] | None = None
+
+    def getattr_(name: str) -> Any:
+        nonlocal lazy_imports
+        # Python looks up names like `__path__` during every `from module import x`; those are never lazy.
+        if not name.startswith("_"):
+            if lazy_imports is None:
+                try:
+                    lazy_imports = _lazy_imports(module_name)
+                except OSError as e:
+                    raise AttributeError(
+                        f"module {module_name!r} has no attribute {name!r}: its lazy imports need its source file"
+                    ) from e
+            if name in lazy_imports:
+                module = sys.modules[module_name]
+                flags = __future__.annotations.compiler_flag
+                code = compile(lazy_imports[name], inspect.getfile(module), "exec", flags, dont_inherit=True)
+                try:
+                    exec(code, vars(module))  # nosec B102: the module's own imports
+                except AttributeError as e:
+                    # Python would read this as "no such attribute" and drop the real error.
+                    raise ImportError(f"importing {name!r} for {module_name!r} failed: {e}") from e
+                return vars(module)[name]
+        raise AttributeError(f"module {module_name!r} has no attribute {name!r}")
+
+    return getattr_
 
 
 def make_device_from_device_class(config: ChoiceRegistry) -> Any:

@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import abc
+import builtins
 import logging
 import math
 from collections.abc import Callable
@@ -42,6 +43,15 @@ class LRSchedulerConfig(draccus.ChoiceRegistry, abc.ABC):
     @property
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
+
+    @classmethod
+    def get_choice_class(cls, name: str) -> builtins.type["LRSchedulerConfig"]:
+        # Some policy packages register their own choices here, and policies load on demand.
+        if name not in cls._choice_registry:
+            from lerobot.configs.policies import PreTrainedConfig
+
+            PreTrainedConfig.load_all_choices()
+        return super().get_choice_class(name)
 
     @abc.abstractmethod
     def build(self, optimizer: Optimizer, num_training_steps: int) -> LRScheduler | None:
