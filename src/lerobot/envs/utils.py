@@ -69,7 +69,7 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
     # TODO(jadechoghari, imstevenpmwork): refactor this to use features from the environment (no hardcoding)
     """Convert environment observation to LeRobot format observation.
     Args:
-        observation: Dictionary of observation batches from a Gym vector environment.
+        observations: Dictionary of observation batches from a Gym vector environment.
     Returns:
         Dictionary of observation batches with keys renamed to LeRobot format and values as tensors.
     """
