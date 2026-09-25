@@ -19,6 +19,7 @@ import logging
 from collections import deque
 from collections.abc import Callable
 from contextlib import nullcontext
+from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Unpack, cast
 
@@ -64,6 +65,7 @@ from ..common.flow_matching import (
     sample_noise,
     sample_time_beta,
 )
+from ..common.openpi_checkpoint import building_on_meta, load_complete_checkpoint
 from ..common.vla_utils import (
     clone_past_key_values,
     create_sinusoidal_pos_embedding,
@@ -1068,6 +1070,9 @@ class PI05Policy(PreTrainedPolicy):
     model_class = PI05Pytorch
     # Subclasses whose checkpoints are native LeRobot state dicts use the base loader.
     use_native_pretrained_loader = False
+    # Opts in to `load_complete_checkpoint` (see its docstring), which the native loader above never calls.
+    # Subclasses must set it again.
+    _supports_meta_load = True
 
     def supports_rtc(self) -> bool:
         return True
@@ -1094,7 +1099,9 @@ class PI05Policy(PreTrainedPolicy):
         if config.gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
 
-        self.model.to(config.device)
+        # When load_complete_checkpoint builds the policy, it places the parameters and moves the buffers.
+        if not building_on_meta():
+            self.model.to(config.device)
 
         self.reset()
 
@@ -1138,45 +1145,51 @@ class PI05Policy(PreTrainedPolicy):
         if pretrained_name_or_path is None:
             raise ValueError("pretrained_name_or_path is required")
 
+        download_kwargs: dict[str, Any] = {
+            "force_download": force_download,
+            "token": token,
+            "cache_dir": cache_dir,
+            "local_files_only": local_files_only,
+            "revision": revision,
+        }
         # Use provided config if available, otherwise create default config
         if config is None:
             config = PreTrainedConfig.from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
-                force_download=force_download,
                 resume_download=resume_download,
                 proxies=proxies,
-                token=token,
-                cache_dir=cache_dir,
-                local_files_only=local_files_only,
-                revision=revision,
+                **download_kwargs,
                 **kwargs,
             )
+
+        print(f"Loading model from: {pretrained_name_or_path}")
+
+        # Both paths build the policy before asking for the file, so a constructor error comes before the
+        # download. Cached so that the regular path reuses a file the fast path already fetched.
+        @cache
+        def model_file() -> str:
+            from transformers.utils import cached_file
+
+            return cached_file(pretrained_name_or_path, "model.safetensors", **download_kwargs)
+
+        model = load_complete_checkpoint(cls, model_file, config, **kwargs)
+        if model is not None:
+            return model
 
         # Initialize model without loading weights
         # Check if dataset_stats were provided in kwargs
         model = cls(config, **kwargs)
+        resolved_file = model_file()
 
         # Load state dict (expects keys with "model." prefix)
         try:
-            print(f"Loading model from: {pretrained_name_or_path}")
             try:
-                from transformers.utils import cached_file
-
-                resolved_file = cached_file(
-                    pretrained_name_or_path,
-                    "model.safetensors",
-                    cache_dir=cache_dir,
-                    force_download=force_download,
-                    token=token,
-                    revision=revision,
-                    local_files_only=local_files_only,
-                )
                 from safetensors.torch import load_file
 
                 original_state_dict = load_file(resolved_file)
                 print("✓ Loaded state dict from model.safetensors")
             except Exception as e:
-                print(f"Could not load state dict from remote files: {e}")
+                print(f"Could not load state dict from {resolved_file}: {e}")
                 print("Returning model without loading pretrained weights")
                 return model
 
@@ -1302,9 +1315,11 @@ class PI05Policy(PreTrainedPolicy):
                 key == "model.paligemma_with_expert.paligemma.lm_head.weight"
                 or key == "paligemma_with_expert.paligemma.lm_head.weight"
             ):
+                # Every caller copies each value into its own parameter, so no clone is needed. Until then
+                # the two keys share one tensor, so a conversion step must not edit it in place.
                 fixed_state_dict[
                     "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
-                ] = value.clone()
+                ] = value
 
             fixed_state_dict[new_key] = value
 
