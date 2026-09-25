@@ -17,7 +17,7 @@ from lerobot.processor import (
 
 
 def test_language_rollout_loads_checkpoint_processors_even_when_dataset_stats_are_present(monkeypatch):
-    saved = (SimpleNamespace(steps=[]), SimpleNamespace(steps=[]))
+    saved = (PolicyProcessorPipeline(steps=[]), PolicyProcessorPipeline(steps=[]))
     load = MagicMock(side_effect=saved)
     rebuild = MagicMock()
     monkeypatch.setattr(factory.PolicyProcessorPipeline, "from_pretrained", load)

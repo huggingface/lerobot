@@ -254,14 +254,7 @@ def bind_relative_anchor(
     Call once wherever a policy and its preprocessor are built together; a disabled step counts
     as absent. Returns the step that was bound, or ``None`` if the pipeline has no enabled one.
     """
-    step = next(
-        (
-            s
-            for s in getattr(pipeline, "steps", ())
-            if isinstance(s, RelativeActionsProcessorStep) and s.enabled
-        ),
-        None,
-    )
+    step = next((s for s in pipeline.get_steps(RelativeActionsProcessorStep) if s.enabled), None)
     if step is not None:
         step.bind_action_queue(policy.count_queued_actions)
     return step
