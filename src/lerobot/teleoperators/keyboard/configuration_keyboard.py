@@ -66,3 +66,15 @@ class KeyboardRoverTeleopConfig(TeleoperatorConfig):
     angular_speed_ratio: float = 0.6
     min_linear_speed: float = 0.1
     min_angular_speed: float = 0.05
+
+
+@TeleoperatorConfig.register_subclass("keyboard_reachy_mini")
+@dataclass
+class KeyboardReachyMiniTeleopConfig(KeyboardTeleopConfig):
+    """
+    Configuration for the Reachy Mini keyboard teleoperator.
+    """
+
+    head_speed_deg: float = 1.0
+    body_speed_deg: float = 1.0
+    antenna_speed_deg: float = 2.0

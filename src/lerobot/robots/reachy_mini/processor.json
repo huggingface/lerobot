@@ -1,0 +1,20 @@
+{
+  "name": "reachy_mini_ik_pipeline",
+  "steps": [
+    {
+      "registry_name": "reachy_inverse_kinematics_ee_to_joints",
+      "config": {
+        "motor_names": [
+          "body_rotation",
+          "stewart_1",
+          "stewart_2",
+          "stewart_3",
+          "stewart_4",
+          "stewart_5",
+          "stewart_6"
+        ],
+        "initial_guess_current_joints": true
+      }
+    }
+  ]
+}
