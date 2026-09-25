@@ -19,6 +19,7 @@ Tests focus on mode contracts (read-only, write-only, resume), guards,
 property delegation, and the full create-record-finalize-read lifecycle.
 """
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -480,6 +481,23 @@ def test_add_frame_works_in_write_mode(tmp_path):
 
 
 # ── Resume mode ──────────────────────────────────────────────────────
+
+
+def test_resume_rejects_non_default_storage_format(tmp_path):
+    """resume() must fail before creating a default writer for another backend."""
+    root = tmp_path / "resume_non_default_ds"
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=root
+    )
+    dataset.finalize()
+
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["storage_format"] = "lance"
+    info_path.write_text(json.dumps(info, indent=4))
+
+    with pytest.raises(ValueError, match="storage_format='lance'"):
+        LeRobotDataset.resume(repo_id=DUMMY_REPO_ID, root=root)
 
 
 def test_resume_freshly_created_empty_dataset(tmp_path):
