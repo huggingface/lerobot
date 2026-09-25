@@ -35,12 +35,12 @@ Python package, Hydra, or OmegaConf.
 
 ### Input and Output Contracts
 
-| Profile          | Released action path                       | Raw → policy layout                          | Cameras                               | Predicted | Executed | Normalization                   |
-| ---------------- | ------------------------------------------ | -------------------------------------------- | ------------------------------------- | --------: | -------: | ------------------------------- |
-| `g05-base`       | Explicitly selected AR ActionCodec or flow | R1 Lite/Pro joints → 27D whole-body layout   | head + both wrists, 6-step history    |        32 |       16 | z-score-tail + q01/q99 grippers |
-| `g05-libero`     | Continuous flow                            | right EEF 6 + gripper 1 → 20D grouped layout | exterior, right wrist                 |        32 |       10 | stepwise q01/q99                |
-| `g05-robotwin20` | Continuous flow                            | two arms 6+gripper → 20D grouped layout      | high, left wrist, right wrist         |        32 |        8 | stepwise q01/q99                |
-| `g05-so101`      | Flow or AR ActionCodec + native CoT        | right arm joints 6 → 20D grouped layout      | exterior, optional left + right wrist |        32 |       16 | stepwise q01/q99                |
+| Profile          | Released action path                       | Raw → policy layout                          | Cameras                               | Predicted | Executed | Normalization    |
+| ---------------- | ------------------------------------------ | -------------------------------------------- | ------------------------------------- | --------: | -------: | ---------------- |
+| `g05-base`       | Explicitly selected AR ActionCodec or flow | R1 Lite/Pro joints → 27D whole-body layout   | head + both wrists, 6-step history    |        32 |       16 | stepwise z-score |
+| `g05-libero`     | Continuous flow                            | right EEF 6 + gripper 1 → 20D grouped layout | exterior, right wrist                 |        32 |       10 | stepwise q01/q99 |
+| `g05-robotwin20` | Continuous flow                            | two arms 6+gripper → 20D grouped layout      | high, left wrist, right wrist         |        32 |        8 | stepwise q01/q99 |
+| `g05-so101`      | Flow or AR ActionCodec + native CoT        | right arm joints 6 → 20D grouped layout      | exterior, optional left + right wrist |        32 |       16 | stepwise q01/q99 |
 
 Each packaged checkpoint stores the resolved model and processor configuration,
 ActionCodec metadata, statistics, exact prompt template, and license. Loading
@@ -156,8 +156,10 @@ The checkpoint is non-commercial and may be private; authenticate with
 ## Data Requirements
 
 The dataset must expose the state, action, camera, and task features matching
-the selected checkpoint contract. For SO-101, use camera names `exterior` and
-`wrist_right`; the optional `wrist_left` input is zero-filled.
+the selected checkpoint contract. Camera names are free: `--policy.camera_order`
+lists the dataset camera that feeds each of the checkpoint's image slots, and
+`null` leaves a slot empty (zero-filled). For SO-101 the slots are exterior,
+left wrist, and right wrist; the left wrist is optional.
 
 Training System 2 language targets additionally requires the checkpoint's
 annotated CoT fields. A normal LeRobot recording supplies action supervision
@@ -202,11 +204,56 @@ annotation is present. Samples without them are skipped.
 
 Generate the required `subtask` and grounded `vqa` language columns with
 `lerobot-annotate` as described in the
-[annotation pipeline](./annotation_pipeline). The bundled recipe targets
-`observation.images.exterior`. Pass an explicit external YAML through
-`--policy.recipe_path=/path/to/recipe.yaml` when training an embodiment with a
-different grounded camera; that selected recipe is serialized into the saved
-policy config.
+[annotation pipeline](./annotation_pipeline). The built-in recipe reads the
+boxes annotated on the BBox camera: `--policy.cot_bbox_camera`, which defaults to
+the first non-empty camera slot. Box coordinates must be `[0, 1]` fractions of
+the image width and height, which is what `lerobot-annotate` stores; pixel boxes
+are rejected. Pass an explicit external YAML through
+`--policy.recipe_path=/path/to/recipe.yaml` to train a different recipe; the
+selected recipe is serialized into the saved policy config.
+
+### Fine-tuning the base checkpoint on another robot
+
+`lerobot/g05_base` can be fine-tuned on a robot it has not seen. Name the robot
+with `--policy.embodiment`, for instance the dataset's `robot_type`; the name is
+the `Embodiment:` text of the prompt. The flag is required: without it the
+checkpoint keeps its own embodiment and slot table.
+The joints are placed in the base layout from the dataset's joint names:
+`left_`-prefixed joints go on the left arm and the others on the right arm, a
+joint whose name contains `gripper` takes that arm's gripper slot, and the rest
+fill its nine control slots in order. A 6-joint OMX arm thus fills right-arm
+slots 10-14 and the right gripper, and a 7-DoF arm fills 10-16 and the gripper.
+Set `--policy.state_slots` and `--policy.action_slots` to place the joints
+explicitly. The resolved slots are saved with the fine-tuned checkpoint.
+
+The example below uses an OMX dataset recorded with `top` and `wrist` cameras.
+The base checkpoint's image slots are a head view, the left wrist, and the right
+wrist; the single arm sits on the right, so its wrist camera takes the
+right-wrist slot and the left-wrist slot stays empty. List-valued flags take
+quoted JSON.
+
+```bash
+lerobot-train \
+  --dataset.repo_id=${HF_USER}/omx_multicubes_annotated \
+  --policy.path=lerobot/g05_base \
+  --policy.embodiment=omx \
+  --policy.camera_order='["observation.images.top", null, "observation.images.wrist"]' \
+  --policy.use_language_recipe=true \
+  --policy.device=cuda \
+  --policy.repo_id=${HF_USER}/g05_omx_finetuned \
+  --output_dir=outputs/train/g05_omx \
+  --job_name=g05_omx \
+  --batch_size=16 \
+  --steps=10000
+```
+
+Normalization uses the dataset's own statistics (z-score for the base
+checkpoint; pass
+`--policy.normalization_mapping='{"VISUAL": "IDENTITY", "STATE": "QUANTILES", "ACTION": "QUANTILES"}'`
+for q01/q99). The gripper stays absolute (`relative_exclude_joints=["gripper"]`
+in the base checkpoint), while arm joints are trained as deltas. BBox targets
+come from the grounded `vqa` answers annotated on `observation.images.top`, the
+first non-empty camera slot.
 
 The SO-101 recipe uses AdamW at `8e-5` with 1,000 warmup steps. The packaged
 LIBERO and RoboTwin configurations use their released `1e-5` recipe, with
@@ -229,17 +276,20 @@ lerobot-train \
 
 ## Key Configuration Parameters
 
-| Parameter                                 | Description                                                      |
-| ----------------------------------------- | ---------------------------------------------------------------- |
-| `policy.checkpoint_profile`               | Selects the packaged base, LIBERO, RoboTwin, or SO-101 contract  |
-| `policy.action_head`                      | Uses the checkpoint's `flow` or `actioncodec` action path        |
-| `policy.runtime_system`                   | Selects direct System 1 or unified System 2 reasoning and action |
-| `policy.chunk_size`                       | Number of actions predicted in each chunk                        |
-| `policy.n_action_steps`                   | Number of actions executed before replanning                     |
-| `policy.use_language_recipe`              | Enable G0.5's built-in language-supervision recipe               |
-| `policy.recipe_path`                      | Explicit external recipe override used during fine-tuning        |
-| `policy.optimizer_backbone_lr_multiplier` | Learning-rate multiplier for the language backbone               |
-| `policy.optimizer_vision_lr_multiplier`   | Learning-rate multiplier for the vision tower                    |
+| Parameter                                   | Description                                                      |
+| ------------------------------------------- | ---------------------------------------------------------------- |
+| `policy.checkpoint_profile`                 | Selects the packaged base, LIBERO, RoboTwin, or SO-101 contract  |
+| `policy.embodiment`                         | Robot name written in the prompt; selects a released slot table  |
+| `policy.state_slots`, `policy.action_slots` | Explicit policy-layout slot of each raw state/action value       |
+| `policy.camera_order`                       | Dataset camera per checkpoint image slot; `null` leaves it empty |
+| `policy.action_head`                        | Uses the checkpoint's `flow` or `actioncodec` action path        |
+| `policy.runtime_system`                     | Selects direct System 1 or unified System 2 reasoning and action |
+| `policy.chunk_size`                         | Number of actions predicted in each chunk                        |
+| `policy.n_action_steps`                     | Number of actions executed before replanning                     |
+| `policy.use_language_recipe`                | Enable G0.5's built-in language-supervision recipe               |
+| `policy.recipe_path`                        | Explicit external recipe override used during fine-tuning        |
+| `policy.optimizer_backbone_lr_multiplier`   | Learning-rate multiplier for the language backbone               |
+| `policy.optimizer_vision_lr_multiplier`     | Learning-rate multiplier for the vision tower                    |
 
 Do not override checkpoint contract fields unless deliberately converting or
 validating another embodiment. Incompatible action heads, dimensions, horizons,

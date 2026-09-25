@@ -173,3 +173,14 @@ def test_native_action_codec_action_time_contrastive_objective() -> None:
     output["loss"].backward()
     assert codec.model.action_time_contrastive_loss is not None
     assert codec.model.action_time_contrastive_loss.logit_scale.grad is not None
+
+
+def test_batched_language_encoding_matches_one_chunk_at_a_time() -> None:
+    codec = G05NativeActionCodec(_tiny_codec_config(), action_token_begin=100)
+    codec.module.eval()
+    generator = torch.Generator().manual_seed(0)
+    chunks = [torch.randn(8, 8, generator=generator) for _ in range(4)]
+
+    batched = codec.encode_batch_for_language([{"value": chunk} for chunk in chunks])
+
+    assert batched == [codec.encode_for_language({"value": chunk}) for chunk in chunks]
