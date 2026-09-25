@@ -106,9 +106,11 @@ class VQBeTConfig(PreTrainedConfig):
     vqvae_embedding_dim: int = 256
     vqvae_enc_hidden_dim: int = 128
     # VQ-BeT
-    gpt_block_size: int = 500
+    # int | None: draccus can inject an explicit `null` here (e.g. `--gpt_block_size=null`)
+    # even though the field has no Optional in its own default; GPT.__init__ asserts non-None.
+    gpt_block_size: int | None = 500
     gpt_input_dim: int = 512
-    gpt_output_dim: int = 512
+    gpt_output_dim: int | None = 512
     gpt_n_layer: int = 8
     gpt_n_head: int = 8
     gpt_hidden_dim: int = 512

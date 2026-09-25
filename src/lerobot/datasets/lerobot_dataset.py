@@ -548,7 +548,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.writer is None:
             return False
         # save_episode pops "size", so a buffer abandoned mid-save has nothing pending.
-        return self.writer.episode_buffer is not None and self.writer.episode_buffer.get("size", 0) > 0
+        return self.writer.episode_buffer.get("size", 0) > 0
 
     def finalize(self):
         """Flush all pending work and close writers.
@@ -957,8 +957,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj._depth_output_unit = DEFAULT_DEPTH_UNIT
         obj._batch_encoding_size = batch_encoding_size
 
-        if obj._requested_root is not None:
-            obj._requested_root.mkdir(exist_ok=True, parents=True)
+        obj._requested_root.mkdir(exist_ok=True, parents=True)
 
         # Load metadata (revision-safe when root is not provided)
         obj.meta = LeRobotDatasetMetadata(

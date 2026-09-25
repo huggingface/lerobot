@@ -616,7 +616,7 @@ class ConditionalFlowMatchingHead(nn.Module):
         else:
             encoder_attention_mask = None
 
-        use_cfg = cfg_scale is not None and cfg_scale != 1.0
+        use_cfg = cfg_scale != 1.0
         if use_cfg:
             uncond_encoder_hidden = torch.cat(
                 (h_t, self.cfg_embeddings.expand(batch_size, -1, -1), cond_vlm), dim=1
