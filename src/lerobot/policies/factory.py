@@ -73,12 +73,12 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         ValueError: If the policy name is not registered.
         ImportError: If the policy's optional dependencies are not installed.
     """
-    if name not in PreTrainedConfig.get_known_choices():
+    try:
+        config_cls = PreTrainedConfig.get_choice_class(name)
+    except KeyError:
         raise ValueError(
             f"Unknown policy name '{name}'. Available policies: {PreTrainedConfig.get_known_choices()}"
-        )
-
-    config_cls = PreTrainedConfig.get_choice_class(name)
+        ) from None
     config_cls_name = config_cls.__name__
 
     model_name = config_cls_name.removesuffix("Config")  # e.g., DiffusionConfig -> Diffusion
@@ -121,7 +121,7 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
     """
     try:
         config_cls = PreTrainedConfig.get_choice_class(policy_type)
-    except Exception as e:
+    except KeyError as e:
         raise ValueError(f"Policy type '{policy_type}' is not available.") from e
     return config_cls(**kwargs)
 

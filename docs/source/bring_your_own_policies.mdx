@@ -425,7 +425,7 @@ The file names are load-bearing: the factory does lazy imports by name, and the 
 
 Two places need to know about your policy. All by name.
 
-1. **`policies/__init__.py`** — re-export `MyPolicyConfig` and add it to `__all__`. This import is what registers your policy: `@PreTrainedConfig.register_subclass("my_policy")` runs, and from then on the factory resolves everything by convention. **Don't** re-export the modeling class; it loads lazily through the factory (so `import lerobot` stays fast).
+1. **`policies/__init__.py`** — re-export `MyPolicyConfig` under `if LAZY_IMPORTS:` and add it to `__all__`. Your policy registers the first time a command names it: `PreTrainedConfig` imports `lerobot.policies.my_policy`, so give `@PreTrainedConfig.register_subclass("my_policy")` the same name as the package directory (otherwise it still works, but every policy gets imported to find it), and from then on the factory resolves everything by convention. **Don't** re-export the modeling class; it loads lazily through the factory (so `import lerobot` stays fast).
 2. **`templates/lerobot_modelcard_template.md` and the root `README.md`** — the template is what the end-of-training publisher renders into the model card of every checkpoint trained with your policy: add a one-line description of your policy in the `model_name` branches, map it in `policy_docs` so cards link to your MDX guide, and optionally add an architecture image to `diagrams`. Then add your policy to the models table in the root `README.md`, under the right category, linking to your doc page.
 
 Mirror an existing policy that's structurally similar to yours; the diff is small.
@@ -499,7 +499,7 @@ If your policy is real-robot-only and no sim benchmark applies, swap the sim eva
 The general expectations are in [`CONTRIBUTING.md`](https://github.com/huggingface/lerobot/blob/main/CONTRIBUTING.md) and the [PR template](https://github.com/huggingface/lerobot/blob/main/.github/PULL_REQUEST_TEMPLATE.md). On top of those, reviewers will look for:
 
 - [ ] `MyPolicy` and `MyPolicyConfig` cover the surface above; `__init_subclass__` accepts the class.
-- [ ] `policies/__init__.py` re-exports the config (this registers the policy; the factory resolves modeling/processor by naming convention).
+- [ ] `policies/__init__.py` re-exports the config under `if LAZY_IMPORTS:`, and the `register_subclass` name matches the package directory (the policy registers on first use, by that name; the factory resolves modeling/processor by naming convention).
 - [ ] `make_my_policy_pre_post_processors` follows the naming convention.
 - [ ] Optional deps live behind a `[project.optional-dependencies]` extra and the `TYPE_CHECKING + require_package` guard.
 - [ ] `tests/policies/` updated; backward-compat artifact committed & policy-specific tests.

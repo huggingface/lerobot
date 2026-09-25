@@ -11,10 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import contextlib
+import dataclasses
 import importlib
 import inspect
 import json
 import pkgutil
+import re
 import sys
 import tempfile
 from argparse import ArgumentError
@@ -23,7 +26,7 @@ from functools import wraps
 from pathlib import Path
 from pkgutil import ModuleInfo
 from types import ModuleType
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar, cast, get_args, get_type_hints
 
 import draccus
 import yaml
@@ -206,6 +209,37 @@ def get_yaml_overrides(field_name: str) -> list[str]:
 
 def get_type_arg(field_name: str, args: Sequence[str] | None = None) -> str | None:
     return parse_arg(f"{field_name}.{draccus.CHOICE_TYPE_KEY}", args)
+
+
+def load_selected_choices(config_class: type, cli_args: Sequence[str]) -> None:
+    """Register the choices draccus needs before it builds its parser, since some registries load their choices on
+    demand: the policies, and the optimizers and schedulers that policy packages add to.
+
+    Each `--<field>.type` on the command line is looked up in its registry, which loads that choice, or everything
+    it could come from for an unknown name. Registries with a `load_all_choices()` also load everything for `--help`,
+    for a nested `--<field>.<sub>.type`, and when a field's type comes from a config file while `--<field>.*`
+    overrides are given, since draccus needs the class to accept them."""
+    hints = get_type_hints(config_class)
+    load_all = any(arg in ("--help", "-h") or re.match(r"--\w+\.[\w.]+\.type=", arg) for arg in cli_args)
+    lazy_registries = []
+    for field in dataclasses.fields(config_class):
+        types = [
+            t for t in get_args(hints[field.name]) or (hints[field.name],) if draccus.utils.is_choice_type(t)
+        ]
+        lazy = [t for t in types if hasattr(t, "load_all_choices")]
+        lazy_registries += lazy
+        if not types or get_path_arg(field.name, cli_args):
+            continue
+        name = get_type_arg(field.name, cli_args)
+        if name is not None:
+            for choice_type in types:
+                with contextlib.suppress(KeyError):  # draccus reports unknown names itself
+                    choice_type.get_choice_class(name)
+        elif lazy and any(arg.startswith(f"--{field.name}.") for arg in cli_args):
+            load_all = True
+    if load_all:
+        for registry in lazy_registries:
+            registry.load_all_choices()
 
 
 def _register_scoped_actions(
@@ -410,6 +444,7 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
                         # add the relevant CLI arg to the error message
                         raise PluginLoadError(f"{e}\nFailed plugin CLI Arg: {plugin_cli_arg}") from e
                     cli_args = filter_arg(plugin_cli_arg, cli_args)
+                load_selected_choices(argtype, cli_args)
                 if "--help" in cli_args or "-h" in cli_args:
                     print_scoped_help(argtype, cli_args)
                     sys.exit(0)
