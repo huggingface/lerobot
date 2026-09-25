@@ -388,6 +388,7 @@ class RebotB601Follower(Robot):
             )
 
     def _stop_after_feedback_error(self) -> None:
+        logger.warning("Motor feedback failed; disabling all motor torque.")
         motor = self.motors[GRIPPER_MOTOR]
         try:
             motor.send_mit(0.0, 0.0, 0.0, _GRIPPER_IMPEDANCE_DAMPING, 0.0)

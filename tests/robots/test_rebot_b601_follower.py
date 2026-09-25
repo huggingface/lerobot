@@ -483,7 +483,7 @@ def test_rs_gripper_disables_torque_after_feedback_failure():
         assert robot.bus is not None
 
 
-def test_rs_observation_disables_torque_after_feedback_failure():
+def test_rs_observation_disables_torque_after_feedback_failure(caplog):
     with _connected(MotorFamily.RS) as robot:
         robot.bus.poll_feedback_once.side_effect = RuntimeError("temporary CAN error")
 
@@ -492,6 +492,7 @@ def test_rs_observation_disables_torque_after_feedback_failure():
 
         assert robot.motors["gripper"].send_mit.call_args.args[4] == 0.0
         robot.bus.disable_all.assert_called()
+        assert "Motor feedback failed; disabling all motor torque." in caplog.messages
 
 
 @pytest.mark.parametrize("family", MotorFamily)
