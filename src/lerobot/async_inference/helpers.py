@@ -39,6 +39,8 @@ from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_features
 from lerobot.utils.utils import init_logging
 
+from .constants import DEFAULT_OBS_SIMILARITY_ATOL
+
 # observation as those recorded in LeRobot dataset (keys are different)
 LeRobotObservation = dict[str, np.ndarray]
 
@@ -276,7 +278,10 @@ def _compare_observation_states(obs1_state: torch.Tensor, obs2_state: torch.Tens
 
 
 def observations_similar(
-    obs1: TimedObservation, obs2: TimedObservation, lerobot_features: dict[str, dict], atol: float = 1
+    obs1: TimedObservation,
+    obs2: TimedObservation,
+    lerobot_features: dict[str, dict],
+    atol: float = DEFAULT_OBS_SIMILARITY_ATOL,
 ) -> bool:
     """Check if two observations are similar, under a tolerance threshold. Measures distance between
     observations as the difference in joint-space between the two observations.

@@ -189,6 +189,56 @@ def test_obs_sanity_checks(policy_server):
     assert policy_server._obs_sanity_checks(obs_ok, prev) is True
 
 
+@skip_if_package_missing("grpcio", "grpc")
+def test_obs_sanity_checks_uses_configured_atol():
+    """`_obs_sanity_checks` must honour `PolicyServerConfig.obs_similarity_atol`.
+
+    An observation whose L2 distance from the previous one is ~0.49 sits between a
+    tight configured tolerance (0.1) and the historic hard-coded default (1.0). With
+    a tight tolerance the observation is *dissimilar* and must pass the sanity check;
+    with the default tolerance it is *similar* and must be skipped. This proves the
+    config value is actually plumbed into the similarity comparison.
+    """
+    from lerobot.async_inference.configs import PolicyServerConfig
+    from lerobot.async_inference.policy_server import PolicyServer
+
+    lerobot_features = {
+        OBS_STATE: {
+            "dtype": "float32",
+            "shape": [6],
+            "names": ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"],
+        }
+    }
+
+    prev = _make_obs(torch.zeros(6), timestep=0)
+    # ||0.2 * ones(6)|| = sqrt(6 * 0.04) ≈ 0.49, between 0.1 and 1.0.
+    obs = _make_obs(torch.ones(6) * 0.2, timestep=1)
+
+    tight_server = PolicyServer(PolicyServerConfig(host="localhost", port=9998, obs_similarity_atol=0.1))
+    tight_server.lerobot_features = lerobot_features
+    assert tight_server._obs_sanity_checks(obs, prev) is True
+
+    default_server = PolicyServer(PolicyServerConfig(host="localhost", port=9997))
+    default_server.lerobot_features = lerobot_features
+    assert default_server._obs_sanity_checks(obs, prev) is False
+
+
+def test_policy_server_config_rejects_negative_atol():
+    """A negative `obs_similarity_atol` is invalid and must be rejected at construction."""
+    from lerobot.async_inference.configs import PolicyServerConfig
+
+    with pytest.raises(ValueError, match="obs_similarity_atol"):
+        PolicyServerConfig(obs_similarity_atol=-1.0)
+
+
+def test_policy_server_config_serializes_atol():
+    """`obs_similarity_atol` is exported by `to_dict`."""
+    from lerobot.async_inference.configs import PolicyServerConfig
+
+    config = PolicyServerConfig(obs_similarity_atol=0.25)
+    assert config.to_dict()["obs_similarity_atol"] == 0.25
+
+
 def test_predict_action_chunk(monkeypatch, policy_server):
     """End-to-end test of `_predict_action_chunk` with a stubbed _get_action_chunk."""
     # Import only when needed
