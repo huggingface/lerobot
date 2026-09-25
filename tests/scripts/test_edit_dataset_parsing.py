@@ -14,11 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from unittest.mock import patch
+
 import draccus
+import numpy as np
 import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.scripts.lerobot_edit_dataset import (
     ConvertImageToVideoConfig,
     DeleteEpisodesConfig,
@@ -31,6 +35,8 @@ from lerobot.scripts.lerobot_edit_dataset import (
     RemoveFeatureConfig,
     SplitConfig,
     _validate_config,
+    handle_delete_episodes,
+    handle_modify_tasks,
 )
 
 
@@ -165,3 +171,65 @@ class TestDepthEncoderParsing:
         )
         assert isinstance(cfg.operation, ConvertImageToVideoConfig)
         assert cfg.operation.depth_encoder.depth_min == 0.05
+
+
+class TestPushPrivate:
+    """Test that --private reaches the Hub upload (issue #2603)."""
+
+    def test_private_defaults_to_none(self):
+        cfg = parse_cfg(["--repo_id", "test/repo", "--operation.type", "delete_episodes"])
+        assert cfg.private is None
+
+    def test_private_flag_parses(self):
+        cfg = parse_cfg(
+            ["--repo_id", "test/repo", "--operation.type", "delete_episodes", "--private", "true"]
+        )
+        assert cfg.private is True
+
+    @pytest.mark.parametrize(
+        "handler, operation_args",
+        [
+            (
+                handle_delete_episodes,
+                ["--operation.type", "delete_episodes", "--operation.episode_indices", "[0]"],
+            ),
+            (handle_modify_tasks, ["--operation.type", "modify_tasks", "--operation.new_task", "new task"]),
+        ],
+    )
+    def test_push_to_hub_forwards_private(
+        self, tmp_path, empty_lerobot_dataset_factory, handler, operation_args
+    ):
+        features = {"action": {"dtype": "float32", "shape": (2,), "names": None}}
+        dataset = empty_lerobot_dataset_factory(root=tmp_path / "input", features=features, use_videos=False)
+        for _ in range(2):
+            for _ in range(3):
+                dataset.add_frame({"action": np.zeros(2, dtype=np.float32), "task": "task"})
+            dataset.save_episode()
+        dataset.finalize()
+
+        cfg = parse_cfg(
+            [
+                "--repo_id",
+                dataset.repo_id,
+                "--root",
+                str(tmp_path / "input"),
+                "--new_repo_id",
+                "user/edited",
+                "--new_root",
+                str(tmp_path / "output"),
+                "--push_to_hub",
+                "true",
+                "--private",
+                "true",
+                *operation_args,
+            ]
+        )
+        with (
+            patch("lerobot.datasets.dataset_metadata.get_safe_version", return_value="v3.0"),
+            patch("lerobot.datasets.dataset_metadata.snapshot_download"),
+            patch.object(LeRobotDataset, "push_to_hub", autospec=True) as mock_push,
+        ):
+            handler(cfg)
+
+        mock_push.assert_called_once()
+        assert mock_push.call_args.kwargs["private"] is True

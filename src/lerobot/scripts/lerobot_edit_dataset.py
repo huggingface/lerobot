@@ -366,6 +366,8 @@ class EditDatasetConfig:
     new_root: str | None = None
     # Upload dataset to Hugging Face hub.
     push_to_hub: bool = False
+    # If True, upload as private; if None, defer to the org default on the Hub (only affects orgs).
+    private: bool | None = None
 
 
 def _resolve_io_paths(
@@ -465,7 +467,7 @@ def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
 
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {output_repo_id}")
-        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
+        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub(private=cfg.private)
 
 
 def handle_split(cfg: EditDatasetConfig) -> None:
@@ -499,7 +501,7 @@ def handle_split(cfg: EditDatasetConfig) -> None:
 
         if cfg.push_to_hub:
             logging.info(f"Pushing {split_name} split to hub as {split_ds.repo_id}")
-            LeRobotDataset(split_ds.repo_id, root=split_ds.root).push_to_hub()
+            LeRobotDataset(split_ds.repo_id, root=split_ds.root).push_to_hub(private=cfg.private)
 
 
 def handle_merge(cfg: EditDatasetConfig) -> None:
@@ -545,7 +547,7 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
 
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {cfg.new_repo_id}")
-        LeRobotDataset(merged_dataset.repo_id, root=output_dir).push_to_hub()
+        LeRobotDataset(merged_dataset.repo_id, root=output_dir).push_to_hub(private=cfg.private)
 
 
 def handle_remove_feature(cfg: EditDatasetConfig) -> None:
@@ -581,7 +583,7 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
 
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {output_repo_id}")
-        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
+        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub(private=cfg.private)
 
 
 def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
@@ -631,7 +633,7 @@ def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
 
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {cfg.repo_id}")
-        modified_dataset.push_to_hub()
+        modified_dataset.push_to_hub(private=cfg.private)
 
 
 def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
@@ -687,7 +689,7 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
 
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {output_repo_id}...")
-        new_dataset.push_to_hub()
+        new_dataset.push_to_hub(private=cfg.private)
         logging.info("✓ Successfully pushed to hub!")
     else:
         logging.info("Dataset saved locally (not pushed to hub)")
@@ -752,7 +754,7 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
 
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {dataset.repo_id}...")
-        dataset.push_to_hub()
+        dataset.push_to_hub(private=cfg.private)
 
 
 def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
@@ -809,7 +811,7 @@ def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
 
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {output_repo_id}...")
-        dataset.push_to_hub()
+        dataset.push_to_hub(private=cfg.private)
 
 
 def _get_dataset_size(repo_path):
