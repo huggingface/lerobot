@@ -547,7 +547,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         }
         # Convert the episode-local timestamp to each video file's coordinate space.
         current_timestamps = {
-            key: episode_boundaries_ts[key][0] + item["timestamp"] for key in self.meta.video_keys
+            key: episode_boundaries_ts[key][0] + float(item["timestamp"]) for key in self.meta.video_keys
         }
 
         # Apply delta querying logic if necessary
