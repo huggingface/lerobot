@@ -21,7 +21,7 @@ from functools import cached_property
 
 import cv2
 import numpy as np
-import requests  # type: ignore[import-untyped]
+import requests
 
 from lerobot.cameras import Camera
 from lerobot.lerobot_types import RobotAction, RobotObservation

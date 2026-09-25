@@ -34,6 +34,7 @@ import types
 from collections import deque
 from collections.abc import Iterator
 from contextlib import nullcontext, suppress
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -464,7 +465,7 @@ def _mask_discrete_action_spans(
 
 def _drop_trivial_attention_mask(model_inputs: dict[str, Tensor]) -> dict[str, Tensor]:
     attention_mask = model_inputs.get("attention_mask")
-    if torch.is_tensor(attention_mask) and bool(attention_mask.to(dtype=torch.bool).all().item()):
+    if isinstance(attention_mask, Tensor) and bool(attention_mask.to(dtype=torch.bool).all().item()):
         model_inputs = dict(model_inputs)
         model_inputs.pop("attention_mask", None)
     return model_inputs
@@ -621,11 +622,12 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
     config_class = MolmoAct2Config
     name = "molmoact2"
+    config: MolmoAct2Config
 
     @classmethod
     def from_pretrained(
         cls,
-        pretrained_name_or_path: str | os.PathLike[str],
+        pretrained_name_or_path: str | Path,
         *,
         strict: bool = True,
         **kwargs: Any,
@@ -876,7 +878,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         if depth_gate is not None:
             depth_gate.to(dtype=torch.float32)
 
-        fp32_module_types = tuple(
+        fp32_module_types: tuple[type[torch.nn.Module], ...] = tuple(
             module_type
             for module_type in (
                 torch.nn.LayerNorm,
@@ -1270,7 +1272,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         attention_mask = model_inputs.get("attention_mask")
         position_ids = model_inputs.get("position_ids")
         if position_ids is None:
-            if torch.is_tensor(attention_mask) and attention_mask.ndim == 2:
+            if isinstance(attention_mask, Tensor) and attention_mask.ndim == 2:
                 position_ids = _position_ids_from_attention_mask(attention_mask)
             else:
                 position_ids = cache_position.unsqueeze(0)
@@ -1639,6 +1641,10 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 hit_end = True
                 break
             if attention_bias is None:
+                if not callable(consume_generation_tokens):
+                    raise RuntimeError(
+                        "MolmoAct2 checkpoint does not expose discrete token generation helpers."
+                    )
                 current_output, current_attention_mask = consume_generation_tokens(
                     next_token,
                     past_key_values=current_past_key_values,
@@ -1646,6 +1652,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 )
                 current_past_key_values = current_output.past_key_values
             else:
+                if not callable(ar_decode_step):
+                    raise RuntimeError("MolmoAct2 checkpoint does not expose graph-backed AR decode helpers.")
                 step_position_ids = next_position_ids
                 last_hidden, current_past_key_values = ar_decode_step(
                     next_token,

@@ -403,7 +403,7 @@ def build_rollout_context(
 
     teleop = None
     if cfg.teleop is not None:
-        logger.info("Connecting teleoperator (%s)...", cfg.teleop.type if cfg.teleop else "?")
+        logger.info("Connecting teleoperator (%s)...", cfg.teleop.type)
         teleop = make_teleoperator_from_config(cfg.teleop)
         teleop.connect()
         logger.info("Teleoperator connected")

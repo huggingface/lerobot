@@ -287,7 +287,7 @@ class XVLAPolicy(PreTrainedPolicy):
         self.reset()
 
     def reset(self) -> None:
-        self._queues = {
+        self._queues: dict[str, deque[Tensor]] = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
 

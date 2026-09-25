@@ -109,9 +109,10 @@ class Tracker:
             most recent ``maxlen`` debug steps are kept. If ``None``, keeps all.
     """
 
-    def __init__(self, enabled: bool = False, maxlen: int = 100):
+    def __init__(self, enabled: bool = False, maxlen: int = 100) -> None:
         self.enabled = enabled
-        self._steps = {} if enabled else None  # Dictionary with time as key
+        # Debug steps keyed by their (rounded) flow time; None while tracking is disabled.
+        self._steps: dict[float, DebugStep] | None = {} if enabled else None
         self._maxlen = maxlen
         self._step_counter = 0
 
@@ -134,7 +135,7 @@ class Tracker:
         guidance_weight: float | Tensor | None = None,
         inference_delay: int | None = None,
         execution_horizon: int | None = None,
-        **metadata,
+        **metadata: Any,
     ) -> None:
         """Track debug information for a denoising step at a given time.
 
@@ -157,7 +158,7 @@ class Tracker:
             execution_horizon (int | None): Execution horizon parameter.
             **metadata: Additional metadata to store.
         """
-        if not self.enabled:
+        if not self.enabled or self._steps is None:
             return
 
         # Convert time to float and round to avoid float precision issues
