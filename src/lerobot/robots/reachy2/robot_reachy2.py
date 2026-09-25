@@ -15,6 +15,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import logging
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -30,6 +31,8 @@ if TYPE_CHECKING or _reachy2_sdk_available:
     from reachy2_sdk import ReachySDK
 else:
     ReachySDK = None
+
+logger = logging.getLogger(__name__)
 
 # {lerobot_keys: reachy2_sdk_keys}
 REACHY2_NECK_JOINTS = {
@@ -129,13 +132,29 @@ class Reachy2Robot(Robot):
 
     def connect(self, calibrate: bool = False) -> None:
         self.reachy = ReachySDK(self.config.ip_address)
-        if not self.is_connected:
-            raise ConnectionError()
+        try:
+            if not self.is_connected:
+                raise ConnectionError()
 
-        for cam in self.cameras.values():
-            cam.connect()
+            for cam in self.cameras.values():
+                cam.connect()
 
-        self.configure()
+            self.configure()
+        except BaseException:
+            self._release_after_failed_connect()
+            raise
+
+    def _release_bus_after_failed_connect(self) -> None:
+        """Releases the SDK handle, which stands in for a motors bus on this robot."""
+        if self.reachy is None:
+            return
+
+        try:
+            self.reachy.disconnect()
+        except Exception:
+            logger.exception(f"Failed to disconnect the SDK after {self} failed to connect.")
+        finally:
+            self.reachy = None
 
     def configure(self) -> None:
         if self.reachy is not None:
