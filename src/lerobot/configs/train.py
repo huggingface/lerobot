@@ -354,8 +354,8 @@ class TrainPipelineConfig(HubMixin):
                 "CFG parallelism is inference-only and must be 1 for training "
                 "(cfg_parallel is reserved for the serving round)."
             )
-        if self.accelerator.compile.enabled:
-            raise ValueError("--accelerator.compile is a placeholder and not wired yet.")
+        if self.accelerator.compile.enabled and self.parallelism.is_sharded:
+            raise ValueError("--accelerator.compile is wired for DDP/single-process runs only.")
         if self.accelerator.activation_checkpointing.mode is not ActivationCheckpointingMode.NONE:
             raise ValueError("--accelerator.activation_checkpointing is a placeholder and not wired yet.")
         if self.checkpoint_format is not CheckpointFormat.SAFETENSORS and not self.parallelism.is_sharded:
