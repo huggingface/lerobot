@@ -64,7 +64,9 @@ class RenameObservationsProcessorStep(ObservationProcessorStep):
         return new_features
 
 
-def rename_stats(stats: dict[str, dict[str, Any]], rename_map: dict[str, str]) -> dict[str, dict[str, Any]]:
+def rename_stats(
+    stats: dict[str, dict[str, Any] | None], rename_map: dict[str, str]
+) -> dict[str, dict[str, Any]]:
     """
     Renames the top-level keys in a statistics dictionary using a provided mapping.
 

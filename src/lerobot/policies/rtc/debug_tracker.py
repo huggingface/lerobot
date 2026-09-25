@@ -109,7 +109,7 @@ class Tracker:
             most recent ``maxlen`` debug steps are kept. If ``None``, keeps all.
     """
 
-    def __init__(self, enabled: bool = False, maxlen: int = 100) -> None:
+    def __init__(self, enabled: bool = False, maxlen: int | None = 100) -> None:
         self.enabled = enabled
         # Debug steps keyed by their (rounded) flow time; None while tracking is disabled.
         self._steps: dict[float, DebugStep] | None = {} if enabled else None
