@@ -25,6 +25,7 @@ from lerobot.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
 )
+from lerobot.motors.motors_bus import center_homing_on_travel
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
@@ -155,16 +156,41 @@ class SOFollower(Robot):
         input(f"Move {self} to the middle of its range of motion (shown above) and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
 
-        # Attempt to call record_ranges_of_motion with a reduced motor set when appropriate.
-        full_turn_motor = "wrist_roll"
-        unknown_range_motors = [motor for motor in self.bus.motors if motor != full_turn_motor]
+        # `wrist_roll` was excluded from this sweep and assigned 0-4095 outright, on the
+        # assumption that it turns freely. Measured on one SO-101 follower (2026-09-03, torque
+        # off, turned by hand, 266254 samples): it does not. A corner of the printed gripper
+        # housing meets the wrist bracket and stops the joint from *both* directions, leaving
+        # 113-3981 reachable -- 340 deg -- and the 11 deg it cannot reach sits on the encoder
+        # seam, because `set_half_turn_homings` above had already centred the real travel on
+        # 2048 ((113 + 3981) / 2 = 2047). The sweep three lines down had the number; the
+        # assignment threw it away. Downstream, every limit check that reads these registers
+        # then saw "anywhere is reachable" for the one joint whose travel is tightest.
+        #
+        # Recording it costs nothing on an arm where the assumption does hold: a joint that
+        # really spins records very nearly 0-4095 by itself, which is what the assignment was
+        # reaching for, and the consumers of a full-width travel are unchanged. What the
+        # assumption cannot do is notice when it is false, which is the whole difference.
+        #
+        # The prompt has to ask for the right motion, though. A joint swept through a
+        # comfortable half turn would record a range narrower than it can reach, and a false
+        # envelope is worse than none -- so say what "entire" means for a joint that may spin.
         print(
-            f"Move all joints except '{full_turn_motor}' sequentially through their "
-            "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
+            "Move all joints sequentially through their entire ranges of motion.\n"
+            "Turn 'wrist_roll' as far as it goes both ways: a full revolution if it spins "
+            "freely, stop to stop if it does not.\nRecording positions. Press ENTER to stop..."
         )
-        range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
-        range_mins[full_turn_motor] = 0
-        range_maxes[full_turn_motor] = 4095
+        range_mins, range_maxes = self.bus.record_ranges_of_motion(unwrap=["wrist_roll"])
+        # Zero `wrist_roll` on the middle of its travel, not on the pose held at ENTER: see
+        # `center_homing_on_travel`. A joint that spins freely has no middle and keeps the old rule.
+        res = self.bus.model_resolution_table[self.bus.motors["wrist_roll"].model]
+        centred = center_homing_on_travel(
+            homing_offsets["wrist_roll"], range_mins["wrist_roll"], range_maxes["wrist_roll"], res
+        )
+        if centred is None:
+            logger.warning("wrist_roll turned a full revolution: no stops, so its zero is the ENTER pose")
+            range_mins["wrist_roll"], range_maxes["wrist_roll"] = 0, res - 1
+        else:
+            homing_offsets["wrist_roll"], range_mins["wrist_roll"], range_maxes["wrist_roll"] = centred
 
         self.calibration = {}
         for motor, m in self.bus.motors.items():

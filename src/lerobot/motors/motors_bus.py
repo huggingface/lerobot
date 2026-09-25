@@ -130,6 +130,44 @@ class MotorsBusBase(abc.ABC):
         pass
 
 
+def unwrap_step(prev: int, curr: int, resolution: int) -> int:
+    """Signed encoder step from `prev` to `curr`, taking the shorter way across the seam."""
+    delta = curr - prev
+    if delta > resolution // 2:
+        delta -= resolution
+    elif delta < -(resolution // 2):
+        delta += resolution
+    return delta
+
+
+def center_homing_on_travel(
+    homing_offset: float, travel_min: float, travel_max: float, resolution: int
+) -> tuple[int, int, int] | None:
+    """Re-home a joint so the middle of its swept travel reads one half-turn.
+
+    `travel_min`/`travel_max` are unwrapped `Present_Position` extremes taken under `homing_offset`
+    (so they may fall outside `[0, resolution)`). Returns `(homing_offset, range_min, range_max)` for
+    the re-homed joint, or `None` when the travel spans a whole turn and so has no middle.
+
+    Why: a half-turn homing puts the pose held at ENTER at the middle of the encoder, and a joint
+    whose travel then crosses the encoder seam records 0 to 4095, so its normalized zero becomes that
+    ENTER pose. For a joint with stops, the middle of the travel is a physical reference both arms
+    share; the ENTER pose is only as good as the hand that held it. On 2026-09-25 the leader and
+    follower `wrist_roll` zeros disagreed visibly while every joint whose travel did not cross the
+    seam agreed. Feetech convention: `Present_Position = Actual_Position - Homing_Offset`.
+    """
+    span = round(travel_max - travel_min)
+    if span >= resolution - 1:
+        return None
+    half = resolution // 2 - 1
+    shift = round((travel_min + travel_max) / 2) - half
+    # Sign-magnitude register: keep the offset within one turn of zero. A shift by whole turns does
+    # not change the reported position, which the servo already reports modulo one turn.
+    new_offset = (round(homing_offset) + shift + half) % resolution - half
+    new_min = half - span // 2
+    return new_offset, new_min, new_min + span
+
+
 def get_ctrl_table(model_ctrl_table: dict[str, dict], model: str) -> dict[str, tuple[int, int]]:
     ctrl_table = model_ctrl_table.get(model)
     if ctrl_table is None:
@@ -801,7 +839,10 @@ class SerialMotorsBus(MotorsBusBase):
         pass
 
     def record_ranges_of_motion(
-        self, motors: NameOrID | Sequence[NameOrID] | None = None, display_values: bool = True
+        self,
+        motors: NameOrID | Sequence[NameOrID] | None = None,
+        display_values: bool = True,
+        unwrap: Sequence[str] = (),
     ) -> tuple[dict[str, Value], dict[str, Value]]:
         """Interactively record the min/max encoder values of each motor.
 
@@ -812,6 +853,9 @@ class SerialMotorsBus(MotorsBusBase):
             motors (NameOrID | list[NameOrID] | None, optional): Motors to record.
                 Defaults to every motor (`None`).
             display_values (bool, optional): When `True` (default) a live table is printed to the console.
+            unwrap (Sequence[str], optional): Motors followed across the encoder seam. Their extremes
+                are unwrapped positions relative to the first reading and can fall outside the
+                encoder's range; see `center_homing_on_travel`.
 
         Returns:
             tuple[dict[str, Value], dict[str, Value]]: Two dictionaries *mins* and *maxes* with the
@@ -822,12 +866,19 @@ class SerialMotorsBus(MotorsBusBase):
         start_positions = self.sync_read("Present_Position", motor_names, normalize=False, num_retry=5)
         mins = start_positions.copy()
         maxes = start_positions.copy()
+        last_raw = start_positions.copy()
+        unwrapped = {motor: start_positions[motor] for motor in unwrap}
 
         user_pressed_enter = False
         while not user_pressed_enter:
             positions = self.sync_read("Present_Position", motor_names, normalize=False, num_retry=5)
-            mins = {motor: min(positions[motor], min_) for motor, min_ in mins.items()}
-            maxes = {motor: max(positions[motor], max_) for motor, max_ in maxes.items()}
+            for motor in unwrap:
+                res = self.model_resolution_table[self._get_motor_model(motor)]
+                unwrapped[motor] += unwrap_step(last_raw[motor], positions[motor], res)
+            last_raw = positions
+            tracked = {**positions, **unwrapped}
+            mins = {motor: min(tracked[motor], min_) for motor, min_ in mins.items()}
+            maxes = {motor: max(tracked[motor], max_) for motor, max_ in maxes.items()}
 
             if display_values:
                 print("\n-------------------------------------------")

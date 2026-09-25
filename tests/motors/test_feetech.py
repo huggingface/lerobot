@@ -537,3 +537,21 @@ def test_record_ranges_of_motion(mock_motors, dummy_motors):
     mock_sleep.assert_called_once_with(0.02)
     assert mins == expected_mins
     assert maxes == expected_maxes
+
+
+def test_record_ranges_of_motion_follows_an_unwrapped_motor_across_the_seam(mock_motors, dummy_motors):
+    positions = {1: [4000, 50, 3900], 2: [28, 3600, 2444], 3: [4002, 2999, 146]}
+    mock_motors.build_sequential_sync_read_stub(*STS_SMS_SERIES_CONTROL_TABLE["Present_Position"], positions)
+    bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
+    bus.connect(handshake=False)
+
+    with (
+        patch("lerobot.motors.motors_bus.enter_pressed", side_effect=[False, True]),
+        patch("lerobot.motors.motors_bus.time.sleep"),
+    ):
+        mins, maxes = bus.record_ranges_of_motion(display_values=False, unwrap=["dummy_1"])
+
+    # 4000 -> 50 is +146 across the seam, 50 -> 3900 is -246 back: the joint never went near 0.
+    assert (mins["dummy_1"], maxes["dummy_1"]) == (3900, 4146)
+    # Motors not named keep the plain extremes.
+    assert (mins["dummy_3"], maxes["dummy_3"]) == (146, 4002)
