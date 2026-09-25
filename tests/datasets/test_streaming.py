@@ -24,6 +24,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 import lerobot.datasets.streaming_dataset as streaming_dataset_module
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+from lerobot.datasets.io_utils import write_episodes
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.datasets.utils import safe_shard
 from lerobot.utils.constants import ACTION
@@ -300,6 +301,68 @@ def test_iter_raises_on_nested_generator_error(tmp_path, lerobot_dataset_factory
 
     with pytest.raises(RuntimeError, match="generator raised StopIteration"):
         next(iter(streaming_ds))
+
+
+@pytest.mark.parametrize("delta_mode", ["none", "action", "cameras"])
+def test_make_frame_uses_timestamps_relative_to_each_video_file(
+    tmp_path, lerobot_dataset_factory, monkeypatch, delta_mode
+):
+    """Iterate real rows with camera-specific offsets, including a padded video query."""
+    local_path = tmp_path / "dataset"
+    dataset = lerobot_dataset_factory(
+        root=local_path,
+        total_episodes=1,
+        total_frames=5,
+        download_videos=False,
+    )
+    offsets = {"laptop": 5.0, "phone": 1.0}
+    delta_timestamps = None
+    if delta_mode == "action":
+        delta_timestamps = {ACTION: [0, 1 / dataset.fps]}
+    elif delta_mode == "cameras":
+        delta_timestamps = {key: [-1 / dataset.fps, 0] for key in offsets}
+
+    # Model an episode beginning at different positions within its camera files.
+    episodes = dataset.meta.episodes.map(
+        lambda episode: {
+            f"videos/{key}/{boundary}_timestamp": episode[f"videos/{key}/{boundary}_timestamp"] + offset
+            for key, offset in offsets.items()
+            for boundary in ("from", "to")
+        }
+    )
+
+    write_episodes(episodes, local_path)
+    streaming_ds = StreamingLeRobotDataset(
+        repo_id=DUMMY_REPO_ID,
+        root=local_path,
+        buffer_size=1,
+        shuffle=False,
+        delta_timestamps=delta_timestamps,
+    )
+
+    def decode_timestamps(video_path, timestamps, tolerance_s, **kwargs):
+        # Encode requested timestamps into the images so assertions follow the
+        # returned samples, independent of the iterator's shuffle order.
+        return torch.tensor(timestamps).reshape(-1, 1, 1, 1).expand(-1, 3, 64, 96)
+
+    monkeypatch.setattr(streaming_dataset_module, "decode_video_frames_torchcodec", decode_timestamps)
+    samples = list(streaming_ds)
+
+    assert len(samples) == 5
+    assert {int(sample["frame_index"]) for sample in samples} == set(range(5))
+    for sample in samples:
+        frame_index = int(sample["frame_index"])
+        for key, offset in offsets.items():
+            current_timestamp = offset + frame_index / dataset.fps
+            if delta_mode == "cameras":
+                expected = [max(offset, current_timestamp - 1 / dataset.fps), current_timestamp]
+                assert sample[key][:, 0, 0, 0].tolist() == pytest.approx(expected)
+                # This checks the original, pre-clamp timestamps through the real
+                # padding logic: the first query precedes the episode only at frame 0.
+                assert sample[f"{key}_is_pad"].tolist() == [frame_index == 0, False]
+            else:
+                assert sample[key][0, 0, 0].item() == pytest.approx(current_timestamp)
+                assert f"{key}_is_pad" not in sample
 
 
 @pytest.mark.parametrize(
