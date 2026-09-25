@@ -183,6 +183,10 @@ class EO1Config(PreTrainedConfig):
     @property
     def vlm_backbone_config(self) -> Qwen2_5_VLConfig:
         require_package("transformers", extra="eo1")
+        if self.vlm_config is None:
+            raise ValueError(
+                "`vlm_config` is populated from `vlm_base` in `__post_init__`; it cannot be None."
+            )
         config_dict = deepcopy(self.vlm_config)
         if self.attn_implementation is not None:
             config_dict["attn_implementation"] = self.attn_implementation
@@ -198,6 +202,10 @@ class EO1Config(PreTrainedConfig):
 
     def validate_features(self) -> None:
         """Validate and set up EO1 input and output features."""
+        if self.input_features is None or self.output_features is None:
+            raise ValueError(
+                "`input_features` and `output_features` must be resolved before `validate_features()` is called."
+            )
         image_features = [key for key, feat in self.input_features.items() if feat.type == FeatureType.VISUAL]
         if not image_features:
             raise ValueError(

@@ -176,6 +176,7 @@ class RobometerRewardModel(PreTrainedRewardModel):
     safetensors load unchanged.
     """
 
+    config: RobometerConfig
     name = "robometer"
     config_class = RobometerConfig
 

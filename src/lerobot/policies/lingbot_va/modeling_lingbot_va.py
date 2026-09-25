@@ -145,7 +145,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         return self._frozen["streaming_vae"]
 
     # PreTrainedPolicy API
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> list[torch.nn.Parameter]:
         # Only the transformer is trainable; the VAE / text encoder stay frozen (kept outside the
         # nn.Module registry). With PEFT/LoRA this naturally returns just the adapter params.
         return [p for p in self.transformer.parameters() if p.requires_grad]
