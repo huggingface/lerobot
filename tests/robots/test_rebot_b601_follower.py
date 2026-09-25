@@ -303,7 +303,7 @@ def test_connect_rejects_unknown_can_adapter():
         ),
     ],
 )
-def test_missing_mode_tuning_fails_before_enabling_torque(family, config_kwargs, message):
+def test_missing_mode_tuning_fails_before_opening_hardware(family, config_kwargs, message):
     bus = _make_bus_mock()
     with (
         patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
@@ -323,7 +323,19 @@ def test_missing_mode_tuning_fails_before_enabling_torque(family, config_kwargs,
         with pytest.raises(ValueError, match=message):
             robot.connect(calibrate=False)
 
+    controller_cls.from_dm_serial.assert_not_called()
+    controller_cls.assert_not_called()
     bus.enable_all.assert_not_called()
+
+
+def test_configure_validates_control_settings_independently():
+    robot = _build(MotorFamily.RS, control_mode="pos_vel")
+    robot.bus = MagicMock()
+
+    with pytest.raises(ValueError, match="POS_VEL requires pos_vel_velocity"):
+        robot.configure()
+
+    robot.bus.disable_all.assert_not_called()
 
 
 @pytest.mark.parametrize(

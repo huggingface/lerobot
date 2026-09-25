@@ -117,8 +117,27 @@ class RebotB601Follower(Robot):
     def is_connected(self) -> bool:
         return self.bus is not None and all(cam.is_connected for cam in self.cameras.values())
 
+    def _validate_control_config(self) -> None:
+        if self.config.control_mode is ArmControlMode.POS_VEL:
+            missing = [
+                motor_name
+                for motor_name in self.motor_names
+                if motor_name != GRIPPER_MOTOR and motor_name not in self._pos_vel_velocity
+            ]
+            if missing:
+                raise ValueError(f"POS_VEL requires pos_vel_velocity for: {', '.join(missing)}.")
+
+        if self.config.gripper_control_mode is GripperControlMode.FORCE_POS:
+            if GRIPPER_MOTOR not in self._pos_vel_velocity or self.config.gripper_torque_ratio is None:
+                raise ValueError("FORCE_POS requires gripper velocity and torque ratio settings.")
+        elif self.config.gripper_control_mode is GripperControlMode.MIT_IMPEDANCE and (
+            self.config.gripper_torque_limit is None or self.config.gripper_hold_torque_limit is None
+        ):
+            raise ValueError("MIT impedance requires moving and holding gripper torque limits.")
+
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        self._validate_control_config()
         logger.info(
             f"Connecting {self} on {self.config.port} "
             f"(family={self.config.motor_family.value}, adapter={self.config.can_adapter})..."
@@ -205,23 +224,7 @@ class RebotB601Follower(Robot):
         """Set each motor's control mode before enabling torque."""
         if self.bus is None:
             raise DeviceNotConnectedError(f"{self} motor bus is not initialized")
-        if self.config.control_mode is ArmControlMode.POS_VEL:
-            missing = [
-                motor_name
-                for motor_name in self.motor_names
-                if motor_name != GRIPPER_MOTOR and motor_name not in self._pos_vel_velocity
-            ]
-            if missing:
-                raise ValueError(f"POS_VEL requires pos_vel_velocity for: {', '.join(missing)}.")
-
-        if self.config.gripper_control_mode is GripperControlMode.FORCE_POS:
-            if GRIPPER_MOTOR not in self._pos_vel_velocity or self.config.gripper_torque_ratio is None:
-                raise ValueError("FORCE_POS requires gripper velocity and torque ratio settings.")
-        elif self.config.gripper_control_mode is GripperControlMode.MIT_IMPEDANCE and (
-            self.config.gripper_torque_limit is None or self.config.gripper_hold_torque_limit is None
-        ):
-            raise ValueError("MIT impedance requires moving and holding gripper torque limits.")
-
+        self._validate_control_config()
         self.bus.disable_all()
         for motor_name, motor in self.motors.items():
             if motor_name == GRIPPER_MOTOR:
