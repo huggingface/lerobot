@@ -1,4 +1,4 @@
-# 處理器簡介（introduction to processors）
+# 處理器簡介（introduction to processors）[[introduction-to-processors]]
 
 在機器人學中，機器人和人類產生的資料與機器學習模型（machine learning models）所期望的輸入之間存在根本性的落差。
 機器人輸出的是原始感測器資料（raw sensor data），如攝影機影像（camera images）和關節位置（joint positions），這些資料在模型（model）處理之前需要進行正規化（normalization）、批次處理（batching）和裝置配置（device placement）。
@@ -38,7 +38,7 @@ action = model.select_action(preprocessed_sample)
 postprocessed_action = postprocessor(action)
 ```
 
-## 什麼是處理器？（what are processors?）
+## 什麼是處理器？（what are processors?）[[what-are-processors]]
 
 在機器人學中，資料有許多形式：來自攝影機的影像（images）、來自感測器的關節位置（joint positions）、來自使用者的文字指令（text instructions）等等。每種類型（type）的資料在模型（model）能有效使用之前都需要特定的轉換（transformations）。模型需要這些資料（data）經過：
 
@@ -50,9 +50,9 @@ postprocessed_action = postprocessor(action)
 
 處理器（processors）透過可組合（composable）、可重複使用（reusable）的步驟（steps）來處理這些轉換（transformations），這些步驟可以串聯成管線（pipeline）。可以把它們想像成一條模組化的裝配線（modular assembly line），每個工站（station）對你的資料執行特定的轉換。
 
-## 核心概念（core concepts）
+## 核心概念（core concepts）[[core-concepts]]
 
-### EnvTransition：通用資料容器（the universal data container）
+### EnvTransition：通用資料容器（the universal data container）[[envtransition-the-universal-data-container]]
 
 `EnvTransition` 是流經所有處理器（processors）的基本資料結構（fundamental data structure）。
 它是一個帶型別的字典（typed dictionary），代表一次完整的機器人-環境互動（robot-environment interaction）：
@@ -64,7 +64,11 @@ postprocessed_action = postprocessor(action)
 - **INFO**：任意的元資料（arbitrary metadata）
 - **COMPLEMENTARY_DATA**：任務描述（task description）、索引（indices）、填充旗標（padding flag）、步驟間資料（inter-step data）
 
-### ProcessorStep：基本構件（building block）
+批次轉換器（batch converters）會將 `index`、`episode_index` 和 `frame_index` 等索引中介資料（indexing metadata）保留在 `COMPLEMENTARY_DATA` 中。
+在 `batch_to_transition` / `transition_to_batch` 往返過程中，`frame_index` 會保留其原始純量（scalar）或張量（tensor）值。
+如果輸入省略了 `frame_index`，轉換器不會加入它。
+
+### ProcessorStep：基本構件（building block）[[processorstep-the-building-block]]
 
 `ProcessorStep` 是處理轉換（processes transitions）的單一轉換單元（transformation unit）。它是一個抽象基底類（abstract base class），包含兩個必要方法（methods）：
 
@@ -88,7 +92,7 @@ class MyProcessorStep(ProcessorStep):
 
 `transform_features` 用於宣告此步驟（step）如何轉換（transform）特徵（feature）的 shapes/types。
 
-### DataProcessorPipeline：泛用協調器（generic orchestrator）
+### DataProcessorPipeline：泛用協調器（generic orchestrator）[[dataprocessorpipeline-the-generic-orchestrator]]
 
 `DataProcessorPipeline[TInput, TOutput]` 將多個 `ProcessorStep` 實例（instances）串聯在一起：
 
@@ -108,7 +112,7 @@ policy_processor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
 )
 ```
 
-## RobotProcessorPipeline vs PolicyProcessorPipeline
+## RobotProcessorPipeline vs PolicyProcessorPipeline[[robotprocessorpipeline-vs-policyprocessorpipeline]]
 
 關鍵差異在於它們處理的資料結構（data structures）：
 
@@ -150,7 +154,7 @@ policy_batch: dict[str, Any] = {
 policy_action: torch.Tensor = torch.tensor([[0.2, 0.1, 0.8]])  # 模型輸出張量
 ```
 
-## 轉換函式（converter functions）
+## 轉換函式（converter functions）[[converter-functions]]
 
 LeRobot 在 `lerobot.processor.converters` 中提供了轉換函式（converter functions）來橋接不同的資料格式（data formats）。這些函式處理機器人硬體資料結構（hardware data structures）、策略模型格式（policy model formats），以及流經處理器管線（processor pipelines）的內部 `EnvTransition` 表示之間的關鍵轉譯（crucial translations）。
 
@@ -168,7 +172,7 @@ LeRobot 在 `lerobot.processor.converters` 中提供了轉換函式（converter 
 
 關鍵要點在於**機器人硬體轉換器（robot hardware converters）**處理的是個別值（individual values）和字典（dictionary），而**策略/訓練轉換器（policy/training converters）**處理的是批次張量（batched tensors）和模型輸出（model outputs）。轉換函式（converter functions）會自動處理結構上的差異（structural differences），讓你的處理器步驟（processor steps）可以專注於核心轉換（transformations），而不用擔心資料格式的相容性問題（data format compatibility）。
 
-## 處理器範例（processor examples）
+## 處理器範例（processor examples）[[processor-examples]]
 
 以下範例展示了策略訓練（policy training）和推論（inference）的實際處理器配置（real-world processor configurations）。
 
@@ -197,7 +201,7 @@ training_postprocessor = PolicyProcessorPipeline[torch.Tensor, torch.Tensor](
 )
 ```
 
-### 機器人與策略之間透過處理器的互動（interaction between robot and policy with processors）
+### 機器人與策略之間透過處理器的互動（interaction between robot and policy with processors）[[an-interaction-between-a-robot-and-a-policy-with-processors]]
 
 最常見的實際場景（real-world scenario）會結合兩種管線類型（pipeline types）——機器人硬體產生的觀測（observations）需要策略處理（policy processing），而策略輸出（policy outputs）需要與機器人相容的後處理（robot-compatible postprocessing）：
 
@@ -220,11 +224,11 @@ with torch.no_grad():
         robot.send_action(policy_action)
 ```
 
-## 特徵契約：形狀與型別轉換（feature contracts: shape and type transformation）
+## 特徵契約：形狀與型別轉換（feature contracts: shape and type transformation）[[feature-contracts-shape-and-type-transformation]]
 
 處理器（processors）不只是轉換資料——它們還可以**改變資料結構本身（change the data structure itself）**。`transform_features()` 方法宣告了這些變更，這對資料集記錄（dataset recording）和策略建立（policy creation）至關重要。
 
-### 為什麼特徵契約很重要（why feature contracts matter）
+### 為什麼特徵契約很重要（why feature contracts matter）[[why-feature-contracts-matter]]
 
 在建立資料集（dataset）或策略（policy）時，LeRobot 需要知道：
 
@@ -253,7 +257,7 @@ class VelocityProcessor(ObservationProcessorStep):
         return features
 ```
 
-### 特徵規格函式（feature specification functions）
+### 特徵規格函式（feature specification functions）[[feature-specification-functions]]
 
 `create_initial_features()` 和 `aggregate_pipeline_dataset_features()` 解決了一個關鍵的資料集建立問題（dataset creation problem）：在任何資料被處理之前就確定最終的資料結構（final data structure）。
 由於處理器管線（processor pipelines）可以新增特徵（new features，如速度欄位 velocity fields）、改變張量形狀（tensor shapes，如裁剪影像 cropping images）或重新命名鍵名（rename keys），資料集（dataset）需要預先知道完整的輸出規格（complete output specification），以分配適當的儲存空間並定義 schemas。
@@ -283,11 +287,11 @@ dataset = LeRobotDataset.create(
 )
 ```
 
-## 常用處理器步驟（common processor steps）
+## 常用處理器步驟（common processor steps）[[common-processor-steps]]
 
 LeRobot 提供了許多已註冊的處理器步驟（registered processor steps）。以下是最常用的核心處理器（core processors）：
 
-### 基本處理器（basic processors）
+### 基本處理器（basic processors）[[essential-processors]]
 
 - **`normalizer_processor`**：使用資料集統計量（dataset statistics，均值/標準差或最小值/最大值）正規化（normalize）觀測（observation）/動作（action）
 - **`device_processor`**：將張量（tensors）移至 CPU/GPU，並可選擇性地進行資料型別轉換（dtype conversion）
@@ -295,13 +299,13 @@ LeRobot 提供了許多已註冊的處理器步驟（registered processor steps�
 - **`rename_observations_processor`**：使用映射字典（mapping dictionaries）重新命名觀測鍵名（observation keys）
 - **`tokenizer_processor`**：將自然語言任務描述（natural language task descriptions）tokenize 為 token 和注意力遮罩（attention masks）
 
-### 下一步
+### 下一步[[next-steps]]
 
 - **[實作你自己的處理器（implement your own processor）](./implement_your_own_processor)** - 建立自訂處理器步驟（processor steps）
 - **[除錯你的管線（debug your pipeline）](./debug_processor_pipeline)** - 疑難排解與最佳化管線（optimize pipelines）
 - **[機器人與遙操作器的處理器（processors for robots and teleoperators）](./processors_robots_teleop)** - 實際整合模式（real-world integration patterns）
 
-## 總結（summary）
+## 總結（summary）[[summary]]
 
 處理器（processors）透過以下方式解決了機器人學（robotics）中的資料轉譯問題（data translation problem）：
 

@@ -40,6 +40,45 @@ WALL-OSS 團隊致力於打造具身基礎模型（embodied foundation model）�
 policy.type=wall_x
 ```
 
+### 文字生成與互動控制（text generation and interactive control）[[text-generation-and-interactive-control]]
+
+WALL-OSS 透過[自帶策略](./bring_your_own_policies#text-capable-policies)中的策略契約（policy contract），
+提供原生的文字生成（text generation）功能。
+執行階段（runtime）會先提供 `query_kind` 與由呼叫端持有的 `text`，
+再執行 WALL-OSS 的一般輸入管線（input pipeline）：
+
+```python
+request = {
+    **observation,
+    "query_kind": "vqa",
+    "text": "Which object is closest to the right gripper?",
+}
+processed_batch = preprocessor(request)
+answer = policy.generate_text(processed_batch)
+```
+
+`vqa` 會將問題保留為使用者酬載（user payload）。`next_subtask` 會在 `${subtask}`
+之前套用檢查點的配方（recipe）。WALL-X 直接為其 Qwen 視覺語言專家（vision-language expert）覆寫公開的
+`generate_text(processed_batch)` API，
+並透過 `supports_text_generation()` 回報此能力。
+
+互動式語言執行環境（interactive language runtime）可以先生成子任務（subtask），
+再以該子任務為條件，讓 WALL-OSS 做動作預測：
+
+```bash
+lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=your-org/your-wall-oss-checkpoint \
+  --robot.type=your_robot_type \
+  --robot.port=/dev/your_robot_port \
+  --task="clear the table" \
+  --interactive=true
+```
+
+執行 `/start` 之後，使用 `/vqa <question>` 進行以影像為依據的 VQA（image-grounded VQA），
+或使用 `/autosteer <goal>` 進行由配方支援的下一個子任務生成。`/subtask <text>`
+會略過生成，直接將指令送往動作推論（action inference）。
+
 ## 訓練（training）
 
 若要訓練（training） WallX，您可以使用標準的 LeRobot 訓練腳本（training script）搭配適當的設定（configuration）：
@@ -59,6 +98,32 @@ lerobot-train \
     --batch_size=32
 ```
 
+### 使用語言標註訓練（train with language annotations）[[train-with-language-annotations]]
+
+WALL-X 使用其內建配方（built-in recipe），從 LeRobot 的選用語言欄位（optional language
+columns）進行訓練。只有在要取代該配方時才需設定 `recipe_path`：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your_org/your_language_annotated_dataset \
+  --policy.type=wall_x \
+  --policy.pretrained_name_or_path=x-square-robot/wall-oss-flow \
+  --policy.text_loss_weight=0.01 \
+  --policy.flow_loss_weight=1.0 \
+  --policy.device=cuda \
+  --batch_size=1 \
+  --steps=20000
+```
+
+目標助理回合（targeted assistant turns）會接收下一個 token 的交叉熵（next-token cross-entropy），而 `low_level`
+配方串流則接收連續的 flow 動作監督（continuous flow-action supervision）。一筆資料列可能接收
+其中一種目標（objective），或兩者皆有。使用者提示（user prompts）、影像、本體感覺（proprioception）、動作查詢
+token（action-query tokens）與填充（padding）都不計入文字損失（text loss）。設定 `policy.recipe=null` 即可
+使用 WALL-OSS 原本僅含動作的訓練路徑。
+
+標註結構描述（annotation schema）與可用的配方（recipes），
+請參閱[語言欄位與配方](./language_and_recipes)。
+
 ### 訓練引數（training arguments）
 
 | 參數（parameter）              | 描述（description）                                                                                                                                                                                            |
@@ -74,6 +139,10 @@ lerobot-train \
 | `--steps`                      | 要執行的訓練步數總計（total number of training steps to run）                                                                                                                                                  |
 | `--policy.device`              | 訓練裝置（device to train on，`cuda` 為 GPU，`cpu` 為 CPU）                                                                                                                                                    |
 | `--batch_size`                 | 每個訓練批次的樣本數量（number of samples per training batch）                                                                                                                                                 |
+
+語言訓練使用 `policy.text_loss_weight`（預設 `0.01`）、
+`policy.flow_loss_weight`（預設 `1.0`）與 `policy.tokenizer_max_length`
+（預設 `768`）。`policy.recipe_path` 可選擇性地取代內建配方（built-in recipe）。
 
 ## 授權條款
 

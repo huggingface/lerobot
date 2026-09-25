@@ -1,10 +1,10 @@
-# 新增基準測試（adding a new benchmark）
+# 新增基準測試（adding a new benchmark）[[adding-a-new-benchmark]]
 
 本指南將引導您為 LeRobot 新增一個模擬基準測試（simulation benchmark）。請依序遵循以下步驟，並以現有的基準測試作為模板（templates）。
 
 LeRobot 中的基準測試（benchmark）是一組 [Gymnasium](https://gymnasium.farama.org/) 環境，這些環境將第三方模擬器（third-party simulator，如 LIBERO 或 Meta-World）封裝在標準的 `gym.Env` 介面（interface）之後。`lerobot-eval` CLI 接著能以統一的方式在所有基準測試上執行評估（evaluation）。
 
-## 現有基準測試概覽（existing benchmarks at a glance）
+## 現有基準測試概覽（existing benchmarks at a glance）[[existing-benchmarks-at-a-glance]]
 
 在深入了解之前，以下是已整合的內容：
 
@@ -16,9 +16,9 @@ LeRobot 中的基準測試（benchmark）是一組 [Gymnasium](https://gymnasium
 
 請使用 `src/lerobot/envs/libero.py` 和 `src/lerobot/envs/metaworld.py` 作為參考實作（reference implementations）。
 
-## 整體架構如何運作（how it all fits together）
+## 整體架構如何運作（how it all fits together）[[how-it-all-fits-together]]
 
-### 資料流（data flow）
+### 資料流（data flow）[[data-flow]]
 
 在評估（evaluation）過程中，資料流經四個階段（stages）：
 
@@ -37,7 +37,7 @@ LeRobot 中的基準測試（benchmark）是一組 [Gymnasium](https://gymnasium
 
 大多數基準測試（benchmark）只需關注階段（stage） 1（以正確格式產生觀測值 observation values），以及可選的階段 3（如果需要環境專用的轉換 env-specific transforms）。
 
-### 環境結構（environment structure）
+### 環境結構（environment structure）[[environment-structure]]
 
 `make_env()` 回傳（returns）一個向量化環境（vectorized environments）的巢狀字典（nested dict）：
 
@@ -49,7 +49,7 @@ dict[str, dict[int, gym.vector.VectorEnv]]
 單任務環境（single-task env，如 PushT）看起來像 `{"pusht": {0: vec_env}}`。
 多任務基準測試（multi-task benchmark，如 LIBERO）看起來像 `{"libero_spatial": {0: vec0, 1: vec1, ...}, ...}`。
 
-### 評估如何執行（how evaluation runs）
+### 評估如何執行（how evaluation runs）[[how-evaluation-runs]]
 
 所有基準測試（benchmark）都由 `lerobot-eval` 以相同方式進行評估（evaluated）：
 
@@ -57,15 +57,15 @@ dict[str, dict[int, gym.vector.VectorEnv]]
 2. `eval_policy_all()` 迭代（iterates）每個套件（suite）和任務（task）。
 3. 對每個任務（task），透過 `rollout()` 執行 `n_episodes` 個 rollouts。
 4. 結果以階層方式彙整（aggregated hierarchically）：回合（episode）、任務（task）、套件（suite）、整體（overall）。
-5. 指標（metrics）包含 `pc_success`（成功率 success rate）、`avg_sum_reward` 和 `avg_max_reward`。
+5. 指標（metrics）包含 `pc_success`（成功率 success rate）、`avg_sum_reward` 和 `avg_max_reward`。每個成功率都會附上其計數（`n_success` / `n_episodes`）以及以百分比表示的 95% Wilson 區間（`pc_success_ci95`），並分別在任務（task）、套件（suite）與整體（overall）層級提供。該區間僅涵蓋回合之間的取樣雜訊（sampling noise over episodes）；對於相同配方（recipe）在不同訓練執行（training runs）之間的變異（variation）則不具任何說明。
 
 關鍵之處：您的環境（env）必須在每次 `step()` 呼叫時回傳（return） `info["is_success"]`。這是評估迴圈（eval loop）判斷任務（task）是否完成的方式。
 
-## 您的環境必須提供什麼（what your environment must provide）
+## 您的環境必須提供什麼（what your environment must provide）[[what-your-environment-must-provide]]
 
 LeRobot 不強制要求嚴格的觀測（observation）schema。相反地，它依賴一組所有基準測試（benchmark）都遵循的慣例（conventions）。
 
-### 環境的屬性（env attributes）
+### 環境的屬性（env attributes）[[env-attributes]]
 
 您的 `gym.Env` 必須設定以下屬性（attributes）：
 
@@ -75,7 +75,7 @@ LeRobot 不強制要求嚴格的觀測（observation）schema。相反地，它�
 | `task_description`   | `str`        | 作為語言指令（language instruction）傳遞給 VLA 策略（policy）     |
 | `task`               | `str`        | 當 `task_description` 未設定時的備用識別符（fallback identifier） |
 
-### 成功回報（success reporting）
+### 成功回報（success reporting）[[success-reporting]]
 
 您的 `step()` 和 `reset()` 必須在 `info` 字典（dict）中包含 `"is_success"`：
 
@@ -84,7 +84,7 @@ info = {"is_success": True}   # or False
 return observation, reward, terminated, truncated, info
 ```
 
-### 觀測（observations）
+### 觀測（observations）[[observations]]
 
 最簡單的方法是將您模擬器的輸出（simulator’s outputs）對應到 `preprocess_observation()` 已能理解的標準鍵值（standard keys）。在您的 `gym.Env` 中進行此操作（例如在 `_format_raw_obs()` 輔助函式中）：
 
@@ -101,18 +101,18 @@ return observation, reward, terminated, truncated, info
 1. **建議做法：** 在您的 `gym.Env` 封裝器（wrapper）中將它們重新命名為標準鍵值（standard keys）。
 2. **替代方案：** 撰寫一個環境處理器，在 `preprocess_observation()` 執行後轉換觀測值（參見下方步驟 4）。
 
-### 動作（actions）
+### 動作（actions）[[actions]]
 
 動作（action）是 `gym.spaces.Box` 中的連續 numpy 陣列（arrays）。維度（dimensionality）取決於您的基準測試（benchmark，LIBERO 為 7，Meta-World 為 4，等等）。策略（policy）透過其 `input_features` / `output_features` 設定來適應（adapt）不同的動作維度（action dimensions）。
 
-### 特徵宣告（feature declarations）
+### 特徵宣告（feature declarations）[[feature-declaration]]
 
 每個 `EnvConfig` 子類（subclass）宣告兩個字典（dicts），告訴策略（policy）預期的內容：
 
 - `features` — 將特徵名稱（feature names）對應到 `PolicyFeature(type, shape)`（例如動作維度 action dim、影像形狀 image shape）。
 - `features_map` — 將原始觀測值鍵值（raw observation keys）對應到 LeRobot 慣例鍵值（convention keys，例如 `"agent_pos"` 對應到 `"observation.state"`）。
 
-## 逐步指南（step by step）
+## 逐步指南（step by step）[[step-by-step]]
 
 <Tip>
   最少您需要兩個檔案：一個 **gym.Env 封裝器（wrapper）** 和一個帶有
@@ -120,7 +120,7 @@ return observation, reward, terminated, truncated, info
   子類（subclass）**。其他一切都是可選的或屬於文件。不需要修改 `factory.py`。
 </Tip>
 
-### 檢查清單（checklist）
+### 檢查清單（checklist）[[checklist]]
 
 | 檔案                                     | 必要 | 原因                                                                  |
 | ---------------------------------------- | ---- | --------------------------------------------------------------------- |
@@ -132,7 +132,7 @@ return observation, reward, terminated, truncated, info
 | `docs/source/<benchmark>.mdx`            | 是   | 面向使用者的文件頁面（user-facing documentation page）                |
 | `docs/source/_toctree.yml`               | 是   | 將您的頁面加入文件側邊欄（docs sidebar）                              |
 
-### 1. gym.Env 封裝器（wrapper, `src/lerobot/envs/<benchmark>.py`）
+### 1. gym.Env 封裝器（wrapper, `src/lerobot/envs/<benchmark>.py`）[[1-the-gymenv-wrapper-srclerobotenvsbenchmarkpy]]
 
 建立一個封裝（wraps）第三方模擬器（third-party simulator）的 `gym.Env` 子類（subclass）：
 
@@ -178,7 +178,7 @@ def create_mybenchmark_envs(
 
 請參見 `create_libero_envs()`（多套件 multi-suite、多任務 multi-task）和 `create_metaworld_envs()`（按難度分組的任務 difficulty-grouped tasks）作為參考。
 
-### 2. 設定 config（`src/lerobot/envs/configs.py`）
+### 2. 設定 config（`src/lerobot/envs/configs.py`）[[2-the-config-srclerobotenvsconfigspy]]
 
 註冊（register）一個設定（config）dataclass，讓使用者可以用 `--env.type=<name>` 選擇您的基準測試（benchmark）。每個設定透過兩個方法擁有其環境建立（environment creation）和處理器邏輯（processor logic）：
 
@@ -231,7 +231,7 @@ class MyBenchmarkEnvConfig(EnvConfig):
 - `features_map` 將原始觀測值（raw observation values）鍵值對應到 LeRobot 慣例鍵值（convention keys）。
 - **不需要修改 `factory.py`** — 工廠會自動委派給 `cfg.create_envs()` 和 `cfg.get_env_processors()`。
 
-### 3. 可選：環境處理器 env processor（`src/lerobot/processor/env_processor.py`）
+### 3. 可選：環境處理器 env processor（`src/lerobot/processor/env_processor.py`）[[3-env-processor-optional-srclerobotprocessorenvprocessorpy]]
 
 僅在您的基準測試（benchmark）需要 `preprocess_observation()` 無法處理的觀測轉換（observation transforms）時才需要（例如影像翻轉 image flipping、座標轉換 coordinate conversion）。在此處定義處理器步驟（processor step），並在您的設定（config）中從 `get_env_processors()` 回傳（return）它（參見步驟 2）：
 
@@ -253,7 +253,7 @@ class MyBenchmarkProcessorStep(ObservationProcessorStep):
 
 完整範例請參見 `LiberoProcessorStep`（影像旋轉 image rotation、四元數轉軸角轉換 quaternion-to-axis-angle conversion）。
 
-### 4. 相依套件（dependencies, `pyproject.toml`）
+### 4. 相依套件（dependencies, `pyproject.toml`）[[4-dependencies-pyprojecttoml]]
 
 新增一個可選相依群組（optional-dependency group）：
 
@@ -274,11 +274,11 @@ mybenchmark = ["my-benchmark-pkg==1.2.3", "lerobot[scipy-dep]"]
 pip install -e ".[mybenchmark]"
 ```
 
-### 5. 文件（`docs/source/<benchmark>.mdx`）
+### 5. 文件（`docs/source/<benchmark>.mdx`）[[5-documentation-docssourcebenchmarkmdx]]
 
 按照下一節的模板（template）撰寫面向使用者的頁面（user-facing page）。完整範例請參見 `docs/source/libero.mdx` 和 `docs/source/metaworld.mdx`。
 
-### 6. 目錄（`docs/source/_toctree.yml`）
+### 6. 目錄（`docs/source/_toctree.yml`）[[6-table-of-contents-docssourcetoctreeyml]]
 
 將您的基準測試（benchmark）加入「Benchmarks」區段（section）：
 
@@ -295,7 +295,7 @@ pip install -e ".[mybenchmark]"
   title: "Benchmarks"
 ```
 
-## 驗證您的整合（verifying your integration）
+## 驗證您的整合（verifying your integration）[[verifying-your-integration]]
 
 完成上述步驟後，確認一切正常運作：
 
@@ -304,7 +304,7 @@ pip install -e ".[mybenchmark]"
 3. **執行完整評估（run a full eval）** — `lerobot-eval --env.type=<name> --env.task=<task> --eval.n_episodes=1 --policy.path=<any_compatible_policy>` 以端對端（end-to-end）方式測試完整管線（full pipeline）。（`batch_size` 預設會根據 CPU 核心數自動調整；傳入 `--eval.batch_size=1` 可強制使用單一環境 environment。）
 4. **檢查成功偵測（check success detection）** — 驗證當任務（task）實際完成時 `info["is_success"]` 會變為 `True`。這是評估迴圈（eval loop）用來計算成功率（success rates）的依據。
 
-## 撰寫基準測試文件頁面（writing a benchmark doc page）
+## 撰寫基準測試文件頁面（writing a benchmark doc page）[[writing-a-benchmark-doc-page]]
 
 每個基準測試（benchmark）的 `.mdx` 頁面應包含：
 

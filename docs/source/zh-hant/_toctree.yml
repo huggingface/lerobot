@@ -27,18 +27,18 @@
     title: 使用 PEFT 訓練（例如 LoRA）
   - local: rename_map
     title: 使用重新命名映射表與空攝影機（Using Rename Map and Empty Cameras）
-  title: "教學（Tutorials）"
+  title: 教學（Tutorials）
 - sections:
   - local: hardware_guide
     title: 運算硬體指南（Compute Hardware Guide）
   - local: torch_accelerators
     title: PyTorch accelerators
-  title: "運算與硬體（Compute & Hardware）"
+  title: 運算與硬體（Compute & Hardware）
 - sections:
   - local: lerobot-dataset-v3
     title: 使用 LeRobotDataset
   - local: porting_datasets_v3
-    title: 移轉大型資料集（Porting Large Datasets）
+    title: 移植大型資料集（Porting Large Datasets）
   - local: using_dataset_tools
     title: 使用資料集工具
   - local: language_and_recipes
@@ -51,7 +51,7 @@
     title: 影片編碼參數（Video encoding parameters）
   - local: streaming_video_encoding
     title: 串流影片編碼（Streaming Video Encoding）
-  title: "資料集（Datasets）"
+  title: 資料集（Datasets）
 - sections:
   - local: act
     title: ACT
@@ -67,6 +67,8 @@
     title: MolmoAct2
   - local: vla_jepa
     title: VLA-JEPA
+  - local: lawam
+    title: LaWAM
   - local: eo1
     title: EO-1
   - local: lingbot_va
@@ -83,7 +85,7 @@
     title: 多任務 DiT 策略（Multitask DiT Policy）
   - local: walloss
     title: WALL-OSS
-  title: "策略（Policies）"
+  title: 策略（Policies）
 - sections:
   - local: sarm
     title: SARM
@@ -91,7 +93,7 @@
     title: ROBOMETER
   - local: topreward
     title: TOPReward
-  title: "獎勵模型（Reward Models）"
+  title: 獎勵模型（Reward Models）
 - sections:
   - local: inference
     title: 策略部署（Policy Deployment, lerobot-rollout）
@@ -99,13 +101,13 @@
     title: 使用非同步推論（Async Inference）
   - local: rtc
     title: 即時分塊（Real-Time Chunking, RTC）
-  title: "推論（Inference）"
+  title: 推論（Inference）
 - sections:
   - local: envhub
     title: 來自 Hub 的環境（Environments from the Hub）
   - local: envhub_leisaac
     title: 在模擬中控制與訓練機器人（LeIsaac）
-  title: "模擬（Simulation）"
+  title: 模擬（Simulation）
 - sections:
   - local: adding_benchmarks
     title: 新增基準測試（Adding a New Benchmark）
@@ -127,7 +129,7 @@
     title: NVIDIA IsaacLab Arena Environments
   - local: vlabench
     title: VLABench
-  title: "基準測試（Benchmarks）"
+  title: 基準測試（Benchmarks）
 - sections:
   - local: introduction_processors
     title: 處理器簡介（introduction to processors）
@@ -141,7 +143,7 @@
     title: 環境處理器（Environment Processors）
   - local: action_representations
     title: 動作表示法（Action Representations）
-  title: "機器人處理器（Robot Processors）"
+  title: 機器人處理器（Robot Processors）
 - sections:
   - local: so101
     title: SO-101
@@ -165,17 +167,21 @@
     title: OpenArm
   - local: rebot_b601
     title: reBot B601-DM
-  title: "機器人（Robots）"
+  - local: third_party_robots
+    title: 第三方機器人與遙操作器
+  title: 機器人（Robots）
 - sections:
   - local: phone_teleop
     title: 手機（Phone）
   - local: isaac_teleop
     title: Isaac Teleop
-  title: "遙操作器（Teleoperators）"
+  title: 遙操作器（Teleoperators）
 - sections:
   - local: cameras
     title: 攝影機（Cameras）
-  title: "感測器（Sensors）"
+  - local: third_party_sensors
+    title: 第三方相機與感測器
+  title: 感測器（Sensors）
 - sections:
   - local: notebooks
     title: Notebooks
@@ -183,10 +189,32 @@
     title: 更新 Feetech 韌體
   - local: damiao
     title: Damiao 馬達與 CAN 匯流排
-  title: "資源（Resources）"
+  title: 資源（Resources）
 - sections:
   - local: contributing
     title: 貢獻至 LeRobot
+  - local: writing_docstrings
+    title: 撰寫 docstring（Writing docstrings）
   - local: backwardcomp
     title: 向下相容性（Backward compatibility）
-  title: "關於（About）"
+  title: 關於（About）
+- sections:
+  - local: api/robots
+    title: 機器人（Robots）
+  - local: api/teleoperators
+    title: 遙操作器（Teleoperators）
+  - local: api/cameras
+    title: 相機（Cameras）
+  - local: api/motors
+    title: 馬達（Motors）
+  - local: api/datasets
+    title: 資料集（Datasets）
+  - local: api/policies
+    title: 策略（Policies）
+  - local: api/processor
+    title: 處理器（Processors）
+  - local: api/envs
+    title: 環境（Environments）
+  - local: api/configs
+    title: 設定（Configuration）
+  title: API 參考

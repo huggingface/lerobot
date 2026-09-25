@@ -1,4 +1,4 @@
-# 攝影機（cameras）
+# 攝影機（cameras）[[cameras]]
 
 LeRobot 提供多種視訊擷取選項（video capture）：
 
@@ -12,7 +12,7 @@ LeRobot 提供多種視訊擷取選項（video capture）：
 > [!TIP]
 > 關於 `OpenCVCamera` 的相容性細節，請參閱 [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html)。
 
-### 找到您的攝影機（find your camera）
+### 找到您的攝影機（find your camera）[[find-your-camera]]
 
 每個攝影機（camera）都需要一個唯一識別碼（unique identifier）才能建立實例（instantiated），讓您能夠區分多個已連接的裝置（connected devices）。
 
@@ -45,9 +45,9 @@ Camera #0:
 
 `ZMQCamera` 和 `Reachy2Camera` 不支援自動探索（auto-discovery）。它們必須手動設定，提供其網路位址與連接埠（network address and port）或機器人 SDK 設定。
 
-## 使用攝影機（use cameras）
+## 使用攝影機（use cameras）[[use-cameras]]
 
-### 影格存取模式（frame access modes）
+### 影格存取模式（frame access modes）[[frame-access-modes]]
 
 所有攝影機類別都實作了三種擷取影格的存取模式（access modes for capturing frames）：
 
@@ -57,7 +57,7 @@ Camera #0:
 | `async_read(timeout_ms)`  | 從背景執行緒（background thread）回傳（returns）最新尚未取用的影格（latest unconsumed frame）。僅在緩衝區為空時才阻塞（blocks only if buffer is empty），最多阻塞 `timeout_ms`。若沒有影格（frame）到達則拋出 `TimeoutError`。 | 有逾時限制（with a timeout） | 與攝影機 FPS 同步的控制迴圈（control loops synchronized to camera FPS） |
 | `read_latest(max_age_ms)` | 窺看（peeks）緩衝區中最新的影格（most recent frame in buffer，可能已過時）。若影格（frame）比 `max_age_ms` 更舊則拋出 `TimeoutError`。                                                                                         | 否                           | UI 視覺化（visualization）、記錄（logging）、監控（monitoring）         |
 
-### 使用範例（usage examples）
+### 使用範例（usage examples）[[usage-examples]]
 
 以下範例示範如何使用攝影機 API（camera API），針對不同攝影機類型（camera types）進行設定（configure）與擷取影格（capture frames）。
 
@@ -136,6 +136,10 @@ config = RealSenseCameraConfig(
     height=480,
     color_mode=ColorMode.RGB,
     use_depth=True,
+    # 選用的固定色彩控制項。若省略，將維持目前感測器設定不變。
+    exposure=120,
+    gain=64,
+    white_balance=4600,
     rotation=Cv2Rotation.NO_ROTATION
 )
 
@@ -154,18 +158,22 @@ finally:
 ```
 <!-- prettier-ignore-end -->
 
+手動色彩控制會停用對應的自動曝光或白平衡模式。其支援範圍因攝影機型號而異；無效的值會在連線時引發錯誤，錯誤內容會包含感測器回報的範圍。要求不支援的控制項也會引發錯誤。省略的控制項會讓感測器現有的自動或手動設定維持不變。這些選項需要 `use_rgb=True`。
+
+手動色彩控制需要專用的 RGB 模組。沒有此模組的攝影機（例如 RealSense D405）不支援這些控制，且會在連線時引發錯誤。
+
 </hfoption>
 </hfoptions>
 
-### 使用深度（working with depth）
+### 使用深度（working with depth）[[working-with-depth]]
 
 Intel RealSense 和 Reachy 2 攝影機（cameras）可以同步擷取彩色與深度（capture both color and depth in lockstep）。呼叫 `read()` 會回傳（returns）形狀為 `(H, W, 3)` 的 `uint8` **彩色**影格（color frame）。呼叫 `read_depth()` 會回傳（returns）形狀為 `(H, W, 1)` 的 `uint16` **深度圖（depth map）**，其中每個像素值（pixel value）代表距離感測器的距離（distance from the sensor），以**毫米（millimetres）**表示。像素值為 `0` 通常表示「無可用測量值（no measurement available）」（超出範圍 out-of-range、被遮蔽 occluded 或低信心度 low-confidence）。
 
 在錄製（recording）期間，控制迴圈（control loop）會透過 `read_latest()`（彩色 color）與 `read_latest_depth()`（深度 depth）非阻塞地（non-blockingly）窺看最新的緩衝影格（freshest buffered frames），並將深度圖（depth map）作為同層級的特徵（sibling feature）加入（例如 `front` 旁邊的 `front_depth`）。
 
-關於錄製資料集（record a dataset）時深度串流（depth streams）如何儲存與編碼（stored and encoded），請參閱視訊編碼指南的[深度串流（depth streams）](./video_encoding_parameters#%E6%B7%B1%E5%BA%A6%E4%B8%B2%E6%B5%81depth-streams)章節。
+關於錄製資料集（record a dataset）時深度串流（depth streams）如何儲存與編碼（stored and encoded），請參閱視訊編碼指南的[深度串流（depth streams）](./video_encoding_parameters#depth-streams)章節。
 
-## 使用您手機的攝影機
+## 使用您手機的攝影機[[use-your-phones-camera]]
 
 <hfoptions id="use phone">
 <hfoption id="iPhone & macOS">

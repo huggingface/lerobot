@@ -1,4 +1,4 @@
-# SO-101
+# SO-101[[so-101]]
 
 <div style="display: flex; align-items: center; gap: 10px;">
   <img
@@ -15,12 +15,12 @@
 
 在以下步驟中，我們將說明如何組裝我們的旗艦機器人 SO-101。
 
-## 採購零件（source the parts）
+## 採購零件（source the parts）[[source-the-parts]]
 
 請依照這份 [README](https://github.com/TheRobotStudio/SO-ARM100) 操作。它包含物料清單（bill of materials），並附有採購零件的連結，以及 3D 列印零件的說明。
 如果這是您第一次列印，或您沒有 3D 印表機，也會提供建議。
 
-## 安裝 LeRobot（install LeRobot） 🤗
+## 安裝 LeRobot（install LeRobot） 🤗[[install-lerobot]]
 
 若要安裝 LeRobot，請依照我們的[安裝指南（Installation Guide）](./installation)操作。
 
@@ -30,7 +30,7 @@
 pip install -e ".[feetech]"
 ```
 
-## 逐步組裝說明（step-by-step assembly instructions）
+## 逐步組裝說明（step-by-step assembly instructions）[[step-by-step-assembly-instructions]]
 
 從臂（follower arm）使用 6 個具 1/345 齒輪比的 STS3215 馬達（motors）。然而，主臂（leader）使用三種不同齒輪比的馬達，以確保它既能支撐自身重量，又能在不需太大力量的情況下被移動。哪個關節（joint）需要哪個馬達，如下表所示。
 
@@ -43,9 +43,9 @@ pip install -e ".[feetech]"
 | 腕部滾轉（wrist roll）                 |       5       |       1 / 147        |
 | 夾爪（gripper）                        |       6       |       1 / 147        |
 
-## 設定馬達（configure the motors）
+## 設定馬達（configure the motors）[[configure-the-motors]]
 
-### 1. 找出與每支手臂相關聯的 USB 連接埠（find the USB ports associated with each arm）
+### 1. 找出與每支手臂相關聯的 USB 連接埠（find the USB ports associated with each arm）[[1-find-the-usb-ports-associated-with-each-arm]]
 
 若要找出每個匯流排伺服轉接器（bus servo adapter）的連接埠（port），請透過 USB 與電源將 MotorBus 連接到您的電腦。執行以下腳本，並在出現提示（prompt）時中斷 MotorBus 的連接：
 
@@ -99,7 +99,7 @@ Reconnect the USB cable.
 </hfoption>
 </hfoptions>
 
-### 2. 設定馬達 id 與鮑率（set the motors ids and baudrates）
+### 2. 設定馬達 id 與鮑率（set the motors ids and baudrates）[[2-set-the-motors-ids-and-baudrates]]
 
 每個馬達在匯流排（bus）上都由一個唯一的 id 來識別（identified）。全新的馬達（motors）通常預設 id 為 `1`。為了讓馬達與控制器（controller）之間的通訊能正常運作，我們首先需要為每個馬達設定一個唯一且不同的 id。此外，資料在匯流排（bus）上傳輸的速度由鮑率（baudrate）決定。為了能互相通訊，控制器與所有馬達都需要設定（configured）為相同的鮑率。
 
@@ -109,7 +109,7 @@ Reconnect the USB cable.
 
 下方影片展示了設定馬達 id 的步驟順序（sequence of steps）。
 
-##### 設定馬達影片（motor setup video）
+##### 設定馬達影片（motor setup video）[[setup-motors-video]]
 
 <div class="video-container">
   <video controls width="600">
@@ -120,7 +120,7 @@ Reconnect the USB cable.
   </video>
 </div>
 
-#### 從臂（follower）
+#### 從臂（follower）[[follower]]
 
 將電腦的 USB 線與電源供應器連接到從臂的控制板（follower arm’s controller board）。然後，使用您在上一步取得的連接埠（port），執行以下命令或執行 API 範例。您還需要搭配 `id` 參數（parameter）為您的從臂（follower arm）命名。
 
@@ -196,7 +196,7 @@ Connect the controller board to the 'wrist_roll' motor only and press enter.
 
 完成後，腳本就會結束，此時馬達（motors）即可使用。您現在可以將每個馬達的 3-pin 線（3-pin cable）插到下一個馬達，並將第一個馬達（id=1 的 '肩部平移 shoulder pan'）的線連接到控制板（controller board），接著就可以將控制板固定到手臂的底座上。
 
-#### 主臂（leader）
+#### 主臂（leader）[[leader]]
 
 對主臂（leader arm）執行相同的步驟。
 
@@ -228,13 +228,13 @@ leader.setup_motors()
 </hfoption>
 </hfoptions>
 
-### 清理零件
+### 清理零件[[clean-parts]]
 
 移除 3D 列印零件上的所有支撐材料。最簡單的方法是使用小螺絲起子伸到支撐材料下方。
 
 建議在放好馬達（motor）後，先在馬達上安裝一條 3-pin 線（3-pin cable），再繼續組裝。
 
-### 關節 1（joint 1）
+### 關節 1（joint 1）[[joint-1]]
 
 - 安裝兩個馬達喇叭盤（motor horn）。以一顆 M3x6mm 螺絲固定上方的喇叭盤。下方的喇叭盤不需要螺絲。
 - 將第一個馬達放入底座（base）。
@@ -253,7 +253,7 @@ leader.setup_motors()
   </video>
 </div>
 
-### 關節 2（joint 2）
+### 關節 2（joint 2）[[joint-2]]
 
 - 安裝兩個馬達喇叭盤（motor horns）。以一顆 M3x6mm 螺絲固定上方的喇叭盤。下方的喇叭盤不需要螺絲。
 - 從上方滑入第二個馬達。
@@ -269,7 +269,7 @@ leader.setup_motors()
   </video>
 </div>
 
-### 關節 3（joint 3）
+### 關節 3（joint 3）[[joint-3]]
 
 - 安裝兩個馬達喇叭盤。以一顆 M3x6mm 螺絲固定上方的喇叭盤。下方的喇叭盤不需要螺絲。
 - 插入馬達 3 並以 4 顆 M2x6mm 螺絲固定。
@@ -284,7 +284,7 @@ leader.setup_motors()
   </video>
 </div>
 
-### 關節 4（joint 4）
+### 關節 4（joint 4）[[joint-4]]
 
 - 安裝兩個馬達喇叭盤（motor horns）。以一顆 M3x6mm 螺絲固定上方的喇叭盤。下方的喇叭盤不需要螺絲。
 - 滑上馬達固定座 4。
@@ -300,7 +300,7 @@ leader.setup_motors()
   </video>
 </div>
 
-### 關節 5（joint 5）
+### 關節 5（joint 5）[[joint-5]]
 
 - 將馬達 5 插入腕部固定座（wrist holder），並以 2 顆 M2x6mm 前方螺絲固定它。
 - 在腕部馬達（wrist motor）上只安裝一個馬達喇叭盤，並以一顆 M3x6mm 喇叭盤螺絲固定它。
@@ -315,7 +315,7 @@ leader.setup_motors()
   </video>
 </div>
 
-### 夾爪與握把（gripper / handle）
+### 夾爪與握把（gripper / handle）[[gripper-handle]]
 
 <hfoptions id="assembly">
 <hfoption id="Follower">
@@ -338,7 +338,7 @@ leader.setup_motors()
 <hfoption id="Leader">
 
 - 將主臂固定座（leader holder）裝到腕部（wrist），並以 4 顆 M3x6mm 螺絲固定它。
-- 以 1 顆 M2x6mm 螺絲將握把裝到馬達 5。
+- 使用 1 顆 M2x6mm 螺絲將握把裝到主臂固定座上。
 - 插入夾爪（gripper）馬達，以每側 2 顆 M2x6mm 螺絲固定它，並以一顆 M3x6mm 喇叭盤螺絲裝上一個馬達喇叭盤。
 - 以 4 顆 M3x6mm 螺絲裝上從臂扳機（follower trigger）。
 
@@ -354,12 +354,12 @@ leader.setup_motors()
 </hfoption>
 </hfoptions>
 
-## 校正（calibrate）
+## 校正（calibrate）[[calibrate]]
 
 接下來，您需要校正（calibrate）您的機器人，以確保主臂（leader arm）與從臂（follower arm）在相同的物理位置（physical position）時具有相同的位置值（position values）。
 校正過程（calibration process）非常重要，因為它能讓在某一台機器人上訓練（training）的神經網路（neural network），也能在另一台機器人上運作。
 
-#### 從臂（follower）
+#### 從臂（follower）[[calibrate-follower]]
 
 執行以下命令或 API 範例來校正從臂（calibrate the follower arm）：
 
@@ -397,7 +397,7 @@ follower.disconnect()
 
 下方影片展示了如何執行校正（calibration）。首先，您需要將機器人移動到所有關節（joints）都位於其活動範圍中間的位置（middle of their ranges）。接著在按下 enter 後，您必須讓每個關節走完其完整的活動範圍（through its full range of motion）。
 
-##### 校正影片（calibration video）
+##### 校正影片（calibration video）[[calibration-video]]
 
 <div class="video-container">
   <video controls width="600">
@@ -408,7 +408,7 @@ follower.disconnect()
   </video>
 </div>
 
-#### 主臂（leader）
+#### 主臂（leader）[[calibrate-leader]]
 
 執行相同的步驟來校正主臂（calibrate the leader arm），執行以下命令或 API 範例：
 

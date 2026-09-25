@@ -1,0 +1,21 @@
+# 馬達（Motors）[[motors]]
+
+`MotorsBus` 是串接在序列匯流排（serial bus）上一連串伺服馬達的低階介面（low-level interface）。機器人用它讀取位置並寫入目標位置；除非您要新增硬體，否則很少需要直接操作它。
+
+新增匯流排請參閱[自備硬體](../integrate_hardware)；特定裝置的說明請參閱[更新 Feetech 韌體](../feetech)與 [Damiao 馬達與 CAN 匯流排](../damiao)。
+
+## MotorsBus
+
+[[autodoc]] lerobot.motors.motors_bus.MotorsBus
+
+## Motor
+
+[[autodoc]] lerobot.motors.Motor
+
+## MotorCalibration
+
+[[autodoc]] lerobot.motors.MotorCalibration
+
+## MotorNormMode
+
+[[autodoc]] lerobot.motors.MotorNormMode

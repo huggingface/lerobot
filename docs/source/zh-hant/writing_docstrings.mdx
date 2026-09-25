@@ -1,0 +1,286 @@
+# 撰寫 docstring[[writing-docstrings]]
+
+LeRobot 的 API 參考文件是直接從 `src/lerobot/` 中的 docstring 產生的。docstring 不是
+註解（comment），而是該物件公開發布的文件；下方的格式正是渲染器（renderer）與
+CI 檢查所解析的格式。
+
+本頁就是這份約定（contract）。如果您要在 `src/lerobot/` 中新增或編輯任何公開的內容，請遵循它。
+
+> [!IMPORTANT]
+> **沒有文件的公開方法，就等於看不見的方法。** `[[autodoc]]` 會默默略過沒有
+> docstring 的成員（member）：沒有警告、沒有錯誤，它就是不會出現在渲染後的頁面上。覆蓋率（coverage）與
+> API 參考文件的完整性是同一個問題。
+
+## 一個範例看懂格式[[the-format-in-one-example]]
+
+採用 Google 的區段標題（section headers）與 Hugging Face 的型別格式（type formatting）。兩者並用，不是二選一。
+
+````python
+def send_action(self, action: RobotAction, rate_hz: float = 30.0) -> RobotAction:
+    """Command the robot to move to a target joint configuration.
+
+    Values are clipped by the configured maximum relative target before reaching the motors, so the
+    returned action may differ from the requested one.
+
+    Args:
+        action (`dict[str, float]`):
+            Target values keyed by motor name, e.g. `{"shoulder_pan.pos": 0.0}`. Keys must match the
+            robot's action features.
+        rate_hz (`float`, *optional*, defaults to `30.0`):
+            Control loop frequency.
+
+    Returns:
+        `dict[str, float]`: The action actually written to the motors after safety clipping.
+
+    Raises:
+        DeviceNotConnectedError: If the robot has not been connected.
+
+    Example:
+        ```python
+        >>> from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+        >>> robot = SO101Follower(SO101FollowerConfig(port="/dev/ttyACM0"))  # doctest: +SKIP
+        >>> robot.connect()  # doctest: +SKIP
+        >>> robot.send_action({"shoulder_pan.pos": 0.0})  # doctest: +SKIP
+        ```
+    """
+````
+
+本頁的範例都省略了交叉參照（cross-references）；其語法以及為何無法在程式碼區塊中展示，請參閱[交叉參照](#cross-references)。
+
+## 規則[[rules]]
+
+### 區段[[sections]]
+
+`Args:` · `Returns:` · `Raises:` · `Yields:` · `Example:` · `Note:`
+
+依照上述順序，不使用其他區段標題（section headers）。最前面是一行摘要（one-line summary），接著是選用的自由格式
+描述，最後才是各個區段。
+
+### `Args:` 這一行會被機器解析[[the-args-line-is-machine-parsed]]
+
+```
+name (`type`, *optional*, defaults to `X`):
+    Description, indented on its own line.
+```
+
+`make check-docstrings` 會**拿 `*optional*, defaults to` 子句與實際 signature 中的預設值比對**。
+它不是裝飾用的：如果您寫的預設值已經和程式碼不一致，CI 就會
+失敗。必填參數則完全省略這個子句：
+
+```python
+    Args:
+        port (`str`):
+            Serial port the arm is connected to, e.g. `/dev/ttyACM0`.
+        max_relative_target (`float | dict[str, float]`, *optional*):
+            Caps the magnitude of the relative positional target vector. `None` disables clipping.
+        use_degrees (`bool`, *optional*, defaults to `True`):
+            Keep `True` for backward compatibility with existing policies and datasets.
+```
+
+型別要放在反引號（backticks）中。當預設值是 `None`，或因其他原因不值得重述時，
+只寫 `*optional*`，不加 `defaults to`。
+
+### `Returns:` 以型別開頭[[returns-is-type-first]]
+
+一行縮排的內容：先寫型別，接著冒號，再接描述：
+
+```python
+    Returns:
+        `dict[str, float]`: The action actually written to the motors after safety clipping.
+```
+
+`Yields:` 採用相同的格式。
+
+### 使用 `**Attributes**:`，而非 `Attributes:`[[attributes-never-attributes]]
+
+doc-builder 會把單獨的 `Attributes:` 解析為 **`Parameters:` 的同義詞（synonym）**，因此您的屬性（attributes）會被渲染
+成建構子引數（constructor arguments）。這種錯誤不會有任何提示。只要屬性與建構子
+參數不同，就要使用粗體形式搭配 `--` 分隔符號：
+
+```python
+class Robot(abc.ABC):
+    """The base abstract class for all LeRobot-compatible robots.
+
+    **Attributes**:
+        - **config_class** (`type[RobotConfig]`) -- The expected configuration class for this robot.
+        - **name** (`str`) -- The unique robot name used to identify this robot type.
+    """
+```
+
+注意是 `--`，不是 `:`。
+
+### 交叉參照[[cross-references]]
+
+請使用 doc-builder 的方括號語法：以方括號包住、以反引號括起的路徑。**不支援 Sphinx 角色（`:pymeth:`、
+`:pyattr:`）**，它們在頁面上會以純文字呈現。
+
+| 想要的效果             | 寫法                                |
+| ---------------------- | ----------------------------------- |
+| 主套件中的類           | &#91;`Robot`&#93;                   |
+| 方法，顯示完整路徑     | &#91;`Robot.connect`&#93;           |
+| 方法，只顯示名稱       | &#91;`~Robot.connect`&#93;          |
+| 巢狀路徑               | &#91;`~robots.Robot.connect`&#93;   |
+| 其他 HF 函式庫中的物件 | &#91;`~accelerate.Accelerator`&#93; |
+
+`~` 只會從**連結文字**中移除路徑；連結本身仍會指向完整路徑。
+
+> [!NOTE]
+> doc-builder 會在頁面的任何地方解析這個語法，包括圍欄式程式碼區塊（fenced code blocks）內部。這就是為什麼
+> 本頁的 docstring 範例使用一般文字而非交叉參照：若程式碼區塊中含有交叉參照，
+> 會渲染出解析後的連結，而不是您需要輸入的語法。在您自己的 docstring 中，請盡量
+> 使用交叉參照；這項限制只影響「說明這個語法」的文件。
+
+### 提示框（Callouts）[[callouts]]
+
+使用 GitHub 風格的引用區塊（blockquotes）：
+
+```markdown
+> [!TIP]
+> Call this once at startup — it takes about two seconds.
+
+> [!WARNING]
+> Torque is disabled on disconnect. The arm will drop if it is holding a load.
+```
+
+依 doc-builder 的說法，`<Tip>` 元件已是舊式寫法（legacy）；請不要再新增。
+
+### 範例必須放在圍欄中[[examples-must-be-fenced]]
+
+範例要放在含有 `>>> ` 的圍欄式 ` ```python ` 區塊中。圍欄讓它能渲染
+成程式碼區塊，也是 doctest 前處理器的正規表示式（preprocessor’s regex）所尋找的目標：
+
+````python
+    Example:
+        ```python
+        >>> from lerobot.robots.so_follower import SO101FollowerConfig
+        >>> cfg = SO101FollowerConfig(port="/dev/ttyACM0")
+        >>> cfg.use_degrees
+        True
+        ```
+````
+
+> [!WARNING]
+> 沒有圍欄的 `>>>` 仍然會被收集，因為 doctest 會在 docstring 的任何地方尋找提示符號（prompts）。失去的是
+> 渲染效果，它會在頁面上變成一大段文字。每個範例都需要圍欄。
+
+每個範例要不是會在 CI 中執行，就是帶有 `# doctest: +SKIP`。任何會用到硬體、GPU，或
+會從 Hub 下載的範例，都要加上 `+SKIP`：
+
+````python
+    Example:
+        ```python
+        >>> robot.connect()  # doctest: +SKIP
+        >>> policy = ACTPolicy.from_pretrained("lerobot/act_aloha_sim_transfer_cube_human")  # doctest: +SKIP
+        ```
+````
+
+請將含有可執行範例的檔案加入 `utils/documentation_tests.txt`。
+
+請把範例放在模組中三到五個真正的進入點（entry points）上。瑣碎的存取（trivial accessors）的範例只是雜訊。
+
+## 經常會遇到的三種模式[[three-patterns-you-will-hit-constantly]]
+
+### 設定 dataclass[[config-dataclasses]]
+
+設定欄位（configuration fields）過去習慣以每個欄位上方的 `#` 註解說明。**doc-builder 看不到
+行內註解（inline comments）**：這樣的類渲染後會列出每個欄位，卻沒有任何一個描述。請把它們移到
+類本身 docstring 的 `Args:` 區塊中：
+
+```python
+@dataclass
+class SOFollowerConfig:
+    """Configuration for SO-family follower arms.
+
+    Args:
+        port (`str`):
+            Serial port the arm is connected to, e.g. `/dev/ttyACM0`.
+        max_relative_target (`float | dict[str, float]`, *optional*):
+            Caps the magnitude of the relative positional target vector. A scalar applies to all motors;
+            a dict maps motor name to a per-motor cap. `None` disables clipping.
+        use_degrees (`bool`, *optional*, defaults to `True`):
+            Keep `True` for backward compatibility with existing policies and datasets.
+    """
+
+    port: str
+    max_relative_target: float | dict[str, float] | None = None
+    use_degrees: bool = True
+```
+
+> [!IMPORTANT]
+> **doc-builder 不會從基底類（base classes）繼承 docstring。** LeRobot 註冊的設定類
+> 經常只是簡單的多重繼承過渡類（multiple-inheritance shims）：
+>
+> ```python
+> @RobotConfig.register_subclass("so101_follower")
+> @dataclass
+> class SOFollowerRobotConfig(RobotConfig, SOFollowerConfig):
+>     pass
+> ```
+>
+> 這個類會渲染出**每一個**欄位（包括繼承而來的欄位），卻完全沒有描述，無論
+> 基底類的文件寫得多好都一樣。`Args:` 區塊必須放在
+> `[[autodoc]]` 指名的具體類上，而且也必須涵蓋繼承而來的欄位。
+
+### 先基底類，再具體子類[[base-class-then-concrete-subclass]]
+
+抽象基底類承載標準的約定。子類只記錄與之不同的部分：連接埠語意（port semantics）、
+校正上的特殊情況（calibration quirks）、馬達配置（motor layout）、支援的特徵鍵（feature keys）。不要把基底的約定複製到每個子類中。
+
+`Robot`、`Teleoperator`、`Camera`、`MotorsBus`、`ProcessorStep` 與 `PreTrainedPolicy` 都遵循這種
+結構。
+
+### 模組層級的別名[[module-level-aliases]]
+
+有些公開名稱是別名（aliases），而不是獨立的類：
+
+```python
+SO100FollowerConfig = SOFollowerRobotConfig
+SO101FollowerConfig = SOFollowerRobotConfig
+```
+
+`[[autodoc]]` 會解析別名，並渲染出**標準（canonical）**類的名稱，因此 `## SO101FollowerConfig`
+標題的內文會顯示 `class lerobot.robots.so_follower.SOFollowerRobotConfig`。請只為
+標準類撰寫一次文件，並在頁面的說明文字中提及這些別名，而不是為每個別名各自建立
+autodoc 區塊。
+
+## 不需要撰寫文件的內容[[what-not-to-document]]
+
+- **私有成員（private members）。** 任何以 `_` 開頭的名稱都不屬於公開 API。
+- **用文字重述型別註記（type annotation）。** `port (`str`): A string.` 沒有提供任何資訊。請說明它的用途。
+- **內嵌的上游程式碼（vendored upstream code）。** `src/lerobot/policies/molmoact2/molmoact2_hf_model/` 是從
+  `transformers` 內嵌而來，已經帶有上游風格的 docstring。請不要更動它：重新調整風格只會在
+  下次同步時造成衝突。它已被排除在 API 參考文件與 docstring 檢查之外。
+
+## 如何強制執行[[how-this-is-enforced]]
+
+| 檢查                      | 會抓到的問題                                                  |
+| ------------------------- | ------------------------------------------------------------- |
+| `make check-docstrings`   | 與簽章不符的 `Args:` 項目；文件中的預設值已和實際預設值不一致 |
+| `make doctest`            | 已經無法執行的範例                                            |
+| `make check-doctest-list` | `utils/documentation_tests.txt` 中過時或未排序的項目          |
+| `ruff`（`D` 規則）        | 違反 Google 慣例的風格問題                                    |
+| `interrogate`             | docstring 覆蓋率低於目前的門檻                                |
+| doc-builder               | 指向不存在目標的 `[[autodoc]]` 路徑，這會導致文件建置失敗     |
+
+開 PR 之前，請一起執行這些檢查：
+
+```bash
+make check-docstrings && make doctest && pre-commit run --all-files
+```
+
+接著渲染頁面，並實際看過一遍：
+
+```bash
+doc-builder build lerobot docs/source/ --build_dir /tmp/doc-build
+```
+
+## 檢查清單[[checklist]]
+
+- [ ] 您動到的每個公開成員都有 docstring。
+- [ ] 每個 `Args:` 項目都與簽章相符，包括 `*optional*, defaults to` 子句。
+- [ ] `Returns:` 以型別開頭，並寫在一行縮排內容中。
+- [ ] 沒有單獨的 `Attributes:`，而是使用 `**Attributes**:` 搭配 `--` 分隔符號。
+- [ ] 沒有 Sphinx 角色；交叉參照使用 &#91;`~module.Class.method`&#93;。
+- [ ] 範例都放在圍欄式 ` ```python ` 區塊中，並且會在 CI 中執行，或帶有 `# doctest: +SKIP`。
+- [ ] 設定 dataclass 的欄位寫在具體類的 `Args:` 區塊中，而不是 `#` 註解。
+- [ ] 已經親眼檢查過渲染後的頁面。

@@ -1,8 +1,8 @@
-# 環境處理器（environment processors）
+# 環境處理器（environment processors）[[environment-processors]]
 
 環境處理器（processors）是 LeRobot 資料處理架構中的關鍵一層，負責處理**環境特定（environment-specific）**的轉換（transformations），與策略特定的處理（policy-specific processing）分開。這種關注點分離（separation of concerns）讓程式碼更乾淨、模組化（modularity）更佳，也更容易對不同的環境（environment）與策略（policies）進行實驗。
 
-## 為什麼需要環境處理器？（why environment processors?）
+## 為什麼需要環境處理器？（why environment processors?）[[why-environment-processors]]
 
 在處理不同的機器人環境（robot environments，LIBERO、MetaWorld、Aloha 等）時，每個環境往往有各自獨特的資料格式（data formats）、座標系（coordinate systems）與慣例（conventions），需要在策略處理（policy processing）**之前**先標準化（standardization）。若沒有環境處理器（environment processors），這些轉換（transformations）將會：
 
@@ -12,12 +12,12 @@
 
 環境處理器（environment processors）透過在原始環境觀測（raw environment observations）與策略輸入（policy inputs）之間提供一個**專屬的處理層（dedicated processing layer）**來解決這些問題。
 
-## 處理流程（the processing pipeline）
+## 處理流程（the processing pipeline）[[the-processing-pipeline]]
 
 以下是評估（evaluation）期間資料如何流經完整的處理管線（processing pipeline）：
 
 ```python
-# In lerobot_eval.py rollout() function:
+# 在 lerobot_eval.py 的 rollout() 函式中：
 
 # 1. 原始環境觀測（numpy 陣列，各種格式）
 raw_observation = env.step(action)
@@ -60,9 +60,9 @@ action = action_transition["action"]
 env.step(action)
 ```
 
-## 好處（benefits）
+## 好處（benefits）[[the-benefits]]
 
-### 1. **關注點分離（separation of concerns）**
+### 1. **關注點分離（separation of concerns）**[[1-separation-of-concerns]]
 
 環境處理器（environment processors）處理**環境資料格式（environment’s data format）**特有的轉換（transformations），而策略處理器（policy processor）處理**模型需求（model’s requirements）**特有的轉換。
 
@@ -84,7 +84,7 @@ env_preprocessor = LiberoProcessorStep()  # 攤平 robot_state
 policy_preprocessor = NormalizerProcessorStep(stats=dataset_stats)
 ```
 
-### 2. **彈性與可重用性（flexibility and reusability）**
+### 2. **彈性與可重用性（flexibility and reusability）**[[2-flexibility-and-reusability]]
 
 同一個策略（policy）可以搭配不同的環境處理器（environment processors），而同一個環境處理器也可以搭配不同的策略：
 
@@ -104,7 +104,7 @@ libero_preprocessor, libero_postprocessor = make_env_pre_post_processors(
 act_preprocessor, act_postprocessor = make_pre_post_processors(act_cfg)
 ```
 
-### 3. **更容易做實驗（easier experimentation）**
+### 3. **更容易做實驗（easier experimentation）**[[3-easier-experimentation]]
 
 想為 LIBERO 嘗試不同的狀態表示法（state representations）嗎？只要建立一個新的處理器（processor）即可：
 
@@ -134,7 +134,7 @@ class LiberoVelocityProcessorStep(ObservationProcessorStep):
         return state
 ```
 
-### 4. **更乾淨的環境程式碼（cleaner environment code）**
+### 4. **更乾淨的環境程式碼（cleaner environment code）**[[4-cleaner-environment-code]]
 
 環境（environments）會公開**所有可用的資料（all available data）**，而無須知道下游模型（downstream models）會使用哪些：
 
@@ -153,9 +153,9 @@ observation = {
 # 策略 processor 處理模型特定的轉換
 ```
 
-## 使用環境處理器（using the environment processor）
+## 使用環境處理器（using environment processors）[[using-environment-processors]]
 
-### Factory 函式
+### Factory 函式[[factory-function]]
 
 `make_env_pre_post_processors` 函式遵循與策略（policy）的 `make_pre_post_processors` 相同的模式（pattern）：
 
@@ -172,7 +172,7 @@ pusht_cfg = PushtEnv()
 env_preprocessor, env_postprocessor = make_env_pre_post_processors(pusht_cfg)
 ```
 
-### `envs/factory.py` 中的實作
+### `envs/factory.py` 中的實作[[implementation-in-envsfactorypy]]
 
 ```python
 def make_env_pre_post_processors(
@@ -206,7 +206,7 @@ def make_env_pre_post_processors(
     return preprocessor, postprocessor
 ```
 
-### 在評估中的整合（integration in evaluation）
+### 在評估中的整合（integration in evaluation）[[integration-in-evaluation]]
 
 在 `lerobot_eval.py` 中，環境處理器（environment processors）會建立一次並在整個過程中使用：
 
@@ -239,7 +239,7 @@ def eval_main(cfg: EvalPipelineConfig):
     )
 ```
 
-## 範例：LIBERO 環境處理器（LIBERO environment processor）
+## 範例：LIBERO 環境處理器（LIBERO environment processor）[[example-libero-environment-processor]]
 
 `LiberoProcessorStep` 展示了一個真實世界的環境處理器（real-world environment processor）：
 
@@ -292,7 +292,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
         return processed_obs
 ```
 
-### 為什麼要做這些轉換（why these transformations）？
+### 為什麼要做這些轉換（why these transformations）？[[why-these-transformations]]
 
 1. **影像旋轉（image rotation）**：HuggingFaceVLA/libero 資料集（dataset）的影像（images）相對於原始 LIBERO 模擬器（raw LIBERO simulator）旋轉了 180°。這個處理器（processor）會處理此慣例不一致（convention mismatch），讓在該資料集（dataset）上訓練的策略（policies trained）能無縫運作。
 
@@ -303,11 +303,11 @@ class LiberoProcessorStep(ObservationProcessorStep):
 
 3. **彈性（flexibility）**：環境仍公開**所有**原始資料（raw data）。如果您想嘗試不同的狀態表示法（state representations，例如納入速度 velocities、以矩陣表示法 matrix representation 取代軸角 axis-angle），可以建立一個新的處理器（processor）而無須修改環境程式碼（environment code）。
 
-## 為新環境加入環境處理器（adding an environment processor for a new environment）
+## 為新環境加入環境處理器（adding environment processors for new environments）[[adding-environment-processors-for-new-environments]]
 
 若要為新環境加入環境處理器（environment processor）：
 
-### 1. 建立處理器步驟（create a processor step）
+### 1. 建立處理器步驟（create a processor step）[[1-create-the-processor-step]]
 
 ```python
 # In src/lerobot/processor/env_processor.py
@@ -329,7 +329,7 @@ class MyEnvProcessorStep(ObservationProcessorStep):
         return processed
 ```
 
-### 2. 更新您的 `EnvConfig` 子類（update your `EnvConfig` subclass）
+### 2. 更新您的 `EnvConfig` 子類（update your `EnvConfig` subclass）[[2-update-your-envconfig-subclass]]
 
 ```python
 # In src/lerobot/envs/factory.py
@@ -346,7 +346,7 @@ def make_env_pre_post_processors(env_cfg: EnvConfig):
     return preprocessor, postprocessor
 ```
 
-### 3. 在評估中使用（use in evaluation）
+### 3. 在評估中使用（use in evaluation）[[3-use-in-evaluation]]
 
 無須任何變更！評估腳本（evaluation script）會自動使用適當的處理器（processor）：
 
@@ -357,11 +357,11 @@ lerobot-eval \
     --eval.n_episodes=10
 ```
 
-## 未來：環境後處理器（environment postprocessor）
+## 未來：環境後處理器（environment postprocessors）[[future-environment-postprocessors]]
 
 目前，所有環境的後處理器（postprocessor）都是 identity（no-op）。未來的使用情境包括：
 
-### 動作空間轉換（action-space transforms）
+### 動作空間轉換（action space transformations）[[action-space-transformations]]
 
 ```python
 @dataclass
@@ -382,7 +382,7 @@ class MyEnvActionPostprocessor(ProcessorStep):
         return transition
 ```
 
-### 座標系轉換（coordinate system conversions）
+### 座標系轉換（coordinate system conversions）[[coordinate-system-conversions]]
 
 ```python
 @dataclass
@@ -399,7 +399,7 @@ class CoordinateTransformPostprocessor(ProcessorStep):
         return transition
 ```
 
-## 最佳實務（best practices）
+## 最佳實務（best practices）[[best-practices]]
 
 1. **保持環境簡單（keep environment processors simple）**：它們應該只處理環境特定的資料格式（environment-specific data format）問題，而非複雜的學習相關轉換（learning-related transformations）。
 
@@ -411,7 +411,7 @@ class CoordinateTransformPostprocessor(ProcessorStep):
 
 5. **獨立測試（test independently）**：環境處理器（environment processor）應該能在不載入完整策略（full policies）或環境（environment）的情況下進行測試。
 
-## 總結（summary）
+## 總結（summary）[[summary]]
 
 環境處理器（environment processor）在環境特定的資料轉換（environment-specific data transformations）與策略特定的模型需求（policy-specific model requirements）之間提供了**乾淨的分離（clean separation）**。這種架構：
 

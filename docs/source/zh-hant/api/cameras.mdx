@@ -1,0 +1,22 @@
+# 相機（Cameras）[[cameras]]
+
+相機提供策略（policy）所看到的影像觀測。每一種後端（OpenCV、Intel RealSense、Reachy 2）都實作了 [`Camera`] 介面（interface），因此更換硬體時，讀取影格的程式碼不需要修改。
+
+如何選擇與設定相機，請參閱[相機指南](../cameras)；核心支援範圍以外的裝置，請參閱[第三方相機與感測器](../third_party_sensors)。
+
+## Camera
+
+[[autodoc]] lerobot.cameras.Camera
+    - connect
+    - disconnect
+    - read
+    - async_read
+    - find_cameras
+
+## CameraConfig
+
+[[autodoc]] lerobot.cameras.CameraConfig
+
+## make_cameras_from_configs
+
+[[autodoc]] lerobot.cameras.make_cameras_from_configs

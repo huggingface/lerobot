@@ -1,15 +1,15 @@
-# 安裝（installation）
+# 安裝[[installation]]
 
-本指南使用 `conda`（透過 miniforge）來管理環境（推薦）。若您偏好其他環境管理工具（例如 `uv`、`venv`），請確保您使用 Python >=3.12 並支援 PyTorch >= 2.10，然後直接跳至下方的[環境設定](#步驟-2環境設定)。
+本指南使用 `conda`（透過 miniforge）來管理環境（推薦）。若您偏好其他環境管理工具（例如 `uv`、`venv`），請確保您使用 Python >=3.12 並支援 PyTorch >= 2.10，然後直接跳至下方的[環境設定](#step-2-environment-setup)。
 
-## 步驟 1（僅限 `conda`）：安裝 [`miniforge`](https://conda-forge.org/download/)
+## 步驟 1（僅限 `conda`）：安裝 [`miniforge`](https://conda-forge.org/download/)[[step-1-conda-only-install-miniforge]]
 
 ```bash
 wget "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
 bash Miniforge3-$(uname)-$(uname -m).sh
 ```
 
-## 步驟 2：環境設定
+## 步驟 2：環境設定[[step-2-environment-setup]]
 
 建立 Python 3.12 的虛擬環境（virtual environment）：
 
@@ -67,12 +67,14 @@ source .venv/bin/activate
 </hfoptions>
 <!-- prettier-ignore-end -->
 
-### 安裝 `ffmpeg`（用於影片解碼）
+### 安裝 `ffmpeg`（用於影片解碼）[[install-ffmpeg-for-video-decoding]]
 
 LeRobot 預設使用 [TorchCodec](https://github.com/meta-pytorch/torchcodec) 進行影片解碼（video decoding），而它需要 `ffmpeg`。
 
 > [!NOTE]
 > **平台支援：** TorchCodec 在 macOS Intel（x86_64）、Linux ARM（aarch64、arm64、armv7l），或搭配 PyTorch < 2.8 的 Windows 上**無法使用**。在這些平台上，LeRobot 會自動回退（fall back）到 `pyav`，因此您不需要安裝 `ffmpeg`，可直接跳到步驟 3。
+>
+> **Jetson（aarch64 + CUDA）：** 上述的 `pyav` 回退（fallback）表示預設沒有 GPU 加速的影片解碼。[`docker/Dockerfile.jetson`](https://github.com/huggingface/lerobot/blob/main/docker/Dockerfile.jetson) 會針對 JetPack 6.2 從原始碼建置具備 CUDA 支援的 `torch`／`torchcodec`——由社群維護，預建置映像（prebuilt image）請見 [`ravediamond/lerobot-jetson`](https://github.com/ravediamond/lerobot-jetson)，背景說明請見 issue [#819](https://github.com/huggingface/lerobot/issues/819)。
 
 若您的平台支援 TorchCodec，請使用下列其中一種方式安裝 `ffmpeg`：
 
@@ -114,11 +116,11 @@ brew install ffmpeg
 </hfoptions>
 <!-- prettier-ignore-end -->
 
-## 步驟 3：安裝 LeRobot 🤗
+## 步驟 3：安裝 LeRobot 🤗[[step-3-install-lerobot]]
 
 基本的 `lerobot` 安裝刻意保持**輕量（lightweight）**——只包含核心 ML 相依套件（PyTorch、torchvision、numpy、opencv、einops、draccus、huggingface-hub、gymnasium、safetensors）。較重的相依套件則以選用的額外套件（extras）把關，讓您只安裝需要的部分。
 
-### 以原始碼安裝（from source）
+### 以原始碼安裝（from source）[[from-source]]
 
 首先，複製儲存庫（clone the repository）並進入該目錄（directory）：
 
@@ -148,7 +150,7 @@ uv pip install -e ".[all]"           # 全部（所有策略 policy、環境 env
 </hfoptions>
 <!-- prettier-ignore-end -->
 
-### 從 PyPI 安裝（installation from PyPI）
+### 從 PyPI 安裝（installation from PyPI）[[installation-from-pypi]]
 
 **核心函式庫（core library）：**
 使用以下指令安裝基本套件：
@@ -207,7 +209,7 @@ pip install 'lerobot[feetech]'        # Feetech 馬達支援
 
 _多個額外套件（extras）可以組合（例如 `.[core_scripts,pi,pusht]`）。完整的可用額外套件清單請參閱 `pyproject.toml`。_
 
-### PyTorch 的 CUDA 版本（僅限 Linux）
+### PyTorch 的 CUDA 版本（僅限 Linux）[[pytorch-cuda-variant-linux-only]]
 
 在 Linux 上，安裝方式會決定您取得哪個 CUDA wheel。macOS 與 Windows 的安裝使用 PyPI 預設（分別為 MPS／CPU／CUDA-Windows wheel），可跳過本節。
 
@@ -257,7 +259,7 @@ uv pip install --torch-backend cu128 lerobot
 </hfoptions>
 <!-- prettier-ignore-end -->
 
-### 疑難排解
+### 疑難排解[[troubleshooting]]
 
 若您遇到建置錯誤，可能需要安裝額外的系統相依套件（system dependencies）：`cmake`、`build-essential` 以及 `ffmpeg libs`。
 若要在 Linux 上安裝這些套件，請執行：
@@ -268,11 +270,11 @@ sudo apt-get install cmake build-essential python3-dev pkg-config libavformat-de
 
 對於其他作業系統請參閱：[編譯 PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
 
-## 選用的相依套件（optional dependencies）
+## 選用的相依套件（optional dependencies）[[optional-dependencies]]
 
 LeRobot 為特定功能提供可選的額外套件（optional extras）。多個額外套件（multiple extras）可以組合使用（例如 `.[aloha,feetech]`）。如需所有可用的額外套件，請參閱 `pyproject.toml`。若您使用 `uv`，請將下列指令中的 `pip install` 替換為 `uv pip install`。
 
-### 模擬（simulations）
+### 模擬（simulations）[[simulations]]
 
 安裝環境套件：`aloha`（[gym-aloha](https://github.com/huggingface/gym-aloha)）或 `pusht`（[gym-pusht](https://github.com/huggingface/gym-pusht)）。
 這些會自動包含 `dataset` 額外套件（extra）。
@@ -281,7 +283,7 @@ LeRobot 為特定功能提供可選的額外套件（optional extras）。多個
 pip install -e ".[aloha]" # 或例如 "[pusht]"
 ```
 
-### 馬達控制（motor control）
+### 馬達控制（motor control）[[motor-control]]
 
 針對 Koch v1.1 請安裝 Dynamixel SDK，對於 SO100/SO101/Moss 則安裝 Feetech SDK。
 
@@ -289,7 +291,7 @@ pip install -e ".[aloha]" # 或例如 "[pusht]"
 pip install -e ".[feetech]" # 或例如 "[dynamixel]"
 ```
 
-### 實驗追蹤（experiment tracking）
+### 實驗追蹤（experiment tracking）[[experiment-tracking]]
 
 Weights and Biases 已包含在 `training` 額外套件（extra）中。若要使用 [Weights and Biases](https://docs.wandb.ai/quickstart) 進行實驗追蹤（experiment tracking），請使用以下指令登入：
 

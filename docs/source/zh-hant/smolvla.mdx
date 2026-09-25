@@ -10,10 +10,11 @@ SmolVLA 是 Hugging Face 的輕量級機器人基礎模型（lightweight foundat
   />
   <br />
   <em>
-    圖 1. SmolVLA 接收以下輸入： (i) 多個攝影機視角（multiple cameras views）、 (ii)
-    機器人當前的感覺運動狀態（sensorimotor state）， 以及 (iii) 自然語言指令（natural language instruction），編碼為上下文特徵（contextual features），
-    用於在生成動作區塊（action chunk）時對動作專家（action expert）進行條件化。
-
+    圖 1. SmolVLA 接收以下輸入： (i) 多個攝影機視角（multiple cameras views）、
+    (ii) 機器人當前的感覺運動狀態（sensorimotor state）， 以及 (iii)
+    自然語言指令（natural language instruction），編碼為上下文特徵（contextual
+    features）， 用於在生成動作區塊（action chunk）時對動作專家（action
+    expert）進行條件化。
   </em>
 </p>
 
@@ -84,16 +85,16 @@ lerobot-train --help
   />
   <br />
   <em>
-    圖 2：SmolVLA 在不同任務變化（task variations）中的比較。從左至右： (1) 方塊取放計數、 (2)
-    方塊取放計數、 (3) 在干擾（perturbations）下的方塊取放計數，以及 (4) 使用真實世界 SO101
+    圖 2：SmolVLA 在不同任務變化（task variations）中的比較。從左至右： (1)
+    方塊取放計數、 (2) 方塊取放計數、 (3)
+    在干擾（perturbations）下的方塊取放計數，以及 (4) 使用真實世界 SO101
     對樂高積木取放的泛化能力（generalization）。
-
   </em>
 </p>
 
 ## 評估微調後的模型並即時運行（evaluate the finetuned model and run it in real-time）
 
-與錄製回合（recording an episode）時類似，建議您先登入 HuggingFace Hub。您可以按照相應的步驟操作：[錄製資料集（Record a dataset）](./il_robots)。
+與錄製回合（recording an episode）時類似，建議您先登入 HuggingFace Hub。您可以按照相應的步驟操作：[錄製資料集（Record a dataset）](./il_robots#record-a-dataset)。
 登入後，您可以在您的設定中執行推理（inference）：
 
 ```bash

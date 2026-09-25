@@ -1,4 +1,4 @@
-# Unitree G1
+# Unitree G1[[unitree-g1]]
 
 <img
   src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/unitree_thumbnail.jpg"
@@ -10,9 +10,9 @@ LeRobot 現已支援 Unitree G1 人形機器人！您可以進行遙操作（tel
 
 ---
 
-## 第 1 部分：開始使用（getting started）
+## 第 1 部分：開始使用（getting started）[[part-1-getting-started]]
 
-### 安裝 Unitree SDK（install the Unitree SDK）
+### 安裝 Unitree SDK（install the Unitree SDK）[[install-the-unitree-sdk]]
 
 請依照 [unitree_sdk2_python 安裝指南](https://github.com/unitreerobotics/unitree_sdk2_python#installation)操作。已在 `unitree_sdk2py==1.0.1` 與 `cyclonedds==0.10.2` 上測試過：
 
@@ -25,7 +25,7 @@ pip install -e .
 cd ..
 ```
 
-### 安裝 LeRobot（install LeRobot）
+### 安裝 LeRobot（install LeRobot）[[install-lerobot]]
 
 ```bash
 conda install ffmpeg -c conda-forge
@@ -40,7 +40,7 @@ pip install -e '.[unitree_g1]'
   CasADi 綁定（bindings）。
 </Tip>
 
-### 測試安裝（test the installation, simulation）
+### 測試安裝（test the installation, simulation）[[test-the-installation-simulation]]
 
 模擬環境（simulation environment）有其自己的依賴套件（dependencies）。請查看模擬環境依賴套件（simulation environment dependencies）：[Unitree G1 Mujoco EnvHub](https://huggingface.co/lerobot/unitree-g1-mujoco/tree/main)。
 
@@ -64,7 +64,22 @@ lerobot-teleoperate \
 - 按下 `9` 以釋放機器人（release the robot）
 - 按下 `7` / `8` 以增加 / 降低腰部高度（increase / decrease waist height）
 
-### 連接到實體機器人（connect to the physical robot）
+#### 選擇末端執行器（choosing the end effector）[[choosing-the-end-effector]]
+
+`--robot.end_effector` 指定手臂所搭載的末端執行器（end effector）：`dex1` 代表平行夾爪（預設）、`dex3` 代表三指手，或 `dummy` 代表裸手腕。在模擬中，它會選擇 MuJoCo 模型，而該模型決定手指致動器以及場景帶有哪些相機——腕部相機安裝在末端執行器上，因此 `dummy` 只有 `head_camera`。
+
+```bash
+lerobot-teleoperate \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=true \
+  --robot.end_effector=dex3 \
+  --teleop.id=wbc_unitree \
+  --robot.controller=GrootLocomotionController
+```
+
+模擬會透過 ZMQ 在 `--robot.sim_camera_port`（預設為 5555）上發佈模型的相機影像，`--robot.cameras` 中的 `zmq` 相機會從該處讀取。改為傳入 `--robot.sim_publish_images=false` 以開啟 MuJoCo 的互動視窗：模擬只會渲染其相機或視窗，絕不會同時渲染兩者，因為離螢幕情境（offscreen contexts）屬於建立它們的執行緒，而非檢視器的執行緒。`--robot.sim_onscreen` 會直接指明該選擇，而不是交由相機決定；同時要求兩者會被拒絕；將它與 `--robot.sim_publish_images` 都設為 false 即可兩者都不渲染，這正是沒有顯示器的機器可以採用的做法。
+
+### 連接到實體機器人（connect to the physical robot）[[connect-to-the-physical-robot]]
 
 G1 的乙太網路（Ethernet）IP 固定為 `192.168.123.164`。您的機器必須在相同子網路（subnet）上具有靜態（static）IP：`192.168.123.x`，其中 `x ≠ 164`。
 
@@ -75,14 +90,14 @@ sudo ip addr add 192.168.123.200/24 dev enp131s0
 sudo ip link set enp131s0 up
 ```
 
-### SSH 連入機器人（SSH into the robot）
+### SSH 連入機器人（SSH into the robot）[[ssh-into-the-robot]]
 
 ```bash
 ssh unitree@192.168.123.164
 # 密碼：123
 ```
 
-### 透過乙太網路分享網際網路（share internet via Ethernet）
+### 透過乙太網路分享網際網路（share internet via Ethernet）[[share-internet-via-ethernet]]
 
 G1 需要網際網路存取（internet access）才能複製（clone）repo 與安裝套件（install packages）。透過乙太網路（Ethernet）分享您筆電的連線：
 
@@ -108,7 +123,7 @@ echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
 ping -c 3 8.8.8.8
 ```
 
-### 在 G1 上安裝 Unitree SDK（install the Unitree SDK on the G1）
+### 在 G1 上安裝 Unitree SDK（install the Unitree SDK on the G1）[[install-the-unitree-sdk-on-the-g1]]
 
 請依照 [unitree_sdk2_python 安裝指南](https://github.com/unitreerobotics/unitree_sdk2_python#installation)操作：
 
@@ -121,7 +136,7 @@ python -m pip install -e .
 cd ..
 ```
 
-### 在 G1 上安裝 LeRobot（install LeRobot on the G1）
+### 在 G1 上安裝 LeRobot（install LeRobot on the G1）[[install-lerobot-on-the-g1]]
 
 ```bash
 git clone https://github.com/huggingface/lerobot.git
@@ -135,7 +150,7 @@ python -m pip install -e '.[unitree_g1]'
   CasADi 綁定（bindings）。
 </Tip>
 
-### 可選：在機器人上啟用 WiFi（Enable WiFi on the Robot）
+### 可選：在機器人上啟用 WiFi（Enable WiFi on the Robot）[[optional-enable-wifi-on-the-robot]]
 
 若要進行無線 SSH 存取，您可以在 G1 上啟用 WiFi（預設為封鎖）：
 
@@ -170,9 +185,9 @@ ssh unitree@<ROBOT_WIFI_IP>
 
 ---
 
-## 第 2 部分：遙操作與移動（teleoperation & locomotion）
+## 第 2 部分：遙操作與移動（teleoperation & locomotion）[[part-2-teleoperation-locomotion]]
 
-### 執行機器人伺服器（run the robot server）
+### 執行機器人伺服器（run the robot server）[[run-the-robot-server]]
 
 在機器人上（於 `~/lerobot`）：
 
@@ -181,7 +196,7 @@ cd ~/lerobot
 python src/lerobot/robots/unitree_g1/run_g1_server.py --camera
 ```
 
-### 執行移動策略（running the locomotion policy）
+### 執行移動策略（running the locomotion policy）[[run-the-locomotion-policy]]
 
 您可以從筆電透過乙太網路（Ethernet）、透過 WiFi（實驗性 experimental）或直接在機器人本身上執行遙操作用戶端（teleoperation client）。請留意您的網路可能引入的延遲（latency）。
 
@@ -203,11 +218,11 @@ lerobot-teleoperate \
 
 ---
 
-## 第 3 部分：使用 Homunculus 外骨骼進行移動操作（loco-manipulation with the Homunculus exoskeleton）
+## 第 3 部分：使用 Homunculus 外骨骼進行移動操作（loco-manipulation with the Homunculus exoskeleton）[[part-3-loco-manipulation-with-the-homunculus-exoskeleton]]
 
 我們透過 Homunculus 外骨骼（Exoskeleton）提供移動操作（loco-manipulation）解決方案，這是一個用於全身控制（whole-body control）的開源 7 自由度外骨骼（7 DoF exoskeleton）。請至[這裡](https://github.com/nepyope/hmc_exo)查看。
 
-### 校正（calibration）
+### 校正（calibration）[[calibrate]]
 
 ```bash
 lerobot-calibrate \
@@ -219,7 +234,7 @@ lerobot-calibrate \
 
 校正（calibration）期間，讓每個關節走完其完整範圍（move each joint through its entire range）。擬合（fitting）完成後，將關節移動到中立位置（move the joint in a neutral position）並按下 `n` 以繼續。
 
-### 錄製資料集（record a dataset）
+### 錄製資料集（record a dataset）[[record-a-dataset]]
 
 ```bash
 lerobot-record \
@@ -246,9 +261,9 @@ lerobot-record \
 
 ---
 
-## 第 4 部分：訓練與推論（training & inference）
+## 第 4 部分：訓練與推論（training & inference）[[part-4-training-inference]]
 
-### 訓練（training）
+### 訓練（training）[[train]]
 
 ```bash
 python src/lerobot/scripts/lerobot_train.py \
@@ -269,7 +284,7 @@ python src/lerobot/scripts/lerobot_train.py \
   --batch_size=32
 ```
 
-### 使用 RTC 進行推論（inference with RTC）
+### 使用 RTC 進行推論（inference with RTC）[[inference-with-rtc]]
 
 訓練（training）完成後，我們建議使用推論時的 RTC （inference-time RTC）來部署策略（deploying policies）：
 
@@ -290,7 +305,85 @@ lerobot-rollout \
 
 ---
 
-## 其他資源（additional resources）
+## 第 5 部分：SONIC 全身控制（Latent-Token Policies）[[part-5-sonic-whole-body-control-latent-token-policies]]
+
+LeRobot 現在將 NVIDIA 的 [SONIC](https://github.com/NVIDIA/sonic) 全身部署堆疊的**解碼器**部分移植為 `SonicWholeBodyController`。策略不再直接命令關節，而是在每個控制週期輸出 64 維的 **latent motion token**（`motion_token.{i}.pos`）；SONIC 解碼器會將該符元加上近期的本體感覺歷史（proprioception history）映射為殘差動作（residual action），該動作經縮放後加到站立姿勢（standing pose）上，為全部 29 個自由度產生 50 Hz 的關節位置目標。
+
+該控制器會從 [`lerobot/sonic_decoder`](https://huggingface.co/lerobot/sonic_decoder) 載入其 ONNX 解碼器與所有部署常數（PD 增益、`default_angles`、`action_scale` 以及中性符元）。該儲存庫也隨附一個蒸餾後的低延遲解碼器，可透過控制器的 `policy_type="low_latency"` 參數選用（預設為 `"default"`）。
+
+### 在模擬中測試（test in simulation）[[test-in-simulation]]
+
+任何以 SONIC 動作符元訓練、會輸出符元的策略（例如 [`nepyope/sonic_walk`](https://huggingface.co/nepyope/sonic_walk)）都能驅動它：
+
+```bash
+lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=nepyope/sonic_walk \
+  --policy.device=cuda \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=true \
+  --robot.controller=SonicWholeBodyController \
+  --robot.cameras='{"ego_view": {"type": "zmq", "server_address": "localhost", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30, "warmup_s": 15}}'
+```
+
+### 在實體機器人上執行（run on the physical robot）[[run-on-the-physical-robot]]
+
+在實體硬體上，請使用[非同步推論（async inference）](./async)來執行策略，而不是單一的 `lerobot-rollout` 迴圈。從筆電驅動的 rollout 會把網路放在控制迴圈中間：每個步驟都會因推論而阻塞，而只要有一次卡頓，就會讓機器人站立時所依賴的 50 Hz 平衡迴圈停滯。非同步推論將兩者分開——策略在您的 GPU 機器上執行，而機器人用戶端則在 G1 的 Jetson 上執行，因此 SONIC 控制器執行緒與 `rt/lowcmd` 都留在機載（onboard），只有 64 維符元區塊（token chunks）會通過網路。
+
+三個行程，並讓第 2 部分的機器人伺服器全程保持執行：
+
+```text
+GPU machine                     G1 (Jetson)
+policy_server  ◄── gRPC ──►  robot_client: UnitreeG1 + SONIC decoder @ 50 Hz
+  checkpoint                        │ ZMQ (lowcmd 6000, lowstate 6001, camera 5555)
+                                    ▼
+                             run_g1_server.py  ◄──► rt/lowcmd, rt/lowstate (DDS)
+```
+
+請先在 GPU 機器上啟動策略伺服器：
+
+```bash
+python -m lerobot.async_inference.policy_server \
+  --host=0.0.0.0 \
+  --port=8080 \
+  --fps=30
+```
+
+在機器人上，啟動伺服器（橋接器 + 相機）：
+
+```bash
+python src/lerobot/robots/unitree_g1/run_g1_server.py --camera
+```
+
+接著，在機器人的第二個終端機中啟動用戶端。機器人端的所有通訊都是回送（loopback），因為橋接器執行於同一台機器上：
+
+```bash
+python -m lerobot.async_inference.robot_client \
+  --server_address=<GPU_MACHINE_IP>:8080 \
+  --policy_type=pi05 \
+  --pretrained_name_or_path=nepyope/sonic_walk \
+  --policy_device=cuda \
+  --actions_per_chunk=50 \
+  --fps=30 \
+  --task="walk forward" \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=false \
+  --robot.robot_ip=127.0.0.1 \
+  --robot.controller=SonicWholeBodyController \
+  --robot.cameras='{"ego_view": {"type": "zmq", "server_address": "127.0.0.1", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30, "warmup_s": 5}}'
+```
+
+有幾點請留意：
+
+- `--policy_device` 是*伺服器*載入策略所用的裝置——用戶端會在握手（handshake）期間傳送此資訊。
+- `--actions_per_chunk` 不得超過檢查點的區塊大小（`nepyope/sonic_walk` 為 50）。
+- 使用 `SonicWholeBodyController` 時，觀測狀態是 64 維 token echo，而不是 29 個關節位置，因此檢查點必須以相同的狀態進行訓練。
+
+連線時，機器人會先讓每個關節平順地移動到解碼器的 `default_angles`，之後控制器才會接管，因此最初的策略命令不會從連線時的姿勢猛然跳動。
+
+---
+
+## 其他資源（additional resources）[[additional-resources]]
 
 - [Unitree SDK 文件](https://github.com/unitreerobotics/unitree_sdk2_python)
 - [GR00T-WholeBodyControl](https://github.com/NVlabs/GR00T-WholeBodyControl)
@@ -300,4 +393,4 @@ lerobot-rollout \
 
 ---
 
-_最後更新：2026 年 3 月_
+_最後更新：2026 年 7 月_

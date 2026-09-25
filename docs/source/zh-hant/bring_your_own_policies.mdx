@@ -7,7 +7,7 @@
 
 外掛路徑通常是正確的起點；等策略穩定、且將它隨函式庫一起發布有明確價值時，再升級為 in-tree。
 
-無論哪一種，基礎構件都相同：一個配置類（configuration class）、一個策略類（policy class），以及一個處理器工廠（processor factory）。本指南前半部涵蓋這些共用元件，後半部涵蓋各路徑專屬的架構（見下方 [Path A](#path-a%E6%A8%B9%E5%A4%96%E5%A4%96%E6%8E%9Bout-of-tree-plugin) 與 [Path B](#path-bin-tree-%E8%B2%A2%E7%8D%BBcontributing-in-tree)）。
+無論哪一種，基礎構件都相同：一個配置類（configuration class）、一個策略類（policy class），以及一個處理器工廠（processor factory）。本指南前半部涵蓋這些共用元件，後半部涵蓋各路徑專屬的架構（見下方 [Path A](#path-a-out-of-tree-plugin) 與 [Path B](#path-b-contributing-in-tree)）。
 
 關於語氣的說明：機器人學習是一個持續演進的領域，「策略長什麼樣子」可能隨每個新架構而改變。此處描述的慣例之所以存在，是因為它們能讓 `lerobot-train` 與 `lerobot-eval` 在差異極大的模型間一致運作。當某個新策略確實不符合這些慣例時，請提出來（在您的 PR 或 issue 中），這些慣例並非不可更動。
 
@@ -161,6 +161,16 @@ class MyPolicy(PreTrainedPolicy):
 
 批次（batch）是扁平字典（flat dictionaries），以 [`lerobot.utils.constants`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/utils/constants.py) 中的常數作為鍵：`OBS_STATE`（`observation.state.<motor>`）、`OBS_IMAGES`（`observation.images.<camera>`）、`OBS_LANGUAGE`、`ACTION` 等。請重用這些常數（constants），不要自創新的前綴（prefix）。
 
+如果您的模型大到需要[分片式多 GPU 訓練（sharded multi-GPU training）](./multi_gpu_training#sharded-training-fsdp)，也請宣告它的 FSDP 包裝單元（wrap units），也就是分片（sharding）所作用的重複區塊類（repeated block classes）：
+
+```python
+class MyPolicy(PreTrainedPolicy):
+    ...
+    _fsdp_wrap_modules = ["MyTransformerBlock"]
+```
+
+只要這一項宣告，`--parallelism.dp_shard=N` 就能直接用於您的策略（使用者仍可用 `--accelerator.fsdp.wrap_modules` 覆寫）。若沒有任何包裝來源（wrap source），分片執行（sharded runs）在設計上就會於啟動時失敗。
+
 ### 處理器函式（processor functions）
 
 LeRobot 使用 `PolicyProcessorPipeline` 在您的策略（policy）前後對輸入（inputs）進行正規化（normalize）、對輸出（outputs）進行反正規化（de-normalize）。如需具體參考，請查看 [`processor_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/processor_act.py) 或 [`processor_diffusion.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/diffusion/processor_diffusion.py)。
@@ -189,9 +199,82 @@ def make_my_policy_pre_post_processors(
 
 **重要 — 函式命名（function naming）：** LeRobot 透過名稱探索您的處理器（processor）。此函式**必須**命名為 `make_{policy_name}_pre_post_processors`（與您傳給 `@PreTrainedConfig.register_subclass` 的字串相符）。
 
+### 支援文字的策略（text-capable policies）[[text-capable-policies]]
+
+語言策略（language policies）會在兩個處理器步驟（processor steps）之間共用配方渲染（recipe rendering）：
+
+- `RenderTrainingMessagesStep` 將資料集的語言標註（language annotations）轉換為渲染後的訊息（rendered messages）。
+- `RenderRuntimeMessagesStep` 將使用者提示（user prompts）轉換為渲染後的訊息。
+
+接著由策略專屬的處理器套用聊天格式化（chat formatting）與 tokenization。
+
+策略設定（policy config）會儲存解析後的 `recipe: TrainingRecipe | None`（來自
+`lerobot.datasets.recipe`）。選用的 `recipe_path` 可以載入 YAML 配方；
+請在建構處理器（processors）之前先解析它。解析後的配方會啟用配方訓練（recipe
+training），而 `None` 會讓訓練渲染器（training renderer）不執行任何動作。請將解析後的
+配方序列化到設定與處理器中，讓部署（deployment）不依賴本機的 YAML 路徑。
+由配方支援的渲染需要 `dataset` extra，因為配方目前
+位於 `lerobot.datasets` 之下。
+
+請將兩個渲染器都放在策略原生的聊天格式化與 tokenization 之前：
+
+```python
+input_steps = [
+    RenderRuntimeMessagesStep(config.recipe),
+    RenderTrainingMessagesStep(config.recipe),
+    # observation transforms
+    # policy-native roles, image placement, chat template, and tokenization
+    # device placement
+]
+```
+
+訓練與推論會儲存並載入同一條管線（pipeline）。執行階段（runtime）
+渲染只會在明確指定 `query_kind` 時執行。訓練渲染會略過
+執行階段查詢（runtime queries），並在設定了配方時，處理帶有原始
+標註（raw annotations）或動作目標（action targets）的樣本。一般僅含觀測的輸入（observation-only inputs）會直接通過。有標註的純文字訓練
+（annotated text-only training）不需要動作張量（action tensor）即可進行。沒有標註的訓練則需要動作
+目標，才能啟用任務後備機制（task fallback）。
+
+共用工廠（shared factory）只負責建構或載入處理器。語言配方
+微調（language-recipe fine-tuning）會從目前的設定與資料集統計（dataset statistics）建構處理器，讓
+已儲存的處理器無法覆寫新的配方。恢復訓練（resume）與推論則會載入已儲存的
+管線，包含其中的配方與統計資料。非語言訓練則維持
+既有的建構與檢查點載入行為。
+全新的工廠會自行推導正規化（normalization）與相對動作（relative-action）設定。
+全新的工廠會使用設定的裝置（device）；既有的資料集批次
+前處理（batch preprocessing）則會套用訓練用的重新命名對應（rename map）。
+
+`messages_rendered` 包含經配方展開的語意訊息（semantic messages），位於原生
+聊天格式化或 tokenization 之前。訓練用的附屬資料（training sidecars）會索引這同一個清單。
+訊息輔助函式（message helpers）位於 `lerobot.utils.language`。
+
+互動式 rollout 會加入 `query_kind` 與 `query_text`。執行階段渲染支援：
+
+- `vqa`：將呼叫端的問題保留為使用者訊息（user message）。
+- `next_subtask`：渲染檢查點配方直到監督 `${subtask}` 的助理回合（assistant turn）為止，
+  但不包含該回合。
+
+接著，策略透過既有的策略 API 公開其解碼器（decoder）：
+
+```python
+class MyPolicy(PreTrainedPolicy):
+    def supports_text_generation(self) -> bool:
+        return True
+
+    def generate_text(self, batch) -> str:
+        token_ids = self.model.generate(**batch)
+        return self.tokenizer.decode(token_ids, skip_special_tokens=True)
+```
+
+`generate_text` 接收可直接供模型使用的處理器輸出；它不得重新建構或
+重新 tokenize 呼叫端的提示。訓練期間，策略原生的 tokenizer
+會使用 `target_message_indices`，只監督選定的助理片段（assistant spans）。
+請將配方儲存在語言策略的設定中，讓它隨
+檢查點一起序列化，並讓部署時能重建訓練所用的提示。
+
 ---
 
-## Path A：樹外外掛（out-of-tree plugin）
+## Path A：樹外外掛（out-of-tree plugin）[[path-a-out-of-tree-plugin]]
 
 要發布策略最快的方式：把它打包（package）成獨立的 Python 發行套件（standalone Python distribution），並與 LeRobot 一起安裝。不需 PR、您自己掌握發布週期（release cycle），也可以用自己的命名空間（namespace）發布到 PyPI。
 
@@ -273,7 +356,7 @@ lerobot-train \
 
 ---
 
-## Path B：in-tree 貢獻（contributing in-tree）
+## Path B：in-tree 貢獻（contributing in-tree）[[path-b-contributing-in-tree]]
 
 當您的策略（policy）已經穩定、且將它隨函式庫一起發布有明確價值時，您可以讓它直接進入 LeRobot。請先閱讀一般性的[貢獻指南](./contributing)與 [PR 模板](https://github.com/huggingface/lerobot/blob/main/.github/PULL_REQUEST_TEMPLATE.md)，那裡列出了每個 PR 都必須符合的測試／品質（testing/quality）要求（`pre-commit run -a`、`pytest`、社群審查規則等）。以下是在這些要求之上、策略專屬（policy-specific）的部分。
 
@@ -300,7 +383,7 @@ src/lerobot/policies/my_policy/
 有兩個地方需要知道您的策略（policy），全都透過名稱。
 
 1. **`policies/__init__.py`** — 重新匯出（re-export） `MyPolicyConfig` 並將其加入 `__all__`。這個匯入就是註冊您策略（registers your policy）的關鍵：`@PreTrainedConfig.register_subclass("my_policy")` 會執行，自此工廠（factory）便依慣例（convention）解析一切。**不要**重新匯出 modeling 類（class）；它會透過工廠延遲載入（loads lazily，讓 `import lerobot` 保持快速）。
-2. **`templates/lerobot_modelcard_template.md` 與根目錄（root）的 `README.md`** — 這個模板（template）就是 `push_model_to_hub` 為每個以您策略訓練的檢查點（checkpoint）渲染出的模型卡（model card）內容：在 `model_name` 分支中為您的策略加上一行描述（one-line description），於 `policy_docs` 中對應它，讓模型卡連到您的 MDX 指南，並可選擇在 `diagrams` 中加入架構圖。接著把您的策略（policy）加進根目錄 `README.md` 的模型表格（models table），放在正確的分類下，並連到您的文件頁面。
+2. **`templates/lerobot_modelcard_template.md` 與根目錄（root）的 `README.md`** — 這個模板（template）就是訓練結束時的發布程序（end-of-training publisher）為每個以您策略訓練的檢查點（checkpoint）渲染出的模型卡（model card）內容：在 `model_name` 分支中為您的策略加上一行描述（one-line description），於 `policy_docs` 中對應它，讓模型卡連到您的 MDX 指南，並可選擇在 `diagrams` 中加入架構圖。接著把您的策略（policy）加進根目錄 `README.md` 的模型表格（models table），放在正確的分類下，並連到您的文件頁面。
 
 參照一個結構與您相似的現有策略；差異很小。
 
@@ -344,7 +427,7 @@ class DiffusionPolicy(PreTrainedPolicy):
 
 **至少挑選一個 in-tree 基準測試（pick at least one in-tree benchmark）。** LeRobot 提供了附帶各自 Docker images 的模擬基準測試（sim benchmarks: LIBERO、LIBERO-plus、Meta-World、RoboTwin 2.0、RoboCasa365、RoboCerebra、RoboMME、VLABench 等）。挑選符合您策略模態（policy’s modality）的那一個：VLA 通常選 LIBERO 或 VLABench；純影像的 BC 選 LIBERO 或 Meta-World。完整清單位於文件側邊欄的 [Benchmarks](./libero) 底下。
 
-**將檢查點與處理器推送（push the checkpoint & processors）**到 Hub 的 `lerobot/<policy>_<benchmark>`（若您沒有寫入權限，可用自己的命名空間；維護者可以鏡像過去）。使用 `PreTrainedPolicy.push_model_to_hub`，讓儲存庫（repo）取得 `config.json`、`model.safetensors` 與一張模型卡（model card）。
+**將檢查點與處理器推送（push the checkpoint & processors）**到 Hub 的 `lerobot/<policy>_<benchmark>`（若您沒有寫入權限，可用自己的命名空間；維護者可以鏡像過去）。最簡單的方式是在訓練時加上 `--policy.repo_id=<namespace>/<repo>` 與 `--policy.push_to_hub=true`：`lerobot-train` 會在執行結束時發布模型、兩個處理器（processors）與一張模型卡（model card）。若要事後發布既有的檢查點，請上傳其 `pretrained_model/` 目錄（例如 `huggingface-cli upload`），或對分片格式（sharded-format）的檢查點使用 `lerobot-convert-dcp --push_to_hub=...`。
 
 **在您策略的 MDX 中回報結果（report results in your policy’s MDX）**，附上確切的 `lerobot-eval` 指令與硬體（hardware），讓任何人都能重新執行：
 

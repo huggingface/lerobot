@@ -1,10 +1,10 @@
-# 人在迴圈中的資料收集（Human-In-the-Loop data collection）
+# 人在迴圈中的資料收集（Human-In-the-Loop data collection）[[human-in-the-loop-data-collection]]
 
 人在迴圈中（Human-In-the-Loop, HIL）的資料收集（data collection）讓您能透過將已訓練的策略（trained policy）部署（deployment）到真實機器人上，同時由人類操作員（human operator）監控（monitors）並在需要時介入（intervenes），來改進該策略。介入資料（intervention data，恢復動作與修正動作）會與自主運行片段（autonomous segments）一併記錄（recorded），產生更豐富的訓練資料集（training dataset），教導策略如何處理失敗情況（failures）。
 
 ---
 
-## 為什麼需要人在迴圈中的機制？（why Human-In-the-Loop?）
+## 為什麼需要人在迴圈中的機制？（why Human-In-the-Loop?）[[why-human-in-the-loop]]
 
 標準的行為複製（standard behavioral cloning）僅在成功的示範（successful demonstrations）上訓練策略（train a policy）。在部署（deployment）期間，微小的誤差可能會不斷累積（compound），將機器人推入訓練期間從未見過的狀態（分佈偏移 distribution shift）。HIL 資料收集透過以下方式解決此問題：
 
@@ -17,7 +17,7 @@
 
 ---
 
-## 運作方式（how it works）
+## 運作方式（how it works）[[how-it-works]]
 
 在 HIL 進行期間，人類操作員（human operator）在每個回合（episode）中遵循以下循環（loop）：
 
@@ -46,9 +46,9 @@
 
 ---
 
-## 硬體需求（hardware requirements）
+## 硬體需求（hardware requirements）[[hardware-requirements]]
 
-### 遙操作器需求（teleoperator requirements）
+### 遙操作器需求（teleoperator requirements）[[teleoperator-requirements]]
 
 使用 `lerobot-rollout` 搭配 `--strategy.type=dagger` 模式需要**具有主動馬達的遙操作器（teleoperators with active motors）**，能夠：
 
@@ -58,7 +58,8 @@
 **相容的遙操作器（teleoperator）：**
 
 - `bi_openarm_mini` - 雙臂 OpenArm Mini
-- `so_leader` - SO100 / SO101 的領導臂（leader arm）
+- `so_leader` - SO100 / SO101 主臂（leader arm）
+- `bi_so_leader` - 雙臂 SO100 / SO101 主臂（leader arm）
 
 > [!IMPORTANT]
 > 提供的指令預設使用 `bi_openarm_follower` + `bi_openarm_mini`。
@@ -66,20 +67,20 @@
 
 ---
 
-## 腳本（script）
+## 腳本（script）[[script]]
 
 使用 `lerobot-rollout` 搭配 `--strategy.type=dagger` 進行 HIL 資料收集（data collection）。透過 `--inference.type=sync|rtc` 選擇推論後端（inference backend）：
 
 | 模式（mode）    | 旗標（flag）             | 模型（model）         |
 | --------------- | ------------------------ | --------------------- |
 | 標準（預設）    | _（不需要旗標（flag））_ | ACT、Diffusion Policy |
-| 即時分塊（RTC） | `--inference.type=rtc`   | Pi0、Pi0.5、SmolVLA   |
+| 即時區塊（RTC） | `--inference.type=rtc`   | Pi0、Pi0.5、SmolVLA   |
 
 ---
 
-## 逐步指南（step-by-step guide）
+## 逐步指南（step-by-step guide）[[step-by-step-guide]]
 
-### 步驟 1：預訓練基礎策略（pre-train a base policy）
+### 步驟 1：預訓練基礎策略（pre-train a base policy）[[step-1-pre-train-a-base-policy]]
 
 首先，在您的示範資料集（demonstration dataset）上訓練策略（train a policy）：
 
@@ -92,9 +93,9 @@ python src/lerobot/scripts/lerobot_train.py \
     --steps=50000
 ```
 
-### 步驟 2：收集 HIL 資料（collect HIL data）
+### 步驟 2：收集 HIL 資料（collect HIL data）[[step-2-collect-hil-data]]
 
-**標準推論（ACT、Diffusion policy）：**
+**標準推論（ACT、Diffusion Policy）：**
 
 ```bash
 lerobot-rollout --strategy.type=dagger \
@@ -114,6 +115,8 @@ lerobot-rollout --strategy.type=dagger \
     --strategy.num_episodes=50 \
     --interpolation_multiplier=2
 ```
+
+使用 `--interpolation_multiplier=N` 時，機器人會針對每個策略動作接收 `N` 個內插指令（控制以 `fps × N` Hz 執行），而策略推論與資料集記錄仍維持在 `--fps`，因此錄製的資料集會與其宣告的 FPS 相符。
 
 **搭配 RTC 用於大型模型（Pi0、Pi0.5、SmolVLA）：**
 
@@ -147,11 +150,11 @@ lerobot-rollout --strategy.type=dagger \
 互動模式（interaction model）如下：
 
 - **暫停輸入（pause input）**：暫停自主策略執行（pause autonomous policy execution）
-- **接管輸入（takeover input:）**：將控制權轉移（transfer control）給人類操作員（human operator）並記錄介入資料（record intervention data）
+- **接管輸入（takeover input）**：將控制權轉移（transfer control）給人類操作員（human operator）並記錄介入資料（record intervention data）
 - **交還策略輸入（return-to-policy input）**：將控制權交還（hand control back）給策略（policy）並繼續同一回合（same episode）
 - **回合控制輸入（episode control inputs）**：根據需要儲存（save）/重新錄製（re-record）/停止（stop）/重置（reset）
 
-實際的按鍵（key）/踏板（padal）對應可能因腳本和硬體整合而異。請以每個腳本印出的操控說明作為您設定上具體對應關係的依據（source of truth）。
+實際的按鍵（key）/踏板（pedal）對應可能因腳本和硬體整合而異。請以每個腳本印出的操控說明作為您設定上具體對應關係的依據（source of truth）。
 
 HIL 協定（HIL protocol）：
 
@@ -180,7 +183,7 @@ HIL 協定（HIL protocol）：
 sudo setfacl -m u:$USER:rw /dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd
 ```
 
-### 步驟 3：微調策略（fine-tune the policy）
+### 步驟 3：微調策略（fine-tune the policy）[[step-3-fine-tune-the-policy]]
 
 在**合併的**資料集（combined dataset， `demo-dataset` + `hil-dataset` 合併在一起）上進行微調（fine-tune）：
 
@@ -197,9 +200,9 @@ python src/lerobot/scripts/lerobot_train.py \
 
 ---
 
-## 有效 HIL 收集的技巧（tips for effective HIL collection）
+## 有效 HIL 收集的技巧（tips for effective HIL collection）[[tips-for-effective-hil-collection]]
 
-### 何時介入（when to intervene）
+### 何時介入（when to intervene）[[when-to-intervene]]
 
 當您觀察到以下情況時介入（intervene）：
 
@@ -207,7 +210,7 @@ python src/lerobot/scripts/lerobot_train.py \
 - 機器人猶豫不決或表現出不確定的行為（hesitating or showing uncertain behavior）
 - 機器人偏離預期軌跡（deviating from the expected trajectory）
 
-### 恢復：遙操作回到良好狀態（recovery: teleoperating back to a good state）
+### 恢復：遙操作回到良好狀態（recovery: teleoperating back to a good state）[[recovery-teleoperating-back-to-a-good-state]]
 
 在恢復（recovery）階段，遙操作（teleoperate）機器人回到以下狀態（state）：
 
@@ -215,17 +218,17 @@ python src/lerobot/scripts/lerobot_train.py \
 - 當前子任務（subtask）仍然可以完成
 - 恢復軌跡（recovery trajectory）本身就是有資訊量的訓練資料（informative training data）
 
-### 修正的品質（quality of corrections）
+### 修正的品質（quality of corrections）[[quality-of-corrections]]
 
 在修正（correction）階段：
 
 - 提供**自信、乾淨的**軌跡（trajectory）
-- 完整地完成當前子任務（task）
+- 完整地完成當前子任務（subtask）
 - 不要過度修正或添加不必要的動作（action）
 
 ---
 
-## 相關工作（related work）
+## 相關工作（related work）[[related-work]]
 
 此 HIL 資料收集方法（HIL data collection approach）建立在互動式模仿學習（interactive imitation learning）的理念之上：
 

@@ -1,4 +1,4 @@
-# 在真實世界機器人上進行模仿學習（Imitation Learning）
+# 在真實世界機器人上進行模仿學習（Imitation Learning）[[imitation-learning-on-real-world-robots]]
 
 本教學將說明如何訓練神經網路（train a neural network）來自主控制真實的機器人。
 
@@ -38,11 +38,11 @@
 
 </Tip>
 
-## 設定與校正（set up and calibrate）
+## 設定與校正（set up and calibrate）[[set-up-and-calibrate]]
 
 如果您尚未設定和校正您的機器人與遙操作裝置（teleop device），請按照機器人專屬的教學（robot-specific tutorial）進行操作。
 
-## 遙操作（teleoperate）
+## 遙操作（teleoperate）[[teleoperate]]
 
 在此範例中，我們將示範如何遙操作（teleoperation） SO101 機器人。每個命令都附有對應的 API 範例。
 
@@ -96,11 +96,11 @@ while True:
 1. 識別任何缺少的校正（identify any missing calibrations），並啟動校正程序。
 2. 連接機器人和遙操作裝置（teleop device），並開始遙操作。
 
-## 攝影機（cameras）
+## 攝影機（cameras）[[cameras]]
 
-要將攝影機加入您的設定，請參照此[指南](./cameras#setup-cameras)。
+要將攝影機加入您的設定，請參照此[指南](./cameras)。
 
-## 搭配攝影機進行遙操作（teleoperate with cameras）
+## 搭配攝影機進行遙操作（teleoperate with cameras）[[teleoperate-with-cameras]]
 
 使用 `rerun`，您可以在遙操作（teleoperate）的同時視覺化攝影機畫面和關節位置（joint positions）。在此範例中，我們使用的是 Koch 手臂。
 
@@ -170,7 +170,7 @@ while True:
 </hfoption>
 </hfoptions>
 
-## 錄製資料集（record a dataset）
+## 錄製資料集（record a dataset）[[record-a-dataset]]
 
 熟悉遙操作（teleoperation）後，您就可以錄製（record）您的第一個資料集（dataset）。
 
@@ -207,8 +207,8 @@ lerobot-record \
     --dataset.num_episodes=5 \
     --dataset.single_task="Grab the black cube" \
     --dataset.streaming_encoding=true \
-    # --dataset.rgb_encoder.vcodec=auto \
     --dataset.encoder_threads=2
+# 選用：--dataset.rgb_encoder.vcodec=auto
 ```
 </hfoption>
 <hfoption id="API example">
@@ -341,7 +341,7 @@ if __name__ == "__main__":
 </hfoption>
 </hfoptions>
 
-#### 資料集上傳（dataset upload）
+#### 資料集上傳（dataset upload）[[dataset-upload]]
 
 在本機端，您的資料集（dataset）儲存在此資料夾中：`~/.cache/huggingface/lerobot/{repo-id}`。資料錄製（data recording）結束後，您的資料集將被上傳到您的 Hugging Face 頁面（例如 `https://huggingface.co/datasets/${HF_USER}/so101_test`），您可以執行以下命令取得該連結：
 
@@ -359,23 +359,23 @@ echo https://huggingface.co/datasets/${HF_USER}/so101_test
 hf upload ${HF_USER}/record-test ~/.cache/huggingface/lerobot/{repo-id} --repo-type dataset
 ```
 
-#### 錄製功能（record function）
+#### 錄製功能（record function）[[record-function]]
 
 `record` 功能提供了一套工具，用於在機器人操作期間擷取和管理資料：
 
-##### 1. 資料儲存（data storage）
+##### 1. 資料儲存（data storage）[[1-data-storage]]
 
 - 資料使用 `LeRobotDataset` 格式儲存，並在錄製（recording）期間存入磁碟。
 - 預設情況下，資料集（dataset）會在錄製（recording）完成後推送到您的 Hugging Face 頁面。
   - 若要停用上傳功能（disable uploading），請使用 `--dataset.push_to_hub=False`。
 
-##### 2. 檢查點的建立與接續（checkpointing and resuming）
+##### 2. 檢查點的建立與接續（checkpointing and resuming）[[2-checkpointing-and-resuming]]
 
 - 錄製（recording）過程中會自動建立檢查點（checkpoints）。
 - 如果發生問題，或您想在同一個資料集（dataset）中錄製更多回合（record additional episodes），可以使用 `--resume=true` 重新執行相同命令來接續（resume）錄製。續錄錄製時，`--dataset.num_episodes` 必須設定為**額外要錄製的回合數（number of additional episodes to be recorded）**，而不是資料集中的目標總回合數（targeted total number of episodes）！請確保您也設定了 `--dataset.root="local_path"`，這是儲存資料集新部分的本機路徑（local path），且是接續（resume）錄製所需的。
 - 若要從頭開始錄製（recording from scratch），請**手動刪除（manually delete）**資料集目錄（dataset directory）。
 
-##### 3. 錄製參數（recording parameters）
+##### 3. 錄製參數（recording parameters）[[3-recording-parameters]]
 
 使用命令列引數（command-line arguments）設定資料錄製的流程（flow of data recording）：
 
@@ -386,7 +386,7 @@ hf upload ${HF_USER}/record-test ~/.cache/huggingface/lerobot/{repo-id} --repo-t
 - `--dataset.num_episodes=50`
   要錄製（record）的總回合數（total number of episodes）（預設：**50**）。
 
-##### 4. 錄製期間的鍵盤控制（keyboard controls during recording）
+##### 4. 錄製期間的鍵盤控制（keyboard controls during recording）[[4-keyboard-controls-during-recording]]
 
 使用鍵盤快捷鍵控制資料錄製流程（data recording flow）：
 
@@ -402,7 +402,7 @@ hf upload ${HF_USER}/record-test ~/.cache/huggingface/lerobot/{repo-id} --repo-t
 
 </Tip>
 
-#### 收集資料的技巧（tips for gathering data）
+#### 收集資料的技巧（tips for gathering data）[[tips-for-gathering-data]]
 
 熟悉資料錄製（data recording）後，您可以建立更大的資料集（dataset）進行訓練（training）。一個好的入門任務（starting task）是在不同位置抓取物體並放入箱中。我們建議至少錄製 50 個回合（episodes），每個位置 10 個回合。保持攝影機固定，並在整個錄製過程中維持一致的抓取行為。同時確保您操作的物體在攝影機畫面中可見。一個好的經驗法則是，您應該能夠僅透過觀看攝影機影像就能自行完成任務。
 
@@ -412,11 +412,34 @@ hf upload ${HF_USER}/record-test ~/.cache/huggingface/lerobot/{repo-id} --repo-t
 
 如果您想深入了解這個重要主題，可以參閱我們撰寫的關於什麼是好的資料集（dataset）的[部落格文章](https://huggingface.co/blog/lerobot-datasets#what-makes-a-good-dataset)。
 
-#### 疑難排解
+#### 節奏回報（cadence reporting）[[cadence-reporting]]
+
+`lerobot-record` 會依 `--dataset.fps` 調節迴圈步調，並回報實際達成的結果：為每個您保留的回合提供一行摘要，並在錄製結束時（包括按下 `Ctrl-C` 時）提供整個工作階段的區塊報告。
+
+```
+Cadence (episode 0): 29.88 Hz vs 30 Hz target · 600 ticks, 20.0 s measured · 8/599 ticks over the 33.3 ms budget (work mean 18.4 ms, worst 45.1 ms)
+Cadence (episode 1): 29.88 Hz vs 30 Hz target · 600 ticks, 20.0 s measured · 8/599 ticks over the 33.3 ms budget (work mean 18.4 ms, worst 45.1 ms)
+Cadence summary — whole run, 2 episodes · target 30 Hz (33.3 ms budget per tick): 1200 ticks, 1198 judged
+  effective cadence: 29.88 Hz over 40.1 s measured
+  ticks over the 33.3 ms work budget: 16/1198 (1.3%) — work mean 18.4 ms, worst 45.1 ms
+  loop-body steps (share of measured work):
+    observe      mean  13.65 ms · worst  40.20 ms ·  74.4% of work · 1200 calls
+    process_obs  mean   0.30 ms · worst   0.30 ms ·   1.6% of work · 1200 calls
+    teleop       mean   1.80 ms · worst   1.80 ms ·   9.8% of work · 1200 calls
+    send         mean   0.90 ms · worst   0.90 ms ·   4.9% of work · 1200 calls
+    record       mean   1.70 ms · worst   1.90 ms ·   9.3% of work · 1200 calls
+  pacing headroom: 15.1 ms slept per tick on average (max 16.7 ms) — near zero means the loop is saturated
+```
+
+在您使用該資料集（dataset）進行訓練之前，這份報告值得一讀。影格的時間戳記（frame’s timestamp）是從其索引推導而來，因此一個以 25 Hz 執行的工作階段，仍會產生一個*聲稱*為 30 的資料集——錄下來的動作單純就是比現實更快。在上面的例子中，`observe` 佔了迴圈工作量的 74%，而其 `worst` 為 40 ms，預算卻只有 33.3 ms：正是攝影機（camera）導致那 16 個 tick 超支。**步調餘裕（pacing headroom）**接近零，代表已經沒有多餘空間可以吸收一次緩慢的 tick。
+
+回合（episode）之間的重置階段（reset phases）以相同方式調節步調，但刻意不計入這些數字，因為它們不會錄製任何內容。`lerobot-teleoperate` 與 `lerobot-replay` 也以相同方式回報，而 `lerobot-rollout` 則會額外加入 [節奏回報（Cadence Reporting）](./inference#cadence-reporting) 中所述的插值專屬（interpolation-specific）資訊列。
+
+#### 疑難排解[[troubleshooting]]
 
 - 在 Linux 上，只要 `lerobot-record` 在互動式終端機中執行，錄製控制流程（recording control-flow）的按鍵（方向鍵、Escape）就能在 X11、Wayland 以及無頭/SSH 工作階段上運作，不需要設定 `$DISPLAY`。如果按鍵沒有任何效果，請確認您位於互動式（TTY）終端機，而非管線（pipeline）/非 TTY 工作階段，並確認它是焦點視窗；對應的字母鍵 `n` / `r` / `q` 也可使用。鍵盤*遙操作（teleoperation）*（相對於錄製控制流程）仍需要全域按鍵後端，也就是 X11 工作階段、Windows 桌面，或已授予輔助使用/輸入監控權限的 macOS，在 Wayland 或無頭機器上則無法使用。請參閱 [pynput 限制](https://pynput.readthedocs.io/en/latest/limitations.html#linux)。
 
-## 視覺化資料集（visualize a dataset）
+## 視覺化資料集（visualize a dataset）[[visualize-a-dataset]]
 
 若您已使用 `--control.push_to_hub=true` 將資料集（dataset）上傳至 Hub，可透過複製貼上下方指令所提供的儲存庫（repository） ID，用於[線上視覺化您的資料集（visualize your dataset online）](https://huggingface.co/spaces/lerobot/visualize_dataset)：
 
@@ -424,7 +447,7 @@ hf upload ${HF_USER}/record-test ~/.cache/huggingface/lerobot/{repo-id} --repo-t
 echo ${HF_USER}/so101_test
 ```
 
-## 回合重播（replay an episode）
+## 回合重播（replay an episode）[[replay-an-episode]]
 
 一個實用的功能是 `replay` 函式，它允許您重播（replay）任何已錄製（recorded）的回合（episode）或任何現有資料集（dataset）中的回合。此功能可幫助您測試機器人動作（actions）的可重複性，並評估在相同型號機器人之間的可遷移性（transferability）。
 
@@ -482,7 +505,7 @@ robot.disconnect()
 
 您的機器人應該會複現（replicate）與您錄製（record）時類似的動作。例如，觀看[這段影片](https://x.com/RemiCadene/status/1793654950905680090)，我們在 [Trossen Robotics](https://www.trossenrobotics.com) 的 Aloha 機器人上使用了 `replay`。
 
-## 訓練策略（train a policy）
+## 訓練策略（train a policy）[[train-a-policy]]
 
 要訓練一個策略（train a policy）來控制您的機器人，請使用 [`lerobot-train`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/scripts/lerobot_train.py) 腳本。需要幾個必要引數（arguments）。以下是一個範例命令：
 
@@ -524,11 +547,11 @@ lerobot-train --config_path=${HF_USER}/my_policy --resume=true
 
 此外，您可以為模型（model）提供額外的 `tags` 或指定 `license`，或將模型儲存庫（model repo）設為 `private`：`--policy.private=true --policy.tags=\[ppo,rl\] --policy.license=mit`
 
-#### 使用 Google Colab 訓練（train using Google Colab）
+#### 使用 Google Colab 訓練（train using Google Colab）[[train-using-google-colab]]
 
 如果您的本機電腦沒有強大的 GPU，您可以透過 [ACT 訓練筆記本](./notebooks#training-act)利用 Google Colab 來訓練（training）模型（model）。
 
-#### 使用 Hugging Face Jobs 訓練（train using Hugging Face Jobs）
+#### 使用 Hugging Face Jobs 訓練（train using Hugging Face Jobs）[[train-using-hugging-face-jobs]]
 
 Hugging Face Jobs 讓您能輕鬆選擇硬體並在雲端執行訓練（training）。因此，如果您沒有強大的 GPU、需要更多 VRAM，或只是想更快地訓練模型（train a model），就使用 HF Jobs！它採用按用量計費，您只需為每秒的使用付費，您可以在[這裡](https://huggingface.co/docs/hub/jobs)查看定價與其他資訊。
 
@@ -575,7 +598,7 @@ lerobot-train \
 
 Job 設定來自目前的命令，因此請視需要覆寫 `--job.target`、`--job.timeout` 等；若要讓接續後的執行本身之後也能被接續，請保留 `--save_checkpoint_to_hub=true`。
 
-#### 上傳策略的檢查點（upload policy checkpoints)
+#### 上傳策略的檢查點（upload policy checkpoints）[[upload-policy-checkpoints]]
 
 訓練（training）完成後，使用以下命令上傳最新的檢查點（checkpoint）：
 
@@ -592,7 +615,7 @@ hf upload ${HF_USER}/act_so101_test${CKPT} \
   outputs/train/act_so101_test/checkpoints/${CKPT}/pretrained_model
 ```
 
-## 執行推論並評估您的策略（run inference and evaluate your policy）
+## 執行推論並評估您的策略（run inference and evaluate your policy）[[run-inference-and-evaluate-your-policy]]
 
 使用 `lerobot-rollout` 在您的機器人上部署（deployment）已訓練策略（trained policy）。您可以根據需求選擇不同的策略（strategies）：
 

@@ -68,10 +68,11 @@ repos:
         # Jinja2 model-card templates use a .md extension but contain {% ... %} /
         # {{ ... }} tags that prettier's Markdown formatter mangles (e.g. table loops).
         #
-        # docs/source/api/ holds the generated API reference. Its `[[autodoc]]` blocks restrict output
-        # to an indented `- member` list, which prettier reads as a lazy paragraph continuation and
-        # joins onto one line — silently turning a member list into part of the directive.
-        exclude: ^(src/lerobot/templates/.*\.md|docs/source/api/.*\.mdx)$
+        # docs/source/api/ and its translations under docs/source/<lang>/api/ hold the generated API
+        # reference. Their `[[autodoc]]` blocks restrict output to an indented `- member` list, which
+        # prettier reads as a lazy paragraph continuation and joins onto one line — silently turning
+        # a member list into part of the directive.
+        exclude: ^(src/lerobot/templates/.*\.md|docs/source/([^/]+/)?api/.*\.mdx)$
 
   ##### Security #####
   - repo: https://github.com/gitleaks/gitleaks

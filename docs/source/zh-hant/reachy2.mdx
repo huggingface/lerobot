@@ -1,16 +1,16 @@
-# Reachy 2
+# Reachy 2[[reachy-2]]
 
 Reachy 2 是由 Pollen Robotics 製造的開源人形機器人，專為具身 AI（embodied AI）與真實世界應用（real-world applications）的開發而設計。
 請查看 [Pollen Robotics 網站](https://www.pollen-robotics.com/reachy/)，或存取 [Reachy 2 文件](https://docs.pollen-robotics.com/)以取得更多有關此平台的資訊！
 
-## 遙操作 Reachy 2（teleoperate Reachy 2）
+## 遙操作 Reachy 2（teleoperate Reachy 2）[[teleoperate-reachy-2]]
 
 目前有兩種方式可遙操作（teleoperate） Reachy 2：
 
 - Pollen Robotics 的 VR 遙操作（teleoperation，不包含在 LeRobot 中）。
 - 機器人對機器人遙操作（robot-to-robot teleoperation，使用一台 Reachy 2 控制另一台）。
 
-## Reachy 2 模擬（simulation）
+## Reachy 2 模擬（simulation）[[reachy-2-simulation]]
 
 **（僅限 Linux）** 您可以使用所提供的 [Docker 映像](https://hub.docker.com/r/pollenrobotics/reachy2_core)，在模擬（Gazebo 或 MuJoCo）中執行 Reachy 2。
 
@@ -63,9 +63,9 @@ docker run --rm -it \
 >   start_rviz:=true start_sdk_server:=true mujoco:=true
 > ```
 
-## 設定（setup）
+## 設定（setup）[[setup]]
 
-### 事前準備（prerequisites）
+### 事前準備（prerequisites）[[prerequisites]]
 
 - 在您的機器人上，檢查**服務映像（service images）**是否符合最低版本：
   - **reachy2-core >= 1.7.5.2**
@@ -78,7 +78,7 @@ docker run --rm -it \
 
 我們建議使用兩台電腦：一台用於遙操作（需要 Windows），另一台用於以 LeRobot 錄製（recording）。
 
-### 安裝 LeRobot（install LeRobot）
+### 安裝 LeRobot（install LeRobot）[[install-lerobot]]
 
 請依照[安裝說明（installation instructions）](https://github.com/huggingface/lerobot#installation)安裝 LeRobot。
 
@@ -88,55 +88,22 @@ docker run --rm -it \
 pip install -e ".[reachy2]"
 ```
 
-### （可選但建議）安裝 pollen_data_acquisition_server
+## 步驟 1：錄製（recording）[[step-1-recording]]
 
-如何管理 Reachy 2 的錄製工作階段（recording sessions）由您自行決定，但**最簡單**的方式是使用這個伺服器（server），讓您能直接從 VR 遙操作（teleoperation） app 控制工作階段（sessions）。
-
-> **注意：** 目前只有 VR 遙操作應用程式（teleoperation application）能作為此伺服器（server）的用戶端（client），因此這個步驟主要針對遙操作。您可以自由開發自訂用戶端（custom clients）來依需求管理工作階段（sessions）。
-
-在您的 LeRobot 環境中，從原始碼安裝該伺服器（server）：
-
-```bash
-git clone https://github.com/pollen-robotics/pollen_data_acquisition_server.git
-cd pollen_data_acquisition_server
-pip install -e .
-```
-
-在[這裡找到 pollen_data_acquisition_server 文件](https://github.com/pollen-robotics/pollen_data_acquisition_server)。
-
-## 步驟 1：錄製（recording）
-
-### 取得 Reachy 2 的 IP 位址（get Reachy 2 IP address）
+### 取得 Reachy 2 的 IP 位址（get Reachy 2 IP address）[[get-reachy-2-ip-address]]
 
 在開始遙操作（teleoperation）與資料錄製（data recording）之前，請先找出[機器人的 IP 位址](https://docs.pollen-robotics.com/getting-started/setup-reachy2/connect-reachy2/)。
 我們強烈建議透過**乙太網路（Ethernet）**連接所有裝置（PC 與機器人）。
 
-### 啟動錄製（launch recording）
+### 啟動錄製（launch recording）[[launch-recording]]
 
-使用 Reachy 2 VR 遙操作應用程式（teleoperation application）時，有兩種方式可管理錄製工作階段（recording sessions）：
+使用 LeRobot 的 `lerobot-record` 指令來管理錄製工作階段。先前記錄於此的 `pollen_data_acquisition_server` 工作流程已不再提供。
 
-- **使用資料擷取伺服器（推薦用於 VR 遠端操作）**：VR app 會協調工作階段（orchestrates sessions，透過該伺服器 server 告訴 LeRobot 何時建立資料集 dataset、開始/停止回合 episode），同時也控制機器人的動作（robot’s motions）。
-- **使用 LeRobot 的 record 腳本**：由 LeRobot 掌握工作階段控制（session control），並決定何時開始/停止回合（episode）。若您同時也使用 VR 遙操作（teleoperation） app，那它僅用於動作控制（motion control）。
+使用 Reachy 2 VR 遙操作應用程式時，請選擇「Standard session」。VR 應用程式會控制機器人的動作，而 `lerobot-record` 則負責管理資料集並開始與停止回合。
 
-### 選項 1：使用 Pollen 資料擷取伺服器（推薦用於 VR 遠端操作）
-
-請確認您已如「設定（setup）」章節所述安裝了 pollen_data_acquisition_server。
-
-啟動資料擷取伺服器（data acquisition server），以便能直接從遙操作應用程式（teleoperation application）管理您的工作階段（session）：
-
-```bash
-python -m pollen_data_acquisition_server.server
-```
-
-接著進入遙操作應用程式（teleoperation application）並選擇「Data acquisition session」。
-最後，您可以依照顯示的畫面設定您的工作階段（session）。
-
-> 即使沒有 VR app，您也可以搭配自己的用戶端實作（client implementation）使用 `pollen_data_acquisition_server`。
-
-### 選項 2：使用 lerobot.record
+### 使用 `lerobot-record` 錄製[[record-with-lerobot-record]]
 
 Reachy 2 完全受 LeRobot 錄製功能（recording features）支援。
-若您選擇此選項但仍想使用 VR 遙操作應用程式（teleoperation application），請在 app 中選擇「Standard session」。
 
 **範例：在不使用移動底座的情況下開始錄製（record）：**
 首先，將 reachy2 與 reachy2_teleoperator 加入 record 腳本的 imports 中。接著您可以使用以下命令：
@@ -165,7 +132,7 @@ lerobot-record \
     --display_data=true
 ```
 
-#### 特定選項（specific options）
+#### 特定選項（specific options）[[specific-options]]
 
 **完整設定總覽（包含所有選項）：**
 
@@ -207,17 +174,17 @@ lerobot-record \
     --display_data=true
 ```
 
-##### `--robot.use_external_commands`
+##### `--robot.use_external_commands`[[--robotuseexternalcommands]]
 
 決定 LeRobot 的 robot.send_action() 是否向機器人送出命令。
 使用 VR 遙操作應用程式（teleoperation application）時**必須**設為 false，因為該 app 已經在送出命令。
 
-##### `--teleop.use_present_position`
+##### `--teleop.use_present_position`[[--teleopusepresentposition]]
 
 決定遙操作器（teleoperator）讀取的是機器人的目標位置還是當前位置（goal or present position）。
 若使用一台順應（compliant）的 Reachy 2 來控制另一台，則必須設為 true。
 
-##### 使用相關的部件（use the relevant parts）
+##### 使用相關的部件（use the relevant parts）[[use-the-relevant-parts]]
 
 從我們的初步測試來看，在只有部分關節在移動時仍錄製（recording）**所有**關節（joints），可能會使某些策略（policy）的模型品質（model quality）下降。
 為避免這種情況，您可以使用以下方式將特定部件（specific parts）排除在錄製（recording）與重播（replay）之外：
@@ -243,7 +210,7 @@ lerobot-record \
 > **重要：** 在同一個工作階段中，機器人與遙操作器（robot and the teleoperator）兩邊**啟用的部件必須相符**。
 > 例如，若機器人以 `--robot.with_mobile_base=false` 執行，則遙操作器（teleoperator）也必須停用相同的部件 `--teleoperator.with_mobile_base=false`。
 
-##### 使用相關的攝影機（use the relevant cameras）
+##### 使用相關的攝影機（use the relevant cameras）[[use-the-relevant-cameras]]
 
 您可以對**攝影機（cameras）**做相同的事。使用以下方式以預設參數（default parameters）啟用或停用每台攝影機：
 
@@ -269,7 +236,7 @@ lerobot-record \
 --robot.cameras="{ extra: {type: opencv, index_or_path: 42, width: 640, height: 480, fps: 30}}" \
 ```
 
-## 步驟 2：重播（replay）
+## 步驟 2：重播（replay）[[step-2-replay]]
 
 請確認機器人設定的部件與資料集相同（configured with the same parts as the dataset）：
 
@@ -283,7 +250,7 @@ lerobot-replay \
     --dataset.episode=0
 ```
 
-## 步驟 3：訓練（training）
+## 步驟 3：訓練（training）[[step-3-train]]
 
 ```bash
 lerobot-train \
@@ -296,7 +263,7 @@ lerobot-train \
   --policy.repo_id=pollen_robotics/record_test_policy
 ```
 
-## 步驟 4：評估（evaluate）
+## 步驟 4：評估（evaluate）[[step-4-evaluate]]
 
 ```bash
 lerobot-eval \
@@ -307,3 +274,11 @@ lerobot-eval \
   --dataset.num_episodes=10 \
   --policy.path=outputs/train/reachy2_test/checkpoints/last/pretrained_model
 ```
+
+已移動的章節：
+
+[ <a href="#record-with-lerobot-record">（可選但建議）安裝 pollen_data_acquisition_server</a><a id="optional-but-recommended-install-pollendataacquisitionserver"></a> ]
+
+[ <a href="#record-with-lerobot-record">選項 1：使用 Pollen 資料擷取伺服器（推薦用於 VR 遠端操作）</a><a id="option-1-using-pollen-data-acquisition-server-recommended-for-vr-teleop"></a> ]
+
+[ <a href="#record-with-lerobot-record">選項 2：使用 lerobot.record</a><a id="option-2-using-lerobotrecord"></a> ]

@@ -107,7 +107,7 @@ class GripperConfig:
     gripper_penalty: float = 0.0    # 不當使用夾爪的懲罰
 
 class ResetConfig:
-    fixed_reset_joint_positions: Any | None = None    # 重置時的關節位置
+    fixed_reset_joint_positions: list[float] | None = None    # 重置時的關節位置
     reset_time_s: float = 5.0    # 重置期間的等待時間
     control_time_s: float = 20.0    # 最大回合持續時間
     terminate_on_success: bool = True    # 偵測到成功時是否終止回合
@@ -810,7 +810,6 @@ python -m lerobot.rl.gym_manipulator --config_path path/to/env_config.json
    ```
 
 4. **測試分類器（test the classifier）**：
-
    ```bash
    python -m lerobot.rl.gym_manipulator --config_path src/lerobot/configs/env_config.json
    ```

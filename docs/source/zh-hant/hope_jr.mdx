@@ -1,10 +1,10 @@
-# Hope Jr
+# HopeJR[[hopejr]]
 
-## 事前準備（prerequisites）
+## 事前準備（prerequisites）[[prerequisites]]
 
 - [硬體設定（Hardware Setup）](https://github.com/TheRobotStudio/HOPEJr)
 
-## 安裝 LeRobot（install LeRobot）
+## 安裝 LeRobot（install LeRobot）[[install-lerobot]]
 
 請依照[安裝說明（installation instructions）](https://github.com/huggingface/lerobot#installation)安裝 LeRobot。
 
@@ -14,7 +14,7 @@
 pip install -e ".[hopejr]"
 ```
 
-## 裝置設定（device configuration）
+## 裝置設定（device configuration）[[device-configuration]]
 
 在開始校正（calibration）與操作之前，您需要識別每個 HopeJR 元件的 USB 連接埠（ports）。執行此腳本來找出手臂（arm）、手（hand）、手套（glove）與外骨骼（exoskeleton）的 USB 連接埠：
 
@@ -24,11 +24,11 @@ lerobot-find-port
 
 這會顯示可用的 USB 連接埠（ports）及其相關聯的裝置。請記下連接埠路徑（port paths，例如 `/dev/tty.usbmodem58760433331`、`/dev/tty.usbmodem11301`），因為在錄製資料（recording data）、重播回合（replaying episodes）或執行遙操作腳本（running teleoperation scripts）時，您需要在 `--robot.port` 與 `--teleop.port` 參數（parameter）中指定它們。
 
-## 步驟 1：校正（calibration）
+## 步驟 1：校正（calibration）[[step-1-calibration]]
 
 在進行遙操作（teleoperation）之前，HopeJR 的肢體需要先校正（calibration）。校正檔案（calibration files）會儲存在 `~/.cache/huggingface/lerobot/calibration`
 
-### 1.1 校正機器人手部（calibrate robot hand）
+### 1.1 校正機器人手部（calibrate robot hand）[[11-calibrate-robot-hand]]
 
 ```bash
 lerobot-calibrate \
@@ -78,7 +78,7 @@ lerobot-calibrate \
 
 當您為所有關節（joints）設定好適當的界限（boundaries）後，點擊「Save」將校正值（calibration values）儲存到馬達（motors）。
 
-### 1.2 校正遙操作器手套（calibrate teleoperator glove）
+### 1.2 校正遙操作器手套（calibrate teleoperator glove）[[12-calibrate-teleoperator-glove]]
 
 ```bash
 lerobot-calibrate \
@@ -117,7 +117,7 @@ middle_dip           |   1484 |   1500 |   1547
 
 校正（calibration）完成後，系統會將校正儲存到 `/Users/your_username/.cache/huggingface/lerobot/calibration/teleoperators/homunculus_glove/red.json`
 
-### 1.3 校正機器人手臂（calibrate robot arm）
+### 1.3 校正機器人手臂（calibrate robot arm）[[13-calibrate-robot-arm]]
 
 ```bash
 lerobot-calibrate \
@@ -143,7 +143,7 @@ lerobot-calibrate \
 
 使用校正介面（calibration interface）為每個關節（joint）設定範圍界限（range boundaries）。讓每個關節走完其完整的活動範圍（move each joint through its full range of motion），並相應地調整最小值與最大值（minimum and maximum values）。當您為所有關節設定好適當的界限後，儲存校正（calibration）。
 
-### 1.4 校正遙操作器外骨骼（calibrate teleoperator exoskeleton）
+### 1.4 校正遙操作器外骨骼（calibrate teleoperator exoskeleton）[[14-calibrate-teleoperator-exoskeleton]]
 
 ```bash
 lerobot-calibrate \
@@ -171,11 +171,11 @@ wrist_pitch     |   1975 |   1993 |   2074
 Calibration saved to /Users/your_username/.cache/huggingface/lerobot/calibration/teleoperators/homunculus_arm/black.json
 ```
 
-## 步驟 2：遙操作（teleoperation）
+## 步驟 2：遙操作（teleoperation）[[step-2-teleoperation]]
 
 由於 Feetech middleware 中的全域變數衝突（global variable conflicts），手臂與手的遙操作（teleoperation for arm and hand）必須在各自獨立的 shell 工作階段（sessions）中執行：
 
-### 手（hand）
+### 手（hand）[[hand]]
 
 ```bash
 lerobot-teleoperate \
@@ -191,7 +191,7 @@ lerobot-teleoperate \
     --fps=30
 ```
 
-### 手臂（arm）
+### 手臂（arm）[[arm]]
 
 ```bash
 lerobot-teleoperate \
@@ -205,13 +205,13 @@ lerobot-teleoperate \
     --fps=30
 ```
 
-## 步驟 3：錄製、重播與訓練（record, replay, train）
+## 步驟 3：錄製、重播與訓練（record, replay, train）[[step-3-record-replay-train]]
 
 使用 Hope-JR 進行錄製（record）、重播（replay）與訓練（train）仍屬實驗性質（experimental）。
 
-### 錄製（record）
+### 錄製（record）[[record]]
 
-此步驟會錄製資料集（records the dataset），可在[這裡](https://huggingface.co/datasets/nepyope/hand_record_test_with_video_data/settings)看到一個範例。
+此步驟會錄製資料集（records the dataset），可在[這裡](https://huggingface.co/datasets/nepyope/hand_record_test_with_video_data)看到一個範例。
 
 ```bash
 lerobot-record \
@@ -232,11 +232,11 @@ lerobot-record \
     --dataset.private=true \
     --dataset.streaming_encoding=true \
     --dataset.encoder_threads=2 \
-    # --dataset.rgb_encoder.vcodec=auto \
     --display_data=true
+# 選用：--dataset.rgb_encoder.vcodec=auto
 ```
 
-### 重播（replay）
+### 重播（replay）[[replay]]
 
 ```bash
 lerobot-replay \
@@ -248,7 +248,7 @@ lerobot-replay \
     --dataset.episode=0
 ```
 
-### 訓練（train）
+### 訓練（train）[[train]]
 
 ```bash
 lerobot-train \
@@ -261,7 +261,7 @@ lerobot-train \
   --policy.repo_id=<USER>/hand_test_policy
 ```
 
-### 評估（evaluate）
+### 評估（evaluate）[[evaluate]]
 
 這次訓練執行（training run）可在[這裡](https://wandb.ai/tino/lerobot/runs/rp0k8zvw?nw=nwusertino)作為範例查看。
 
@@ -278,6 +278,6 @@ lerobot-record \
   --dataset.num_episodes=10 \
   --dataset.streaming_encoding=true \
   --dataset.encoder_threads=2 \
-  # --dataset.rgb_encoder.vcodec=auto \
   --policy.path=outputs/train/hopejr_hand/checkpoints/last/pretrained_model
+# 選用：--dataset.rgb_encoder.vcodec=auto
 ```

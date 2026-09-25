@@ -1,4 +1,4 @@
-# EarthRover Mini Plus
+# EarthRover Mini Plus[[earthrover-mini-plus]]
 
 <img
   src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Earth_Rover_Mini_5_240c9adc-4f9e-44b7-982f-5d1dc24af1d8.png.webp"
@@ -8,15 +8,15 @@
 
 EarthRover Mini Plus 是一款完全開源的移動機器人（mobile robot），透過 Frodobots SDK 經由雲端連線。這讓您能夠控制機器人並錄製資料集（record datasets）以訓練 AI 模型（training AI models）。
 
-## 您需要準備的東西（what you need）
+## 您需要準備的東西（what you need）[[what-you-need]]
 
-### 硬體（hardware）
+### 硬體（hardware）[[hardware]]
 
 - EarthRover Mini 機器人
 - 具備 Python 3.12 或更新版本的電腦
 - 網際網路連線
 
-### 設定 Frodobots SDK（setting up the Frodobots SDK）
+### 設定 Frodobots SDK（setting up the Frodobots SDK）[[setting-up-the-frodobots-sdk]]
 
 機器人需要在您的電腦上執行 [Frodobots SDK](https://github.com/frodobots-org/earth-rovers-sdk)。方法如下：
 
@@ -57,12 +57,12 @@ hypercorn main:app --reload
 
 SDK 提供：
 
-- 前後攝影機（front and rear cameras）的即時視訊（live video）
+- 前後相機的即時視訊
 
 > [!IMPORTANT]
 > SDK 必須先執行，您才能使用機器人。
 
-## 安裝 LeRobot（install LeRobot）
+## 安裝 LeRobot（install LeRobot）[[install-lerobot]]
 
 請依照我們的[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
 
@@ -72,25 +72,25 @@ SDK 提供：
 pip install -e ".[hardware]"
 ```
 
-## 運作原理（how it works）
+## 運作原理（how it works）[[how-it-works]]
 
 機器人使用網際網路（internet）進行通訊：
 
 - **移動命令（movement commands）**：透過 SDK 送出
-- **攝影機視訊（camera video）**：從 SDK 接收
+- **相機視訊（camera video）**：從 SDK 接收
 - **機器人資訊（robot info）**：來自 SDK 的電量（battery）、位置（location）、速度（speed）
 
 您不需要插上任何東西（plug anything in），一切都透過 SDK 運作。
 
-## 校正（calibration）
+## 校正（calibration）[[calibration]]
 
-不需要校正（calibration）！只要 SDK 在執行中，機器人即可使用。
+不需要校正！只要 SDK 在執行中，機器人即可使用。
 
-## 控制機器人（controlling the robot）
+## 控制機器人（controlling the robot）[[controlling-the-robot]]
 
 您可以使用鍵盤控制機器人，就像用 WASD 鍵玩電玩遊戲一樣。
 
-### 鍵盤控制（keyboard controls）
+### 鍵盤控制（keyboard controls）[[keyboard-controls]]
 
 | 按鍵 | 動作（action）     |
 | ---- | ------------------ |
@@ -105,7 +105,7 @@ pip install -e ".[hardware]"
 | -    | 降低速度           |
 | ESC  | 中斷連線           |
 
-### 速度設定（speed settings）
+### 速度設定（speed settings）[[speed-settings]]
 
 您可以調整機器人的移動速度：
 
@@ -113,7 +113,7 @@ pip install -e ".[hardware]"
 - **轉向速度（turning speed）**：預設為全速（1.0）
 - **速度變更（speed changes）**：使用 +/- 鍵每次調整 0.1
 
-### 試試看（try it out）
+### 試試看（try it out）[[try-it-out]]
 
 在錄製資料（recording data）前先試駕（test driving）機器人：
 
@@ -152,20 +152,20 @@ finally:
 > [!TIP]
 > 若您使用 Mac，可能需要授予「終端機（Terminal）」存取鍵盤的權限以進行遙操作（teleoperation）。前往「系統偏好設定 > 安全性與隱私 > 輸入監控」，並勾選「終端機」的核取方塊。
 
-## 錄製資料（recording data）
+## 錄製資料（recording data）[[recording-data]]
 
-一旦您能好好駕駛機器人，就可以開始錄製資料（recording data）來訓練 AI 模型（train AI models）。系統會記錄：
+一旦您能好好駕駛機器人，就可以開始錄製資料來訓練 AI 模型。系統會記錄：
 
 - **您的操作**：您如何移動機器人（前進、後退、轉向）
 - **機器人所見**：
-  - 兩台攝影機的影片（videos from both cameras）
-  - 機器人的速度與方向（robot speed and direction）
-  - 電量與位置（battery level and location）
-  - GPS 位置與訊號（GPS position and signal）
-  - 其他感測器資料（other sensor data）
-- **發生的時間**：所有內容的時間戳（timestamp）
+  - 兩台相機的影片
+  - 機器人的速度與方向
+  - 電量與位置
+  - GPS 位置與訊號
+  - 其他感測器資料
+- **發生的時間**：所有內容的時間戳
 
-### 設定 Hugging Face（setting up Hugging Face）
+### 設定 Hugging Face（setting up Hugging Face）[[setting-up-hugging-face]]
 
 我們使用 Hugging Face 將您的資料儲存在線上。首先，使用您從 [Hugging Face 設定](https://huggingface.co/settings/tokens)取得的 token 登入：
 
@@ -173,16 +173,16 @@ finally:
 hf auth login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
-儲存您的 Hugging Face 使用者名稱（username）：
+儲存您的 Hugging Face 使用者名稱：
 
 ```bash
 HF_USER=$(hf auth whoami | awk -F': *' 'NR==1 {print $2}')
 echo $HF_USER
 ```
 
-### 開始錄製（start recording）
+### 開始錄製（start recording）[[start-recording]]
 
-使用標準的錄製命令（standard recording command）：
+使用標準的錄製命令：
 
 ```bash
 lerobot-record \
@@ -194,45 +194,45 @@ lerobot-record \
     --dataset.single_task="Navigate around obstacles" \
     --dataset.streaming_encoding=true \
     --dataset.encoder_threads=2 \
-    # --dataset.rgb_encoder.vcodec=auto \
     --display_data=true
+# 選用：--dataset.rgb_encoder.vcodec=auto
 ```
 
-將 `your_username/dataset_name` 替換為您的 Hugging Face 使用者名稱（username）與資料集（dataset）的名稱。
+將 `your_username/dataset_name` 替換為您的 Hugging Face 使用者名稱與資料集的名稱。
 
-### 儲存的內容（what gets saved）
+### 儲存的內容（what gets saved）[[what-gets-saved]]
 
-您的資料集（dataset）包含：
+您的資料集包含：
 
-**您的動作（2 個特徵 feature）**：
+**您的動作（2 個特徵）**：
 
 - `linear_velocity`：您向前/向後移動了多少
 - `angular_velocity`：您向左/向右轉了多少
 
-**機器人觀測（24 個特徵（feature））**：
+**機器人觀測（24 個特徵）**：
 
-- 前攝影機影片（front camera video）
-- 後攝影機影片（rear camera video）
-- 當前速度（current speed）
-- 電量（battery level）
-- 方向（orientation）
-- GPS（緯度 latitude、經度 longitude、訊號強度 signal strength）
-- 網路訊號強度（network signal strength）
-- 震動程度（vibration level）
-- 燈光狀態（lamp state，開 on/關 off）
-- 加速度計（accelerometer，x、y、z）
-- 陀螺儀（gyroscope，x、y、z）
-- 磁力計（magnetometer，x、y、z）
-- 車輪轉速 RPM（wheel RPMs，4 個車輪）
+- 前相機影片
+- 後相機影片
+- 當前速度
+- 電量
+- 方向
+- GPS（緯度、經度、訊號強度）
+- 網路訊號強度
+- 震動程度
+- 燈光狀態（開/關）
+- 加速度計（x、y、z）
+- 陀螺儀（x、y、z）
+- 磁力計（x、y、z）
+- 車輪轉速 RPM（4 個車輪）
 
-### 您的資料會存放在哪裡（where your data goes）
+### 您的資料會存放在哪裡（where your data goes）[[where-your-data-goes]]
 
 在您的電腦上：`~/.cache/huggingface/lerobot/{repo-id}`
 
-錄製（recording）完成後，您的資料會自動上傳到您的 Hugging Face 頁面：
+錄製完成後，您的資料會自動上傳到您的 Hugging Face 頁面：
 
 ```bash
 echo https://huggingface.co/datasets/${HF_USER}/earthrover-navigation
 ```
 
-您的資料集（dataset）會被標記為 `LeRobot`，方便社群探索。
+您的資料集會被標記為 `LeRobot`，方便社群探索。
