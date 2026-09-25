@@ -35,7 +35,7 @@ from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import close_envs, preprocess_observation
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.act.configuration_act import ACTConfig
-from lerobot.policies.act.modeling_act import ACTTemporalEnsembler
+from lerobot.policies.act.modeling_act import ACT, ACTTemporalEnsembler
 from lerobot.policies.factory import (
     get_policy_class,
     make_policy,
@@ -374,6 +374,50 @@ def test_multikey_construction(multikey: bool):
     assert action_condition, (
         f"Discrepancy detected. Action feature is {config.action_feature} but policy expects {output_features[ACTION]}"
     )
+
+
+@pytest.mark.parametrize("camera_channels", [1, 3])
+def test_act_single_channel_camera_shares_rgb_backbone(camera_channels: int):
+    """A single-channel camera (e.g. a depth map) shares ACT's RGB backbone.
+
+    `dataset_to_policy_features` classifies every image/video feature as
+    FeatureType.VISUAL, depth maps included, so a depth camera reaches the
+    backbone as a (B, 1, H, W) tensor and would otherwise raise a channel
+    mismatch in the backbone's first convolution.
+    """
+    h, w, batch_size, chunk_size, dim = 96, 128, 2, 4, 6
+    config = ACTConfig(
+        chunk_size=chunk_size,
+        n_action_steps=chunk_size,
+        pretrained_backbone_weights=None,
+        input_features={
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(dim,)),
+            f"{OBS_IMAGES}.top": PolicyFeature(type=FeatureType.VISUAL, shape=(3, h, w)),
+            f"{OBS_IMAGES}.top_depth": PolicyFeature(
+                type=FeatureType.VISUAL, shape=(camera_channels, h, w)
+            ),
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(dim,))},
+    )
+    model = ACT(config)
+    camera = torch.rand(batch_size, camera_channels, h, w, requires_grad=True)
+    batch = {
+        OBS_STATE: torch.randn(batch_size, dim),
+        ACTION: torch.randn(batch_size, chunk_size, dim),
+        "action_is_pad": torch.zeros(batch_size, chunk_size, dtype=torch.bool),
+        OBS_IMAGES: [torch.rand(batch_size, 3, h, w), camera],
+    }
+
+    actions, _ = model(batch)
+    assert actions.shape == (batch_size, chunk_size, dim)
+
+    # The RGB stem is reused as-is, so pretrained backbone weights stay valid.
+    assert model.backbone.conv1.in_channels == 3
+
+    # Gradients still reach the single-channel input.
+    actions.sum().backward()
+    assert camera.grad is not None
+    assert torch.isfinite(camera.grad).all()
 
 
 @pytest.mark.parametrize(
