@@ -20,7 +20,7 @@ from .config_so_follower import (
     SOFollowerConfig,
     SOFollowerRobotConfig,
 )
-from .so_follower import SO100Follower, SO101Follower, SOFollower
+from .so_follower import MotorStallError, SO100Follower, SO101Follower, SOFollower
 
 __all__ = [
     "SO100Follower",
@@ -30,4 +30,5 @@ __all__ = [
     "SOFollower",
     "SOFollowerConfig",
     "SOFollowerRobotConfig",
+    "MotorStallError",
 ]
