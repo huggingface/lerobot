@@ -83,6 +83,8 @@
     title: NVIDIA GR00T
   - local: xvla
     title: X-VLA
+  - local: dp3
+    title: DP3 (3D Diffusion Policy)
   - local: multi_task_dit
     title: Multitask DiT Policy
   - local: walloss
