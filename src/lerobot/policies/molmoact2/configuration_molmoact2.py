@@ -400,7 +400,11 @@ class MolmoAct2Config(PreTrainedConfig):
         super().__post_init__()
         if (self.joint_signs is None) != (self.joint_offsets is None):
             raise ValueError("joint_signs and joint_offsets must both be set or both be None.")
-        if self.joint_signs is not None and len(self.joint_signs) != len(self.joint_offsets):
+        if (
+            self.joint_signs is not None
+            and self.joint_offsets is not None
+            and len(self.joint_signs) != len(self.joint_offsets)
+        ):
             raise ValueError("joint_signs and joint_offsets must have the same length.")
         if self.action_mode not in {"continuous", "discrete", "both"}:
             raise ValueError(

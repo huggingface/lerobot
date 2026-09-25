@@ -58,6 +58,7 @@ from tqdm import tqdm
 
 from lerobot.datasets import LeRobotDataset
 from lerobot.lerobot_types import TransitionKey
+from lerobot.processor import create_transition
 from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
 from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
 from lerobot.rewards.robometer.processor_robometer import RobometerEncoderProcessorStep
@@ -157,18 +158,19 @@ def compute_robometer_progress(
 
         sub_indices = _build_subsample_indices(num_frames, num_subsampled_frames)
 
-        progress_per_frame = np.zeros(num_frames, dtype=np.float32)
+        progress_per_frame: np.ndarray = np.zeros(num_frames, dtype=np.float32)
 
         for start in tqdm(range(0, num_frames, batch_size), desc=f"  Ep {episode_idx}", leave=False):
             end = min(start + batch_size, num_frames)
             frames_batch = torch.stack([ep_frames[sub_indices[i]] for i in range(start, end)])
 
-            transition = {
-                TransitionKey.OBSERVATION: {image_key: frames_batch},
-                TransitionKey.COMPLEMENTARY_DATA: {"task": task},
-            }
+            transition = create_transition(
+                observation={image_key: frames_batch}, complementary_data={"task": task}
+            )
             encoded = encoder(transition)
             obs = encoded[TransitionKey.OBSERVATION]
+            if obs is None:
+                raise ValueError("RobometerEncoderProcessorStep returned a transition without an observation")
             batch = {
                 key: value.to(device) if isinstance(value, torch.Tensor) else value
                 for key, value in obs.items()

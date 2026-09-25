@@ -440,6 +440,10 @@ class GrootConfig(PreTrainedConfig):
 
     def validate_features(self) -> None:
         """Validate and set up input/output features for Groot."""
+        if self.input_features is None or self.output_features is None:
+            raise ValueError(
+                "`input_features` and `output_features` must be resolved before validating them."
+            )
         image_features = [key for key, feat in self.input_features.items() if feat.type == FeatureType.VISUAL]
         if not image_features:
             raise ValueError(

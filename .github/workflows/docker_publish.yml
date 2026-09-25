@@ -14,8 +14,6 @@
 
 # This workflow handles Docker image publishing & testing.
 name: Docker Publish & Test
-permissions:
-  contents: read
 
 on:
   # Allows running this workflow manually from the Actions tab
@@ -37,9 +35,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
   # This job builds a CPU image for testing & distribution
   build-docker-cpu:
+    permissions:
+      contents: read
     name: Build CPU Docker
     runs-on:
       group: aws-general-8-plus
@@ -52,21 +54,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install git-lfs
           git lfs install
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: true
           persist-credentials: false
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4 # zizmor: ignore[unpinned-uses]
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false
       - name: Login to Docker Hub
-        uses: docker/login-action@v4.4.0 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
       - name: Build and push Docker image CPU
-        uses: docker/build-push-action@v7 # zizmor: ignore[unpinned-uses]
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ./docker/Dockerfile.user
@@ -75,6 +77,8 @@ jobs:
 
   # This job builds a GPU image for testing & distribution
   build-docker-gpu:
+    permissions:
+      contents: read
     name: Build GPU Docker
     runs-on:
       group: aws-general-8-plus
@@ -87,21 +91,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install git-lfs
           git lfs install
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: true
           persist-credentials: false
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4 # zizmor: ignore[unpinned-uses]
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false
       - name: Login to Docker Hub
-        uses: docker/login-action@v4.4.0 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
       - name: Build and push Docker image GPU
-        uses: docker/build-push-action@v7 # zizmor: ignore[unpinned-uses]
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ./docker/Dockerfile.internal
@@ -110,6 +114,7 @@ jobs:
 
   # This job runs the E2E tests + pytest with all extras in the CPU image
   cpu-tests:
+    permissions: {}
     name: CPU Tests
     needs: [build-docker-cpu]
     runs-on:
@@ -143,6 +148,7 @@ jobs:
 
   # This job runs the E2E tests + pytest with all extras in the GPU image
   gpu-tests:
+    permissions: {}
     name: GPU Tests
     needs: [build-docker-gpu]
     runs-on:
@@ -176,6 +182,7 @@ jobs:
 
   # This job runs multi-GPU training tests with 4 GPUs
   multi-gpu-tests:
+    permissions: {}
     name: Multi-GPU Tests
     needs: [build-docker-gpu]
     runs-on:
