@@ -18,7 +18,11 @@ import builtins
 import dataclasses
 import logging
 import os
+import threading
 import warnings
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from itertools import chain
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, TypeVar, Unpack
 
@@ -27,6 +31,8 @@ from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_model as load_model_as_safetensor
 from torch import Tensor, nn
+from torch.nn.modules.module import register_module_parameter_registration_hook
+from torch.utils.weak import WeakIdKeyDictionary
 
 from lerobot.configs import PreTrainedConfig
 from lerobot.optim.optimizers import OptimizerParams
@@ -65,6 +71,74 @@ class RTCActionSelectKwargs(TypedDict, total=False):
     inference_delay: int | None
     prev_chunk_left_over: Tensor | None
     execution_horizon: int | None
+
+
+_meta_init = threading.local()
+
+
+def _parameter_to_meta(module: nn.Module, name: str, param: nn.Parameter) -> nn.Parameter | None:
+    replacements = getattr(_meta_init, "replacements", None)
+    if replacements is None or param.is_meta:
+        return None
+    if param not in replacements:
+        replacements[param] = nn.Parameter(param.to("meta"), requires_grad=param.requires_grad)
+    return replacements[param]
+
+
+# Registered once, so that entering and leaving `_parameters_on_meta` never changes PyTorch's
+# process-wide hook registry while another thread iterates it to register a parameter.
+register_module_parameter_registration_hook(_parameter_to_meta)
+
+
+@contextmanager
+def _parameters_on_meta() -> Iterator[None]:
+    """Create the parameters of modules built inside this block on the meta device.
+
+    A meta tensor has a shape and a dtype but no memory, so building a model this way skips
+    allocating and randomly initializing weights that a checkpoint will replace. Only parameters
+    move: buffers and plain tensors are still computed, so values a constructor derives (rotary
+    tables, masks) stay correct without coming from the checkpoint. Only the thread that entered
+    the block is affected, and a parameter registered in two modules stays shared.
+    """
+    previous = getattr(_meta_init, "replacements", None)
+    _meta_init.replacements = WeakIdKeyDictionary() if previous is None else previous
+    try:
+        yield
+    finally:
+        _meta_init.replacements = previous
+
+
+def _load_state_dict_into_meta_model(
+    model: nn.Module, state_dict: Iterable[tuple[str, Tensor]], device: str | None
+) -> None:
+    """Load a complete checkpoint into a model built under `_parameters_on_meta`.
+
+    `state_dict` can be a lazy iterator and must have exactly the model's keys. Each tensor is copied
+    on the CPU into the dtype the constructor gave the matching parameter or buffer, then moved to
+    `device`, so the constructor's precision choices are kept and only one checkpoint tensor is held
+    at a time. Raises if the model shares a parameter between modules, because `assign=True` would
+    give each name its own tensor, and if any tensor is still on the meta device afterwards.
+    """
+    if len(list(model.parameters())) != len(list(model.named_parameters(remove_duplicate=False))):
+        raise ValueError(f"{type(model).__name__} shares parameters between modules, which is not supported")
+    targets = model.state_dict(keep_vars=True)
+    tensors = {}
+    for name, tensor in state_dict:
+        target = targets.get(name)
+        # A device copy straight from a memory-mapped file can keep every page it read as private memory
+        # until the file closes (measured on Jetson), a second copy of the weights; a CPU copy does not.
+        tensors[name] = tensor if target is None else tensor.to(dtype=target.dtype, copy=True).to(device)
+    model.load_state_dict(tensors, strict=True, assign=True)
+
+    on_meta = [
+        name
+        for name, tensor in chain(model.named_parameters(), model.named_buffers(remove_duplicate=False))
+        if tensor.is_meta
+    ]
+    if on_meta:
+        raise RuntimeError(
+            f"The checkpoint has no value for these tensors of {type(model).__name__}: {on_meta}"
+        )
 
 
 class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
