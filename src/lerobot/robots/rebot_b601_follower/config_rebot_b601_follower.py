@@ -103,6 +103,8 @@ class RebotB601FollowerConfig:
 
         if self.joint_limits is None:
             self.joint_limits = dict(profile.joint_limits)
+        else:
+            self.joint_limits = {**profile.joint_limits, **self.joint_limits}
 
         if self.gripper_torque_ratio is None:
             self.gripper_torque_ratio = profile.gripper_torque_ratio

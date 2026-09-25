@@ -190,6 +190,18 @@ def test_named_joint_tuning_overrides_profile_defaults():
     assert config.mit_kp == {**DM_PROFILE.mit_kp, "gripper": 5.0}
 
 
+@pytest.mark.parametrize(("family", "profile"), [(MotorFamily.DM, DM_PROFILE), (MotorFamily.RS, RS_PROFILE)])
+def test_named_joint_limits_override_profile_defaults(family, profile):
+    gripper_limits = (-180.0, 0.0)
+    config = RebotB601FollowerRobotConfig(
+        motor_family=family,
+        port="/dev/null",
+        joint_limits={"gripper": gripper_limits},
+    )
+
+    assert config.joint_limits == {**profile.joint_limits, "gripper": gripper_limits}
+
+
 def test_explicit_config_values_are_passed_through():
     config = RebotB601FollowerRobotConfig(
         motor_family=MotorFamily.RS,
