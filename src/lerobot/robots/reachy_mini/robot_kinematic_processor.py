@@ -130,9 +130,10 @@ class ReachyInverseKinematicsEEToJoints(RobotActionProcessorStep):
                 "Missing required end-effector pose components: ee.x, ee.y, ee.z, ee.wx, ee.wy, ee.wz must all be present in action"
             )
 
-        observation = self.transition.get(TransitionKey.OBSERVATION).copy()
+        observation = self.transition.get(TransitionKey.OBSERVATION)
         if observation is None:
             raise ValueError("Joints observation is require for computing robot kinematics")
+        observation = observation.copy()
 
         # Extract joints corresponding to motor_names
         q_raw_list = []

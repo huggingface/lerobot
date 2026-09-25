@@ -13,7 +13,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from lerobot.utils.import_utils import _reachy_mini_available
+
 from .configuration_reachy_mini import ReachyMiniConfig
 from .robot_reachy_mini import ReachyMini
+
+if _reachy_mini_available:
+    from . import robot_kinematic_processor  # noqa: F401  registers IK/FK processor steps
 
 __all__ = ["ReachyMiniConfig", "ReachyMini"]

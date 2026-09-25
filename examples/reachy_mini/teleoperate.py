@@ -16,8 +16,10 @@
 
 import time
 
+from lerobot.processor.converters import robot_action_observation_to_transition
 from lerobot.processor.pipeline import RobotProcessorPipeline
 from lerobot.robots.reachy_mini import ReachyMini, ReachyMiniConfig
+from lerobot.robots.reachy_mini.robot_kinematic_processor import ReachyMiniKinematics
 from lerobot.teleoperators.keyboard import KeyboardReachyMiniTeleop, KeyboardReachyMiniTeleopConfig
 from lerobot.utils.robot_utils import precise_sleep
 
@@ -36,7 +38,10 @@ def main():
     # Load the IK processor from the robots/reachy_mini/processor.json
     # This pipeline handles Cartesian (EE) control
     robot_action_processor = RobotProcessorPipeline.from_pretrained(
-        "src/lerobot/robots/reachy_mini", config_filename="processor.json"
+        "src/lerobot/robots/reachy_mini",
+        config_filename="processor.json",
+        overrides={"reachy_inverse_kinematics_ee_to_joints": {"kinematics": ReachyMiniKinematics()}},
+        to_transition=robot_action_observation_to_transition,
     )
 
     # Connect to hardware
@@ -58,7 +63,7 @@ def main():
 
             # 3. Process Action through IK (converts EE Intent -> Joint Positions)
             # ReachyInverseKinematicsEEToJoints expects a dict with ee.* and observations
-            processed_action = robot_action_processor((raw_action, observation))
+            processed_action = robot_action_processor((raw_action, observation))["action"]
 
             # 4. Send processed action to robot
             robot.send_action(processed_action)

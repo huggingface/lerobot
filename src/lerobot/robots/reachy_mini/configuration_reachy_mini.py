@@ -25,6 +25,9 @@ from lerobot.robots import RobotConfig
 class ReachyMiniConfig(RobotConfig):
     """
     Configuration for the Reachy Mini robot.
+
+    Calibration is handled by the Reachy Mini daemon/SDK itself, not by LeRobot; `calibration_dir` and
+    `connect(calibrate=...)` are inherited from `RobotConfig`/`Robot` but unused here.
     """
 
     # IP address or hostname of the robot
