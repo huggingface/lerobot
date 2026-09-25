@@ -1575,3 +1575,113 @@ def test_subtask_not_added_for_unsupported_types():
 
     # But main task tokens should still be present
     assert f"{OBS_LANGUAGE}.tokens" in observation
+
+
+# ---------------------------------------------------------------------------
+# Tests for the batched CPU transfer in ActionTokenizerProcessorStep (perf fix)
+# ---------------------------------------------------------------------------
+
+
+class _CpuCallCountingTensor(torch.Tensor):
+    """Tensor subclass that counts .cpu() calls, including calls on views/slices."""
+
+    calls = 0
+
+    def cpu(self, *args, **kwargs):
+        type(self).calls += 1
+        return super().cpu(*args, **kwargs)
+
+
+class _RecordingActionTokenizer:
+    """Fake FAST tokenizer: records the device of every input tensor and returns
+    a token sequence derived from the input values, so different samples produce
+    different (deterministic) sequences of varying length."""
+
+    def __init__(self):
+        self.seen_devices = []
+        self.n_calls = 0
+
+    def __call__(self, action: torch.Tensor) -> list[int]:
+        self.n_calls += 1
+        self.seen_devices.append(action.device.type)
+        flat = action.flatten()
+        n_tokens = 2 + int(flat[0].abs().item() * 10) % 3
+        return [int(v.abs().item() * 10) % 50 for v in flat[:n_tokens]]
+
+
+class _CountingPaliGemmaTokenizer:
+    """Minimal PaliGemma tokenizer stub that counts encode() calls."""
+
+    vocab_size = 1000
+    bos_token_id = 2
+
+    def __init__(self):
+        self.encode_calls = 0
+
+    def encode(self, text: str, **kwargs) -> list[int]:
+        self.encode_calls += 1
+        return [10, 11] if text == "Action: " else [99]
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_batch_transfers_to_cpu_once(mock_auto_tokenizer):
+    """The whole action batch is moved to CPU in a single transfer, and the FAST
+    tokenizer only ever sees CPU tensors."""
+    mock_auto_tokenizer.from_pretrained.return_value = _CountingPaliGemmaTokenizer()
+    fake_tokenizer = _RecordingActionTokenizer()
+    step = ActionTokenizerProcessorStep(action_tokenizer_input_object=fake_tokenizer, max_action_tokens=16)
+
+    _CpuCallCountingTensor.calls = 0
+    action = torch.randn(4, 2, 7).as_subclass(_CpuCallCountingTensor)
+    tokens, mask, code_mask = step._tokenize_action(action)
+
+    assert _CpuCallCountingTensor.calls == 1
+    assert fake_tokenizer.n_calls == 4
+    assert all(device == "cpu" for device in fake_tokenizer.seen_devices)
+    assert tokens.shape == (4, 16)
+    assert mask.shape == (4, 16)
+    assert code_mask.shape == (4, 16)
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_constant_affixes_cached_across_calls(mock_auto_tokenizer):
+    """The constant prefix (bos + "Action: ") and suffix ("|") are encoded once at
+    init and never re-encoded during tokenization."""
+    paligemma = _CountingPaliGemmaTokenizer()
+    mock_auto_tokenizer.from_pretrained.return_value = paligemma
+    step = ActionTokenizerProcessorStep(
+        action_tokenizer_input_object=_RecordingActionTokenizer(), max_action_tokens=16
+    )
+
+    calls_after_init = paligemma.encode_calls
+    assert calls_after_init == 2  # "Action: " and "|"
+
+    step._tokenize_action(torch.randn(3, 2, 7))
+    step._tokenize_action(torch.randn(2, 2, 7))
+
+    assert paligemma.encode_calls == calls_after_init
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_batched_results_match_per_sample(mock_auto_tokenizer):
+    """Tokenizing a batch produces exactly the same tokens/masks per sample as
+    tokenizing each sample on its own."""
+    mock_auto_tokenizer.from_pretrained.return_value = _CountingPaliGemmaTokenizer()
+    step = ActionTokenizerProcessorStep(
+        action_tokenizer_input_object=_RecordingActionTokenizer(), max_action_tokens=16
+    )
+
+    action = torch.randn(3, 2, 7)
+    tokens_batch, mask_batch, code_mask_batch = step._tokenize_action(action)
+
+    for i in range(3):
+        tokens_i, mask_i, code_mask_i = step._tokenize_action(action[i : i + 1])
+        assert torch.equal(tokens_batch[i : i + 1], tokens_i)
+        assert torch.equal(mask_batch[i : i + 1], mask_i)
+        assert torch.equal(code_mask_batch[i : i + 1], code_mask_i)
+    assert tokens_batch.dtype == torch.long
+    assert mask_batch.dtype == torch.bool
+    assert code_mask_batch.dtype == torch.bool
