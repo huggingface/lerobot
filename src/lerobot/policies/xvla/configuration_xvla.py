@@ -205,7 +205,7 @@ class XVLAConfig(PreTrainedConfig):
         return self._florence_config_obj
 
     def validate_features(self) -> None:
-        if not self.image_features:
+        if not self.input_features or not self.image_features:
             raise ValueError("XVLA requires at least one visual feature in the inputs.")
         if self.use_proprio and self.robot_state_feature is None:
             raise ValueError("`use_proprio=True` requires a proprioceptive state feature.")

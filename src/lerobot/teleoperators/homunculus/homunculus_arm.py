@@ -17,6 +17,7 @@
 import logging
 import threading
 from collections import deque
+from collections.abc import Mapping
 from pprint import pformat
 from typing import TYPE_CHECKING
 
@@ -64,8 +65,8 @@ class HomunculusArm(Teleoperator):
         # EMA parameters ---------------------------------------------------
         self.n: int = n
         self.alpha: float = 2 / (n + 1)
-        # one deque *per joint* so we can inspect raw history if needed
-        self._buffers: dict[str, deque[int]] = {
+        # one deque *per joint* so we can inspect the EMA input history (normalized or raw) if needed
+        self._buffers: dict[str, deque[float]] = {
             joint: deque(maxlen=n)
             for joint in (
                 "shoulder_pitch",
@@ -80,7 +81,8 @@ class HomunculusArm(Teleoperator):
         # running EMA value per joint – lazily initialised on first read
         self._ema: dict[str, float | None] = dict.fromkeys(self._buffers)
 
-        self._state: dict[str, float] | None = None
+        # latest raw joint angles produced by `_read_loop`
+        self._state: dict[str, int] | None = None
         self.new_state_event = threading.Event()
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self._read_loop, daemon=True, name=f"{self} _read_loop")
@@ -166,8 +168,8 @@ class HomunculusArm(Teleoperator):
         display_len = max(len(key) for key in joints)
 
         start_positions = self._read(joints, normalize=False)
-        mins = start_positions.copy()
-        maxes = start_positions.copy()
+        mins = {joint: int(pos) for joint, pos in start_positions.items()}
+        maxes = mins.copy()
 
         user_pressed_enter = False
         while not user_pressed_enter:
@@ -220,7 +222,7 @@ class HomunculusArm(Teleoperator):
 
         return normalized_values
 
-    def _apply_ema(self, raw: dict[str, int]) -> dict[str, float]:
+    def _apply_ema(self, raw: Mapping[str, float]) -> dict[str, float]:
         """Update buffers & running EMA values; return smoothed dict."""
         smoothed: dict[str, float] = {}
         for joint, value in raw.items():
@@ -228,17 +230,15 @@ class HomunculusArm(Teleoperator):
             self._buffers[joint].append(value)
 
             # initialise on first run
-            if self._ema[joint] is None:
-                self._ema[joint] = float(value)
-            else:
-                self._ema[joint] = self.alpha * value + (1 - self.alpha) * self._ema[joint]
-
-            smoothed[joint] = self._ema[joint]
+            prev = self._ema[joint]
+            ema = float(value) if prev is None else self.alpha * value + (1 - self.alpha) * prev
+            self._ema[joint] = ema
+            smoothed[joint] = ema
         return smoothed
 
     def _read(
         self, joints: list[str] | None = None, normalize: bool = True, timeout: float = 1
-    ) -> dict[str, int | float]:
+    ) -> dict[str, float]:
         """
         Return the most recent (single) values from self.last_d,
         optionally applying calibration.
@@ -257,12 +257,9 @@ class HomunculusArm(Teleoperator):
         if joints is not None:
             state = {k: v for k, v in state.items() if k in joints}
 
-        if normalize:
-            state = self._normalize(state)
+        values: Mapping[str, float] = self._normalize(state) if normalize else state
 
-        state = self._apply_ema(state)
-
-        return state
+        return self._apply_ema(values)
 
     def _read_loop(self):
         """

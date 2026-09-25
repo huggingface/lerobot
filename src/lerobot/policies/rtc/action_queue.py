@@ -55,14 +55,14 @@ class ActionQueue:
         last_index (int): Current consumption index in the queue.
     """
 
-    def __init__(self, cfg: RTCConfig):
+    def __init__(self, cfg: RTCConfig) -> None:
         """Initialize the action queue.
 
         Args:
             cfg: RTC configuration controlling queue behavior.
         """
-        self.queue = None  # Processed actions for robot rollout
-        self.original_queue = None  # Original actions for RTC
+        self.queue: Tensor | None = None  # Processed actions for robot rollout
+        self.original_queue: Tensor | None = None  # Original actions for RTC
         self._task_queue: list[str | None] | None = None
         self.lock = Lock()
         self.last_index = 0
