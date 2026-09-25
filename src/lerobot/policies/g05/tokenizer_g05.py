@@ -244,6 +244,7 @@ class G05Tokenizer:
         sample: dict[str, Any],
         *,
         action_codec: Any | None,
+        action_ids: list[int] | None = None,
     ) -> tuple[list[int], list[int], list[float]]:
         """Encode one segment into its ids, labels and per-token type codes."""
         if segment.kind == "static":
@@ -281,6 +282,10 @@ class G05Tokenizer:
             ids = [self.state_token_id] * count
             labels = [IGNORE_INDEX] * count
             token_type = G05TokenType.PROPRIO
+        elif segment.processor == "action" and action_ids is not None:
+            ids = list(action_ids)
+            labels = ids.copy()
+            token_type = G05TokenType.ACTION
         elif segment.processor == "action":
             if action_codec is None:
                 raise RuntimeError(
@@ -306,6 +311,7 @@ class G05Tokenizer:
         *,
         mode: str | None,
         action_codec: Any | None,
+        action_ids: list[int] | None = None,
     ) -> tuple[list[int], list[int], list[float]]:
         """Encode a whole sample into ids, labels and per-token type codes."""
         pred_eov = bool(self.model_config.get("input_preprocessor", {}).get("pred_eov", False))
@@ -315,7 +321,7 @@ class G05Tokenizer:
         types: list[float] = []
         for segment in segments:
             segment_ids, segment_labels, segment_types = self._serialize_segment(
-                segment, sample, action_codec=action_codec
+                segment, sample, action_codec=action_codec, action_ids=action_ids
             )
             ids.extend(segment_ids)
             labels.extend(segment_labels)
@@ -327,19 +333,18 @@ class G05Tokenizer:
         rows: list[tuple[list[int], list[int], list[float]]],
         *,
         right_align: bool,
-        device: torch.device,
     ) -> G05SequenceBatch:
-        """Pad encoded rows to a common length, left- or right-aligned."""
+        """Pad encoded rows to a common length, left- or right-aligned, on the host."""
         length = max(len(row[0]) for row in rows)
-        input_ids = torch.full((len(rows), length), self.pad_token_id, dtype=torch.long, device=device)
-        labels = torch.full((len(rows), length), IGNORE_INDEX, dtype=torch.long, device=device)
-        token_types = torch.zeros((len(rows), length), dtype=torch.float32, device=device)
+        input_ids = torch.full((len(rows), length), self.pad_token_id, dtype=torch.long)
+        labels = torch.full((len(rows), length), IGNORE_INDEX, dtype=torch.long)
+        token_types = torch.zeros((len(rows), length), dtype=torch.float32)
         for index, (ids, row_labels, types) in enumerate(rows):
             start = length - len(ids) if right_align else 0
             stop = start + len(ids)
-            input_ids[index, start:stop] = torch.tensor(ids, dtype=torch.long, device=device)
-            labels[index, start:stop] = torch.tensor(row_labels, dtype=torch.long, device=device)
-            token_types[index, start:stop] = torch.tensor(types, dtype=torch.float32, device=device)
+            input_ids[index, start:stop] = torch.tensor(ids, dtype=torch.long)
+            labels[index, start:stop] = torch.tensor(row_labels, dtype=torch.long)
+            token_types[index, start:stop] = torch.tensor(types, dtype=torch.float32)
         return G05SequenceBatch(input_ids, labels, token_types)
 
     def encode_inference(
@@ -350,7 +355,10 @@ class G05Tokenizer:
     ) -> G05SequenceBatch:
         """Encode context-only samples, right-aligned so generation starts at the end."""
         rows = [self._serialize(sample, mode="context", action_codec=None) for sample in samples]
-        return self._pad(rows, right_align=True, device=device)
+        sequence = self._pad(rows, right_align=True)
+        return G05SequenceBatch(
+            sequence.input_ids.to(device), sequence.labels.to(device), sequence.token_types.to(device)
+        )
 
     def encode_train(
         self,
@@ -359,18 +367,44 @@ class G05Tokenizer:
         device: torch.device,
         action_codec: Any | None,
     ) -> G05SequenceBatch:
-        """Encode prefix and suffix samples for supervised training."""
+        """Encode prefix and suffix samples for supervised training.
+
+        The action chunks go through the codec in one batch, and the padded sequences are
+        built on the host and moved to ``device`` in one copy per tensor.
+        """
+        action_ids = self._encode_actions(samples, action_codec)
         prefix_rows = [
-            self._serialize(sample, mode="prefix", action_codec=action_codec) for sample in samples
+            self._serialize(sample, mode="prefix", action_codec=action_codec, action_ids=ids)
+            for sample, ids in zip(samples, action_ids, strict=True)
         ]
         suffix_rows = [
-            self._serialize(sample, mode="suffix", action_codec=action_codec) for sample in samples
+            self._serialize(sample, mode="suffix", action_codec=action_codec, action_ids=ids)
+            for sample, ids in zip(samples, action_ids, strict=True)
         ]
-        prefix = self._pad(prefix_rows, right_align=True, device=device)
-        suffix = self._pad(suffix_rows, right_align=False, device=device)
+        prefix = self._pad(prefix_rows, right_align=True)
+        suffix = self._pad(suffix_rows, right_align=False)
         return G05SequenceBatch(
-            input_ids=torch.cat((prefix.input_ids, suffix.input_ids), dim=1),
-            labels=torch.cat((prefix.labels, suffix.labels), dim=1),
-            token_types=torch.cat((prefix.token_types, suffix.token_types), dim=1),
+            input_ids=torch.cat((prefix.input_ids, suffix.input_ids), dim=1).to(device),
+            labels=torch.cat((prefix.labels, suffix.labels), dim=1).to(device),
+            token_types=torch.cat((prefix.token_types, suffix.token_types), dim=1).to(device),
             split_index=prefix.input_ids.shape[1],
         )
+
+    def _encode_actions(
+        self, samples: list[dict[str, Any]], action_codec: Any | None
+    ) -> list[list[int] | None]:
+        """ActionCodec ids of every sample whose template has an action target, in one batch."""
+        targets = [
+            index
+            for index, sample in enumerate(samples)
+            if "action" in sample
+            and any(segment.processor == "action" for segment in self._parse(sample["template"]))
+        ]
+        action_ids: list[list[int] | None] = [None] * len(samples)
+        encode = getattr(action_codec, "encode_batch_for_language", None)
+        if targets and callable(encode):
+            for index, ids in zip(
+                targets, encode([samples[index]["action"] for index in targets]), strict=True
+            ):
+                action_ids[index] = ids
+        return action_ids
