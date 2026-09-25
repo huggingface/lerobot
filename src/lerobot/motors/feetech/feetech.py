@@ -55,8 +55,9 @@ class OperatingMode(Enum):
     # The motor is in constant speed mode, which is controlled by parameter 0x2e, and the highest bit 15 is
     # the direction bit
     VELOCITY = 1
-    # PWM open-loop speed regulation mode, with parameter 0x2c running time parameter control, bit11 as
-    # direction bit
+    # PWM open-loop speed regulation mode, with parameter 0x2c running time parameter control, bit 10
+    # as direction bit. The datasheet writes "bit11", counting from 1; zero-indexed that is bit 10,
+    # which is the bit `STS_SMS_SERIES_ENCODINGS_TABLE` already uses to sign `Present_Load`.
     PWM = 2
     # In step servo mode, the number of step progress is represented by parameter 0x2a, and the highest bit 15
     # is the direction bit
