@@ -11,7 +11,7 @@ symbol the policy needs from it is `G05NativeActionCodec`.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -974,8 +974,9 @@ class _BinarySequenceCodec:
     def encode(self, values: Tensor, threshold: float) -> Tensor:
         """Encode bit rows to tokens."""
         output = []
-        for row in values:
-            bits = self._repair([int(value >= threshold) for value in row.tolist()])
+        # One device-to-host copy for the batch rather than one per row.
+        for row in values.detach().cpu().tolist():
+            bits = self._repair([int(value >= threshold) for value in row])
             rank, last, run, first = 0, -1, 0, True
             for position, bit in enumerate(bits):
                 remaining = len(bits) - position - 1
@@ -1126,28 +1127,37 @@ class G05NativeActionCodec:
     @torch.no_grad()
     def encode_for_language(self, payload: Mapping[str, Any]) -> list[int]:
         """Encode an action chunk into language token ids."""
-        actions = torch.as_tensor(payload["value"])
-        if actions.ndim == 2:
-            actions = actions.unsqueeze(0)
-        components = self._split(actions)
+        return self.encode_batch_for_language([payload])[0]
+
+    @torch.no_grad()
+    def encode_batch_for_language(self, payloads: Sequence[Mapping[str, Any]]) -> list[list[int]]:
+        """Encode several action chunks into language token ids with one codec pass.
+
+        The codes reach the host in one copy per part, not one per sample, level, and part.
+        """
+        chunks = []
+        for payload in payloads:
+            actions = torch.as_tensor(payload["value"])
+            chunks.append(actions[0] if actions.ndim == 3 else actions)
+        components = self._split(torch.stack(chunks))
         neural = {key: components[key] for key in self.neural_parts}
-        codes = self.model.encode(neural)
+        codes = {key: value.cpu() for key, value in self.model.encode(neural).items()}
+        threshold = float(self.config.get("rule_based_binarize_threshold", 0))
         rule_codes = {
-            key: self.rule_codec.encode(
-                components[key][..., 0],
-                float(self.config.get("rule_based_binarize_threshold", 0)),
-            )
-            for key in self.rule_parts
+            key: self.rule_codec.encode(components[key][..., 0].cpu(), threshold) for key in self.rule_parts
         }
-        indices = []
-        for level in range(self.num_residuals):
-            for key in self.neural_parts:
-                indices.append(self.marker_indices[f"<{key}_{level}>"])
-                indices.extend(codes[key][0, level].tolist())
-        for key in self.rule_parts:
-            indices.append(self.marker_indices[f"<{key}>"])
-            indices.extend(rule_codes[key][0].tolist())
-        return [self.action_token_begin + int(index) for index in indices]
+        rows = []
+        for index in range(len(chunks)):
+            indices = []
+            for level in range(self.num_residuals):
+                for key in self.neural_parts:
+                    indices.append(self.marker_indices[f"<{key}_{level}>"])
+                    indices.extend(codes[key][index, level].tolist())
+            for key in self.rule_parts:
+                indices.append(self.marker_indices[f"<{key}>"])
+                indices.extend(rule_codes[key][index].tolist())
+            rows.append([self.action_token_begin + int(value) for value in indices])
+        return rows
 
     @torch.no_grad()
     def decode_language_tokens(

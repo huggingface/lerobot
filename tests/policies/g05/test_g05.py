@@ -25,9 +25,15 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5VisionRotaryEmbedding,
 )
 
-from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
-from lerobot.policies.g05.configuration_g05 import G05_CAMERA_PROFILES, G05_EMBODIMENT_MAPPINGS, G05Config
+from lerobot.policies.g05.configuration_g05 import (
+    G05_CAMERA_PROFILES,
+    G05_EMBODIMENT_MAPPINGS,
+    G05Config,
+    derive_g05_slots,
+    make_g05_prompt_template,
+)
 from lerobot.policies.g05.modeling_g05 import (
     G05_RUNTIME_PREDICT_COT,
     G05GatedDeltaNet,
@@ -35,12 +41,19 @@ from lerobot.policies.g05.modeling_g05 import (
     G05Policy,
     G05TextGeneration,
 )
-from lerobot.policies.g05.processor_g05 import G05RelativeJointActionsStep, G05TokenizerStep
+from lerobot.policies.g05.processor_g05 import (
+    G05ActionOperationMaskStep,
+    G05EmbodimentProjectionStep,
+    G05InverseActionProjectionStep,
+    G05RelativeJointActionsStep,
+    G05TokenizerStep,
+)
 from lerobot.policies.g05.tokenizer_g05 import (
     G05_INPUT_IDS,
     G05_LABELS,
     G05_SPLIT_INDEX,
     G05_TOKEN_TYPES,
+    G05Tokenizer,
     G05TokenType,
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -203,6 +216,18 @@ def _vision_backend(*, temporal_freq: int = 0):
     return backend
 
 
+_QUANTILES = {
+    "VISUAL": NormalizationMode.IDENTITY,
+    "STATE": NormalizationMode.QUANTILES,
+    "ACTION": NormalizationMode.QUANTILES,
+}
+_MEAN_STD = {
+    "VISUAL": NormalizationMode.IDENTITY,
+    "STATE": NormalizationMode.MEAN_STD,
+    "ACTION": NormalizationMode.MEAN_STD,
+}
+
+
 def _features():
     return {
         OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(7,)),
@@ -212,10 +237,8 @@ def _features():
 
 
 def _config(**kwargs):
-    normalization_mode = kwargs.pop("normalization_mode", "identity")
     return G05Config(
         checkpoint_profile="custom",
-        normalization_mode=normalization_mode,
         input_features=_features(),
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,))},
         chunk_size=4,
@@ -416,7 +439,6 @@ def test_so101_runtime_pads_optional_left_wrist():
         raw_state_dim=6,
         chunk_size=32,
         n_action_steps=16,
-        normalization_mode="identity",
         camera_order=(
             "observation.images.exterior",
             "observation.images.wrist_left",
@@ -463,7 +485,6 @@ def test_libero_runtime_executes_ten_step_window_and_binarizes_gripper():
         return_continuous_action=True,
         chunk_size=32,
         n_action_steps=10,
-        normalization_mode="identity",
         libero_gripper_binarize=True,
     )
     _, postprocessor = make_pre_post_processors(config)
@@ -562,7 +583,7 @@ def test_lerobot_libero_two_finger_state_matches_author_first_qpos_contract():
 
 
 def test_quantile_mode_refuses_minmax_substitution():
-    config = _config(normalization_mode="q01_q99")
+    config = _config(normalization_mapping=_QUANTILES)
     stats = {
         OBS_STATE: {"min": torch.zeros(7), "max": torch.ones(7)},
         ACTION: {"min": torch.zeros(7), "max": torch.ones(7)},
@@ -572,7 +593,7 @@ def test_quantile_mode_refuses_minmax_substitution():
 
 
 def test_checkpoint_normalization_clips_to_author_finite_range():
-    config = _config(normalization_mode="q01_q99", normalization_clip=(-5.0, 5.0))
+    config = _config(normalization_mapping=_QUANTILES, normalization_clip=(-5.0, 5.0))
     stats = {
         OBS_STATE: {"q01": torch.zeros(7), "q99": torch.ones(7)},
         ACTION: {"q01": torch.zeros(4, 7), "q99": torch.ones(4, 7)},
@@ -596,7 +617,7 @@ def test_checkpoint_normalization_clips_to_author_finite_range():
 
 def test_stepwise_quantiles_constant_dimension_are_finite_and_serializable(tmp_path: Path):
     config = _config(
-        normalization_mode="q01_q99",
+        normalization_mapping=_QUANTILES,
         use_stepwise_action_norm=True,
         n_action_steps=2,
     )
@@ -665,7 +686,7 @@ def test_finetune_overrides_reproject_stats_and_retarget_stepwise_unnormalizer(t
         raw_action_dim=6,
         chunk_size=4,
         n_action_steps=4,
-        normalization_mode="q01_q99",
+        normalization_mapping=_QUANTILES,
         use_stepwise_action_norm=True,
         camera_order=cameras,
         camera_sizes=dict.fromkeys(cameras, (8, 8)),
@@ -729,39 +750,65 @@ def test_finetune_overrides_reproject_stats_and_retarget_stepwise_unnormalizer(t
     torch.testing.assert_close(norm_step._tensor_stats[OBS_STATE]["q99"][10:16], torch.full((6,), 4.0))
 
 
-def test_recipe_finetune_rebuilds_pipelines_instead_of_loading_them(tmp_path):
-    """A checkpoint exported without recipe training has no render step and no projected
-    stats in its saved pipeline, so turning `use_language_recipe` on for a fine-tune has
-    to rebuild both pipelines from the live config rather than load the serialized ones.
+def test_recipe_finetune_loads_the_saved_pipeline_and_turns_the_renderer_on(tmp_path):
+    """A checkpoint exported without recipe training saves its training renderer with no
+    recipe. Turning `use_language_recipe` on for a fine-tune must switch that renderer on
+    while keeping the serialized pipeline, so overrides and Hub loading behave as usual.
     """
     exported = _config(predict_cot=True, runtime_system="system2")
     preprocessor, postprocessor = make_pre_post_processors(exported)
     preprocessor.save_pretrained(tmp_path)
     postprocessor.save_pretrained(tmp_path)
-    assert (
-        next(step for step in preprocessor.steps if isinstance(step, RenderTrainingMessagesStep)).recipe
-        is None
-    )
+    saved_renderer = next(step for step in preprocessor.steps if isinstance(step, RenderTrainingMessagesStep))
+    assert saved_renderer.recipe is None
 
     finetune = _config(predict_cot=True, runtime_system="system2", use_language_recipe=True)
-    dataset_stats = {
-        OBS_STATE: {"mean": torch.zeros(7), "std": torch.ones(7)},
-        ACTION: {"mean": torch.zeros(7), "std": torch.ones(7)},
-    }
-    rebuilt, _ = make_pre_post_processors(
+    loaded, _ = make_pre_post_processors(
         finetune,
         pretrained_path=tmp_path,
-        dataset_stats=dataset_stats,
         preprocessor_overrides={"rename_observations_processor": {"rename_map": {"a": "b"}}},
     )
 
-    render_step = next(step for step in rebuilt.steps if isinstance(step, RenderTrainingMessagesStep))
+    render_step = next(step for step in loaded.steps if isinstance(step, RenderTrainingMessagesStep))
     assert render_step.recipe is not None
-    # The rebuild loses the serialized rename map, so the caller's override is re-applied.
+    assert [type(step) for step in loaded.steps] == [type(step) for step in preprocessor.steps]
     rename_step = next(
-        step for step in rebuilt.steps if step.__class__.__name__ == "RenameObservationsProcessorStep"
+        step for step in loaded.steps if step.__class__.__name__ == "RenameObservationsProcessorStep"
     )
     assert rename_step.rename_map == {"a": "b"}
+
+    exported_again, _ = make_pre_post_processors(exported, pretrained_path=tmp_path)
+    assert (
+        next(step for step in exported_again.steps if isinstance(step, RenderTrainingMessagesStep)).recipe
+        is None
+    )
+
+
+def test_pipelines_built_from_a_hub_repo_id_download_the_sidecars(tmp_path, monkeypatch):
+    """`lerobot-train` rebuilds G0.5 pipelines from the config with `pretrained_path` set to
+    the `--policy.path` repo id; the tokenizer step must point at a local download."""
+    downloads = []
+
+    def fake_snapshot_download(**kwargs):
+        downloads.append(kwargs)
+        return str(tmp_path)
+
+    monkeypatch.setattr("lerobot.policies.g05.processor_g05.snapshot_download", fake_snapshot_download)
+    config = _config()
+    config.pretrained_path = "lerobot/g05_so101"
+    config.pretrained_revision = "main"
+    preprocessor, _ = make_pre_post_processors(config)
+
+    step = next(step for step in preprocessor.steps if isinstance(step, G05TokenizerStep))
+    assert Path(step.processor_dir) == tmp_path / "hf_processor"
+    assert Path(step.action_tokenizer_path) == tmp_path / "action_tokenizer.safetensors"
+    assert downloads == [
+        {
+            "repo_id": "lerobot/g05_so101",
+            "revision": "main",
+            "allow_patterns": ["hf_processor/**", "action_tokenizer.safetensors"],
+        }
+    ]
 
 
 def test_exact_raw_task_reaches_author_command_and_head_selection():
@@ -1111,14 +1158,13 @@ def test_system2_recipe_bbox_and_subtask_use_checkpoint_field_order():
                 "role": "assistant",
                 "content": (
                     'BBoxJSON: {"detections": [{"label": "cup", "bbox_format": "xyxy", '
-                    '"bbox": [20, 10, 100, 50]}]}'
+                    '"bbox": [0.1, 0.1, 0.5, 0.5]}]}'
                 ),
             },
             {"role": "assistant", "content": "Subtask: grasp the cup"},
         ]
     ]
     batch["target_message_indices"] = [[1, 2]]
-    batch["g05_bbox_image_size"] = (100, 200)
 
     sample = policy._prepare_author_batch(batch)["samples"][0]
 
@@ -1172,10 +1218,10 @@ def test_recipe_preprocessor_resolves_lerobot_subtask_and_bbox_annotations():
             {
                 "role": "assistant",
                 "content": (
-                    '{"detections": [{"label": "cup", "bbox_format": "xyxy", "bbox": [20, 10, 100, 50]}]}'
+                    '{"detections": [{"label": "cup", "bbox_format": "xyxy", "bbox": [0.1, 0.1, 0.5, 0.5]}]}'
                 ),
                 "style": "vqa",
-                "camera": "observation.images.exterior",
+                "camera": "observation.images.image",
                 "tool_calls": None,
             }
         ],
@@ -1543,13 +1589,154 @@ def test_gated_checkpoint_loads_strictly():
 
 
 def test_project_stats_passes_dataset_count_through():
-    config = _config(normalization_mode="q01_q99")
+    config = _config(normalization_mapping=_QUANTILES)
     stats = {
         OBS_STATE: {"q01": torch.zeros(7), "q99": torch.ones(7), "count": torch.tensor([100])},
         ACTION: {"q01": torch.zeros(7), "q99": torch.ones(7), "count": torch.tensor([100])},
     }
 
     make_pre_post_processors(config, dataset_stats=stats)
+
+
+def _base_like_config(embodiment: str, width: int, **kwargs) -> G05Config:
+    """A `g05_base`-shaped config (27-dim layout, z-score) on another embodiment."""
+    raw_dim = len(G05_EMBODIMENT_MAPPINGS[embodiment]["state"])
+    return G05Config(
+        checkpoint_profile="custom",
+        embodiment=embodiment,
+        raw_state_dim=raw_dim,
+        raw_action_dim=raw_dim,
+        policy_state_dim=width,
+        policy_action_dim=width,
+        camera_order=G05_CAMERA_PROFILES[embodiment],
+        normalization_mapping=_MEAN_STD,
+        device="cpu",
+        **kwargs,
+    )
+
+
+def _raw_stats(dim: int) -> dict[str, dict[str, torch.Tensor]]:
+    feature_stats = {
+        "mean": torch.zeros(dim),
+        "std": torch.ones(dim),
+        "q01": -torch.ones(dim),
+        "q99": torch.ones(dim),
+        "count": torch.tensor([100]),
+    }
+    return {OBS_STATE: dict(feature_stats), ACTION: dict(feature_stats)}
+
+
+def test_input_features_follow_the_embodiment_not_the_saved_checkpoint():
+    config = _base_like_config(
+        "so100",
+        27,
+        input_features={
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(14,)),
+            "observation.images.head_rgb": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 256, 256)),
+        },
+    )
+
+    config.validate_features()
+
+    assert config.input_features[OBS_STATE].shape == (6,)
+    assert list(config.input_features) == [OBS_STATE, *G05_CAMERA_PROFILES["so100"]]
+
+
+_OMX_JOINTS = [
+    "shoulder_pan.pos",
+    "shoulder_lift.pos",
+    "elbow_flex.pos",
+    "wrist_flex.pos",
+    "wrist_roll.pos",
+    "gripper.pos",
+]
+
+
+@pytest.mark.parametrize(
+    ("names", "slots"),
+    [
+        (_OMX_JOINTS, (10, 11, 12, 13, 14, 19)),
+        ([f"joint{index}.pos" for index in range(1, 8)] + ["gripper.pos"], (10, 11, 12, 13, 14, 15, 16, 19)),
+        (["left_waist", "left_elbow", "left_gripper", "right_waist", "right_gripper"], (0, 1, 9, 10, 19)),
+    ],
+)
+def test_slots_are_derived_from_joint_names(names, slots):
+    assert derive_g05_slots(names, 27) == slots
+
+
+def test_slot_derivation_rejects_joints_that_do_not_fit():
+    with pytest.raises(ValueError, match="right_control part holds 9"):
+        derive_g05_slots([f"joint{index}" for index in range(10)], 27)
+
+
+def _new_robot_config(**kwargs) -> G05Config:
+    """A `g05_base`-shaped config fine-tuned on a robot without a named embodiment."""
+    return G05Config(
+        checkpoint_profile="custom",
+        embodiment="omx",
+        policy_state_dim=27,
+        policy_action_dim=27,
+        camera_order=("observation.images.top", None, "observation.images.wrist"),
+        camera_sizes={"observation.images.head_rgb": (256, 256)} | kwargs.pop("camera_sizes", {}),
+        normalization_mapping=_MEAN_STD,
+        device="cpu",
+        **kwargs,
+    )
+
+
+def test_new_robot_takes_its_layout_from_the_dataset(tmp_path: Path):
+    config = _new_robot_config()
+    joints = {"dtype": "float32", "shape": (6,), "names": _OMX_JOINTS}
+    config.set_dataset_feature_metadata({OBS_STATE: joints, ACTION: joints})
+    config.validate_features()
+
+    assert config.state_slots == config.action_slots == (10, 11, 12, 13, 14, 19)
+    assert (config.raw_state_dim, config.raw_action_dim) == (6, 6)
+    assert config.camera_order[1] in config.optional_camera_keys
+    assert set(config.camera_sizes) == set(config.camera_order)
+    assert "camera=observation.images.top)" in config.recipe["bindings"]["bbox"]
+
+    preprocessor, postprocessor = make_pre_post_processors(config, dataset_stats=_raw_stats(6))
+    projection = next(step for step in preprocessor.steps if isinstance(step, G05EmbodimentProjectionStep))
+    inverse = next(step for step in postprocessor.steps if isinstance(step, G05InverseActionProjectionStep))
+    assert projection.mapping["state"] == inverse.indices == (10, 11, 12, 13, 14, 19)
+
+    config._save_pretrained(tmp_path)
+    reloaded = G05Config.from_pretrained(tmp_path)
+    assert (reloaded.state_slots, reloaded.camera_order) == (config.state_slots, config.camera_order)
+
+
+def test_new_robot_without_joint_names_asks_for_slots():
+    config = _new_robot_config()
+    with pytest.raises(ValueError, match="no joint names"):
+        config.set_dataset_feature_metadata({OBS_STATE: {"shape": (6,)}, ACTION: {"shape": (6,)}})
+    with pytest.raises(ValueError, match="set state_slots and action_slots"):
+        config.validate_features()
+
+
+def test_pipelines_saved_without_slots_use_the_embodiment_table():
+    step = G05EmbodimentProjectionStep(
+        embodiment="so100",
+        policy_state_dim=20,
+        policy_action_dim=20,
+        camera_order=G05_CAMERA_PROFILES["so100"],
+    )
+    inverse = G05InverseActionProjectionStep(embodiment="so100", policy_action_dim=20)
+
+    assert step.mapping == G05_EMBODIMENT_MAPPINGS["so100"]
+    assert inverse.indices == G05_EMBODIMENT_MAPPINGS["so100"]["action"]
+
+
+def test_r1lite_action_filter_is_skipped_for_other_embodiments():
+    config = _base_like_config(
+        "so100",
+        27,
+        processor_metadata={"action_filter": {"_target_": "g05.filters.R1LiteJointActionFilter"}},
+    )
+
+    preprocessor, _ = make_pre_post_processors(config, dataset_stats=_raw_stats(6))
+
+    assert not any(isinstance(step, G05ActionOperationMaskStep) for step in preprocessor.steps)
 
 
 def test_named_embodiment_rebuilds_stale_camera_sizes():
@@ -1645,3 +1832,120 @@ def test_relative_anchor_uses_the_last_proprio_history_step():
     history = torch.stack([torch.full((6,), float(i)) for i in (1, 2, 3)])
     step(create_transition(observation={OBS_STATE: history}))
     assert torch.equal(step.get_cached_state(), torch.full((6,), 3.0))
+
+
+class _CharTokenizer:
+    """Stands in for the checkpoint's text tokenizer: one id per character."""
+
+    def __call__(self, text, add_special_tokens=False):
+        return {"input_ids": [ord(char) for char in text]}
+
+    def convert_tokens_to_ids(self, token):
+        return 1
+
+
+def _char_g05_tokenizer() -> G05Tokenizer:
+    tokenizer = object.__new__(G05Tokenizer)
+    tokenizer.tokenizer = _CharTokenizer()
+    tokenizer.model_config = {"vision": {"patch_size": 16, "spatial_merge_size": 2}}
+    tokenizer.pad_token_id, tokenizer.image_token_id, tokenizer.state_token_id = 0, 2, 5
+    tokenizer.vision_start_token_id, tokenizer.vision_end_token_id = 3, 4
+    return tokenizer
+
+
+class _BatchCountingCodec:
+    def __init__(self):
+        self.batch_calls = 0
+
+    def encode_for_language(self, payload):
+        return [100 + int(value) for value in payload["value"].flatten()[:3].tolist()]
+
+    def encode_batch_for_language(self, payloads):
+        self.batch_calls += 1
+        return [self.encode_for_language(payload) for payload in payloads]
+
+
+def test_training_sequences_encode_actions_in_one_batch_like_one_at_a_time():
+    templates = [
+        make_g05_prompt_template(1, predict_cot=True, flow_only=False),
+        make_g05_prompt_template(1, predict_cot=False, flow_only=True),
+        make_g05_prompt_template(1, predict_cot=True, flow_only=False),
+    ]
+    samples = [
+        {
+            "template": template,
+            "image0": (32, 32),
+            "embodiment": "omx",
+            "command": f"task {index}",
+            "proprio": {"value": torch.zeros(1, 6)},
+            "prompt": "predict subtask",
+            "atomic_task": f"Subtask: step {index}",
+            "action": {"value": torch.full((4, 6), float(index + 1))},
+        }
+        for index, template in enumerate(templates)
+    ]
+    codec = _BatchCountingCodec()
+    tokenizer = _char_g05_tokenizer()
+
+    batched = tokenizer.encode_train(samples, device=torch.device("cpu"), action_codec=codec)
+    one_at_a_time = tokenizer.encode_train(
+        samples,
+        device=torch.device("cpu"),
+        action_codec=SimpleNamespace(encode_for_language=codec.encode_for_language),
+    )
+
+    assert codec.batch_calls == 1
+    for name in ("input_ids", "labels", "token_types"):
+        assert torch.equal(getattr(batched, name), getattr(one_at_a_time, name)), name
+    assert batched.split_index == one_at_a_time.split_index
+    assert (batched.token_types == G05TokenType.ACTION).sum(dim=1).tolist() == [3, 0, 3]
+
+
+def test_mrope_positions_are_built_on_the_host_and_returned_on_the_token_device():
+    text, image, pad = G05TokenType.TEXT, G05TokenType.IMAGE, G05TokenType.PADDING
+    token_types = torch.tensor([[pad, text, text, image, image, image, image, text]], dtype=torch.float32)
+    backend = SimpleNamespace(
+        model_config={"vision": {"spatial_merge_size": 2}},
+        _last_vision_grids=[(1, 4, 4)],
+        training=False,
+    )
+
+    positions = G05NativeBackend._mrope_positions(backend, token_types)
+
+    assert positions.device == token_types.device and positions.dtype == torch.long
+    assert positions[:, 0].tolist() == [
+        [0, 0, 1, 2, 2, 2, 2, 4],
+        [0, 0, 1, 2, 2, 3, 3, 4],
+        [0, 0, 1, 2, 3, 2, 3, 4],
+    ]
+
+
+@pytest.mark.parametrize(
+    ("detection", "expected"),
+    [
+        (
+            {"label": "cube", "bbox_format": "xyxy", "bbox": [0.7, 0.39, 0.87, 0.61]},
+            "BBox: cube <loc0399><loc0717><loc0625><loc0891>",
+        ),
+        (
+            {"label": "cube", "bbox_format": "xywh", "bbox": [0.7, 0.39, 0.17, 0.22]},
+            "BBox: cube <loc0399><loc0717><loc0625><loc0891>",
+        ),
+    ],
+)
+def test_bbox_targets_read_unit_coordinates_in_either_box_format(detection, expected):
+    assert G05Policy._format_bbox_target(json.dumps({"detections": [detection]})) == expected
+
+
+def test_bbox_targets_reject_pixel_coordinates():
+    pixels = json.dumps(
+        {"detections": [{"label": "cube", "bbox_format": "xyxy", "bbox": [448, 187.2, 556.8, 292.8]}]}
+    )
+    with pytest.raises(ValueError, match=r"\[0, 1\] image-fraction"):
+        G05Policy._format_bbox_target(pixels)
+
+
+def test_image_counts_follow_the_history_length_not_the_saved_values():
+    config = _new_robot_config(n_obs_steps=1, num_input_images=18, num_prompt_images=3)
+
+    assert (config.num_input_images, config.num_prompt_images) == (3, 3)

@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import logging
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,6 +14,7 @@ from typing import Any
 
 import torch
 import torchvision.transforms.functional as vision_functional
+from huggingface_hub import snapshot_download
 from torch import Tensor
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
@@ -75,40 +75,6 @@ def _copy_feature_tree(
 ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
     """Shallow-copy a feature tree so a step can edit its own view of the features."""
     return {kind: values.copy() for kind, values in features.items()}
-
-
-@dataclass
-@ProcessorStepRegistry.register(name="g05_bbox_image_size")
-class G05BBoxImageSizeStep(ProcessorStep):
-    """Preserve the annotated camera's source size before checkpoint resizing."""
-
-    # Default matches so100/chatton exterior; older Hub JSONs omitted camera_key.
-    camera_key: str = "observation.images.exterior"
-
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        """Record the annotated camera's pixel size before the checkpoint resize discards it."""
-        observation = transition.get(TransitionKey.OBSERVATION) or {}
-        image = observation.get(self.camera_key)
-        if image is None:
-            return transition
-        image = torch.as_tensor(image)
-        if image.ndim < 3:
-            raise ValueError(f"G0.5 bbox camera {self.camera_key!r} has invalid shape {image.shape}.")
-        transition = transition.copy()
-        complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
-        complementary["g05_bbox_image_size"] = (int(image.shape[-2]), int(image.shape[-1]))
-        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
-        return transition
-
-    def transform_features(
-        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
-    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """Pass the feature contract through unchanged."""
-        return features
-
-    def get_config(self) -> dict[str, Any]:
-        """Return this step's serializable configuration."""
-        return {"camera_key": self.camera_key}
 
 
 @dataclass
@@ -375,17 +341,25 @@ class G05EmbodimentProjectionStep(ProcessorStep):
     policy_state_dim: int
     policy_action_dim: int
     camera_order: tuple[str, ...]
+    # Empty on pipelines saved before slots were serialized: the embodiment's table then applies.
+    state_slots: tuple[int, ...] = ()
+    action_slots: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
-        """Freeze the camera order and check the embodiment is known."""
+        """Freeze the camera order and resolve the slots."""
         self.camera_order = tuple(self.camera_order)
-        if self.embodiment not in G05_EMBODIMENT_MAPPINGS:
-            raise ValueError(f"No projection is defined for G0.5 embodiment {self.embodiment!r}.")
+        if not self.state_slots:
+            if self.embodiment not in G05_EMBODIMENT_MAPPINGS:
+                raise ValueError(f"No projection is defined for G0.5 embodiment {self.embodiment!r}.")
+            self.state_slots = G05_EMBODIMENT_MAPPINGS[self.embodiment]["state"]
+            self.action_slots = G05_EMBODIMENT_MAPPINGS[self.embodiment]["action"]
+        self.state_slots = tuple(self.state_slots)
+        self.action_slots = tuple(self.action_slots)
 
     @property
     def mapping(self) -> dict[str, tuple[int, ...]]:
-        """Policy-slot indices this embodiment writes its state and action into."""
-        return G05_EMBODIMENT_MAPPINGS[self.embodiment]
+        """Policy-slot indices the raw state and action are written into."""
+        return {"state": self.state_slots, "action": self.action_slots}
 
     @staticmethod
     def _project(value: torch.Tensor, indices: tuple[int, ...], width: int) -> torch.Tensor:
@@ -482,6 +456,8 @@ class G05EmbodimentProjectionStep(ProcessorStep):
             "policy_state_dim": self.policy_state_dim,
             "policy_action_dim": self.policy_action_dim,
             "camera_order": list(self.camera_order),
+            "state_slots": list(self.state_slots),
+            "action_slots": list(self.action_slots),
         }
 
 
@@ -524,91 +500,6 @@ class G05RelativeJointActionsStep(RelativeActionsProcessorStep):
     def get_config(self) -> dict[str, Any]:
         """Return this step's serializable configuration."""
         return {**super().get_config(), "num_obs_steps": self.num_obs_steps}
-
-
-@dataclass
-@ProcessorStepRegistry.register(name="g05_tail_normalization")
-class G05TailNormalizationStep(ProcessorStep):
-    """Apply or invert the author's q01/q99 log-tail compression."""
-
-    inverse: bool = False
-    tail_scale: float = 0.075
-    stats: dict[str, dict[str, Any]] = field(default_factory=dict, repr=False)
-    _tensor_stats: dict[str, dict[str, torch.Tensor]] = field(default_factory=dict, init=False, repr=False)
-
-    _TAIL_STATS = ("tail_q01", "tail_q99", "tail_mean", "tail_mask")
-
-    def __post_init__(self) -> None:
-        """Materialize the configured tail statistics as tensors."""
-        self._tensor_stats = {
-            key: {
-                name: torch.as_tensor(value)
-                for name, value in feature_stats.items()
-                if name in self._TAIL_STATS
-            }
-            for key, feature_stats in self.stats.items()
-        }
-
-    def _transform(self, value: torch.Tensor, key: str) -> torch.Tensor:
-        """Compress values beyond the q01/q99 tails logarithmically, or invert that."""
-        if key not in self._tensor_stats:
-            return value
-        stats = {name: tensor.to(value.device) for name, tensor in self._tensor_stats[key].items()}
-        if set(stats) != set(self._TAIL_STATS):
-            raise ValueError(f"Incomplete G0.5 tail statistics for {key}.")
-        q01 = stats["tail_q01"].to(value.dtype)
-        q99 = stats["tail_q99"].to(value.dtype)
-        mean = stats["tail_mean"].to(value.dtype)
-        mask = stats["tail_mask"].bool()
-        degenerate = (q99 <= q01) | (mean <= q01) | (mean >= q99)
-        mask = mask & ~degenerate
-        c_pos = torch.where(mask, self.tail_scale * (q99 - mean), torch.ones_like(q99))
-        c_neg = torch.where(mask, self.tail_scale * (mean - q01), torch.ones_like(q01))
-        if self.inverse:
-            positive = q99 + c_pos * torch.expm1(torch.clamp((value - q99) / c_pos, min=0.0))
-            negative = q01 - c_neg * torch.expm1(torch.clamp((q01 - value) / c_neg, min=0.0))
-        else:
-            positive = q99 + c_pos * torch.log1p(torch.clamp((value - q99) / c_pos, min=0.0))
-            negative = q01 - c_neg * torch.log1p(torch.clamp((q01 - value) / c_neg, min=0.0))
-        transformed = torch.where(value > q99, positive, torch.where(value < q01, negative, value))
-        return torch.where(mask, transformed, value)
-
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        """Apply the tail transform to `observation.state` and to the action."""
-        transition = transition.copy()
-        observation = dict(transition.get(TransitionKey.OBSERVATION) or {})
-        if OBS_STATE in observation:
-            observation[OBS_STATE] = self._transform(observation[OBS_STATE], OBS_STATE)
-        transition[TransitionKey.OBSERVATION] = observation
-        action = transition.get(TransitionKey.ACTION)
-        if isinstance(action, torch.Tensor):
-            transition[TransitionKey.ACTION] = self._transform(action, ACTION)
-        return transition
-
-    def state_dict(self) -> dict[str, torch.Tensor]:
-        """Flatten the per-feature tail statistics for serialization."""
-        return {
-            f"{key}.{name}": tensor.cpu()
-            for key, feature_stats in self._tensor_stats.items()
-            for name, tensor in feature_stats.items()
-        }
-
-    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        """Restore the per-feature tail statistics from their flattened form."""
-        self._tensor_stats = {}
-        for flat_key, tensor in state.items():
-            key, name = flat_key.rsplit(".", 1)
-            self._tensor_stats.setdefault(key, {})[name] = tensor
-
-    def transform_features(
-        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
-    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """Pass the feature contract through unchanged."""
-        return features
-
-    def get_config(self) -> dict[str, Any]:
-        """Return this step's serializable configuration."""
-        return {"inverse": self.inverse, "tail_scale": self.tail_scale}
 
 
 @dataclass
@@ -699,11 +590,17 @@ class G05InverseActionProjectionStep(PolicyActionProcessorStep):
 
     embodiment: str
     policy_action_dim: int
+    # Empty on pipelines saved before slots were serialized: the embodiment's table then applies.
+    action_slots: tuple[int, ...] = ()
+
+    def __post_init__(self) -> None:
+        """Resolve the action slots."""
+        self.action_slots = tuple(self.action_slots or G05_EMBODIMENT_MAPPINGS[self.embodiment]["action"])
 
     @property
     def indices(self) -> tuple[int, ...]:
-        """Policy-slot indices holding this embodiment's action dimensions."""
-        return G05_EMBODIMENT_MAPPINGS[self.embodiment]["action"]
+        """Policy-slot indices holding the raw action dimensions."""
+        return self.action_slots
 
     def action(self, action: PolicyAction) -> PolicyAction:
         """Gather the embodiment's action dimensions back out of the policy layout."""
@@ -724,7 +621,11 @@ class G05InverseActionProjectionStep(PolicyActionProcessorStep):
 
     def get_config(self) -> dict[str, Any]:
         """Return this step's serializable configuration."""
-        return {"embodiment": self.embodiment, "policy_action_dim": self.policy_action_dim}
+        return {
+            "embodiment": self.embodiment,
+            "policy_action_dim": self.policy_action_dim,
+            "action_slots": list(self.action_slots),
+        }
 
 
 @dataclass
@@ -812,13 +713,15 @@ def _tokenizer_policy_config(config: G05Config) -> dict[str, Any]:
     }
 
 
-def _normalization_mode(config: G05Config) -> NormalizationMode:
-    """Map the checkpoint's `normalization_mode` string onto a lerobot `NormalizationMode`."""
-    if config.normalization_mode == "q01_q99":
-        return NormalizationMode.QUANTILES
-    if config.normalization_mode in {"z_score", "z_score_tail_mixed"}:
-        return NormalizationMode.MEAN_STD
-    return NormalizationMode.IDENTITY
+def _slot_mapping(config: G05Config) -> dict[str, tuple[int, ...]]:
+    """The config's state/action slots, which a policy without a named embodiment gets from its dataset."""
+    mapping = config.slot_mapping
+    if mapping is None:
+        raise ValueError(
+            f"G0.5 embodiment {config.embodiment!r} has no named slot table; set state_slots and "
+            "action_slots, or build the policy from a dataset whose features carry joint names."
+        )
+    return mapping
 
 
 def _project_stats(
@@ -829,7 +732,7 @@ def _project_stats(
     if not dataset_stats:
         return dataset_stats
     result: dict[str, dict[str, torch.Tensor]] = {}
-    mapping = G05_EMBODIMENT_MAPPINGS[config.embodiment]
+    mapping = _slot_mapping(config)
     widths = {OBS_STATE: config.policy_state_dim, ACTION: config.policy_action_dim}
     index_maps = {OBS_STATE: mapping["state"], ACTION: mapping["action"]}
     for feature_name, stats in dataset_stats.items():
@@ -871,25 +774,16 @@ def fix_g05_train_overrides(
     """Adapt ``lerobot-train``'s generic normalizer overrides to G0.5's pipeline.
 
     ``lerobot-train`` assumes a ``normalizer_processor``/``unnormalizer_processor`` step pair
-    that normalizes raw dataset-space stats with ``policy.config.normalization_mapping``. G0.5's
-    normalizer instead runs after ``G05EmbodimentProjectionStep`` (policy-space, padded dims) and
-    keeps its own mode in ``config.normalization_mode``; its unnormalizer is also renamed to
-    ``g05_stepwise_unnormalizer`` when per-timestep stats are enabled. Left alone, the override
-    either targets a step name that doesn't exist (unnormalizer) or silently replaces the correct
-    projected stats/norm_map with raw, all-identity ones (normalizer).
+    that normalizes raw dataset-space stats. G0.5's normalizer instead runs after
+    ``G05EmbodimentProjectionStep`` (policy-space, padded dims), and its unnormalizer is renamed
+    to ``g05_stepwise_unnormalizer`` when per-timestep stats are enabled. Left alone, the override
+    either targets a step name that doesn't exist (unnormalizer) or replaces the projected stats
+    with raw ones (normalizer).
     """
-    mode = _normalization_mode(config)
-    full_norm_map = {
-        FeatureType.STATE: mode,
-        FeatureType.ACTION: mode,
-        FeatureType.VISUAL: NormalizationMode.IDENTITY,
-    }
-
     preprocessor_overrides = dict(preprocessor_overrides or {})
     normalizer_override = preprocessor_overrides.get("normalizer_processor")
     if normalizer_override is not None:
         normalizer_override = dict(normalizer_override)
-        normalizer_override["norm_map"] = full_norm_map
         if normalizer_override.get("stats") is not None:
             normalizer_override["stats"] = _project_stats(config, normalizer_override["stats"])
         preprocessor_overrides["normalizer_processor"] = normalizer_override
@@ -898,7 +792,6 @@ def fix_g05_train_overrides(
     unnormalizer_override = postprocessor_overrides.pop("unnormalizer_processor", None)
     if unnormalizer_override is not None:
         unnormalizer_override = dict(unnormalizer_override)
-        unnormalizer_override["norm_map"] = {FeatureType.ACTION: mode}
         if unnormalizer_override.get("stats") is not None:
             unnormalizer_override["stats"] = _project_stats(config, unnormalizer_override["stats"])
         registry_name = (
@@ -914,14 +807,18 @@ def reconcile_g05_processors(
     preprocessor: PolicyProcessorPipeline,
     postprocessor: PolicyProcessorPipeline,
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
-    """Fill bbox camera_key on Hub pipelines that saved an empty step config, and
-    hand `G05TokenizerStep` the policy fields it reads, which the live config owns
-    rather than the saved pipeline.
+    """Hand the loaded steps the fields the live config owns rather than the saved pipeline.
+
+    The training recipe is one of them: a checkpoint saved without recipe training
+    stores its training renderer with no recipe, and a fine-tune that turns the
+    recipe on (or off) switches it here instead of rebuilding the pipeline.
     """
-    camera_key = config.cot_bbox_camera or (config.camera_order[0] if config.camera_order else None)
-    for step in preprocessor.steps:
-        if camera_key is not None and isinstance(step, G05BBoxImageSizeStep):
-            step.camera_key = camera_key
+    if config.language_recipe_enabled and config.recipe is None:
+        raise ValueError("G0.5 language training requires a recipe in policy config.")
+    for index, step in enumerate(preprocessor.steps):
+        if isinstance(step, RenderTrainingMessagesStep):
+            recipe = config.recipe if config.language_recipe_enabled else None
+            preprocessor.steps[index] = RenderTrainingMessagesStep(recipe, dataset_ctx=step.dataset_ctx)
         if isinstance(step, G05TokenizerStep):
             step.policy_config = _tokenizer_policy_config(config)
     return preprocessor, postprocessor
@@ -942,27 +839,12 @@ def make_g05_pre_post_processors_from_pretrained(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """Rebuild G0.5 pipelines for recipe fine-tuning and load serialized ones otherwise.
+    """Load the serialized G0.5 pipelines and reconcile them with the live config.
 
-    A checkpoint exported without recipe training has no render step and no
-    projected stats in its saved pipeline, so a fine-tune that turns the recipe on
-    has to rebuild both pipelines from the live config. Every other entry point
-    keeps the serialized pipelines authoritative and only reconciles them.
+    Dataset stats reach the pipelines through the normalizer overrides, which
+    `fix_g05_train_overrides` projects into the checkpoint's policy space.
     """
-    del dataset_meta
-
-    if dataset_stats is not None and config.language_recipe_enabled:
-        logging.info(
-            "Building G0.5 processor pipelines from the active policy config instead of loading them from %s.",
-            pretrained_path,
-        )
-        preprocessor, postprocessor = make_g05_pre_post_processors(config, dataset_stats=dataset_stats)
-        rename_override = (preprocessor_overrides or {}).get("rename_observations_processor")
-        if rename_override:
-            for step in preprocessor.steps:
-                if isinstance(step, RenameObservationsProcessorStep):
-                    step.rename_map = dict(rename_override.get("rename_map") or {})
-        return preprocessor, postprocessor
+    del dataset_stats, dataset_meta
 
     prepared_preprocessor_overrides, prepared_postprocessor_overrides = fix_g05_train_overrides(
         config, preprocessor_overrides, postprocessor_overrides
@@ -978,6 +860,26 @@ def make_g05_pre_post_processors_from_pretrained(
     return reconcile_g05_processors(config, preprocessor, postprocessor)
 
 
+def _sidecar_root(config: G05Config) -> Path:
+    """Return the local checkpoint directory holding the tokenizer sidecars.
+
+    `lerobot-train` rebuilds these pipelines from the config with `pretrained_path`
+    still set to what `--policy.path` named, which may be a Hub repo id.
+    """
+    if config.pretrained_path is None:
+        return Path()
+    root = Path(str(config.pretrained_path))
+    if root.is_dir():
+        return root
+    return Path(
+        snapshot_download(
+            repo_id=str(config.pretrained_path),
+            revision=config.pretrained_revision,
+            allow_patterns=["hf_processor/**", "action_tokenizer.safetensors"],
+        )
+    )
+
+
 def make_g05_pre_post_processors(
     config: G05Config,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
@@ -987,25 +889,16 @@ def make_g05_pre_post_processors(
 ]:
     """Build serializable G0.5 pipelines from checkpoint-authoritative metadata."""
 
-    if config.normalization_mode == "checkpoint" and not config.processor_metadata:
-        raise ValueError(
-            "normalization_mode='checkpoint' requires processor_metadata from the packaged checkpoint."
-        )
-    mode = _normalization_mode(config)
-    if mode is NormalizationMode.QUANTILES and dataset_stats:
-        for key in (OBS_STATE, ACTION):
-            if key in dataset_stats and not {"q01", "q99"} <= set(dataset_stats[key]):
+    if dataset_stats:
+        for key, feature_type in ((OBS_STATE, "STATE"), (ACTION, "ACTION")):
+            quantiles = config.normalization_mapping.get(feature_type) == NormalizationMode.QUANTILES
+            if quantiles and key in dataset_stats and not {"q01", "q99"} <= set(dataset_stats[key]):
                 raise ValueError(f"{key} requires real q01/q99 statistics; min/max must not be substituted.")
     policy_features = dict(config.input_features or {})
     policy_features.update(config.output_features or {})
     policy_features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=(config.policy_state_dim,))
     policy_features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(config.policy_action_dim,))
     projected_stats = _project_stats(config, dataset_stats)
-    norm_map = {
-        FeatureType.STATE: mode,
-        FeatureType.ACTION: mode,
-        FeatureType.VISUAL: NormalizationMode.IDENTITY,
-    }
 
     relative_step = G05RelativeJointActionsStep(
         enabled=config.use_relative_actions,
@@ -1023,10 +916,8 @@ def make_g05_pre_post_processors(
         RenderRuntimeMessagesStep(config.recipe),
         RenderTrainingMessagesStep(config.recipe if render_training else None),
         RenameObservationsProcessorStep(rename_map={}),
+        AddBatchDimensionProcessorStep(),
     ]
-    if render_training:
-        steps.append(G05BBoxImageSizeStep(camera_key=config.cot_bbox_camera or config.camera_order[0]))
-    steps.append(AddBatchDimensionProcessorStep())
     steps.append(
         G05ImageTransformStep(
             camera_order=config.camera_order,
@@ -1037,7 +928,11 @@ def make_g05_pre_post_processors(
         )
     )
     action_filter = config.processor_metadata.get("action_filter") or {}
-    if str(action_filter.get("_target_", "")).endswith("R1LiteJointActionFilter"):
+    # The filter describes R1Lite's action parts; another embodiment fine-tuned from
+    # the same checkpoint keeps the metadata but not the layout it applies to.
+    if config.embodiment == "galaxea_r1lite" and str(action_filter.get("_target_", "")).endswith(
+        "R1LiteJointActionFilter"
+    ):
         action_parts = tuple(
             (str(item["key"]), int(item["shape"]))
             for item in (config.processor_metadata.get("shape_meta") or {}).get("action", [])
@@ -1061,15 +956,15 @@ def make_g05_pre_post_processors(
                 policy_state_dim=config.policy_state_dim,
                 policy_action_dim=config.policy_action_dim,
                 camera_order=config.camera_order,
+                state_slots=_slot_mapping(config)["state"],
+                action_slots=_slot_mapping(config)["action"],
             ),
         ]
     )
-    if config.normalization_mode == "z_score_tail_mixed":
-        steps.append(G05TailNormalizationStep(stats=projected_stats or {}))
     steps.append(
         NormalizerProcessorStep(
             features=policy_features,
-            norm_map=norm_map,
+            norm_map=config.normalization_mapping,
             stats=projected_stats,
         )
     )
@@ -1081,7 +976,7 @@ def make_g05_pre_post_processors(
             )
         )
     steps.append(DeviceProcessorStep(device=config.device))
-    checkpoint_root = Path(str(config.pretrained_path)) if config.pretrained_path is not None else Path()
+    checkpoint_root = _sidecar_root(config)
     steps.append(
         G05TokenizerStep(
             processor_dir=str(checkpoint_root / "hf_processor"),
@@ -1100,7 +995,7 @@ def make_g05_pre_post_processors(
     )
     unnormalizer_kwargs = {
         "features": {ACTION: policy_features[ACTION]},
-        "norm_map": {FeatureType.ACTION: mode},
+        "norm_map": config.normalization_mapping,
         "stats": projected_stats,
     }
     if config.use_stepwise_action_norm:
@@ -1110,11 +1005,11 @@ def make_g05_pre_post_processors(
             **unnormalizer_kwargs,
         )
     ]
-    if config.normalization_mode == "z_score_tail_mixed":
-        output_steps.append(G05TailNormalizationStep(inverse=True, stats=projected_stats or {}))
     output_steps.append(
         G05InverseActionProjectionStep(
-            embodiment=config.embodiment, policy_action_dim=config.policy_action_dim
+            embodiment=config.embodiment,
+            policy_action_dim=config.policy_action_dim,
+            action_slots=_slot_mapping(config)["action"],
         )
     )
     if config.libero_gripper_binarize:

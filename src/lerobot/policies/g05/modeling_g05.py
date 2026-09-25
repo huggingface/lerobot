@@ -989,20 +989,20 @@ class G05NativeBackend(nn.Module):
         return embeddings
 
     def _mrope_positions(self, token_types: Tensor) -> Tensor:
-        """Build multimodal rotary position ids from the token types."""
+        """Build multimodal rotary position ids from the token types.
+
+        The ids are built on the host from one copy of the token types: walking the segments
+        on the device would block on a device-to-host sync at every text segment.
+        """
         batch_size, sequence_length = token_types.shape
-        positions = torch.zeros(
-            3,
-            batch_size,
-            sequence_length,
-            dtype=torch.long,
-            device=token_types.device,
-        )
+        device = token_types.device
+        host_types = token_types.detach().cpu()
+        positions = torch.zeros(3, batch_size, sequence_length, dtype=torch.long)
         position_mode = str(self.model_config.get("position_ids_type", "pi0fast"))
         for batch_index in range(batch_size):
             cursor = 0
             grid_index = 0
-            values = token_types[batch_index].detach().cpu().tolist()
+            values = host_types[batch_index].tolist()
             for token_type, entries in itertools.groupby(enumerate(values), key=lambda item: item[1]):
                 entries = list(entries)
                 start, stop = entries[0][0], entries[-1][0] + 1
@@ -1016,11 +1016,8 @@ class G05NativeBackend(nn.Module):
                     grid_index += 1
                     merge = int(self.model_config["vision"]["spatial_merge_size"])
                     grid_h, grid_w = raw_h // merge, raw_w // merge
-                    height = (
-                        torch.arange(grid_h, device=token_types.device).repeat_interleave(grid_w)[:length]
-                        + cursor
-                    )
-                    width = torch.arange(grid_w, device=token_types.device).repeat(grid_h)[:length] + cursor
+                    height = torch.arange(grid_h).repeat_interleave(grid_w)[:length] + cursor
+                    width = torch.arange(grid_w).repeat(grid_h)[:length] + cursor
                     positions[0, batch_index, start:stop] = cursor
                     positions[1, batch_index, start:stop] = height
                     positions[2, batch_index, start:stop] = width
@@ -1034,20 +1031,19 @@ class G05NativeBackend(nn.Module):
                                 mean=2.0,
                                 std=0.5,
                                 size=(length,),
-                                device=token_types.device,
                             )
                             .round()
                             .clamp(1, 3)
                             .long()
                         )
                     else:
-                        steps = torch.full((length,), 2, dtype=torch.long, device=token_types.device)
+                        steps = torch.full((length,), 2, dtype=torch.long)
                 else:
-                    steps = torch.ones(length, dtype=torch.long, device=token_types.device)
+                    steps = torch.ones(length, dtype=torch.long)
                 text_positions = cursor + steps.cumsum(0) - steps[0]
                 positions[:, batch_index, start:stop] = text_positions
                 cursor = int(text_positions[-1]) + int(steps[-1])
-        return positions
+        return positions.to(device)
 
     @staticmethod
     def _causal_mask(token_types: Tensor, dtype: torch.dtype) -> tuple[Tensor, Tensor]:
@@ -1964,8 +1960,13 @@ class G05Policy(PreTrainedPolicy):
         return subtask, bbox_json
 
     @staticmethod
-    def _format_bbox_target(bbox_json: str | None, image_size: tuple[int, int]) -> str | None:
-        """Convert LeRobot grounded-VQA JSON into G0.5's location-token format."""
+    def _format_bbox_target(bbox_json: str | None) -> str | None:
+        """Convert LeRobot grounded-VQA JSON into G0.5's location-token format.
+
+        Coordinates are [0, 1] fractions of the image, the LeRobot annotation convention and
+        the frame the checkpoint was trained in; each becomes one of 1024 location tokens, in
+        (y1, x1, y2, x2) order.
+        """
 
         if not bbox_json:
             return None
@@ -1980,31 +1981,34 @@ class G05Policy(PreTrainedPolicy):
         if isinstance(payload.get("answer"), Mapping):
             payload = payload["answer"]
 
-        height, width = image_size
         boxes: list[tuple[str, list[float]]] = []
         detections = payload.get("detections")
         if isinstance(detections, list):
             for detection in detections:
-                if not isinstance(detection, Mapping) or detection.get("bbox_format", "xyxy") != "xyxy":
+                if not isinstance(detection, Mapping):
                     continue
                 coords = detection.get("bbox")
-                if not isinstance(coords, list | tuple) or len(coords) != 4:
+                bbox_format = detection.get("bbox_format", "xyxy")
+                if (
+                    not isinstance(coords, list | tuple)
+                    or len(coords) != 4
+                    or bbox_format not in {"xyxy", "xywh"}
+                ):
                     continue
-                label = str(detection.get("label") or "object")
-                boxes.append((label, [float(value) for value in coords]))
+                x1, y1, a, b = (float(value) for value in coords)
+                corners = [x1, y1, x1 + a, y1 + b] if bbox_format == "xywh" else [x1, y1, a, b]
+                boxes.append((str(detection.get("label") or "object"), corners))
         else:
             for label, coords in payload.items():
                 if isinstance(coords, list | tuple) and len(coords) == 4:
                     boxes.append((str(label), [float(value) for value in coords]))
         if not boxes:
             return None
-
-        def normalize(coords: list[float]) -> list[float]:
-            """Scale box coordinates to the unit interval."""
-            if max(abs(value) for value in coords) <= 1.0:
-                return coords
-            x1, y1, x2, y2 = coords
-            return [x1 / width, y1 / height, x2 / width, y2 / height]
+        if any(not 0.0 <= value <= 1.0 for _, coords in boxes for value in coords):
+            raise ValueError(
+                "G0.5 bbox targets need [0, 1] image-fraction coordinates (the lerobot-annotate "
+                f"convention), got {bbox_json!r}. Convert pixel boxes by dividing by the frame size."
+            )
 
         def location_token(value: float) -> str:
             """Render a coordinate as a location token."""
@@ -2012,8 +2016,7 @@ class G05Policy(PreTrainedPolicy):
             return f"<loc{location:04d}>"
 
         formatted = []
-        for label, raw_coords in boxes:
-            x1, y1, x2, y2 = normalize(raw_coords)
+        for label, (x1, y1, x2, y2) in boxes:
             locations = "".join(location_token(value) for value in (y1, x1, y2, x2))
             formatted.append(f"{label} {locations}")
         return "BBox: " + "; ".join(formatted)
@@ -2028,20 +2031,7 @@ class G05Policy(PreTrainedPolicy):
         """Populate one author sample from recipe-rendered CoT targets."""
 
         subtask, bbox_json = self._recipe_cot_targets(batch, index, batch_size)
-        image_size = batch.get("g05_bbox_image_size")
-        if (
-            isinstance(image_size, list | tuple)
-            and len(image_size) == batch_size
-            and image_size
-            and isinstance(image_size[0], list | tuple | Tensor)
-        ):
-            image_size = image_size[index]
-        if isinstance(image_size, Tensor):
-            image_size = image_size.detach().cpu().tolist()
-        if not isinstance(image_size, list | tuple) or len(image_size) != 2:
-            camera = self.config.cot_bbox_camera or self.config.camera_order[0]
-            image_size = self.config.camera_sizes[camera]
-        bbox = self._format_bbox_target(bbox_json, (int(image_size[0]), int(image_size[1])))
+        bbox = self._format_bbox_target(bbox_json)
 
         fields = tuple(field for field, value in (("bbox", bbox), ("subtask", subtask)) if value)
         if not fields:
