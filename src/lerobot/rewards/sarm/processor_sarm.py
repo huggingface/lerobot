@@ -64,11 +64,16 @@ from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PR
 
 from .configuration_sarm import SARMConfig
 from .sarm_utils import (
+    SubtaskFrames,
+    SubtaskNames,
     apply_rewind_augmentation,
     compute_absolute_indices,
     find_stage_and_tau,
     pad_state_to_max_dim,
 )
+
+if TYPE_CHECKING:
+    from lerobot.datasets import LeRobotDatasetMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -80,9 +85,9 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self,
         config: SARMConfig,
         image_key: str | None = None,
-        dataset_meta=None,
-        dataset_stats: dict | None = None,
-    ):
+        dataset_meta: LeRobotDatasetMetadata | None = None,
+        dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    ) -> None:
         require_package("transformers", extra="sarm")
         require_package("faker", extra="sarm")
         require_package("pandas", extra="dataset")
@@ -94,7 +99,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self.annotation_mode = config.annotation_mode
 
         # Helper to create temporal proportions dict
-        def make_props_dict(names, props):
+        def make_props_dict(names: list[str] | None, props: list[float] | None) -> dict[str, float] | None:
             return dict(zip(names, props, strict=True)) if names and props else None
 
         # Sparse annotations (always needed)
@@ -199,6 +204,8 @@ class SARMEncodingProcessorStep(ProcessorStep):
 
     def _find_episode_for_frame(self, frame_idx: int) -> int:
         """Find the episode index for a given frame index."""
+        if self.dataset_meta is None:
+            raise ValueError("dataset_meta is required to resolve the episode of a frame index")
         for ep_idx in range(len(self.dataset_meta.episodes)):
             ep_start = self.dataset_meta.episodes[ep_idx]["dataset_from_index"]
             ep_end = self.dataset_meta.episodes[ep_idx]["dataset_to_index"]
@@ -229,8 +236,12 @@ class SARMEncodingProcessorStep(ProcessorStep):
     def _get_annotation_config(self, annotation_type: str) -> tuple[list[str], dict[str, float] | None]:
         """Get global subtask names and temporal proportions for an annotation type."""
         if annotation_type == "dense":
-            return self.dense_subtask_names, self.dense_temporal_proportions
-        return self.sparse_subtask_names, self.sparse_temporal_proportions
+            names, proportions = self.dense_subtask_names, self.dense_temporal_proportions
+        else:
+            names, proportions = self.sparse_subtask_names, self.sparse_temporal_proportions
+        if names is None:
+            raise ValueError(f"SARM {annotation_type} subtask names are not configured")
+        return names, proportions
 
     def _load_episode_annotations(
         self,
@@ -238,7 +249,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         episodes_df: pd.DataFrame | None,
         annotation_type: str,
         global_names: list[str],
-    ) -> tuple[list | None, list | None, list | None]:
+    ) -> tuple[SubtaskNames | None, SubtaskFrames | None, SubtaskFrames | None]:
         """Load subtask annotations for an episode from DataFrame."""
         # Single-stage mode: (linear progress 0→1)
         if episodes_df is None or len(global_names) == 1:
@@ -267,9 +278,11 @@ class SARMEncodingProcessorStep(ProcessorStep):
         - Generates stage+tau targets for all frames
         - Outputs lengths tensor for valid sequence masking
         """
-        new_transition = transition.copy() if hasattr(transition, "copy") else dict(transition)
+        new_transition = transition.copy()
         observation = new_transition.get(TransitionKey.OBSERVATION)
-        comp_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+        if observation is None:
+            raise ValueError("SARMEncodingProcessorStep requires an observation in the transition")
+        comp_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
 
         frame_index = comp_data.get("index")
         episode_index = comp_data.get("episode_index")
@@ -283,6 +296,8 @@ class SARMEncodingProcessorStep(ProcessorStep):
         episode_indices = self._get_episode_indices(frame_indices, episode_index)
 
         image = observation.get(self.image_key)
+        if image is None:
+            raise KeyError(f"SARM expected image key {self.image_key!r} in observation")
         if isinstance(image, torch.Tensor):
             image = image.cpu().numpy()
 
@@ -411,6 +426,8 @@ class SARMEncodingProcessorStep(ProcessorStep):
         total_frames = 1 + n_obs_steps + max_rewind_steps
         frame_gap = self.config.frame_gap
 
+        if self.dataset_meta is None:
+            raise ValueError("dataset_meta is required to compute SARM stage targets")
         global_names, temporal_props = self._get_annotation_config(annotation_type)
         targets = torch.zeros(batch_size, total_frames, dtype=torch.float32)
 
@@ -587,12 +604,20 @@ class SARMEncodingProcessorStep(ProcessorStep):
 def make_sarm_pre_post_processors(
     config: SARMConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
-    dataset_meta=None,
+    dataset_meta: LeRobotDatasetMetadata | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
     """Create pre-processor and post-processor pipelines for SARM."""
+    if config.device is None:
+        raise ValueError(
+            "SARMConfig.device is unresolved; RewardModelConfig.__post_init__ should have set it"
+        )
+    # The config keys the mapping by `FeatureType` value strings; the normalizer expects enum keys.
+    norm_map = {
+        FeatureType(feature_type): mode for feature_type, mode in config.normalization_mapping.items()
+    }
     return (
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=[
@@ -600,7 +625,7 @@ def make_sarm_pre_post_processors(
                 RenameObservationsProcessorStep(rename_map={}),
                 NormalizerProcessorStep(
                     features={**config.input_features, **config.output_features},
-                    norm_map=config.normalization_mapping,
+                    norm_map=norm_map,
                     stats=dataset_stats,
                 ),
                 SARMEncodingProcessorStep(

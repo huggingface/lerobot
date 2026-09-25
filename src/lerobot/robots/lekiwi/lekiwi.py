@@ -176,9 +176,9 @@ class LeKiwi(Robot):
             self.calibration[name] = MotorCalibration(
                 id=motor.id,
                 drive_mode=0,
-                homing_offset=homing_offsets[name],
-                range_min=range_mins[name],
-                range_max=range_maxes[name],
+                homing_offset=int(homing_offsets[name]),
+                range_min=int(range_mins[name]),
+                range_max=int(range_maxes[name]),
             )
 
         self.bus.write_calibration(self.calibration)

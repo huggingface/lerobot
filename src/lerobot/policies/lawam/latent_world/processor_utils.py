@@ -53,7 +53,7 @@ def configure_latent_world_processor(
         processor.chat_template = processor.tokenizer.chat_template
 
     tokenizer = processor.tokenizer
-    tokenizer.add_special_tokens({"additional_special_tokens": [str(placeholder_token)]})  # type: ignore[attr-defined]
+    tokenizer.add_special_tokens({"additional_special_tokens": [str(placeholder_token)]})
     placeholder_token_id = int(tokenizer.convert_tokens_to_ids(str(placeholder_token)))
     if placeholder_token_id < 0:
         raise ValueError(f"Invalid placeholder token id for `{placeholder_token}`.")
