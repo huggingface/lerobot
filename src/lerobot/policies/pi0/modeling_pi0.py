@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Literal, Unpack, cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
+from safetensors import safe_open
 from torch import Tensor, nn
 
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -63,7 +64,13 @@ from ..common.vla_utils import (
     prepare_attention_masks_4d,
     resize_with_pad_torch,
 )
-from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs, T
+from ..pretrained import (
+    PreTrainedPolicy,
+    RTCActionSelectKwargs,
+    T,
+    _load_state_dict_into_meta_model,
+    _parameters_on_meta,
+)
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi0 import DEFAULT_IMAGE_SIZE, PI0Config
 
@@ -789,7 +796,9 @@ class PI0Policy(PreTrainedPolicy):
         if config.gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
 
-        self.model.to(config.device)
+        # Parameters built on the meta device have no data to move yet; the loader places them.
+        if not next(self.model.parameters()).is_meta:
+            self.model.to(config.device)
 
         self.reset()
 
@@ -832,6 +841,19 @@ class PI0Policy(PreTrainedPolicy):
                 **kwargs,
             )
 
+        download_kwargs = {
+            "force_download": force_download,
+            "resume_download": resume_download,
+            "proxies": proxies,
+            "token": token,
+            "cache_dir": cache_dir,
+            "local_files_only": local_files_only,
+            "revision": revision,
+        }
+        model = cls._from_complete_checkpoint(pretrained_name_or_path, config, download_kwargs, **kwargs)
+        if model is not None:
+            return model
+
         # Initialize model without loading weights
         # Check if dataset_stats were provided in kwargs
         model = cls(config, **kwargs)
@@ -842,17 +864,7 @@ class PI0Policy(PreTrainedPolicy):
             try:
                 from transformers.utils import cached_file
 
-                resolved_file = cached_file(
-                    pretrained_name_or_path,
-                    "model.safetensors",
-                    cache_dir=kwargs.get("cache_dir"),
-                    force_download=kwargs.get("force_download", False),
-                    resume_download=kwargs.get("resume_download"),
-                    proxies=kwargs.get("proxies"),
-                    token=kwargs.get("token"),
-                    revision=kwargs.get("revision"),
-                    local_files_only=kwargs.get("local_files_only", False),
-                )
+                resolved_file = cached_file(pretrained_name_or_path, "model.safetensors", **download_kwargs)
                 from safetensors.torch import load_file
 
                 original_state_dict = load_file(resolved_file)
@@ -909,6 +921,49 @@ class PI0Policy(PreTrainedPolicy):
         except Exception as e:
             print(f"Warning: Could not load state dict: {e}")
 
+        return model
+
+    @classmethod
+    def _from_complete_checkpoint(
+        cls,
+        pretrained_name_or_path: str | Path,
+        config: PreTrainedConfig,
+        download_kwargs: dict[str, Any],
+        **kwargs,
+    ) -> "PI0Policy | None":
+        """Build the parameters on the meta device and stream the checkpoint straight into them.
+
+        This skips randomly initializing weights that the checkpoint replaces, and never holds a
+        second full copy of them. Returns None, before reading any weight, when the checkpoint cannot
+        be read or its keys or shapes (after `_fix_pytorch_state_dict_keys`) differ from the model's,
+        so that `from_pretrained` loads the regular way, with the same result as before.
+        """
+        from transformers.utils import cached_file
+
+        try:
+            model_file = cached_file(pretrained_name_or_path, "model.safetensors", **download_kwargs)
+            checkpoint = safe_open(model_file, framework="pt", device="cpu")
+        except Exception:
+            # The regular path tries again and reports the failure as it always has.
+            return None
+        with checkpoint:
+            with _parameters_on_meta():
+                model = cls(config, **kwargs)
+
+            def model_keys(key: str, shape: list[int]) -> dict[str, torch.Size]:
+                fixed = model._fix_pytorch_state_dict_keys({key: torch.empty(shape, device="meta")}, config)
+                return {k if k.startswith("model.") else f"model.{k}": v.shape for k, v in fixed.items()}
+
+            file_shapes = {key: checkpoint.get_slice(key).get_shape() for key in checkpoint.keys()}  # noqa: SIM118
+            targets = {key: model_keys(key, shape) for key, shape in file_shapes.items()}
+            shapes = {name: shape for names in targets.values() for name, shape in names.items()}
+            if shapes != {name: tensor.shape for name, tensor in model.state_dict().items()}:
+                return None
+            print(f"Loading model from: {pretrained_name_or_path}")
+            tensors = ((name, checkpoint.get_tensor(key)) for key, names in targets.items() for name in names)
+            _load_state_dict_into_meta_model(model, tensors, config.device)
+        model.model.to(config.device)
+        print("All keys loaded successfully!")
         return model
 
     def _fix_pytorch_state_dict_keys(
