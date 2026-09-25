@@ -69,6 +69,9 @@ class TDMPCConfig(PreTrainedConfig):
             elites, when updating the gaussian parameters for CEM.
         gaussian_mean_momentum: Momentum (α) used for EMA updates of the mean parameter μ of the gaussian
             parameters optimized in CEM. Updates are calculated as μ⁻ ← αμ⁻ + (1-α)μ.
+        compile_model: Whether to compile the MPC planning step with `torch.compile`. With `use_mpc=False`,
+            the policy never calls `plan`, so the flag has no effect.
+        compile_mode: The `torch.compile` mode to use when `compile_model` is `True`.
         max_random_shift_ratio: Maximum random shift (as a proportion of the image size) to apply to the
             image(s) (in units of pixels) for training-time augmentation. If set to 0, no such augmentation
             is applied. Note that the input images are assumed to be square for this augmentation.
@@ -129,6 +132,8 @@ class TDMPCConfig(PreTrainedConfig):
     n_elites: int = 50
     elite_weighting_temperature: float = 0.5
     gaussian_mean_momentum: float = 0.1
+    compile_model: bool = False
+    compile_mode: str = "max-autotune"
 
     # Training and loss computation.
     max_random_shift_ratio: float = 0.0476

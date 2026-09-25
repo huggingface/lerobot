@@ -14,9 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for TDMPC with image feature keys other than observation.image."""
+"""Tests for the TDMPC policy."""
 
 import torch
+import torch._dynamo
+from torch._dynamo.utils import counters, guard_failures
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
@@ -100,3 +102,50 @@ def test_forward_is_independent_of_image_key():
     loss_b, _ = policy_b.forward(batch_b)
 
     torch.testing.assert_close(loss_a, loss_b)
+
+
+def test_compiled_plan_has_no_graph_breaks_or_recompiles():
+    """With compile_model=True, repeated planning compiles once, with no graph breaks and no re-compiles."""
+    set_seed(0)
+    config = TDMPCConfig(
+        device=DEVICE,
+        compile_model=True,
+        compile_mode="default",
+        horizon=2,
+        cem_iterations=2,
+        n_gaussian_samples=8,
+        n_pi_samples=4,
+        n_elites=4,
+        n_action_repeats=2,
+    )
+    config.input_features = {
+        OBS_IMAGE: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 84, 84)),
+        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,)),
+    }
+
+    config.output_features = {
+        ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(6,)),
+    }
+
+    torch._dynamo.reset()
+    counters.clear()
+    guard_failures.clear()
+
+    policy = TDMPCPolicy(config)
+    policy.to(DEVICE)
+    policy.eval()
+    policy.reset()
+
+    batch = {
+        OBS_IMAGE: torch.rand(2, 3, 84, 84, device=DEVICE),
+        OBS_STATE: torch.rand(2, 6, device=DEVICE),
+    }
+
+    for _ in range(6):
+        policy.select_action(batch)
+
+    assert sum(counters["graph_break"].values()) == 0, f"Graph breaks detected: {counters['graph_break']}"
+    assert not guard_failures, f"Guard failures detected: {dict(guard_failures)}"
+    assert counters["stats"].get("unique_graphs", 0) == 1, (
+        f"Expected exactly one compiled graph, got {counters['stats']}"
+    )

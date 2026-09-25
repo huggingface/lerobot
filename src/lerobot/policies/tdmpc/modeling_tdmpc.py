@@ -84,6 +84,10 @@ class TDMPCPolicy(PreTrainedPolicy):
 
         self.reset()
 
+        # Compile the stateless planning step if requested (see TDMPCConfig.compile_model).
+        if config.compile_model:
+            self._plan_step = torch.compile(self._plan_step, mode=config.compile_mode)
+
     def get_optim_params(self) -> dict:
         return self.parameters()
 
@@ -183,8 +187,9 @@ class TDMPCPolicy(PreTrainedPolicy):
             prev_mean = self._prev_mean
 
         actions, mean = self._plan_step(z, prev_mean)
-        self._prev_mean = mean
-        return actions
+        # Clone outputs we keep: CUDA-graph compile modes reuse output memory on the next call.
+        self._prev_mean = mean.clone()
+        return actions.clone()
 
     @torch.no_grad()
     def _plan_step(self, z: Tensor, prev_mean: Tensor) -> tuple[Tensor, Tensor]:
