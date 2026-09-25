@@ -110,11 +110,14 @@ from lerobot.datasets import (
     safe_stop_image_writer,
 )
 from lerobot.processor import (
+    DataProcessorPipeline,
+    IdentityProcessorStep,
     RobotAction,
     RobotObservation,
     RobotProcessorPipeline,
     make_default_processors,
 )
+from lerobot.processor.converters import robot_action_observation_to_transition, transition_to_robot_action
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -291,6 +294,18 @@ def record_loop(
     if timer is None:
         timer = CycleTimer(fps, records_data=dataset is not None)
 
+    # Only the canonical identity robot-action pipeline preserves the recording
+    # representation. Matching field names is not enough: a processor can keep
+    # the same keys while changing units or semantics.
+    record_sent_action = (
+        type(robot_action_processor) is DataProcessorPipeline
+        and all(type(step) is IdentityProcessorStep for step in robot_action_processor.steps)
+        and robot_action_processor.to_transition is robot_action_observation_to_transition
+        and robot_action_processor.to_output is transition_to_robot_action
+        and not robot_action_processor.before_step_hooks
+        and not robot_action_processor.after_step_hooks
+    )
+
     no_action_count = 0
     timestamp = 0.0
     start_episode_t = time.perf_counter()
@@ -355,16 +370,16 @@ def record_loop(
             continue
 
         with timer.section("send"):
-            # Send action to robot
-            # Action can eventually be clipped using `max_relative_target`,
-            # so action actually sent is saved in the dataset. action = postprocessor.process(action)
-            # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
-            _sent_action = robot.send_action(robot_action_to_send)
+            # Robot implementations may clip or otherwise modify the command at
+            # the hardware boundary.
+            sent_action = robot.send_action(robot_action_to_send)
 
-        # Write to dataset
+        # Preserve the recording representation unless the robot processor is
+        # known to leave it unchanged. Matching field names cannot establish units.
+        recorded_action = sent_action if record_sent_action else action_values
         if dataset is not None:
             with timer.section("record"):
-                action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
+                action_frame = build_dataset_frame(dataset.features, recorded_action, prefix=ACTION)
                 frame = {**observation_frame, **action_frame, "task": single_task}
                 dataset.add_frame(frame)
 
@@ -373,7 +388,7 @@ def record_loop(
                 log_visualization_data(
                     display_mode,
                     observation=obs_processed,
-                    action=action_values,
+                    action=recorded_action,
                     compress_images=display_compressed_images,
                 )
 
