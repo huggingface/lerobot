@@ -105,6 +105,16 @@ class StdinCommandListener:
         else:
             self._run_blocking()
 
+    def _is_running(self) -> bool:
+        """Read ``_running`` through a call, not a direct attribute access.
+
+        ``stop()`` clears the flag from a different thread. A direct ``self._running``
+        read stays narrowed to its value at loop-entry for mypy's single-threaded flow
+        analysis, which makes the re-checks below look unreachable; routing through a
+        method call is invisible to that narrowing, matching the actual concurrent read.
+        """
+        return self._running
+
     def _run_select(self) -> None:
         """Poll the file descriptor and split lines from raw bytes.
 
@@ -118,7 +128,7 @@ class StdinCommandListener:
             self._emit_read_error()
             return
         buffer = b""
-        while self._running:
+        while self._is_running():
             try:
                 ready, _, _ = select.select([fd], [], [], self._poll_interval_s)
             except (OSError, ValueError):  # stream closed underneath us
@@ -131,7 +141,7 @@ class StdinCommandListener:
             except OSError:
                 self._emit_read_error()
                 return
-            if not self._running:
+            if not self._is_running():
                 return
             if chunk == b"":  # EOF: Ctrl-D or the piped input ended
                 # A final command without trailing newline still counts.
@@ -144,13 +154,13 @@ class StdinCommandListener:
                 self._emit_line(raw.decode(errors="replace"))
 
     def _run_blocking(self) -> None:
-        while self._running:
+        while self._is_running():
             try:
                 line = self._stream.readline()
             except (OSError, ValueError, AttributeError):
                 self._emit_read_error()
                 return
-            if not self._running:
+            if not self._is_running():
                 return
             if not line:  # EOF: "" on text streams, b"" on bytes streams
                 self._emit_eof()

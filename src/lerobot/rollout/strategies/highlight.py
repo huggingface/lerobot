@@ -21,6 +21,7 @@ import logging
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Event as ThreadingEvent, Lock
+from typing import Any
 
 from lerobot.datasets import LeRobotDataset, VideoEncodingManager
 from lerobot.utils.constants import ACTION, OBS_STR
@@ -57,7 +58,9 @@ class HighlightStrategy(RolloutStrategy):
     def __init__(self, config: HighlightStrategyConfig) -> None:
         super().__init__(config)
         self._ring: RolloutRingBuffer | None = None
-        self._listener = None
+        # create_key_listener() has no return type annotation (returns a pynput Listener,
+        # TerminalKeyListener, or None), so Any is the honest type here.
+        self._listener: Any = None
         self._save_requested = ThreadingEvent()
         self._recording_live = ThreadingEvent()
         self._push_requested = ThreadingEvent()

@@ -50,6 +50,7 @@ import logging
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Event, Lock, Thread
+from typing import Any
 
 import numpy as np
 
@@ -248,7 +249,9 @@ class DAggerStrategy(RolloutStrategy):
 
     def __init__(self, config: DAggerStrategyConfig) -> None:
         super().__init__(config)
-        self._listener = None
+        # create_key_listener() (via _init_dagger_keyboard()) has no return type annotation
+        # (returns a pynput Listener, TerminalKeyListener, or None), so Any is the honest type here.
+        self._listener: Any = None
         self._pedal_thread: Thread | None = None
         self._events = DAggerEvents()
         self._push_executor: ThreadPoolExecutor | None = None

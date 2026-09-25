@@ -420,8 +420,9 @@ class _NormalizationMixin:
                 return (tensor + 1.0) * denom / 2.0 + q10
             return 2.0 * (tensor - q10) / denom - 1.0
 
-        # If necessary stats are missing, return input unchanged.
-        return tensor
+        # Unreachable: the guard above already raises for every norm_mode not covered by
+        # one of the four branches above, so every real path returns before this point.
+        raise AssertionError(f"unreachable: norm_mode {norm_mode!r} bypassed the mode guard above")
 
 
 @dataclass

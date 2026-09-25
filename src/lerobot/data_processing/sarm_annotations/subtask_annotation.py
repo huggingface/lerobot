@@ -553,7 +553,7 @@ def draw_timeline(ax, subtasks, total_duration, colors):
 
 def visualize_episode(
     ep_idx: int,
-    annotation: SubtaskAnnotation,
+    annotation: SubtaskAnnotation | None,
     video_path: Path,
     video_start: float,
     video_end: float,
