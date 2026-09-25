@@ -441,11 +441,13 @@ The reset phases between episodes are paced the same way but are deliberately no
 
 ## Visualize a dataset
 
-If you uploaded your dataset to the hub with `--control.push_to_hub=true`, you can [visualize your dataset online](https://huggingface.co/spaces/lerobot/visualize_dataset) by copy pasting your repo id given by:
+Your dataset is uploaded to the Hub by default (unless you passed `--dataset.push_to_hub=False`), so you can open it in the [LeRobot Dataset Visualizer](https://huggingface.co/spaces/lerobot/visualize_dataset) right away: enter your repo id on its home page, or go straight to the first episode with the link this prints:
 
 ```bash
-echo ${HF_USER}/so101_test
+echo "https://huggingface.co/spaces/lerobot/visualize_dataset?path=/${HF_USER}/so101_test/episode_0"
 ```
+
+Sign in on the visualizer to open a private dataset. See [Explore a Dataset in the Browser](./using_dataset_tools#explore-a-dataset-in-the-browser) for a walkthrough.
 
 ## Replay an episode
 

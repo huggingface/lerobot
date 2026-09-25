@@ -1,8 +1,89 @@
 # Using Dataset Tools
 
-This guide covers the dataset tools utilities available in LeRobot for modifying and editing existing datasets.
+This guide shows how to explore a LeRobot dataset, online or locally, and then covers the utilities LeRobot provides for modifying and editing existing datasets.
 
-## Overview
+## Explore a Dataset in the Browser
+
+The quickest way to see what a LeRobot dataset contains is the [LeRobot Dataset Visualizer](https://huggingface.co/spaces/lerobot/visualize_dataset), a Hugging Face Space that plays any LeRobot dataset on the Hub, with nothing to install. Datasets you record with `lerobot` are pushed to the Hub unless you opt out, so your own recordings open there too.
+
+<div class="flex justify-center">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/visualizer-episode.webp"
+    alt="The LeRobot Dataset Visualizer showing episode 0 of lerobot/svla_so101_pickplace: the episode list, two synchronized camera recordings, the task, and joint charts"
+    width="800"
+  />
+</div>
+
+To try it on a real dataset, open [episode 0 of `lerobot/svla_so101_pickplace`](https://huggingface.co/spaces/lerobot/visualize_dataset?path=/lerobot/svla_so101_pickplace/episode_0), an SO-101 arm placing a lego brick in a box, and follow along:
+
+1. **Choose a dataset.** On the visualizer's home page, enter a repo id such as `lerobot/svla_so101_pickplace`, or pick one of the examples. Sign in to open your private datasets.
+
+   <div class="flex justify-center">
+     <img
+       src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/visualizer-home.webp"
+       alt="The visualizer's home page, with a search box for a dataset repo id and example datasets"
+       width="640"
+     />
+   </div>
+
+2. **Pick an episode.** The sidebar lists every episode, under the dataset's total frames, episode count, and FPS. Click one to open it, or use <kbd>↑</kbd> / <kbd>↓</kbd> to step through them.
+3. **Watch the recordings.** Every camera in the dataset plays in sync. Enlarge one, or hide the ones you don't need. The episode's task, its language instruction, is shown below the videos.
+4. **Read the data alongside.** Below the videos, the robot's state and actions are charted over the whole episode, one line per joint. A cursor follows playback, and the legend shows each value at the current frame (or under the pointer while you hover). Press <kbd>Space</kbd> to play or pause, drag the seek bar, or click a chart to jump to that moment.
+
+   <div class="flex justify-center">
+     <img
+       src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/visualizer-charts.webp"
+       alt="Synchronized charts of observation.state and action for each joint, with the playback cursor and current values"
+       width="800"
+     />
+   </div>
+
+5. **Go further.** **3D Replay** animates the robot from the recorded joint positions (SO-100/SO-101, OpenArm and Unitree G1, on v3.0 datasets). **Advanced** has dataset statistics, filtering to flag problematic episodes, first/last-frame overviews, and action insights.
+
+<Tip>
+
+Link straight to an episode with `https://huggingface.co/spaces/lerobot/visualize_dataset?path=/<repo_id>/episode_<index>`, for example to share a failure case with your team.
+
+</Tip>
+
+## Visualize a Dataset Locally
+
+You can also visualize episodes from a dataset locally using our command-line tool.
+
+**From the Hugging Face Hub:**
+
+```bash
+lerobot-dataset-viz \
+    --repo-id lerobot/pusht \
+    --episode-index 0
+```
+
+For a private or gated dataset, authenticate first with `hf auth login`, or set the
+`HF_TOKEN` environment variable. The Hub client then discovers the credential
+automatically; no token argument is needed.
+
+**From a local folder:**
+Add the `--root` option and set `--mode local`. For example, to search in `./my_local_data_dir/lerobot/pusht`:
+
+```bash
+lerobot-dataset-viz \
+    --repo-id lerobot/pusht \
+    --root ./my_local_data_dir \
+    --mode local \
+    --episode-index 0
+```
+
+Once executed, the tool opens `rerun.io` and displays the camera streams, robot states, and actions for the selected episode.
+
+To use [Foxglove](https://foxglove.dev) instead of Rerun, install the extra add `--display-mode foxglove`. This starts a WebSocket server (connect the Foxglove app to `ws://127.0.0.1:8765`) that serves the episode as a seekable timeline you can play/pause and scrub.
+
+For advanced usage—including visualizing datasets stored on a remote server—run:
+
+```bash
+lerobot-dataset-viz --help
+```
+
+## Editing Datasets
 
 LeRobot provides several utilities for manipulating datasets:
 
@@ -280,47 +361,3 @@ lerobot-edit-dataset \
 ```
 
 There is also a tool for adding features to a dataset that is not yet covered in `lerobot-edit-dataset`.
-
-# Dataset Visualization
-
-## Online Visualization
-
-When you record a dataset using `lerobot`, it automatically uploads to the Hugging Face Hub unless you specify otherwise. To view the dataset online, use our **LeRobot Dataset Visualizer**, available at:
-https://huggingface.co/spaces/lerobot/visualize_dataset
-
-## Local Visualization
-
-You can also visualize episodes from a dataset locally using our command-line tool.
-
-**From the Hugging Face Hub:**
-
-```bash
-lerobot-dataset-viz \
-    --repo-id lerobot/pusht \
-    --episode-index 0
-```
-
-For a private or gated dataset, authenticate first with `hf auth login`, or set the
-`HF_TOKEN` environment variable. The Hub client then discovers the credential
-automatically; no token argument is needed.
-
-**From a local folder:**
-Add the `--root` option and set `--mode local`. For example, to search in `./my_local_data_dir/lerobot/pusht`:
-
-```bash
-lerobot-dataset-viz \
-    --repo-id lerobot/pusht \
-    --root ./my_local_data_dir \
-    --mode local \
-    --episode-index 0
-```
-
-Once executed, the tool opens `rerun.io` and displays the camera streams, robot states, and actions for the selected episode.
-
-To use [Foxglove](https://foxglove.dev) instead of Rerun, install the extra add `--display-mode foxglove`. This starts a WebSocket server (connect the Foxglove app to `ws://127.0.0.1:8765`) that serves the episode as a seekable timeline you can play/pause and scrub.
-
-For advanced usage—including visualizing datasets stored on a remote server—run:
-
-```bash
-lerobot-dataset-viz --help
-```
