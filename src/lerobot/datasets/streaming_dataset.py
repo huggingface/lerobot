@@ -40,6 +40,7 @@ from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .depth_utils import MM_PER_METRE, dequantize_depth
 from .feature_utils import check_delta_timestamps, get_delta_indices, get_hf_features_from_features
 from .io_utils import hf_transform_to_torch
+from .language import LANGUAGE_COLUMNS
 from .streaming_sidecar import (
     ensure_dataset_mp4_sidecar,
     range_backend_for_root,
@@ -51,10 +52,24 @@ from .video_utils import decode_video_frames_pyav
 
 @dataclass(frozen=True)
 class _EpisodeData:
-    """Keep an episode table and zero-copy column views under the same lifetime."""
+    """Keep prepared numeric tensors and fallback feature views for one resident episode."""
 
     dataset: datasets.Dataset
     columns: dict[str, datasets.Dataset]
+    numeric: dict[str, torch.Tensor]
+    other: datasets.Dataset | None
+
+    def get_item(self, index: int) -> dict[str, Any]:
+        """Return an independently owned row without reformatting prepared numeric columns."""
+        item = self.other[index] if self.other is not None else {}
+        item.update({key: values[index].clone() for key, values in self.numeric.items()})
+        return item
+
+    def get_column(self, key: str, indices: list[int]) -> torch.Tensor:
+        """Gather a temporal window, preserving repeated indices and sample ownership."""
+        if key in self.numeric:
+            return self.numeric[key][indices]
+        return torch.stack(self.columns[key][indices][key])
 
 
 def _balanced_episode_shards(
@@ -600,7 +615,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         reader: EpisodeParquetReader,
         episode_index: int,
     ) -> _EpisodeData:
-        """Load one episode and retain projected column views for temporal queries."""
+        """Load one episode, preparing fixed-shape numeric columns once for temporal queries."""
         table = reader.read_episode(
             self.meta.get_data_file_path(episode_index),
             episode_index=episode_index,
@@ -610,12 +625,45 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         # while retaining the episode-sized memory bound.
         dataset = datasets.Dataset.from_dict(table.to_pydict(), features=self._hf_features)
         dataset.set_transform(hf_transform_to_torch)
+        numeric: dict[str, torch.Tensor] = {}
+        for key, feature in self._hf_features.items():
+            if key in LANGUAGE_COLUMNS:
+                continue
+            while isinstance(feature, datasets.List) and feature.length >= 0:
+                feature = feature.feature
+            if not isinstance(feature, datasets.Value) or feature.dtype not in {
+                "bool",
+                "int8",
+                "int16",
+                "int32",
+                "int64",
+                "uint8",
+                "uint16",
+                "uint32",
+                "float16",
+                "float32",
+                "float64",
+            }:
+                continue
+            values = dataset.select_columns(key).with_format(None)[:][key]
+            try:
+                # Match hf_transform_to_torch's Python-value dtype inference, not the
+                # Arrow storage dtype. Keep nullable columns on the original feature path.
+                numeric[key] = torch.tensor(values)
+            except (TypeError, ValueError, RuntimeError):
+                continue
+        other_keys = [key for key in dataset.column_names if key not in numeric]
         # Zero-copy views share the episode's lifetime and fixed HF transform. Project
         # before row lookup so action/state windows cannot decode unrelated images.
         column_keys = set(self.delta_indices or ()) - set(self.meta.video_keys)
         if self.meta.video_keys:
             column_keys.add("timestamp")
-        return _EpisodeData(dataset, {key: dataset.select_columns(key) for key in sorted(column_keys)})
+        return _EpisodeData(
+            dataset=dataset,
+            columns={key: dataset.select_columns(key) for key in sorted(column_keys) if key not in numeric},
+            numeric=numeric,
+            other=dataset.select_columns(other_keys) if other_keys else None,
+        )
 
     def _make_video_cache(
         self,
@@ -660,7 +708,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
     ) -> dict[str, Any]:
         """Assemble an anchor's temporal windows, padding masks and decoded camera frames."""
         episode_dataset = episode_data.dataset
-        item = episode_dataset[frame_index]
+        item = episode_data.get_item(frame_index)
         episode = self.meta.episodes[episode_index]
         episode_start = int(episode["dataset_from_index"])
 
@@ -676,7 +724,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                     ]
                 )
                 if key not in self.meta.video_keys:
-                    item[key] = torch.stack(episode_data.columns[key][target_indices][key])
+                    item[key] = episode_data.get_column(key, target_indices)
 
         if self.meta.video_keys:
             if video_cache is None:
@@ -692,7 +740,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                     target_indices = [frame_index]
                 local_timestamps = [
                     float(timestamp.item())
-                    for timestamp in episode_data.columns["timestamp"][target_indices]["timestamp"]
+                    for timestamp in episode_data.get_column("timestamp", target_indices)
                 ]
                 from_timestamp = float(episode_metadata[f"videos/{video_key}/from_timestamp"])
                 query_timestamps = [from_timestamp + timestamp for timestamp in local_timestamps]
