@@ -68,6 +68,9 @@ from lerobot.datasets import (
 )
 from lerobot.processor import make_default_processors
 from lerobot.robots import RobotConfig
+from lerobot.robots.rebot_b601_follower import (
+    RebotB601FollowerRobotConfig,  # noqa: F401  (registers rebot_b601_follower)
+)
 from lerobot.robots.so_follower import SOFollowerConfig  # noqa: F401  (registers so101_follower)
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
