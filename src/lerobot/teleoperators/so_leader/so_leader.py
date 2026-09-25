@@ -22,6 +22,7 @@ from lerobot.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
 )
+from lerobot.motors.motors_bus import center_homing_on_travel
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator
@@ -133,7 +134,18 @@ class SOLeader(Teleoperator):
             "Turn 'wrist_roll' as far as it goes both ways: a full revolution if it spins "
             "freely, stop to stop if it does not.\nRecording positions. Press ENTER to stop..."
         )
-        range_mins, range_maxes = self.bus.record_ranges_of_motion()
+        range_mins, range_maxes = self.bus.record_ranges_of_motion(unwrap=["wrist_roll"])
+        # Zero `wrist_roll` on the middle of its travel, not on the pose held at ENTER: see
+        # `center_homing_on_travel`. A joint that spins freely has no middle and keeps the old rule.
+        res = self.bus.model_resolution_table[self.bus.motors["wrist_roll"].model]
+        centred = center_homing_on_travel(
+            homing_offsets["wrist_roll"], range_mins["wrist_roll"], range_maxes["wrist_roll"], res
+        )
+        if centred is None:
+            logger.warning("wrist_roll turned a full revolution: no stops, so its zero is the ENTER pose")
+            range_mins["wrist_roll"], range_maxes["wrist_roll"] = 0, res - 1
+        else:
+            homing_offsets["wrist_roll"], range_mins["wrist_roll"], range_maxes["wrist_roll"] = centred
 
         self.calibration: dict[str, MotorCalibration] = {}
         for motor, m in self.bus.motors.items():
