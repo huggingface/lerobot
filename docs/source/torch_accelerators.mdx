@@ -25,6 +25,48 @@ import torch
 print(torch.<backend_name>.is_available())  # <backend_name> is cuda, mps, or xpu
 ```
 
+## Windows with NVIDIA CUDA
+
+On Windows, installing from a source checkout with `uv sync` uses the default PyTorch build from PyPI. That build may be **CPU-only**, even when an NVIDIA GPU and driver are present. LeRobot keeps CUDA wheel selection in `pyproject.toml` limited to Linux so Windows machines without an NVIDIA GPU are not forced onto CUDA wheels.
+
+If you need CUDA on Windows:
+
+1. Complete the usual source install (`uv sync` or `uv pip install -e ...`).
+2. Open the [PyTorch get-started selector](https://pytorch.org/get-started/locally/), choose **Windows**, **Pip**, your Python version, and the CUDA build that matches your driver.
+3. Install the CUDA wheels **into the project virtualenv** with the index URL from the selector, for example:
+
+```powershell
+uv pip install --python .venv\Scripts\python.exe --force-reinstall `
+  torch torchvision --index-url https://download.pytorch.org/whl/cu128
+```
+
+Replace `cu128` with the CUDA tag shown by the selector (for example `cu126` or `cu130`). On Unix shells, use `.venv/bin/python` instead of `.venv\Scripts\python.exe`.
+
+4. Verify with the **same** interpreter (do not use a bare `python` unless that shell already has `.venv` activated):
+
+```powershell
+.venv\Scripts\python.exe -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available())"
+```
+
+You should see a CUDA build tag in `torch.__version__` (for example `2.x.x+cu128`), a non-`None` `torch.version.cuda`, and `True` from `torch.cuda.is_available()`.
+
+5. Run LeRobot **without** letting `uv` restore the locked CPU wheel:
+
+- Prefer activating `.venv` and invoking commands directly, **or**
+- Use `uv run --no-sync <command>` so uv does not re-sync against `uv.lock` before running.
+
+```powershell
+# Option A: activate, then use normal commands
+.venv\Scripts\Activate.ps1
+lerobot-train --policy.device=cuda ...
+
+# Option B: keep using uv, but skip lock sync
+uv run --no-sync lerobot-train --policy.device=cuda ...
+```
+
+> [!WARNING]
+> A normal `uv run` (without `--no-sync`) or a full `uv sync` will reinstall packages from the lockfile and can **replace your CUDA wheels with the locked CPU-only build**. After any plain `uv sync` / recreating `.venv`, repeat the override above, then keep using `--no-sync` or an activated `.venv`.
+
 ## How to run training or evaluation
 
 To select the desired accelerator, use the `--policy.device` flag when running `lerobot-train` or `lerobot-eval`. For example, to use MPS on Apple Silicon, run:
