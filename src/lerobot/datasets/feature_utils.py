@@ -371,12 +371,15 @@ def validate_feature_image_or_video(
     return error_message
 
 
-def validate_feature_string(name: str, value: str) -> str:
+def validate_feature_string(name: str, value: np.ndarray | PILImage.Image | str) -> str:
     """Validate a feature that is expected to be a string.
 
     Args:
         name (str): The name of the feature.
-        value (str): The value to validate.
+        value: The value to validate — not yet confirmed to be a string; that's what
+            this function checks. Declared ``str`` made the ``isinstance`` guard below
+            look tautological to mypy, since callers dispatch to this function based on
+            the feature's declared dtype, not on ``value``'s actual runtime type.
 
     Returns:
         str: An error message if validation fails, otherwise an empty string.

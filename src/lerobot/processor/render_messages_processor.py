@@ -53,11 +53,15 @@ class RenderTrainingMessagesStep(ProcessorStep):
     dataset_ctx: Any | None = None
 
     def __post_init__(self) -> None:
-        if isinstance(self.recipe, dict):
+        # Read through an Any-typed local: construction also accepts a raw dict (e.g. a
+        # deserialized processor state) to normalize here, which is wider than the field's
+        # own steady-state type, so a direct `self.recipe` narrows the isinstance check away.
+        recipe_value: Any = self.recipe
+        if isinstance(recipe_value, dict):
             # Import only for recipes: the datasets package requires optional extras.
             from lerobot.datasets.recipe import TrainingRecipe
 
-            self.recipe = TrainingRecipe.from_dict(self.recipe)
+            self.recipe = TrainingRecipe.from_dict(recipe_value)
 
     def get_config(self) -> dict[str, Any]:
         return {
@@ -219,11 +223,15 @@ class RenderRuntimeMessagesStep(ComplementaryDataProcessorStep):
     recipe: TrainingRecipe | None = None
 
     def __post_init__(self) -> None:
-        if isinstance(self.recipe, dict):
+        # Read through an Any-typed local: construction also accepts a raw dict (e.g. a
+        # deserialized processor state) to normalize here, which is wider than the field's
+        # own steady-state type, so a direct `self.recipe` narrows the isinstance check away.
+        recipe_value: Any = self.recipe
+        if isinstance(recipe_value, dict):
             # Import only for recipes: the datasets package requires optional extras.
             from lerobot.datasets.recipe import TrainingRecipe
 
-            self.recipe = TrainingRecipe.from_dict(self.recipe)
+            self.recipe = TrainingRecipe.from_dict(recipe_value)
 
     def get_config(self) -> dict[str, Any]:
         return {"recipe": asdict(self.recipe) if self.recipe is not None else None}
