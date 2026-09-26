@@ -33,6 +33,7 @@ from .components import (
     load_wan_video_dit,
     resolve_wan_dit_paths,
 )
+from .model import sinusoidal_embedding_1d
 from .video_dit import (
     FastWAMAttentionBlock,
     WanContinuousFlowMatchScheduler,
@@ -40,7 +41,6 @@ from .video_dit import (
     gradient_checkpoint_forward,
     modulate,
     precompute_freqs_cis,
-    sinusoidal_embedding_1d,
 )
 
 logger = logging.getLogger(__name__)
@@ -941,6 +941,8 @@ class FastWAM(torch.nn.Module):
             raise ValueError("`video_dit_config` is required for FastWAM.from_wan22_pretrained().")
         if "text_dim" not in video_dit_config:
             raise ValueError("`video_dit_config['text_dim']` is required for FastWAM.")
+        if action_dit_config is None:
+            raise ValueError("`action_dit_config` is required for FastWAM.from_wan22_pretrained().")
 
         # Custom MoT video DiT from the original Wan2.2 repo; frozen VAE / UMT5 from
         # the diffusers conversion. This is the offline base-creation path; the

@@ -130,6 +130,8 @@ differ slightly. Use hard resets when reproducing benchmark results.
 
 For reproducible benchmarking, use **10 episodes per task** across all four standard suites (Spatial, Object, Goal, Long). This gives 400 total episodes and matches the protocol used for published results. Success rates may vary by a few percent across evaluation seeds, so we recommend averaging over 3 seeds.
 
+`lerobot-eval` reports a 95% Wilson interval (`pc_success_ci95`) next to every success rate. At 10 episodes a task scored 9/10 has an interval of roughly 60% to 98%, and a 400-episode suite total at 80% has one of roughly 76% to 84%. Two policies whose intervals overlap on a task have not been shown to differ on that task by that run. The interval covers which episodes were drawn; it does not cover the training seed of the policy, which needs more than one training run to measure.
+
 <Tip>
   To compare two policies on the same episodes, use the same `--seed`, keep
   `--env.init_states=true`, and run each task in a single batch

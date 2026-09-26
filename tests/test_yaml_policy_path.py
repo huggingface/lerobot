@@ -6,6 +6,7 @@ import tempfile
 from dataclasses import dataclass, field
 from unittest.mock import patch
 
+import draccus
 import pytest
 import yaml
 
@@ -339,6 +340,22 @@ def test_cli_policy_path_keeps_precedence(tmp_path, monkeypatch, with_config_fil
     assert config.chunk_size == 8
     assert config.temporal_ensemble_coeff is None
     assert config.n_action_steps == 4
+
+
+@dataclass
+class _MixedOverrides:
+    names: list[str] = field(default_factory=lambda: ["saved"])
+    coefficient: float | None = 0.01
+    enabled: bool = True
+
+
+@pytest.mark.parametrize("names", [[], ["front camera", "wrist"]])
+def test_list_and_null_overrides_decode_together(names):
+    args = _flatten_to_cli_args({"names": names, "coefficient": None, "enabled": False})
+    config = draccus.parse(_MixedOverrides, args=args)
+    assert config.names == names
+    assert config.coefficient is None
+    assert config.enabled is False
 
 
 def test_flatten_nested_with_bools():

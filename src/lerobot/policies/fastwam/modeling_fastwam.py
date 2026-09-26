@@ -139,7 +139,7 @@ class FastWAMPolicy(PreTrainedPolicy):
             model.to(map_location)
         return model
 
-    def get_optim_params(self) -> list[Tensor]:
+    def get_optim_params(self) -> list[torch.nn.Parameter]:
         # Return the trainable tensors directly (a single param group). The optimizer
         # builder wraps these in a param group; returning a bare {"params": [...]} dict
         # instead would make `list(...)` yield the key string "params".
@@ -257,8 +257,16 @@ class FastWAMPolicy(PreTrainedPolicy):
         """
         dtype = _dtype_from_name(config.torch_dtype)
         device = config.device
-        video_expert = WanVideoDiT(**config.video_dit_config).to(device=device, dtype=dtype)
-        action_expert = ActionDiT(**config.action_dit_config).to(device=device, dtype=dtype)
+        if device is None:
+            # PreTrainedConfig.__post_init__ always resolves a device; None here is a programming error.
+            raise ValueError("`FastWAMConfig.device` is unset; cannot build the FastWAM core model.")
+        video_dit_config = config.video_dit_config
+        action_dit_config = config.action_dit_config
+        if video_dit_config is None or action_dit_config is None:
+            # FastWAMConfig.__post_init__ always fills both; None here is a programming error.
+            raise ValueError("`FastWAMConfig.video_dit_config` and `action_dit_config` must be resolved.")
+        video_expert = WanVideoDiT(**video_dit_config).to(device=device, dtype=dtype)
+        action_expert = ActionDiT(**action_dit_config).to(device=device, dtype=dtype)
         mot = MoT(
             mixtures={"video": video_expert, "action": action_expert},
             mot_checkpoint_mixed_attn=config.mot_checkpoint_mixed_attn,
@@ -279,7 +287,7 @@ class FastWAMPolicy(PreTrainedPolicy):
             tokenizer=build_wan_tokenizer(
                 model_id=config.tokenizer_model_id, tokenizer_max_len=config.tokenizer_max_len
             ),
-            text_dim=int(config.video_dit_config["text_dim"]),
+            text_dim=int(video_dit_config["text_dim"]),
             proprio_dim=config.proprio_dim,
             device=device,
             torch_dtype=dtype,

@@ -26,7 +26,7 @@ from types import ModuleType
 from typing import Any, TypeVar, cast
 
 import draccus
-import yaml  # type: ignore[import-untyped]
+import yaml
 from draccus.help_formatter import SimpleHelpFormatter
 from draccus.utils import DecodingError
 from draccus.wrappers import DataclassWrapper
@@ -64,7 +64,9 @@ def _flatten_to_cli_args(d: dict, prefix: str = "") -> list[str]:
             value = json.dumps(value)
         if isinstance(value, dict):
             args.extend(_flatten_to_cli_args(value, full_key))
-        elif not isinstance(value, list):
+        elif isinstance(value, list):
+            args.append(f"--{full_key}={json.dumps(value)}")
+        else:
             args.append(f"--{full_key}={value}")
     return args
 

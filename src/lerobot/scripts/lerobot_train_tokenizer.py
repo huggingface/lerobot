@@ -378,7 +378,7 @@ def compute_compression_stats(tokenizer, action_chunks: np.ndarray):
 
 
 @parser.wrap()
-def train_tokenizer(cfg: TokenizerTrainingConfig):
+def train_tokenizer(cfg: TokenizerTrainingConfig) -> None:
     """
     Train FAST tokenizer for action encoding.
 
@@ -459,10 +459,9 @@ def train_tokenizer(cfg: TokenizerTrainingConfig):
     logger.info(f"Collected {len(all_chunks)} action chunks")
 
     # extract only encoded dimensions FIRST (before normalization)
-    encoded_chunks = []
-    for start, end in encoded_dim_ranges:
-        encoded_chunks.append(all_chunks[:, :, start:end])
-    encoded_chunks = np.concatenate(encoded_chunks, axis=-1)  # [N, H, D_encoded]
+    encoded_chunks = np.concatenate(
+        [all_chunks[:, :, start:end] for start, end in encoded_dim_ranges], axis=-1
+    )  # [N, H, D_encoded]
     logger.info(f"Extracted {encoded_chunks.shape[-1]} encoded dimensions")
 
     # apply normalization to encoded dimensions
@@ -476,10 +475,7 @@ def train_tokenizer(cfg: TokenizerTrainingConfig):
         action_stats = norm_stats[ACTION]
 
         # build encoded dimension indices
-        encoded_dim_indices = []
-        for start, end in encoded_dim_ranges:
-            encoded_dim_indices.extend(range(start, end))
-        encoded_dim_indices = np.array(encoded_dim_indices)
+        encoded_dim_indices = np.array([i for start, end in encoded_dim_ranges for i in range(start, end)])
 
         # extract stats for encoded dimensions only
         encoded_stats = {}

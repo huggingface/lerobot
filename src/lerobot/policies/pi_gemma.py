@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch import nn
@@ -203,12 +203,12 @@ def _get_pi_gemma_decoder_layer_base():
     return _PiGemmaDecoderLayerBase
 
 
-class PiGemmaModel(GemmaModel):  # type: ignore[misc]
+class PiGemmaModel(GemmaModel):
     """
     GemmaModel extended with AdaRMS (adaptive RMSNorm) and gated residuals when config.use_adarms is True.
     """
 
-    def __init__(self, config: GemmaConfig, **kwargs):
+    def __init__(self, config: GemmaConfig, **kwargs: Any) -> None:
         super().__init__(config, **kwargs)
         # Free parent-allocated layers/norm before replacing to avoid ~2x peak memory.
         del self.layers
@@ -217,10 +217,12 @@ class PiGemmaModel(GemmaModel):  # type: ignore[misc]
         #     return
         cond_dim = getattr(config, "adarms_cond_dim", None)
         pi_gemma_decoder_layer_base = _get_pi_gemma_decoder_layer_base()
-        self.layers = nn.ModuleList(
+        self.layers: nn.ModuleList = nn.ModuleList(
             [pi_gemma_decoder_layer_base(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
-        self.norm = PiGemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps, cond_dim=cond_dim)
+        self.norm: PiGemmaRMSNorm = PiGemmaRMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps, cond_dim=cond_dim
+        )
 
     def forward(
         self,
@@ -298,11 +300,11 @@ class PiGemmaModel(GemmaModel):  # type: ignore[misc]
         # See https://github.com/huggingface/transformers/pull/29402
 
         # decoder layers
-        all_hidden_states = () if output_hidden_states else None
-        all_self_attns = () if output_attentions else None
+        all_hidden_states: tuple[torch.Tensor, ...] | None = () if output_hidden_states else None
+        all_self_attns: tuple[torch.Tensor, ...] | None = () if output_attentions else None
 
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
-            if output_hidden_states:
+            if all_hidden_states is not None:
                 all_hidden_states += (hidden_states,)
 
             layer_outputs = decoder_layer(
@@ -320,13 +322,13 @@ class PiGemmaModel(GemmaModel):  # type: ignore[misc]
 
             hidden_states = layer_outputs
 
-            if output_attentions:
+            if all_self_attns is not None:
                 all_self_attns += (layer_outputs[1],)
 
         hidden_states, _ = self.norm(hidden_states, adarms_cond)
 
         # add hidden states from the last decoder layer
-        if output_hidden_states:
+        if all_hidden_states is not None:
             all_hidden_states += (hidden_states,)
 
         return BaseModelOutputWithPast(
@@ -337,16 +339,16 @@ class PiGemmaModel(GemmaModel):  # type: ignore[misc]
         )
 
 
-class PiGemmaForCausalLM(GemmaForCausalLM):  # type: ignore[misc]
+class PiGemmaForCausalLM(GemmaForCausalLM):
     """
     Causal LM wrapper using PiGemmaModel as the backbone, for consistency with GemmaForCausalLM
     and the language model used in pi0_fast. Use this for the action expert in pi0/pi05.
     """
 
-    def __init__(self, config: GemmaConfig, **kwargs):
+    def __init__(self, config: GemmaConfig, **kwargs: Any) -> None:
         super().__init__(config, **kwargs)
         del self.model
-        self.model = PiGemmaModel(config)
+        self.model: PiGemmaModel = PiGemmaModel(config)
 
 
 class PaliGemmaModelWithPiGemma(PaliGemmaModel):
