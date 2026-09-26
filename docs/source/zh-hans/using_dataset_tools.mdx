@@ -1,0 +1,232 @@
+# 使用数据集工具
+
+本指南介绍 LeRobot 中用于修改和编辑现有数据集的工具。
+
+## 概述
+
+LeRobot 提供了以下几种数据集操作工具：
+
+1. **删除片段（Delete Episodes）** - 从数据集中删除特定片段
+2. **拆分数据集（Split Dataset）** - 将数据集划分为多个较小的数据集
+3. **合并数据集（Merge Datasets）** - 将多个数据集合并为一个。各数据集必须具有相同的特征，片段按 `repo_ids` 中指定的顺序拼接
+4. **添加特征（Add Features）** - 向数据集添加新特征
+5. **删除特征（Remove Features）** - 从数据集中删除特征
+6. **转换为视频（Convert to Video）** - 将基于图像的数据集转换为视频格式以节省存储空间
+7. **显示数据集信息（Show the Info of Datasets）** - 显示数据集的摘要信息，如片段数量等
+
+核心实现位于 `lerobot.datasets.dataset_tools`。
+An example script detailing how to use the tools API is available in `examples/dataset/use_dataset_tools.py`。
+
+## 命令行工具：lerobot-edit-dataset
+
+`lerobot-edit-dataset` 是用于编辑数据集的命令行脚本，支持删除片段、拆分数据集、合并数据集、添加特征、删除特征以及将图像数据集转换为视频格式。
+
+运行 `lerobot-edit-dataset --help` 可查看各操作的配置说明。
+
+### 使用示例
+
+#### 删除片段
+
+从数据集中删除特定片段，适用于过滤不需要的数据。
+
+```bash
+# 删除第 0、2、5 个片段（直接修改原数据集）
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type delete_episodes \
+    --operation.episode_indices "[0, 2, 5]"
+
+# 删除片段并保存到新数据集（保留原数据集）
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --new_repo_id lerobot/pusht_after_deletion \
+    --operation.type delete_episodes \
+    --operation.episode_indices "[0, 2, 5]"
+```
+
+#### 拆分数据集
+
+将数据集划分为多个子集。
+
+```bash
+# 按比例拆分（例如：80% 训练集、20% 测试集、20% 验证集）
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type split \
+    --operation.splits '{"train": 0.8, "test": 0.2, "val": 0.2}'
+
+# 按指定片段索引拆分
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type split \
+    --operation.splits '{"task1": [0, 1, 2, 3], "task2": [4, 5]}'
+```
+
+拆分名称没有限制，可由用户自定义。结果数据集以原 repo id 加拆分名称的形式保存，例如 `lerobot/pusht_train`、`lerobot/pusht_task1`、`lerobot/pusht_task2`。
+
+#### 合并数据集
+
+将多个数据集合并为一个。
+
+```bash
+# 将训练集和验证集合并回一个数据集
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_merged \
+    --operation.type merge \
+    --operation.repo_ids "['lerobot/pusht_train', 'lerobot/pusht_val']"
+```
+
+#### 删除特征
+
+从数据集中删除特征。
+
+```bash
+# 删除一个摄像头特征
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type remove_feature \
+    --operation.feature_names "['observation.images.top']"
+```
+
+#### 转换为视频
+
+将基于图像的数据集转换为视频格式，生成一个新的 LeRobotDataset，其中图像以视频形式存储。此操作可减少存储占用并提升数据加载性能。新数据集与原数据集结构完全相同，但图像以 LeRobot 标准格式编码为 MP4 视频。
+
+```bash
+# 仅本地保存：指定自定义输出目录（不推送到 Hub）
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --operation.type convert_image_to_video \
+    --operation.output_dir /path/to/output/pusht_video
+
+# 使用新 repo_id 保存（本地存储）
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --new_repo_id lerobot/pusht_video \
+    --operation.type convert_image_to_video
+
+# 转换并推送到 Hugging Face Hub
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --new_repo_id lerobot/pusht_video \
+    --operation.type convert_image_to_video \
+    --push_to_hub true
+
+# 使用自定义视频编解码器和质量设置进行转换
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --operation.type convert_image_to_video \
+    --operation.output_dir outputs/pusht_video \
+    --operation.vcodec libsvtav1 \
+    --operation.pix_fmt yuv420p \
+    --operation.g 2 \
+    --operation.crf 30
+
+# 仅转换指定片段
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --operation.type convert_image_to_video \
+    --operation.output_dir outputs/pusht_video \
+    --operation.episode_indices "[0, 1, 2, 5, 10]"
+
+# 使用多个 worker 并行处理
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --operation.type convert_image_to_video \
+    --operation.output_dir outputs/pusht_video \
+    --operation.num_workers 8
+
+# 对内存受限的系统，可指定批处理限制：
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --operation.type convert_to_video \
+    --operation.max_episodes_per_batch 50 \
+    --operation.max_frames_per_batch 10000
+```
+
+**参数说明：**
+
+- `output_dir`：自定义输出目录（可选，默认使用 `new_repo_id` 或 `{repo_id}_video`）
+- `vcodec`：视频编解码器，可选：`h264`、`hevc`、`libsvtav1`（默认：`libsvtav1`）
+- `pix_fmt`：像素格式，可选：`yuv420p`、`yuv444p`（默认：`yuv420p`）
+- `g`：图像组（GOP）大小，值越小质量越高但文件越大（默认：2）
+- `crf`：恒定码率因子，值越小质量越高但文件越大，0 为无损（默认：30）
+- `fast_decode`：快速解码调优选项（默认：0）
+- `episode_indices`：指定要转换的片段列表（默认：全部片段）
+- `num_workers`：并行处理的 worker 数量（默认：4）
+
+**注意：** 生成的数据集是完整的 LeRobotDataset，所有摄像头均以视频形式编码至 `videos/` 目录，parquet 文件仅包含元数据（不含原始图像数据）。所有片段、统计信息和任务均完整保留。
+
+### 显示数据集信息
+
+显示数据集信息，如片段数量、帧数、文件大小等。此操作不会对数据集做任何修改。
+
+```bash
+# 不显示特征详情
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --operation.type info \
+
+# 显示特征详情
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --operation.type info \
+    --operation.show_features true
+```
+
+**参数说明：**
+
+- `parameters`：控制是否显示特征详情的标志（默认：false）
+
+### 推送到 Hub
+
+在任意命令中添加 `--push_to_hub true` 标志，可将结果数据集自动上传至 Hugging Face Hub：
+
+```bash
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --new_repo_id lerobot/pusht_after_deletion \
+    --operation.type delete_episodes \
+    --operation.episode_indices "[0, 2, 5]" \
+    --push_to_hub true
+```
+
+目前 `lerobot-edit-dataset` 尚未涵盖向数据集添加特征的工具。
+
+# 数据集可视化
+
+## 在线可视化
+
+使用 `lerobot` 录制数据集时，除非另行指定，数据集会自动上传至 Hugging Face Hub。可通过我们的 **LeRobot 数据集可视化工具** 在线查看数据集：
+https://huggingface.co/spaces/lerobot/visualize_dataset
+
+## 本地可视化
+
+也可使用命令行工具在本地可视化数据集中的片段。
+
+**从 Hugging Face Hub 加载：**
+
+```bash
+lerobot-dataset-viz \
+    --repo-id lerobot/pusht \
+    --episode-index 0
+```
+
+**从本地文件夹加载：**
+添加 `--root` 选项并设置 `--mode local`。例如，在 `./my_local_data_dir/lerobot/pusht` 中搜索：
+
+```bash
+lerobot-dataset-viz \
+    --repo-id lerobot/pusht \
+    --root ./my_local_data_dir \
+    --mode local \
+    --episode-index 0
+```
+
+执行后，工具将打开 `rerun.io`，展示所选片段的摄像头画面、机器人状态及动作。
+
+如需高级用法（包括可视化远程服务器上的数据集），请运行：
+
+```bash
+lerobot-dataset-viz --help
+```
