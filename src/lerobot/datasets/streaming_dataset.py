@@ -13,213 +13,97 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import io
+import os
+import warnings
 from collections import deque
-from collections.abc import Callable, Generator, Iterable, Iterator
+from collections.abc import Callable, Generator, Iterator, Mapping
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import ExitStack, closing
+from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import datasets
 import numpy as np
 import torch
-from datasets import load_dataset
 
 from lerobot.configs import DEFAULT_DEPTH_UNIT, DEPTH_METER_UNIT, DepthEncoderConfig
-from lerobot.utils.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
+from lerobot.streaming.episode_cache import EpisodeByteCache
+from lerobot.streaming.episode_parquet import EpisodeParquetReader
+from lerobot.streaming.episode_pool import ExactCoveragePool
+from lerobot.streaming.manifest import EpisodeVideoManifest
+from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.import_utils import get_safe_default_video_backend
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .depth_utils import MM_PER_METRE, dequantize_depth
-from .feature_utils import get_delta_indices
-from .io_utils import item_to_torch
-from .utils import (
-    check_version_compatibility,
-    find_float_index,
-    is_float_in_list,
-    safe_shard,
+from .feature_utils import check_delta_timestamps, get_delta_indices, get_hf_features_from_features
+from .io_utils import hf_transform_to_torch
+from .language import LANGUAGE_COLUMNS
+from .streaming_sidecar import (
+    ensure_dataset_mp4_sidecar,
+    range_backend_for_root,
+    streaming_data_root,
 )
-from .video_utils import (
-    VideoDecoderCache,
-    decode_video_frames,
-    decode_video_frames_torchcodec,
-)
+from .utils import check_version_compatibility
+from .video_utils import decode_video_frames_pyav
 
 
-class LookBackError(Exception):
-    """
-    Exception raised when trying to look back in the history of a Backtrackable object.
-    """
+@dataclass(frozen=True)
+class _EpisodeData:
+    """Keep prepared numeric tensors and fallback feature views for one resident episode."""
 
-    pass
+    dataset: datasets.Dataset
+    columns: dict[str, datasets.Dataset]
+    numeric: dict[str, torch.Tensor]
+    other: datasets.Dataset | None
 
-
-class LookAheadError(Exception):
-    """
-    Exception raised when trying to look ahead in the future of a Backtrackable object.
-    """
-
-    pass
-
-
-class _ShardExhaustedError(Exception):
-    """Raised when a streaming dataset shard has no more items."""
-
-
-class Backtrackable[T]:
-    """
-    Wrap any iterator/iterable so you can step back up to `history` items
-    and look ahead up to `lookahead` items.
-
-    This is useful for streaming datasets where you need to access previous and future items
-    but can't load the entire dataset into memory.
-
-    Example:
-    -------
-    ```python
-    ds = load_dataset("c4", "en", streaming=True, split="train")
-    rev = Backtrackable(ds, history=3, lookahead=2)
-
-    x0 = next(rev)  # forward
-    x1 = next(rev)
-    x2 = next(rev)
-
-    # Look ahead
-    x3_peek = rev.peek_ahead(1)  # next item without moving cursor
-    x4_peek = rev.peek_ahead(2)  # two items ahead
-
-    # Look back
-    x1_again = rev.peek_back(1)  # previous item without moving cursor
-    x0_again = rev.peek_back(2)  # two items back
-
-    # Move backward
-    x1_back = rev.prev()  # back one step
-    next(rev)  # returns x2, continues forward from where we were
-    ```
-    """
-
-    __slots__ = ("_source", "_back_buf", "_ahead_buf", "_cursor", "_history", "_lookahead")
-
-    def __init__(self, iterable: Iterable[T], *, history: int = 1, lookahead: int = 0):
-        if history < 1:
-            raise ValueError("history must be >= 1")
-        if lookahead <= 0:
-            raise ValueError("lookahead must be > 0")
-
-        self._source: Iterator[T] = iter(iterable)
-        self._back_buf: deque[T] = deque(maxlen=history)
-        self._ahead_buf: deque[T] = deque(maxlen=lookahead) if lookahead > 0 else deque()
-        self._cursor: int = 0
-        self._history = history
-        self._lookahead = lookahead
-
-    def __iter__(self) -> "Backtrackable[T]":
-        return self
-
-    def __next__(self) -> T:
-        # If we've stepped back, consume from back buffer first
-        if self._cursor < 0:  # -1 means "last item", etc.
-            self._cursor += 1
-            return self._back_buf[self._cursor]
-
-        # If we have items in the ahead buffer, use them first
-        item = self._ahead_buf.popleft() if self._ahead_buf else next(self._source)
-
-        # Add current item to back buffer and reset cursor
-        self._back_buf.append(item)
-        self._cursor = 0
+    def get_item(self, index: int) -> dict[str, Any]:
+        """Return an independently owned row without reformatting prepared numeric columns."""
+        item = self.other[index] if self.other is not None else {}
+        item.update({key: values[index].clone() for key, values in self.numeric.items()})
         return item
 
-    def prev(self) -> T:
-        """
-        Step one item back in history and return it.
-        Raises IndexError if already at the oldest buffered item.
-        """
-        if len(self._back_buf) + self._cursor <= 1:
-            raise LookBackError("At start of history")
-
-        self._cursor -= 1
-        return self._back_buf[self._cursor]
-
-    def peek_back(self, n: int = 1) -> T:
-        """
-        Look `n` items back (n=1 == previous item) without moving the cursor.
-        """
-        if n < 0 or n + 1 > len(self._back_buf) + self._cursor:
-            raise LookBackError("peek_back distance out of range")
-
-        return self._back_buf[self._cursor - (n + 1)]
-
-    def peek_ahead(self, n: int = 1) -> T:
-        """
-        Look `n` items ahead (n=1 == next item) without moving the cursor.
-        Fills the ahead buffer if necessary.
-        """
-        if n < 1:
-            raise LookAheadError("peek_ahead distance must be 1 or more")
-        elif n > self._lookahead:
-            raise LookAheadError("peek_ahead distance exceeds lookahead limit")
-
-        # Fill ahead buffer if we don't have enough items
-        while len(self._ahead_buf) < n:
-            try:
-                item = next(self._source)
-                self._ahead_buf.append(item)
-
-            except StopIteration as err:
-                raise LookAheadError("peek_ahead: not enough items in source") from err
-
-        return self._ahead_buf[n - 1]
-
-    def history(self) -> list[T]:
-        """
-        Return a copy of the buffered history (most recent last).
-        The list length ≤ `history` argument passed at construction.
-        """
-        if self._cursor == 0:
-            return list(self._back_buf)
-
-        # When cursor<0, slice so the order remains chronological
-        return list(self._back_buf)[: self._cursor or None]
-
-    def can_peek_back(self, steps: int = 1) -> bool:
-        """
-        Check if we can go back `steps` items without raising an IndexError.
-        """
-        return steps < len(self._back_buf) + self._cursor
-
-    def can_peek_ahead(self, steps: int = 1) -> bool:
-        """
-        Check if we can peek ahead `steps` items.
-        This may involve trying to fill the ahead buffer.
-        """
-        if self._lookahead > 0 and steps > self._lookahead:
-            return False
-
-        # Try to fill ahead buffer to check if we can peek that far
-        try:
-            while len(self._ahead_buf) < steps:
-                if self._lookahead > 0 and len(self._ahead_buf) >= self._lookahead:
-                    return False
-                item = next(self._source)
-                self._ahead_buf.append(item)
-            return True
-        except StopIteration:
-            return False
+    def get_column(self, key: str, indices: list[int]) -> torch.Tensor:
+        """Gather a temporal window, preserving repeated indices and sample ownership."""
+        if key in self.numeric:
+            return self.numeric[key][indices]
+        return torch.stack(self.columns[key][indices][key])
 
 
-class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
-    """LeRobotDataset with streaming capabilities.
+def _balanced_episode_shards(
+    episode_indices: list[int],
+    episode_frame_counts: Mapping[int, int],
+    *,
+    world_size: int,
+) -> list[list[int]]:
+    """Assign whole episodes deterministically with greedy frame-count balancing."""
+    if world_size <= 0:
+        raise ValueError("world_size must be positive")
+    shards: list[list[int]] = [[] for _ in range(world_size)]
+    shard_frames = [0] * world_size
+    for episode in sorted(episode_indices, key=lambda item: (-episode_frame_counts[item], item)):
+        rank = min(range(world_size), key=lambda item: (shard_frames[item], item))
+        shards[rank].append(episode)
+        shard_frames[rank] += episode_frame_counts[episode]
+    return shards
 
-    This class extends LeRobotDataset to add streaming functionality, allowing data to be streamed
-    rather than loaded entirely into memory. This is especially useful for large datasets that may
-    not fit in memory or when you want to quickly explore a dataset without downloading it completely.
 
-    The key innovation is using a Backtrackable iterator that maintains a bounded buffer of recent
-    items, allowing us to access previous frames for delta timestamps without loading the entire
-    dataset into memory.
+class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
+    """Episode-scoped streaming reader for LeRobot datasets.
+
+    Metadata is cached locally, while each rank reads only the Parquet rows and MP4 byte ranges
+    needed for the complete episodes it owns. One DataLoader worker per rank owns the logical pool;
+    its bounded result queue provides decoded-batch prefetch without creating independent samplers.
+    Episode ownership is disjoint and every selected frame is yielded exactly once per iteration.
+    MP4 sidecars are resolved automatically and built in a revision-keyed local cache when absent.
 
     Example:
         Basic usage:
         ```python
-        from lerobot.common.datasets.streaming_dataset import StreamingLeRobotDataset
+        from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 
         # Create a streaming dataset with delta timestamps
         delta_timestamps = {
@@ -230,8 +114,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         dataset = StreamingLeRobotDataset(
             repo_id="your-dataset-repo-id",
             delta_timestamps=delta_timestamps,
-            streaming=True,
-            buffer_size=1000,
         )
 
         # Iterate over the dataset
@@ -248,8 +130,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         repo_id: str,
         root: str | Path | None = None,
         episodes: list[int] | None = None,
-        image_transforms: Callable | None = None,
-        delta_timestamps: dict[list[float]] | None = None,
+        image_transforms: Callable[[torch.Tensor], torch.Tensor] | None = None,
+        delta_timestamps: dict[str, list[float]] | None = None,
         tolerance_s: float = 1e-4,
         revision: str | None = None,
         force_cache_sync: bool = False,
@@ -261,64 +143,157 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         shuffle: bool = True,
         return_uint8: bool = False,
         depth_output_unit: str = DEFAULT_DEPTH_UNIT,
+        video_backend: str | None = None,
+        data_root: str | Path | None = None,
+        episode_pool_size: int | None = None,
+        prefetch_episodes: int = 8,
+        byte_budget_gb: float = 8.0,
+        repeat: bool = False,
         *,
         repo_type: Literal["dataset", "bucket"] = "dataset",
         token: str | bool | None = None,
-    ):
-        """Initialize a StreamingLeRobotDataset.
+        decode_threads: int = 2,
+        decoded_queue_size: int = 8,
+        max_open_decoders: int | None = None,
+        native_http_connections: int | None = None,
+        native_http_subranges: int = 1,
+        sampling_strategy: Literal["remaining", "round_robin"] = "remaining",
+    ) -> None:
+        """Initialize an episode-scoped streaming reader.
 
         Args:
-            repo_id (str): This is the repo id that will be used to fetch the dataset.
-            root (Path | None, optional): Local directory to use for local datasets. In bucket mode,
-                this is an optional local metadata-cache directory; parquet and video data remain remote.
-                When omitted, Hub metadata is resolved through the cache under ``$HF_LEROBOT_HOME/hub``.
-            episodes (list[int] | None, optional): If specified, this will only load episodes specified by
-                their episode_index in this list.
-            image_transforms (Callable | None, optional): Transform to apply to image data.
-            tolerance_s (float, optional): Tolerance in seconds for timestamp matching.
-            revision (str, optional): Git revision id (branch name, tag, or commit hash).
-            force_cache_sync (bool, optional): Flag to sync and refresh local files first.
-            streaming (bool, optional): Whether to stream the dataset or load it all. Defaults to True.
-            buffer_size (int, optional): Buffer size for shuffling when streaming. Defaults to 1000.
-            max_num_shards (int, optional): Number of shards to re-shard the input dataset into. Defaults to 16.
-            seed (int, optional): Reproducibility random seed.
-            rng (np.random.Generator | None, optional): Random number generator.
-            shuffle (bool, optional): Whether to shuffle the dataset across exhaustions. Defaults to True.
-            depth_output_unit (str, optional): Physical unit depth maps are dequantized to ("m" or "mm").
-                Defaults to "mm".
-            repo_type: "dataset" (default) or "bucket" to stream from an HF Storage Bucket
-                over ``hf://buckets/``.
-            token: Authentication token used while streaming this dataset from
-                the Hub. Pass a string token, ``True`` to require the locally
-                stored token, ``False`` to disable authentication, or ``None``
-                to use the Hugging Face Hub default. The token is not retained
-                on the dataset instance after initialization.
+            repo_id (`str`):
+                Hub dataset or bucket identifier.
+            root (`str | Path | None`, *optional*):
+                Local dataset directory, or local metadata cache in bucket mode.
+            episodes (`list[int] | None`, *optional*):
+                Episode indices to select; None selects the complete dataset.
+            image_transforms (`Callable[[torch.Tensor], torch.Tensor] | None`, *optional*):
+                Transform applied to decoded RGB images in planned sample order.
+            delta_timestamps (`dict[str, list[float]] | None`, *optional*):
+                Per-feature history or future offsets in seconds, padded at episode boundaries.
+            tolerance_s (`float`, *optional*, defaults to `1e-4`):
+                Maximum timestamp error allowed when matching decoded frames.
+            revision (`str | None`, *optional*):
+                Hub revision to resolve to an immutable dataset commit.
+            force_cache_sync (`bool`, *optional*, defaults to `False`):
+                Refresh locally cached dataset metadata.
+            streaming (`bool`, *optional*, defaults to `True`):
+                Compatibility flag retained by the public API.
+            buffer_size (`int`, *optional*, defaults to `1000`):
+                Legacy setting used to derive the pool size when episode_pool_size is omitted.
+            max_num_shards (`int`, *optional*, defaults to `16`):
+                Maximum internal episode-fetch concurrency, not DataLoader process count.
+            seed (`int`, *optional*, defaults to `42`):
+                Seed for deterministic episode admission and anchor sampling.
+            rng (`np.random.Generator | None`, *optional*):
+                Deprecated and ignored; set seed instead.
+            shuffle (`bool`, *optional*, defaults to `True`):
+                Advance the seeded sample plan between epochs; False replays the same plan.
+            return_uint8 (`bool`, *optional*, defaults to `False`):
+                Return RGB pixels as uint8 instead of float32 values in [0, 1].
+            depth_output_unit (`str`, *optional*):
+                Physical output unit for depth maps: "mm" by default, or "m".
+            video_backend (`str | None`, *optional*):
+                RGB decoder backend. None uses the platform-safe default; TorchCodec failures
+                fall back to PyAV. Depth videos use PyAV.
+            data_root (`str | Path | None`, *optional*):
+                Payload root override for direct Python use; accepts local paths and fsspec URLs.
+            episode_pool_size (`int | None`, *optional*):
+                Maximum active episodes per rank, also limited by the compressed-byte budget.
+            prefetch_episodes (`int`, *optional*, defaults to `8`):
+                Pending episodes eligible for speculative prefetch beyond the active pool.
+            byte_budget_gb (`float`, *optional*, defaults to `8.0`):
+                Per-rank reservation limit in GiB for synthesized video bytes, not total RAM.
+            repeat (`bool`, *optional*, defaults to `False`):
+                Repeat rank-local coverage epochs, allowing batches to span epoch boundaries.
+            repo_type (`Literal["dataset", "bucket"]`, *optional*, defaults to `"dataset"`):
+                Whether repo_id identifies a dataset repository or a Storage Bucket.
+            token (`str | bool | None`, *optional*):
+                Hub authentication retained for worker I/O, never serialized into sidecars.
+            decode_threads (`int`, *optional*, defaults to `2`):
+                Parallel sample-assembly and video-decode workers.
+            decoded_queue_size (`int`, *optional*, defaults to `8`):
+                Maximum samples prepared ahead, delivered in planner order.
+            max_open_decoders (`int | None`, *optional*):
+                Decoder-count cap; None allows one per active episode-camera pair.
+            native_http_connections (`int | None`, *optional*):
+                Per-rank HTTP connection limit; None derives it from fetch concurrency.
+            native_http_subranges (`int`, *optional*, defaults to `1`):
+                Maximum concurrent subrequests for one sufficiently large byte range.
+            sampling_strategy (`Literal["remaining", "round_robin"]`, *optional*, defaults to `"remaining"`):
+                Weight episodes by remaining anchors, or draw one anchor per episode each
+                shuffled round. Neither strategy is a global uniform shuffle.
         """
         super().__init__()
         if repo_type not in ("dataset", "bucket"):
             raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {repo_type!r}")
-
         self.repo_id = repo_id
         self.repo_type = repo_type
-        self._requested_root = Path(root) if root is not None else None
+        self._requested_root = Path(root) if root else None
         self.root = self._requested_root if self._requested_root is not None else HF_LEROBOT_HOME / repo_id
-        self.streaming_from_local = root is not None and self.repo_type == "dataset"
+        self.streaming_from_local = root is not None and repo_type == "dataset"
 
         self.image_transforms = image_transforms
         self.episodes = episodes
         self.tolerance_s = tolerance_s
         self.revision = revision if revision else CODEBASE_VERSION
         self.seed = seed
-        self.rng = rng if rng is not None else np.random.default_rng(seed)
+        if rng is not None:
+            warnings.warn(
+                "rng is deprecated and has no effect; use seed for reproducible streaming order.",
+                FutureWarning,
+                stacklevel=2,
+            )
         self.shuffle = shuffle
 
         self.streaming = streaming
         self.buffer_size = buffer_size
+        self.max_num_shards = max_num_shards
         self._return_uint8 = return_uint8
         self._depth_output_unit = depth_output_unit
-
-        # We cache the video decoders to avoid re-initializing them at each frame (avoiding a ~10x slowdown)
-        self.video_decoder_cache = None
+        self._streaming_io_token = None if self.streaming_from_local else token
+        self._video_backend = video_backend if video_backend is not None else get_safe_default_video_backend()
+        if self._video_backend == "video_reader":
+            self._video_backend = "pyav"
+        if self._video_backend not in {"torchcodec", "pyav"}:
+            raise ValueError(f"Unsupported video backend: {self._video_backend}")
+        if buffer_size <= 0:
+            raise ValueError("buffer_size must be positive")
+        if max_num_shards <= 0:
+            raise ValueError("max_num_shards must be positive")
+        if episode_pool_size is not None and episode_pool_size <= 0:
+            raise ValueError("episode_pool_size must be positive")
+        if prefetch_episodes < 0:
+            raise ValueError("prefetch_episodes must be non-negative")
+        if byte_budget_gb <= 0:
+            raise ValueError("byte_budget_gb must be positive")
+        if decode_threads <= 0:
+            raise ValueError("decode_threads must be positive")
+        if decoded_queue_size <= 0:
+            raise ValueError("decoded_queue_size must be positive")
+        if max_open_decoders is not None and max_open_decoders <= 0:
+            raise ValueError("max_open_decoders must be positive")
+        if native_http_connections is not None and native_http_connections <= 0:
+            raise ValueError("native_http_connections must be positive")
+        if native_http_subranges <= 0:
+            raise ValueError("native_http_subranges must be positive")
+        if sampling_strategy not in ("remaining", "round_robin"):
+            raise ValueError("sampling_strategy must be 'remaining' or 'round_robin'")
+        self.sampling_strategy = sampling_strategy
+        self.episode_pool_size = episode_pool_size or min(buffer_size, 32)
+        self.prefetch_episodes = prefetch_episodes
+        self.byte_budget = int(byte_budget_gb * 1024**3)
+        self.decode_threads = decode_threads
+        self.decoded_queue_size = decoded_queue_size
+        self.native_http_connections = native_http_connections
+        self.native_http_subranges = native_http_subranges
+        self.repeat = repeat
+        self._next_epoch = 0
+        self._active_epoch = 0
+        self._resume_offset = 0
+        self._resume_batch_size = 1
+        self._state_offset = 0
 
         if self._requested_root is not None:
             self.root.mkdir(exist_ok=True, parents=True)
@@ -329,7 +304,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             self._requested_root,
             self.revision,
             force_cache_sync=force_cache_sync,
-            repo_type=self.repo_type,
+            repo_type=repo_type,
             token=token,
         )
         self.root = self.meta.root
@@ -337,6 +312,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.meta.rescale_depth_stats(self._depth_output_unit)
         # Check version
         check_version_compatibility(self.repo_id, self.meta._version, CODEBASE_VERSION)
+        self.max_open_decoders = (
+            max_open_decoders
+            if max_open_decoders is not None
+            else max(1, self.episode_pool_size * len(self.meta.video_keys))
+        )
 
         self._depth_encoder_configs: dict[str, DepthEncoderConfig] = {
             vid_key: DepthEncoderConfig.from_video_info(self.meta.features[vid_key].get("info"))
@@ -350,47 +330,58 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             if key in self.meta.image_keys
         }
 
-        self.delta_timestamps = None
-        self.delta_indices = None
+        selected_episodes = list(range(self.meta.total_episodes)) if episodes is None else list(episodes)
+        if len(set(selected_episodes)) != len(selected_episodes):
+            raise ValueError("episodes must not contain duplicates")
+        invalid_episodes = [
+            episode for episode in selected_episodes if episode < 0 or episode >= self.meta.total_episodes
+        ]
+        if invalid_episodes:
+            raise ValueError(
+                f"Episode indices out of range for dataset with {self.meta.total_episodes} episodes: "
+                f"{invalid_episodes}"
+            )
+        self._selected_episodes = selected_episodes
+
+        self.delta_timestamps: dict[str, list[float]] | None = None
+        self.delta_indices: dict[str, list[int]] | None = None
 
         if delta_timestamps is not None:
-            self._validate_delta_timestamp_keys(delta_timestamps)  # raises ValueError if invalid
+            check_delta_timestamps(delta_timestamps, self.fps, tolerance_s)
             self.delta_timestamps = delta_timestamps
             self.delta_indices = get_delta_indices(self.delta_timestamps, self.fps)
 
-        token_kwargs = {} if token is None else {"token": token}
-        if self.repo_type == "bucket":
-            self.hf_dataset: datasets.IterableDataset = load_dataset(
-                "parquet",
-                data_files=f"hf://buckets/{self.repo_id}/data/*/*.parquet",
-                split="train",
-                streaming=self.streaming,
-                **token_kwargs,
-            )
-        else:
-            if self.streaming_from_local:
-                token_kwargs = {}
-            self.hf_dataset: datasets.IterableDataset = load_dataset(
-                self.repo_id if not self.streaming_from_local else str(self.root),
-                split="train",
-                streaming=self.streaming,
-                data_files="data/*/*.parquet",
-                revision=self.revision,
-                **token_kwargs,
-            )
-
-        self.num_shards = min(self.hf_dataset.num_shards, max_num_shards)
+        self._data_root = streaming_data_root(
+            self.meta,
+            requested_root=self._requested_root,
+            configured_data_root=str(data_root) if data_root is not None else None,
+            token=self._streaming_io_token,
+        )
+        sidecar_backend = range_backend_for_root(self._data_root)
+        self._sidecar_path = ensure_dataset_mp4_sidecar(
+            self.meta,
+            self._data_root,
+            workers=max_num_shards,
+            range_backend=sidecar_backend,
+            token=self._streaming_io_token,
+        )
+        self._hf_features = get_hf_features_from_features(self.meta.features)
+        self._projected_columns = tuple(self._hf_features)
+        self.num_shards = min(max_num_shards, max(1, len(self._selected_episodes)))
 
     @property
-    def num_frames(self):
-        return self.meta.total_frames
+    def num_frames(self) -> int:
+        """Return the frame count across all selected episodes, before rank sharding."""
+        return sum(self._episode_frame_count(episode) for episode in self._selected_episodes)
 
     @property
-    def num_episodes(self):
-        return self.meta.total_episodes
+    def num_episodes(self) -> int:
+        """Return the number of selected episodes across all ranks."""
+        return len(self._selected_episodes)
 
     @property
-    def fps(self):
+    def fps(self) -> int:
+        """Return the dataset's recording frame rate."""
         return self.meta.fps
 
     @property
@@ -398,398 +389,480 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         """Physical unit (``"m"`` or ``"mm"``) depth maps are returned in on read."""
         return self._depth_output_unit
 
-    @staticmethod
-    def _iter_random_indices(
-        rng: np.random.Generator, buffer_size: int, random_batch_size=100
-    ) -> Iterator[int]:
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        """Yield rank-local samples for one coverage epoch, or repeat when configured."""
+        if self.repeat:
+            return self._repeat_iterator()
+        return self._iter_once()
+
+    def _repeat_iterator(self) -> Generator[dict[str, Any], None, None]:
+        """Repeat nonempty rank-local epochs and close each iterator on early exit."""
         while True:
-            yield from (int(i) for i in rng.integers(0, buffer_size, size=random_batch_size))
+            with closing(self._iter_once()) as iterator:
+                try:
+                    first = next(iterator)
+                except StopIteration:
+                    return
+                yield first
+                yield from iterator
 
-    @staticmethod
-    def _infinite_generator_over_elements(rng: np.random.Generator, elements: list[int]) -> Iterator[int]:
-        while True:
-            yield rng.choice(elements)
+    def _iter_once(self) -> Generator[dict[str, Any], None, None]:
+        """Yield one rank-local coverage plan with bounded prefetch and ordered decoding."""
+        epoch = self._next_epoch if self.shuffle else 0
+        self._active_epoch = epoch
 
-    # TODO(fracapuano): Implement multi-threaded prefetching to accelerate data loading.
-    # The current sequential iteration is a bottleneck. A producer-consumer pattern
-    # could be used with a ThreadPoolExecutor to run `make_frame` (especially video decoding)
-    # in parallel, feeding a queue from which this iterator will yield processed items.
-    def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
-        if self.video_decoder_cache is None:
-            self.video_decoder_cache = VideoDecoderCache()
+        worker = torch.utils.data.get_worker_info()
+        if worker is not None and worker.num_workers > 1:
+            raise RuntimeError(
+                "StreamingLeRobotDataset uses one rank-level sampling pool and supports at most "
+                "one DataLoader worker per rank"
+            )
+        resume_offset = self._resume_offset
+        self._resume_offset = 0
+        consumer_episodes, _rank, _world_size = self._rank_episodes()
+        consumer_frame_count = sum(self._episode_frame_count(episode) for episode in consumer_episodes)
+        if consumer_frame_count:
+            worker_epoch_delta, resume_offset = divmod(resume_offset, consumer_frame_count)
+        else:
+            worker_epoch_delta = 0
+        if self.shuffle:
+            epoch += worker_epoch_delta
+        self._state_offset = resume_offset
+        self._active_epoch = epoch
+        if self.shuffle:
+            self._next_epoch = epoch + 1
 
-        # keep the same seed across exhaustions if shuffle is False, otherwise shuffle data across exhaustions
-        rng = np.random.default_rng(self.seed) if not self.shuffle else self.rng
+        max_workers = min(self.max_num_shards, max(1, self.episode_pool_size + self.prefetch_episodes))
+        with ExitStack() as resources:
+            video_cache = self._make_video_cache(consumer_episodes, max_workers)
+            if video_cache is not None:
+                resources.callback(video_cache.close)
+            episode_byte_sizes = (
+                {episode: video_cache.manifest.episode_byte_size(episode) for episode in consumer_episodes}
+                if video_cache is not None
+                else None
+            )
+            planner = ExactCoveragePool(
+                [(episode, self._episode_frame_count(episode)) for episode in consumer_episodes],
+                pool_size=self.episode_pool_size,
+                sampling_strategy=self.sampling_strategy,
+                seed=self.seed,
+                epoch=epoch,
+                episode_byte_sizes=episode_byte_sizes,
+                byte_budget=self.byte_budget if episode_byte_sizes is not None else None,
+            )
+            for _ in range(resume_offset):
+                try:
+                    next(planner)
+                except StopIteration:
+                    return
+            planner.newly_admitted.clear()
+            planner.evicted.clear()
 
-        buffer_indices_generator = self._iter_random_indices(rng, self.buffer_size)
+            parquet_reader = EpisodeParquetReader(
+                self._data_root,
+                columns=self._projected_columns,
+                token=self._streaming_io_token,
+            )
+            parquet_executor = ThreadPoolExecutor(
+                max_workers=max_workers, thread_name_prefix="lerobot-parquet"
+            )
+            resources.callback(parquet_executor.shutdown, wait=True, cancel_futures=True)
+            decode_executor = ThreadPoolExecutor(
+                max_workers=self.decode_threads,
+                thread_name_prefix="lerobot-decode",
+            )
+            resources.callback(decode_executor.shutdown, wait=True, cancel_futures=True)
+            episode_futures: dict[int, Future[_EpisodeData]] = {}
+            decoded_futures: deque[Future[dict[str, Any]]] = deque()
+            scheduled_episodes: set[int] = set()
+            retained_video_episodes: set[int] = set()
+            if video_cache is not None:
+                for episode_index in planner.resident:
+                    video_cache.retain_episode(episode_index, wait=True)
+                    retained_video_episodes.add(episode_index)
 
-        idx_to_backtrack_dataset = {
-            idx: self._make_backtrackable_dataset(safe_shard(self.hf_dataset, idx, self.num_shards))
-            for idx in range(self.num_shards)
-        }
+            def submit(episode_index: int) -> Future[_EpisodeData]:
+                """Reuse or schedule the table load for an admitted episode."""
+                future = episode_futures.get(episode_index)
+                if future is None:
+                    future = parquet_executor.submit(
+                        self._load_episode_dataset, parquet_reader, episode_index
+                    )
+                    episode_futures[episode_index] = future
+                return future
 
-        # This buffer is populated while iterating on the dataset's shards
-        # the logic is to add 2 levels of randomness:
-        # (1) sample one shard at random from the ones available, and
-        # (2) sample one frame from the shard sampled at (1)
-        frames_buffer = []
-        while available_shards := list(idx_to_backtrack_dataset.keys()):
-            shard_key = next(self._infinite_generator_over_elements(rng, available_shards))
-            backtrack_dataset = idx_to_backtrack_dataset[shard_key]  # selects which shard to iterate on
+            def schedule_frontier() -> None:
+                """Prefetch tables and video ranges from the same bounded admission frontier."""
+                frontier = [*planner.resident, *planner.prefetch_candidates(self.prefetch_episodes)]
+                for episode_index in frontier:
+                    if episode_index in scheduled_episodes:
+                        continue
+                    submit(episode_index)
+                    if video_cache is not None and not video_cache.submit_prefetch(episode_index):
+                        continue
+                    scheduled_episodes.add(episode_index)
 
+            def decode_item(
+                episode_future: Future[_EpisodeData],
+                episode_index: int,
+                frame_index: int,
+            ) -> dict[str, Any]:
+                """Assemble a planned sample after its episode table is ready."""
+                return self._make_episode_item(
+                    episode_future.result(),
+                    episode_index,
+                    frame_index,
+                    video_cache=video_cache,
+                    apply_image_transforms=False,
+                )
+
+            def update_frontier() -> None:
+                """Release drained episodes and schedule newly admitted or prefetched episodes."""
+                for evicted_episode in planner.evicted:
+                    episode_futures.pop(evicted_episode, None)
+                    if video_cache is not None and evicted_episode in retained_video_episodes:
+                        video_cache.release_episode(evicted_episode)
+                        retained_video_episodes.remove(evicted_episode)
+                if video_cache is not None:
+                    for admitted_episode in planner.newly_admitted:
+                        if admitted_episode not in retained_video_episodes:
+                            # The last anchor may still be decoding after planner eviction.
+                            # Wait for its byte lease before admitting the replacement.
+                            video_cache.retain_episode(admitted_episode, wait=True)
+                            retained_video_episodes.add(admitted_episode)
+                planner.evicted.clear()
+                planner.newly_admitted.clear()
+                schedule_frontier()
+
+            schedule_frontier()
+            planner_exhausted = False
+            while decoded_futures or not planner_exhausted:
+                while not planner_exhausted and len(decoded_futures) < self.decoded_queue_size:
+                    try:
+                        episode_index, frame_index = next(planner)
+                    except StopIteration:
+                        planner_exhausted = True
+                        break
+
+                    episode_future = submit(episode_index)
+                    if video_cache is not None:
+                        video_cache.retain_episode(episode_index)
+                    try:
+                        decoded_future = decode_executor.submit(
+                            decode_item,
+                            episode_future,
+                            episode_index,
+                            frame_index,
+                        )
+                    except Exception:
+                        if video_cache is not None:
+                            video_cache.release_episode(episode_index)
+                        raise
+                    if video_cache is not None:
+
+                        def release_video_episode(
+                            _future: Future[dict[str, Any]],
+                            retained_episode: int = episode_index,
+                            retained_cache: EpisodeByteCache = video_cache,
+                        ) -> None:
+                            """Release this sample's byte lease when its decode future completes."""
+                            retained_cache.release_episode(retained_episode)
+
+                        decoded_future.add_done_callback(release_video_episode)
+                    decoded_futures.append(decoded_future)
+                    update_frontier()
+
+                if not decoded_futures:
+                    continue
+                item = decoded_futures.popleft().result()
+                self._apply_image_transforms(item)
+                self._state_offset += 1
+                yield item
+            self._active_epoch = epoch + 1 if self.shuffle else 0
+            self._state_offset = 0
+
+    def _rank_episodes(self) -> tuple[list[int], int, int]:
+        """Resolve the distributed rank and its deterministic, frame-balanced episode shard."""
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            rank = torch.distributed.get_rank()
+            world_size = torch.distributed.get_world_size()
+        else:
+            rank = int(os.environ.get("RANK", "0"))
+            world_size = int(os.environ.get("WORLD_SIZE", "1"))
+        if world_size <= 0 or rank < 0 or rank >= world_size:
+            raise ValueError(f"Invalid distributed rank/world size: rank={rank}, world_size={world_size}")
+        counts = {episode: self._episode_frame_count(episode) for episode in self._selected_episodes}
+        shards = _balanced_episode_shards(self._selected_episodes, counts, world_size=world_size)
+        return shards[rank], rank, world_size
+
+    @cached_property
+    def _episode_frame_counts(self) -> np.ndarray:
+        """Read only episode boundaries once for rank balancing and coverage planning."""
+        boundaries = self.meta.episodes.select_columns(
+            ["dataset_from_index", "dataset_to_index"]
+        ).with_format(None)[:]
+        return np.asarray(boundaries["dataset_to_index"], dtype=np.int64) - np.asarray(
+            boundaries["dataset_from_index"], dtype=np.int64
+        )
+
+    def _episode_frame_count(self, episode_index: int) -> int:
+        """Return the complete episode length from its absolute dataset boundaries."""
+        return int(self._episode_frame_counts[episode_index])
+
+    def num_frames_for_rank(self, rank: int, world_size: int, num_workers: int) -> int:
+        """Return frames owned by one training rank under balanced whole-episode sharding."""
+        if world_size <= 0 or rank < 0 or rank >= world_size:
+            raise ValueError(f"Invalid distributed rank/world size: rank={rank}, world_size={world_size}")
+        if num_workers > 1:
+            raise ValueError("Rank-level streaming supports at most one DataLoader worker per rank")
+        counts = {episode: self._episode_frame_count(episode) for episode in self._selected_episodes}
+        shards = _balanced_episode_shards(self._selected_episodes, counts, world_size=world_size)
+        return sum(counts[episode] for episode in shards[rank])
+
+    def _load_episode_dataset(
+        self,
+        reader: EpisodeParquetReader,
+        episode_index: int,
+    ) -> _EpisodeData:
+        """Load one episode, preparing fixed-shape numeric columns once for temporal queries."""
+        table = reader.read_episode(
+            self.meta.get_data_file_path(episode_index),
+            episode_index=episode_index,
+            expected_rows=self._episode_frame_count(episode_index),
+        )
+        # from_dict applies the declared HF feature encoders (images, nested language/JSON fields)
+        # while retaining the episode-sized memory bound.
+        dataset = datasets.Dataset.from_dict(table.to_pydict(), features=self._hf_features)
+        dataset.set_transform(hf_transform_to_torch)
+        numeric: dict[str, torch.Tensor] = {}
+        for key, feature in self._hf_features.items():
+            if key in LANGUAGE_COLUMNS:
+                continue
+            while isinstance(feature, datasets.List) and feature.length >= 0:
+                feature = feature.feature
+            if not isinstance(feature, datasets.Value) or feature.dtype not in {
+                "bool",
+                "int8",
+                "int16",
+                "int32",
+                "int64",
+                "uint8",
+                "uint16",
+                "uint32",
+                "float16",
+                "float32",
+                "float64",
+            }:
+                continue
+            values = dataset.select_columns(key).with_format(None)[:][key]
             try:
-                for frame in self.make_frame(backtrack_dataset):
-                    if len(frames_buffer) == self.buffer_size:
-                        i = next(buffer_indices_generator)  # samples a element from the buffer
-                        yield frames_buffer[i]
-                        frames_buffer[i] = frame
-                    else:
-                        frames_buffer.append(frame)
-                    break  # random shard sampled, switch shard
-            except _ShardExhaustedError:
-                del idx_to_backtrack_dataset[shard_key]  # Remove exhausted shard, onto another shard
+                # Match hf_transform_to_torch's Python-value dtype inference, not the
+                # Arrow storage dtype. Keep nullable columns on the original feature path.
+                numeric[key] = torch.tensor(values)
+            except (TypeError, ValueError, RuntimeError):
+                continue
+        other_keys = [key for key in dataset.column_names if key not in numeric]
+        # Zero-copy views share the episode's lifetime and fixed HF transform. Project
+        # before row lookup so action/state windows cannot decode unrelated images.
+        column_keys = set(self.delta_indices or ()) - set(self.meta.video_keys)
+        if self.meta.video_keys:
+            column_keys.add("timestamp")
+        return _EpisodeData(
+            dataset=dataset,
+            columns={key: dataset.select_columns(key) for key in sorted(column_keys) if key not in numeric},
+            numeric=numeric,
+            other=dataset.select_columns(other_keys) if other_keys else None,
+        )
 
-        # Once shards are all exhausted, shuffle the buffer and yield the remaining frames
-        rng.shuffle(frames_buffer)
-        yield from frames_buffer
-
-    def _get_window_steps(
-        self, delta_timestamps: dict[str, list[float]] | None = None, dynamic_bounds: bool = False
-    ) -> tuple[int, int]:
-        if delta_timestamps is None:
-            return 1, 1
-
-        if not dynamic_bounds:
-            # Fix the windows
-            lookback = LOOKBACK_BACKTRACKTABLE
-            lookahead = LOOKAHEAD_BACKTRACKTABLE
-        else:
-            # Dynamically adjust the windows based on the given delta_timesteps
-            all_timestamps = sum(delta_timestamps.values(), [])
-            lookback = min(all_timestamps) * self.fps
-            lookahead = max(all_timestamps) * self.fps
-
-            # When lookback is >=0 it means no negative timesteps have been provided
-            lookback = 0 if lookback >= 0 else (lookback * -1)
-
-        return lookback, lookahead
-
-    def _make_backtrackable_dataset(self, dataset: datasets.IterableDataset) -> Backtrackable:
-        lookback, lookahead = self._get_window_steps(self.delta_timestamps)
-        return Backtrackable(dataset, history=lookback, lookahead=lookahead)
-
-    def _make_timestamps_from_indices(
-        self, start_ts: float, indices: dict[str, list[int]] | None = None
-    ) -> dict[str, list[float]]:
-        if indices is not None:
-            return {
-                key: (
-                    start_ts + torch.tensor(indices[key]) / self.fps
-                ).tolist()  # NOTE: why not delta_timestamps directly?
-                for key in self.delta_timestamps
-            }
-        else:
-            return dict.fromkeys(self.meta.video_keys, [start_ts])
-
-    def _make_padding_camera_frame(self, camera_key: str):
-        """Variable-shape padding frame for given camera keys, given in (H, W, C)"""
-        return torch.zeros(self.meta.info.features[camera_key]["shape"]).permute(-1, 0, 1)
-
-    def _get_video_frame_padding_mask(
+    def _make_video_cache(
         self,
-        video_frames: dict[str, torch.Tensor],
-        query_timestamps: dict[str, list[float]],
-        original_timestamps: dict[str, list[float]],
-    ) -> dict[str, torch.BoolTensor]:
-        padding_mask = {}
+        episode_indices: list[int],
+        workers: int,
+    ) -> EpisodeByteCache | None:
+        """Build the rank-local video manifest and its bounded byte cache."""
+        if self._sidecar_path is None or not episode_indices:
+            return None
+        range_backend = range_backend_for_root(self._data_root)
+        manifest = EpisodeVideoManifest.build(
+            self.meta,
+            self._data_root,
+            episode_indices=episode_indices,
+            range_backend=range_backend,
+            workers=workers,
+            sidecar_path=self._sidecar_path,
+            token=self._streaming_io_token,
+        )
+        return EpisodeByteCache(
+            manifest,
+            self._data_root,
+            byte_budget=self.byte_budget,
+            workers=workers,
+            range_backend=range_backend,
+            native_http_connections=self.native_http_connections,
+            native_http_subranges=self.native_http_subranges,
+            max_open_decoders=self.max_open_decoders,
+            video_backend=self._video_backend,
+            tolerance_s=self.tolerance_s,
+            token=self._streaming_io_token,
+        )
 
-        for video_key, timestamps in original_timestamps.items():
-            if video_key not in video_frames:
-                continue  # only padding on video keys that are available
-            frames = []
-            mask = []
-            padding_frame = self._make_padding_camera_frame(video_key)
-            for ts in timestamps:
-                if is_float_in_list(ts, query_timestamps[video_key]):
-                    idx = find_float_index(ts, query_timestamps[video_key])
-                    frames.append(video_frames[video_key][idx, :])
-                    mask.append(False)
-                else:
-                    frames.append(padding_frame)
-                    mask.append(True)
+    def _make_episode_item(
+        self,
+        episode_data: _EpisodeData,
+        episode_index: int,
+        frame_index: int,
+        *,
+        video_cache: EpisodeByteCache | None,
+        apply_image_transforms: bool = True,
+    ) -> dict[str, Any]:
+        """Assemble an anchor's temporal windows, padding masks and decoded camera frames."""
+        episode_dataset = episode_data.dataset
+        item = episode_data.get_item(frame_index)
+        episode = self.meta.episodes[episode_index]
+        episode_start = int(episode["dataset_from_index"])
 
-            padding_mask[f"{video_key}_is_pad"] = torch.BoolTensor(mask)
-
-        return padding_mask
-
-    def make_frame(self, dataset_iterator: Backtrackable) -> Generator:
-        """Makes a frame starting from a dataset iterator"""
-        try:
-            item = next(dataset_iterator)
-        except StopIteration as e:
-            # Translate exhaustion here, before PEP 479 turns it into an indistinguishable RuntimeError.
-            raise _ShardExhaustedError from e
-        item = item_to_torch(item)
-
-        updates = []  # list of "updates" to apply to the item retrieved from hf_dataset (w/o camera features)
-
-        # Get episode index from the item
-        ep_idx = item["episode_index"]
-
-        # "timestamp" restarts from 0 for each episode, whereas we need a global timestep within the single .mp4 file (given by index/fps)
-        current_ts = item["index"] / self.fps
-
-        episode_boundaries_ts = {
-            key: (
-                self.meta.episodes[ep_idx][f"videos/{key}/from_timestamp"],
-                self.meta.episodes[ep_idx][f"videos/{key}/to_timestamp"],
-            )
-            for key in self.meta.video_keys
-        }
-
-        # Apply delta querying logic if necessary
         if self.delta_indices is not None:
-            query_result, padding = self._get_delta_frames(dataset_iterator, item)
-            updates.append(query_result)
-            updates.append(padding)
-
-        # Load video frames, when needed
-        if len(self.meta.video_keys) > 0:
-            original_timestamps = self._make_timestamps_from_indices(current_ts, self.delta_indices)
-
-            # Some timestamps might not result available considering the episode's boundaries
-            query_timestamps = self._get_query_timestamps(
-                current_ts, self.delta_indices, episode_boundaries_ts
-            )
-            video_frames = self._query_videos(query_timestamps, ep_idx)
-
-            if self.image_transforms is not None:
-                image_keys = self.meta.camera_keys
-                for cam in image_keys:
-                    video_frames[cam] = self.image_transforms(video_frames[cam])
-
-            updates.append(video_frames)
-
-            if self.delta_indices is not None:
-                # We always return the same number of frames. Unavailable frames are padded.
-                padding_mask = self._get_video_frame_padding_mask(
-                    video_frames, query_timestamps, original_timestamps
+            for key, delta_indices in self.delta_indices.items():
+                target_indices = [
+                    max(0, min(len(episode_dataset) - 1, frame_index + delta)) for delta in delta_indices
+                ]
+                item[f"{key}_is_pad"] = torch.BoolTensor(
+                    [
+                        frame_index + delta < 0 or frame_index + delta >= len(episode_dataset)
+                        for delta in delta_indices
+                    ]
                 )
-                updates.append(padding_mask)
+                if key not in self.meta.video_keys:
+                    item[key] = episode_data.get_column(key, target_indices)
 
-        result = item.copy()
-        for update in updates:
-            result.update(update)
+        if self.meta.video_keys:
+            if video_cache is None:
+                raise RuntimeError("Video dataset streaming requires an episode byte cache")
+            episode_metadata = self.meta.episodes[episode_index]
+            for video_key in self.meta.video_keys:
+                if self.delta_indices is not None and video_key in self.delta_indices:
+                    target_indices = [
+                        max(0, min(len(episode_dataset) - 1, frame_index + delta))
+                        for delta in self.delta_indices[video_key]
+                    ]
+                else:
+                    target_indices = [frame_index]
+                local_timestamps = [
+                    float(timestamp.item())
+                    for timestamp in episode_data.get_column("timestamp", target_indices)
+                ]
+                from_timestamp = float(episode_metadata[f"videos/{video_key}/from_timestamp"])
+                query_timestamps = [from_timestamp + timestamp for timestamp in local_timestamps]
+                if video_key in self.meta.depth_keys:
+                    source_start = video_cache.manifest.lookup(episode_index, video_key).source_start_pts
+                    frames = decode_video_frames_pyav(
+                        io.BytesIO(video_cache.get_bytes(episode_index, video_key)),
+                        [timestamp - source_start for timestamp in query_timestamps],
+                        self.tolerance_s,
+                        return_uint8=False,
+                        is_depth=True,
+                    )
+                    depth_encoder = self._depth_encoder_configs[video_key]
+                    frames = dequantize_depth(
+                        frames,
+                        depth_min=depth_encoder.depth_min,
+                        depth_max=depth_encoder.depth_max,
+                        shift=depth_encoder.shift,
+                        use_log=depth_encoder.use_log,
+                        output_unit=self._depth_output_unit,
+                    )
+                else:
+                    frames = video_cache.get_frames(episode_index, video_key, query_timestamps)
+                    if not self._return_uint8:
+                        frames = frames.to(torch.float32) / 255.0
+                item[video_key] = frames.squeeze(0)
 
-        # Convert raw-image depth features to the output unit (video depth is already converted).
+        if apply_image_transforms:
+            self._apply_image_transforms(item)
+
         for key, stored_unit in self._image_depth_units.items():
-            if key in result and stored_unit is not None and stored_unit != self._depth_output_unit:
-                result[key] = (
-                    result[key] * MM_PER_METRE
-                    if stored_unit == DEPTH_METER_UNIT
-                    else result[key] / MM_PER_METRE
+            if key in item and stored_unit is not None and stored_unit != self._depth_output_unit:
+                item[key] = (
+                    item[key] * MM_PER_METRE if stored_unit == DEPTH_METER_UNIT else item[key] / MM_PER_METRE
                 )
 
-        result["task"] = self.meta.tasks.iloc[item["task_index"]].name
-
-        yield result
-
-    def _get_query_timestamps(
-        self,
-        current_ts: float,
-        query_indices: dict[str, list[int]] | None = None,
-        episode_boundaries_ts: dict[str, tuple[float, float]] | None = None,
-    ) -> dict[str, list[float]]:
-        query_timestamps = {}
-        keys_to_timestamps = self._make_timestamps_from_indices(current_ts, query_indices)
-        for key in self.meta.video_keys:
-            if query_indices is not None and key in query_indices:
-                timestamps = keys_to_timestamps[key]
-                # Clamp out timesteps outside of episode boundaries
-                query_timestamps[key] = torch.clamp(
-                    torch.tensor(timestamps), *episode_boundaries_ts[key]
-                ).tolist()
-
-            else:
-                query_timestamps[key] = [current_ts]
-
-        return query_timestamps
-
-    def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict:
-        """Note: When using data workers (e.g. DataLoader with num_workers>0), do not call this function
-        in the main process (e.g. by using a second Dataloader with num_workers=0). It will result in a
-        Segmentation Fault. This probably happens because a memory reference to the video loader is created in
-        the main process and a subprocess fails to access it.
-        """
-
-        item = {}
-        for video_key, query_ts in query_timestamps.items():
-            root = self.meta.url_root if self.streaming and not self.streaming_from_local else self.root
-            video_path = f"{root}/{self.meta.get_video_file_path(ep_idx, video_key)}"
-            if video_key in self.meta.depth_keys:
-                # Depth maps are 12-bit quantized and only decodable via pyav; dequantize back
-                # to physical units to match the non-streaming reader.
-                frames = decode_video_frames(
-                    video_path,
-                    query_ts,
-                    self.tolerance_s,
-                    backend="pyav",
-                    return_uint8=False,
-                    is_depth=True,
-                )
-                depth_encoder = self._depth_encoder_configs[video_key]
-                frames = dequantize_depth(
-                    frames,
-                    depth_min=depth_encoder.depth_min,
-                    depth_max=depth_encoder.depth_max,
-                    shift=depth_encoder.shift,
-                    use_log=depth_encoder.use_log,
-                    output_unit=self._depth_output_unit,
-                )
-            else:
-                frames = decode_video_frames_torchcodec(
-                    video_path,
-                    query_ts,
-                    self.tolerance_s,
-                    decoder_cache=self.video_decoder_cache,
-                    return_uint8=self._return_uint8,
-                )
-
-            item[video_key] = frames.squeeze(0) if len(query_ts) == 1 else frames
-
+        task_index = int(item["task_index"].item())
+        item["task"] = self.meta.tasks.iloc[task_index].name
+        if int(item["episode_index"].item()) != episode_index:
+            raise RuntimeError(f"Episode reader returned episode {item['episode_index']} for {episode_index}")
+        if int(item["index"].item()) != episode_start + frame_index:
+            raise RuntimeError(
+                f"Episode {episode_index} frame {frame_index} has unexpected absolute index {item['index']}"
+            )
         return item
 
-    def _get_delta_frames(self, dataset_iterator: Backtrackable, current_item: dict):
-        # TODO(fracapuano): Modularize this function, refactor the code
-        """Get frames with delta offsets using the backtrackable iterator.
+    def _apply_image_transforms(self, item: dict[str, Any]) -> None:
+        """Transform RGB images in place, leaving physical depth values unchanged."""
+        if self.image_transforms is None:
+            return
+        for camera_key in self.meta.camera_keys:
+            if camera_key in self.meta.depth_keys:
+                continue
+            item[camera_key] = self.image_transforms(item[camera_key])
 
-        Args:
-            current_item (dict): Current item from the iterator.
-            ep_idx (int): Episode index.
+    def state_dict(self) -> dict[str, int]:
+        """Return the iterator's current rank-local position.
 
         Returns:
-            tuple: (query_result, padding) - frames at delta offsets and padding info.
+            `dict[str, int]`: Epoch, yielded-sample offset and resume batch size.
+
+        Note:
+            With DataLoader prefetch, yielded samples may not yet have been consumed by training.
+            The training pipeline restores its position from completed steps instead.
         """
-        current_episode_idx = current_item["episode_index"]
+        return {
+            "epoch": self._active_epoch,
+            "offset": self._state_offset,
+            "batch_size": self._resume_batch_size,
+        }
 
-        # Prepare results
-        query_result = {}
-        padding = {}
+    def load_state_dict(self, state: dict[str, int]) -> None:
+        """Restore the next iterator's anchor position without fetching skipped samples.
 
-        for key, delta_indices in self.delta_indices.items():
-            if key in self.meta.video_keys:
-                continue  # visual frames are decoded separately
-
-            target_frames = []
-            is_pad = []
-
-            # Create a results dictionary to store frames in processing order, then reconstruct original order for stacking
-            delta_results = {}
-
-            # Separate and sort deltas by difficulty (easier operations first)
-            negative_deltas = sorted([d for d in delta_indices if d < 0], reverse=True)  # [-1, -2, -3, ...]
-            positive_deltas = sorted([d for d in delta_indices if d > 0])  # [1, 2, 3, ...]
-            zero_deltas = [d for d in delta_indices if d == 0]
-
-            # Process zero deltas (current frame)
-            for delta in zero_deltas:
-                delta_results[delta] = (
-                    current_item[key],
-                    False,
-                )
-
-            # Process negative deltas in order of increasing difficulty
-            lookback_failed = False
-
-            last_successful_frame = current_item[key]
-
-            for delta in negative_deltas:
-                if lookback_failed:
-                    delta_results[delta] = (last_successful_frame, True)
-                    continue
-
-                try:
-                    steps_back = abs(delta)
-                    if dataset_iterator.can_peek_back(steps_back):
-                        past_item = dataset_iterator.peek_back(steps_back)
-                        past_item = item_to_torch(past_item)
-
-                        if past_item["episode_index"] == current_episode_idx:
-                            delta_results[delta] = (past_item[key], False)
-                            last_successful_frame = past_item[key]
-
-                        else:
-                            raise LookBackError("Retrieved frame is from different episode!")
-                    else:
-                        raise LookBackError("Cannot go back further than the history buffer!")
-
-                except LookBackError:
-                    delta_results[delta] = (last_successful_frame, True)
-                    lookback_failed = True  # All subsequent negative deltas will also fail
-
-            # Process positive deltas in order of increasing difficulty
-            lookahead_failed = False
-            last_successful_frame = current_item[key]
-
-            for delta in positive_deltas:
-                if lookahead_failed:
-                    delta_results[delta] = (last_successful_frame, True)
-                    continue
-
-                try:
-                    if dataset_iterator.can_peek_ahead(delta):
-                        future_item = dataset_iterator.peek_ahead(delta)
-                        future_item = item_to_torch(future_item)
-
-                        if future_item["episode_index"] == current_episode_idx:
-                            delta_results[delta] = (future_item[key], False)
-                            last_successful_frame = future_item[key]
-
-                        else:
-                            raise LookAheadError("Retrieved frame is from different episode!")
-                    else:
-                        raise LookAheadError("Cannot go ahead further than the lookahead buffer!")
-
-                except LookAheadError:
-                    delta_results[delta] = (last_successful_frame, True)
-                    lookahead_failed = True  # All subsequent positive deltas will also fail
-
-            # Reconstruct original order for stacking
-            for delta in delta_indices:
-                frame, is_padded = delta_results[delta]
-
-                # add batch dimension for stacking
-                target_frames.append(frame)  # frame.unsqueeze(0))
-                is_pad.append(is_padded)
-
-            # Stack frames and add to results
-            if target_frames:
-                query_result[key] = torch.stack(target_frames)
-                padding[f"{key}_is_pad"] = torch.BoolTensor(is_pad)
-
-        return query_result, padding
-
-    def _validate_delta_timestamp_keys(self, delta_timestamps: dict[list[float]]) -> None:
-        """
-        Validate that all keys in delta_timestamps correspond to actual features in the dataset.
+        Args:
+            state (`dict[str, int]`):
+                Rank-local epoch, sample offset and batch size. Missing keys default to 0, 0 and 1.
 
         Raises:
-            ValueError: If any delta timestamp key doesn't correspond to a dataset feature.
+            ValueError: If the epoch or offset is negative, or the batch size is not positive.
+
+        Note:
+            Reproducing anchor order requires the same dataset, seed, sampler, pool settings and
+            distributed topology. Random image transforms are not restored by this method.
         """
-        if delta_timestamps is None:
-            return
-
-        # Get all available feature keys from the dataset metadata
-        available_features = set(self.meta.features.keys())
-
-        # Get all keys from delta_timestamps
-        delta_keys = set(delta_timestamps.keys())
-
-        # Find any keys that don't correspond to features
-        invalid_keys = delta_keys - available_features
-
-        if invalid_keys:
+        epoch = int(state.get("epoch", 0))
+        offset = int(state.get("offset", 0))
+        batch_size = int(state.get("batch_size", 1))
+        if epoch < 0 or offset < 0 or batch_size <= 0:
             raise ValueError(
-                f"The following delta_timestamp keys do not correspond to dataset features: {invalid_keys}. "
-                f"Available features are: {sorted(available_features)}"
+                "Streaming dataset epoch/offset must be non-negative and batch_size must be positive"
             )
+        self._next_epoch = epoch
+        self._active_epoch = epoch
+        self._resume_offset = offset
+        self._resume_batch_size = batch_size
+        self._state_offset = offset
+
+    def set_epoch(self, epoch: int) -> None:
+        """Select a non-negative epoch and reset the rank-local resume offset.
+
+        Args:
+            epoch (`int`):
+                Coverage epoch used to seed the next sample plan when shuffle is enabled.
+
+        Raises:
+            ValueError: If epoch is negative.
+        """
+        if epoch < 0:
+            raise ValueError("epoch must be non-negative")
+        self._next_epoch = epoch
+        self._active_epoch = epoch
+        self._resume_offset = 0
+        self._resume_batch_size = 1
+        self._state_offset = 0
