@@ -335,6 +335,10 @@ class GrootConfig(PreTrainedConfig):
     # keep the gripper absolute, matching the Isaac-GR00T single-arm + absolute-gripper convention.
     relative_exclude_joints: list[str] = field(default_factory=list)
 
+    # Action index groups of end-effector poses, composed in SE(3) instead of subtracted.
+    # See `RelativeActionsProcessorStep`. Empty leaves every dimension component-wise.
+    relative_se3_pose_groups: list[list[int]] = field(default_factory=list)
+
     # Training parameters
     optimizer_lr: float = 1e-4
     # Isaac-GR00T N1.7 fine-tunes with AdamW betas (0.9, 0.999).

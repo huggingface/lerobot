@@ -332,6 +332,7 @@ class RecomputeStatsConfig(OperationConfig):
     relative_action: bool = False
     relative_exclude_joints: list[str] | None = None
     chunk_size: int = 50
+    relative_se3_pose_groups: list[list[int]] | None = None
     num_workers: int = 0
     overwrite: bool = False
 
@@ -736,7 +737,8 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
     if cfg.operation.relative_action:
         logging.info(
             f"Relative action stats enabled (chunk_size={cfg.operation.chunk_size}, "
-            f"exclude_joints={cfg.operation.relative_exclude_joints})"
+            f"exclude_joints={cfg.operation.relative_exclude_joints}, "
+            f"se3_pose_groups={cfg.operation.relative_se3_pose_groups})"
         )
 
     recompute_stats(
@@ -745,6 +747,7 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
         relative_action=cfg.operation.relative_action,
         relative_exclude_joints=cfg.operation.relative_exclude_joints,
         chunk_size=cfg.operation.chunk_size,
+        relative_se3_pose_groups=cfg.operation.relative_se3_pose_groups,
         num_workers=cfg.operation.num_workers,
     )
 
