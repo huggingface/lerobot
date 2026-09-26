@@ -23,6 +23,7 @@ import torch.nn as nn
 import torchvision.transforms.functional as tvf
 from torchvision.transforms.functional import InterpolationMode
 
+from lerobot.utils.device_utils import auto_select_torch_device
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -109,7 +110,7 @@ class InternVL3Embedder(nn.Module):
         self,
         model_name="OpenGVLab/InternVL3-1B-hf",
         image_size=448,
-        device="cuda",
+        device: str | torch.device | None = None,
         num_language_layers: int | None = 14,
         model_dtype: str | torch.dtype = "bfloat16",
         use_flash_attn: bool = True,
@@ -119,7 +120,7 @@ class InternVL3Embedder(nn.Module):
         hub_kwargs: dict | None = None,
     ):
         super().__init__()
-        self._requested_device = device
+        self._requested_device = device if device is not None else auto_select_torch_device()
         self.image_size = image_size
         self.num_language_layers = num_language_layers
         self.max_text_length = max_text_length
