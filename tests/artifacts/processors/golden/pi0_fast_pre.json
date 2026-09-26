@@ -1,0 +1,100 @@
+{
+  "name": "policy_preprocessor",
+  "steps": [
+    {
+      "config": {
+        "rename_map": {}
+      },
+      "registry_name": "rename_observations_processor"
+    },
+    {
+      "config": {},
+      "registry_name": "to_batch_processor"
+    },
+    {
+      "config": {
+        "action_names": null,
+        "enabled": false,
+        "exclude_joints": [
+          "gripper"
+        ]
+      },
+      "registry_name": "relative_actions_processor"
+    },
+    {
+      "config": {
+        "eps": 1e-08,
+        "features": {
+          "action": {
+            "shape": [
+              6
+            ],
+            "type": "ACTION"
+          },
+          "observation.image.cam": {
+            "shape": [
+              3,
+              96,
+              96
+            ],
+            "type": "VISUAL"
+          },
+          "observation.images.cam": {
+            "shape": [
+              3,
+              96,
+              96
+            ],
+            "type": "VISUAL"
+          },
+          "observation.state": {
+            "shape": [
+              6
+            ],
+            "type": "STATE"
+          }
+        },
+        "norm_map": {
+          "ACTION": "MEAN_STD",
+          "STATE": "MEAN_STD",
+          "VISUAL": "IDENTITY"
+        }
+      },
+      "registry_name": "normalizer_processor",
+      "state_file": "policy_preprocessor_step_3_normalizer_processor.safetensors"
+    },
+    {
+      "config": {},
+      "registry_name": "pi0_fast_prepare_state_tokenizer_processor_step"
+    },
+    {
+      "config": {
+        "max_length": 200,
+        "padding": "max_length",
+        "padding_side": "right",
+        "task_key": "task",
+        "tokenizer_name": "google/paligemma-3b-pt-224",
+        "truncation": true
+      },
+      "registry_name": "tokenizer_processor"
+    },
+    {
+      "config": {
+        "action_tokenizer_name": "lerobot/fast-action-tokenizer",
+        "allow_truncation": true,
+        "fast_skip_tokens": 128,
+        "max_action_tokens": 256,
+        "paligemma_tokenizer_name": "google/paligemma-3b-pt-224",
+        "trust_remote_code": true
+      },
+      "registry_name": "action_tokenizer_processor"
+    },
+    {
+      "config": {
+        "device": "cpu",
+        "float_dtype": null
+      },
+      "registry_name": "device_processor"
+    }
+  ]
+}
