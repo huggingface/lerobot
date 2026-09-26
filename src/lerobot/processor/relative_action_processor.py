@@ -122,12 +122,16 @@ def _resolve_se3_pose_groups(
     pose_groups: Sequence[Sequence[int]] | None,
     mask: Sequence[bool],
     action_dim: int,
+    state_dim: int,
 ) -> list[list[int]]:
     """Validate ``se3_pose_groups`` against the action layout and return them as lists.
 
     Each group is six consecutive-or-not action indices laid out as ``[x, y, z, rx, ry, rz]``
     with an axis-angle rotation vector, and must be inside the relative mask -- a pose the
     policy keeps absolute has nothing to compose against.
+
+    The same indices address the state, which is the pose the actions are composed against, so
+    they must also fit inside it.
     """
     if not pose_groups:
         return []
@@ -142,6 +146,12 @@ def _resolve_se3_pose_groups(
         for index in indices:
             if not 0 <= index < action_dim:
                 raise ValueError(f"SE(3) pose index {index} is outside the action of width {action_dim}")
+            if index >= state_dim:
+                raise ValueError(
+                    f"SE(3) pose index {index} is outside the state of width {state_dim}. The pose "
+                    "group addresses both the action and the state it is composed against, so the "
+                    "state must carry the same pose at the same indices."
+                )
             if index in seen:
                 raise ValueError(f"Action index {index} appears in more than one SE(3) pose group")
             if index < len(mask) and not mask[index]:
@@ -185,7 +195,7 @@ def to_relative_actions(
     # broadcast over the action horizon. pi0/pi05 pass a 2D (B, state_dim) state and are unaffected.
     if state.ndim == 3:
         state = state[:, 0]
-    groups = _resolve_se3_pose_groups(se3_pose_groups, mask, actions.shape[-1])
+    groups = _resolve_se3_pose_groups(se3_pose_groups, mask, actions.shape[-1], state.shape[-1])
     component_mask = mask_t.clone()
     for group in groups:
         component_mask[group] = 0
@@ -231,7 +241,7 @@ def to_absolute_actions(
     # broadcast over the action horizon. pi0/pi05 pass a 2D (B, state_dim) state and are unaffected.
     if state.ndim == 3:
         state = state[:, 0]
-    groups = _resolve_se3_pose_groups(se3_pose_groups, mask, actions.shape[-1])
+    groups = _resolve_se3_pose_groups(se3_pose_groups, mask, actions.shape[-1], state.shape[-1])
     component_mask = mask_t.clone()
     for group in groups:
         component_mask[group] = 0

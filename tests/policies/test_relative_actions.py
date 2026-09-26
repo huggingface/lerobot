@@ -552,6 +552,10 @@ def test_se3_pose_groups_are_validated():
         )
     with pytest.raises(ValueError, match="excluded from the relative conversion"):
         to_relative_actions(actions, state, [True] * 5 + [False, True], se3_pose_groups=[[0, 1, 2, 3, 4, 5]])
+    # The group addresses the state too, so a state that does not reach index 5 is a layout error,
+    # not a broadcast error.
+    with pytest.raises(ValueError, match="outside the state"):
+        to_relative_actions(actions, torch.zeros(1, 4), [True] * 7, se3_pose_groups=[[0, 1, 2, 3, 4, 5]])
 
 
 @pytest.mark.parametrize("angle", [0.0, np.pi, 3 * np.pi])
