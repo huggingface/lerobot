@@ -29,6 +29,7 @@ from lerobot.lerobot_types import PolicyAction, RobotObservation
 from lerobot.policies import (  # noqa: F401
     ACTConfig,
     DiffusionConfig,
+    DM05Config,
     PI0Config,
     PI05Config,
     SmolVLAConfig,
