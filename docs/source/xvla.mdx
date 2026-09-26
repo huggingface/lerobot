@@ -201,8 +201,8 @@ X-VLA uses an **Action Registry** system to handle different action spaces and e
 When you have a pretrained checkpoint like `lerobot/xvla-base` trained with `action_dim=20`, and you want to train on a dataset with a different action dimension (e.g., 14 for bimanual arms), you can't simply trim the action dimension. The action mode orchestrates:
 
 1. **Loss Computation**: Different loss functions for different action components (MSE for joints, BCE for grippers, etc.)
-2. **Preprocessing**: Zeroing out gripper channels, padding dimensions
-3. **Postprocessing**: Applying sigmoid to gripper logits, trimming padding
+2. **Preprocessing**: Padding dimensions and, for action modes with a binary gripper (`ee6d`, `joint`), zeroing out gripper channels
+3. **Postprocessing**: Trimming padding and, for action modes with a binary gripper (`ee6d`, `joint`), applying sigmoid to gripper logits
 
 #### Example: BimanualSO101 Action Space
 
