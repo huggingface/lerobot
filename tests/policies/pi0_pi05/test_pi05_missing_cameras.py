@@ -117,7 +117,7 @@ def test_inference_skips_missing_camera_encoders_without_changing_actions(
 
     vision_calls = []
     hook = policy.model.paligemma_with_expert.paligemma.model.multi_modal_projector.register_forward_pre_hook(
-        lambda module, args: vision_calls.append(1)
+        lambda module, args: vision_calls.append(args[0].shape[0])
     )
     try:
         actual = policy.predict_action_chunk(batch, noise=noise)
@@ -126,7 +126,9 @@ def test_inference_skips_missing_camera_encoders_without_changing_actions(
 
     torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
     expected_cameras = len(images) if compile_model else cameras
-    assert len(vision_calls) == expected_cameras
+    # Upstream batches 4D cameras at inference; MEM video inputs stay per-camera.
+    assert sum(vision_calls) == expected_cameras * noise.shape[0]
+    assert len(vision_calls) == (expected_cameras if temporal else 1)
     actual_images, actual_masks = policy._preprocess_images(batch, encode_missing_cameras=compile_model)
     assert len(actual_images) == len(images)
     assert sum(img is not None for img in actual_images) == expected_cameras
@@ -169,6 +171,6 @@ def test_loss_forward_keeps_camera_padding(small_policy, training):
         loss.backward()
     finally:
         hook.remove()
-    assert len(vision_calls) == 3
+    assert len(vision_calls) == (3 if training else 1)
     assert torch.isfinite(loss)
     assert torch.isfinite(policy.model.action_out_proj.weight.grad).all()

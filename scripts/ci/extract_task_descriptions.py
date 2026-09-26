@@ -50,7 +50,7 @@ def _strip_libero_perturbation_tail(instruction: str) -> str:
 
 
 def _libero_descriptions(task_suite: str) -> dict[str, str]:
-    from libero.libero import benchmark  # type: ignore[import-untyped]
+    from libero.libero import benchmark
 
     suite_dict = benchmark.get_benchmark_dict()
     if task_suite not in suite_dict:
