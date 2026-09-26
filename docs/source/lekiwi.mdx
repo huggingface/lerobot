@@ -119,7 +119,7 @@ Where the found port is: `/dev/ttyACM0` corresponding to your board.
 
 The instructions for configuring the motors can be found in the SO101 [docs](./so101#configure-the-motors). Besides the ids for the arm motors, we also need to set the motor ids for the mobile base. These need to be in a specific order to work. Below an image of the motor ids and motor mounting positions for the mobile base. Note that we only use one Motor Control board on LeKiwi. This means the motor ids for the wheels are 7, 8 and 9.
 
-You can run this command to setup motors for LeKiwi. It will first setup the motors for arm (id 6..1) and then setup motors for wheels (9,8,7)
+You can run this command to set up the motors for LeKiwi. It first sets up the arm motors (IDs 6 through 1), then the wheel motors (IDs 9, 8, and 7).
 
 ```bash
 lerobot-setup-motors \
