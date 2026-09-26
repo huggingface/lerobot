@@ -542,7 +542,7 @@ def test_se3_rotation_matches_proper_composition():
 def test_se3_pose_groups_are_validated():
     actions = torch.zeros(1, 7)
     state = torch.zeros(1, 7)
-    with pytest.raises(ValueError, match="six indices"):
+    with pytest.raises(ValueError, match="six indices .* or nine"):
         to_relative_actions(actions, state, [True] * 7, se3_pose_groups=[[0, 1, 2]])
     with pytest.raises(ValueError, match="outside the action"):
         to_relative_actions(actions, state, [True] * 7, se3_pose_groups=[[0, 1, 2, 3, 4, 99]])
@@ -579,3 +579,52 @@ def test_se3_composition_survives_degenerate_rotations(angle):
     # rotation, and the helpers return the canonical one. Compare rotations, not vectors.
     delta = np.swapaxes(_as_matrix(recovered[..., 3:].numpy()), -1, -2) @ _as_matrix(target[..., 3:].numpy())
     np.testing.assert_allclose(delta, np.broadcast_to(np.eye(3), delta.shape), atol=1e-9)
+
+
+def _random_poses_rot6d(rng, *shape):
+    """`[x, y, z, r11, r12, r13, r21, r22, r23]`: xyz plus the first two rotation-matrix rows."""
+    poses = _random_poses(rng, *shape)
+    matrix = _as_matrix(poses[..., 3:])
+    return np.concatenate([poses[..., :3], matrix[..., :2, :].reshape(*shape, 6)], axis=-1)
+
+
+def test_se3_rot6d_pose_groups_round_trip():
+    """A nine-index group is an `xyz+rot6d` pose and composes in SE(3) just like the six-index one."""
+    rng = np.random.default_rng(3)
+    gripper = rng.uniform(0.0, 1.0, (4, 5, 1))
+    actions = torch.tensor(np.concatenate([_random_poses_rot6d(rng, 4, 5), gripper], -1), dtype=torch.float64)
+    state = torch.tensor(
+        np.concatenate([_random_poses_rot6d(rng, 4), rng.uniform(0.0, 1.0, (4, 1))], -1),
+        dtype=torch.float64,
+    )
+    mask = [True] * 9 + [False]
+    groups = [[0, 1, 2, 3, 4, 5, 6, 7, 8]]
+
+    relative = to_relative_actions(actions, state, mask, se3_pose_groups=groups)
+    assert relative.shape == actions.shape  # rot6d in, rot6d out: the action does not widen
+    assert not torch.allclose(relative[..., :9], actions[..., :9] - state[..., :9].unsqueeze(-2))
+
+    # The relative rotation is `inv(R_state) @ R_action`, computed independently from the rows.
+    def rows_to_matrix(rows):
+        first, second = rows[..., :3], rows[..., 3:]
+        third = np.cross(first, second)
+        return np.stack([first, second, third], axis=-2)
+
+    expected = np.swapaxes(rows_to_matrix(state.numpy()[:, 3:9]), -1, -2)[:, None] @ rows_to_matrix(
+        actions.numpy()[..., 3:9]
+    )
+    np.testing.assert_allclose(rows_to_matrix(relative.numpy()[..., 3:9]), expected, atol=1e-10)
+    torch.testing.assert_close(to_absolute_actions(relative, state, mask, se3_pose_groups=groups), actions)
+
+
+def test_se3_rot6d_rejects_a_reference_that_is_not_a_rotation():
+    """Gram-Schmidt turns any six numbers into a valid rotation, so the reference is checked."""
+    rng = np.random.default_rng(4)
+    actions = torch.tensor(_random_poses_rot6d(rng, 4, 5), dtype=torch.float64)
+    axis_angle_state = torch.tensor(
+        np.concatenate([_random_poses(rng, 4), rng.normal(0.0, 1.0, (4, 3))], -1), dtype=torch.float64
+    )
+    with pytest.raises(ValueError, match="not orthonormal"):
+        to_relative_actions(
+            actions, axis_angle_state, [True] * 9, se3_pose_groups=[[0, 1, 2, 3, 4, 5, 6, 7, 8]]
+        )

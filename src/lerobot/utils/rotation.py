@@ -17,8 +17,8 @@
 """Custom rotation utilities to replace scipy.spatial.transform.Rotation.
 
 The `Rotation` class is NumPy and follows scipy's `[x, y, z, w]` quaternion order. The
-functions below it are torch and use `[w, x, y, z]`: they run inside processor steps on
-batched GPU tensors, which must keep their device and dtype.
+functions below it are torch: they run inside processor steps on batched GPU tensors, which
+must keep their device and dtype. The torch quaternions use `[w, x, y, z]`.
 """
 
 import numpy as np
@@ -324,3 +324,32 @@ def quaternion_rotate(quaternion: Tensor, vector: Tensor) -> Tensor:
     uv = torch.linalg.cross(quaternion_xyz, vector, dim=-1)
     uuv = torch.linalg.cross(quaternion_xyz, uv, dim=-1)
     return vector + 2.0 * (quaternion[..., :1] * uv + uuv)
+
+
+def rotation_6d_to_matrix(rotation_6d: torch.Tensor) -> torch.Tensor:
+    """Build rotation matrices from the continuous 6-D representation (its first two rows).
+
+    Gram-Schmidt orthonormalization, as in Zhou et al., "On the Continuity of Rotation
+    Representations in Neural Networks". A predicted pair of 3-vectors is generally neither unit
+    length nor orthogonal; this is what makes the representation usable as a network output.
+    """
+    if rotation_6d.shape[-1] != 6:
+        raise ValueError(f"A 6-D rotation has six values, got shape {tuple(rotation_6d.shape)}")
+    first, second = rotation_6d[..., :3], rotation_6d[..., 3:]
+    first_norm = torch.linalg.vector_norm(first, dim=-1, keepdim=True)
+    second = second - (first / first_norm.clamp_min(1e-12) * second).sum(dim=-1, keepdim=True) * (
+        first / first_norm.clamp_min(1e-12)
+    )
+    second_norm = torch.linalg.vector_norm(second, dim=-1, keepdim=True)
+    if bool(torch.any(first_norm <= 1e-8)) or bool(torch.any(second_norm <= 1e-8)):
+        raise ValueError("Cannot build a rotation from a degenerate 6-D representation")
+    row1 = first / first_norm
+    row2 = second / second_norm
+    return torch.stack((row1, row2, torch.linalg.cross(row1, row2, dim=-1)), dim=-2)
+
+
+def matrix_to_rotation_6d(matrix: torch.Tensor) -> torch.Tensor:
+    """Drop a rotation matrix down to its first two rows, the inverse of `rotation_6d_to_matrix`."""
+    if matrix.shape[-2:] != (3, 3):
+        raise ValueError(f"Rotation matrices have shape (..., 3, 3), got {tuple(matrix.shape)}")
+    return matrix[..., :2, :].reshape(matrix.shape[:-2] + (6,))

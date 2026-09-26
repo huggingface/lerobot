@@ -23,10 +23,12 @@ from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.rotation import (
+    matrix_to_rotation_6d,
     quaternion_conjugate,
     quaternion_multiply,
     quaternion_rotate,
     quaternion_to_rotvec,
+    rotation_6d_to_matrix,
     rotvec_to_quaternion,
 )
 
@@ -46,6 +48,11 @@ __all__ = [
     "to_relative_actions",
     "to_absolute_actions",
 ]
+
+
+_POSE_GROUP_WIDTHS = (6, 9)
+# The reference rotation-6D comes from data, not from a network, so it should be exact.
+_ROT6D_ORTHONORMAL_TOLERANCE = 1e-3
 
 
 def to_relative_se3_pose(target_pose: Tensor, reference_pose: Tensor) -> Tensor:
@@ -79,6 +86,58 @@ def to_absolute_se3_pose(relative_pose: Tensor, reference_pose: Tensor) -> Tenso
     return torch.cat((target_translation, quaternion_to_rotvec(target_quaternion)), dim=-1)
 
 
+def _check_reference_rotation_6d(rotation_6d: Tensor) -> None:
+    """Fail if the anchor's rotation-6D is not orthonormal.
+
+    The reference pose comes from the dataset or the robot, so its two rows are orthonormal by
+    construction. If they are not, the pose group is pointing at something that is not a
+    rotation-6D and the composition would silently return a plausible but wrong rotation:
+    Gram-Schmidt maps any six numbers onto a valid rotation matrix. Predicted poses are not held
+    to this -- orthonormalizing them is the point of the representation.
+    """
+    first, second = rotation_6d[..., :3], rotation_6d[..., 3:]
+    deviation = torch.maximum(
+        torch.maximum(
+            (torch.linalg.vector_norm(first, dim=-1) - 1).abs().max(),
+            (torch.linalg.vector_norm(second, dim=-1) - 1).abs().max(),
+        ),
+        (first * second).sum(dim=-1).abs().max(),
+    )
+    if bool(deviation > _ROT6D_ORTHONORMAL_TOLERANCE):
+        raise ValueError(
+            f"The reference rotation-6D is not orthonormal (deviation {float(deviation):.3g} > "
+            f"{_ROT6D_ORTHONORMAL_TOLERANCE:g}), so this pose group does not address an xyz+rot6d "
+            "pose in the state. Check that the group indices match the state layout."
+        )
+
+
+def to_relative_se3_pose_6d(target_pose: Tensor, reference_pose: Tensor) -> Tensor:
+    """`inv(T_reference) @ T_target` for poses laid out as xyz plus a 6-D rotation.
+
+    Composed as matrices throughout: a 6-D rotation *is* the first two rows of one, so there is
+    nothing to gain from routing it through a quaternion.
+    """
+    _check_reference_rotation_6d(reference_pose[..., 3:])
+    reference = rotation_6d_to_matrix(reference_pose[..., 3:])
+    inverse_reference = reference.transpose(-1, -2)
+    relative_translation = (
+        inverse_reference @ (target_pose[..., :3] - reference_pose[..., :3]).unsqueeze(-1)
+    ).squeeze(-1)
+    relative_rotation = inverse_reference @ rotation_6d_to_matrix(target_pose[..., 3:])
+    return torch.cat((relative_translation, matrix_to_rotation_6d(relative_rotation)), dim=-1)
+
+
+def to_absolute_se3_pose_6d(relative_pose: Tensor, reference_pose: Tensor) -> Tensor:
+    """`T_reference @ T_relative`, inverting :func:`to_relative_se3_pose_6d`."""
+    _check_reference_rotation_6d(reference_pose[..., 3:])
+    reference = rotation_6d_to_matrix(reference_pose[..., 3:])
+    target_translation = reference_pose[..., :3] + (reference @ relative_pose[..., :3].unsqueeze(-1)).squeeze(
+        -1
+    )
+    target_rotation = reference @ rotation_6d_to_matrix(relative_pose[..., 3:])
+    return torch.cat((target_translation, matrix_to_rotation_6d(target_rotation)), dim=-1)
+
+
 def _resolve_se3_pose_groups(
     pose_groups: Sequence[Sequence[int]] | None,
     mask: Sequence[bool],
@@ -87,12 +146,14 @@ def _resolve_se3_pose_groups(
 ) -> list[list[int]]:
     """Validate ``se3_pose_groups`` against the action layout and return them as lists.
 
-    Each group is six consecutive-or-not action indices laid out as ``[x, y, z, rx, ry, rz]``
-    with an axis-angle rotation vector, and must be inside the relative mask -- a pose the
-    policy keeps absolute has nothing to compose against.
+    A group is the action indices of one end-effector pose, and its length picks the rotation
+    encoding: six for ``[x, y, z, rx, ry, rz]`` (axis-angle) and nine for
+    ``[x, y, z, r11, r12, r13, r21, r22, r23]`` (the continuous 6-D rotation, i.e. the first two
+    rows of the rotation matrix). GR00T calls the two layouts ``xyz+rotvec`` and ``xyz+rot6d``.
 
-    The same indices address the state, which is the pose the actions are composed against, so
-    they must also fit inside it.
+    A group must be inside the relative mask -- a pose the policy keeps absolute has nothing to
+    compose against. The same indices address the state, which is the pose the actions are
+    composed against, so they must also fit inside it.
     """
     if not pose_groups:
         return []
@@ -100,9 +161,10 @@ def _resolve_se3_pose_groups(
     seen: set[int] = set()
     for group in pose_groups:
         indices = [int(i) for i in group]
-        if len(indices) != 6:
+        if len(indices) not in _POSE_GROUP_WIDTHS:
             raise ValueError(
-                f"An SE(3) pose group needs six indices (xyz + rotation vector), got {len(indices)}"
+                "An SE(3) pose group needs six indices (xyz + rotation vector) or nine "
+                f"(xyz + rotation-6D), got {len(indices)}"
             )
         for index in indices:
             if not 0 <= index < action_dim:
@@ -169,7 +231,8 @@ def to_relative_actions(
     actions = actions.clone()
     actions[..., :dims] -= state_offset
     for group in groups:
-        actions[..., group] = to_relative_se3_pose(actions[..., group], reference[..., group])
+        compose = to_relative_se3_pose if len(group) == 6 else to_relative_se3_pose_6d
+        actions[..., group] = compose(actions[..., group], reference[..., group])
     return actions
 
 
@@ -214,7 +277,8 @@ def to_absolute_actions(
         reference = state
     actions = actions.clone()
     for group in groups:
-        actions[..., group] = to_absolute_se3_pose(actions[..., group], reference[..., group])
+        compose = to_absolute_se3_pose if len(group) == 6 else to_absolute_se3_pose_6d
+        actions[..., group] = compose(actions[..., group], reference[..., group])
     actions[..., :dims] += state_offset
     return actions
 
