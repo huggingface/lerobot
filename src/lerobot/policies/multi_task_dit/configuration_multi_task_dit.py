@@ -20,6 +20,17 @@ from dataclasses import dataclass, field
 from lerobot.configs import NormalizationMode, PreTrainedConfig
 from lerobot.optim import AdamConfig, DiffuserSchedulerConfig
 
+# Encoder families accepted by `vision_encoder_name` / `text_encoder_name`, matched as
+# case-insensitive substrings of the Hugging Face model id. See the per-family handling in
+# modeling_multi_task_dit.VisionEncoder / TextEncoder.
+# Matched at the *family* level: any CLIP / DINO / SigLIP checkpoint works through the same code
+# paths (we test & recommend CLIP, DINOv3, and SigLIP 2). Anything exposing a CLS token (vision) or a
+# pooled output (text) is likely compatible; these substrings just gate the common, verified families.
+_SUPPORTED_VISION_ENCODERS = ("clip", "dino", "siglip")
+_SUPPORTED_TEXT_ENCODERS = ("clip", "siglip")
+_VISION_ONLY_ENCODERS = ("dino",)
+_SIGLIP_MAX_TOKENS = 64  # SigLIP 2 text uses a fixed 64-token context (pools the last position)
+
 
 @PreTrainedConfig.register_subclass("multi_task_dit")
 @dataclass
@@ -68,17 +79,17 @@ class MultiTaskDiTConfig(PreTrainedConfig):
     use_rope: bool = True  # Use Rotary Position Embedding
     rope_base: float = 10000.0  # RoPE base frequency
 
-    # Vision Encoder (CLIP)
-    vision_encoder_name: str = "openai/clip-vit-base-patch16"  # HuggingFace CLIP model
+    # Vision Encoder: CLIP (default), DINOv3, or SigLIP 2 (HuggingFace model id)
+    vision_encoder_name: str = "openai/clip-vit-base-patch16"
     use_separate_rgb_encoder_per_camera: bool = False  # Separate encoder per camera view
     vision_encoder_lr_multiplier: float = 0.1  # LR multiplier for vision encoder
     image_resize_shape: tuple[int, int] | None = None  # Resize images before crop
     image_crop_shape: tuple[int, int] | None = (224, 224)  # Crop shape (CLIP default)
     image_crop_is_random: bool = True  # Random crop during training, center at inference
 
-    # Text Encoder (CLIP)
-    text_encoder_name: str = "openai/clip-vit-base-patch16"  # HuggingFace CLIP model
-    tokenizer_max_length: int = 77  # Max length for tokenized text (CLIP default is 77)
+    # Text Encoder: CLIP (default) or SigLIP 2 (HuggingFace model id); tokenizer is auto-selected
+    text_encoder_name: str = "openai/clip-vit-base-patch16"
+    tokenizer_max_length: int = 77  # CLIP uses 77; set 64 for SigLIP 2
     tokenizer_padding: str = "max_length"  # Padding strategy: "max_length" or "longest"
     tokenizer_padding_side: str = "right"  # Padding side: "left" or "right"
     tokenizer_truncation: bool = True  # Whether to truncate sequences longer than max_length
@@ -130,10 +141,16 @@ class MultiTaskDiTConfig(PreTrainedConfig):
         if not (0.0 <= self.dropout <= 1.0):
             raise ValueError("dropout must be between 0.0 and 1.0")
 
-        # Vision encoder validation
-        if "clip" not in self.vision_encoder_name.lower():
+        # Vision encoder validation: CLIP (default), DINOv3, or SigLIP 2.
+        if "naflex" in self.vision_encoder_name.lower() or "naflex" in self.text_encoder_name.lower():
             raise ValueError(
-                f"vision_encoder_name must be a CLIP model (contain 'clip'), got '{self.vision_encoder_name}'"
+                "Variable-resolution SigLIP 2 (NaFlex) is not supported; use a fixed-resolution "
+                "SigLIP 2 checkpoint such as 'google/siglip2-base-patch16-224'."
+            )
+        if not any(family in self.vision_encoder_name.lower() for family in _SUPPORTED_VISION_ENCODERS):
+            raise ValueError(
+                "vision_encoder_name must be a CLIP, DINOv3, or SigLIP 2 model "
+                f"(id containing one of {_SUPPORTED_VISION_ENCODERS}), got '{self.vision_encoder_name}'"
             )
         if (
             self.image_resize_shape
@@ -150,10 +167,23 @@ class MultiTaskDiTConfig(PreTrainedConfig):
             )
             self.image_crop_shape = None
 
-        # Text encoder validation
-        if "clip" not in self.text_encoder_name.lower():
+        # Text encoder validation: CLIP (default) or SigLIP 2. Vision-only encoders are rejected.
+        text_name = self.text_encoder_name.lower()
+        if not any(family in text_name for family in _SUPPORTED_TEXT_ENCODERS):
+            if any(vision_only in text_name for vision_only in _VISION_ONLY_ENCODERS):
+                raise ValueError(
+                    f"text_encoder_name='{self.text_encoder_name}' is a vision-only encoder "
+                    "(DINOv2/DINOv3 have no text tower). Use a CLIP or SigLIP 2 model for text."
+                )
             raise ValueError(
-                f"text_encoder_name must be a CLIP model (contain 'clip'), got '{self.text_encoder_name}'"
+                "text_encoder_name must be a CLIP or SigLIP 2 model "
+                f"(id containing one of {_SUPPORTED_TEXT_ENCODERS}), got '{self.text_encoder_name}'"
+            )
+        # SigLIP 2 text uses a fixed 64-token context (pools the last position); CLIP uses 77.
+        if "siglip" in text_name and self.tokenizer_max_length > _SIGLIP_MAX_TOKENS:
+            raise ValueError(
+                f"SigLIP 2 text supports at most {_SIGLIP_MAX_TOKENS} tokens; "
+                f"set tokenizer_max_length={_SIGLIP_MAX_TOKENS} (got {self.tokenizer_max_length})."
             )
 
         # Objective-specific validation
