@@ -11,6 +11,9 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from datasets import Dataset
 
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset

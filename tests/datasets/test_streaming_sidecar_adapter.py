@@ -12,9 +12,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from datasets import Dataset
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+from datasets import Dataset
 
 from lerobot.datasets.streaming_sidecar import make_sidecar_spec, range_backend_for_root, streaming_data_root
 
