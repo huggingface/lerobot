@@ -29,7 +29,9 @@ from lerobot.processor.relative_action_processor import (
     RelativeActionsProcessorStep,
     bind_relative_anchor,
     to_absolute_actions,
+    to_absolute_se3_pose,
     to_relative_actions,
+    to_relative_se3_pose,
 )
 from lerobot.utils.constants import ACTION, OBS_STATE
 
@@ -562,3 +564,57 @@ def test_se3_pose_groups_are_validated():
         )
     with pytest.raises(ValueError, match="excluded from the relative conversion"):
         to_relative_actions(actions, state, [True] * 5 + [False, True], se3_pose_groups=[[0, 1, 2, 3, 4, 5]])
+
+
+def _assert_same_rotation(left: torch.Tensor, right: torch.Tensor, atol: float = 1e-9) -> None:
+    """Assert two rotation vectors describe the same rotation, via `inv(left) @ right`."""
+
+    def as_matrix(rotvec: np.ndarray) -> np.ndarray:
+        angle = np.linalg.norm(rotvec, axis=-1, keepdims=True)
+        axis = np.divide(rotvec, angle, out=np.zeros_like(rotvec), where=angle > 0)
+        kx, ky, kz = axis[..., 0], axis[..., 1], axis[..., 2]
+        zero = np.zeros_like(kx)
+        skew = np.stack([zero, -kz, ky, kz, zero, -kx, -ky, kx, zero], axis=-1).reshape(
+            *rotvec.shape[:-1], 3, 3
+        )
+        angle = angle[..., None]
+        return np.eye(3) + np.sin(angle) * skew + (1 - np.cos(angle)) * (skew @ skew)
+
+    delta = np.swapaxes(as_matrix(left.numpy()), -1, -2) @ as_matrix(right.numpy())
+    np.testing.assert_allclose(delta, np.broadcast_to(np.eye(3), delta.shape), atol=atol)
+
+
+@pytest.mark.parametrize(
+    ("name", "reference_angle", "target_angle"),
+    [
+        ("identity", 0.0, 0.0),
+        ("tiny", 1e-8, 2e-8),
+        ("near_pi", np.pi - 1e-7, np.pi - 1e-7),
+        ("exactly_pi", np.pi, np.pi),
+        ("beyond_pi", 3 * np.pi, 0.5),
+    ],
+)
+def test_se3_composition_survives_degenerate_rotations(name, reference_angle, target_angle):
+    """Rotation-vector <-> quaternion conversion is singular at 0 and at pi.
+
+    The small-angle branches in the helpers must keep these finite and invertible, or a policy
+    whose end-effector happens to sit near an identity or half-turn orientation would emit NaNs.
+    """
+    rng = np.random.default_rng(0)
+    axis = rng.normal(0.0, 1.0, (64, 3))
+    axis /= np.linalg.norm(axis, axis=-1, keepdims=True)
+    reference = np.concatenate([np.zeros((64, 3)), axis * reference_angle], axis=-1)
+    # flip the axis so `near_pi` and `exactly_pi` exercise antipodal quaternions
+    target = np.concatenate([np.zeros((64, 3)), -axis * target_angle], axis=-1)
+
+    reference_t = torch.tensor(reference, dtype=torch.float64)
+    target_t = torch.tensor(target, dtype=torch.float64)
+    relative = to_relative_se3_pose(target_t, reference_t)
+    assert torch.isfinite(relative).all(), f"{name} produced non-finite values"
+
+    recovered = to_absolute_se3_pose(relative, reference_t)
+    assert torch.isfinite(recovered).all(), f"{name} produced non-finite values"
+    torch.testing.assert_close(recovered[..., :3], target_t[..., :3], atol=1e-9, rtol=0)
+    # At angle == pi the rotation vector is not unique: +pi*axis and -pi*axis are the same
+    # rotation, and the helpers return the canonical one. Compare rotations, not vectors.
+    _assert_same_rotation(recovered[..., 3:], target_t[..., 3:])
