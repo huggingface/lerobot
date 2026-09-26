@@ -682,3 +682,71 @@ def test_async_iterator_multiple_iterations():
 
     # Ensure iterator can be disposed without blocking
     del iterator
+
+
+# ---------------------------------------------------------------------------
+# optimize_memory sampling must never derive the newest transition's next_state
+# ---------------------------------------------------------------------------
+
+
+def make_scalar_state_buffer(capacity: int) -> ReplayBuffer:
+    """A minimal optimize_memory buffer holding scalar observation.state values."""
+    return ReplayBuffer(
+        capacity,
+        "cpu",
+        [OBS_STATE],
+        optimize_memory=True,
+        use_drq=False,
+        image_augmentation_function=lambda img: img,
+    )
+
+
+def scalar_state(value: float) -> dict:
+    return {OBS_STATE: torch.tensor([value])}
+
+
+def collect_next_state_values(buffer: ReplayBuffer, draws: int) -> set[float]:
+    values = []
+    while len(values) < draws:
+        batch = buffer.sample(batch_size=buffer.size)
+        values.extend(batch["next_state"][OBS_STATE].squeeze(-1).tolist())
+    return set(values)
+
+
+def test_sample_full_buffer_excludes_unstored_next_state():
+    """When the ring is full, the newest transition's successor is not stored: sampling that
+    transition would derive its next_state from the oldest surviving slot instead. That
+    stale value must never appear as a next_state."""
+    buffer = make_scalar_state_buffer(capacity=4)
+    for i in range(4):
+        buffer.add(scalar_state(i), torch.zeros(1), 0.0, scalar_state(i + 1), False, False)
+
+    # Slots hold states 0..3; the newest transition (state 3) is excluded, so the only
+    # valid next_states are states 1..3. State 0 is the oldest ring slot, not a successor.
+    torch.manual_seed(0)
+    values = collect_next_state_values(buffer, draws=4000)
+    assert values == {1.0, 2.0, 3.0}, f"unexpected next_state values sampled: {values}"
+
+
+def test_sample_buffer_after_wrap_excludes_newest_transition():
+    """After the ring wraps, the newest slot sits in the middle of the storage range; the
+    exclusion must still land on it rather than only trimming the index range end."""
+    buffer = make_scalar_state_buffer(capacity=3)
+    for i in range(5):
+        buffer.add(scalar_state(i), torch.zeros(1), 0.0, scalar_state(i + 1), False, False)
+
+    # Slots hold states [3, 4, 2] (position=2); the newest transition is slot 1 (state 4).
+    # Valid transitions are slot0 (3->4) and slot2 (2->3), so next_states are {4, 3} only.
+    torch.manual_seed(0)
+    values = collect_next_state_values(buffer, draws=3000)
+    assert values == {3.0, 4.0}, f"unexpected next_state values sampled: {values}"
+
+
+def test_sample_optimize_memory_requires_two_transitions():
+    """A single transition has no stored successor; sampling must fail with a clear error
+    instead of an internal torch.randint shape failure."""
+    buffer = make_scalar_state_buffer(capacity=8)
+    buffer.add(scalar_state(0), torch.zeros(1), 0.0, scalar_state(1), False, False)
+
+    with pytest.raises(RuntimeError, match="at least 2 transitions"):
+        buffer.sample(batch_size=1)
