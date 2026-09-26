@@ -16,6 +16,8 @@
 
 """PI0FastPolicy.from_pretrained builds parameters on the meta device and matches the regular load."""
 
+import sys
+
 import pytest
 import torch
 
@@ -26,9 +28,12 @@ import transformers.utils  # noqa: E402
 
 from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
 from lerobot.policies.pi0_fast import PI0FastConfig, PI0FastPolicy, modeling_pi0_fast  # noqa: E402
+from lerobot.utils import import_utils  # noqa: E402
 from tests.policies.pi0_pi05.utils.meta_load import (  # noqa: E402
+    DOWNLOAD_ARGUMENTS,
     EMBED_TOKENS,
     assert_same,
+    drop_projector_bias,
     load,
     save_checkpoint,
     use_tiny_backbone,
@@ -73,6 +78,8 @@ def test_matches_regular_load(config, tmp_path, monkeypatch):
 
 def test_subclass_with_its_own_constructor(config, tmp_path, monkeypatch):
     class Subclass(PI0FastPolicy):
+        _supports_meta_load = True
+
         def __init__(self, config, extra=None):
             super().__init__(config)
             self.extra = extra
@@ -103,17 +110,31 @@ def test_incomplete_checkpoint_loads_the_regular_way(config, tmp_path, monkeypat
     assert_same(model, expected)
 
 
-@pytest.mark.parametrize("regular", [False, True])
-def test_download_arguments_reach_the_weights(config, tmp_path, monkeypatch, regular):
-    path = save_checkpoint(PI0FastPolicy, config, tmp_path / "ckpt")
+@pytest.mark.parametrize("complete", [True, False])
+def test_download_arguments_reach_the_weights(config, tmp_path, monkeypatch, complete):
+    path = save_checkpoint(
+        PI0FastPolicy, config, tmp_path / "ckpt", edit=None if complete else drop_projector_bias
+    )
     cached_file = transformers.utils.cached_file
     calls = []
 
     def record(*args, **kwargs):
         calls.append(kwargs)
-        return cached_file(*args, **{**kwargs, "revision": None, "token": None})
+        return cached_file(*args)
 
     monkeypatch.setattr(transformers.utils, "cached_file", record)
-    arguments = {"revision": "v1", "token": "secret", "cache_dir": str(tmp_path / "cache")}
-    load(PI0FastPolicy, path, config, monkeypatch, regular=regular, **arguments)
-    assert calls and all(call.items() >= arguments.items() for call in calls)
+    _, used_meta = load(PI0FastPolicy, path, config, monkeypatch, **DOWNLOAD_ARGUMENTS)
+    # One lookup, with every option, serves whichever path loads the weights.
+    assert calls == [DOWNLOAD_ARGUMENTS] and used_meta == complete
+
+
+def test_missing_weights_raise(config, tmp_path, monkeypatch):
+    with pytest.raises(OSError, match="model.safetensors"):
+        load(PI0FastPolicy, tmp_path, config, monkeypatch)
+
+
+def test_missing_transformers_names_the_extra(config, tmp_path, monkeypatch):
+    monkeypatch.setitem(import_utils._require_package_cache, "transformers", False)
+    monkeypatch.setitem(sys.modules, "transformers.utils", None)
+    with pytest.raises(ImportError, match=r"lerobot\[pi\]"):
+        PI0FastPolicy.from_pretrained(tmp_path, config=config)
