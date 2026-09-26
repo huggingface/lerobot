@@ -22,6 +22,13 @@ from torch import Tensor
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.rotation import (
+    quaternion_conjugate,
+    quaternion_multiply,
+    quaternion_rotate,
+    quaternion_to_rotvec,
+    rotvec_to_quaternion,
+)
 
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
 from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry
@@ -41,52 +48,6 @@ __all__ = [
 ]
 
 
-def _rotvec_to_quaternion(rotvec: Tensor) -> Tensor:
-    angle = torch.linalg.vector_norm(rotvec, dim=-1, keepdim=True)
-    angle_sq = angle.square()
-    small_scale = 0.5 - angle_sq / 48.0 + angle_sq.square() / 3840.0
-    scale = torch.where(angle > 1e-6, torch.sin(angle / 2.0) / angle.clamp_min(1e-12), small_scale)
-    return torch.cat((torch.cos(angle / 2.0), rotvec * scale), dim=-1)
-
-
-def _quaternion_to_rotvec(quaternion: Tensor) -> Tensor:
-    quaternion = quaternion / torch.linalg.vector_norm(quaternion, dim=-1, keepdim=True).clamp_min(1e-12)
-    quaternion = quaternion * torch.where(quaternion[..., :1] < 0, -1.0, 1.0)
-    vector = quaternion[..., 1:]
-    sin_half_angle = torch.linalg.vector_norm(vector, dim=-1, keepdim=True)
-    angle = 2.0 * torch.atan2(sin_half_angle, quaternion[..., :1].clamp_min(0.0))
-    small_scale = 2.0 + sin_half_angle.square() / 3.0
-    scale = torch.where(
-        sin_half_angle > 1e-6,
-        angle / sin_half_angle.clamp_min(1e-12),
-        small_scale,
-    )
-    return vector * scale
-
-
-def _quaternion_multiply(left: Tensor, right: Tensor) -> Tensor:
-    left_w, left_xyz = left[..., :1], left[..., 1:]
-    right_w, right_xyz = right[..., :1], right[..., 1:]
-    return torch.cat(
-        (
-            left_w * right_w - (left_xyz * right_xyz).sum(dim=-1, keepdim=True),
-            left_w * right_xyz + right_w * left_xyz + torch.linalg.cross(left_xyz, right_xyz, dim=-1),
-        ),
-        dim=-1,
-    )
-
-
-def _quaternion_conjugate(quaternion: Tensor) -> Tensor:
-    return torch.cat((quaternion[..., :1], -quaternion[..., 1:]), dim=-1)
-
-
-def _quaternion_rotate(quaternion: Tensor, vector: Tensor) -> Tensor:
-    quaternion_xyz = quaternion[..., 1:]
-    uv = torch.linalg.cross(quaternion_xyz, vector, dim=-1)
-    uuv = torch.linalg.cross(quaternion_xyz, uv, dim=-1)
-    return vector + 2.0 * (quaternion[..., :1] * uv + uuv)
-
-
 def to_relative_se3_pose(target_pose: Tensor, reference_pose: Tensor) -> Tensor:
     """Encode a pose as ``inv(T_reference) @ T_target``.
 
@@ -95,27 +56,27 @@ def to_relative_se3_pose(target_pose: Tensor, reference_pose: Tensor) -> Tensor:
     """
     if target_pose.shape[-1] != 6 or reference_pose.shape[-1] != 6:
         raise ValueError("SE(3) poses must have six values: xyz followed by a rotation vector")
-    reference_quaternion = _rotvec_to_quaternion(reference_pose[..., 3:])
-    target_quaternion = _rotvec_to_quaternion(target_pose[..., 3:])
-    inverse_reference_quaternion = _quaternion_conjugate(reference_quaternion)
-    relative_translation = _quaternion_rotate(
+    reference_quaternion = rotvec_to_quaternion(reference_pose[..., 3:])
+    target_quaternion = rotvec_to_quaternion(target_pose[..., 3:])
+    inverse_reference_quaternion = quaternion_conjugate(reference_quaternion)
+    relative_translation = quaternion_rotate(
         inverse_reference_quaternion, target_pose[..., :3] - reference_pose[..., :3]
     )
-    relative_quaternion = _quaternion_multiply(inverse_reference_quaternion, target_quaternion)
-    return torch.cat((relative_translation, _quaternion_to_rotvec(relative_quaternion)), dim=-1)
+    relative_quaternion = quaternion_multiply(inverse_reference_quaternion, target_quaternion)
+    return torch.cat((relative_translation, quaternion_to_rotvec(relative_quaternion)), dim=-1)
 
 
 def to_absolute_se3_pose(relative_pose: Tensor, reference_pose: Tensor) -> Tensor:
     """Decode a pose with ``T_target = T_reference @ T_relative``."""
     if relative_pose.shape[-1] != 6 or reference_pose.shape[-1] != 6:
         raise ValueError("SE(3) poses must have six values: xyz followed by a rotation vector")
-    reference_quaternion = _rotvec_to_quaternion(reference_pose[..., 3:])
-    relative_quaternion = _rotvec_to_quaternion(relative_pose[..., 3:])
-    target_translation = reference_pose[..., :3] + _quaternion_rotate(
+    reference_quaternion = rotvec_to_quaternion(reference_pose[..., 3:])
+    relative_quaternion = rotvec_to_quaternion(relative_pose[..., 3:])
+    target_translation = reference_pose[..., :3] + quaternion_rotate(
         reference_quaternion, relative_pose[..., :3]
     )
-    target_quaternion = _quaternion_multiply(reference_quaternion, relative_quaternion)
-    return torch.cat((target_translation, _quaternion_to_rotvec(target_quaternion)), dim=-1)
+    target_quaternion = quaternion_multiply(reference_quaternion, relative_quaternion)
+    return torch.cat((target_translation, quaternion_to_rotvec(target_quaternion)), dim=-1)
 
 
 def _resolve_se3_pose_groups(
