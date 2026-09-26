@@ -66,6 +66,10 @@ class VLAJEPAConfig(PreTrainedConfig):
     use_relative_actions: bool = False
     # Joint names to keep absolute (not converted to relative). Empty list = all dims relative.
     relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+
+    # Action index groups of end-effector poses, composed in SE(3) instead of subtracted.
+    # See `RelativeActionsProcessorStep`. Empty leaves every dimension component-wise.
+    relative_se3_pose_groups: list[list[int]] = field(default_factory=list)
     # Populated at runtime from dataset metadata by make_policy (used to build the exclude mask).
     action_feature_names: list[str] | None = None
 
