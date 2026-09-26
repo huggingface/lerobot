@@ -198,6 +198,8 @@ def seeded_context(seed: int) -> Generator[None, None, None]:
     ```
     """
     random_state_dict = get_rng_state()
-    set_seed(seed)
-    yield None
-    set_rng_state(random_state_dict)
+    try:
+        set_seed(seed)
+        yield None
+    finally:
+        set_rng_state(random_state_dict)
