@@ -22,6 +22,7 @@ instead of a policy-local copy has no effect on checkpoints.
 """
 
 import math
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import torch
@@ -55,6 +56,68 @@ def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedd
     scaling_factor = 1.0 / period * 2 * math.pi
     sin_input = time[..., None] * scaling_factor
     return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=-1)
+
+
+def _call_directly(func: Callable[..., Tensor], *args: Tensor) -> Tensor:
+    return func(*args)
+
+
+def fuse_action_time_embedding(
+    noisy_actions: Tensor,
+    timestep: Tensor,
+    *,
+    action_proj: Callable[[Tensor], Tensor],
+    action_time_mlp: Callable[[Tensor], Tensor],
+    embedding_width: int,
+    min_period: float,
+    max_period: float,
+    apply_checkpoint: Callable[..., Tensor] = _call_directly,
+) -> Tensor:
+    """Fuse a noised action chunk and its flow-matching timestep into action-expert tokens.
+
+    Projects the actions, concatenates a sine-cosine embedding of the timestep, and runs the
+    result through the caller's MLP. Adopted by pi0, eo1 and smolvla. *Not* pi05, which
+    conditions on time through adaRMS instead of concatenation.
+
+    Both stages are supplied as callables rather than modules so that callers keep full control
+    over dtype and autocast rules (eo1 casts its inputs to the layer weight dtype inside an
+    autocast-disabling context). This helper owns no parameters, so adopting it leaves every
+    ``state_dict`` key untouched.
+
+    Args:
+        noisy_actions: ``(batch, horizon, action_dim)`` noised action chunk.
+        timestep: ``(batch,)`` flow-matching timestep, one scalar per batch element. Per-action
+            timesteps are deliberately out of scope here; :func:`create_sinusoidal_pos_embedding`
+            still accepts ``(batch, action_horizon)`` for callers that need it.
+        action_proj: maps ``noisy_actions`` to ``(batch, horizon, embedding_width)``.
+        action_time_mlp: maps the ``(batch, horizon, 2 * embedding_width)`` concatenation back to
+            ``(batch, horizon, embedding_width)``; owns its own activation.
+        embedding_width: width of the timestep embedding, i.e. ``action_proj``'s output width.
+        min_period: shortest sine-cosine period.
+        max_period: longest sine-cosine period.
+        apply_checkpoint: ``apply_checkpoint(func, *args)`` wrapper applied to both stages, used to
+            route them through gradient checkpointing. Defaults to calling ``func`` directly.
+
+    Returns:
+        ``(batch, horizon, embedding_width)`` action-expert input embeddings.
+    """
+    if timestep.ndim != 1:
+        raise ValueError(f"The timestep tensor must have shape (batch_size,), got {tuple(timestep.shape)}.")
+
+    action_emb = apply_checkpoint(action_proj, noisy_actions)
+
+    time_emb = create_sinusoidal_pos_embedding(
+        timestep,
+        embedding_width,
+        min_period=min_period,
+        max_period=max_period,
+        device=timestep.device,
+    )
+    time_emb = time_emb.to(dtype=action_emb.dtype)
+    time_emb = time_emb[:, None, :].expand_as(action_emb)
+    action_time_emb = torch.cat([action_emb, time_emb], dim=2)
+
+    return apply_checkpoint(action_time_mlp, action_time_emb)
 
 
 def make_att_2d_masks(pad_masks: Tensor, att_masks: Tensor) -> Tensor:  # see openpi (exact copy)
