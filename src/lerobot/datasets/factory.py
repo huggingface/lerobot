@@ -204,8 +204,11 @@ def make_train_eval_datasets(
 ) -> tuple[LeRobotDataset | StreamingLeRobotDataset, LeRobotDataset | None]:
     """Create train and optional eval datasets by splitting episodes based on eval_split.
 
-    The last ceil(n_episodes * eval_split) episodes per task are held out for evaluation.
-    If eval_split == 0.0, returns (full_dataset, None).
+    The last ceil(n_episodes * eval_split) episodes per task are held out for evaluation,
+    capped so at least one episode per task stays in the training split (eval_split < 1.0
+    is enforced by ``DatasetConfig``, so every task the policy sees is meant to still train
+    on it -- a task should never be pushed out of training entirely just because it happens
+    to have few episodes). If eval_split == 0.0, returns (full_dataset, None).
     """
     full_dataset = make_dataset(cfg)
 
@@ -224,13 +227,30 @@ def make_train_eval_datasets(
 
     train_episodes, eval_episodes = [], []
     for eps in task_to_episodes.values():
-        n_eval = math.ceil(len(eps) * cfg.dataset.eval_split)
+        # Cap at len(eps) - 1: a task's *own* episode count can be too small for the
+        # global eval_split to round down to 0 held-out episodes (ceil(1 * 0.1) == 1), which
+        # would silently take 100% of that task's episodes into eval and leave the policy
+        # with zero training examples of it. eval_split < 1.0 is validated by
+        # DatasetConfig.__post_init__, so at least one episode staying in train is always
+        # the right floor here, independent of how eval_split rounds for this task.
+        n_eval = min(math.ceil(len(eps) * cfg.dataset.eval_split), len(eps) - 1)
         train_episodes.extend(eps[: len(eps) - n_eval])
         eval_episodes.extend(eps[len(eps) - n_eval :])
 
     if not train_episodes:
         raise ValueError(
             f"eval_split={cfg.dataset.eval_split} leaves 0 training episodes from {len(base_episodes)} total."
+        )
+    if not eval_episodes:
+        # Reachable only when every task has a single episode: capping each task at
+        # len(eps) - 1 held-out episodes then leaves nothing for eval. Building an
+        # empty-episode eval LeRobotDataset otherwise fails downstream with an opaque
+        # `datasets` error ('Instruction "train" corresponds to no data!'), so fail fast.
+        raise ValueError(
+            f"eval_split={cfg.dataset.eval_split} holds out no eval episodes: each of the "
+            f"{len(task_to_episodes)} task(s) has only one episode, so keeping at least one "
+            "episode per task in training leaves none for evaluation. Use a dataset with more "
+            "than one episode per task, or set dataset.eval_split=0.0 to disable the split."
         )
 
     logger.info(
