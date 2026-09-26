@@ -30,6 +30,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
@@ -44,6 +45,20 @@ from lerobot.utils.device_utils import auto_select_torch_device
 pytest.importorskip("transformers")
 
 DUMMY_REPO_ID = "dummy/repo"
+
+
+@pytest.fixture(autouse=True)
+def _restore_cuda_backends():
+    """train() unconditionally sets these global torch.backends flags; test_train_with_camera_mismatch
+    calls train() for real, so restore them at teardown instead of leaking precision/determinism
+    settings into whatever test runs next."""
+    benchmark = torch.backends.cudnn.benchmark
+    deterministic = torch.backends.cudnn.deterministic
+    allow_tf32 = torch.backends.cuda.matmul.allow_tf32
+    yield
+    torch.backends.cudnn.benchmark = benchmark
+    torch.backends.cudnn.deterministic = deterministic
+    torch.backends.cuda.matmul.allow_tf32 = allow_tf32
 
 
 @pytest.fixture
