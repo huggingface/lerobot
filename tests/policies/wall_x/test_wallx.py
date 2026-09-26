@@ -31,6 +31,7 @@ from lerobot.policies.factory import make_policy_config, make_pre_post_processor
 from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
 from lerobot.policies.wall_x import (
     WallXConfig,  # noqa: E402
+    modeling_wall_x,  # noqa: E402
 )
 from lerobot.policies.wall_x.constant import WALL_X_PROMPT_SEGMENTS  # noqa: E402
 from lerobot.policies.wall_x.modeling_wall_x import Qwen2_5_VLMoEForAction, WallXPolicy  # noqa: E402
@@ -49,6 +50,62 @@ from lerobot.processor import (  # noqa: E402
 from lerobot.utils.constants import MESSAGES_RENDERED, QUERY_KIND, QUERY_TEXT  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 from tests.utils import require_cuda, require_hf_token  # noqa: E402
+
+
+def test_from_pretrained_logs_non_strict_state_dict_keys(monkeypatch):
+    class FakeConfig:
+        text_config = SimpleNamespace(pad_token_id=None)
+        pad_token_id = None
+
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            return cls()
+
+    class FakeTokenizer:
+        pad_token_id = 0
+
+        def __len__(self):
+            return 1
+
+    class FakeProcessor:
+        tokenizer = FakeTokenizer()
+
+    class FakeAutoProcessor:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            return FakeProcessor()
+
+    class FakeModel(Qwen2_5_VLMoEForAction):
+        config_class = FakeConfig
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def resize_token_embeddings(self, *args, **kwargs):
+            pass
+
+        def load_state_dict(self, *args, **kwargs):
+            assert kwargs["strict"] is False
+            return ["missing.weight"], ["unexpected.weight"]
+
+    logged = []
+    monkeypatch.setattr(
+        modeling_wall_x.Qwen2_5_VLMoEModel,
+        "_require_eager_attention",
+        staticmethod(lambda *args: None),
+    )
+    monkeypatch.setattr(modeling_wall_x, "AutoProcessor", FakeAutoProcessor)
+    monkeypatch.setattr(modeling_wall_x, "cached_file", lambda *args, **kwargs: "weights.safetensors")
+    monkeypatch.setattr(modeling_wall_x, "load_file", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        modeling_wall_x,
+        "log_model_loading_keys",
+        lambda missing, unexpected: logged.append((missing, unexpected)),
+    )
+
+    FakeModel.from_pretrained("example/wall-x")
+
+    assert logged == [(["missing.weight"], ["unexpected.weight"])]
 
 
 def test_moe_model_captures_requested_hidden_states_and_attentions():
