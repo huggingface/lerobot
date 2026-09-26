@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import abc
+import importlib
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -21,6 +22,7 @@ from typing import Any
 
 import draccus
 import torch
+from draccus.choice_types import ChoiceRegistryBase
 from safetensors.torch import load_file, save_file
 
 from lerobot.utils.constants import (
@@ -42,8 +44,56 @@ OptimizerParams = (
 )
 
 
+class ChoicesFromPolicies(ChoiceRegistryBase):
+    """Base for a draccus registry that policy packages add choices to, like the optimizers and schedulers.
+
+    Policies are imported on demand, so a name a policy registers imports that policy first, and a name that
+    is still not registered then imports every policy before the lookup fails, so the error can list every
+    choice. It is not a `draccus.ChoiceRegistry` itself, since the registries that use it would then share
+    one set of choices.
+    """
+
+    # The names policy packages register, each with the package that registers it. When another module
+    # registers one of these names, `register_subclass` imports only that package first, so the built-in keeps
+    # its name, and `get_choice_class` imports it for a name that is not registered yet.
+    # tests/configs/test_policy_registration.py keeps it in sync.
+    POLICY_CHOICES = {
+        "molmoact2_adamw": "molmoact2",
+        "molmoact2_cosine_with_warmup": "molmoact2",
+        "lawam_cosine_with_min_lr": "lawam",
+    }
+
+    @classmethod
+    def register_subclass(cls, name: str, choice_type: Any = None) -> Any:
+        owner = cls.POLICY_CHOICES.get(name)
+        if (
+            choice_type is not None
+            and owner is not None
+            and not choice_type.__module__.startswith(f"lerobot.policies.{owner}.")
+        ):
+            # Register the built-in first, so another class cannot take its name just by loading earlier.
+            importlib.import_module(f"lerobot.policies.{owner}")
+        return super().register_subclass(name, choice_type)
+
+    @classmethod
+    def get_choice_class(cls, name: str) -> Any:
+        if not isinstance(name, str):
+            raise KeyError(name)
+        if name not in cls.get_known_choices() and name in cls.POLICY_CHOICES:
+            importlib.import_module(f"lerobot.policies.{cls.POLICY_CHOICES[name]}")
+        if name not in cls.get_known_choices():
+            cls.load_all_choices()
+        return super().get_choice_class(name)
+
+    @classmethod
+    def load_all_choices(cls) -> None:
+        from lerobot.configs.policies import PreTrainedConfig
+
+        PreTrainedConfig.load_all_choices()
+
+
 @dataclass
-class OptimizerConfig(draccus.ChoiceRegistry, abc.ABC):
+class OptimizerConfig(ChoicesFromPolicies, draccus.ChoiceRegistry, abc.ABC):
     lr: float
     weight_decay: float
     grad_clip_norm: float

@@ -29,6 +29,8 @@ from lerobot.utils.constants import SCHEDULER_STATE
 from lerobot.utils.import_utils import _diffusers_available, require_package
 from lerobot.utils.io_utils import deserialize_json_into_object, write_json
 
+from .optimizers import ChoicesFromPolicies
+
 if TYPE_CHECKING or _diffusers_available:
     from diffusers.optimization import get_scheduler
 else:
@@ -36,7 +38,7 @@ else:
 
 
 @dataclass
-class LRSchedulerConfig(draccus.ChoiceRegistry, abc.ABC):
+class LRSchedulerConfig(ChoicesFromPolicies, draccus.ChoiceRegistry, abc.ABC):
     num_warmup_steps: int | None
 
     @property
