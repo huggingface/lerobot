@@ -490,6 +490,100 @@ def test_actor_side_weight_sync_with_discrete_critic():
 
 
 # ===========================================================================
+# target-network encoder independence
+# ===========================================================================
+
+
+def test_critic_target_owns_a_separate_encoder():
+    """The target ensemble must not alias the online encoder's parameters.
+
+    `_update_target_networks` EMA-updates every parameter of the target ensemble. If the
+    target shares the online encoder object, those parameters pair with themselves and the
+    update silently becomes a no-op for the encoder, so the TD bootstrap target moves with
+    the online trajectory instead of trailing behind it.
+    """
+    algorithm, _ = _make_algorithm()
+    assert algorithm.critic_target.encoder is not algorithm.critic_ensemble.encoder
+    online_param_ids = {id(p) for p in algorithm.critic_ensemble.parameters()}
+    assert all(id(p) not in online_param_ids for p in algorithm.critic_target.parameters())
+
+
+def test_discrete_critic_target_owns_a_separate_encoder():
+    """Same aliasing check for the discrete critic target."""
+    algorithm, policy = _make_algorithm(num_discrete_actions=3, action_dim=6)
+    assert algorithm.discrete_critic_target.encoder is not policy.discrete_critic.encoder
+    online_param_ids = {id(p) for p in policy.discrete_critic.parameters()}
+    assert all(id(p) not in online_param_ids for p in algorithm.discrete_critic_target.parameters())
+
+
+def test_target_encoder_trails_online_encoder_after_update():
+    """After a real update() the target encoder must differ from the online encoder.
+
+    The critic optimizer trains the online encoder, so its weights move; the target encoder
+    only follows through the EMA and therefore trails. With shared parameters both stay
+    byte-identical forever.
+    """
+    algorithm, _ = _make_algorithm()
+    algorithm.update(_batch_iterator())
+
+    max_abs_diff = max(
+        (target_p - online_p).abs().max().item()
+        for target_p, online_p in zip(
+            algorithm.critic_target.encoder.parameters(),
+            algorithm.critic_ensemble.encoder.parameters(),
+            strict=True,
+        )
+    )
+    assert max_abs_diff > 0.0, (
+        "target encoder stayed identical to the online encoder after an update: "
+        "the EMA is a no-op because the parameters are shared"
+    )
+
+
+def test_load_state_dict_resyncs_target_encoder_to_online():
+    """Bundles carry no encoder tensors (`_strip_encoder_keys`), so `load_state_dict` must
+    re-sync the target encoders from the online encoders — which the checkpoint restores
+    through the policy — instead of leaving a stale pre-load copy behind."""
+    src_cfg = _make_sac_config(state_dim=10, action_dim=6)
+    src = SACAlgorithm(
+        policy=GaussianActorPolicy(config=src_cfg), config=SACAlgorithmConfig.from_policy_config(src_cfg)
+    )
+    src.make_optimizers_and_scheduler()
+    src.update(_batch_iterator())  # src target now trails src online and lags behind init
+
+    # Mirror the learner's resume order: restore the policy weights first (fresh random init,
+    # then checkpoint load), and only then load the algorithm state.
+    set_seed(4242)
+    dst_cfg = _make_sac_config(state_dim=10, action_dim=6)
+    dst_policy = GaussianActorPolicy(config=dst_cfg)
+    dst_policy.load_state_dict(src.policy.state_dict())
+    dst = SACAlgorithm(policy=dst_policy, config=SACAlgorithmConfig.from_policy_config(dst_cfg))
+
+    dst.load_state_dict(src.state_dict())
+
+    # Target heads must come from the bundle (their restored, lagged values), so they differ
+    # from dst's online heads — guarding against a wholesale critic_target <- critic_ensemble copy.
+    src_bundle = src.state_dict()
+    dst_bundle = dst.state_dict()
+    for key in src_bundle:
+        if key.startswith("critic_target."):
+            assert torch.allclose(src_bundle[key], dst_bundle[key]), f"{key} not restored from bundle"
+
+    # The (unserialized) target encoder must follow the online encoder, which now holds the
+    # checkpoint weights — i.e. the src-trained encoder values, not dst's stale random copy.
+    for target_p, online_p in zip(
+        dst.critic_target.encoder.parameters(),
+        dst.critic_ensemble.encoder.parameters(),
+        strict=True,
+    ):
+        assert torch.equal(target_p, online_p), "target encoder was not re-synced to the online encoder"
+
+    src_target_encoder = src.policy.encoder_critic.state_dict()
+    for key, online_value in dst_policy.encoder_critic.state_dict().items():
+        assert torch.equal(src_target_encoder[key], online_value), "policy was not restored from src"
+
+
+# ===========================================================================
 # TrainingStats generic losses dict
 # ===========================================================================
 
