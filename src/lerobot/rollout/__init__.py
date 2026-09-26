@@ -22,7 +22,9 @@ references the controller, so strategies stay usable non-interactively.  Control
 intent under the controller lock; ``serve()`` is the only place intent becomes motion.
 """
 
-from lerobot.utils.import_utils import require_package
+from typing import TYPE_CHECKING
+
+from lerobot.utils.import_utils import lazy_exports, require_package
 
 require_package("datasets", extra="dataset")
 
@@ -37,15 +39,6 @@ from .configs import (
     RolloutStrategyConfig,
     SentryStrategyConfig,
 )
-from .context import (
-    DatasetContext,
-    HardwareContext,
-    PolicyContext,
-    ProcessorContext,
-    RolloutContext,
-    RuntimeContext,
-    build_rollout_context,
-)
 from .controller import (
     AskResult,
     LinkedEvent,
@@ -58,21 +51,54 @@ from .inference import (
     QueryAnswer,
     QueryKind,
     RTCInferenceConfig,
-    RTCInferenceEngine,
     SyncInferenceConfig,
-    SyncInferenceEngine,
     create_inference_engine,
 )
 from .interactive import InteractiveSession
-from .strategies import (
-    BaseStrategy,
-    DAggerStrategy,
-    EpisodicStrategy,
-    HighlightStrategy,
-    RolloutStrategy,
-    SentryStrategy,
-    create_strategy,
-)
+
+# These import torch, the dataset stack and the processors, so each is imported the first time it is used.
+if TYPE_CHECKING:
+    from .context import (
+        DatasetContext,
+        HardwareContext,
+        PolicyContext,
+        ProcessorContext,
+        RolloutContext,
+        RuntimeContext,
+        build_rollout_context,
+    )
+    from .inference import RTCInferenceEngine, SyncInferenceEngine
+    from .strategies import (
+        BaseStrategy,
+        DAggerStrategy,
+        EpisodicStrategy,
+        HighlightStrategy,
+        RolloutStrategy,
+        SentryStrategy,
+        create_strategy,
+    )
+else:
+    __getattr__, __dir__ = lazy_exports(
+        __name__,
+        {
+            "DatasetContext": ".context.DatasetContext",
+            "HardwareContext": ".context.HardwareContext",
+            "PolicyContext": ".context.PolicyContext",
+            "ProcessorContext": ".context.ProcessorContext",
+            "RolloutContext": ".context.RolloutContext",
+            "RuntimeContext": ".context.RuntimeContext",
+            "build_rollout_context": ".context.build_rollout_context",
+            "RTCInferenceEngine": ".inference.RTCInferenceEngine",
+            "SyncInferenceEngine": ".inference.SyncInferenceEngine",
+            "BaseStrategy": ".strategies.BaseStrategy",
+            "DAggerStrategy": ".strategies.DAggerStrategy",
+            "EpisodicStrategy": ".strategies.EpisodicStrategy",
+            "HighlightStrategy": ".strategies.HighlightStrategy",
+            "RolloutStrategy": ".strategies.RolloutStrategy",
+            "SentryStrategy": ".strategies.SentryStrategy",
+            "create_strategy": ".strategies.create_strategy",
+        },
+    )
 
 __all__ = [
     "AskResult",

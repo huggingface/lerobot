@@ -119,6 +119,12 @@ class ProcessorStepRegistry:
             KeyError: If the name is not found in the registry.
         """
         if name not in cls._registry:
+            # A policy's steps register when its package is imported, and a saved pipeline records only the
+            # step name, so import the built-in policies before giving up.
+            from lerobot.configs.policies import PreTrainedConfig
+
+            PreTrainedConfig.load_all_choices()
+        if name not in cls._registry:
             available = list(cls._registry.keys())
             raise KeyError(
                 f"Processor step '{name}' not found in registry. "
