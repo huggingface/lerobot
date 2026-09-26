@@ -227,7 +227,7 @@ class RecordConfig:
 @safe_stop_image_writer
 def record_loop(
     robot: Robot,
-    events: dict,
+    events: dict[str, bool],
     fps: int,
     teleop_action_processor: RobotProcessorPipeline[
         tuple[RobotAction, RobotObservation], RobotAction
@@ -240,13 +240,13 @@ def record_loop(
     ],  # runs after robot
     dataset: LeRobotDataset | None = None,
     teleop: Teleoperator | list[Teleoperator] | None = None,
-    control_time_s: int | None = None,
+    control_time_s: float | None = None,
     single_task: str | None = None,
     display_data: bool = False,
     display_mode: str = "rerun",
     display_compressed_images: bool = False,
     timer: CycleTimer | None = None,
-):
+) -> None:
     """Drive the robot from the teleoperator at *fps*, optionally recording each frame.
 
     *timer* lets a caller that runs several phases — :func:`record` records one episode
@@ -258,8 +258,11 @@ def record_loop(
     """
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
+    if control_time_s is None:
+        raise ValueError("`control_time_s` is required: it is how long the loop runs.")
 
-    teleop_arm = teleop_keyboard = None
+    # Multi-teleop is LeKiwi-only: one arm leader plus a keyboard that drives the base.
+    multi_teleop: tuple[Teleoperator, KeyboardTeleop] | None = None
     if isinstance(teleop, list):
         teleop_keyboard = next((t for t in teleop if isinstance(t, KeyboardTeleop)), None)
         teleop_arm = next(
@@ -283,12 +286,13 @@ def record_loop(
             raise ValueError(
                 "For multi-teleop, the list must contain exactly one KeyboardTeleop and one arm teleoperator. Currently only supported for LeKiwi robot."
             )
+        multi_teleop = (teleop_arm, teleop_keyboard)
 
     if timer is None:
         timer = CycleTimer(fps, records_data=dataset is not None)
 
     no_action_count = 0
-    timestamp = 0
+    timestamp = 0.0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
         # Checked before `tick()`: this iteration is not a control tick, so it should not
@@ -322,11 +326,12 @@ def record_loop(
                 action_values = act_processed_teleop
                 robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
 
-            elif isinstance(teleop, list):
-                arm_action = teleop_arm.get_action()
+            elif multi_teleop is not None:
+                arm_teleop, keyboard_teleop = multi_teleop
+                arm_action = arm_teleop.get_action()
                 arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
-                keyboard_action = teleop_keyboard.get_action()
-                base_action = robot._from_keyboard_to_base_action(keyboard_action)
+                keyboard_action = keyboard_teleop.get_action()
+                base_action = robot._from_keyboard_to_base_action(keyboard_action)  # type: ignore[attr-defined]
                 act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
                 act_processed_teleop = teleop_action_processor((act, obs))
                 action_values = act_processed_teleop
@@ -460,6 +465,7 @@ def record(
                     "lerobot-record is for data collection only. Use lerobot-rollout for policy deployment."
                 )
             cfg.dataset.stamp_repo_id()
+            num_cameras = len(robot.cameras)  # type: ignore[attr-defined]
             dataset = LeRobotDataset.create(
                 cfg.dataset.repo_id,
                 cfg.dataset.fps,
@@ -468,7 +474,7 @@ def record(
                 features=dataset_features,
                 use_videos=cfg.dataset.video,
                 image_writer_processes=cfg.dataset.num_image_writer_processes,
-                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
+                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * num_cameras,
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
                 rgb_encoder=cfg.dataset.rgb_encoder,
                 depth_encoder=cfg.dataset.depth_encoder,

@@ -156,7 +156,7 @@ def resolve_wan_dit_paths(
 
 
 def load_wan_video_dit(
-    paths: list[str | Path],
+    paths: Sequence[str | Path],
     *,
     dit_config: dict[str, Any],
     torch_dtype: torch.dtype,
@@ -168,7 +168,7 @@ def load_wan_video_dit(
     return model.to(device=device, dtype=torch_dtype)
 
 
-def _read_wan_dit_safetensors(paths: list[str | Path]) -> dict[str, torch.Tensor]:
+def _read_wan_dit_safetensors(paths: Sequence[str | Path]) -> dict[str, torch.Tensor]:
     state_dict = {}
     for path in paths:
         state_dict.update(load_file(str(path), device="cpu"))

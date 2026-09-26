@@ -39,8 +39,10 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
+pytestmark = pytest.mark.multigpu
 
-def get_num_available_gpus():
+
+def get_num_available_gpus() -> int:
     """Returns the number of available GPUs."""
     if not torch.cuda.is_available():
         return 0
@@ -60,13 +62,19 @@ def download_dataset(repo_id, episodes):
     print(f"Dataset {repo_id} downloaded successfully")
 
 
-def run_accelerate_training(config_args, num_processes=4):
+def run_accelerate_training(
+    config_args: list[str], num_processes: int = 2
+) -> subprocess.CompletedProcess[str]:
     """
     Helper function to run training with accelerate launch.
 
     `accelerate launch` is used as a plain launcher (no `--config_file`): it only sets the
     rendezvous env vars, and the layout — DDP by default, FSDP with `--parallelism.dp_shard` —
     comes from `config_args`.
+
+    The launched ranks see exactly `num_processes` GPUs: the first `num_processes` entries of
+    `CUDA_VISIBLE_DEVICES` when the runner pre-sets it (a shared runner may expose a job's GPU
+    subset that way), otherwise devices `0..num_processes-1`.
 
     Args:
         config_args: List of config arguments to pass to lerobot_train.py
@@ -75,6 +83,13 @@ def run_accelerate_training(config_args, num_processes=4):
     Returns:
         subprocess.CompletedProcess result
     """
+    available = get_num_available_gpus()
+    if num_processes > available:
+        pytest.fail(f"Requested {num_processes} processes but only {available} GPUs are visible")
+
+    preset = os.environ.get("CUDA_VISIBLE_DEVICES")
+    devices = preset.split(",") if preset else [str(i) for i in range(num_processes)]
+
     cmd = [
         "accelerate",
         "launch",
@@ -87,7 +102,7 @@ def run_accelerate_training(config_args, num_processes=4):
         cmd,
         capture_output=True,
         text=True,
-        env={**os.environ, "CUDA_VISIBLE_DEVICES": ",".join(map(str, range(num_processes)))},
+        env={**os.environ, "CUDA_VISIBLE_DEVICES": ",".join(devices[:num_processes])},
     )
 
     return result
@@ -127,7 +142,7 @@ class TestMultiGPUTraining:
                 "--num_workers=0",
             ]
 
-            result = run_accelerate_training(config_args, num_processes=4)
+            result = run_accelerate_training(config_args, num_processes=2)
 
             # Check that training completed successfully
             assert result.returncode == 0, (

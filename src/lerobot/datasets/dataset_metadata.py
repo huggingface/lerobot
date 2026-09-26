@@ -58,6 +58,8 @@ from .utils import (
 )
 from .video_utils import get_video_info
 
+logger = logging.getLogger(__name__)
+
 CODEBASE_VERSION = "v3.0"
 
 
@@ -79,7 +81,7 @@ class LeRobotDatasetMetadata:
         *,
         repo_type: Literal["dataset", "bucket"] = "dataset",
         token: str | bool | None = None,
-    ):
+    ) -> None:
         """Load or download metadata for an existing LeRobot dataset.
 
         Attempts to load metadata from local disk. If files are missing or
@@ -112,7 +114,7 @@ class LeRobotDatasetMetadata:
 
         self.repo_id = repo_id
         self.repo_type = repo_type
-        self.revision = revision if revision else CODEBASE_VERSION
+        self.revision: str | None = revision if revision else CODEBASE_VERSION
         self._requested_root = Path(root) if root is not None else None
         if self._requested_root is not None:
             self.root = self._requested_root
@@ -120,8 +122,8 @@ class LeRobotDatasetMetadata:
             self.root = HF_LEROBOT_HUB_CACHE / ("buckets--" + self.repo_id.replace("/", "--"))
         else:
             self.root = HF_LEROBOT_HOME / repo_id
-        self._pq_writer = None
-        self.latest_episode = None
+        self._pq_writer: pq.ParquetWriter | None = None
+        self.latest_episode: dict | None = None
         self._metadata_buffer: list[dict] = []
         self._metadata_buffer_size = metadata_buffer_size
         self._finalized = False
@@ -153,7 +155,7 @@ class LeRobotDatasetMetadata:
         if not hasattr(self, "_metadata_buffer") or len(self._metadata_buffer) == 0:
             return
 
-        combined_dict = {}
+        combined_dict: dict[str, list] = {}
         for episode_dict in self._metadata_buffer:
             for key, value in episode_dict.items():
                 if key not in combined_dict:
@@ -345,6 +347,7 @@ class LeRobotDatasetMetadata:
 
         Raises:
             IndexError: If ``ep_index`` is out of range.
+            ValueError: If the dataset stores no videos (no ``video_path`` template).
         """
         if self.episodes is None:
             self.episodes = load_episodes(self.root)
@@ -355,7 +358,10 @@ class LeRobotDatasetMetadata:
         ep = self.episodes[ep_index]
         chunk_idx = ep[f"videos/{vid_key}/chunk_index"]
         file_idx = ep[f"videos/{vid_key}/file_index"]
-        fpath = self.video_path.format(video_key=vid_key, chunk_index=chunk_idx, file_index=file_idx)
+        video_path_template = self.video_path
+        if video_path_template is None:
+            raise ValueError(f"Dataset '{self.repo_id}' has no video_path template: it stores no videos.")
+        fpath = video_path_template.format(video_key=vid_key, chunk_index=chunk_idx, file_index=file_idx)
         return Path(fpath)
 
     @property
@@ -420,7 +426,7 @@ class LeRobotDatasetMetadata:
             key for key in self.depth_keys if (self.features[key].get("info") or {}).get("depth_unit") is None
         ]
         if missing_unit_keys:
-            logging.warning(
+            logger.warning(
                 f"Depth feature(s) {missing_unit_keys} have no recorded 'depth_unit' in their info. "
                 f"Depth maps and stats for these keys will be returned AS IS, with no unit conversion "
                 f"to the requested output unit {output_unit!r}. Re-record the dataset or set 'depth_unit' "
@@ -707,11 +713,16 @@ class LeRobotDatasetMetadata:
             raise ValueError(f"Video key {video_key} not found in dataset")
 
         video_keys = [video_key] if video_key is not None else self.video_keys
+        if not video_keys:
+            return
+        video_path_template = self.video_path
+        if video_path_template is None:
+            raise ValueError(f"Dataset '{self.repo_id}' has no video_path template: it stores no videos.")
         preserve_set = set(preserve_keys or ())
         for key in video_keys:
             feature = self.info.features[key]
             existing = feature.get("info") or {}
-            video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
+            video_path = self.root / video_path_template.format(video_key=key, chunk_index=0, file_index=0)
             new_info = get_video_info(video_path, video_encoder=video_encoder)
             # Drop preserved keys so the existing values win on merge.
             new_info = {k: v for k, v in new_info.items() if k not in preserve_set}
@@ -724,7 +735,7 @@ class LeRobotDatasetMetadata:
             )
             canonicalize_depth_marker(feature)
             if had_legacy:
-                logging.warning(f"Migrated legacy depth marker to 'is_depth_map' for feature {key!r}.")
+                logger.warning(f"Migrated legacy depth marker to 'is_depth_map' for feature {key!r}.")
 
     def update_chunk_settings(
         self,

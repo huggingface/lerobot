@@ -61,10 +61,9 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
-    batch_to_transition,
+    load_pretrained_policy_processors,
     policy_action_to_transition,
     to_relative_actions,
-    transition_to_batch,
     transition_to_policy_action,
 )
 from lerobot.utils.constants import (
@@ -166,10 +165,11 @@ def _load_n1_7_checkpoint_processor_assets(config: GrootConfig) -> _GrootN17Chec
     can keep using caller-provided dataset stats and config values.
     """
 
-    if not is_raw_groot_n1_7_checkpoint(config.base_model_path):
+    base_model_path = config.base_model_path
+    if base_model_path is None or not is_raw_groot_n1_7_checkpoint(base_model_path):
         return None
 
-    checkpoint_path = Path(config.base_model_path).expanduser()
+    checkpoint_path = Path(base_model_path).expanduser()
     processor_config = read_json(checkpoint_path / "processor_config.json")
     processor_kwargs = processor_config.get("processor_kwargs", {})
     if not isinstance(processor_kwargs, dict):
@@ -510,7 +510,10 @@ def make_groot_pre_post_processors_from_pretrained(
         _apply_groot_action_decode_transform(postprocessor, config.action_decode_transform)
         return preprocessor, postprocessor
 
-    preprocessor, postprocessor = _load_groot_processor_pipelines(
+    # Register the GR00T N1.5 rejection stubs before deserializing, so a saved N1.5 pipeline
+    # referencing their registry names fails with the canonical removal guidance.
+    _register_removed_n1_5_step_stubs()
+    preprocessor, postprocessor = load_pretrained_policy_processors(
         pretrained_path,
         revision=revision,
         preprocessor_overrides=preprocessor_overrides,
@@ -518,61 +521,10 @@ def make_groot_pre_post_processors_from_pretrained(
         preprocessor_config_filename=preprocessor_config_filename,
         postprocessor_config_filename=postprocessor_config_filename,
     )
-    _reconnect_groot_relative_absolute_steps(preprocessor, postprocessor)
     _reconnect_groot_n1_7_pack_decode_steps(preprocessor, postprocessor)
     _apply_groot_action_decode_transform(postprocessor, config.action_decode_transform)
     _set_groot_preprocessor_training(preprocessor, training=dataset_meta is not None)
     return preprocessor, postprocessor
-
-
-def _load_groot_processor_pipelines(
-    pretrained_path: str,
-    *,
-    revision: str | None,
-    preprocessor_overrides: dict[str, Any],
-    postprocessor_overrides: dict[str, Any],
-    preprocessor_config_filename: str,
-    postprocessor_config_filename: str,
-) -> tuple[
-    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
-]:
-    # Register the GR00T N1.5 rejection stubs before deserializing, so a saved N1.5 pipeline
-    # referencing their registry names fails with the canonical removal guidance.
-    _register_removed_n1_5_step_stubs()
-    preprocessor = PolicyProcessorPipeline.from_pretrained(
-        pretrained_model_name_or_path=pretrained_path,
-        config_filename=preprocessor_config_filename,
-        revision=revision,
-        overrides=preprocessor_overrides,
-        to_transition=batch_to_transition,
-        to_output=transition_to_batch,
-    )
-    postprocessor = PolicyProcessorPipeline.from_pretrained(
-        pretrained_model_name_or_path=pretrained_path,
-        config_filename=postprocessor_config_filename,
-        revision=revision,
-        overrides=postprocessor_overrides,
-        to_transition=policy_action_to_transition,
-        to_output=transition_to_policy_action,
-    )
-    return preprocessor, postprocessor
-
-
-def _reconnect_groot_relative_absolute_steps(
-    preprocessor: PolicyProcessorPipeline,
-    postprocessor: PolicyProcessorPipeline,
-) -> None:
-    relative_step = next(
-        (step for step in preprocessor.steps if isinstance(step, RelativeActionsProcessorStep)),
-        None,
-    )
-    if relative_step is None:
-        return
-
-    for step in postprocessor.steps:
-        if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
-            step.relative_step = relative_step
 
 
 def _reconnect_groot_n1_7_pack_decode_steps(
@@ -1007,8 +959,11 @@ def _build_n1_7_relative_action_processor_assets(
     if not config.use_relative_actions or not dataset_stats:
         return None
 
+    output_features = config.output_features
+    if output_features is None:
+        return None
     try:
-        action_dim = int(config.output_features[ACTION].shape[0])
+        action_dim = int(output_features[ACTION].shape[0])
     except Exception:
         return None
 
@@ -1207,8 +1162,9 @@ def make_groot_pre_post_processors(
     formalize_language = checkpoint_assets.formalize_language if checkpoint_assets is not None else True
     clip_outliers = checkpoint_assets.clip_outliers if checkpoint_assets is not None else True
     video_modality_keys = checkpoint_assets.video_modality_keys if checkpoint_assets is not None else None
+    output_features = config.output_features
     try:
-        env_action_dim = int(config.output_features[ACTION].shape[0])
+        env_action_dim = int(output_features[ACTION].shape[0]) if output_features is not None else 0
     except Exception:
         env_action_dim = 0
     pack_step = GrootN17PackInputsStep(
@@ -1251,6 +1207,10 @@ def make_groot_pre_post_processors(
         crop_fraction = None
     use_albumentations = checkpoint_assets.use_albumentations if checkpoint_assets is not None else False
     letter_box_transform = checkpoint_assets.letter_box_transform if checkpoint_assets is not None else False
+    if config.device is None:
+        raise ValueError(
+            "GR00T processors require `config.device`; `PreTrainedConfig.__post_init__` resolves it."
+        )
 
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),
