@@ -492,6 +492,23 @@ def test_render_sample_rejects_non_dict_language_rows():
         )
 
 
+def test_explicit_task_sampling_uses_annotations_while_default_keeps_runtime_task():
+    goals = ["Put the block in the bin.", "Move the block into the bin."]
+    rows = [{"role": "user", "content": goal, "style": "task_aug", "timestamp": 0.0} for goal in goals]
+    messages = [{"role": "user", "content": "${task}", "stream": "low_level"}]
+    for explicit in (False, True):
+        recipe = TrainingRecipe.from_dict(
+            {"messages": messages, **({"bindings": {"task": "sample_task()"}} if explicit else {})}
+        )
+        prompts = {
+            render_sample(
+                recipe=recipe, persistent=rows, events=[], t=0.0, sample_idx=index, task="Runtime task"
+            )["messages_rendered"][0]["content"]
+            for index in range(100)
+        }
+        assert prompts == (set(goals) if explicit else {"Runtime task"})
+
+
 def test_low_level_branch_renders_active_subtask():
     low_level = TrainingRecipe(
         blend={

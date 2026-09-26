@@ -155,6 +155,20 @@ The loss weights are starting points, not dataset-independent constants. Track
 flow loss and text/FAST losses separately, and inspect generated subtasks rather
 than selecting a checkpoint from total loss alone.
 
+For conditioning-gradient spikes, opt in to a separate time-MLP/adaptive-normalization
+group with `policy.conditioning_lr_scale` (default `1.0`) and
+`policy.conditioning_grad_clip_norm` (default `None`).
+`policy.action_expert_grad_clip_norm` independently limits the remaining expert
+group. Group clipping runs before global clipping, measures norms in float64,
+and rejects nonfinite gradients before updating the optimizer. It supports
+single-device and DDP FP32/BF16 training without a GradScaler, not sharded training.
+These controls contain spikes; they do not establish their underlying cause.
+
+To explicitly sample stored `task_aug` annotations during training even when the
+dataset supplies a canonical task, set the recipe binding `task: sample_task()`.
+Sampling is deterministic by frame index. Recipes without this binding retain
+the default behavior in which runtime task overrides take precedence.
+
 ### Dataset-specific FAST tokenizer
 
 The universal FAST tokenizer works out of the box. Dataset-specific fitting is
@@ -226,7 +240,10 @@ multimodal prefix:
 
 1. **Action denoising** encodes the image/language prefix once, reuses its KV
    cache across flow steps, constructs action-suffix masks on-device, and
-   crops temporary suffix K/V instead of cloning the prefix cache.
+   crops temporary suffix K/V instead of cloning the prefix cache. It creates
+   the timestep schedule on the device once per chunk, preserving the historical
+   timestep arithmetic. This implementation detail does not establish an
+   end-to-end speedup without benchmarking.
 2. **Language decoding** uses autoregressive KV caching, so each new token only
    processes the sampled token against cached image/language keys instead of
    rerunning the full prefix.

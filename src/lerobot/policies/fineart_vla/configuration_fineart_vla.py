@@ -15,6 +15,7 @@
 """FineART-VLA, built on Physical Intelligence's pi0.5 and openpi implementation."""
 
 import logging
+import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -151,6 +152,14 @@ class FineARTVLAConfig(PI05Config):
     backbone_lr_scale: float = 1.0
     action_expert_lr_scale: float = 1.0
 
+    # Opt-in stabilization: leave saved checkpoints and default training unchanged.
+    conditioning_lr_scale: float = 1.0
+    """Additional LR multiplier for time MLPs and adaptive scale/shift/gate projections."""
+
+    conditioning_grad_clip_norm: float | None = None
+    action_expert_grad_clip_norm: float | None = None
+    """Independent group limits before global clipping; supported on single-device/DDP training."""
+
     # Reuse each VLM prefix across independent denoising draws; 1 restores single-draw flow.
     flow_num_repeats: int = 5
 
@@ -166,6 +175,12 @@ class FineARTVLAConfig(PI05Config):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        if not math.isfinite(self.conditioning_lr_scale) or self.conditioning_lr_scale < 0:
+            raise ValueError("conditioning_lr_scale must be finite and nonnegative")
+        for name in ("conditioning_grad_clip_norm", "action_expert_grad_clip_norm"):
+            value = getattr(self, name)
+            if value is not None and (not math.isfinite(value) or value <= 0):
+                raise ValueError(f"{name} must be finite and positive")
         if self.recipe_path is not None:
             from lerobot.datasets.recipe import resolve_recipe_override
 

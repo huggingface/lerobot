@@ -301,7 +301,7 @@ def _resolve_bindings(
     for name, spec in specs.items():
         if name not in needed:
             continue
-        bindings[name] = _resolve_spec(spec, persistent=persistent, events=events, t=t)
+        bindings[name] = _resolve_spec(spec, persistent=persistent, events=events, t=t, sample_idx=sample_idx)
     return bindings
 
 
@@ -355,7 +355,8 @@ def _resolve_spec(
     persistent: Sequence[LanguageRow],
     events: Sequence[LanguageRow],
     t: float,
-) -> LanguageRow | None:
+    sample_idx: int = 0,
+) -> LanguageRow | str | None:
     """Parse a single binding's resolver expression and dispatch to its function."""
     match = _RESOLVER_RE.match(spec.strip())
     if match is None:
@@ -364,6 +365,13 @@ def _resolve_spec(
     kwargs = _parse_resolver_args(match.group("args"))
     kwargs.pop("t_arg", None)
 
+    if name == "sample_task":
+        if kwargs or match.group("args").strip():
+            raise ValueError("sample_task() takes no arguments")
+        # Explicit training binding: use stored augmentations even when the
+        # dataset supplies a canonical task. Runtime task overrides still win
+        # in the default resolver; this changes only recipes opting in here.
+        return _resolve_task(None, None, persistent=persistent, sample_idx=sample_idx)
     if name == "emitted_at":
         return emitted_at(t, persistent=persistent, events=events, **kwargs)
     if name == "active_at":

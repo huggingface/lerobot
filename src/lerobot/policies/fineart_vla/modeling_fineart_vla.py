@@ -180,8 +180,10 @@ class PI05Pytorch(PI05PytorchBase):  # see openpi `PI0Pytorch`
         finally:
             self._lang_causal_marks = None
 
-    def embed_prefix(self, images, img_masks, tokens, masks):
-        prefix_embs, prefix_pad, prefix_att = super().embed_prefix(images, img_masks, tokens, masks)
+    def embed_prefix(self, images, img_masks, tokens, masks, states=None, state_masks=None):
+        prefix_embs, prefix_pad, prefix_att = super().embed_prefix(
+            images, img_masks, tokens, masks, states, state_masks
+        )
         marks = getattr(self, "_lang_causal_marks", None)
         if marks is not None:
             prefix_att = _apply_causal_language_marks(prefix_att, marks.to(prefix_att.device))
@@ -1691,16 +1693,28 @@ class FineARTVLAPolicy(PI05Policy):
         ``action_expert_lr_scale`` (the Gemma expert + action/time projection
         heads). The cosine scheduler multiplies every group by the same lambda
         each step so the ratios are preserved across decay. AdamW backend
-        options stay in these policy-local parameter groups.
+        options stay in these policy-local parameter groups. Optional conditioning
+        controls split time MLPs and adaptive normalization projections from the
+        expert; their LR is additionally multiplied by ``conditioning_lr_scale``.
         """
         head_scale = float(getattr(self.config, "lm_head_lr_scale", 1.0))
         backbone_scale = float(getattr(self.config, "backbone_lr_scale", 1.0))
         expert_scale = float(getattr(self.config, "action_expert_lr_scale", 1.0))
+        conditioning_scale = self.config.conditioning_lr_scale
+        conditioning_limit = self.config.conditioning_grad_clip_norm
+        expert_limit = self.config.action_expert_grad_clip_norm
+        split_conditioning = conditioning_scale != 1.0 or conditioning_limit is not None
         backend = {
             "foreach": getattr(self.config, "optimizer_foreach", False),
             "fused": getattr(self.config, "optimizer_fused", True),
         }
-        if head_scale == 1.0 and backbone_scale == 1.0 and expert_scale == 1.0:
+        if (
+            head_scale == 1.0
+            and backbone_scale == 1.0
+            and expert_scale == 1.0
+            and not split_conditioning
+            and expert_limit is None
+        ):
             return [{"params": self.parameters(), **backend}]
 
         # Keep the tied LM projection and embeddings in the same optimizer group.
@@ -1712,6 +1726,7 @@ class FineARTVLAPolicy(PI05Policy):
         head_params: list[torch.nn.Parameter] = []
         backbone_params: list[torch.nn.Parameter] = []
         expert_params: list[torch.nn.Parameter] = []
+        conditioning_params: list[torch.nn.Parameter] = []
         for name, p in self.named_parameters():
             if not p.requires_grad:
                 continue
@@ -1719,6 +1734,21 @@ class FineARTVLAPolicy(PI05Policy):
                 head_params.append(p)
             elif backbone_substring in name:
                 backbone_params.append(p)
+            elif split_conditioning and (
+                name.startswith(("model.time_mlp_in.", "model.time_mlp_out."))
+                or (
+                    "paligemma_with_expert.gemma_expert." in name
+                    and any(
+                        part in name
+                        for part in (
+                            ".input_layernorm.dense.",
+                            ".post_attention_layernorm.dense.",
+                            ".norm.dense.",
+                        )
+                    )
+                )
+            ):
+                conditioning_params.append(p)
             else:
                 expert_params.append(p)
         base_lr = float(self.config.optimizer_lr)
@@ -1726,7 +1756,25 @@ class FineARTVLAPolicy(PI05Policy):
         if backbone_params:
             groups.append({"params": backbone_params, "lr": base_lr * backbone_scale, "name": "backbone"})
         if expert_params:
-            groups.append({"params": expert_params, "lr": base_lr * expert_scale, "name": "action_expert"})
+            groups.append(
+                {
+                    "params": expert_params,
+                    "lr": base_lr * expert_scale,
+                    "name": "action_expert",
+                    "grad_clip_norm": expert_limit,
+                }
+            )
+        if conditioning_params:
+            groups.append(
+                {
+                    "params": conditioning_params,
+                    "lr": base_lr * expert_scale * conditioning_scale,
+                    "name": "conditioning",
+                    "grad_clip_norm": conditioning_limit,
+                }
+            )
+        elif split_conditioning:
+            raise RuntimeError("Conditioning stabilization requested but no conditioning parameters matched")
         if head_params:
             groups.append({"params": head_params, "lr": base_lr * head_scale, "name": "lm_head"})
         # Sanity: a non-trivial head scale that matches no params would silently
@@ -1753,6 +1801,13 @@ class FineARTVLAPolicy(PI05Policy):
         )
         for group in groups:
             group.update(backend)
+            if group.get("grad_clip_norm") is not None or group["name"] == "conditioning":
+                logger.info(
+                    "FineARTVLA %s: lr=%g, pre-global gradient limit=%s",
+                    group["name"],
+                    group["lr"],
+                    group.get("grad_clip_norm"),
+                )
         return groups
 
     @torch.no_grad()

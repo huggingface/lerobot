@@ -70,6 +70,7 @@ def euler_integrate(
     execution_horizon: int | None = None,
     hard_prefix: Tensor | None = None,
     hard_prefix_mask: Tensor | None = None,
+    precompute_times: bool = False,
 ) -> Tensor:
     """Forward-Euler integration of a velocity field from t=1 (noise) to t=0 (actions).
 
@@ -93,15 +94,25 @@ def euler_integrate(
         execution_horizon: RTC guidance parameter, forwarded verbatim.
         hard_prefix: Optional clean action prefix to clamp throughout denoising.
         hard_prefix_mask: Boolean mask selecting the values clamped from ``hard_prefix``.
+        precompute_times: Create the float32 timestep schedule on the target device once,
+            avoiding a scalar tensor allocation/host transfer in each denoising step.
+            Uses the same Python scalar arithmetic as the historical loop.
     """
     bsize = noise.shape[0]
     device = noise.device
 
     dt = -1.0 / num_steps
+    times = (
+        torch.tensor([1.0 + step * dt for step in range(num_steps)], dtype=torch.float32, device=device)
+        if precompute_times
+        else None
+    )
     x_t = noise
     for step in range(num_steps):
         time = 1.0 + step * dt
-        time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
+        time_tensor = (
+            times[step] if times is not None else torch.tensor(time, dtype=torch.float32, device=device)
+        ).expand(bsize)
 
         if hard_prefix is not None:
             if hard_prefix_mask is None:
