@@ -16,6 +16,7 @@ import os
 import shutil
 import threading
 import weakref
+import zipfile
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -535,6 +536,57 @@ def test_invalid_build_preserves_previous_source_and_mapped_generation(tmp_path:
     np.testing.assert_array_equal(next(iter(old.values())).mp4.sample_pts, [0.0])
     assert len(list((tmp_path / "cache-home").glob("**/*.bin"))) == 1
     assert not list((tmp_path / "cache-home").glob("**/*.index.tmp"))
+
+
+def test_parallel_mapping_protects_legacy_zip_relative_seeks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Older Python ZIP readers must not seek relative to another worker's position."""
+    path = tmp_path / "index.npz"
+    EpisodeVideoManifest.save_file_sidecar(path, [_record(f"{i}.mp4") for i in range(12)], spec=_spec())
+    serial, _ = _mapped_index.mapped_sidecar(path, workers=1)
+    original_seek = zipfile._SharedFile.seek
+    relative_seeks = []
+
+    def legacy_seek(shared: Any, offset: int, whence: int = os.SEEK_SET) -> int:
+        if whence != os.SEEK_CUR:
+            return original_seek(shared, offset, whence)
+        if threading.current_thread().name.startswith("sidecar-index"):
+            assert shared._lock._is_owned(), "ZIP header reads must hold the shared source lock"
+            relative_seeks.append(offset)
+        # Python 3.12.3 seeks relative to the descriptor, not the member's saved
+        # position. Holding the source lock across open prevents interleaving.
+        with shared._lock:
+            shared._file.seek(offset, whence)
+            shared._pos = shared._file.tell()
+            return shared._pos
+
+    monkeypatch.setattr(zipfile._SharedFile, "seek", legacy_seek)
+    monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path / "parallel"))
+    parallel, _ = _mapped_index.mapped_sidecar(path, workers=4)
+    assert relative_seeks
+    assert parallel.read_bytes() == serial.read_bytes()
+
+
+def test_parallel_mapping_decompresses_outside_source_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Protect header reads without serializing independent array decompression."""
+    path = tmp_path / "index.npz"
+    EpisodeVideoManifest.save_file_sidecar(path, [_record(f"{i}.mp4") for i in range(2)], spec=_spec())
+    serial, _ = _mapped_index.mapped_sidecar(path, workers=1)
+    original_read = np.lib.format.read_array
+    overlap = threading.Barrier(2)
+
+    def read_array(member: Any, *args: Any, **kwargs: Any) -> np.ndarray:
+        if getattr(member, "name", None) in {"0/sample_pts.npy", "1/sample_pts.npy"}:
+            overlap.wait(timeout=5)
+        return original_read(member, *args, **kwargs)
+
+    monkeypatch.setattr(np.lib.format, "read_array", read_array)
+    monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path / "parallel"))
+    parallel, _ = _mapped_index.mapped_sidecar(path, workers=2)
+    assert parallel.read_bytes() == serial.read_bytes()
 
 
 def test_parallel_mapping_is_ordered_and_matches_serial_bytes(

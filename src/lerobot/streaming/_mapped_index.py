@@ -118,7 +118,12 @@ def _read_arrays(archive: ZipFile, file_index: int, item: dict[str, Any]) -> dic
     """Read numeric members directly, without NpzFile's linear filename searches."""
     arrays = {}
     for name in ARRAY_NAMES:
-        with archive.open(f"{file_index}/{name}.npy") as member:
+        # Older Python ZIP readers seek relative to the shared descriptor while
+        # opening ZIP64 headers. Hold their own source lock across that sequence
+        # so other headers or payload reads cannot move it; decompress unlocked.
+        with archive._lock:
+            member = archive.open(f"{file_index}/{name}.npy")
+        with member:
             arrays[name] = np.lib.format.read_array(member, allow_pickle=False)
     _validate_arrays(arrays)
     Mp4Index.from_dict(item["mp4"], arrays)
