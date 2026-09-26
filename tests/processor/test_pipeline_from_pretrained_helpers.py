@@ -31,9 +31,11 @@ import torch
 from huggingface_hub import hf_hub_download
 from safetensors.torch import save_file
 
+import lerobot.policies
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition
 from lerobot.processor.pipeline import (
+    BUILTIN_STEP_MODULES,
     DataProcessorPipeline,
     ProcessorMigrationError,
     ProcessorStep,
@@ -361,6 +363,15 @@ def test_resolve_step_class_registry_name_not_found():
 
     with pytest.raises(ImportError, match="Failed to load processor step from registry"):
         DataProcessorPipeline._resolve_step_class(step_entry)
+
+
+def test_resolve_step_class_names_a_builtin_step_whose_module_fails_to_import(tmp_path, monkeypatch):
+    (tmp_path / "broken_step_module.py").write_text("import missing_dependency\n")
+    monkeypatch.setattr(lerobot.policies, "__path__", [*lerobot.policies.__path__, str(tmp_path)])
+    monkeypatch.setitem(BUILTIN_STEP_MODULES, "broken_step", "policies.broken_step_module")
+
+    with pytest.raises(ImportError, match="'broken_step'.*missing_dependency"):
+        DataProcessorPipeline._resolve_step_class({"registry_name": "broken_step"})
 
 
 def test_resolve_step_class_import_path():

@@ -18,6 +18,10 @@
 # from lerobot.utils.import_utils import require_package
 # require_package("gymnasium", extra="<update_extra>", import_name="gymnasium")
 
+from typing import TYPE_CHECKING
+
+from lerobot.utils.import_utils import lazy_exports
+
 from .configs import (
     AlohaEnvConfig,
     EnvClientConfig,
@@ -27,7 +31,25 @@ from .configs import (
     PushtEnvConfig,
 )
 from .factory import make_env, make_env_config, make_env_pre_post_processors
-from .utils import check_env_attributes_and_types, close_envs, env_to_policy_features, preprocess_observation
+
+# These import torch, so each is imported the first time it is used.
+if TYPE_CHECKING:
+    from .utils import (
+        check_env_attributes_and_types,
+        close_envs,
+        env_to_policy_features,
+        preprocess_observation,
+    )
+else:
+    __getattr__, __dir__ = lazy_exports(
+        __name__,
+        {
+            "check_env_attributes_and_types": ".utils.check_env_attributes_and_types",
+            "close_envs": ".utils.close_envs",
+            "env_to_policy_features": ".utils.env_to_policy_features",
+            "preprocess_observation": ".utils.preprocess_observation",
+        },
+    )
 
 __all__ = [
     "AlohaEnvConfig",
