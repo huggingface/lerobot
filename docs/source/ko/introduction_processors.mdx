@@ -1,0 +1,313 @@
+# 프로세서에 대한 서론
+
+로봇공학에서는 로봇과 인간이 생성하는 데이터와 머신러닝 모델이 기대하는 데이터는 근본적으로 다른 점이 있습니다.
+로봇은 카메라 이미지나 관절 위치와 같이 가공되지 않은 센서 데이터를 출력하며, 이 데이터를 모델에서 처리하기 위해선 정규화, 배치 처리 및 디바이스 할당이 필요합니다.
+인간이 내리는 언어 기반의 지시는 토큰화하여 수치적으로 표현되어야 하며, 각기 다른 로봇들은 표준화가 필요한 제각각의 좌표계를 사용합니다.
+
+이러한 문제는 모델 출력(Output)에서도 이어집니다.
+모델은 엔드 이펙터(end-effector) 위치를 출력하는 반면 로봇은 관절 공간(joint-space) 명령을 필요로 할 수 있고, 원격 조종자(teleoperator)는 상대값에 기반한 움직임을 생성하지만 로봇은 절대값에 기반한 움직임(명령)을 기대할 수 있습니다. 모델의 예측값은 대체로 정규화되어 있으므로 이를 다시 실제 세상의 척도로 변환해야 합니다.
+
+도메인 간 변환(Cross-domain translation)은 복잡성을 한층 더 가중시킵니다.
+한 로봇의 구조(setup)에서 얻은 학습 데이터는 다른 하드웨어에 배포하기 위해 적응 과정이 필요하며, 특정 카메라 설정(Configuration)으로 학습된 모델은 새로운 배치(arrangement)에서도 작동해야 합니다. 또한 명명 규칙이 다른 데이터셋들은 조화롭게 통일되어야 합니다.
+
+**바로 여기서 프로세서가 그 역할을 합니다.** 프로세서는 이러한 간극을 메우는 범용 변환기의 역할을 하며, 센서에서 모델, 그리고 액추에이터(구동기)로 데이터가 매끄럽게 흐르도록 보장합니다. 프로세서는 가공되지 않은 환경 데이터를 모델이 사용할 수 있는 입력으로 변환하고, 반대로 모델 출력을 환경 또는 로봇이 사용할 수 있는 형태로 변환하는 데 필요한 모든 전처리 및 후처리 절차를 처리합니다.
+
+이 말은 즉, 여러분이 선호하는 정책(Policy)을 다음과 같이 사용할 수 있다는 것을 의미합니다:
+
+```python
+import torch
+
+from lerobot.datasets import LeRobotDataset
+from lerobot.policies import make_pre_post_processors
+from lerobot.policies.your_policy import YourPolicy
+from lerobot.processor import RobotProcessorPipeline, PolicyProcessorPipeline
+dataset = LeRobotDataset("hf_user/dataset", episodes=[0])
+sample = dataset[10]
+
+model = YourPolicy.from_pretrained(
+    "hf_user/model",
+)
+model.eval()
+model.to("cuda")
+preprocessor, postprocessor = make_pre_post_processors(model.config, pretrained_path="hf_user/model", dataset_stats=dataset.meta.stats)
+
+preprocessed_sample = preprocessor(sample)
+action = model.select_action(preprocessed_sample)
+postprocessed_action = postprocessor(action)
+```
+
+## 프로세서란 무엇인가요?
+
+로봇공학에서 데이터는, 카메라로 찍은 이미지, 센서에서 얻은 관절의 위치, 사용자의 텍스트 기반 지시 등 다양한 형태로 제공됩니다. 각 데이터 유형은 특정한 변형을 거쳐야 모델에서 효율적으로 사용될 수 있습니다. 모델은 그 데이터가 다음과 같기를 요구합니다.
+
+- **정규화(Normalized)**: 신경망 처리에 적합한 범위로 스케일링됨
+- **배치 처리(Batched)**: 배치 처리를 위해 적절한 차원으로 구성됨
+- **토큰화(Tokenized)**: 텍스트가 수치적으로 표현됨
+- **디바이스 할당(Device-placed)**: 올바른 하드웨어(CPU/GPU)로 할당됨
+- **타입 전환(Type-converted)**: 적절한 데이터 타입으로 캐스팅됨
+
+프로세서는 이러한 변형을 조합 가능하고 재사용 가능한 절차들을 통해 처리하며, 이 절차들은 파이프라인으로 연결될 수 있습니다. 프로세서를 개별 데이터에 대해 특정 변형을 수행하는 작업대를 가진 모듈식 조립 라인이라고 생각하면 쉽습니다.
+
+## 핵심 개념
+
+### EnvTransition: 범용 데이터 컨테이너
+
+`EnvTransition`은 모든 프로세서를 거치는 기본 데이터 구조입니다. 로봇과 환경 간의 전체적인 상호작용을 나타내는 타입이 지정된 딕셔너리(Dictionary)입니다:
+
+- **OBSERVATION**: 모든 센서 데이터 (이미지, 상태, 고유 수용성 감각)
+- **ACTION**: 실행할 액션 또는 실행된 액션
+- **REWARD**: 강화 학습 신호
+- **DONE/TRUNCATED**: 에피소드 경계 지시자
+- **INFO**: 임의의 메타데이터
+- **COMPLEMENTARY_DATA**: 작업 설명, 인덱스, 패딩 플래그, 절차 간 데이터
+
+### ProcessorStep: 기본 요소
+
+`ProcessorStep`은 transition을 처리하는 단일 변형 단위입니다. `ProcessorStep`은 두 개의 필수 메서드를 갖는 추상 기반 클래스입니다.
+
+```python
+from lerobot.processor import ProcessorStep, EnvTransition
+
+class MyProcessorStep(ProcessorStep):
+    """프로세서 절차 예시 - 추상 클래스의 상속 및 적용."""
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """transition의 변형 - 필수 추상 메서드."""
+        # 처리 로직 작성란
+        return transition
+
+    def transform_features(self, features):
+        """이 절차의 feature의 형태/타입을 어떻게 변형하는지 선언 - 필수 추상 메서드."""
+        return features  # 대부분의 프로세서는 feature를 변경하지 않고 반환합니다.
+```
+
+`__call__`: 프로세서 절차의 핵심입니다. `EnvTransition`을 받아 수정된 `EnvTransition`을 반환합니다.
+
+`transform_features`: 이 절차에서 feature의 형태(shape)나 타입이 어떻게 변형되는지 선언하는 데 사용됩니다.
+
+### DataProcessorPipeline: 범용 오케스트레이터
+
+`DataProcessorPipeline[TInput, TOutput]`은 여러 `ProcessorStep` 인스턴스를 하나로 연결합니다:
+
+```python
+from lerobot.processor import RobotProcessorPipeline, PolicyProcessorPipeline
+
+# 로봇 하드웨어용 (비배치 데이터)
+robot_processor = RobotProcessorPipeline[RobotAction, RobotAction](
+    steps=[step1, step2, step3],
+    name="robot_pipeline"
+)
+
+# 모델 학습/추론용 (배치 데이터)
+policy_processor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
+    steps=[step1, step2, step3],
+    name="policy_pipeline"
+)
+
+## RobotProcessorPipeline vs PolicyProcessorPipeline
+
+주요 차이는 이들이 다루는 데이터 구조에 있습니다.
+
+| Aspect          | RobotProcessorPipeline                       | PolicyProcessorPipeline                  |
+| --------------- | -------------------------------------------- | ---------------------------------------- |
+| **Input**       | `dict[str, Any]` - Individual robot values   | `dict[str, Any]` - Batched tensors       |
+| **Output**      | `dict[str, Any]` - Individual robot commands | `torch.Tensor` - Policy predictions      |
+| **Use Case**    | Real-time robot control                      | Model training/inference                 |
+| **Data Format** | Unbatched, heterogeneous                     | Batched, homogeneous                     |
+| **Examples**    | `{"joint_1": 0.5}`                           | `{"observation.state": tensor([[0.5]])}` |
+
+로봇 하드웨어 인터페이스에는 **`RobotProcessorPipeline`을 사용**해주세요:
+
+```python
+# 로봇 데이터 구조: 관측 및 액션을 위한 dict[str, Any]
+robot_obs: dict[str, Any] = {
+    "joint_1": 0.5,           # 개별 관절 값
+    "joint_2": -0.3,
+    "camera_0": image_array   # 미가공(원시) 카메라 데이터
+}
+
+robot_action: dict[str, Any] = {
+    "joint_1": 0.2,          # 목표 관절 위치
+    "joint_2": 0.1,
+    "gripper": 0.8
+}
+
+모델 학습 및 배치 처리에는 **`PolicyProcessorPipeline`을 사용**해주세요:
+
+```python
+# 정책 데이터 구조: 배치 딕셔너리 및 텐서
+policy_batch: dict[str, Any] = {
+    "observation.state": torch.tensor([[0.5, -0.3]]),      # 배치된 관측 상태
+    "observation.images.camera0": torch.tensor(...),        # 배치된 관측 이미지
+    "action": torch.tensor([[0.2, 0.1, 0.8]])              # 배치된 액션
+}
+
+policy_action: torch.Tensor = torch.tensor([[0.2, 0.1, 0.8]])  # 모델 출력 텐서
+````
+
+## 전환 함수 (Converter Functions)
+
+LeRobot은 lerobot.processor.converters에서 서로 다른 데이터 형식을 연결하는 전환 함수를 제공합니다. 이 함수들은 로봇 하드웨어 데이터 구조, 정책 모델 형식, 그리고 파이프라인을 흐르는 내부 `EnvTransition` 표현 간의 핵심적인 변환을 담당합니다.
+
+| Category                       | Function                      | Description                     |
+| ------------------------------ | ----------------------------- | ------------------------------- |
+| **Robot Hardware Converters**  | `robot_action_to_transition`  | Robot dict → EnvTransition      |
+|                                | `observation_to_transition`   | Robot obs → EnvTransition       |
+|                                | `transition_to_robot_action`  | EnvTransition → Robot dict      |
+| **Policy/Training Converters** | `batch_to_transition`         | Batch dict → EnvTransition      |
+|                                | `transition_to_batch`         | EnvTransition → Batch dict      |
+|                                | `policy_action_to_transition` | Policy tensor → EnvTransition   |
+|                                | `transition_to_policy_action` | EnvTransition → Policy tensor   |
+| **Utilities**                  | `create_transition`           | Build transitions with defaults |
+|                                | `identity_transition`         | Pass-through converter          |
+
+핵심은 로봇 하드웨어 전환기가 개별 값과 딕셔너리(Dictionary)를 다루는 반면, 정책/학습 전환기는 배치된 텐서와 모델 출력을 다룬다는 점입니다. 전환 함수가 구조적 차이를 자동으로 처리하므로, 프로세서 절차는 데이터 형식 호환성을 걱정하지 않고 핵심 변형 로직에만 집중할 수 있습니다.
+
+## 프로세서 예시
+
+다음은 정책 학습 및 추론을 위한 실제 프로세서 구성 예시입니다.
+
+하기는 정책의 학습 및 추론을 위한 예시 프로세서입니다:
+
+```python
+# 학습 데이터 전처리 (GPU 성능을 위해 최적화된 순서)
+training_preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
+    steps=[
+        RenameObservationsProcessorStep(rename_map={}),     # 키 표준화
+        AddBatchDimensionProcessorStep(),                   # 배치 차원 추가
+        TokenizerProcessorStep(tokenizer_name="...", ...),  # 언어 토큰화
+        DeviceProcessorStep(device="cuda"),                 # GPU로 먼저 이동
+        NormalizerProcessorStep(features=..., stats=...),   # GPU에서 정규화
+    ]
+)
+
+# 모델 출력 후처리
+training_postprocessor = PolicyProcessorPipeline[torch.Tensor, torch.Tensor](
+    steps=[
+        DeviceProcessorStep(device="cpu"),                  # CPU로 이동
+        UnnormalizerProcessorStep(features=..., stats=...), # 역정규화
+    ],
+    to_transition=policy_action_to_transition,
+    to_output=transition_to_policy_action,
+)
+```
+
+### 프로세서를 통한 로봇과 정책의 상호작용
+
+가장 일반적인 실제 시나리오는 두 파이프라인 유형을 결합하는 것입니다. 로봇 하드웨어는 정책 처리가 필요한 관측치를 생성하고, 정책 출력은 로봇 호환 후처리가 필요합니다:
+
+```python
+# 실제 배포: 로봇 센서 → 모델 → 로봇 명령
+with torch.no_grad():
+    while not done:
+        raw_obs = robot.get_observation()  # dict[str, Any]
+
+        # 로봇 관측치를 정책 전처리기에 전달
+
+        policy_input = policy_preprocessor(raw_obs)  # 배치된 딕셔너리
+
+        policy_output = policy.select_action(policy_input)  # 정책 텐서
+
+        policy_action = policy_postprocessor(policy_output)
+
+        # 로봇의 액션을 정책 액션 프로세서로 전달
+
+        robot.send_action(policy_action)
+```
+
+## Feature Contracts: 형태(shape) 및 타입(type) 변형
+
+프로세서는 단순히 데이터를 변형하는 데 그치지 않고 **_데이터 구조 자체를 변경할 수도 있습니다_**. `transform_features()` 메서드는 이러한 변경 사항을 선언하며, 이는 데이터셋 기록 및 정책 생성에 매우 중요합니다.
+
+### Feature Contracts가 중요한 이유
+
+데이터셋이나 정책을 구축할 때 LeRobot은 다음을 알아야 합니다:
+
+- 처리 후 **어떤 데이터 필드가 존재할 것인가**
+- 각 필드는 **어떤 형태(shape)와 타입**을 가질 것인가
+- 예상되는 데이터 구조에 맞춰 **모델을 어떻게 구성**할 것인가
+
+```python
+# 예시: 관측치에 속도(velocity)를 추가하는 프로세서
+class VelocityProcessor(ObservationProcessorStep):
+    def observation(self, obs):
+        new_obs = obs.copy()
+        if "observation.state" in obs:
+            # 계산된 속도 필드를 상태에 결합
+            new_obs["observation.state"] = self._compute_velocity(obs["observation.state"])
+        return new_obs
+
+    def transform_features(self, features):
+        """추가되는 새로운 속도 필드를 선언."""
+        state_feature = features[PipelineFeatureType.OBSERVATION].get("observation.state")
+        if state_feature:
+            double_shape = (state_feature.shape[0] * 2,) if state_feature.shape else (2,)
+            features[PipelineFeatureType.OBSERVATION]["observation.state"] = PolicyFeature(
+                type=FeatureType.STATE, shape=double_shape
+            )
+        return features
+```
+
+### Feature Specification 함수
+
+`create_initial_features()`와 `aggregate_pipeline_dataset_features()`는 데이터셋 생성에서 중요한 문제인, 실제 데이터가 처리되기 전에 최종 데이터 구조를 정확히 결정하는 문제를 해결합니다.
+
+프로세서 파이프라인은 새로운 feature를 추가하거나(velocity field 같은), tensor shape을 변경하거나(이미지 crop처럼), key 이름을 변경할 수 있습니다. 따라서 데이터셋은 적절한 저장 공간을 할당하고 schema를 정의하기 위해 전체 출력의 specification을 사전에 알아야 합니다.
+
+이 함수들은 먼저 로봇 하드웨어 specification에서 시작하고(`create_initial_features()`), 전체 파이프라인 변형을 시뮬레이션하여(`aggregate_pipeline_dataset_features()`) 최종 feature dictionary를 계산합니다.
+이 최종 feature dictionary는 `LeRobotDataset.create()`에 전달되며, 프로세서가 출력하는 내용과 데이터셋이 저장할 것으로 기대하는 내용이 완벽히 일치하도록 보장합니다.
+
+```python
+from lerobot.datasets import aggregate_pipeline_dataset_features
+
+# Start with robot's raw features
+initial_features = create_initial_features(
+    observation=robot.observation_features,  # {"joint_1.pos": float, "camera_0": (480,640,3)}
+    action=robot.action_features            # {"joint_1.pos": float, "gripper.pos": float}
+)
+
+# Apply processor pipeline to compute final features
+final_features = aggregate_pipeline_dataset_features(
+    pipeline=my_processor_pipeline,
+    initial_features=initial_features,
+    use_videos=True
+)
+
+# Use for dataset creation
+dataset = LeRobotDataset.create(
+    repo_id="my_dataset",
+    features=final_features,  # Knows exactly what data to expect
+    ...
+)
+```
+
+## 일반적인 Processor Steps
+
+LeRobot은 등록된 processor steps을 많이 제공합니다.
+다음은 가장 자주 사용되는 핵심 프로세서들입니다
+
+### 필수 프로세서
+
+- **`normalizer_processor`**: 데이터셋 통계, 즉 mean/std 또는 min/max를 사용해 observation/action을 정규화
+- **`device_processor`**: tensor를 CPU/GPU로 이동시키고 선택적으로 dtype 변환 수행
+- **`to_batch_processor`**: 모델 호환성을 위해 transition에 batch dimension 추가
+- **`rename_observations_processor`**: 매핑 딕셔너리(mapping dictionary)를 사용해 관측 키(observation key) 이름 변경
+- **`tokenizer_processor`**: 자연어 task description을 token 및 attention mask로 토큰화
+
+### 다음 단계
+
+- **[자신만의 프로세서 구현하기](./implement_your_own_processor)** - 커스텀 processor step 생성
+- **[파이프라인 디버깅하기](./debug_processor_pipeline)** - 파이프라인 문제 해결 및 최적화
+- **[로봇 원격 조작자를 위한 프로세서](./processors_robots_teleop)** - 실제 통합 패턴
+
+## 요약
+
+프로세서는 다음과 같은 기능을 제공하여 로보틱스의 데이터 변환 문제를 해결합니다:
+
+- **모듈형 변형**: 조립 및 재사용이 가능한 처리 절차
+- **타입 안전성**: 컴파일 타임 체크가 가능한 범용 파이프라인
+- **성능 최적화**: GPU 가속 연산 지원
+- **로봇/정책 구분**: 데이터 구조에 따른 별도의 파이프라인 운영
+- **포괄적 생태계**: 일반적인 작업을 위해 등록된 30개 이상의 프로세서
+
+핵심 사항: `RobotProcessorPipeline`은 비배치 로봇 하드웨어 데이터를 처리하고, `PolicyProcessorPipeline`은 배치된 모델 데이터를 처리합니다. 데이터 구조에 맞는 올바른 도구를 선택하세요!
