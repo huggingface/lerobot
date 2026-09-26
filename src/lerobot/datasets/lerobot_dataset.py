@@ -31,12 +31,13 @@ from lerobot.utils.import_utils import get_safe_default_video_backend
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .dataset_reader import BaseDatasetReader, DatasetReader
-from .dataset_writer import DatasetWriter
+from .dataset_writer import BaseDatasetWriter
 from .storage import (
     DEFAULT_STORAGE_FORMAT,
     is_remote_uri,
     localize_remote_root,
     make_dataset_reader,
+    make_dataset_writer,
 )
 from .utils import (
     create_lerobot_dataset_card,
@@ -292,7 +293,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         self.image_transforms = image_transforms
         self.reader: BaseDatasetReader | None
-        self.writer: DatasetWriter | None
+        self.writer: BaseDatasetWriter | None
         if self.meta.storage_format != DEFAULT_STORAGE_FORMAT:
             # non-default formats read the data in place at its root
             reader_kwargs: dict[str, Any] = {
@@ -318,7 +319,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if video_decoder_cache_size is not None:
             raise ValueError("video_decoder_cache_size only applies to non-default storage formats.")
         # The default format is always served by DatasetReader.
-        reader = DatasetReader(
+        self.reader = DatasetReader(
             meta=self.meta,
             root=self.root,
             episodes=episodes,
@@ -329,17 +330,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
             return_uint8=return_uint8,
             depth_output_unit=depth_output_unit,
         )
-        self.reader = reader
 
         # Load actual data
-        if force_cache_sync or not reader.try_load():
+        if force_cache_sync or not self.reader.try_load():
             if self.revision is not None and is_valid_version(self.revision):
                 if token is None:
                     self.revision = get_safe_version(self.repo_id, self.revision)
                 else:
                     self.revision = get_safe_version(self.repo_id, self.revision, token=token)
             self._download(download_videos, token=token)
-            reader.load_and_activate()
+            self.reader.load_and_activate()
 
         # Detect write-mode params for backward compatibility
         _has_write_params = streaming_encoding or batch_encoding_size != 1
@@ -361,7 +361,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     encoder_queue_maxsize,
                     encoder_threads,
                 )
-            self.writer = DatasetWriter(
+            self.writer = make_dataset_writer(
+                storage_format=self.meta.storage_format,
                 meta=self.meta,
                 root=self.root,
                 rgb_encoder=rgb_encoder,
@@ -378,7 +379,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     # ── Writer guard ──────────────────────────────────────────────────
 
-    def _require_writer(self, method_name: str) -> DatasetWriter:
+    def _require_writer(self, method_name: str) -> BaseDatasetWriter:
         """Return the writer, raising if the dataset is read-only or already finalized."""
         if self.writer is None:
             raise RuntimeError(
@@ -396,29 +397,29 @@ class LeRobotDataset(torch.utils.data.Dataset):
     # ── Reader guard ──────────────────────────────────────────────────
 
     def _ensure_reader(self) -> BaseDatasetReader:
-        """Return the reader, lazily creating the default one on first access.
-
-        ``self.reader`` is only ``None`` in write mode (create/resume), which
-        exists for the default format only — non-default formats construct
-        their reader in ``__init__``.
-        """
+        """Return the reader, lazily creating it on first access."""
         if self.writer is not None and not self._is_finalized:
             raise RuntimeError(
                 "Cannot read from a dataset that is being recorded. Call finalize() first, then access items."
             )
         if self.reader is None:
             self.meta.ensure_readable()
-            self.reader = DatasetReader(
-                meta=self.meta,
-                root=self.root,
-                episodes=self.episodes,
-                tolerance_s=self.tolerance_s,
-                video_backend=self._video_backend,
-                delta_timestamps=self.delta_timestamps,
-                image_transforms=self.image_transforms,
-                return_uint8=self._return_uint8,
-                depth_output_unit=self._depth_output_unit,
-            )
+            reader_kwargs = {
+                "meta": self.meta,
+                "root": self.root,
+                "episodes": self.episodes,
+                "tolerance_s": self.tolerance_s,
+                "delta_timestamps": self.delta_timestamps,
+                "image_transforms": self.image_transforms,
+                "return_uint8": self._return_uint8,
+                "depth_output_unit": self._depth_output_unit,
+            }
+            if self.meta.storage_format == DEFAULT_STORAGE_FORMAT:
+                reader_kwargs["video_backend"] = self._video_backend
+            else:
+                # Write mode records locally, so no object-store root/token is involved.
+                reader_kwargs["revision"] = self.revision
+            self.reader = make_dataset_reader(self.meta.storage_format, **reader_kwargs)
         return self.reader
 
     @staticmethod
@@ -563,6 +564,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             return
         if self.writer is not None:
             self.writer.finalize()
+            self.meta.finalize()
         self._is_finalized = True
 
     # ── Core Dataset methods ──────────────────────────────────────────
@@ -788,6 +790,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         encoder_threads: int | None = None,
         video_files_size_in_mb: int | None = None,
         data_files_size_in_mb: int | None = None,
+        storage_format: str = DEFAULT_STORAGE_FORMAT,
     ) -> "LeRobotDataset":
         """Create a new LeRobotDataset from scratch for recording data.
 
@@ -824,6 +827,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 during capture instead of writing images first.
             encoder_queue_maxsize: Max buffered frames per camera when using
                 streaming encoding.
+            storage_format: Storage format holding the data files. Defaults to
+                the built-in parquet/mp4 layout (``"lerobot"``) and is persisted
+                in metadata. Any other value must have a writer registered via
+                :func:`~lerobot.datasets.storage.register_dataset_writer`.
 
         Returns:
             A new :class:`LeRobotDataset` in write mode.
@@ -839,6 +846,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             metadata_buffer_size=metadata_buffer_size,
             video_files_size_in_mb=video_files_size_in_mb,
             data_files_size_in_mb=data_files_size_in_mb,
+            storage_format=storage_format,
         )
         obj.repo_id = obj.meta.repo_id
         obj._requested_root = obj.meta.root
@@ -858,20 +866,25 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Reader is lazily created on first access (write-only mode)
         obj.reader = None
 
-        streaming_enc = None
-        if streaming_encoding and len(obj.meta.video_keys) > 0:
-            streaming_enc = cls._build_streaming_encoder(
-                fps, rgb_encoder, depth_encoder, encoder_queue_maxsize, encoder_threads
+        writer_kwargs = {"meta": obj.meta, "root": obj.root, "initial_frames": 0}
+        if obj.meta.storage_format == DEFAULT_STORAGE_FORMAT:
+            streaming_enc = None
+            if streaming_encoding and len(obj.meta.video_keys) > 0:
+                streaming_enc = cls._build_streaming_encoder(
+                    fps, rgb_encoder, depth_encoder, encoder_queue_maxsize, encoder_threads
+                )
+            writer_kwargs.update(
+                rgb_encoder=rgb_encoder,
+                depth_encoder=depth_encoder,
+                encoder_threads=encoder_threads,
+                batch_encoding_size=batch_encoding_size,
+                streaming_encoder=streaming_enc,
             )
-        obj.writer = DatasetWriter(
-            meta=obj.meta,
-            root=obj.root,
-            rgb_encoder=rgb_encoder,
-            depth_encoder=depth_encoder,
-            encoder_threads=encoder_threads,
-            batch_encoding_size=batch_encoding_size,
-            streaming_encoder=streaming_enc,
-        )
+        elif rgb_encoder is not None or depth_encoder is not None or encoder_threads is not None:
+            raise ValueError(
+                "rgb_encoder, depth_encoder, and encoder_threads only apply to the default LeRobot storage format."
+            )
+        obj.writer = make_dataset_writer(obj.meta.storage_format, **writer_kwargs)
 
         if image_writer_processes or image_writer_threads:
             obj.writer.start_image_writer(image_writer_processes, image_writer_threads)
@@ -976,21 +989,25 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Reader is lazily created on first access (write-only mode)
         obj.reader = None
 
-        streaming_enc = None
-        if streaming_encoding and len(obj.meta.video_keys) > 0:
-            streaming_enc = cls._build_streaming_encoder(
-                obj.meta.fps, rgb_encoder, depth_encoder, encoder_queue_maxsize, encoder_threads
+        writer_kwargs = {"meta": obj.meta, "root": obj.root, "initial_frames": obj.meta.total_frames}
+        if obj.meta.storage_format == DEFAULT_STORAGE_FORMAT:
+            streaming_enc = None
+            if streaming_encoding and len(obj.meta.video_keys) > 0:
+                streaming_enc = cls._build_streaming_encoder(
+                    obj.meta.fps, rgb_encoder, depth_encoder, encoder_queue_maxsize, encoder_threads
+                )
+            writer_kwargs.update(
+                rgb_encoder=rgb_encoder,
+                depth_encoder=depth_encoder,
+                encoder_threads=encoder_threads,
+                batch_encoding_size=batch_encoding_size,
+                streaming_encoder=streaming_enc,
             )
-        obj.writer = DatasetWriter(
-            meta=obj.meta,
-            root=obj.root,
-            rgb_encoder=rgb_encoder,
-            depth_encoder=depth_encoder,
-            encoder_threads=encoder_threads,
-            batch_encoding_size=batch_encoding_size,
-            streaming_encoder=streaming_enc,
-            initial_frames=obj.meta.total_frames,
-        )
+        elif rgb_encoder is not None or depth_encoder is not None or encoder_threads is not None:
+            raise ValueError(
+                "rgb_encoder, depth_encoder, and encoder_threads only apply to the default LeRobot storage format."
+            )
+        obj.writer = make_dataset_writer(obj.meta.storage_format, **writer_kwargs)
 
         if image_writer_processes or image_writer_threads:
             obj.writer.start_image_writer(image_writer_processes, image_writer_threads)

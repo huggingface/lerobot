@@ -321,7 +321,14 @@ class LeRobotDatasetMetadata:
 
         Raises:
             IndexError: If ``ep_index`` is out of range.
+            NotImplementedError: For non-default storage formats, which manage
+                their own file layout.
         """
+        if self.storage_format != DEFAULT_STORAGE_FORMAT:
+            raise NotImplementedError(
+                f"get_data_file_path() is only supported for the {DEFAULT_STORAGE_FORMAT!r} storage format, "
+                f"not {self.storage_format!r}."
+            )
         if self.episodes is None:
             self.episodes = load_episodes(self.root)
         if ep_index >= len(self.episodes):
@@ -348,7 +355,14 @@ class LeRobotDatasetMetadata:
         Raises:
             IndexError: If ``ep_index`` is out of range.
             ValueError: If the dataset stores no videos (no ``video_path`` template).
+            NotImplementedError: For non-default storage formats, which manage
+                their own file layout.
         """
+        if self.storage_format != DEFAULT_STORAGE_FORMAT:
+            raise NotImplementedError(
+                f"get_video_file_path() is only supported for the {DEFAULT_STORAGE_FORMAT!r} storage format, "
+                f"not {self.storage_format!r}."
+            )
         if self.episodes is None:
             self.episodes = load_episodes(self.root)
         if ep_index >= len(self.episodes):
@@ -708,7 +722,18 @@ class LeRobotDatasetMetadata:
                 ``video.*`` entries (see :func:`get_video_info`).
             preserve_keys: Keys whose existing values are kept instead of being
                 recomputed. ``None`` (default) recomputes every key.
+
+        Raises:
+            NotImplementedError: For non-default storage formats, which manage
+                their own video info.
+            ValueError: If ``video_key`` is not a video key of the dataset, or
+                if the dataset stores no videos (no ``video_path`` template).
         """
+        if self.storage_format != DEFAULT_STORAGE_FORMAT:
+            raise NotImplementedError(
+                f"update_video_info() is only supported for the {DEFAULT_STORAGE_FORMAT!r} storage format, "
+                f"not {self.storage_format!r}."
+            )
         if video_key is not None and video_key not in self.video_keys:
             raise ValueError(f"Video key {video_key} not found in dataset")
 
@@ -808,6 +833,7 @@ class LeRobotDatasetMetadata:
         chunks_size: int | None = None,
         data_files_size_in_mb: int | None = None,
         video_files_size_in_mb: int | None = None,
+        storage_format: str = DEFAULT_STORAGE_FORMAT,
     ) -> "LeRobotDatasetMetadata":
         """Create metadata for a new LeRobot dataset from scratch.
 
@@ -831,6 +857,9 @@ class LeRobotDatasetMetadata:
                 default.
             video_files_size_in_mb: Max video file size in MB. ``None`` uses the
                 default.
+            storage_format: Storage format holding the data files. Defaults to
+                the built-in parquet/mp4 layout (``"lerobot"``). Always persisted
+                in ``info.json`` so read/write backend selection can resolve it.
 
         Returns:
             A new :class:`LeRobotDatasetMetadata` instance.
@@ -857,6 +886,7 @@ class LeRobotDatasetMetadata:
             chunks_size,
             data_files_size_in_mb,
             video_files_size_in_mb,
+            storage_format,
         )
         if len(obj.video_keys) > 0 and not use_videos:
             raise ValueError(

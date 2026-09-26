@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from .dataset_metadata import LeRobotDatasetMetadata
     from .dataset_reader import BaseDatasetReader
+    from .dataset_writer import BaseDatasetWriter
 
 DEFAULT_STORAGE_FORMAT = "lerobot"
 
@@ -70,6 +71,40 @@ def make_dataset_reader(storage_format: str, **kwargs) -> BaseDatasetReader:
 
         return DatasetReader(**kwargs)
     return _reader_module(storage_format).DATASET_READER(**kwargs)
+
+
+# Non-default writable storage formats and the module implementing each. Modules
+# are imported lazily and must expose a ``DATASET_WRITER`` class implementing
+# :class:`~lerobot.datasets.dataset_writer.BaseDatasetWriter` (constructed with
+# the keyword arguments ``meta``, ``root`` and ``initial_frames``).
+_DATASET_WRITER_MODULES: dict[str, str] = {}
+
+
+def register_dataset_writer(storage_format: str, module: str) -> None:
+    """Register ``module`` (exposing ``DATASET_WRITER``) to write ``storage_format``."""
+    existing = _DATASET_WRITER_MODULES.get(storage_format, module)
+    if storage_format == DEFAULT_STORAGE_FORMAT or existing != module:
+        raise ValueError(f"storage_format {storage_format!r} is already registered.")
+    _DATASET_WRITER_MODULES[storage_format] = module
+
+
+def _writer_module(storage_format: str):
+    module_name = _DATASET_WRITER_MODULES.get(storage_format)
+    if module_name is None:
+        raise ValueError(
+            f"Unknown storage_format {storage_format!r}. Supported formats: "
+            f"{[DEFAULT_STORAGE_FORMAT, *_DATASET_WRITER_MODULES]}."
+        )
+    return importlib.import_module(module_name)
+
+
+def make_dataset_writer(storage_format: str, **kwargs) -> BaseDatasetWriter:
+    """Instantiate the writer class serving ``storage_format``."""
+    if storage_format == DEFAULT_STORAGE_FORMAT:
+        from .dataset_writer import DatasetWriter  # noqa: PLC0415  (import cycle)
+
+        return DatasetWriter(**kwargs)
+    return _writer_module(storage_format).DATASET_WRITER(**kwargs)
 
 
 def localize_remote_root(
