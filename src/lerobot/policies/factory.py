@@ -218,6 +218,32 @@ def make_pre_post_processors(
     )
 
 
+def _apply_dataset_relative_action_provenance(cfg: PreTrainedConfig, ds_meta) -> None:
+    """Inject the dataset-declared SE(3) pose groups into a config that leaves them unset.
+
+    ``recompute_stats(relative_action=True)`` records how the action statistics were computed in
+    ``meta/info.json``. The pose layout is a property of the data, so a config that does not set
+    ``relative_se3_pose_groups`` inherits the declaration, and one that contradicts it fails
+    before training starts -- the statistics only describe the declared groups.
+    """
+    if not getattr(cfg, "use_relative_actions", False) or not hasattr(cfg, "relative_se3_pose_groups"):
+        return
+    declared = getattr(getattr(ds_meta, "info", None), "relative_action", None)
+    if not isinstance(declared, dict):
+        return
+    declared_groups = [list(group) for group in declared.get("se3_pose_groups", [])]
+    configured = [list(group) for group in cfg.relative_se3_pose_groups or []]
+    if not configured:
+        cfg.relative_se3_pose_groups = declared_groups
+    elif configured != declared_groups:
+        raise ValueError(
+            f"policy.relative_se3_pose_groups={configured} contradicts the dataset's own "
+            f"declaration {declared_groups} in meta/info.json, written when its relative action "
+            "statistics were computed. The statistics only match the declared groups; recompute "
+            "them with the new groups, or drop the override."
+        )
+
+
 def make_policy(
     cfg: PreTrainedConfig,
     ds_meta: LeRobotDatasetMetadata | None = None,
@@ -313,6 +339,8 @@ def make_policy(
             ):
                 action_names = [name for group in action_names.values() for name in group]
             cfg.action_feature_names = list(action_names)
+    if ds_meta is not None:
+        _apply_dataset_relative_action_provenance(cfg, ds_meta)
     if ds_meta is not None:
         set_dataset_feature_metadata = getattr(cfg, "set_dataset_feature_metadata", None)
         if callable(set_dataset_feature_metadata):

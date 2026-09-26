@@ -1722,6 +1722,20 @@ def recompute_stats(
     write_stats(new_stats, dataset.root)
     dataset.meta.stats = new_stats
 
+    # Record how the action stats were computed, so training can pick the pose groups up from
+    # the dataset instead of asking for them a second time -- and detect a mismatch if it does.
+    if relative_action_stats is not None:
+        dataset.meta.info.relative_action = {
+            "chunk_size": chunk_size,
+            "exclude_joints": list(relative_exclude_joints or []),
+            "se3_pose_groups": [list(group) for group in (relative_se3_pose_groups or [])],
+        }
+        write_info(dataset.meta.info, dataset.root)
+    elif ACTION in features_to_compute and dataset.meta.info.relative_action is not None:
+        # The action stats were just recomputed as absolute -- drop the stale marker.
+        dataset.meta.info.relative_action = None
+        write_info(dataset.meta.info, dataset.root)
+
     logger.info("Stats recomputed successfully")
     return dataset
 
