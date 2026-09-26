@@ -13,17 +13,23 @@
 # limitations under the License.
 
 """
-gRPC transport layer for async inference.
+Transport layer for async inference and low-latency IPC.
 
-Requires: ``pip install 'lerobot[grpcio-dep]'``
-
-Available modules (import directly)::
-
-    from lerobot.transport.utils import ...
+Includes:
+1. gRPC transport layer for network / async inference.
+2. Zero-Copy POSIX Shared Memory IPC for high-frequency sensor ingestion.
 """
 
-from lerobot.utils.import_utils import require_package
+from lerobot.transport.zerocopy_ipc import (
+    ZeroCopyDataset,
+    ZeroCopyPublisher,
+    MultiChannelZeroCopyDataset,
+    is_zerocopy_available,
+)
 
-require_package("grpcio", extra="grpcio-dep", import_name="grpc")
-
-__all__: list[str] = []
+__all__: list[str] = [
+    "ZeroCopyDataset",
+    "ZeroCopyPublisher",
+    "MultiChannelZeroCopyDataset",
+    "is_zerocopy_available",
+]
