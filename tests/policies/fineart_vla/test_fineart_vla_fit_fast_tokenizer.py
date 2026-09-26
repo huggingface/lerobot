@@ -19,7 +19,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from lerobot.policies.pi052.fit_fast_tokenizer import (
+from lerobot.policies.fineart_vla.fit_fast_tokenizer import (
     _apply_relative_actions,
     _dataset_signature,
     _is_global_leader,

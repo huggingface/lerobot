@@ -19,7 +19,7 @@ import torch
 
 pytest.importorskip("transformers")
 
-from lerobot.policies.pi052.modeling_pi052 import _lin_ce_flat, _shifted_lin_ce
+from lerobot.policies.fineart_vla.modeling_fineart_vla import _lin_ce_flat, _shifted_lin_ce
 
 
 def test_shifted_ce_none_retains_distinct_per_sample_losses():
@@ -51,11 +51,11 @@ def test_bucketed_ce_matches_dense_loss_and_gradients(z_loss_weight, rows, valid
     hidden_bucketed = hidden_ref.detach().clone().requires_grad_(True)
     weight_bucketed = weight_ref.detach().clone().requires_grad_(True)
 
-    import lerobot.policies.pi052.modeling_pi052 as modeling_pi052
+    import lerobot.policies.fineart_vla.modeling_fineart_vla as modeling_fineart_vla
 
     loss_ref = _lin_ce_flat(hidden_ref, weight_ref, labels, z_loss_weight=z_loss_weight)
-    old_limit = modeling_pi052._LOGITS_CE_MAX_POSITIONS
-    modeling_pi052._LOGITS_CE_MAX_POSITIONS = 16
+    old_limit = modeling_fineart_vla._LOGITS_CE_MAX_POSITIONS
+    modeling_fineart_vla._LOGITS_CE_MAX_POSITIONS = 16
     try:
         loss_bucketed = _lin_ce_flat(
             hidden_bucketed,
@@ -64,7 +64,7 @@ def test_bucketed_ce_matches_dense_loss_and_gradients(z_loss_weight, rows, valid
             z_loss_weight=z_loss_weight,
         )
     finally:
-        modeling_pi052._LOGITS_CE_MAX_POSITIONS = old_limit
+        modeling_fineart_vla._LOGITS_CE_MAX_POSITIONS = old_limit
 
     loss_ref.backward()
     loss_bucketed.backward()
@@ -79,14 +79,14 @@ def test_bucketed_ce_all_ignored_preserves_zero_gradients():
     weight = torch.randn(19, 7, dtype=torch.float64, requires_grad=True)
     labels = torch.full((24,), -100, dtype=torch.long)
 
-    import lerobot.policies.pi052.modeling_pi052 as modeling_pi052
+    import lerobot.policies.fineart_vla.modeling_fineart_vla as modeling_fineart_vla
 
-    old_limit = modeling_pi052._LOGITS_CE_MAX_POSITIONS
-    modeling_pi052._LOGITS_CE_MAX_POSITIONS = 16
+    old_limit = modeling_fineart_vla._LOGITS_CE_MAX_POSITIONS
+    modeling_fineart_vla._LOGITS_CE_MAX_POSITIONS = 16
     try:
         loss = _lin_ce_flat(hidden, weight, labels)
     finally:
-        modeling_pi052._LOGITS_CE_MAX_POSITIONS = old_limit
+        modeling_fineart_vla._LOGITS_CE_MAX_POSITIONS = old_limit
     loss.backward()
 
     assert loss.item() == 0.0

@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for PI052's text tokenizer.
+"""Tests for FineARTVLA's text tokenizer.
 
 Covers ``say`` tool-call flattening (PaliGemma's flat prompt has no
 structured tool calls, so a ``say`` call must be serialized into a
@@ -27,8 +27,8 @@ import torch
 
 from lerobot.datasets.recipe import MessageTurn, TrainingRecipe
 from lerobot.lerobot_types import TransitionKey
-from lerobot.policies.pi052.text_processor_pi052 import (
-    PI052TextTokenizerStep,
+from lerobot.policies.fineart_vla.text_processor_fineart_vla import (
+    FineARTVLATextTokenizerStep,
     _flatten_say_tool_calls,
     _format_messages,
 )
@@ -95,12 +95,12 @@ def test_format_messages_without_eos_args_is_unchanged():
     assert prompt[spans[0][0] : spans[0][1]] == "hi"
 
 
-def test_pi052_steps_roundtrip_through_standard_pipeline_loader(tmp_path):
+def test_fineart_vla_steps_roundtrip_through_standard_pipeline_loader(tmp_path):
     recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="${task}", stream="low_level")])
     pipeline = PolicyProcessorPipeline(
         steps=[
             RenderTrainingMessagesStep(recipe),
-            PI052TextTokenizerStep(
+            FineARTVLATextTokenizerStep(
                 tokenizer_name="custom-tokenizer",
                 max_length=77,
                 plan_dropout_prob=0.2,
@@ -127,11 +127,11 @@ def _eos_char_id() -> int:
     return ord("\x1f") % 251 + 1
 
 
-def test_pi052_text_tokenizer_supervises_eos_at_target_end():
+def test_fineart_vla_text_tokenizer_supervises_eos_at_target_end():
     """The appended EOS is the last supervised label on a target turn —
     that's the signal that teaches the LM head to stop. The trailing
     newline right after it stays unsupervised (-100)."""
-    step = PI052TextTokenizerStep(max_length=64)
+    step = FineARTVLATextTokenizerStep(max_length=64)
     step._tokenizer = _CharTokenizer()
     transition = {
         TransitionKey.OBSERVATION: {},
@@ -191,8 +191,8 @@ class _CharTokenizer:
         return "".join(chr(max(int(i) - 1, 0)) for i in token_ids if int(i) != self.pad_token_id)
 
 
-def test_pi052_text_tokenizer_handles_batched_rendered_messages():
-    step = PI052TextTokenizerStep(max_length=64)
+def test_fineart_vla_text_tokenizer_handles_batched_rendered_messages():
+    step = FineARTVLATextTokenizerStep(max_length=64)
     step._tokenizer = _CharTokenizer()
 
     transition = {

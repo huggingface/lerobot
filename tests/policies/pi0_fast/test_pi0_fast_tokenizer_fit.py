@@ -19,8 +19,8 @@ from types import SimpleNamespace
 import pytest
 
 from lerobot.policies import factory
+from lerobot.policies.fineart_vla import fit_fast_tokenizer as fit_module
 from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
-from lerobot.policies.pi052 import fit_fast_tokenizer as fit_module
 
 
 def test_pi0_fast_resolves_dataset_specific_tokenizer(monkeypatch, tmp_path):

@@ -116,10 +116,10 @@ def test_native_checkpoint_uses_standard_lerobot_loader(tmp_path):
     torch.testing.assert_close(policy.weight, torch.tensor([2.0]))
 
 
-def test_pi052_uses_native_checkpoint_loader():
-    from lerobot.policies.pi052.modeling_pi052 import PI052Policy
+def test_fineart_vla_uses_native_checkpoint_loader():
+    from lerobot.policies.fineart_vla.modeling_fineart_vla import FineARTVLAPolicy
 
-    assert PI052Policy.use_native_pretrained_loader
+    assert FineARTVLAPolicy.use_native_pretrained_loader
 
 
 @require_cuda

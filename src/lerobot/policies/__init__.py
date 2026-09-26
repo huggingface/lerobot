@@ -20,6 +20,7 @@ from .eo1.configuration_eo1 import EO1Config as EO1Config
 from .evo1.configuration_evo1 import Evo1Config as Evo1Config
 from .factory import get_policy_class, make_policy, make_policy_config, make_pre_post_processors
 from .fastwam.configuration_fastwam import FastWAMConfig as FastWAMConfig
+from .fineart_vla.configuration_fineart_vla import FineARTVLAConfig as FineARTVLAConfig
 from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig as GaussianActorConfig
 from .groot.configuration_groot import GrootConfig as GrootConfig
 from .lingbot_va.configuration_lingbot_va import LingBotVAConfig as LingBotVAConfig
@@ -28,7 +29,6 @@ from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig as M
 from .pi0.configuration_pi0 import PI0Config as PI0Config
 from .pi0_fast.configuration_pi0_fast import PI0FastConfig as PI0FastConfig
 from .pi05.configuration_pi05 import PI05Config as PI05Config
-from .pi052.configuration_pi052 import PI052Config as PI052Config
 from .pretrained import PreTrainedPolicy as PreTrainedPolicy
 from .smolvla.configuration_smolvla import SmolVLAConfig as SmolVLAConfig
 from .tdmpc.configuration_tdmpc import TDMPCConfig as TDMPCConfig
@@ -48,6 +48,7 @@ __all__ = [
     "DiffusionConfig",
     "EO1Config",
     "FastWAMConfig",
+    "FineARTVLAConfig",
     "GaussianActorConfig",
     "Evo1Config",
     "GrootConfig",
@@ -57,7 +58,6 @@ __all__ = [
     "PI0Config",
     "PI0FastConfig",
     "PI05Config",
-    "PI052Config",
     "SmolVLAConfig",
     "TDMPCConfig",
     "VLAJEPAConfig",

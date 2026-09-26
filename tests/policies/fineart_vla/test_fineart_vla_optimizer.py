@@ -1,18 +1,18 @@
-"""PI052 backend options must not require changes to the shared optimizer config."""
+"""FineARTVLA backend options must not require changes to the shared optimizer config."""
 
 import pytest
 import torch
 
-from lerobot.policies.pi052.configuration_pi052 import PI052Config
-from lerobot.policies.pi052.modeling_pi052 import PI052Policy
+from lerobot.policies.fineart_vla.configuration_fineart_vla import FineARTVLAConfig
+from lerobot.policies.fineart_vla.modeling_fineart_vla import FineARTVLAPolicy
 
 
 @pytest.mark.parametrize("backbone_scale", [1.0, 0.5])
 def test_adamw_backend_options_stay_in_policy_groups(backbone_scale):
-    policy = PI052Policy.__new__(PI052Policy)
+    policy = FineARTVLAPolicy.__new__(FineARTVLAPolicy)
     torch.nn.Module.__init__(policy)
     policy.weight = torch.nn.Parameter(torch.ones(2))
-    policy.config = PI052Config(
+    policy.config = FineARTVLAConfig(
         device="cpu",
         backbone_lr_scale=backbone_scale,
         optimizer_foreach=False,

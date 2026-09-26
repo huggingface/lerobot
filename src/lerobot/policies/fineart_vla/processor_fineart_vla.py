@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PI052 processor factory with optional recipe rendering and text tokenization.
+"""FineART-VLA processor factory with optional recipe rendering and text tokenization.
 
 Without a recipe it delegates to the standard PI0.5 pipeline.
 """
@@ -45,12 +45,12 @@ from lerobot.processor.render_messages_processor import RenderRuntimeMessagesSte
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 from ..pi05.processor_pi05 import make_pi05_pre_post_processors
-from .configuration_pi052 import PI052Config
-from .text_processor_pi052 import PI052TextTokenizerStep
+from .configuration_fineart_vla import FineARTVLAConfig
+from .text_processor_fineart_vla import FineARTVLATextTokenizerStep
 
 
-def make_pi052_pre_post_processors(
-    config: PI052Config,
+def make_fineart_vla_pre_post_processors(
+    config: FineARTVLAConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
     dataset_repo_id: str | None = None,
     dataset_root: str | None = None,
@@ -61,13 +61,13 @@ def make_pi052_pre_post_processors(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """Build PI0.5-v2's pre/post-processor pipelines.
+    """Build FineART-VLA's pre/post-processor pipelines.
 
     Falls through to π0.5's stock pipeline when ``recipe_path`` is unset.
     """
     if config.recipe is None:
         if getattr(config, "enable_fast_action_loss", False):
-            raise ValueError("PI052 FAST action loss requires recipe_path to build action supervision.")
+            raise ValueError("FineART-VLA FAST action loss requires recipe_path to build action supervision.")
         return make_pi05_pre_post_processors(config, dataset_stats=dataset_stats)
 
     recipe = TrainingRecipe.from_dict(config.recipe)
@@ -89,7 +89,7 @@ def make_pi052_pre_post_processors(
         ),
         RenderRuntimeMessagesStep(recipe=recipe),
         RenderTrainingMessagesStep(recipe=recipe),
-        PI052TextTokenizerStep(
+        FineARTVLATextTokenizerStep(
             tokenizer_name="google/paligemma-3b-pt-224",
             max_length=config.tokenizer_max_length,
             plan_dropout_prob=getattr(config, "plan_dropout_prob", 0.0),

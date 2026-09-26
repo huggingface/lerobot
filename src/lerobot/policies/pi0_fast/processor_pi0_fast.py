@@ -156,7 +156,7 @@ def make_pi0_fast_pre_post_processors(
     # state from the observation but does not change it. NormalizerProcessorStep still runs
     # before Pi0FastPrepareStateAndLanguageTokenizerProcessorStep, so the state tokenizer
     # continues to receive normalized state in [-1, 1] as expected.
-    from ..pi052.fit_fast_tokenizer import resolve_fast_tokenizer  # noqa: PLC0415
+    from ..fineart_vla.fit_fast_tokenizer import resolve_fast_tokenizer  # noqa: PLC0415
 
     action_tokenizer_path = resolve_fast_tokenizer(
         config,

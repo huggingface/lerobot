@@ -1,4 +1,4 @@
-"""Parity checks for PI052 on the shared recipe/runtime contract."""
+"""Parity checks for FineARTVLA on the shared recipe/runtime contract."""
 
 from dataclasses import asdict
 
@@ -7,40 +7,40 @@ import torch
 
 from lerobot.datasets.recipe import TrainingRecipe
 from lerobot.lerobot_types import TransitionKey
-from lerobot.policies.pi052.configuration_pi052 import PI052Config
-from lerobot.policies.pi052.text_processor_pi052 import PI052TextTokenizerStep
+from lerobot.policies.fineart_vla.configuration_fineart_vla import FineARTVLAConfig
+from lerobot.policies.fineart_vla.text_processor_fineart_vla import FineARTVLATextTokenizerStep
 from lerobot.processor.render_messages_processor import RenderRuntimeMessagesStep, RenderTrainingMessagesStep
 from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_STATE, QUERY_KIND, QUERY_TEXT
-from tests.policies.pi052.test_pi052_text_processor import _CharTokenizer
+from tests.policies.fineart_vla.test_fineart_vla_text_processor import _CharTokenizer
 
 
 def test_subtask_recipe_is_embedded_and_keeps_70_30_mix():
-    config = PI052Config(device="cpu", enable_fast_action_loss=False)
+    config = FineARTVLAConfig(device="cpu", enable_fast_action_loss=False)
     assert config.recipe_path is None
     assert config.recipe["blend"]["high_level_subtask"]["weight"] == 0.3
     assert config.recipe["blend"]["low_level_execution"]["weight"] == 0.7
-    restored = PI052Config(recipe_path="/missing/recipe.yaml", recipe=config.recipe, device="cpu")
+    restored = FineARTVLAConfig(recipe_path="/missing/recipe.yaml", recipe=config.recipe, device="cpu")
     assert TrainingRecipe.from_dict(restored.recipe) == TrainingRecipe.from_dict(config.recipe)
 
 
 def test_default_matches_shared_subtask_recipe():
-    config = PI052Config(device="cpu")
+    config = FineARTVLAConfig(device="cpu")
     assert TrainingRecipe.from_dict(config.recipe) == TrainingRecipe.from_yaml(
         "src/lerobot/configs/recipes/subtask.yaml"
     )
 
 
 def test_default_recipes_are_independent():
-    first = PI052Config(device="cpu")
-    second = PI052Config(device="cpu")
+    first = FineARTVLAConfig(device="cpu")
+    second = FineARTVLAConfig(device="cpu")
     first.recipe["blend"]["high_level_subtask"]["weight"] = 0.9
     assert second.recipe["blend"]["high_level_subtask"]["weight"] == 0.3
 
 
 def test_embedded_recipe_survives_checkpoint_roundtrip(tmp_path):
-    config = PI052Config(device="cpu", enable_fast_action_loss=False)
+    config = FineARTVLAConfig(device="cpu", enable_fast_action_loss=False)
     config.save_pretrained(tmp_path)
-    restored = PI052Config.from_pretrained(tmp_path)
+    restored = FineARTVLAConfig.from_pretrained(tmp_path)
     assert restored.recipe == config.recipe
     assert restored.recipe_path is None
 
@@ -48,20 +48,20 @@ def test_embedded_recipe_survives_checkpoint_roundtrip(tmp_path):
 def test_explicit_recipe_file_overrides_default(tmp_path):
     path = tmp_path / "recipe.yaml"
     path.write_text('messages: [{role: user, content: "${task}", stream: low_level}]\n')
-    config = PI052Config(recipe_path=str(path), device="cpu")
+    config = FineARTVLAConfig(recipe_path=str(path), device="cpu")
     assert TrainingRecipe.from_dict(config.recipe) == TrainingRecipe.from_yaml(path)
 
 
 def test_plain_recipe_requires_fast_disabled():
-    config = PI052Config(recipe=None, enable_fast_action_loss=False, device="cpu")
+    config = FineARTVLAConfig(recipe=None, enable_fast_action_loss=False, device="cpu")
     assert config.recipe is None
     with pytest.raises(ValueError, match="FAST action loss requires"):
-        PI052Config(recipe=None, device="cpu")
+        FineARTVLAConfig(recipe=None, device="cpu")
 
 
 def test_runtime_prefill_matches_training_before_target():
     recipe = TrainingRecipe.from_yaml("src/lerobot/configs/recipes/subtask.yaml")
-    tokenizer = PI052TextTokenizerStep(max_length=256)
+    tokenizer = FineARTVLATextTokenizerStep(max_length=256)
     tokenizer._tokenizer = _CharTokenizer()
     transition = {
         TransitionKey.OBSERVATION: {OBS_STATE: torch.zeros(1, 14)},
@@ -89,7 +89,7 @@ def test_runtime_prefill_matches_training_before_target():
 
 
 def test_action_only_runtime_uses_same_state_bearing_prompt_as_training():
-    tokenizer = PI052TextTokenizerStep(max_length=256)
+    tokenizer = FineARTVLATextTokenizerStep(max_length=256)
     tokenizer._tokenizer = _CharTokenizer()
     base = {TransitionKey.OBSERVATION: {OBS_STATE: torch.zeros(1, 14)}}
     runtime = tokenizer({**base, TransitionKey.COMPLEMENTARY_DATA: {"task": ["pick plate"]}})
@@ -113,7 +113,7 @@ def test_goal_only_recipe_ignores_subtask_annotations():
     recipe = TrainingRecipe.from_dict(
         {"messages": [{"role": "user", "content": "${task}", "stream": "low_level"}]}
     )
-    config = PI052Config(
+    config = FineARTVLAConfig(
         recipe_path=None,
         recipe=asdict(recipe),
         device="cpu",

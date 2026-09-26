@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Attention-masking tests for the PI052 (π0.5 v2) text head.
+"""Attention-masking tests for the FineART-VLA text head.
 
 Regression coverage for the text-CE collapse bug: PaliGemma's
 ``embed_prefix`` flags every language token ``att=0``, which
@@ -33,14 +33,14 @@ tests pin that behaviour for the PaliGemma prefix layout.
 import pytest
 import torch
 
-# modeling_pi052 / modeling_pi05 import transformers transitively.
+# modeling_fineart_vla / modeling_pi05 import transformers transitively.
 pytest.importorskip("transformers")
 
-from lerobot.policies.pi05.modeling_pi05 import make_att_2d_masks  # noqa: E402
-from lerobot.policies.pi052.modeling_pi052 import (  # noqa: E402
+from lerobot.policies.fineart_vla.modeling_fineart_vla import (  # noqa: E402
     _mark_target_span_causal,
     _shifted_lin_ce,
 )
+from lerobot.policies.pi05.modeling_pi05 import make_att_2d_masks  # noqa: E402
 
 
 def _shifted_ce(logits, labels):

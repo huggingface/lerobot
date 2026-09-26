@@ -16,7 +16,7 @@
 
 """Numerical-parity tests for the SDPA attention port.
 
-``pi05`` / ``pi052`` replaced the per-layer call from
+``pi05`` / ``fineart_vla`` replaced the per-layer call from
 ``modeling_gemma.eager_attention_forward`` with
 ``sdpa_attention_forward`` (PyTorch SDPA + GQA repeat). The forward
 output must be bit-equivalent (within bf16 tolerance) on the masks
@@ -35,7 +35,7 @@ pytest.importorskip("transformers")
 
 from transformers.models.gemma import modeling_gemma  # noqa: E402
 
-from lerobot.policies.pi052.modeling_pi052 import make_att_2d_masks  # noqa: E402
+from lerobot.policies.fineart_vla.modeling_fineart_vla import make_att_2d_masks  # noqa: E402
 from lerobot.policies.pi_gemma import sdpa_attention_forward  # noqa: E402
 from lerobot.utils.constants import OPENPI_ATTENTION_MASK_VALUE  # noqa: E402
 
@@ -174,7 +174,7 @@ def test_bf16_large_scores_backward_matches_fp32():
 @pytest.mark.parametrize("use_checkpointing", [False, True])
 @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
 def test_joint_layer_defaults_to_sdpa_and_keeps_prefix_gradients(monkeypatch, use_checkpointing, dtype):
-    """Exercise the real shared PI05/PI052 joint layer, including KI-off backprop."""
+    """Exercise the real shared PI05/FineARTVLA joint layer, including KI-off backprop."""
     from transformers.models.gemma.configuration_gemma import GemmaConfig
 
     from lerobot.policies.pi05 import modeling_pi05

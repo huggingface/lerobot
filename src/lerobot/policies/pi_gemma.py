@@ -386,8 +386,8 @@ __all__ = [
 ]
 
 
-# PI0.5 / PI052 dual-expert backbone: generic PaliGemma + Gemma action-expert
-# transformer machinery used by the pi052 policy. GemmaVariantConfig is openpi's
+# PI0.5 / FineARTVLA dual-expert backbone: generic PaliGemma + Gemma action-expert
+# transformer machinery used by the fineart_vla policy. GemmaVariantConfig is openpi's
 # width/depth variant config (renamed from GemmaConfig to avoid clashing with
 # transformers' GemmaConfig).
 

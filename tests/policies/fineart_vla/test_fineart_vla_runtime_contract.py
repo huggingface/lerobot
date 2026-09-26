@@ -1,4 +1,4 @@
-"""PI052 text generation uses main's shared runtime, not the removed adapter CLI."""
+"""FineARTVLA text generation uses main's shared runtime, not the removed adapter CLI."""
 
 import json
 from collections import deque
@@ -10,12 +10,12 @@ import pytest
 import torch
 
 from lerobot.configs import PreTrainedConfig
-from lerobot.policies.pi052.configuration_pi052 import PI052Config
-from lerobot.policies.pi052.modeling_pi052 import PI052Policy, _last_valid_prefix_hidden
+from lerobot.policies.fineart_vla.configuration_fineart_vla import FineARTVLAConfig
+from lerobot.policies.fineart_vla.modeling_fineart_vla import FineARTVLAPolicy, _last_valid_prefix_hidden
 
 
 def _policy(**kwargs):
-    policy = PI052Policy.__new__(PI052Policy)
+    policy = FineARTVLAPolicy.__new__(FineARTVLAPolicy)
     torch.nn.Module.__init__(policy)
     policy.config = SimpleNamespace(text_loss_weight=1.0, memory_scratchpad=False, **kwargs)
     return policy
@@ -57,19 +57,19 @@ def test_generation_reads_last_valid_prompt_token_not_right_padding():
 
 
 def test_obsolete_runtime_options_are_not_policy_fields():
-    names = {field.name for field in fields(PI052Config)}
+    names = {field.name for field in fields(FineARTVLAConfig)}
     assert not names & {"subtask_replan_steps", "joint_subtask_conditioning", "apply_chat_template"}
 
 
 def test_tagged_config_roundtrip_uses_standard_choice_decoder():
-    config = PI052Config(device="cpu")
+    config = FineARTVLAConfig(device="cpu")
     encoded = draccus.encode(config, PreTrainedConfig)
     assert draccus.decode(PreTrainedConfig, dict(encoded)).recipe == config.recipe
-    assert encoded["type"] == "pi052"
+    assert encoded["type"] == "fineart_vla"
 
 
 def test_legacy_checkpoint_defaults_load_without_rewriting_source(tmp_path, caplog):
-    config = PI052Config(device="cpu", enable_fast_action_loss=False)
+    config = FineARTVLAConfig(device="cpu", enable_fast_action_loss=False)
     config.save_pretrained(tmp_path)
     path = tmp_path / "config.json"
     raw = json.loads(path.read_text())
@@ -84,7 +84,7 @@ def test_legacy_checkpoint_defaults_load_without_rewriting_source(tmp_path, capl
 
 
 def test_legacy_joint_prompt_request_is_not_silently_ignored(tmp_path):
-    config = PI052Config(device="cpu")
+    config = FineARTVLAConfig(device="cpu")
     config.save_pretrained(tmp_path)
     path = tmp_path / "config.json"
     raw = json.loads(path.read_text())
@@ -94,7 +94,7 @@ def test_legacy_joint_prompt_request_is_not_silently_ignored(tmp_path):
         PreTrainedConfig.from_pretrained(tmp_path)
 
 
-def test_pi052_can_be_used_in_the_training_cli_policy_choice():
+def test_fineart_vla_can_be_used_in_the_training_cli_policy_choice():
     from draccus.argparsing import ArgumentParser
 
     @dataclass
@@ -102,13 +102,13 @@ def test_pi052_can_be_used_in_the_training_cli_policy_choice():
         policy: PreTrainedConfig | None = None
 
     parser = ArgumentParser(config_class=Pipeline)
-    config = parser.parse_args(["--policy.type=pi052", "--policy.device=cpu"])
-    assert isinstance(config.policy, PI052Config)
+    config = parser.parse_args(["--policy.type=fineart_vla", "--policy.device=cpu"])
+    assert isinstance(config.policy, FineARTVLAConfig)
 
 
 def test_single_action_calls_do_not_generate_or_rewrite_runtime_subtask():
     policy = _policy()
-    policy.config = PI052Config(device="cpu", n_action_steps=2)
+    policy.config = FineARTVLAConfig(device="cpu", n_action_steps=2)
     policy._action_queue = deque()
     batch = {"observation.state": torch.zeros(1, 14)}
     seen = []

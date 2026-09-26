@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Regression tests for PI052 FAST action-code supervision."""
+"""Regression tests for FineARTVLA FAST action-code supervision."""
 
 from types import SimpleNamespace
 
@@ -26,8 +26,10 @@ from torch.nn import functional as F  # noqa: N812
 pytest.importorskip("transformers")
 pytest.importorskip("liger_kernel")
 
-from lerobot.policies.pi052.modeling_pi052 import PI052Policy, _fast_lin_ce  # noqa: E402
-from lerobot.policies.pi052.processor_pi052 import make_pi052_pre_post_processors  # noqa: E402
+from lerobot.policies.fineart_vla.modeling_fineart_vla import FineARTVLAPolicy, _fast_lin_ce  # noqa: E402
+from lerobot.policies.fineart_vla.processor_fineart_vla import (
+    make_fineart_vla_pre_post_processors,  # noqa: E402
+)
 
 
 def _fast_ce(logits, action_tokens, action_code_mask, predict_actions_t):
@@ -137,15 +139,15 @@ def test_fast_ce_averages_each_action_sample_equally():
     assert torch.allclose(loss, per_sample.mean())
 
 
-def test_pi052_rejects_fast_loss_without_recipe():
+def test_fineart_vla_rejects_fast_loss_without_recipe():
     config = SimpleNamespace(recipe=None, recipe_path=None, enable_fast_action_loss=True)
 
     with pytest.raises(ValueError, match="recipe_path"):
-        make_pi052_pre_post_processors(config)
+        make_fineart_vla_pre_post_processors(config)
 
 
-def test_pi052_rejects_missing_fast_batch_keys():
-    policy = PI052Policy.__new__(PI052Policy)
+def test_fineart_vla_rejects_missing_fast_batch_keys():
+    policy = FineARTVLAPolicy.__new__(FineARTVLAPolicy)
     nn.Module.__init__(policy)
     policy.config = SimpleNamespace(
         enable_fast_action_loss=True,

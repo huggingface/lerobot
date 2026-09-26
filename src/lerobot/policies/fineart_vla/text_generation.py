@@ -12,19 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import subprocess
-import sys
+"""Tokenizer cache for FineART-VLA's shared-runtime text decoder."""
+
+from __future__ import annotations
+
+from typing import Any
+
+_LOC_TOKENIZER_CACHE: dict[str, Any] = {}
 
 
-def test_pi052_config_import_does_not_load_model_or_dataset_processor():
-    code = """
-import sys
-from lerobot.policies import PI052Config
-assert PI052Config.__name__ == "PI052Config"
-config = PI052Config(device="cpu")
-assert config.recipe_path is None
-assert config.recipe["blend"]["high_level_subtask"]["weight"] == 0.3
-assert "lerobot.policies.pi052.modeling_pi052" not in sys.modules
-assert "lerobot.policies.pi052.processor_pi052" not in sys.modules
-"""
-    subprocess.run([sys.executable, "-c", code], check=True)
+def _get_loc_tokenizer(tok_name: str, auto_tokenizer_cls: Any, register_loc_fn: Any) -> Any:
+    tokenizer = _LOC_TOKENIZER_CACHE.get(tok_name)
+    if tokenizer is None:
+        tokenizer = register_loc_fn(auto_tokenizer_cls.from_pretrained(tok_name))
+        _LOC_TOKENIZER_CACHE[tok_name] = tokenizer
+    return tokenizer

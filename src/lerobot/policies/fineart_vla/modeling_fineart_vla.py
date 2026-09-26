@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PI0.5 with joint flow/text training and hierarchical language inference."""
+"""FineART-VLA: joint flow/text training and hierarchical language inference.
+
+Derived from Physical Intelligence's pi0.5/openpi and LeRobot's PI05 implementation.
+Original architecture and implementation: https://github.com/Physical-Intelligence/openpi
+"""
 
 from __future__ import annotations
 
@@ -38,8 +42,8 @@ from ..pi05.modeling_pi05 import (
     PI05Pytorch as PI05PytorchBase,
     make_att_2d_masks,
 )
-from .configuration_pi052 import PI052Config
-from .processor_pi052 import make_pi052_pre_post_processors  # noqa: F401
+from .configuration_fineart_vla import FineARTVLAConfig
+from .processor_fineart_vla import make_fineart_vla_pre_post_processors  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +205,7 @@ def _enable_hf_kernels() -> None:
         from liger_kernel.transformers import apply_liger_kernel_to_paligemma  # noqa: PLC0415
     except ImportError:
         logger.warning(
-            "PI052: liger-kernel is not installed; skipping fused Triton "
+            "FineART-VLA: liger-kernel is not installed; skipping fused Triton "
             "kernels. Install with ``pip install liger-kernel``."
         )
         return
@@ -215,7 +219,7 @@ def _enable_hf_kernels() -> None:
         fused_linear_cross_entropy=False,
     )
     _HF_KERNELS_ENABLED = True
-    logger.info("PI052: HF kernels (Liger) enabled — rope, geglu fused.")
+    logger.info("FineART-VLA: HF kernels (Liger) enabled — rope, geglu fused.")
 
 
 def _reduce_action_loss(per_sample: Tensor, predict_actions_t: Tensor | None, reduction: str) -> Tensor:
@@ -480,7 +484,7 @@ def _get_flex_fns(device: torch.device):
             )
             _get_flex_kernel_options(device)
         except Exception as exc:
-            logger.warning("PI052: FlexAttention unavailable (%s); using SDPA.", exc)
+            logger.warning("FineART-VLA: FlexAttention unavailable (%s); using SDPA.", exc)
             _flex_fns = False
     return _flex_fns or None
 
@@ -538,7 +542,7 @@ def _get_adarms_backend():
             _flashrt_adarms_cache = get_kernel("flashrt/flashrt-adarms-train", revision="v1")
         except Exception as exc:
             logger.warning(
-                "PI052: flashrt-adarms-train unavailable (%s); using the eager norm path.",
+                "FineART-VLA: flashrt-adarms-train unavailable (%s); using the eager norm path.",
                 exc,
             )
             _flashrt_adarms_cache = False
@@ -599,10 +603,10 @@ def _get_manual_attention():
                 def part(qs, ks, vs, m, scale, _hub=_hub):
                     return _hub(qs, ks, vs, m, scale).transpose(1, 2).contiguous()
 
-                logger.info("PI052: manual attention backed by flashrt-flex-attention-train (Hub).")
+                logger.info("FineART-VLA: manual attention backed by flashrt-flex-attention-train (Hub).")
         except Exception as exc:
             logger.info(
-                "PI052: flashrt-flex-attention-train unavailable (%s); using the inline manual-attention path.",
+                "FineART-VLA: flashrt-flex-attention-train unavailable (%s); using the inline manual-attention path.",
                 exc,
             )
         _manual_attention = torch.compile(part, dynamic=False)
@@ -809,9 +813,9 @@ def _paligemma_forward_ki(
         adarms_cond = [None, None]
 
     # Single-expert paths: defer to the original forward saved in
-    # PI052Policy.__init__.
+    # FineARTVLAPolicy.__init__.
     if inputs_embeds[0] is None or inputs_embeds[1] is None:
-        return self._pi052_orig_forward(
+        return self._fineart_vla_orig_forward(
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
@@ -873,21 +877,21 @@ def _paligemma_forward_ki(
     return [outputs_embeds[0], outputs_embeds[1]], None
 
 
-class PI052Policy(PI05Policy):
-    """π0.5 with the PaliGemma LM head re-enabled.
+class FineARTVLAPolicy(PI05Policy):
+    """FineART-VLA, extending Physical Intelligence's π0.5 with language supervision.
 
     It inherits unchanged PI0.5 policy behavior and replaces the core model with
     the joint flow/text implementation below.
     """
 
-    config_class = PI052Config
-    name = "pi052"
+    config_class = FineARTVLAConfig
+    name = "fineart_vla"
     model_class = PI05Pytorch
     eval_after_pretrained_load = True
     show_openpi_disclaimer = False
     use_native_pretrained_loader = True
 
-    def __init__(self, config: PI052Config, **kwargs: Any) -> None:
+    def __init__(self, config: FineARTVLAConfig, **kwargs: Any) -> None:
         # Patch before constructing Gemma/SigLIP layers; the operation is optional and idempotent.
         _enable_hf_kernels()
         super().__init__(config, **kwargs)
@@ -899,15 +903,15 @@ class PI052Policy(PI05Policy):
         # Bind knowledge insulation per instance so stock PI0.5 policies remain unchanged.
         if getattr(config, "knowledge_insulation", False):
             backbone = self.model.paligemma_with_expert
-            backbone._pi052_orig_forward = backbone.forward
+            backbone._fineart_vla_orig_forward = backbone.forward
             backbone.forward = types.MethodType(_paligemma_forward_ki, backbone)
             logger.info(
-                "PI052: knowledge insulation enabled — action→VLM K/V gradients are blocked in attention."
+                "FineART-VLA: knowledge insulation enabled — action→VLM K/V gradients are blocked in attention."
             )
             if config.use_flashrt_adarms:
                 self._flashrt_adarms = _get_adarms_backend()
                 if self._flashrt_adarms is not None:
-                    logger.info("PI052: FlashRT adaRMS training kernels enabled.")
+                    logger.info("FineART-VLA: FlashRT adaRMS training kernels enabled.")
 
         if config.use_compiled_vision:
             _tower = self.model.paligemma_with_expert.paligemma.model.vision_tower
@@ -920,7 +924,7 @@ class PI052Policy(PI05Policy):
                 return _c(*args, **kwargs)
 
             _tower.forward = _tower_dispatch
-            logger.info("PI052: SigLIP vision tower compiled for no-grad passes.")
+            logger.info("FineART-VLA: SigLIP vision tower compiled for no-grad passes.")
 
         # Cache the fixed K-repeat action mask outside the training step.
         if config.flow_num_repeats > 1:
@@ -1026,7 +1030,7 @@ class PI052Policy(PI05Policy):
                     if value is None
                 ]
                 raise ValueError(
-                    "PI052 FAST action loss is enabled, but the preprocessor did not produce "
+                    "FineART-VLA FAST action loss is enabled, but the preprocessor did not produce "
                     f"required batch keys: {missing}."
                 )
 
@@ -1072,7 +1076,7 @@ class PI052Policy(PI05Policy):
             # Both flow and text disabled — make this an obvious bug
             # rather than a silent zero loss.
             raise RuntimeError(
-                "PI052Policy.forward: both flow_loss_weight and "
+                "FineARTVLAPolicy.forward: both flow_loss_weight and "
                 "text_loss_weight are 0 (or text_labels missing) — "
                 "nothing to train."
             )
@@ -1347,7 +1351,7 @@ class PI052Policy(PI05Policy):
                     prefix_pad, prefix_att, non_fast_prefix_len, k, chunk
                 )
             except Exception as exc:
-                logger.warning("PI052: FlexAttention initialization failed (%s); using SDPA.", exc)
+                logger.warning("FineART-VLA: FlexAttention initialization failed (%s); using SDPA.", exc)
                 self._flex_attention_disabled = True
         if flex_masks is not None:
             att_2d_4d = None
@@ -1487,7 +1491,7 @@ class PI052Policy(PI05Policy):
             use_cache=False,
         )
         if vlm_out is None:
-            raise RuntimeError("PI052 text+fast loss: VLM forward returned no hidden states.")
+            raise RuntimeError("FineART-VLA text+fast loss: VLM forward returned no hidden states.")
         return self._prefix_ce_losses(
             vlm_out,
             text_labels,
@@ -1510,7 +1514,7 @@ class PI052Policy(PI05Policy):
                 "the shared autosteer runtime accepts only a subtask response."
             )
         if self._batch_size_from_observation(batch) != 1:
-            raise ValueError("PI052 text generation requires one observation.")
+            raise ValueError("FineART-VLA text generation requires one observation.")
         return self.select_message(batch)
 
     def select_message(
@@ -1539,7 +1543,7 @@ class PI052Policy(PI05Policy):
             from transformers import AutoTokenizer  # noqa: PLC0415
 
             from .text_generation import _get_loc_tokenizer  # noqa: PLC0415
-            from .text_processor_pi052 import register_paligemma_loc_tokens  # noqa: PLC0415
+            from .text_processor_fineart_vla import register_paligemma_loc_tokens  # noqa: PLC0415
 
             tok_name = getattr(self.config, "tokenizer_name", None) or "google/paligemma-3b-pt-224"
             tokenizer = _get_loc_tokenizer(tok_name, AutoTokenizer, register_paligemma_loc_tokens)
@@ -1639,7 +1643,7 @@ class PI052Policy(PI05Policy):
 
         decoded = tokenizer.decode(generated, skip_special_tokens=True).strip()
         if not decoded and generated:
-            logger.debug("PI052 generated an empty text response; raw token IDs: %s", generated[:16])
+            logger.debug("FineART-VLA generated an empty text response; raw token IDs: %s", generated[:16])
         return decoded
 
     @staticmethod
@@ -1734,7 +1738,7 @@ class PI052Policy(PI05Policy):
                 "module rename?"
             )
         logging.info(
-            "PI052Policy LR groups (base=%.3g): backbone=%.3g (×%.3g, n=%d), "
+            "FineARTVLAPolicy LR groups (base=%.3g): backbone=%.3g (×%.3g, n=%d), "
             "action_expert=%.3g (×%.3g, n=%d), lm_head=%.3g (×%.3g, n=%d)",
             base_lr,
             base_lr * backbone_scale,

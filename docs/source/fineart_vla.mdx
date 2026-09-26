@@ -1,16 +1,18 @@
-# π₀.₅ with language supervision (Pi052)
+# FineART-VLA
 
-Pi052 extends [Pi05](./pi05) with a trainable PaliGemma language head and a
+FineART-VLA builds on **π0.5 from Physical Intelligence** and its
+[openpi implementation](https://github.com/Physical-Intelligence/openpi),
+through LeRobot's [Pi05](./pi05) policy. It extends this foundation with a trainable PaliGemma language head and a
 runtime that alternates language generation with action generation. A single
 checkpoint can predict a low-level subtask, optionally update memory or answer
 visual questions, and condition its flow-matching action expert on that text.
 
-Use Pi05 when you only need task-conditioned actions. Use Pi052 when the policy
+Use Pi05 when you only need task-conditioned actions. Use FineART-VLA when the policy
 must generate or consume intermediate language during a rollout.
 
-## How Pi052 differs from Pi05
+## How FineART-VLA differs from Pi05
 
-| Capability          | Pi05                                                   | Pi052                                                                             |
+| Capability          | Pi05                                                   | FineART-VLA                                                                       |
 | ------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------- |
 | Action model        | PaliGemma vision-language prefix + Gemma action expert | Same base architecture                                                            |
 | Language head       | Not trained for runtime generation                     | Re-enabled and trained with text cross-entropy                                    |
@@ -19,8 +21,8 @@ must generate or consume intermediate language during a rollout.
 | Dataset requirement | Standard images, state, actions, and task              | The same fields plus language annotations for every language capability you train |
 | Rollout             | Direct task-to-action policy                           | Hierarchical task → subtask → action loop, with optional memory and VQA           |
 
-Pi052 can initialize from a Pi05 checkpoint. The policy architecture remains
-compatible, while Pi052 builds its own processors so recipe labels and FAST
+FineART-VLA can initialize from a Pi05 checkpoint. The policy architecture remains
+compatible, while FineART-VLA builds its own processors so recipe labels and FAST
 labels are not silently replaced by the Pi05 processor stack.
 
 ## Install
@@ -42,7 +44,7 @@ GPU.
 
 ## Prepare language-annotated data
 
-Pi052 does not infer supervised subtasks from a normal LeRobot dataset during
+FineART-VLA does not infer supervised subtasks from a normal LeRobot dataset during
 training. The dataset must contain the language targets used by the selected
 recipe in the optional `language_persistent` and `language_events` columns.
 
@@ -50,14 +52,14 @@ At minimum, annotate a continuous `subtask` timeline so each training frame has
 an active low-level instruction. Add `memory`, VQA, interjections, and speech
 annotations only if the recipe trains those capabilities.
 
-PI052 embeds its default recipe in `PI052Config`, like EO-1. It samples
+FineART-VLA embeds its default recipe in `FineARTVLAConfig`, like EO-1. It samples
 30% high-level task → subtask prediction and 70% low-level subtask-conditioned
 action training. Each configuration owns its recipe dictionary, and saved
 checkpoints carry that dictionary into inference.
 
 Use `--policy.recipe_path=/path/to/custom.yaml` to override the default.
 The shared recipes in `src/lerobot/configs/recipes/` retain main's semantics;
-PI052 does not replace them. For goal-only training, use an inline recipe with
+FineART-VLA does not replace them. For goal-only training, use an inline recipe with
 one low-level user message containing `${task}`, or set `recipe=None` and
 disable text/FAST losses for the plain PI05 pipeline.
 
@@ -67,7 +69,7 @@ the task and generated assistant span with the same causal marks as training.
 The old policy-side joint prompt builder is no longer used by rollout.
 
 Rollout owns planning cadence (`--autosteer_interval_s=3`), interactive commands,
-and synchronous/RTC scheduling. PI052 only generates text when queried; ordinary
+and synchronous/RTC scheduling. FineART-VLA only generates text when queried; ordinary
 action calls never generate another subtask behind the runtime's back.
 `subtask_replan_steps`, `joint_subtask_conditioning`, and `apply_chat_template`
 are no longer policy CLI options. Older checkpoint configs with the default
@@ -96,19 +98,23 @@ recipe resolver.
 
 <Tip>
   If a dataset has no language columns, recipe rendering becomes a no-op and
-  Pi052 falls back to the plain Pi05 prompt path. This is useful for
+  FineART-VLA falls back to the plain Pi05 prompt path. This is useful for
   compatibility but does not train the language planner.
 </Tip>
 
-## Train Pi052
+## Train FineART-VLA
 
-This example initializes Pi052 from the native Pi052 initialization checkpoint
-and trains the embedded 70/30 subtask recipe:
+This example initializes FineART-VLA from `lerobot/pi052_base`, the existing
+Hub initialization checkpoint, and trains the embedded 70/30 subtask recipe.
+That checkpoint contains π0.5 base weights converted to the native policy layout;
+it does not contain additional FineART language training. Its repository name is
+retained for compatibility. Legacy `pi052` configuration and tokenizer identifiers
+remain loadable; newly saved configurations use `fineart_vla`.
 
 ```bash
 lerobot-train \
     --dataset.repo_id=${HF_USER}/my_language_annotated_dataset \
-    --policy.type=pi052 \
+    --policy.type=fineart_vla \
     --policy.pretrained_path=lerobot/pi052_base \
     --policy.tokenizer_max_length=256 \
     --policy.dtype=bfloat16 \
@@ -117,8 +123,8 @@ lerobot-train \
     --policy.gradient_checkpointing=true \
     --batch_size=8 \
     --steps=30000 \
-    --output_dir=outputs/pi052 \
-    --job_name=pi052 \
+    --output_dir=outputs/fineart_vla \
+    --job_name=fineart_vla \
     --wandb.enable=true
 ```
 
@@ -153,7 +159,7 @@ than selecting a checkpoint from total loss alone.
 
 The universal FAST tokenizer works out of the box. Dataset-specific fitting is
 an explicit preparation step, not a hook in the shared training loop.
-Call `lerobot.policies.pi052.fit_fast_tokenizer.fit_fast_tokenizer` with the
+Call `lerobot.policies.fineart_vla.fit_fast_tokenizer.fit_fast_tokenizer` with the
 dataset source, split, action normalization statistics and relative-action
 settings used by training. Then pass the returned directory with
 `--policy.action_tokenizer_name=/path/to/fitted/tokenizer` and leave
@@ -162,7 +168,7 @@ self-contained.
 
 ## Training performance
 
-Pi052 uses optimized training paths by default:
+FineART-VLA uses optimized training paths by default:
 
 - batches repeated flow targets and suffix projections instead of replaying
   small operations in Python;
@@ -215,11 +221,11 @@ ablation or post-training but does not learn the language runtime.
 
 ## Inference performance
 
-Pi052 has two inference loops, and both avoid repeatedly encoding the expensive
+FineART-VLA has two inference loops, and both avoid repeatedly encoding the expensive
 multimodal prefix:
 
 1. **Action denoising** encodes the image/language prefix once, reuses its KV
-   cache across flow steps, precomputes the timestep schedule on-device, and
+   cache across flow steps, constructs action-suffix masks on-device, and
    crops temporary suffix K/V instead of cloning the prefix cache.
 2. **Language decoding** uses autoregressive KV caching, so each new token only
    processes the sampled token against cached image/language keys instead of

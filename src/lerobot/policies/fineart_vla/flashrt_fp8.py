@@ -219,7 +219,7 @@ def apply_fp8_mlp(policy, batch, *, safety: float = 1.05) -> bool:
     device = next(policy.parameters()).device
     if not _fp8_supported(device):
         logger.warning(
-            "PI052: device %s has no FP8 (E4M3) support (needs CUDA SM>=8.9); keeping BF16.",
+            "FineART-VLA: device %s has no FP8 (E4M3) support (needs CUDA SM>=8.9); keeping BF16.",
             device,
         )
         return False
@@ -229,7 +229,7 @@ def apply_fp8_mlp(policy, batch, *, safety: float = 1.05) -> bool:
         gelu_ops = _get_kernel(_GELU_REPO)
         quant_ops = _get_kernel(_GEMM_REPO)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("PI052: FlashRT FP8 kernels unavailable (%s); keeping BF16.", exc)
+        logger.warning("FineART-VLA: FlashRT FP8 kernels unavailable (%s); keeping BF16.", exc)
         return False
 
     model = policy.model
@@ -256,7 +256,7 @@ def apply_fp8_mlp(policy, batch, *, safety: float = 1.05) -> bool:
         m.calibrating = False
 
     logger.info(
-        "PI052: FlashRT FP8 enabled (%d Gemma + %d SigLIP MLPs).",
+        "FineART-VLA: FlashRT FP8 enabled (%d Gemma + %d SigLIP MLPs).",
         len(gemma_layers),
         len(siglip),
     )

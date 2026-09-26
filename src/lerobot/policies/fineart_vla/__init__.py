@@ -12,4 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compatibility namespace for processor artifacts saved before the FineART-VLA rename."""
+"""FineART-VLA configuration; model and processors are imported lazily by their factories."""
+
+from .configuration_fineart_vla import FineARTVLAConfig
+
+__all__ = ["FineARTVLAConfig"]

@@ -75,7 +75,7 @@ def _make_pipeline(action_tokenizer_path):
     )
 
 
-def test_pi052_pipeline_embeds_and_loads_fitted_action_tokenizer(tmp_path, monkeypatch):
+def test_fineart_vla_pipeline_embeds_and_loads_fitted_action_tokenizer(tmp_path, monkeypatch):
     original_cache = tmp_path / "original_fast_cache"
     original_cache.mkdir()
     tokenizer = _ActionTokenizer()
@@ -88,7 +88,7 @@ def test_pi052_pipeline_embeds_and_loads_fitted_action_tokenizer(tmp_path, monke
         lambda *args, **kwargs: _PaligemmaTokenizer(),
     )
     monkeypatch.setattr(
-        "lerobot.policies.pi052.fit_fast_tokenizer.fit_fast_tokenizer",
+        "lerobot.policies.fineart_vla.fit_fast_tokenizer.fit_fast_tokenizer",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("FAST fitting must not run")),
     )
 
@@ -113,7 +113,7 @@ def test_pi052_pipeline_embeds_and_loads_fitted_action_tokenizer(tmp_path, monke
 
     shutil.rmtree(original_cache)
     loaded, _ = make_pre_post_processors(
-        SimpleNamespace(type="pi052", auto_fit_fast_tokenizer=True),
+        SimpleNamespace(type="fineart_vla", auto_fit_fast_tokenizer=True),
         pretrained_path=str(checkpoint),
         dataset_repo_id="org/dataset-that-must-not-be-read",
     )
@@ -127,7 +127,7 @@ def test_pi052_pipeline_embeds_and_loads_fitted_action_tokenizer(tmp_path, monke
     )
 
 
-def test_pi052_pipeline_rejects_missing_fitted_action_tokenizer(tmp_path, monkeypatch):
+def test_fineart_vla_pipeline_rejects_missing_fitted_action_tokenizer(tmp_path, monkeypatch):
     tokenizer = _ActionTokenizer()
     monkeypatch.setattr(
         "lerobot.processor.tokenizer_processor.AutoProcessor.from_pretrained",

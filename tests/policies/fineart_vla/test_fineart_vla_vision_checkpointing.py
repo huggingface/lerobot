@@ -22,7 +22,7 @@ from torch import nn
 
 pytest.importorskip("transformers")
 
-from lerobot.policies.pi052.modeling_pi052 import PI05Pytorch
+from lerobot.policies.fineart_vla.modeling_fineart_vla import PI05Pytorch
 
 
 class _MockVisionTower:

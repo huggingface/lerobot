@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for PI052 joint-sequence (paper-style) subtask conditioning.
+"""Tests for FineARTVLA joint-sequence (paper-style) subtask conditioning.
 
 Joint recipes train the subtask text and the action losses in one sequence,
 with the supervised subtask span attended causally. At inference the same
@@ -34,8 +34,8 @@ from pathlib import Path
 import torch
 
 from lerobot.datasets.recipe import TrainingRecipe
-from lerobot.policies.pi052.text_processor_pi052 import (
-    PI052TextTokenizerStep,
+from lerobot.policies.fineart_vla.text_processor_fineart_vla import (
+    FineARTVLATextTokenizerStep,
     encode_prompt_with_targets,
 )
 
@@ -72,7 +72,7 @@ _MESSAGES = [
 def test_encode_prompt_with_targets_matches_training_labels():
     tokenizer = _CharTokenizer()
 
-    step = PI052TextTokenizerStep(max_length=120)
+    step = FineARTVLATextTokenizerStep(max_length=120)
     step._tokenizer = tokenizer
     train_ids, train_attn, labels, predict_actions, _prompt = step._encode_messages(
         tokenizer,
@@ -97,8 +97,8 @@ def test_encode_prompt_with_targets_matches_training_labels():
 
 
 def test_apply_causal_language_marks_reproduces_training_mask():
+    from lerobot.policies.fineart_vla.modeling_fineart_vla import _apply_causal_language_marks
     from lerobot.policies.pi05.modeling_pi05 import make_att_2d_masks
-    from lerobot.policies.pi052.modeling_pi052 import _apply_causal_language_marks
 
     n_img, n_lang = 4, 8
     prefix_len = n_img + n_lang
@@ -135,10 +135,10 @@ def test_joint_recipe_is_a_valid_message_recipe():
 
 
 def test_default_fast_mapping_clears_loc_and_seg_ranges():
-    from lerobot.policies.pi052.configuration_pi052 import PI052Config
-    from lerobot.policies.pi052.modeling_pi052 import _FAST_ACTION_VOCAB_SIZE
+    from lerobot.policies.fineart_vla.configuration_fineart_vla import FineARTVLAConfig
+    from lerobot.policies.fineart_vla.modeling_fineart_vla import _FAST_ACTION_VOCAB_SIZE
 
-    skip = PI052Config.__dataclass_fields__["fast_skip_tokens"].default
+    skip = FineARTVLAConfig.__dataclass_fields__["fast_skip_tokens"].default
     assert skip == 1152
 
     paligemma_vocab = 257152

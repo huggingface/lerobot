@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PI0.5 with hierarchical text generation and flow-matched actions."""
+"""FineART-VLA, built on Physical Intelligence's pi0.5 and openpi implementation."""
 
 import logging
 from dataclasses import asdict, dataclass, field
@@ -23,7 +23,7 @@ from lerobot.configs import PreTrainedConfig
 from ..pi05.configuration_pi05 import PI05Config
 
 
-def _pi052_default_recipe() -> dict:
+def _fineart_vla_default_recipe() -> dict:
     """Embed the subtask contract without importing optional dataset dependencies."""
     return {
         "blend": {
@@ -55,16 +55,17 @@ def _pi052_default_recipe() -> dict:
     }
 
 
-@PreTrainedConfig.register_subclass("pi052")
+@PreTrainedConfig.register_subclass("pi052")  # Legacy checkpoint/config alias.
+@PreTrainedConfig.register_subclass("fineart_vla")
 @dataclass
-class PI052Config(PI05Config):
-    """PI0.5 with recipe-driven text and action supervision."""
+class FineARTVLAConfig(PI05Config):
+    """FineART-VLA: pi0.5 with recipe-driven text and action supervision."""
 
     # Recipe / language stack ---------------------------------------------
     recipe_path: str | None = None
     """Optional file override for the embedded default recipe."""
 
-    recipe: dict | None = field(default_factory=_pi052_default_recipe)
+    recipe: dict | None = field(default_factory=_fineart_vla_default_recipe)
     """Serialized training/runtime contract; ``None`` selects the plain PI0.5 prompt."""
 
     memory_scratchpad: bool = False
@@ -159,7 +160,7 @@ class PI052Config(PI05Config):
     use_flashrt_fp8_mlp: bool = False
     """Use calibrated FlashRT FP8 MLP kernels."""
 
-    # Applied to PI052 parameter groups, leaving the shared AdamW config unchanged.
+    # Applied to FineART-VLA parameter groups, leaving the shared AdamW config unchanged.
     optimizer_foreach: bool | None = False
     optimizer_fused: bool | None = True
 
@@ -175,7 +176,7 @@ class PI052Config(PI05Config):
                     path = str(packaged)
             self.recipe = asdict(resolve_recipe_override(self.recipe, path))
         if self.enable_fast_action_loss and self.recipe is None:
-            raise ValueError("PI052 FAST action loss requires recipe_path to build action supervision.")
+            raise ValueError("FineART-VLA FAST action loss requires recipe_path to build action supervision.")
         if self.text_loss_weight > 0 and self.unfreeze_lm_head:
             self.train_expert_only = False
         if self.flow_num_repeats < 1:
@@ -211,7 +212,7 @@ class PI052Config(PI05Config):
             if key in config:
                 config.pop(key)
                 logging.warning(
-                    "Ignoring legacy PI052 checkpoint option %s; rollout owns autosteer_interval_s "
+                    "Ignoring legacy FineART-VLA checkpoint option %s; rollout owns autosteer_interval_s "
                     "and the saved recipe/processors own prompt formatting.",
                     key,
                 )

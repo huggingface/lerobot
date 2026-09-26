@@ -20,13 +20,13 @@ from torch import nn
 
 pytest.importorskip("transformers")
 
-from lerobot.policies.pi052.modeling_pi052 import PI052Policy  # noqa: E402
+from lerobot.policies.fineart_vla.modeling_fineart_vla import FineARTVLAPolicy  # noqa: E402
 from lerobot.utils.logging_utils import MetricsTracker  # noqa: E402
 
 
 @pytest.mark.parametrize("reduction", ["mean", "none"])
 def test_component_metrics_are_numeric_without_detaching_training_loss(monkeypatch, reduction):
-    policy = PI052Policy.__new__(PI052Policy)
+    policy = FineARTVLAPolicy.__new__(FineARTVLAPolicy)
     nn.Module.__init__(policy)
     policy.config = SimpleNamespace(flow_loss_weight=10.0, text_loss_weight=1.0)
     shape = () if reduction == "mean" else (2,)
