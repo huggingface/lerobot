@@ -56,6 +56,7 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_TOKENS,
 )
 
+from ..common.openpi_checkpoint import load_complete_checkpoint
 from ..common.vla_utils import pad_vector, prepare_attention_masks_4d, resize_with_pad_torch
 from ..pretrained import PreTrainedPolicy, T
 from ..rtc.modeling_rtc import RTCProcessor
@@ -794,7 +795,9 @@ class PI0FastPolicy(PreTrainedPolicy):
         if config.gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
 
-        self.model.to(config.device)
+        # Parameters built on the meta device have no data to move yet; the loader places them.
+        if not next(self.model.parameters()).is_meta:
+            self.model.to(config.device)
 
         self.reset()
 
@@ -837,6 +840,19 @@ class PI0FastPolicy(PreTrainedPolicy):
                 **kwargs,
             )
 
+        download_kwargs = {
+            "force_download": force_download,
+            "resume_download": resume_download,
+            "proxies": proxies,
+            "token": token,
+            "cache_dir": cache_dir,
+            "local_files_only": local_files_only,
+            "revision": revision,
+        }
+        model = load_complete_checkpoint(cls, pretrained_name_or_path, config, download_kwargs, **kwargs)
+        if model is not None:
+            return model
+
         # Initialize model without loading weights
         # Check if dataset_stats were provided in kwargs
         model = cls(config, **kwargs)
@@ -847,17 +863,7 @@ class PI0FastPolicy(PreTrainedPolicy):
             try:
                 from transformers.utils import cached_file
 
-                resolved_file = cached_file(
-                    pretrained_name_or_path,
-                    "model.safetensors",
-                    cache_dir=kwargs.get("cache_dir"),
-                    force_download=kwargs.get("force_download", False),
-                    resume_download=kwargs.get("resume_download"),
-                    proxies=kwargs.get("proxies"),
-                    token=kwargs.get("token"),
-                    revision=kwargs.get("revision"),
-                    local_files_only=kwargs.get("local_files_only", False),
-                )
+                resolved_file = cached_file(pretrained_name_or_path, "model.safetensors", **download_kwargs)
                 from safetensors.torch import load_file
 
                 original_state_dict = load_file(resolved_file)
