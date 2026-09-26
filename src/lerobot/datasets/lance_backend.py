@@ -525,7 +525,7 @@ class LanceDatasetReader(BaseDatasetReader):
         # Lazy load torchcodec
         from torchcodec.decoders import VideoDecoder
 
-        self._load_file_meta([key for key in file_keys if key not in self._file_meta])
+        file_meta = self._load_file_meta(file_keys)
 
         prepared: dict[tuple, tuple] = {}
         new_files = []
@@ -537,12 +537,12 @@ class LanceDatasetReader(BaseDatasetReader):
 
         if new_files:
             sources = {
-                key: _SparseBlobSource(self._file_meta[key]["file_size"], partial(self._blob_handle, key))
+                key: _SparseBlobSource(file_meta[key]["file_size"], partial(self._blob_handle, key))
                 for key in new_files
             }
             spans_by_key: dict[tuple, list[tuple[int, int]]] = {}
             for key in new_files:
-                meta = self._file_meta[key]
+                meta = file_meta[key]
                 spans = [
                     (0, min(_OPEN_PROBE_BYTES, meta["file_size"])),
                     # Slack past the moov covers the next box header ffmpeg reads.
@@ -570,7 +570,7 @@ class LanceDatasetReader(BaseDatasetReader):
         if windows:
             window_spans: dict[tuple, list[tuple[int, int]]] = {}
             for key, frame_windows in windows.items():
-                meta = self._file_meta[key]
+                meta = file_meta[key]
                 source = prepared[key][1]
                 spans = [
                     span
@@ -638,10 +638,12 @@ class LanceDatasetReader(BaseDatasetReader):
         for (key, offset), payload in zip(range_targets, payloads, strict=True):
             sources[key].add(offset, payload.as_py())
 
-    def _load_file_meta(self, missing: list[tuple]) -> None:
-        """Fetch byte-index columns for files not yet in the per-worker cache."""
+    def _load_file_meta(self, file_keys: list[tuple]) -> dict[tuple, dict]:
+        """Return the batch's byte indexes, retaining references across cache eviction."""
+        file_meta = {key: self._file_meta[key] for key in file_keys if key in self._file_meta}
+        missing = [key for key in file_keys if key not in file_meta]
         if not missing:
-            return
+            return file_meta
         row_ids = [self._video_row_ids[file_key] for file_key in missing]
         batch = (
             _opened(self._videos_table)
@@ -667,7 +669,7 @@ class LanceDatasetReader(BaseDatasetReader):
         position_values = kf_position_column.values.to_numpy(zero_copy_only=False)
         for i in range(batch.num_rows):
             file_key = (scalars["video_key"][i], scalars["chunk_index"][i], scalars["file_index"][i])
-            self._file_meta[file_key] = {
+            file_meta[file_key] = self._file_meta[file_key] = {
                 "file_size": scalars["file_size"][i],
                 "moov_offset": scalars["moov_offset"][i],
                 "moov_size": scalars["moov_size"][i],
@@ -676,6 +678,7 @@ class LanceDatasetReader(BaseDatasetReader):
             }
         while len(self._file_meta) > 2048:
             self._file_meta.popitem(last=False)
+        return file_meta
 
     def _window_byte_range(self, key: str, meta: dict, first_frame: int, last_frame: int) -> tuple[int, int]:
         """Byte range covering frames [first, last]: preceding keyframe to next keyframe."""
