@@ -720,6 +720,7 @@ def _make_relative_action_training_stats(
     *,
     exclude_joints: list[str] | None,
     action_names: list[str] | None,
+    se3_pose_groups: list[list[int]] | None = None,
     preserve_action_horizon: bool = True,
 ) -> dict[str, dict[str, Any]]:
     try:
@@ -737,6 +738,7 @@ def _make_relative_action_training_stats(
         enabled=True,
         exclude_joints=list(exclude_joints or []),
         action_names=action_names,
+        se3_pose_groups=list(se3_pose_groups or []),
     )
     stats = deepcopy(getattr(getattr(dataset, "meta", None), "stats", {}) or {})
     chunks_by_horizon: list[list[np.ndarray]] | None = None
@@ -760,6 +762,7 @@ def _make_relative_action_training_stats(
             action_batch,
             state_batch,
             relative_step._build_mask(action_batch.shape[-1]),
+            relative_step.se3_pose_groups,
         )
         if not preserve_action_horizon:
             relative_action = relative_action.reshape(-1, relative_action.shape[-1]).unsqueeze(0)
@@ -835,6 +838,7 @@ def _make_relative_action_training_stats_from_dataset_meta(
         dataset,
         exclude_joints=list(config.relative_exclude_joints or []),
         action_names=_resolve_action_feature_names_from_dataset_meta(dataset_meta),
+        se3_pose_groups=list(config.relative_se3_pose_groups or []),
         preserve_action_horizon=True,
     )
 
@@ -1245,6 +1249,7 @@ def make_groot_pre_post_processors(
             enabled=True,
             exclude_joints=list(config.relative_exclude_joints or []),
             action_names=_resolve_action_feature_names_from_dataset_meta(dataset_meta),
+            se3_pose_groups=list(config.relative_se3_pose_groups or []),
         )
         input_steps.insert(2, relative_step)
 
