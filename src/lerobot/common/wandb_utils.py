@@ -47,7 +47,9 @@ def cfg_to_group(
         trainable_tag,
         f"seed:{cfg.seed}",
     ]
-    if cfg.dataset is not None:
+    # cfg.dataset is a required field on the real TrainPipelineConfig, but WandBLogger is also
+    # exercised in tests against a duck-typed stub (SimpleNamespace) that sets it to None.
+    if cfg.dataset is not None:  # type: ignore[comparison-overlap]
         lst.append(f"dataset:{cfg.dataset.repo_id}")
     if cfg.env is not None:
         lst.append(f"env:{cfg.env.type}")

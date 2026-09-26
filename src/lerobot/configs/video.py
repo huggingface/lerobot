@@ -91,7 +91,7 @@ class VideoEncoderConfig:
     g: int | None = 2  # GOP size (keyframe interval).
     crf: int | float | None = 30  # Quality level. Lower means better quality and larger files.
     preset: int | str | None = None  # Speed/quality preset. Accepted values are codec-specific.
-    fast_decode: int = 0  # Fast-decode tuning. Accepted values are codec-specific, 0 disables it.
+    fast_decode: int | None = 0  # Fast-decode tuning. Accepted values are codec-specific, 0 disables it.
     # TODO(CarolinePascal): add torchcodec support + find a way to unify the
     # two backends (encoding and decoding).
     video_backend: str = "pyav"  # Encoding backend. Only "pyav" is currently supported.

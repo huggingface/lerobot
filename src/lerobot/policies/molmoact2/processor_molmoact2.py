@@ -247,11 +247,15 @@ def _strip_processor_config(config: dict[str, Any], *metadata_keys: str) -> dict
 
 
 def _load_local_molmoact2_processor(checkpoint_location: str) -> Any:
+    # MolmoAct2* names below are the real local classes under TYPE_CHECKING/when transformers
+    # is installed, or None at runtime otherwise (see the guarded import above) -- mypy only
+    # sees the TYPE_CHECKING branch's concrete type, so it can't see the real runtime-None case.
+    # (Qwen2Tokenizer resolves to Any -- an untyped transformers import -- so it isn't flagged.)
     if (
         Qwen2Tokenizer is None
-        or MolmoAct2ImageProcessor is None
-        or MolmoAct2Processor is None
-        or MolmoAct2VideoProcessor is None
+        or MolmoAct2ImageProcessor is None  # type: ignore[comparison-overlap]
+        or MolmoAct2Processor is None  # type: ignore[comparison-overlap]
+        or MolmoAct2VideoProcessor is None  # type: ignore[comparison-overlap]
     ):
         raise RuntimeError("transformers is required to load MolmoAct2 processor.")
 
@@ -331,7 +335,7 @@ def _normalize_question_text(text: str) -> str:
     normalized = re.sub(r"\s+", " ", str(text or "")).strip()
     if not normalized:
         return ""
-    previous = None
+    previous: str | None = None
     while normalized and normalized != previous:
         previous = normalized
         normalized = normalized.strip().strip(_QUESTION_SURROUNDING_DELIMITERS).strip()
@@ -772,7 +776,9 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         self.action_processor = None
         if self.action_mode in {"discrete", "both"}:
             require_package("scipy", extra="molmoact2")
-            if UniversalActionProcessor is None:
+            # Real transformers+scipy class under TYPE_CHECKING/when installed, None at runtime
+            # otherwise (see the guarded import above) -- same as _load_local_molmoact2_processor.
+            if UniversalActionProcessor is None:  # type: ignore[comparison-overlap]
                 raise RuntimeError("transformers and scipy are required to load MolmoAct2 action tokenizer.")
             self.action_processor = UniversalActionProcessor.from_pretrained_local(
                 self.discrete_action_tokenizer,

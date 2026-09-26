@@ -49,7 +49,10 @@ class RTCConfig:
 
     # Debug settings
     debug: bool = False
-    debug_maxlen: int = 100
+    # Optional sliding window size for the debug tracker; keeps all steps if None. Typed
+    # Optional because draccus can inject a literal `--debug_maxlen=null` regardless of the
+    # non-Optional default here.
+    debug_maxlen: int | None = 100
 
     def __post_init__(self):
         """Validate RTC configuration parameters."""
@@ -57,5 +60,5 @@ class RTCConfig:
             raise ValueError(f"mode must be 'guided' or 'trained', got {self.mode!r}")
         if self.max_guidance_weight <= 0:
             raise ValueError(f"max_guidance_weight must be positive, got {self.max_guidance_weight}")
-        if self.debug_maxlen <= 0:
+        if self.debug_maxlen is not None and self.debug_maxlen <= 0:
             raise ValueError(f"debug_maxlen must be positive, got {self.debug_maxlen}")
