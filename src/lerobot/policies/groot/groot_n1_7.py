@@ -885,7 +885,7 @@ class GR00TN17(PreTrainedModel):
         return next(iter(self.parameters())).dtype
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: str, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path: str | None, **kwargs):
         tune_visual = kwargs.pop("tune_visual", True)
         tune_llm = kwargs.pop("tune_llm", False)
         tune_projector = kwargs.pop("tune_projector", True)
@@ -899,17 +899,18 @@ class GR00TN17(PreTrainedModel):
             if key in kwargs:
                 transformers_loading_kwargs.setdefault(key, kwargs[key])
 
-        try:
-            local_model_path = snapshot_download(
-                pretrained_model_name_or_path,
-                repo_type="model",
-                revision=kwargs.get("revision"),
-                cache_dir=kwargs.get("cache_dir"),
-                local_files_only=kwargs.get("local_files_only", False),
-                token=kwargs.get("token"),
-            )
-        except (HFValidationError, RepositoryNotFoundError):
-            local_model_path = pretrained_model_name_or_path
+        local_model_path = pretrained_model_name_or_path
+        # None means `config` and `state_dict` are passed in, as transformers allows, so there is nothing to download.
+        if pretrained_model_name_or_path is not None:
+            with suppress(HFValidationError, RepositoryNotFoundError):
+                local_model_path = snapshot_download(
+                    pretrained_model_name_or_path,
+                    repo_type="model",
+                    revision=kwargs.get("revision"),
+                    cache_dir=kwargs.get("cache_dir"),
+                    local_files_only=kwargs.get("local_files_only", False),
+                    token=kwargs.get("token"),
+                )
 
         pretrained_model = super().from_pretrained(
             local_model_path,
