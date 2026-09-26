@@ -76,6 +76,8 @@ LeRobot uses [TorchCodec](https://github.com/meta-pytorch/torchcodec) for video 
 >
 > **Jetson (aarch64 + CUDA):** the `pyav` fallback above means no GPU-accelerated video decode by default. [`docker/Dockerfile.jetson`](https://github.com/huggingface/lerobot/blob/main/docker/Dockerfile.jetson) builds `torch`/`torchcodec` from source with CUDA support for JetPack 6.2 — community-maintained, see [`ravediamond/lerobot-jetson`](https://github.com/ravediamond/lerobot-jetson) for the prebuilt image and issue [#819](https://github.com/huggingface/lerobot/issues/819) for background.
 
+> **Blackwell GPUs (RTX 5090 / RTX PRO 6000, `sm_120`):** the default wheels (`torch 2.11+cu128`, driver >= 570.86) already ship `sm_120` kernels — no changes needed. CUDA 13 wheels are also verified: installing `torch==2.14.0+cu130` / `torchvision==0.29.0+cu130` from the `cu130` index (see the note in `pyproject.toml`) passes the policy test-suite and ACT / pi0 / pi0.5 forward+backward on RTX 5090, RTX PRO 6000 and RTX 4090 (validation details in the [xzwgit/lerobot fork README](https://github.com/xzwgit/lerobot)). Caveat: `torchcodec` wheels paired with `torch>=2.12` are not released yet, so on the cu130 stack video-dataset decoding is unavailable (image datasets unaffected) — see the torchcodec pairing note in `pyproject.toml`.
+
 If your platform supports TorchCodec, install `ffmpeg` using one of the methods below:
 
 <!-- prettier-ignore-start -->
