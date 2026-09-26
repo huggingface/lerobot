@@ -18,6 +18,7 @@ import os
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from functools import singledispatch
+from inspect import Parameter, signature
 from typing import Any
 
 import einops
@@ -462,11 +463,24 @@ def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, cfg: EnvConfi
             f"The hub module {getattr(module, '__name__', 'hub_module')} must expose `make_env(n_envs=int, use_async_envs=bool)`."
         )
     entry_fn = module.make_env
-    # Only pass cfg if it's not None (i.e., when an EnvConfig was provided, not a string hub ID)
+    # cfg is optional in the Hub factory API, even when the caller uses an EnvConfig.
     if cfg is not None:
-        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, cfg=cfg)
-    else:
-        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs)
+        try:
+            parameters = signature(entry_fn).parameters.values()
+        except (TypeError, ValueError):
+            # Preserve existing forwarding for callables whose signature cannot be inspected.
+            return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, cfg=cfg)
+        accepts_cfg = any(
+            parameter.kind is Parameter.VAR_KEYWORD
+            or (
+                parameter.name == "cfg"
+                and parameter.kind in (Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY)
+            )
+            for parameter in parameters
+        )
+        if accepts_cfg:
+            return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, cfg=cfg)
+    return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs)
 
 
 def _normalize_hub_result(result: Any) -> dict[str, dict[int, gym.vector.VectorEnv]]:
