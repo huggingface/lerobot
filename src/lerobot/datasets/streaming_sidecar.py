@@ -20,7 +20,7 @@ import fsspec
 from huggingface_hub import HfApi, HfFileSystem
 
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.streaming.manifest import EpisodeVideoManifest
+from lerobot.streaming.manifest import EpisodeVideoManifest, video_file_groups
 from lerobot.streaming.sidecar import SidecarSpec, ensure_mp4_sidecar, sidecar_cache_path
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
@@ -98,13 +98,7 @@ def make_sidecar_spec(
         `SidecarSpec`: Source identity used to validate and key the local sidecar cache.
     """
     data_root = _pin_hub_root(data_root.rstrip("/"), token=token)
-    relative_paths = sorted(
-        {
-            str(meta.get_video_file_path(episode_index, video_key))
-            for episode_index in range(int(meta.total_episodes))
-            for video_key in meta.video_keys
-        }
-    )
+    relative_paths = sorted(video_file_groups(meta))
     root = Path(data_root).expanduser()
     source_files: tuple[tuple[str, int | None], ...]
     fingerprints: tuple[tuple[str, str], ...] = ()

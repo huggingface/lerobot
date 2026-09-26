@@ -21,6 +21,7 @@ from collections.abc import Callable, Generator, Iterator, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import ExitStack, closing
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 from typing import Any, Literal
 
@@ -595,10 +596,19 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         shards = _balanced_episode_shards(self._selected_episodes, counts, world_size=world_size)
         return shards[rank], rank, world_size
 
+    @cached_property
+    def _episode_frame_counts(self) -> np.ndarray:
+        """Read only episode boundaries once for rank balancing and coverage planning."""
+        boundaries = self.meta.episodes.select_columns(
+            ["dataset_from_index", "dataset_to_index"]
+        ).with_format(None)[:]
+        return np.asarray(boundaries["dataset_to_index"], dtype=np.int64) - np.asarray(
+            boundaries["dataset_from_index"], dtype=np.int64
+        )
+
     def _episode_frame_count(self, episode_index: int) -> int:
         """Return the complete episode length from its absolute dataset boundaries."""
-        episode = self.meta.episodes[episode_index]
-        return int(episode["dataset_to_index"] - episode["dataset_from_index"])
+        return int(self._episode_frame_counts[episode_index])
 
     def num_frames_for_rank(self, rank: int, world_size: int, num_workers: int) -> int:
         """Return frames owned by one training rank under balanced whole-episode sharding."""

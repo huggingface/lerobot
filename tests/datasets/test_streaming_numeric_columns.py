@@ -71,7 +71,7 @@ def test_numeric_dtype_matches_existing_formatter(tmp_path: Path, dtype: str, ve
     stream.meta = SimpleNamespace(
         video_keys=[],
         get_data_file_path=lambda _: "data.parquet",
-        episodes=[{"dataset_from_index": 0, "dataset_to_index": 2}],
+        episodes=datasets.Dataset.from_list([{"dataset_from_index": 0, "dataset_to_index": 2}]),
     )
     stream._hf_features = features
     stream.delta_indices = None
@@ -111,7 +111,7 @@ def test_nonnumeric_and_nullable_columns_keep_feature_path(tmp_path: Path) -> No
     stream.meta = SimpleNamespace(
         video_keys=[],
         get_data_file_path=lambda _: "data.parquet",
-        episodes=[{"dataset_from_index": 0, "dataset_to_index": 2}],
+        episodes=datasets.Dataset.from_list([{"dataset_from_index": 0, "dataset_to_index": 2}]),
     )
     stream._hf_features = features
     stream.delta_indices = None

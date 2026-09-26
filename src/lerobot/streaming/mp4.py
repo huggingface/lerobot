@@ -414,19 +414,44 @@ def synthesized_mp4_size(index: Mp4Index, sample_slice: Mp4SampleSlice) -> int:
     durations = index.sample_durations[lo:hi]
     sync = index.sync_samples[(index.sync_samples >= lo) & (index.sync_samples < hi)] - lo + 1
     composition_offsets = index.sample_composition_offsets[lo:hi]
-    moov = _make_moov(index, durations, sizes, rel_offsets, sync, composition_offsets, mdat_data_offset=0)
-    header_size = len(index.ftyp) + len(moov)
-    mdat_header_size = 8 if sample_slice.byte_length + 8 <= 0xFFFFFFFF else 16
-    moov = _make_moov(
-        index,
-        durations,
-        sizes,
-        rel_offsets,
-        sync,
-        composition_offsets,
-        mdat_data_offset=header_size + mdat_header_size,
+    sync = _safe_sync_samples(durations, sync, composition_offsets)
+    duration = int(durations.sum())
+    sample_count = len(sizes)
+
+    def box_size(payload_size: int) -> int:
+        return payload_size + (8 if payload_size + 8 <= 0xFFFFFFFF else 16)
+
+    def timing_size(values: NDArray[np.int64]) -> int:
+        runs = 1 + int(np.count_nonzero(values[1:] != values[:-1]))
+        return box_size(8 + 8 * runs)
+
+    # Count the same boxes as _make_moov without packing a Python object per
+    # sample. Admission needs their lengths, not serialized copies of the tables.
+    tables = (
+        box_size(len(index.stsd_body))
+        + timing_size(durations)
+        + (timing_size(composition_offsets) if np.any(composition_offsets) else 0)
+        + len(_stsc_one_sample_per_chunk(sample_count))
+        + box_size(12 + 4 * sample_count)
+        + (box_size(8 + 4 * len(sync)) if len(sync) else 0)
     )
-    return len(index.ftyp) + len(moov) + mdat_header_size + sample_slice.byte_length
+    media_headers = len(_mdhd(index.timescale, duration)) + len(_hdlr())
+    track_header = len(_tkhd(index.track_id, duration, index.width, index.height))
+    movie_header = len(_mvhd(index.timescale, duration, index.track_id + 1))
+    edit_size = 44 if int(composition_offsets[0]) else 0
+
+    def moov_size(offset_width: int) -> int:
+        stbl = box_size(tables + box_size(8 + offset_width * sample_count))
+        minf = box_size(len(_vmhd()) + len(_dinf()) + stbl)
+        mdia = box_size(media_headers + minf)
+        return box_size(movie_header + box_size(track_header + edit_size + mdia))
+
+    max_offset = int(rel_offsets.max())
+    first_size = moov_size(8 if max_offset > 0xFFFFFFFF else 4)
+    mdat_header_size = box_size(sample_slice.byte_length) - sample_slice.byte_length
+    data_offset = len(index.ftyp) + first_size + mdat_header_size
+    final_size = moov_size(8 if max_offset + data_offset > 0xFFFFFFFF else 4)
+    return len(index.ftyp) + final_size + mdat_header_size + sample_slice.byte_length
 
 
 def iter_boxes(
@@ -701,6 +726,28 @@ def _sample_offsets(
     return offsets
 
 
+def _safe_sync_samples(
+    durations: NDArray[np.int64],
+    sync_samples: NDArray[np.int64],
+    composition_offsets: NDArray[np.int64],
+) -> NDArray[np.int64]:
+    """Exclude internal open-GOP keyframes that would skip preceding pictures."""
+    if np.any(composition_offsets) and len(sync_samples) > 1:
+        # Approximate decoders seek using sync samples without scanning packets.
+        # An internal open-GOP keyframe is later than its leading B-frames: do
+        # not seek there and accidentally skip a requested preceding picture.
+        presentation_times = np.cumsum(durations) - durations + composition_offsets
+        safe_sync_samples = [int(sync_samples[0])]
+        for position, sample in enumerate(sync_samples[1:], start=1):
+            next_sample = (
+                int(sync_samples[position + 1]) if position + 1 < len(sync_samples) else len(durations) + 1
+            )
+            if not np.any(presentation_times[sample : next_sample - 1] < presentation_times[sample - 1]):
+                safe_sync_samples.append(int(sample))
+        sync_samples = np.array(safe_sync_samples, dtype=np.int64)
+    return sync_samples
+
+
 def _make_moov(
     index: Mp4Index,
     durations: NDArray[np.int64],
@@ -713,19 +760,7 @@ def _make_moov(
 ) -> bytes:
     """Build movie metadata for the slice, rebasing offsets and preserving presentation timing."""
     duration = int(durations.sum())
-    if np.any(composition_offsets) and len(sync_samples) > 1:
-        # Approximate decoders seek using sync samples without scanning packets.
-        # An internal open-GOP keyframe is later than its leading B-frames: do
-        # not seek there and accidentally skip a requested preceding picture.
-        presentation_times = np.cumsum(durations) - durations + composition_offsets
-        safe_sync_samples = [int(sync_samples[0])]
-        for position, sample in enumerate(sync_samples[1:], start=1):
-            next_sample = (
-                int(sync_samples[position + 1]) if position + 1 < len(sync_samples) else len(sizes) + 1
-            )
-            if not np.any(presentation_times[sample : next_sample - 1] < presentation_times[sample - 1]):
-                safe_sync_samples.append(int(sample))
-        sync_samples = np.array(safe_sync_samples, dtype=np.int64)
+    sync_samples = _safe_sync_samples(durations, sync_samples, composition_offsets)
     stco_values = [int(mdat_data_offset + value) for value in rel_offsets]
     if any(value > 0xFFFFFFFF for value in stco_values):
         offset_box = _co64(stco_values)

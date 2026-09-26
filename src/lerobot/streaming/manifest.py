@@ -13,6 +13,7 @@ from __future__ import annotations
 import errno
 import json
 import logging
+from collections import defaultdict
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -66,6 +67,32 @@ class VideoFileRecord:
     mp4: Mp4Index
 
 
+def video_file_groups(
+    meta: LeRobotDatasetMetadata, episode_indices: Sequence[int] | None = None
+) -> dict[str, list[tuple[int, int]]]:
+    """Group episode/camera positions by source, reading only path metadata columns."""
+    meta.ensure_readable()
+    indices = range(int(meta.total_episodes)) if episode_indices is None else episode_indices
+    columns = [f"videos/{key}/{field}" for key in meta.video_keys for field in ("chunk_index", "file_index")]
+    if not columns:
+        return {}
+    table = meta.episodes.select_columns(columns).with_format(None)
+    if episode_indices is not None:
+        table = table.select(indices)
+    groups: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    offset = 0
+    for batch in table.iter(batch_size=10_000):
+        count = len(batch[columns[0]])
+        for camera, key in enumerate(meta.video_keys):
+            chunks = batch[f"videos/{key}/chunk_index"]
+            files = batch[f"videos/{key}/file_index"]
+            for position, (chunk, file) in enumerate(zip(chunks, files, strict=True)):
+                path = str(Path(meta.video_path.format(video_key=key, chunk_index=chunk, file_index=file)))
+                groups[path].append((int(indices[offset + position]), camera))
+        offset += count
+    return dict(groups)
+
+
 class EpisodeVideoManifest:
     """Map episode-camera pairs to source byte spans and MP4 metadata."""
 
@@ -81,6 +108,7 @@ class EpisodeVideoManifest:
         self._camera_to_id = {key: idx for idx, key in enumerate(self.video_keys)}
         self.files = files
         self.spans = spans
+        self._episode_byte_sizes: dict[int, int] = {}
 
     @classmethod
     def build(
@@ -103,10 +131,8 @@ class EpisodeVideoManifest:
         video_keys = list(meta.video_keys)
         if episode_indices is None:
             episode_indices = range(int(meta.total_episodes))
-        rel_paths = sorted(
-            {str(meta.get_video_file_path(ep_idx, key)) for ep_idx in episode_indices for key in video_keys}
-        )
-        path_to_id = {path: idx for idx, path in enumerate(rel_paths)}
+        file_episodes = video_file_groups(meta, episode_indices)
+        rel_paths = sorted(file_episodes)
         if sidecar_path is None:
             files = cls._build_file_records(
                 rel_paths,
@@ -140,14 +166,23 @@ class EpisodeVideoManifest:
             "source_start_pts": np.zeros((total, num_cameras), dtype=np.float64),
         }
 
-        for ep_idx in episode_indices:
-            ep = meta.episodes[ep_idx]
-            for cam_idx, key in enumerate(video_keys):
-                rel_path = str(meta.get_video_file_path(ep_idx, key))
-                file_id = path_to_id[rel_path]
-                mp4 = files[file_id].mp4
-                from_ts = float(ep[f"videos/{key}/from_timestamp"])
-                to_ts = float(ep[f"videos/{key}/to_timestamp"])
+        # Finish each source's mapped pages before moving on. Rank-balanced episode
+        # order can revisit most files and thrash an index larger than physical RAM.
+        timestamp_columns = [
+            f"videos/{key}/{field}" for key in video_keys for field in ("from_timestamp", "to_timestamp")
+        ]
+        timestamps = {
+            key: np.asarray(values, dtype=np.float64)
+            for key, values in meta.episodes.select_columns(timestamp_columns).with_format(None)[:].items()
+        }
+
+        manifest = cls(video_keys=video_keys, files=files, spans=spans)
+        for file_id, path in enumerate(rel_paths):
+            mp4 = files[file_id].mp4
+            for ep_idx, cam_idx in file_episodes.pop(path):
+                key = video_keys[cam_idx]
+                from_ts = float(timestamps[f"videos/{key}/from_timestamp"][ep_idx])
+                to_ts = float(timestamps[f"videos/{key}/to_timestamp"][ep_idx])
                 sample_slice = mp4.sample_slice(
                     from_ts,
                     to_ts,
@@ -164,8 +199,11 @@ class EpisodeVideoManifest:
                 spans["sample_lo"][ep_idx, cam_idx] = sample_slice.sample_lo
                 spans["sample_hi"][ep_idx, cam_idx] = sample_slice.sample_hi
                 spans["source_start_pts"][ep_idx, cam_idx] = sample_slice.source_start_pts
+                manifest._episode_byte_sizes[ep_idx] = manifest._episode_byte_sizes.get(
+                    ep_idx, 0
+                ) + synthesized_mp4_size(mp4, sample_slice)
 
-        return cls(video_keys=video_keys, files=files, spans=spans)
+        return manifest
 
     @staticmethod
     def _build_file_records(
@@ -365,6 +403,8 @@ class EpisodeVideoManifest:
 
     def episode_byte_size(self, episode_index: int) -> int:
         """Exact synthesized video bytes retained while an episode is active."""
+        if episode_index in self._episode_byte_sizes:
+            return self._episode_byte_sizes[episode_index]
         return sum(
             synthesized_mp4_size(
                 self.mp4_index(episode_index, camera_key),

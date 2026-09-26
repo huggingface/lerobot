@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from datasets import Dataset
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
@@ -67,6 +68,9 @@ def test_bucket_replacement_invalidates_sidecar_even_at_same_size(monkeypatch: p
         total_episodes=1,
         video_keys=["camera"],
         get_video_file_path=lambda *_args: video,
+        ensure_readable=lambda: None,
+        video_path="videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4",
+        episodes=Dataset.from_dict({"videos/camera/chunk_index": [0], "videos/camera/file_index": [0]}),
     )
     monkeypatch.setattr(
         "lerobot.datasets.streaming_sidecar.HfApi",
