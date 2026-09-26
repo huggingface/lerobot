@@ -54,7 +54,7 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 
 import math
 from collections import deque
-from typing import TypedDict, Unpack
+from typing import Any, Unpack
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -70,19 +70,13 @@ from ..common.vla_utils import (
     pad_vector,
     resize_with_pad,
 )
-from ..pretrained import PreTrainedPolicy
+from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs
 from ..rtc.modeling_rtc import RTCProcessor
 from ..utils import (
     populate_queues,
 )
 from .configuration_smolvla import SmolVLAConfig
 from .smolvlm_with_expert import SmolVLMWithExpertModel
-
-
-class ActionSelectKwargs(TypedDict, total=False):
-    inference_delay: int | None
-    prev_chunk_left_over: Tensor | None
-    execution_horizon: int | None
 
 
 def normalize(x, min_val, max_val):
@@ -193,7 +187,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         return self.parameters()
 
     def _get_action_chunk(
-        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
+        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[RTCActionSelectKwargs]
     ) -> Tensor:
         # TODO: Check if this for loop is needed.
         # Context: In fact, self.queues contains only ACTION field, and in inference, we don't have action in the batch
@@ -214,8 +208,10 @@ class SmolVLAPolicy(PreTrainedPolicy):
         )
 
         # Unpad actions
-        original_action_dim = self.config.action_feature.shape[0]
-        actions = actions[:, :, :original_action_dim]
+        action_feature = self.config.action_feature
+        if action_feature is None:
+            raise ValueError("SmolVLA requires an action output feature.")
+        actions = actions[:, :, : action_feature.shape[0]]
 
         if self.config.adapt_to_pi_aloha:
             actions = self._pi_aloha_encode_actions(actions)
@@ -230,7 +226,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(
-        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
+        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[RTCActionSelectKwargs]
     ) -> Tensor:
         self.eval()
 
@@ -242,7 +238,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def select_action(
-        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
+        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[RTCActionSelectKwargs]
     ) -> Tensor:
         """Select a single action given environment observations.
 
@@ -275,8 +271,12 @@ class SmolVLAPolicy(PreTrainedPolicy):
         return self.config.rtc_config is not None and self.config.rtc_config.enabled
 
     def forward(
-        self, batch: dict[str, Tensor], noise=None, time=None, reduction: str = "mean"
-    ) -> dict[str, Tensor]:
+        self,
+        batch: dict[str, Tensor],
+        noise: Tensor | None = None,
+        time: Tensor | None = None,
+        reduction: str = "mean",
+    ) -> tuple[Tensor, dict[str, float]]:
         """Do a full training forward pass to compute the loss.
 
         Args:
@@ -297,10 +297,12 @@ class SmolVLAPolicy(PreTrainedPolicy):
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("action_is_pad")
-        loss_dict = {}
+        loss_dict: dict[str, float] = {}
         losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
-        original_action_dim = self.config.action_feature.shape[0]
-        losses = losses[:, :, :original_action_dim]
+        action_feature = self.config.action_feature
+        if action_feature is None:
+            raise ValueError("SmolVLA requires an action output feature.")
+        losses = losses[:, :, : action_feature.shape[0]]
         loss_dict["losses_after_forward"] = losses.clone().mean().item()
 
         if actions_is_pad is not None:
@@ -417,7 +419,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
 
-    def _get_default_peft_targets(self) -> dict[str, any]:
+    def _get_default_peft_targets(self) -> dict[str, Any]:
         """Return default PEFT target modules for SmolVLA fine-tuning."""
         common_projections = (
             "state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out"
@@ -533,8 +535,8 @@ class VLAFlowMatching(nn.Module):
         # Compile model if requested
         if config.compile_model:
             torch.set_float32_matmul_precision("high")
-            self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)
-            self.forward = torch.compile(self.forward, mode=config.compile_mode)
+            self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)  # type: ignore[method-assign]
+            self.forward = torch.compile(self.forward, mode=config.compile_mode)  # type: ignore[method-assign]
 
     def _rtc_enabled(self):
         return self.config.rtc_config is not None and self.config.rtc_config.enabled
@@ -731,7 +733,7 @@ class VLAFlowMatching(nn.Module):
         lang_masks,
         state,
         noise=None,
-        **kwargs: Unpack[ActionSelectKwargs],
+        **kwargs: Unpack[RTCActionSelectKwargs],
     ) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = state.shape[0]

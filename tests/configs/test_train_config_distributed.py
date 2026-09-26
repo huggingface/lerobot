@@ -15,6 +15,8 @@
 # limitations under the License.
 """TrainPipelineConfig integration for the distributed fields: fail-fasts + config compat."""
 
+from types import SimpleNamespace
+
 import draccus
 import pytest
 
@@ -69,12 +71,27 @@ class TestDistributedFailFasts:
         cfg.parallelism = sharded()
         cfg._validate_distributed()
 
-    def test_fp16_rejected_when_sharded(self):
+    @pytest.mark.parametrize("mixed_precision", ["no", "bf16", "fp16"])
+    def test_every_precision_is_allowed_when_sharded(self, mixed_precision):
+        """fp16 was rejected under sharding while the GradScaler-over-DTensor path was
+        unverified; accelerate builds a plain GradScaler for FSDP2 and torch reduces the
+        overflow flag across the mesh, so all three precisions are now in scope."""
         cfg = make_cfg(parallelism=sharded())
+        cfg.accelerator.mixed_precision = mixed_precision
+        cfg._validate_distributed()
+
+    def test_fp16_rejected_on_cpu(self):
+        """accelerate skips the whole fp16 branch on CPU, so the run would silently be fp32."""
+        cfg = make_cfg()
+        cfg.policy = SimpleNamespace(device="cpu")
         cfg.accelerator.mixed_precision = "fp16"
-        with pytest.raises(ValueError, match="fp16"):
+        with pytest.raises(ValueError, match="fp16 requires an accelerator device"):
             cfg._validate_distributed()
+
         cfg.accelerator.mixed_precision = "bf16"
+        cfg._validate_distributed()
+        cfg.accelerator.mixed_precision = "fp16"
+        cfg.policy = SimpleNamespace(device="cuda")
         cfg._validate_distributed()
 
     def test_peft_rejected_when_sharded(self):

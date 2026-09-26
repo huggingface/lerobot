@@ -381,7 +381,7 @@ def check_version_compatibility(
     if v_check.major < v_current.major and enforce_breaking_major:
         raise BackwardCompatibilityError(repo_id, v_check)
     elif v_check.minor < v_current.minor:
-        logging.warning(FUTURE_MESSAGE.format(repo_id=repo_id, version=v_check))
+        logger.warning(FUTURE_MESSAGE.format(repo_id=repo_id, version=v_check))
 
 
 def get_repo_versions(repo_id: str, *, token: str | bool | None = None) -> list[packaging.version.Version]:
@@ -448,7 +448,7 @@ def get_safe_version(
     if compatibles:
         return_version = max(compatibles)
         if return_version < target_version:
-            logging.warning(f"Revision {version} for {repo_id} not found, using version v{return_version}")
+            logger.warning(f"Revision {version} for {repo_id} not found, using version v{return_version}")
         return f"v{return_version}"
 
     lower_major = [v for v in hub_versions if v.major < target_version.major]

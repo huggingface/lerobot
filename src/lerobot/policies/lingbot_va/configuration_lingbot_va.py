@@ -129,6 +129,10 @@ class LingBotVAConfig(PreTrainedConfig):
         return self.chunk_size
 
     def validate_features(self) -> None:
+        if self.input_features is None or self.output_features is None:
+            raise ValueError(
+                "LingBot-VA requires `input_features` and `output_features` to be resolved before validation."
+            )
         image_features = [key for key, feat in self.input_features.items() if feat.type == FeatureType.VISUAL]
         if not image_features:
             raise ValueError(
