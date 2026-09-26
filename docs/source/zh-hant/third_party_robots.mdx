@@ -1,0 +1,339 @@
+# 第三方機器人與遙操作裝置[[third-party-robots-teleoperators]]
+
+LeRobot 生態系統遠超出官方支援的硬體。拜 LeRobot 的外掛架構所賜，社群已為各式各樣的機械手臂與遙操作裝置建立整合 —— 從工業機械手臂到平價的業餘愛好者平台、VR 頭戴式裝置、觸覺回饋裝置，以及完整的手臂加遙操作裝置套件。本頁展示社群維護的整合，可用於遙操作、資料收集與策略部署。
+
+> [!IMPORTANT]
+> 這些專案由第三方開發與維護。請參閱各自的儲存庫以取得安裝說明、硬體需求與支援。
+
+隨插即用外掛會依套件名稱自動探索：LeRobot 會匯入任何已安裝且套件名稱開頭為 `lerobot_robot_` 或 `lerobot_teleoperator_` 的套件。安裝後，可直接從任何 LeRobot 指令引用外掛註冊的 `type`（請參閱其 README —— 它可能與套件名稱不同）：
+
+```bash
+pip install lerobot_robot_<name> lerobot_teleoperator_<name>
+
+lerobot-record \
+    --robot.type=<robot_name> \
+    --teleop.type=<teleoperator_name> \
+    --dataset.repo_id=${HF_USER}/my-dataset \
+    --dataset.num_episodes=5
+```
+
+> [!TIP]
+> ⚠️ 標示的是 LeRobot 的分支／擴充專案。它們可能需要自訂設定，而無法在未經修改的安裝環境中運作。所有其他項目皆為隨插即用外掛。
+
+## 工業與協作型手臂[[industrial-collaborative-arms]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>專案</th><th>說明</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/SpesRobotics/lerobot-robot-xarm">lerobot-robot-xarm</a></td>
+      <td>適用於 <a href="https://www.ufactory.cc/">UFACTORY</a> 的 xArm 協作型手臂系列的外掛。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/lebai-robotics/lerobot_lebai">lerobot_lebai</a></td>
+      <td>適用於 <a href="https://lebai.ltd/en/">Lebai</a> 六軸協作型手臂的外掛。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/wengmister/LeFranX">LeFranX</a> ⚠️</td>
+      <td>適用於 <a href="https://franka.de/">Franka</a> 研究用機械手臂的 LeRobot 擴充，搭配 <a href="https://www.robotera.com/">RobotEra XHand</a> 手部裝置進行 VR 遙操作。</td>
+    </tr>
+  </tbody>
+</table>
+
+#### Universal Robots UR5e[[universal-robots-ur5e]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>專案</th><th>說明</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/yechen056/UR5e-LeRobot">UR5e-LeRobot</a> ⚠️</td>
+      <td>適用於 <a href="https://www.universal-robots.com/">Universal Robots UR5e</a> 的 LeRobot 擴充，支援單臂與雙臂操作。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/scy-v/lerobot_ur5e_auto">lerobot_ur5e_auto</a> ⚠️</td>
+      <td>適用於移動式 <a href="https://www.universal-robots.com/">Universal Robots UR5e</a> 的 LeRobot 擴充，新增可大規模自動錄製且僅需最少監督的功能。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/F-Fer/lerobot_ur5e_gello">lerobot_robot_ur5e</a></td>
+      <td>適用於搭載 <a href="https://robotiq.com/">Robotiq</a> 夾爪的 <a href="https://www.universal-robots.com/">Universal Robots UR5e</a> 外掛，透過 RTDE 控制。</td>
+    </tr>
+  </tbody>
+</table>
+
+## 研究與學習用機械手臂[[research-learning-arms]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>專案</th><th>說明</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/TrossenRobotics/lerobot_trossen">lerobot_trossen</a></td>
+      <td>適用於 <a href="https://www.trossenrobotics.com/">Trossen Robotics</a> 的 WidowX 與 ALOHA 風格手臂的外掛。</td>
+    </tr>
+  </tbody>
+</table>
+
+#### AgileX Piper[[agilex-piper]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>專案</th><th>說明</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/AgRoboticsResearch/lerobot_robot_piper">lerobot_robot_piper (AgRobotics Research)</a></td>
+      <td>適用於 <a href="https://global.agilex.ai/">AgileX Piper</a> 手臂的外掛。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/WeGo-Robotics/lerobot_robot_piper">lerobot_robot_piper (WeGo Robotics)</a></td>
+      <td>適用於 <a href="https://global.agilex.ai/">AgileX Piper</a> 手臂的外掛，支援多臂遙操作、安全限制與 GUI 工具。</td>
+    </tr>
+  </tbody>
+</table>
+
+## 平價與業餘愛好者機械手臂[[affordable-hobbyist-arms]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>專案</th><th>說明</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/servodevelop/fashionstar-lerobot-robot-cello">fashionstar-lerobot-robot-cello</a></td>
+      <td>適用於 <a href="https://fashionstar.com.hk/">FashionStar</a> 的 StarAI Cello 6+1 自由度機械手臂的外掛。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/servodevelop/fashionstar-lerobot-robot-viola">fashionstar-lerobot-robot-viola</a></td>
+      <td>適用於 <a href="https://fashionstar.com.hk/">FashionStar</a> 精巧型 StarAI Viola 6+1 自由度機械手臂的外掛。</td>
+    </tr>
+  </tbody>
+</table>
+
+## 服務、移動與實用型機器人[[service-mobile-utility-robots]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>專案</th><th>說明</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/ugo-plus/lerobot-robot-ugo-pro">lerobot-robot-ugo-pro</a></td>
+      <td>適用於 <a href="https://ugo.plus/products/ugo-pro/">ugo</a> 的 ugo Pro 雙臂服務型機器人的外掛。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/zuoxingdong/lerobot_robot_lekiwi_pincopen">lerobot_robot_lekiwi_pincopen</a></td>
+      <td>適用於搭載 <a href="https://github.com/pollen-robotics/PincOpen">PincOpen</a> 夾爪的 LeKiwi 移動式機械手臂的外掛。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/KillingJacky/lerobot-robot-dummy">lerobot-robot-dummy</a></td>
+      <td>用於模擬機器人以便在沒有硬體的情況下錄製的外掛。對除錯很有用！</td>
+    </tr>
+  </tbody>
+</table>
+
+## 遙操作裝置[[teleoperators]]
+
+### VR 與動作控制器[[vr-motion-controllers]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>專案</th><th>說明</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/SpesRobotics/lerobot-teleoperator-teleop">lerobot-teleoperator-teleop</a></td>
+      <td>透過 <a href="https://immersiveweb.dev">WebXR</a> 將手機或 VR 頭戴式裝置變成遙操作裝置的外掛，封裝開源的 <a href="https://github.com/SpesRobotics/teleop"><code>teleop</code></a> 函式庫。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/Jas000n/lerobot-teleoperator-spacemouse">lerobot-teleoperator-spacemouse</a></td>
+      <td>適用於 <a href="https://3dconnexion.com/">3Dconnexion SpaceMouse</a> 的外掛，具備 SO-ARMS 機器人的逆運動學。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/Dream-Machines-Robotics/vr-teleop-kit">vr-teleop-kit</a></td>
+      <td>可從 <a href="https://www.meta.com/quest/">Meta Quest</a>（WebXR）遙操作手臂的外掛，仰賴 URDF 描述進行逆運動學運算。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/xensedyl/lerobot-teleoperator-pico4">lerobot-teleoperator-pico4</a></td>
+      <td>適用於 <a href="https://www.picoxr.com/">PICO 4</a> VR 頭戴式裝置的外掛，並隨附無控制器的<a href="https://github.com/xensedyl/lerobot-teleoperator-pico4-hand">手部追蹤版本</a>。</td>
+    </tr>
+  </tbody>
+</table>
+
+### 主臂[[leader-arms]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>專案</th><th>說明</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/F-Fer/lerobot_ur5e_gello">lerobot_teleoperator_gello</a></td>
+      <td>適用於 7 自由度 <a href="https://wuphilipp.github.io/gello_site/">GELLO</a> 遙操作裝置的外掛。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/uynitsuj/lerobot_teleoperator_yamactiveleader">lerobot_teleoperator_yamactiveleader</a></td>
+      <td>適用於 <a href="https://i2rt.com/">I2RT</a> 的主動式 YAM 遙操作裝置的外掛，這是一款雙向力回饋手臂。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/charlie8612/lerobot_teleoperator_omy">lerobot_teleoperator_omy</a></td>
+      <td>適用於 <a href="https://www.robotis.com/">ROBOTIS</a> 的 OMY-L100 6 自由度遙操作裝置的外掛。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://pypi.org/project/lerobot-teleoperator-pipermate/">lerobot-teleoperator-pipermate</a></td>
+      <td>適用於 PiperMate 遙操作裝置（<a href="https://fashionstar.com.hk/">FashionStar</a> UART 伺服馬達）的外掛，可驅動 <a href="https://global.agilex.ai/">AgileX Piper</a> 手臂。</td>
+    </tr>
+  </tbody>
+</table>
+
+### 觸覺回饋裝置[[haptic-devices]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>專案</th><th>說明</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/chohh7391/lerobot_teleoperator_inverse3">lerobot_teleoperator_inverse3</a></td>
+      <td>適用於 <a href="https://www.haply.co/">Haply Inverse3</a> 觸覺回饋裝置的外掛，新增力回饋遙操作功能。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/hzhz112/lerobot_teleoperator_omega7">lerobot_teleoperator_omega7</a></td>
+      <td>適用於 <a href="https://www.forcedimension.com/">Force Dimension omega.7</a> 觸覺回饋裝置的外掛，新增力回饋遙操作功能。</td>
+    </tr>
+  </tbody>
+</table>
+
+### 網路與遠端[[networked-remote]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>專案</th><th>說明</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://pypi.org/project/lerobot-teleoperator-livekit/">lerobot-teleoperator-livekit</a></td>
+      <td>透過 <a href="https://livekit.io/">LiveKit</a> Portal（WebRTC）接收遙操作指令以進行遠端控制的外掛。</td>
+    </tr>
+  </tbody>
+</table>
+
+## 完整套件（機器人 + 遙操作裝置）[[full-kits-robot-teleoperator]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>專案</th><th>說明</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/villekuosmanen/lerobot-arx5">lerobot-arx5</a></td>
+      <td>適用於 <a href="https://www.arx-x.com/">ARX5</a> 手臂的外掛：<a href="https://pypi.org/project/lerobot-robot-arx5/"><code>lerobot-arx5</code></a> 機械手臂與其 <a href="https://pypi.org/project/lerobot-teleoperator-arx5/"><code>lerobot-teleoperator-arx5</code></a> 遙操作手臂。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/robertorobotics/Nextis-AIRA-3D">Nextis-AIRA-3D</a></td>
+      <td>適用於 <a href="https://www.nextis.tech">Nextis</a> 7 自由度手臂的外掛：機械手臂 <code>aira_follower</code> 與遙操作手臂 <code>aira_leader</code>。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/pravsels/lerobot_yam">lerobot_yam</a></td>
+      <td>適用於 <a href="https://i2rt.com/">I2RT</a> YAM 手臂的外掛套件：機械手臂 <code>yam_follower</code> 與遙操作手臂 <code>yam_leader</code>。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/robot-learning-co/trlc-dk1">trlc-dk1</a></td>
+      <td>適用於 <a href="https://www.robot-learning.co/">The Robot Learning Company</a> 開發套件的外掛：單臂與雙臂的從臂／遙操作裝置類型。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/hexfellow/hex_lerobot_drivers">hex_lerobot_drivers</a></td>
+      <td>適用於 <a href="https://hexfellow.com/">HEXFELLOW</a> 裝置的外掛套件：機器人、遙操作裝置與相機（請參閱 <a href="./third_party_sensors">相機與感測器</a>）。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/Hiwonder-official/lerobot-robot-nexarm-follower">lerobot-robot-nexarm-follower</a></td>
+      <td>適用於 <a href="https://www.hiwonder.com/">Hiwonder</a> NexArm 的外掛：<a href="https://github.com/Hiwonder-official/lerobot-robot-nexarm-follower">機械手臂</a>及其搭配的<a href="https://github.com/Hiwonder-official/lerobot-teleoperator-nexarm-leader">遙操作手臂</a>。</td>
+    </tr>
+  </tbody>
+</table>
+
+## ROS 2 橋接器[[ros-2-bridges]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>專案</th><th>說明</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/ngres/leros2">leros2</a></td>
+      <td>將 ROS 2 主題與動作橋接到 LeRobot 機器人與遙操作裝置的外掛。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/ROBOTIS-GIT/lerobot_robot_ros2_zenoh">lerobot_robot_ros2_zenoh</a></td>
+      <td>透過 <a href="https://zenoh.io">Zenoh</a> 發布／訂閱傳輸，將 ROS 2 機器人橋接到 LeRobot 的外掛。</td>
+    </tr>
+  </tbody>
+</table>
+
+## 貢獻[[contributing]]
+
+打造了自己的 LeRobot 硬體整合嗎？外掛系統讓新增機器人與遙操作裝置變得簡單 —— 請參閱 [Bring Your Own Hardware](./integrate_hardware) 指南開始使用，並與社群分享你的專案！

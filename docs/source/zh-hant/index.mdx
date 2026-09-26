@@ -1,0 +1,174 @@
+# LeRobot[[lerobot]]
+
+<div class="flex justify-center">
+  <a target="_blank" href="https://huggingface.co/lerobot">
+    <img
+      alt="LeRobot, Hugging Face Robotics Library"
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-logo-thumbnail.png"
+    ></img>
+  </a>
+</div>
+
+**用於真實世界機器人的最先進機器學習技術**
+
+🤗 LeRobot 提供與硬體無關的原生 Python 介面，用於控制真實機器人——從 SO-ARM101 這類平價手臂到完整的人形機器人。此外還提供錄製、儲存與分享其所產生資料集的工具。每個資料集都採用標準化的 **LeRobotDataset** 格式（同步的影片 + 動作／狀態資料），並可直接從 [Hugging Face Hub](https://huggingface.co/lerobot) 串流。
+
+🤗 在這些資料之上，LeRobot 實作了最先進的策略（state-of-the-art policies）——從 ACT 這類輕量的模仿學習模型，到 π₀ 與 SmolVLA 這類大型視覺－語言－動作模型（vision-language-action models）——全都只需同樣的幾個 CLI 指令，即可訓練、分享與部署。
+
+目標：降低機器人技術的入門障礙，讓所有人都能為共享的資料集與預訓練模型做出貢獻，並從中受益。
+
+<div align="center" style="display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin: 20px 0;">
+  <a href="https://discord.gg/s3KuuzsPFb" target="_blank">
+    <img alt="Discord" src="https://img.shields.io/badge/Discord-Join_the_Community-5865F2?style=flat&logo=discord&logoColor=white">
+  </a>
+  <a href="https://x.com/LeRobotHF" target="_blank">
+    <img alt="X (Twitter)" src="https://img.shields.io/badge/X-Follow_%40LeRobotHF-black?style=flat&logo=x&logoColor=white">
+  </a>
+  <a href="https://huggingface.co/lerobot" target="_blank">
+    <img alt="Hugging Face Hub" src="https://img.shields.io/badge/HF_Hub-Models_%26_Datasets-FFD21E?style=flat">
+  </a>
+</div>
+
+<div align="center">
+  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/robots_control_video.webp" width="640px" alt="Reachy 2 Demo">
+</div>
+
+## 運作方式[[how-it-works]]
+
+**遙操作 → 錄製 → 訓練 → 部署**
+
+1. **遙操作**——自行控制機器人（使用主臂、鍵盤或手機），讓它能從你的動作中學習。
+2. **錄製**——每次示範都會儲存為資料集：同步的相機影片（synchronized camera video）加上你所採取的動作。
+3. **訓練**——策略（policy，即將控制機器人的神經網路）會學習模仿你的示範。
+4. **部署**——在機器人上執行訓練好的策略，看著它自行完成任務。
+
+## 開始使用[[get-started]]
+
+初次接觸嗎？請先[安裝 LeRobot](./installation)，然後選擇你的路徑：
+
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 my-6">
+  <div class="border dark:border-gray-700 rounded-lg p-4 shadow">
+    <div class="text-lg font-semibold mb-2">🔧 我有一台機器人</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      LeRobot 支援多種手臂與移動式機器人。熱門選擇：
+    </p>
+    <ul class="text-gray-700 dark:text-gray-300 text-sm list-disc pl-5 mb-2">
+      <li>
+        <a href="./so101">SO-101</a>——我們的旗艦級低成本手臂
+      </li>
+      <li>
+        <a href="./lekiwi">LeKiwi</a>——上方裝有手臂的移動底座
+      </li>
+      <li>
+        <a href="./koch">Koch v1.1</a>——社群長久以來的愛用款
+      </li>
+      <li>
+        或在側邊欄的 <strong>Robots</strong> 下找到你的機型
+      </li>
+    </ul>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      組裝並校正完成後，可依照<a href="./il_robots">模仿學習教學</a>
+      錄製資料集並訓練你的第一個策略——或者完全跳過 CLI，改用
+      <a href="./lelab">LeLab</a>，這是一款為相同工作流程 提供的瀏覽器 GUI。
+    </p>
+  </div>
+  <div class="border dark:border-gray-700 rounded-lg p-4 shadow">
+    <div class="text-lg font-semibold mb-2">💻 還沒有硬體</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      即使沒有機器人，你仍然可以訓練與評估策略：
+    </p>
+    <ul class="text-gray-700 dark:text-gray-300 text-sm list-disc pl-5 mb-2">
+      <li>
+        使用 Hub 上現有的
+        <a href="https://huggingface.co/datasets?other=LeRobot">
+          LeRobot 資料集
+        </a>
+        進行訓練
+      </li>
+      <li>
+        在<a href="./envhub">模擬</a>環境中，針對 LIBERO 或 Meta-World
+        等基準測試進行評估
+      </li>
+      <li>
+        試試免費的 <a href="./notebooks">Colab notebooks</a>——無需安裝任何東西
+      </li>
+    </ul>
+  </div>
+  <div class="border dark:border-gray-700 rounded-lg p-4 shadow">
+    <div class="text-lg font-semibold mb-2">🤝 我想貢獻心力</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      請先閱讀<a href="./contributing">貢獻指南</a>，然後
+      <a href="./bring_your_own_policies">新增一個策略</a>或
+      <a href="./integrate_hardware">使用自帶硬體</a>。
+    </p>
+  </div>
+</div>
+
+## 探索文件[[explore-the-docs]]
+
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 my-6">
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./cheat-sheet"
+  >
+    <div class="font-semibold mb-1">📋 速查表</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      所有 LeRobot CLI 指令，可直接複製貼上。
+    </p>
+  </a>
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./hardware_guide"
+  >
+    <div class="font-semibold mb-1">🖥️ 運算與硬體指南</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      哪個策略適合你的 GPU，以及訓練需要多久。
+    </p>
+  </a>
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./lerobot-dataset-v3"
+  >
+    <div class="font-semibold mb-1">🗂️ LeRobotDataset</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      從 Hub 載入、串流及視覺化機器人資料集。
+    </p>
+  </a>
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./lelab"
+  >
+    <div class="font-semibold mb-1">🖼 LeLab</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      用於校正、錄製與訓練的瀏覽器 GUI——無需 CLI。
+    </p>
+  </a>
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./act"
+  >
+    <div class="font-semibold mb-1">🧠 策略</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      從 ACT 開始，這是我們推薦的第一個策略——或在側邊欄瀏覽 SmolVLA、π₀ 及
+      更多內容。
+    </p>
+  </a>
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./envhub"
+  >
+    <div class="font-semibold mb-1">🎮 模擬與基準測試</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      在接觸真實硬體之前，先在模擬環境中訓練與評估。
+    </p>
+  </a>
+</div>
+
+## 常見問題[[common-problems]]
+
+遇到問題了嗎？以下是幾個最常見的情況：
+
+- **相機畫面模糊或無法使用**——光線比解析度更重要。請參閱[相機](./cameras)指南。
+- **建置或安裝錯誤**（`cmake`、`ffmpeg`、CUDA）——請參閱[安裝指南](./installation#troubleshooting)的疑難排解章節。
+- **不確定哪個策略適合你的 GPU**——請查看[運算與硬體指南](./hardware_guide)。
+- **還是卡住了嗎？** 在 [Discord](https://discord.gg/s3KuuzsPFb) 上提問——社群（以及 LeRobot 團隊）隨時樂意協助。
