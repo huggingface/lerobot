@@ -36,11 +36,9 @@ class MapPhoneActionToRobotAction(RobotActionProcessorStep):
     button presses to generate a gripper command.
 
     Attributes:
-        platform: The operating system of the phone (iOS or Android), used
-            to determine the correct button mappings for the gripper.
+        platform: The operating system of the phone (iOS or Android).
     """
 
-    # TODO(Steven): Gripper vel could be output of phone_teleop directly
     platform: PhoneOS
     _enabled_prev: bool = field(default=False, init=False, repr=False)
 
@@ -61,30 +59,21 @@ class MapPhoneActionToRobotAction(RobotActionProcessorStep):
         enabled = bool(action.pop("phone.enabled"))
         pos = action.pop("phone.pos")
         rot = action.pop("phone.rot")
-        inputs = action.pop("phone.raw_inputs")
+        gripper_vel = float(action.pop("phone.gripper_vel", 0.0))
+        action.pop("phone.raw_inputs", None)
 
         if pos is None or rot is None:
             raise ValueError("pos and rot must be present in action")
 
         rotvec = rot.as_rotvec()  # Absolute orientation as rotvec
 
-        # Map certain inputs to certain actions
-        if self.platform == PhoneOS.IOS:
-            gripper_vel = float(inputs.get("a3", 0.0))
-        else:
-            a = float(inputs.get("reservedButtonA", 0.0))
-            b = float(inputs.get("reservedButtonB", 0.0))
-            gripper_vel = (
-                a - b
-            )  # Positive if a is pressed, negative if b is pressed, 0 if both or neither are pressed
-
-        # For some actions we need to invert the axis
+        # Phone axes -> robot axes:
         action["enabled"] = enabled
-        action["target_x"] = -pos[1] if enabled else 0.0
-        action["target_y"] = pos[0] if enabled else 0.0
+        action["target_x"] = pos[1] if enabled else 0.0
+        action["target_y"] = -pos[0] if enabled else 0.0
         action["target_z"] = pos[2] if enabled else 0.0
         action["target_wx"] = rotvec[1] if enabled else 0.0
-        action["target_wy"] = rotvec[0] if enabled else 0.0
+        action["target_wy"] = -rotvec[0] if enabled else 0.0
         action["target_wz"] = -rotvec[2] if enabled else 0.0
         action["gripper_vel"] = gripper_vel  # Still send gripper action when disabled
         return action
@@ -92,7 +81,7 @@ class MapPhoneActionToRobotAction(RobotActionProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        for feat in ["enabled", "pos", "rot", "raw_inputs"]:
+        for feat in ["enabled", "pos", "rot", "raw_inputs", "gripper_vel"]:
             features[PipelineFeatureType.ACTION].pop(f"phone.{feat}", None)
 
         for feat in [
