@@ -17,6 +17,10 @@ import importlib
 import importlib.metadata
 import importlib.util
 import logging
+import sys
+import threading
+from collections.abc import Callable
+from types import ModuleType
 from typing import Any, Literal, overload
 
 from draccus.choice_types import ChoiceRegistry
@@ -179,6 +183,81 @@ _pygame_available = is_package_available("pygame")
 _qwen_vl_utils_available = is_package_available("qwen-vl-utils", import_name="qwen_vl_utils")
 _grpc_available = is_package_available("grpcio", import_name="grpc")
 _wallx_deps_available = _transformers_available and _peft_available and _qwen_vl_utils_available
+
+
+_on_demand_import_lock = threading.RLock()
+
+
+def import_on_demand(name: str) -> ModuleType:
+    """Import module `name` for a registry lookup, one thread at a time while it is not imported yet.
+
+    Two threads importing different modules for the first time can both be inside a shared dependency, such
+    as torchvision, at once, and Python then hands one of them a partly initialized module. A module that is
+    already imported, or that another thread is still importing, skips the lock, so Python's own module lock
+    makes this thread wait for it.
+
+    Module-level code must not look up a registry (`PreTrainedConfig.get_choice_class`,
+    `ProcessorStepRegistry.get` and the like): if the thread holding this lock is importing something that
+    needs that module, the two threads wait for each other forever, and Python cannot detect it.
+
+    Any error the import raises comes out as an `ImportError`, with that error as its cause, since registries
+    read a `KeyError` as an unknown name and skip a module only when it fails to import.
+    """
+    try:
+        if name in sys.modules:
+            return importlib.import_module(name)
+        with _on_demand_import_lock:
+            return importlib.import_module(name)
+    except ImportError:
+        raise
+    except Exception as e:
+        raise ImportError(f"{name} failed to import: {e!r}", name=name) from e
+
+
+def lazy_exports(
+    module_name: str, exports: dict[str, str]
+) -> tuple[Callable[[str], Any], Callable[[], list[str]]]:
+    """Return a module `__getattr__` and `__dir__` (PEP 562) that import each name in `exports` on first use.
+
+    `exports` maps each name to the object it stands for, written `<module>.<attribute>` with the module
+    absolute or relative to the calling package. Import the same names under `if TYPE_CHECKING:` and assign
+    these in its `else:` branch, so type checkers read the real imports and still report names that do not
+    exist. The names never become module globals, so the module's own code imports them where it uses them,
+    and `typing.get_type_hints` cannot resolve an annotation that uses them. In a package, a name that is not
+    in `exports` but names a submodule imports and returns it, as if the package had imported it. A submodule
+    that fails to import, for example for a missing extra, reads as a missing name with that error as its
+    cause, so `hasattr` and `getattr` with a default still answer, and `from <package> import <name>` shows
+    the error.
+
+    A name is imported in the thread that first uses it, without the lock of `import_on_demand`: module code
+    reads these names while the module is being imported, and a lock there could wait forever for a thread
+    that waits for that module. So resolve the names a thread uses before starting threads, since a thread
+    that first uses one while another thread imports can get a partly initialized module.
+    """
+    module = sys.modules[module_name]
+    is_package = module.__spec__ is not None and module.__spec__.submodule_search_locations is not None
+
+    def module_getattr(name: str) -> Any:
+        if name not in exports:
+            submodule = f"{module_name}.{name}"
+            may_be_submodule = is_package and name.isidentifier() and not name.startswith("__")
+            if may_be_submodule and importlib.util.find_spec(submodule):
+                try:
+                    return importlib.import_module(submodule)
+                except ImportError as e:
+                    raise AttributeError(f"module {module_name!r} has no attribute {name!r}") from e
+            raise AttributeError(f"module {module_name!r} has no attribute {name!r}")
+        module_path, _, attribute = exports[name].rpartition(".")
+        try:
+            return getattr(importlib.import_module(module_path, module.__package__), attribute)
+        except AttributeError as e:
+            # From a module __getattr__, Python reads AttributeError as a missing name and drops the cause.
+            raise ImportError(f"cannot import name {name!r} from {module_name!r}: {e}") from e
+
+    def module_dir() -> list[str]:
+        return sorted({*vars(module), *exports})
+
+    return module_getattr, module_dir
 
 
 def make_device_from_device_class(config: ChoiceRegistry) -> Any:

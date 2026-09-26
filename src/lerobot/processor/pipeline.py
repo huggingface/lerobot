@@ -30,9 +30,11 @@ The core components are:
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import json
 import re
+import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
@@ -55,8 +57,95 @@ from lerobot.lerobot_types import (
 )
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.hub import HubMixin
+from lerobot.utils.import_utils import import_on_demand
 
 from .converters import batch_to_transition, create_transition, transition_to_batch
+
+# The step names the policy packages register, each with the module under `lerobot.` that registers it, so a
+# name can be looked up without importing every policy. A class from another module that registers one of these
+# names gets a "reserved" error until `unregister` releases the name.
+# tests/configs/test_policy_registration.py keeps it in sync.
+BUILTIN_STEP_MODULES = {
+    "cosmos3_idle_frame_processor": "policies.cosmos3.processor_cosmos3",
+    "cosmos3_libero_action_processor": "policies.cosmos3.processor_cosmos3",
+    "cosmos3_prompt_processor": "policies.cosmos3.processor_cosmos3",
+    "cosmos3_tokenizer_processor": "policies.cosmos3.processor_cosmos3",
+    "cosmos3_video_canvas_processor": "policies.cosmos3.processor_cosmos3",
+    "dm05_clip_normalized_processor": "policies.dm05.processor_dm05",
+    "dm05_state_bins_processor": "policies.dm05.processor_dm05",
+    "dm05_task_processor": "policies.dm05.processor_dm05",
+    "dm05_tokenizer_processor": "policies.dm05.processor_dm05",
+    "eo1_conversation_template_processor": "policies.eo1.processor_eo1",
+    "eo1_qwen_processor": "policies.eo1.processor_eo1",
+    "evo1_action_processor": "policies.evo1.processor_evo1",
+    "evo1_pad_action_processor": "policies.evo1.processor_evo1",
+    "evo1_pad_state_processor": "policies.evo1.processor_evo1",
+    "fastwam_action_toggle_processor": "policies.fastwam.processor_fastwam",
+    "fineart_vla_text_tokenizer": "policies.fineart_vla.processor_fineart_vla",
+    "flux3_action_history_unnormalizer": "policies.flux3.processor_flux3",
+    "flux3_action_target_normalizer": "policies.flux3.processor_flux3",
+    "flux3_camera_resize": "policies.flux3.processor_flux3",
+    "flux3_observation_history_normalizer": "policies.flux3.processor_flux3",
+    "g05_action_frame_transform": "policies.g05.processor_g05",
+    "g05_action_history_crop": "policies.g05.processor_g05",
+    "g05_action_operation_mask": "policies.g05.processor_g05",
+    "g05_embodiment_projection": "policies.g05.processor_g05",
+    "g05_image_transform": "policies.g05.processor_g05",
+    "g05_inverse_action_projection": "policies.g05.processor_g05",
+    "g05_libero_gripper": "policies.g05.processor_g05",
+    "g05_normalization_clamp": "policies.g05.processor_g05",
+    "g05_relative_joint_actions": "policies.g05.processor_g05",
+    "g05_state_frame_transform": "policies.g05.processor_g05",
+    "g05_stepwise_unnormalizer": "policies.g05.processor_g05",
+    "g05_tokenizer": "policies.g05.processor_g05",
+    "groot_action_unpack_unnormalize_v2": "policies.groot.processor_groot",
+    "groot_n1_7_action_decode_v1": "policies.groot.processor_groot",
+    "groot_n1_7_pack_inputs_v1": "policies.groot.processor_groot",
+    "groot_n1_7_vlm_encode_v1": "policies.groot.processor_groot",
+    "lawam_binarize_gripper": "policies.lawam.processor_lawam",
+    "lawam_clip_actions": "policies.lawam.processor_lawam",
+    "lawam_pre_snap_gripper": "policies.lawam.processor_lawam",
+    "lawam_prepare_batch": "policies.lawam.processor_lawam",
+    "lawam_qwen_inputs": "policies.lawam.processor_lawam",
+    "lawam_resize_images": "policies.lawam.processor_lawam",
+    "lingbot_vla_v2_chat_template": "policies.lingbot_vla_v2.processor_lingbot_vla_v2",
+    "lingbot_vla_v2_image": "policies.lingbot_vla_v2.processor_lingbot_vla_v2",
+    "lingbot_vla_v2_inverse_slot_mapping": "policies.lingbot_vla_v2.processor_lingbot_vla_v2",
+    "lingbot_vla_v2_slot_mapping": "policies.lingbot_vla_v2.processor_lingbot_vla_v2",
+    "longwam_action_clamp": "policies.longwam.processor_longwam",
+    "longwam_action_toggle": "policies.longwam.processor_longwam",
+    "longwam_observations": "policies.longwam.processor_longwam",
+    "longwam_prompt": "policies.longwam.processor_longwam",
+    "molmoact2_action_frame_transform": "policies.molmoact2.processor_molmoact2",
+    "molmoact2_clamp_action": "policies.molmoact2.processor_molmoact2",
+    "molmoact2_clamp_normalized": "policies.molmoact2.processor_molmoact2",
+    "molmoact2_masked_normalizer": "policies.molmoact2.processor_molmoact2",
+    "molmoact2_masked_unnormalizer": "policies.molmoact2.processor_molmoact2",
+    "molmoact2_pack_inputs": "policies.molmoact2.processor_molmoact2",
+    "molmoact2_state_frame_transform": "policies.molmoact2.processor_molmoact2",
+    "multi_task_dit_task_tokenizer": "policies.multi_task_dit.processor_multi_task_dit",
+    "pi0_new_line_processor": "policies.pi0.processor_pi0",
+    "pi05_prepare_state_tokenizer_processor_step": "policies.pi05.processor_pi05",
+    "pi0_fast_prepare_state_tokenizer_processor_step": "policies.pi0_fast.processor_pi0_fast",
+    "vla_jepa_binarize_gripper": "policies.vla_jepa.processor_vla_jepa",
+    "vla_jepa_clip_actions": "policies.vla_jepa.processor_vla_jepa",
+    "vla_jepa_image_prep": "policies.vla_jepa.processor_vla_jepa",
+    "vla_jepa_pre_snap_gripper": "policies.vla_jepa.processor_vla_jepa",
+    "wall_oss_05_clamp_normalized": "policies.wall_oss_05.processor_wall_oss_05",
+    "wall_oss_05_crop_action": "policies.wall_oss_05.processor_wall_oss_05",
+    "wall_oss_05_pad_action": "policies.wall_oss_05.processor_wall_oss_05",
+    "wall_oss_05_pad_state": "policies.wall_oss_05.processor_wall_oss_05",
+    "wall_oss_05_task_passthrough": "policies.wall_oss_05.processor_wall_oss_05",
+    "wall_oss_05_tokenizer": "policies.wall_oss_05.processor_wall_oss_05",
+    "wall_x_prompt": "policies.wall_x.processor_wall_x",
+    "wall_x_task_processor": "policies.wall_x.processor_wall_x",
+    "wall_x_tokenizer": "policies.wall_x.processor_wall_x",
+    "xvla_add_domain_id": "policies.xvla.processor_xvla",
+    "xvla_image_scale": "policies.xvla.processor_xvla",
+    "xvla_image_to_float": "policies.xvla.processor_xvla",
+    "xvla_imagenet_normalize": "policies.xvla.processor_xvla",
+    "xvla_rotation_6d_to_axis_angle": "policies.xvla.processor_xvla",
+}
 
 # Generic type variables for pipeline input and output.
 TInput = TypeVar("TInput")
@@ -73,6 +162,9 @@ class ProcessorStepRegistry:
     """
 
     _registry: dict[str, type[ProcessorStep]] = {}
+    # Built-in names given up with `unregister`, which another class can then register. Looking one up no
+    # longer imports the module that owns it, so that class works even when that module fails to import.
+    _released: set[str] = set()
 
     @classmethod
     def register[StepT: ProcessorStep](cls, name: str | None = None) -> Callable[[type[StepT]], type[StepT]]:
@@ -85,14 +177,31 @@ class ProcessorStepRegistry:
             A decorator function that registers the class and returns it.
 
         Raises:
-            ValueError: If a step with the same name is already registered.
+            ValueError: If another class is already registered under the name, or if the name is a built-in
+                step name, reserved for the module that registers it until `unregister` releases it.
         """
 
         def decorator(step_class: type[StepT]) -> type[StepT]:
             """The actual decorator that performs the registration."""
             registration_name = name if name is not None else step_class.__name__
 
-            if registration_name in cls._registry:
+            owner = BUILTIN_STEP_MODULES.get(registration_name)
+            if (
+                owner is not None
+                and registration_name not in cls._released
+                and step_class.__module__ != f"lerobot.{owner}"
+            ):
+                # Not by importing the owner first: if it was imported before clear(), it registers nothing.
+                raise ValueError(
+                    f"Processor step '{registration_name}' is reserved for lerobot.{owner}. Use a different "
+                    f"name, or call ProcessorStepRegistry.unregister({registration_name!r}) first."
+                )
+            registered = cls._registry.get(registration_name)
+            # A module that failed to import runs again on the next import, so let it replace its own class.
+            if registered is not None and (registered.__module__, registered.__qualname__) != (
+                step_class.__module__,
+                step_class.__qualname__,
+            ):
                 raise ValueError(
                     f"Processor step '{registration_name}' is already registered. "
                     f"Use a different name or unregister the existing one first."
@@ -109,6 +218,9 @@ class ProcessorStepRegistry:
     def get(cls, name: str) -> type[ProcessorStep]:
         """Retrieves a processor step class from the registry by its name.
 
+        A built-in name imports the module that registers it, and waits for that module if another thread is
+        still importing it.
+
         Args:
             name: The name of the step to retrieve.
 
@@ -117,12 +229,16 @@ class ProcessorStepRegistry:
 
         Raises:
             KeyError: If the name is not found in the registry.
+            ImportError: If the module that registers a built-in name fails to import.
         """
+        if name in BUILTIN_STEP_MODULES and name not in cls._released:
+            # A saved pipeline records only the step name, so import the module that registers it. Importing
+            # it even when the name is registered waits for another thread that is still running that module.
+            import_on_demand(f"lerobot.{BUILTIN_STEP_MODULES[name]}")
         if name not in cls._registry:
-            available = list(cls._registry.keys())
             raise KeyError(
                 f"Processor step '{name}' not found in registry. "
-                f"Available steps: {available}. "
+                f"Available steps: {cls.list()}. "
                 f"Make sure the step is registered using @ProcessorStepRegistry.register()"
             )
         return cls._registry[name]
@@ -131,20 +247,42 @@ class ProcessorStepRegistry:
     def unregister(cls, name: str) -> None:
         """Removes a processor step from the registry.
 
+        A built-in name first imports the module that registers it, then is released, so another class can
+        register it until `clear()`.
+
         Args:
             name: The name of the step to unregister.
         """
+        if name in BUILTIN_STEP_MODULES:
+            # Load the built-in first, or it would register again when its module is imported later, as a
+            # lookup of another of its steps does. A module that fails to import cannot register it either.
+            with contextlib.suppress(ImportError):
+                import_on_demand(f"lerobot.{BUILTIN_STEP_MODULES[name]}")
+            cls._released.add(name)
         cls._registry.pop(name, None)
 
     @classmethod
     def list(cls) -> list[str]:
-        """Returns a list of all registered processor step names."""
-        return list(cls._registry.keys())
+        """Returns the registered step names and the built-in step names that load on first use.
+
+        Nothing is imported, since most step modules import torch.
+        """
+        # The built-in names a lookup would still import, so not those `unregister` gave up.
+        unloaded = {
+            n
+            for n, module in BUILTIN_STEP_MODULES.items()
+            if n not in cls._released and f"lerobot.{module}" not in sys.modules
+        }
+        return sorted({*cls._registry, *unloaded})
 
     @classmethod
     def clear(cls) -> None:
-        """Clears all processor steps from the registry."""
+        """Clears all processor steps from the registry.
+
+        Built-in names given up with `unregister` are reserved again.
+        """
         cls._registry.clear()
+        cls._released.clear()
 
 
 class ProcessorStep(ABC):
@@ -1150,9 +1288,10 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         **Tier 1: Registry-based resolution** (preferred):
         - **If "registry_name" in step_entry**: Look up in ProcessorStepRegistry
-          - **Advantage**: Faster, no imports needed, guaranteed compatibility
+          - **Advantage**: Faster, loads only the policy or module that registers it, guaranteed compatibility
           - **Example**: {"registry_name": "normalize_step"} -> Get pre-registered class
-          - **Error**: KeyError if registry_name not found -> Convert to ImportError
+          - **Error**: KeyError if registry_name not found, or ImportError from the module that registers it
+            -> Convert to ImportError that names the step
 
         **Tier 2: Dynamic import fallback**:
         - **Else use "class" field**: Full module.ClassName import path
@@ -1169,7 +1308,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         - This allows users to override with: {"normalize_step": {...}} or {"NormalizeStep": {...}}
 
         **Error Handling**:
-        - Registry KeyError -> ImportError with registry context
+        - Registry KeyError or ImportError -> ImportError with registry context
         - Import/Attribute errors -> ImportError with helpful suggestions
         - All errors include troubleshooting guidance
 
@@ -1190,6 +1329,10 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                 return step_class, step_entry["registry_name"]
             except KeyError as e:
                 raise ImportError(f"Failed to load processor step from registry. {str(e)}") from e
+            except ImportError as e:
+                raise ImportError(
+                    f"Failed to load processor step '{step_entry['registry_name']}' from registry: {e}"
+                ) from e
         else:
             # Fallback to dynamic import using the full class path
             full_class_path = step_entry["class"]
