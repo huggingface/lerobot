@@ -150,6 +150,7 @@ def make_flux3_pre_post_processors(
         enabled=config.use_relative_actions,
         exclude_joints=list(config.relative_exclude_joints),
         action_names=config.action_feature_names,
+        se3_pose_groups=list(config.relative_se3_pose_groups),
     )
     input_steps: list[ProcessorStep] = [
         steps.rename_observations,

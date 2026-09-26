@@ -22,6 +22,13 @@ from torch import Tensor
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.rotation import (
+    quaternion_conjugate,
+    quaternion_multiply,
+    quaternion_rotate,
+    quaternion_to_rotvec,
+    rotvec_to_quaternion,
+)
 
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
 from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry
@@ -41,8 +48,95 @@ __all__ = [
 ]
 
 
-def to_relative_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) -> Tensor:
+def to_relative_se3_pose(target_pose: Tensor, reference_pose: Tensor) -> Tensor:
+    """Encode a pose as ``inv(T_reference) @ T_target``.
+
+    Poses use ``[x, y, z, rx, ry, rz]`` with an axis-angle rotation vector.
+    The relative translation is therefore expressed in the reference EE frame.
+    """
+    if target_pose.shape[-1] != 6 or reference_pose.shape[-1] != 6:
+        raise ValueError("SE(3) poses must have six values: xyz followed by a rotation vector")
+    reference_quaternion = rotvec_to_quaternion(reference_pose[..., 3:])
+    target_quaternion = rotvec_to_quaternion(target_pose[..., 3:])
+    inverse_reference_quaternion = quaternion_conjugate(reference_quaternion)
+    relative_translation = quaternion_rotate(
+        inverse_reference_quaternion, target_pose[..., :3] - reference_pose[..., :3]
+    )
+    relative_quaternion = quaternion_multiply(inverse_reference_quaternion, target_quaternion)
+    return torch.cat((relative_translation, quaternion_to_rotvec(relative_quaternion)), dim=-1)
+
+
+def to_absolute_se3_pose(relative_pose: Tensor, reference_pose: Tensor) -> Tensor:
+    """Decode a pose with ``T_target = T_reference @ T_relative``."""
+    if relative_pose.shape[-1] != 6 or reference_pose.shape[-1] != 6:
+        raise ValueError("SE(3) poses must have six values: xyz followed by a rotation vector")
+    reference_quaternion = rotvec_to_quaternion(reference_pose[..., 3:])
+    relative_quaternion = rotvec_to_quaternion(relative_pose[..., 3:])
+    target_translation = reference_pose[..., :3] + quaternion_rotate(
+        reference_quaternion, relative_pose[..., :3]
+    )
+    target_quaternion = quaternion_multiply(reference_quaternion, relative_quaternion)
+    return torch.cat((target_translation, quaternion_to_rotvec(target_quaternion)), dim=-1)
+
+
+def _resolve_se3_pose_groups(
+    pose_groups: Sequence[Sequence[int]] | None,
+    mask: Sequence[bool],
+    action_dim: int,
+    state_dim: int,
+) -> list[list[int]]:
+    """Validate ``se3_pose_groups`` against the action layout and return them as lists.
+
+    Each group is six consecutive-or-not action indices laid out as ``[x, y, z, rx, ry, rz]``
+    with an axis-angle rotation vector, and must be inside the relative mask -- a pose the
+    policy keeps absolute has nothing to compose against.
+
+    The same indices address the state, which is the pose the actions are composed against, so
+    they must also fit inside it.
+    """
+    if not pose_groups:
+        return []
+    resolved: list[list[int]] = []
+    seen: set[int] = set()
+    for group in pose_groups:
+        indices = [int(i) for i in group]
+        if len(indices) != 6:
+            raise ValueError(
+                f"An SE(3) pose group needs six indices (xyz + rotation vector), got {len(indices)}"
+            )
+        for index in indices:
+            if not 0 <= index < action_dim:
+                raise ValueError(f"SE(3) pose index {index} is outside the action of width {action_dim}")
+            if index >= state_dim:
+                raise ValueError(
+                    f"SE(3) pose index {index} is outside the state of width {state_dim}. The pose "
+                    "group addresses both the action and the state it is composed against, so the "
+                    "state must carry the same pose at the same indices."
+                )
+            if index in seen:
+                raise ValueError(f"Action index {index} appears in more than one SE(3) pose group")
+            if index < len(mask) and not mask[index]:
+                raise ValueError(
+                    f"Action index {index} is excluded from the relative conversion, so it cannot "
+                    "be part of an SE(3) pose group"
+                )
+            seen.add(index)
+        resolved.append(indices)
+    return resolved
+
+
+def to_relative_actions(
+    actions: Tensor,
+    state: Tensor,
+    mask: Sequence[bool],
+    se3_pose_groups: Sequence[Sequence[int]] | None = None,
+) -> Tensor:
     """Convert absolute actions to relative: relative = action - state (for masked dims).
+
+    Dimensions listed in ``se3_pose_groups`` are composed as ``inv(T_state) @ T_action``
+    instead. Subtracting rotation components is only meaningful for scalar quantities such
+    as joint angles; on an end-effector pose it is wrong, because rotations compose by
+    multiplication.
 
     Args:
         actions: (B, T, action_dim) or (B, action_dim).
@@ -62,16 +156,33 @@ def to_relative_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     # broadcast over the action horizon. pi0/pi05 pass a 2D (B, state_dim) state and are unaffected.
     if state.ndim == 3:
         state = state[:, 0]
-    state_offset = state[..., :dims] * mask_t
+    groups = _resolve_se3_pose_groups(se3_pose_groups, mask, actions.shape[-1], state.shape[-1])
+    component_mask = mask_t.clone()
+    for group in groups:
+        component_mask[group] = 0
+    state_offset = state[..., :dims] * component_mask
     if actions.ndim == 3:
         state_offset = state_offset.unsqueeze(-2)
+        reference = state.unsqueeze(-2)
+    else:
+        reference = state
     actions = actions.clone()
     actions[..., :dims] -= state_offset
+    for group in groups:
+        actions[..., group] = to_relative_se3_pose(actions[..., group], reference[..., group])
     return actions
 
 
-def to_absolute_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) -> Tensor:
+def to_absolute_actions(
+    actions: Tensor,
+    state: Tensor,
+    mask: Sequence[bool],
+    se3_pose_groups: Sequence[Sequence[int]] | None = None,
+) -> Tensor:
     """Convert relative actions back to absolute: absolute = relative + state (for masked dims).
+
+    Dimensions listed in ``se3_pose_groups`` are composed as ``T_state @ T_relative``,
+    inverting what :func:`to_relative_actions` did to them.
 
     Args:
         actions: (B, T, action_dim) or (B, action_dim).
@@ -91,10 +202,19 @@ def to_absolute_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     # broadcast over the action horizon. pi0/pi05 pass a 2D (B, state_dim) state and are unaffected.
     if state.ndim == 3:
         state = state[:, 0]
-    state_offset = state[..., :dims] * mask_t
+    groups = _resolve_se3_pose_groups(se3_pose_groups, mask, actions.shape[-1], state.shape[-1])
+    component_mask = mask_t.clone()
+    for group in groups:
+        component_mask[group] = 0
+    state_offset = state[..., :dims] * component_mask
     if actions.ndim == 3:
         state_offset = state_offset.unsqueeze(-2)
+        reference = state.unsqueeze(-2)
+    else:
+        reference = state
     actions = actions.clone()
+    for group in groups:
+        actions[..., group] = to_absolute_se3_pose(actions[..., group], reference[..., group])
     actions[..., :dims] += state_offset
     return actions
 
@@ -114,11 +234,15 @@ class RelativeActionsProcessorStep(ProcessorStep):
         exclude_joints: Joint names to keep absolute (not converted to relative).
         action_names: Action dimension names from dataset metadata, used to build
             the mask from exclude_joints. If None, all dims are converted.
+        se3_pose_groups: Action index groups laid out as ``[x, y, z, rx, ry, rz]`` with an
+            axis-angle rotation vector, composed in SE(3) rather than subtracted. Empty by
+            default, which keeps the component-wise behaviour for every dimension.
     """
 
     enabled: bool = False
     exclude_joints: list[str] = field(default_factory=list)
     action_names: list[str] | None = None
+    se3_pose_groups: list[list[int]] = field(default_factory=list)
     _last_state: torch.Tensor | None = field(default=None, init=False, repr=False)
     _count_queued_actions: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
@@ -162,7 +286,7 @@ class RelativeActionsProcessorStep(ProcessorStep):
             raise ValueError(f"RelativeActionsProcessorStep expects a tensor action, got {type(action)}")
 
         mask = self._build_mask(action.shape[-1])
-        new_transition[TransitionKey.ACTION] = to_relative_actions(action, state, mask)
+        new_transition[TransitionKey.ACTION] = to_relative_actions(action, state, mask, self.se3_pose_groups)
         return new_transition
 
     def reset(self) -> None:
@@ -184,6 +308,7 @@ class RelativeActionsProcessorStep(ProcessorStep):
             "enabled": self.enabled,
             "exclude_joints": self.exclude_joints,
             "action_names": self.action_names,
+            "se3_pose_groups": self.se3_pose_groups,
         }
 
     def transform_features(
@@ -234,7 +359,9 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
             raise ValueError(f"AbsoluteActionsProcessorStep expects a tensor action, got {type(action)}")
 
         mask = self.relative_step._build_mask(action.shape[-1])
-        new_transition[TransitionKey.ACTION] = to_absolute_actions(action, cached_state, mask)
+        new_transition[TransitionKey.ACTION] = to_absolute_actions(
+            action, cached_state, mask, self.relative_step.se3_pose_groups
+        )
         return new_transition
 
     def get_config(self) -> dict[str, Any]:

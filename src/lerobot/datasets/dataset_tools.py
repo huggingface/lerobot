@@ -25,7 +25,7 @@ This module provides utilities for:
 
 import logging
 import shutil
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from pathlib import Path
@@ -1620,6 +1620,7 @@ def recompute_stats(
     relative_exclude_joints: list[str] | None = None,
     chunk_size: int = 50,
     num_workers: int = 0,
+    relative_se3_pose_groups: Sequence[Sequence[int]] | None = None,
 ) -> LeRobotDataset:
     """Recompute stats.json from scratch by iterating all episodes.
 
@@ -1637,6 +1638,8 @@ def recompute_stats(
             ``policy.chunk_size``. Only used when ``relative_action=True``.
         num_workers: Number of parallel threads for relative action stats computation.
             Values ≤1 mean single-threaded. Only used when ``relative_action=True``.
+        relative_se3_pose_groups: Action index groups ``[x, y, z, rx, ry, rz]`` to compose in
+            SE(3) instead of subtracting. Must match ``policy.relative_se3_pose_groups``.
 
     Returns:
         The same dataset with updated stats.
@@ -1669,6 +1672,7 @@ def recompute_stats(
             chunk_size=chunk_size,
             exclude_joints=relative_exclude_joints,
             num_workers=num_workers,
+            se3_pose_groups=relative_se3_pose_groups,
         )
         features_to_compute.pop(ACTION, None)
 
@@ -1717,6 +1721,20 @@ def recompute_stats(
 
     write_stats(new_stats, dataset.root)
     dataset.meta.stats = new_stats
+
+    # Record how the action stats were computed, so training can pick the pose groups up from
+    # the dataset instead of asking for them a second time -- and detect a mismatch if it does.
+    if relative_action_stats is not None:
+        dataset.meta.info.relative_action = {
+            "chunk_size": chunk_size,
+            "exclude_joints": list(relative_exclude_joints or []),
+            "se3_pose_groups": [list(group) for group in (relative_se3_pose_groups or [])],
+        }
+        write_info(dataset.meta.info, dataset.root)
+    elif ACTION in features_to_compute and dataset.meta.info.relative_action is not None:
+        # The action stats were just recomputed as absolute -- drop the stale marker.
+        dataset.meta.info.relative_action = None
+        write_info(dataset.meta.info, dataset.root)
 
     logger.info("Stats recomputed successfully")
     return dataset

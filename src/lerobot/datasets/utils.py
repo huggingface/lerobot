@@ -193,6 +193,12 @@ class DatasetInfo:
     # dataset doesn't declare any — readers fall back to ``DEFAULT_TOOLS``.
     tools: list[dict] | None = None
 
+    # How the ``action`` entry of ``meta/stats.json`` was computed. ``None`` means absolute
+    # actions. Otherwise a dict with ``chunk_size``, ``exclude_joints`` and ``se3_pose_groups``,
+    # written by ``recompute_stats(relative_action=True)`` and read back by ``make_policy`` so
+    # the pose layout is declared once, with the data, instead of once per policy config.
+    relative_action: dict | None = None
+
     def __post_init__(self) -> None:
         # Coerce feature shapes from list to tuple — JSON deserialisation
         # returns lists, but the rest of the codebase expects tuples.
@@ -224,6 +230,8 @@ class DatasetInfo:
             d.pop("tools", None)
         if d.get("storage_format") is None:
             d.pop("storage_format", None)
+        if d.get("relative_action") is None:
+            d.pop("relative_action", None)
         return d
 
     @classmethod

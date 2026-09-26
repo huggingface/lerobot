@@ -196,6 +196,36 @@ relative_ee_chunk = [
 ]
 ```
 
+<Tip warning={true}>
+  The example above carries no orientation. Subtracting translations is correct, but
+  **rotations compose by multiplication**: the relative rotation is `inv(R_state) @ R_action`,
+  not `r_action - r_state`. If your EE actions include orientation, list each
+  `[x, y, z, rx, ry, rz]` block (axis-angle) in `relative_se3_pose_groups` so it is composed
+  in SE(3) instead of subtracted:
+
+```python
+policy.use_relative_actions = True
+policy.relative_se3_pose_groups = [[0, 1, 2, 3, 4, 5]]
+policy.relative_exclude_joints = ["gripper"]
+```
+
+Recompute the action statistics with the same groups, so the normalizer sees the
+distribution the model is trained on:
+
+```bash
+lerobot-edit-dataset --repo_id=${HF_USER}/my_dataset \
+    --operation.type=recompute_stats \
+    --operation.relative_action=true \
+    --operation.chunk_size=50 \
+    --operation.relative_se3_pose_groups="[[0, 1, 2, 3, 4, 5]]"
+```
+
+Dimensions outside a pose group stay component-wise, and SE(3) composition returns the
+canonical rotation vector (`‖r‖ <= pi`) — the same rotation, but not necessarily the same
+vector a dataset with unwrapped rotations stored.
+
+</Tip>
+
 ## Processing Pipeline Summary
 
 Here is how the different processors compose. Each arrow is a processor step, and they can be chained in a `RobotProcessorPipeline` or `PolicyProcessorPipeline`:

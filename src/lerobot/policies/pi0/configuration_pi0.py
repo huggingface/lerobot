@@ -55,6 +55,9 @@ class PI0Config(PreTrainedConfig):
     relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
     # Populated at runtime from dataset metadata by make_policy.
     action_feature_names: list[str] | None = None
+    # Action index groups of end-effector poses, composed in SE(3) instead of subtracted.
+    # See `RelativeActionsProcessorStep`. Empty leaves every dimension component-wise.
+    relative_se3_pose_groups: list[list[int]] = field(default_factory=list)
 
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None

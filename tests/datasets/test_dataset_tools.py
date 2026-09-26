@@ -33,6 +33,7 @@ from lerobot.datasets.dataset_tools import (
     merge_datasets,
     modify_features,
     modify_tasks,
+    recompute_stats,
     reencode_dataset,
     remove_feature,
     split_dataset,
@@ -1589,3 +1590,48 @@ def test_reencode_dataset_multi_key_multiprocessing(
     for vk in dataset.meta.video_keys:
         persisted_encoder = RGBEncoderConfig.from_video_info(persisted_info.features[vk].get("info", {}))
         assert persisted_encoder == target_cfg
+
+
+@pytest.fixture
+def pose_dataset(tmp_path, empty_lerobot_dataset_factory):
+    """A dataset whose action and state carry an end-effector pose at the same indices."""
+    names = ["x", "y", "z", "rx", "ry", "rz", "gripper"]
+    features = {
+        "action": {"dtype": "float32", "shape": (7,), "names": names},
+        "observation.state": {"dtype": "float32", "shape": (7,), "names": names},
+    }
+    dataset = empty_lerobot_dataset_factory(root=tmp_path / "pose_dataset", features=features)
+    rng = np.random.default_rng(0)
+    for _ in range(2):
+        for _ in range(12):
+            dataset.add_frame(
+                {
+                    "action": rng.normal(0, 0.1, 7).astype(np.float32),
+                    "observation.state": rng.normal(0, 0.1, 7).astype(np.float32),
+                    "task": "task_0",
+                }
+            )
+        dataset.save_episode()
+    dataset.finalize()
+    return dataset
+
+
+def test_recompute_stats_records_relative_action_provenance(pose_dataset):
+    groups = [[0, 1, 2, 3, 4, 5]]
+    recompute_stats(
+        pose_dataset,
+        relative_action=True,
+        relative_exclude_joints=["gripper"],
+        chunk_size=4,
+        relative_se3_pose_groups=groups,
+    )
+    info = load_info(pose_dataset.root)
+    assert info.relative_action == {
+        "chunk_size": 4,
+        "exclude_joints": ["gripper"],
+        "se3_pose_groups": groups,
+    }
+
+    # Recomputing absolute stats drops the stale marker.
+    recompute_stats(pose_dataset, relative_action=False)
+    assert load_info(pose_dataset.root).relative_action is None
