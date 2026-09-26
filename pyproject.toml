@@ -185,6 +185,9 @@ openarms = ["lerobot[damiao]"]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
 lekiwi = ["lerobot[feetech]", "lerobot[pyzmq-dep]"]
+# TRON2 speaks a documented WebSocket protocol; the client package is pure Python,
+# so unlike the vendor low-level SDK it installs on any interpreter LeRobot supports.
+limx_tron2 = ["tron2-env>=0.1.0"]
 unitree_g1 = [
     # "unitree-sdk2==1.0.1",
     "lerobot[pyzmq-dep]",

@@ -1,0 +1,150 @@
+# LimX TRON2
+
+The [LimX Dynamics](https://www.limxdynamics.com/) TRON2 is a multi-form embodied platform —
+one body that ships in three configurations: dual-arm, wheeled-legged, and bipedal. This
+integration covers the **dual-arm** configuration: two 7-DoF arms and a 2-DoF head, driven by
+LeRobot as a single `limx_tron2` robot.
+
+<Tip>
+  This integration talks to the robot's **WebSocket controller** directly, so no
+  vendor low-level SDK is required. That is deliberate: the vendor low-level SDK
+  ships native extensions bound to the CPython 3.8 ABI, and cannot be imported
+  from the Python 3.12+ environments LeRobot runs in.
+</Tip>
+
+## Supported Hardware
+
+| Component     | Description                                                                            |
+| ------------- | -------------------------------------------------------------------------------------- |
+| Arms          | 2 × 7 DoF servo arms, commanded as joint positions in radians                          |
+| Head          | 2 DoF (pitch, yaw)                                                                     |
+| End effectors | Optional; not exposed unless `include_grippers` is enabled (see [Grippers](#grippers)) |
+| Transport     | WebSocket (JSON), robot control port                                                   |
+
+## Install
+
+TRON2 support is an optional extra, because it pulls in the `tron2-env` runtime:
+
+```bash
+pip install -e '.[limx_tron2]'
+```
+
+If the extra is not installed, connecting fails with an error telling you to install it — importing
+the robot itself always works, so `--robot.type=limx_tron2` stays discoverable.
+
+## Start the Robot Controller
+
+The robot must be running its WebSocket controller, which is part of the TRON2 bring-up procedure
+(see the TRON2 documentation shipped with the robot). LeRobot then connects to that controller over
+the network — by default `192.168.1.150:5000`.
+
+Only run against a real robot in an authorised environment, with the normal robot bring-up and
+emergency-stop procedures in place.
+
+## Verify the Connection
+
+```python
+from lerobot.robots.limx_tron2 import LimxTron2, LimxTron2Config
+
+robot = LimxTron2(LimxTron2Config(robot_ip="192.168.1.150"))
+robot.connect()
+print(robot.get_observation())
+robot.disconnect()
+```
+
+`get_observation()` returns one `"<joint>.pos"` entry per joint, in radians, keyed by the joint
+names in the configuration (see [Joint Names](#joint-names)).
+
+## Send Actions
+
+`send_action()` consumes exactly the keys that `get_observation()` produces, so a policy trained on
+recorded TRON2 observations can be replayed without a translation layer:
+
+```python
+obs = robot.get_observation()
+action = {key: value for key, value in obs.items()}
+robot.send_action(action)  # holds the measured pose
+```
+
+Actions are joint positions in radians. The controller interpolates towards the commanded setpoint
+rather than applying it instantly, so the values reported back by the controller lag the command by
+one interpolation step.
+
+## Configuration
+
+| Field                 | Default                         | Description                                                                                     |
+| --------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `robot_ip`            | `192.168.1.150`                 | Address of the TRON2 WebSocket controller                                                       |
+| `port`                | `5000`                          | Controller port                                                                                 |
+| `init_joints`         | `None`                          | 14-value bring-up pose (both arms). `None` keeps the runtime default                            |
+| `init_head`           | `None`                          | 2-value bring-up pose for the head. `None` keeps the runtime default                            |
+| `init_ee_z_min`       | `-0.6`                          | Minimum end-effector height enforced during bring-up                                            |
+| `publish_rate`        | `300.0`                         | Command publish rate in Hz                                                                      |
+| `state_max_age`       | `None`                          | Reject state older than this many seconds. `None` disables the check; on hardware prefer `~0.5` |
+| `observation_timeout` | `1.0`                           | Seconds to wait for a fresh state sample                                                        |
+| `include_grippers`    | `False`                         | Expose the end-effector openings in the observation/action space                                |
+| `joint_names`         | descriptive defaults            | 16 names, in command order. Override to match an existing dataset                               |
+| `gripper_names`       | `left_gripper`, `right_gripper` | 2 names                                                                                         |
+
+Example:
+
+```bash
+lerobot-record \
+  --robot.type=limx_tron2 \
+  --robot.robot_ip=192.168.1.150 \
+  --robot.port=5000
+```
+
+## Joint Names
+
+The runtime indexes joints positionally and does not ship a name table, so this integration uses
+descriptive defaults:
+
+```
+left_arm_shoulder_pitch   left_arm_shoulder_roll   left_arm_shoulder_yaw
+left_arm_elbow            left_arm_wrist_roll      left_arm_wrist_pitch
+left_arm_wrist_yaw
+right_arm_shoulder_pitch  right_arm_shoulder_roll  right_arm_shoulder_yaw
+right_arm_elbow           right_arm_wrist_roll     right_arm_wrist_pitch
+right_arm_wrist_yaw
+head_pitch                head_yaw
+```
+
+<Warning>
+  If you already have a dataset or policy checkpoint that uses different joint
+  names, pass your own table via `--robot.joint_names=[...]` (16 entries, in the
+  order above) rather than renaming inside the dataset. No translation is done
+  for you.
+</Warning>
+
+## Grippers
+
+Grippers are **off by default**. Enable them with `--robot.include_grippers=true`, which adds
+`left_gripper.pos` and `right_gripper.pos` to the observation and action space.
+
+They are opt-in because the two directions are not symmetric in the runtime, and the units it reports
+back are not documented. Prior to verifying the reported values on hardware, enabling them would put
+the observation and the action on different scales. Verify the readings on a real robot before
+training on them.
+
+## Safety
+
+- `init_ee_z_min` bounds the end-effector height during bring-up. Keep the default unless your
+  deployment needs otherwise.
+- `state_max_age` is disabled by default. On hardware, set it (for example `0.5`) so a stale state
+  sample is rejected instead of being fed to a policy.
+- The robot's own controller owns calibration and zeroing; `calibrate()` is a no-op here and
+  `is_calibrated` reports `True`.
+
+## Network Security Boundary
+
+The WebSocket control channel is plaintext and unauthenticated. It is intended for a trusted, local
+robot network only — do not expose the controller port beyond that boundary.
+
+## Troubleshooting
+
+| Symptom                                     | Likely cause                                                                      |
+| ------------------------------------------- | --------------------------------------------------------------------------------- |
+| `'tron2-env' is required but not installed` | Install it with `pip install -e '.[limx_tron2]'`                                  |
+| `did not report a live connection`          | The robot-side WebSocket controller is not running, or `robot_ip`/`port` is wrong |
+| Observation keys do not match a dataset     | Pass a matching `joint_names` table; see [Joint Names](#joint-names)              |
