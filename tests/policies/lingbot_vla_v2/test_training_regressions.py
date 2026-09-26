@@ -1,6 +1,6 @@
 """Small CPU regressions for the fix-all behavior retained on master's layout."""
 
-from types import MethodType, SimpleNamespace
+from types import MethodType
 
 import pytest
 import torch
@@ -12,35 +12,49 @@ from lerobot.policies.lingbot_vla_v2.model_core.qwen3vl_in_vla import (
     preprcess_grid_thw,
 )
 from lerobot.policies.lingbot_vla_v2.processor_lingbot_vla_v2 import (
-    LingbotVLAV2FeatureTransformStep,
+    LingbotVLAV2SlotMappingProcessorStep,
     _future_video_fps,
+    _split_camera_frames,
 )
 from lerobot.policies.lingbot_vla_v2.teachers.morgbd_teacher import MoRGBDTeacher
-from lerobot.lerobot_types import TransitionKey
 
 
 @pytest.mark.parametrize("future", [False, True])
 def test_square_resize_preserves_current_future_layout_and_padding(future):
-    pad = torch.tensor([[False, False, True, True]])
-    step = SimpleNamespace(
-        use_future_image=future,
-        resize_imgs_with_padding=(256, 256),
-        chunk_size=4,
-        _feature_transform=SimpleNamespace(org_features={"actions": ["action"]}),
-        _current_transition={TransitionKey.COMPLEMENTARY_DATA: {"action_is_pad": pad}},
+    image_shape = (2, 3, 480, 640) if future else (3, 480, 640)
+    current, future_frame = _split_camera_frames(torch.ones(image_shape), (256, 256), use_future_image=future)
+    assert current.shape == (3, 256, 256)
+    if future:
+        assert future_frame.shape == (3, 256, 256)
+    else:
+        assert future_frame is None
+    # [0, 1] float inputs are scaled to the [0, 255] range Qwen3-VL expects.
+    assert current.max().item() == pytest.approx(255.0, abs=1e-2)
+
+
+def test_slot_mapping_slices_future_state_to_current_frame():
+    """With future-frame deltas stacked on the state, the policy state is frame 0."""
+    step = LingbotVLAV2SlotMappingProcessorStep(
+        robot_config={
+            "states": [
+                {
+                    "observation.state.arm.position": {
+                        "origin_keys": [{"observation.state": {"start": 0, "end": 14}}]
+                    }
+                },
+            ],
+            "actions": [],
+        },
+        canonical_joints={"arm.position": 14},
+        max_state_dim=14,
+        max_action_dim=14,
+        use_future_image=True,
     )
-    image_shape = (1, 2, 3, 480, 640) if future else (1, 3, 480, 640)
-    state_shape = (1, 2, 14) if future else (1, 14)
-    observation = {
-        "observation.state": torch.zeros(state_shape),
-        "observation.images.cam_high": torch.ones(image_shape),
-    }
-    item, _ = next(
-        LingbotVLAV2FeatureTransformStep._iter_items(step, observation, torch.zeros(1, 4, 14), ["task"])
-    )
-    assert item["observation.images.cam_high"].shape == ((2, 3, 256, 256) if future else (3, 256, 256))
-    assert item["observation.state"].shape == (14,)
-    torch.testing.assert_close(item["action_is_pad"], pad[0])
+    state = torch.stack([torch.zeros(1, 14), torch.ones(1, 14)], dim=1)  # (1, T=2, 14)
+    transition = step({"observation": {"observation.state": state}})
+    canonical = transition["observation"]["observation.state"]
+    assert canonical.shape == (1, 14)
+    torch.testing.assert_close(canonical, torch.zeros(1, 14))
 
 
 def test_future_fps_uses_each_samples_actual_tail():

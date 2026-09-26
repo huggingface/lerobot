@@ -14,54 +14,91 @@
 
 """LingBot-VLA 2.0 policy processor.
 
-Unlike the v1 policy (which reimplemented image/language handling as granular
-LeRobot steps), v2 wraps the faithful upstream ``FeatureTransform`` in a single
-step so the robot-config slot mapping, per-slot normalization, canonical padding,
-Qwen3-VL native-resolution image tokens (``image_grid_thw``) and language
-tokenization stay exactly as trained.
+The pipeline is composed of LeRobot's standard ``ProcessorStep`` building blocks
+(rename → batch-dim → relative actions → normalization → slot mapping → Qwen3-VL
+image processing → chat template → tokenization → device), plus one policy-specific
+step: :class:`LingbotVLAV2SlotMappingProcessorStep` maps the raw dataset features
+onto the unified 55-D canonical state/action layout (with joint masks). It only
+remaps/pads — normalization and relative actions are handled by the standard steps
+in raw feature space, so slicing the raw stats with the same offsets reproduces the
+per-slot statistics bit-for-bit.
+
+The postprocessor inverts that pipeline: canonical → raw action dims, unnormalize,
+relative → absolute actions, and a final move to CPU.
 """
 
+import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import torch
-from torchvision.transforms.v2.functional import resize
+import torch.nn.functional as F  # noqa: N812
+from torchvision.transforms.v2.functional import resize as tv_resize
 
-from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.configs import (
+    FeatureType,
+    NormalizationMode,
+    PipelineFeatureType,
+    PolicyFeature,
+)
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import (
+    AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
+    NormalizerProcessorStep,
     PolicyAction,
+    PolicyActionProcessorStep,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
+    RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
+    TokenizerProcessorStep,
+    UnnormalizerProcessorStep,
     batch_to_transition,
+    make_policy_processor_pipelines,
     policy_action_to_transition,
     transition_to_batch,
     transition_to_policy_action,
 )
 from lerobot.utils.constants import (
     ACTION,
+    OBS_IMAGES,
     OBS_STATE,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 from lerobot.utils.import_utils import _transformers_available
 
-from .configuration_lingbot_vla_v2 import (
-    LingbotVLAV2Config,
-    build_feature_transform_configs,
-    resolve_robot_config_and_stats,
-)
+from .configuration_lingbot_vla_v2 import LingbotVLAV2Config, resolve_robot_config_and_stats
+from .preprocessing.data_transform import prepare_images
 
 if _transformers_available:
-    from transformers import AutoProcessor
-else:
-    AutoProcessor = None
+    from transformers import AutoImageProcessor, AutoTokenizer
+else:  # pragma: no cover - transformers is an optional dependency
+    AutoImageProcessor = None
+    AutoTokenizer = None
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_TASK = "Execute the robot action."
+
+# Registry names of the custom steps (override keys for from_pretrained).
+SLOT_MAPPING_STEP = "lingbot_vla_v2_slot_mapping"
+INVERSE_SLOT_MAPPING_STEP = "lingbot_vla_v2_inverse_slot_mapping"
+IMAGE_STEP = "lingbot_vla_v2_image"
+CHAT_TEMPLATE_STEP = "lingbot_vla_v2_chat_template"
+
+# Upstream per-slot norm modes → standard NormalizationMode. Only the modes the
+# released checkpoints train with are mapped; anything else falls back with a
+# warning (see ``_resolve_norm_map``).
+_LINGBOT_NORM_MODE_TO_STANDARD = {
+    "meanstd": NormalizationMode.MEAN_STD,
+    "bounds_99_woclip": NormalizationMode.QUANTILES,
+    "identity": NormalizationMode.IDENTITY,
+}
 
 
 def _future_video_fps(dataset_fps: float, offset: int, action_is_pad=None):
@@ -76,50 +113,107 @@ def _future_video_fps(dataset_fps: float, offset: int, action_is_pad=None):
     return float(dataset_fps) / max(1, offset)
 
 
-def _derive_slot_stats_from_dataset(
-    robot_config: dict,
-    dataset_stats: dict[str, dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    """Derive per-slot norm stats from a LeRobot dataset's per-feature stats.
+# ---------------------------------------------------------------------------
+# Slot-mapping helpers (shared by the forward and inverse steps)
+# ---------------------------------------------------------------------------
 
-    The robot_config's ``origin_keys`` define how raw feature dims map onto canonical
-    slots (e.g. ``arm.position = state[0:6] + state[7:13]``). Since mean/std/quantiles
-    are per-dim independent statistics, slicing the dataset stats with the same offsets
-    yields the slot stats bit-for-bit.
 
-    Returns a ``{"norm_stats": {slot_key: {stat: [...], ...}, ...}, "count": N}`` dict
-    matching the format LingbotVLAV2FeatureTransformStep expects.
+def _canonical_joint_name(slot_key: str, category: str) -> str:
+    """Strip the ``observation.state.`` / ``action.`` prefix from a robot-config slot key.
+
+    Robot configs may key slots either by the bare canonical joint name
+    (``arm.position``, what the typed config fields serialize) or by the full
+    feature name (``observation.state.arm.position``, the upstream YAML format).
     """
-    norm_stats: dict[str, dict[str, Any]] = {}
-    total_count = 0
+    prefix = f"{OBS_STATE}." if category == "states" else f"{ACTION}."
+    return slot_key.removeprefix(prefix)
 
-    for section in ("states", "actions"):
-        for entry in robot_config.get(section, []):
+
+def _build_slot_plans(
+    robot_config: dict | None,
+    canonical_joints: dict[str, int],
+) -> tuple[list[tuple[str, int, list[tuple[str, int, int]] | None]], ...]:
+    """Parse a robot config into per-canonical-joint raw-span plans.
+
+    Returns ``(state_plan, action_plan)``; each plan is a list aligned with
+    ``canonical_joints`` of ``(joint, canonical_dim, spans)`` where ``spans`` is
+    ``[(raw_key, start, end), ...]`` or ``None`` when the slot is unmapped
+    (zero-filled at canonical layout).
+    """
+    raw_plans: dict[str, dict[str, list[tuple[str, int, int]]]] = {"states": {}, "actions": {}}
+    for category in ("states", "actions"):
+        for entry in (robot_config or {}).get(category, []):
             for slot_key, slot_cfg in entry.items():
-                origin_keys = slot_cfg.get("origin_keys", [])
-                slot_stats: dict[str, list] = {}
-                for origin in origin_keys:
+                joint = _canonical_joint_name(slot_key, category)
+                spans: list[tuple[str, int, int]] = []
+                for origin in slot_cfg.get("origin_keys", []):
                     for raw_key, span in origin.items():
-                        if raw_key not in dataset_stats:
-                            raise KeyError(
-                                f"robot_config slot {slot_key!r} references {raw_key!r} "
-                                f"which is not in dataset_stats (keys: {sorted(dataset_stats)})"
-                            )
-                        feat = dataset_stats[raw_key]
-                        start, end = span["start"], span["end"]
-                        for stat_name in ("mean", "std", "q01", "q99", "q02", "q98", "min", "max"):
-                            if stat_name not in feat:
-                                continue
-                            values = feat[stat_name]
-                            # stats are per-dim lists/arrays; slice the same span
-                            sliced = values[start:end] if isinstance(values, list) else values[start:end].tolist()
-                            slot_stats.setdefault(stat_name, []).extend(sliced)
-                        if total_count == 0 and "count" in feat:
-                            total_count = int(feat["count"][0]) if isinstance(feat["count"], list) else int(feat["count"])
-                if slot_stats:
-                    norm_stats[slot_key] = slot_stats
+                        spans.append((raw_key, int(span["start"]), int(span["end"])))
+                raw_plans[category][joint] = spans
 
-    return {"norm_stats": norm_stats, "count": total_count}
+    plans = []
+    for category in ("states", "actions"):
+        plan = []
+        for joint, dim in canonical_joints.items():
+            spans = raw_plans[category].get(joint)
+            if spans is not None and sum(e - s for _, s, e in spans) > dim:
+                raise ValueError(
+                    f"robot-config slot {joint!r} spans {sum(e - s for _, s, e in spans)} dims, "
+                    f"wider than its canonical dimension {dim}."
+                )
+            plan.append((joint, dim, spans))
+        plans.append(plan)
+    return tuple(plans)
+
+
+def _camera_rename_map(robot_config: dict | None) -> dict[str, str]:
+    """Canonical camera key → raw dataset camera key."""
+    mapping: dict[str, str] = {}
+    for entry in (robot_config or {}).get("images", []):
+        for canonical_key, slot_cfg in entry.items():
+            raw_key = slot_cfg["origin_keys"] if isinstance(slot_cfg, dict) else slot_cfg
+            mapping[canonical_key] = raw_key
+    return mapping
+
+
+def _prepare_camera_frame(img: torch.Tensor, size: tuple[int, int]) -> torch.Tensor:
+    """Resize one camera frame and scale it to the [0, 255] range Qwen3-VL expects.
+
+    LeRobot images are float CHW in [0, 1]; the HF image processor rescales by
+    1/255 itself, so the pixel values are scaled only when clearly normalized.
+    """
+    img = tv_resize(img, list(size), antialias=True)
+    if img.dtype.is_floating_point and float(img.max()) <= 1.0 + 1e-4:
+        img = img * 255.0
+    return img
+
+
+def _split_camera_frames(
+    img: torch.Tensor,
+    size: tuple[int, int],
+    use_future_image: bool,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """Pick the current (and optional future) frame from one camera tensor.
+
+    Training samples with future-frame deltas are [T,C,H,W]; the policy consumes
+    the current frame while the distillation teachers additionally get the last
+    sampled (future) frame. Inference supplies a plain [C,H,W] image even for a
+    depth-aligned checkpoint. Both frames are resized to the target size.
+    """
+    if use_future_image and img.ndim == 4:
+        return _prepare_camera_frame(img[0], size), _prepare_camera_frame(img[-1], size)
+    return _prepare_camera_frame(img, size), None
+
+
+def _normalize_task_at(task: Any, index: int) -> str:
+    """Extract item ``index`` of a task that arrived as str, list or tensor."""
+    if isinstance(task, torch.Tensor):
+        t = task[index].item() if task.ndim > 0 else task.item()
+    elif isinstance(task, (list, tuple)):
+        t = task[index] if index < len(task) else task[-1]
+    else:
+        t = task
+    return t if isinstance(t, str) else str(t)
 
 
 def _make_identity_robot_config(config: LingbotVLAV2Config) -> dict:
@@ -127,257 +221,501 @@ def _make_identity_robot_config(config: LingbotVLAV2Config) -> dict:
 
     When no slot mappings are provided (e.g. a checkpoint converted without
     --robot-config-path), this generates an identity passthrough: raw features are
-    assumed to already be in the canonical 55-D layout. This lets users evaluate the
-    checkpoint without training first; fine-tuning overrides with the user's own
-    slot mappings.
-
-    The identity mapping treats each canonical slot as reading directly from the
-    corresponding raw feature (observation.state / action) with no slicing.
+    assumed to already be in the canonical layout — canonical slot *j* reads the
+    cumulative raw span ``[offset_j, offset_j + dim_j)`` of ``observation.state`` /
+    ``action``. This lets users evaluate the checkpoint without training first;
+    fine-tuning overrides with the user's own slot mappings.
     """
     robot_config: dict = {}
 
-    # Identity state mapping: canonical state slots read directly from observation.state
-    # with no slicing (raw features assumed already canonical).
-    if config.state_slots is None:
-        robot_config["states"] = [
-            {slot: {"origin_keys": [{"observation.state": {"start": 0, "end": dim}}]}}
-            for slot, dim in config.canonical_joints.items()
-        ]
-    else:
-        robot_config["states"] = [
-            {slot_key: {"origin_keys": mapping.origin_keys}}
-            for slot_key, mapping in config.state_slots.items()
-        ]
-
-    # Identity action mapping: canonical action slots read directly from action
-    # with no slicing.
-    if config.action_slots is None:
-        robot_config["actions"] = [
-            {slot: {"origin_keys": [{"action": {"start": 0, "end": dim}}], "subtract_state": False}}
-            for slot, dim in config.canonical_joints.items()
-        ]
-    else:
-        robot_config["actions"] = [
+    state_offset = 0
+    states = []
+    for joint, dim in config.canonical_joints.items():
+        states.append(
             {
-                slot_key: {
-                    "origin_keys": mapping.origin_keys,
-                    "subtract_state": mapping.subtract_state,
+                f"{OBS_STATE}.{joint}": {
+                    "origin_keys": [{OBS_STATE: {"start": state_offset, "end": state_offset + dim}}]
                 }
             }
-            for slot_key, mapping in config.action_slots.items()
-        ]
+        )
+        state_offset += dim
+    robot_config["states"] = states
 
-    # Identity camera mapping: canonical cameras read directly from raw cameras
-    # (observation.images.<cam> → observation.images.<cam>).
-    if config.camera_mapping is None:
-        robot_config["images"] = [
-            {f"observation.images.{cam}": {"origin_keys": f"observation.images.{cam}"}}
-            for cam in config.canonical_cameras
-        ]
-    else:
-        robot_config["images"] = [
-            {canonical: {"origin_keys": raw_key}}
-            for canonical, raw_key in config.camera_mapping.items()
-        ]
+    action_offset = 0
+    actions = []
+    for joint, dim in config.canonical_joints.items():
+        actions.append(
+            {
+                f"{ACTION}.{joint}": {
+                    "origin_keys": [{ACTION: {"start": action_offset, "end": action_offset + dim}}],
+                    "subtract_state": False,
+                }
+            }
+        )
+        action_offset += dim
+    robot_config["actions"] = actions
 
+    robot_config["images"] = [
+        {f"{OBS_IMAGES}.{cam}": {"origin_keys": f"{OBS_IMAGES}.{cam}"}} for cam in config.canonical_cameras
+    ]
     return robot_config
 
 
-def _collate(values: list[torch.Tensor]) -> torch.Tensor:
-    """Stack per-item tensors, right-padding 1-D ragged tensors (e.g. language)."""
-    shapes = {tuple(v.shape) for v in values}
-    if len(shapes) == 1:
-        return torch.stack(values, dim=0)
-    if all(v.ndim == 1 for v in values):
-        max_len = max(v.shape[0] for v in values)
-        fill = False if values[0].dtype == torch.bool else 0
-        padded = []
-        for v in values:
-            out = torch.full((max_len,), fill, dtype=v.dtype, device=v.device)
-            out[: v.shape[0]] = v
-            padded.append(out)
-        return torch.stack(padded, dim=0)
-    raise ValueError(f"Cannot collate tensors with shapes {shapes}")
+def _resolve_norm_map(canonical_norm_type: dict[str, str]) -> dict[str, NormalizationMode]:
+    """Map the per-slot upstream norm modes onto the standard per-type modes.
+
+    ``meanstd`` → ``MEAN_STD`` and ``bounds_99_woclip`` → ``QUANTILES`` (the
+    standard q01/q99 mapping does not clip, exactly like the woclip variant).
+    The standard ``NormalizerProcessorStep`` applies one mode per feature type in
+    raw feature space; when a config mixes modes per slot the mode of the first
+    canonical joint wins and a warning is logged.
+    """
+    modes = [mode for mode in canonical_norm_type.values() if mode != "identity"]
+    if not modes:
+        mode = NormalizationMode.IDENTITY
+    else:
+        standard = {_LINGBOT_NORM_MODE_TO_STANDARD.get(mode) for mode in modes}
+        if None in standard or len(modes) > 1 and len(standard) > 1:
+            first = modes[0]
+            logger.warning(
+                "canonical_norm_type %s mixes or uses modes without a standard equivalent; "
+                "normalizing STATE/ACTION with the first joint's mode %r mapped to %s. "
+                "Set canonical_norm_type to a single mode for exact parity.",
+                dict(canonical_norm_type),
+                first,
+                _LINGBOT_NORM_MODE_TO_STANDARD.get(first, NormalizationMode.MEAN_STD),
+            )
+            mode = _LINGBOT_NORM_MODE_TO_STANDARD.get(first, NormalizationMode.MEAN_STD)
+        else:
+            mode = standard.pop()
+    return {
+        "VISUAL": NormalizationMode.IDENTITY,
+        "STATE": mode,
+        "ACTION": mode,
+    }
+
+
+def _raw_stats_from_slot_stats(
+    robot_config: dict,
+    norm_stats: dict | None,
+) -> dict[str, dict[str, list]] | None:
+    """Assemble raw-feature stats from the checkpoint's per-slot ``norm_stats``.
+
+    The embedded stats are keyed by canonical slot (``observation.state.arm.position``)
+    with per-slot vectors; normalization now happens in raw feature space, so each
+    slot stat slice is written back at its raw span offset. Dims covered by no slot
+    get identity stats (they never reach the model). Returns ``None`` when no stats
+    are embedded (identity passthrough — normalization becomes a no-op).
+    """
+    slot_stats = (norm_stats or {}).get("norm_stats") or {}
+    if not slot_stats:
+        return None
+
+    raw_stats: dict[str, dict[str, list]] = {}
+    total_dims: dict[str, int] = {}
+
+    for category in ("states", "actions"):
+        for entry in robot_config.get(category, []):
+            for slot_key, slot_cfg in entry.items():
+                stats = slot_stats.get(slot_key)
+                if stats is None:
+                    continue
+                offset = 0
+                for origin in slot_cfg.get("origin_keys", []):
+                    for raw_key, span in origin.items():
+                        start, end = int(span["start"]), int(span["end"])
+                        width = end - start
+                        target = raw_stats.setdefault(raw_key, {})
+                        total_dims[raw_key] = max(total_dims.get(raw_key, 0), end)
+                        for stat_name, values in stats.items():
+                            if stat_name == "count":
+                                continue
+                            row = target.setdefault(stat_name, [None] * 0)
+                            if len(row) < end:
+                                row.extend([None] * (end - len(row)))
+                            row[start:end] = values[offset : offset + width]
+                        offset += width
+
+    # Fill dims that no slot covers with identity stats so normalization is a
+    # no-op there (those dims are dropped by the slot mapping anyway).
+    for raw_key, stats in raw_stats.items():
+        dim = total_dims[raw_key]
+        for stat_name, values in list(stats.items()):
+            fill = 1.0 if stat_name in ("std", "q99", "max") else (0.0 if stat_name == "mean" else -1.0)
+            values.extend([fill] * (dim - len(values)))
+            stats[stat_name] = [fill if value is None else value for value in values]
+    return raw_stats
+
+
+def _relative_actions_settings(
+    config: LingbotVLAV2Config,
+) -> dict[str, Any]:
+    """Derive the standard relative-action settings from the typed slot mappings.
+
+    Slots flagged ``subtract_state`` map onto the standard all-relative mode with
+    per-dimension names synthesized from the slot spans (zero-padded indices so
+    exclude-joint name matching cannot collide); the non-subtracting slots are
+    listed in ``exclude_joints`` to stay absolute. An explicit
+    ``config.relative_exclude_joints`` always wins over the derived list.
+    """
+    slots = config.action_slots or {}
+    subtracting = {name for name, mapping in slots.items() if mapping.subtract_state}
+    enabled = bool(config.use_relative_actions) or bool(subtracting)
+    if not enabled:
+        return {"enabled": False}
+    if config.relative_exclude_joints:
+        return {"enabled": True, "exclude_joints": list(config.relative_exclude_joints)}
+    if not slots or not subtracting:
+        return {"enabled": True}
+
+    # Order the per-dim names by raw span offset so the mask aligns with the raw
+    # action layout the standard step subtracts against.
+    named_dims: list[tuple[int, str, bool]] = []
+    for name, mapping in slots.items():
+        offset = 0
+        for origin in mapping.origin_keys:
+            for _raw_key, span in origin.items():
+                width = int(span["end"]) - int(span["start"])
+                for i in range(width):
+                    named_dims.append((int(span["start"]) + i, f"{name}.{i:03d}", name in subtracting))
+                offset += width
+    named_dims.sort(key=lambda item: item[0])
+    action_names = [name for _, name, _ in named_dims]
+    exclude_joints = [name for _, name, is_relative in named_dims if not is_relative]
+    return {"enabled": True, "exclude_joints": exclude_joints, "action_names": action_names}
+
+
+# ---------------------------------------------------------------------------
+# Custom processor steps
+# ---------------------------------------------------------------------------
 
 
 @dataclass
-@ProcessorStepRegistry.register(name="lingbot_vla_v2_feature_transform")
-class LingbotVLAV2FeatureTransformStep(ProcessorStep):
-    """Run the LingBot-VLA 2.0 ``FeatureTransform`` over a (batched) transition.
+@ProcessorStepRegistry.register(name=SLOT_MAPPING_STEP)
+class LingbotVLAV2SlotMappingProcessorStep(ProcessorStep):
+    """Map raw dataset features onto the unified canonical layout (mapping only).
 
-    The batched observation/action are split per item, passed through
-    ``FeatureTransform.apply`` (training) — which produces the canonical, padded,
-    Qwen3-VL-ready tensors — then re-collated. ``FeatureTransform.unapply`` runs on
-    the postprocessing side to map model actions back to the raw dataset keys.
+    This is the single LingBot-specific step: it concatenates the raw feature
+    spans each canonical slot declares (``origin_keys``) into the canonical
+    state/action vectors, zero-pads them to ``max_state_dim`` / ``max_action_dim``,
+    and emits the per-dim validity masks (``state_joint_mask`` / ``action_joint_mask``
+    / ``joint_mask``) the model uses to mask padded slots. It also renames raw
+    camera keys onto the canonical camera names. No normalization, no relative
+    actions — those are the standard steps running before this one.
     """
 
-    # The robot config / normalization stats, derived from the config's typed
-    # slot-mapping fields and embedded in the checkpoint. No file paths needed.
     robot_config: dict | None = None
-    norm_stats: dict | None = None
-    processor_path: str = "Qwen/Qwen3-VL-4B-Instruct"
+    # Ordered canonical joint vocabulary (name -> dim); defines the layout.
+    canonical_joints: dict = field(default_factory=dict)
+    # Canonical camera names (observation.images.<name> keys after the step).
+    cameras: list = field(default_factory=list)
     chunk_size: int = 50
     max_state_dim: int = 55
     max_action_dim: int = 55
-    tokenizer_max_length: int = 72
+    use_future_image: bool = False
+
+    _state_plan: Any = field(default=None, init=False, repr=False)
+    _action_plan: Any = field(default=None, init=False, repr=False)
+    _camera_map: Any = field(default=None, init=False, repr=False)
+    _warned_missing_slots: Any = field(default=None, init=False, repr=False)
+
+    def __post_init__(self):
+        self._state_plan, self._action_plan = _build_slot_plans(self.robot_config, self.canonical_joints)
+        self._camera_map = _camera_rename_map(self.robot_config)
+        self._warned_missing_slots = set()
+
+    def _warn_missing(self, joint: str, raw_key: str) -> None:
+        if joint not in self._warned_missing_slots:
+            self._warned_missing_slots.add(joint)
+            logger.warning(
+                "Canonical slot %r left unfilled — source key %r absent from the batch. "
+                "Check the slot mapping against the dataset features; the state/action "
+                "dims of this slot will be zero-padded.",
+                joint,
+                raw_key,
+            )
+
+    def _map_vector(self, source: dict[str, Any], joint: str, dim: int, spans) -> torch.Tensor | None:
+        """Concatenate a slot's raw spans into a (…, dim) canonical vector."""
+        pieces = []
+        for raw_key, start, end in spans:
+            tensor = source.get(raw_key)
+            if tensor is None:
+                self._warn_missing(joint, raw_key)
+                return None
+            piece = tensor[..., start:end]
+            if piece.shape[-1] < end - start:
+                # An over-spanning mapping (e.g. identity on a short raw feature)
+                # zero-pads the tail instead of failing.
+                piece = F.pad(piece, (0, end - start - piece.shape[-1]))
+            pieces.append(piece)
+        vector = torch.cat(pieces, dim=-1).to(torch.float32)
+        return F.pad(vector, (0, dim - vector.shape[-1]))
+
+    def _joint_mask(self, spans, dim: int) -> torch.Tensor:
+        real = sum(end - start for _, start, end in spans) if spans else 0
+        mask = torch.zeros(dim, dtype=torch.bool)
+        mask[:real] = True
+        return mask
+
+    def __call__(self, transition):
+        transition = transition.copy()
+        observation = transition.get(TransitionKey.OBSERVATION)
+        if observation is None or not isinstance(observation, dict):
+            raise ValueError("LingbotVLAV2SlotMappingProcessorStep requires an observation dict.")
+        new_obs = dict(observation)
+
+        state = new_obs.get(OBS_STATE)
+        if state is None:
+            raise ValueError("LingbotVLAV2SlotMappingProcessorStep requires 'observation.state'.")
+        # Future-frame sampling stacks T frames on every observation key; the
+        # policy state is the current frame only.
+        if self.use_future_image and state.ndim == 3:
+            state = state[:, 0]
+        state_source = {OBS_STATE: state}
+
+        state_vecs, state_masks = [], []
+        for joint, dim, spans in self._state_plan:
+            if spans is None:
+                state_vecs.append(torch.zeros(*state.shape[:-1], dim))
+                state_masks.append(torch.zeros(dim, dtype=torch.bool))
+                continue
+            vector = self._map_vector(state_source, joint, dim, spans)
+            if vector is None:
+                state_vecs.append(torch.zeros(*state.shape[:-1], dim))
+                state_masks.append(torch.zeros(dim, dtype=torch.bool))
+                continue
+            state_vecs.append(vector)
+            state_masks.append(self._joint_mask(spans, dim))
+        canonical_width = self._canonical_width()
+        canonical_state = F.pad(torch.cat(state_vecs, dim=-1), (0, self.max_state_dim - canonical_width))
+        state_joint_mask = F.pad(torch.cat(state_masks, dim=-1), (0, self.max_state_dim - canonical_width))
+
+        # Cameras: rename raw keys onto canonical camera names.
+        for canonical_key, raw_key in self._camera_map.items():
+            if raw_key in new_obs and raw_key != canonical_key:
+                new_obs[canonical_key] = new_obs[raw_key]
+
+        action = transition.get(TransitionKey.ACTION)
+        action_joint_mask = F.pad(
+            torch.cat([self._joint_mask(spans, dim) for _, dim, spans in self._action_plan], dim=-1),
+            (0, self.max_action_dim - canonical_width),
+        )
+        if action is not None:
+            action_source = {ACTION: action}
+            action_vecs = []
+            for joint, dim, spans in self._action_plan:
+                if spans is None:
+                    action_vecs.append(torch.zeros(*action.shape[:-1], dim))
+                    continue
+                vector = self._map_vector(action_source, joint, dim, spans)
+                if vector is None:
+                    vector = torch.zeros(*action.shape[:-1], dim)
+                action_vecs.append(vector)
+            canonical_action = F.pad(
+                torch.cat(action_vecs, dim=-1), (0, self.max_action_dim - canonical_width)
+            ).to(torch.float32)
+            transition[TransitionKey.ACTION] = canonical_action
+            batch_size = canonical_state.shape[0]
+            chunk = canonical_action.shape[-2] if canonical_action.ndim == 3 else self.chunk_size
+            joint_mask = action_joint_mask.unsqueeze(0).expand(batch_size, chunk, -1)
+            new_obs["joint_mask"] = joint_mask
+
+        new_obs[OBS_STATE] = canonical_state.to(torch.float32)
+        new_obs["state_joint_mask"] = state_joint_mask.unsqueeze(0).expand(canonical_state.shape[0], -1)
+        new_obs["action_joint_mask"] = action_joint_mask.unsqueeze(0).expand(canonical_state.shape[0], -1)
+        transition[TransitionKey.OBSERVATION] = new_obs
+        return transition
+
+    def _canonical_width(self) -> int:
+        return sum(self.canonical_joints.values())
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "robot_config": self.robot_config,
+            "canonical_joints": self.canonical_joints,
+            "cameras": self.cameras,
+            "chunk_size": self.chunk_size,
+            "max_state_dim": self.max_state_dim,
+            "max_action_dim": self.max_action_dim,
+            "use_future_image": self.use_future_image,
+        }
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        features[PipelineFeatureType.OBSERVATION][OBS_STATE] = PolicyFeature(
+            type=FeatureType.STATE, shape=(self.max_state_dim,)
+        )
+        features[PipelineFeatureType.ACTION][ACTION] = PolicyFeature(
+            type=FeatureType.ACTION, shape=(self.chunk_size, self.max_action_dim)
+        )
+        return features
+
+
+@dataclass
+@ProcessorStepRegistry.register(name=INVERSE_SLOT_MAPPING_STEP)
+class LingbotVLAV2InverseSlotMappingProcessorStep(PolicyActionProcessorStep):
+    """Invert the canonical slot mapping on predicted action chunks.
+
+    ``(B, [chunk,] max_action_dim)`` canonical actions are sliced per canonical
+    joint group and written back to the raw action dims each slot was sourced
+    from, producing the raw-dim action the unnormalizer and the robot expect.
+    """
+
+    robot_config: dict | None = None
     canonical_joints: dict = field(default_factory=dict)
-    canonical_norm_type: dict = field(default_factory=dict)
+
+    _action_plan: Any = field(default=None, init=False, repr=False)
+    # Live reference to the preprocessor's slot-mapping step (for introspection;
+    # the inverse mapping itself is static — derived from the robot config).
+    slot_mapping_step: Any = field(default=None, repr=False)
+
+    def __post_init__(self):
+        _state_plan, self._action_plan = _build_slot_plans(self.robot_config, self.canonical_joints)
+
+    def action(self, action: PolicyAction) -> PolicyAction:
+        spans = [(joint, dim, slot_spans) for joint, dim, slot_spans in self._action_plan if slot_spans]
+        if not spans:
+            raise ValueError(
+                "LingbotVLAV2InverseSlotMappingProcessorStep has no action slot mapping; "
+                "cannot map canonical actions back to raw action dims."
+            )
+        raw_dim = max(end for _, _, slot_spans in spans for _, _, end in slot_spans)
+        raw = action.new_zeros(*action.shape[:-1], raw_dim)
+        offset = 0
+        for _joint, dim, slot_spans in spans:
+            real = sum(end - start for _, start, end in slot_spans)
+            segment = action[..., offset : offset + real]
+            position = 0
+            for raw_key, start, end in slot_spans:
+                if raw_key != ACTION:
+                    raise ValueError(
+                        f"LingBot-VLA 2.0 supports a single '{ACTION}' raw action feature, "
+                        f"got span on {raw_key!r}."
+                    )
+                raw[..., start:end] = segment[..., position : position + (end - start)]
+                position += end - start
+            offset += dim
+        return raw
+
+    def get_config(self) -> dict[str, Any]:
+        return {"robot_config": self.robot_config, "canonical_joints": self.canonical_joints}
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
+@dataclass
+@ProcessorStepRegistry.register(name=IMAGE_STEP)
+class LingbotVLAV2ImageProcessorStep(ProcessorStep):
+    """Run the standard Qwen3-VL image processor over the canonical cameras.
+
+    Per item and camera: resize to ``resize_imgs_with_padding``, rescale to
+    [0, 255], then the HF image processor patchifies at native resolution and
+    returns ``pixel_values`` plus the ``image_grid_thw`` patch grid. Missing
+    canonical views are zero-filled with ``img_masks=False``. With the depth /
+    DINO-video distillation branch enabled, the pre-Qwen frames are also carried
+    as ``pil_images`` (and ``future_pil_images`` for the future frame).
+    """
+
+    processor_path: str = "Qwen/Qwen3-VL-4B-Instruct"
     cameras: list = field(default_factory=list)
     resize_imgs_with_padding: tuple = (224, 224)
-    # Cap the Qwen3-VL image processor's dynamic-resolution token budget. Left uncapped,
-    # a native 1080x1920 frame explodes to ~8k vision tokens -> an O(N^2) eager-attention
-    # tensor that OOMs and does not match the checkpoint's training resolution. Qwen3-VL
-    # uses 16px patches + 2x2 merge (=1024 px/token), so 1,048,576 px ~= 1024 tokens.
+    # Cap the Qwen3-VL image processor's dynamic-resolution token budget. Left
+    # uncapped, a native 1080x1920 frame explodes to ~8k vision tokens -> an
+    # O(N^2) eager-attention tensor that OOMs and does not match the checkpoint's
+    # training resolution. Qwen3-VL uses 16px patches + 2x2 merge (=1024 px/token),
+    # so 1,048,576 px ~= 1024 tokens.
     image_max_pixels: int = 262144
     image_min_pixels: int = 131072
     # When set (e.g. "cuda"), camera images are uploaded to this device and run
     # through the HF image processor in one batched call, with the outputs staying
     # on-device for the vision tower. None keeps the per-camera CPU path.
     preprocess_device: str | None = None
-    # Qwen3-VL specific token/vision handling (mirrors the policy config fields).
-    use_qwen3_chat_template: bool = True
     return_image_grid_thw: bool = True
-    qwen3vl_use_vision_boundaries: bool = True
-    # Native-depth / DINO-video distillation branch: keep raw pre-Qwen-processor
-    # camera frames (CHW float [0,255], canonical camera order) as ``pil_images``
-    # in the batch, and — with ``use_future_image`` — also a ``future_pil_images``
-    # tensor from the last sampled frame. Both feed the frozen teachers inside
-    # ``LingbotVLAV2Policy.forward``; inference never consumes them.
     use_depth_align: bool = False
     use_future_image: bool = False
-    # Dataset fps and future-frame spacing, used to synthesize the per-item
-    # ``future_video_effective_fps`` for the DINO-video teacher exactly like the
-    # upstream dataset does: fps / max(1, future_frame_offset), where the offset
-    # defaults to chunk_size - 1. None for either disables synthesis and the
-    # teacher falls back to the effective_fps in its config.yaml.
     dataset_fps: int | None = None
     future_frame_offset: int | None = None
+    chunk_size: int = 50
 
-    _feature_transform: Any = field(default=None, init=False, repr=False)
+    _image_processor: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
         if not _transformers_available:
             raise ImportError(
-                "transformers is required for LingbotVLAV2FeatureTransformStep. "
+                "transformers is required for LingbotVLAV2ImageProcessorStep. "
                 "Install it with `pip install 'lerobot[lingbot_vla2]'`."
             )
-        from .model_core.qwen3vl_in_vla import apply_lingbot_qwen3_vl_patch
-        from .preprocessing.feature_transform import FeatureTransform
-
-        apply_lingbot_qwen3_vl_patch()
-        processor = AutoProcessor.from_pretrained(
+        self._image_processor = AutoImageProcessor.from_pretrained(
             self.processor_path,
-            padding_side="right",
             max_pixels=self.image_max_pixels,
             min_pixels=self.image_min_pixels,
         )
-        data_config, model_config = build_feature_transform_configs(self)
-        self._feature_transform = FeatureTransform(
-            data_config=data_config,
-            model_config=model_config,
-            processor=processor,
-            chunk_size=self.chunk_size,
-            robot_config=self.robot_config,
-            norm_stats=self.norm_stats,
-            preprocess_device=self.preprocess_device,
-            use_depth_align=self.use_depth_align,
-            use_future_image=self.use_future_image,
-        )
-
-    def _iter_items(self, observation: dict, action, task):
-        """Yield the per-item dicts ``FeatureTransform.apply`` expects."""
-        # Batch size from the state feature.
-        batch_size = observation[OBS_STATE].shape[0]
-        # ``*_is_pad`` columns (emitted whenever delta_timestamps sample multiple
-        # frames) are per-frame flags, not camera tensors.
-        image_keys = [
-            k for k in observation if k.startswith("observation.images.") and not k.endswith("_is_pad")
-        ]
-
-        # The FeatureTransform runs on CPU (numpy stats + the Qwen image processor),
-        # but Accelerate hands us batches already on the training device. Move each
-        # per-item tensor to CPU here; the trailing DeviceProcessorStep re-uploads the
-        # transformed, model-ready tensors to the accelerator device.
-        def _cpu(x):
-            return x.cpu() if isinstance(x, torch.Tensor) else x
-
-        for i in range(batch_size):
-            state = _cpu(observation[OBS_STATE][i])
-            # Future-frame sampling stacks T frames on every observation key; the
-            # policy state is the current frame only (images keep their [T,C,H,W]
-            # so FeatureTransform can split current/future per camera).
-            if self.use_future_image and state.ndim == 2:
-                state = state[0]
-            item: dict[str, Any] = {OBS_STATE: state}
-            for k in image_keys:
-                img = _cpu(observation[k][i])
-                # Match upstream BaseDataset Resize(image_size), for both current
-                # and future frames before Qwen processing and teacher targets.
-                img = resize(img, list(self.resize_imgs_with_padding), antialias=True)
-                # LeRobot images are float CHW in [0, 1]; the Qwen image processor
-                # expects [0, 255]. Scale only if clearly normalized.
-                if img.dtype.is_floating_point and float(img.max()) <= 1.0 + 1e-4:
-                    img = img * 255.0
-                item[k] = img
-            if action is not None:
-                item[ACTION] = _cpu(action[i])
-                # FeatureTransform.apply reads the pad mask from the raw action key
-                # (``f"{org_actions[0]}_is_pad"``); fill it dynamically and let the
-                # apply side fall back to an all-False mask when absent.
-                org_actions = self._feature_transform.org_features["actions"]
-                pad_key = f"{org_actions[0]}_is_pad" if org_actions else "action_is_pad"
-                complementary = self._current_transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
-                mask = complementary.get(pad_key, observation.get(pad_key))
-                item[pad_key] = _cpu(mask[i]).bool() if isinstance(mask, torch.Tensor) else torch.zeros(self.chunk_size, dtype=torch.bool)
-            # Task text can arrive as a list of strings, a collated tensor of indices,
-            # or a plain scalar; normalize to a string for the chat template.
-            if isinstance(task, torch.Tensor):
-                t = task[i].item() if task.ndim > 0 else task.item()
-            elif isinstance(task, (list, tuple)):
-                t = task[i]
-            else:
-                t = task
-            item["task"] = t if isinstance(t, str) else str(t)
-            yield item, (action is None)
 
     def __call__(self, transition):
-        self._current_transition = transition.copy()
-        observation = self._current_transition.get(TransitionKey.OBSERVATION)
+        transition = transition.copy()
+        observation = transition.get(TransitionKey.OBSERVATION)
         if observation is None or not isinstance(observation, dict):
-            raise ValueError("LingbotVLAV2FeatureTransformStep requires an observation dict.")
-        action = self._current_transition.get(TransitionKey.ACTION)
-        complementary = self._current_transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
-        task = complementary.get("task", DEFAULT_TASK)
-
-        applied = [
-            self._feature_transform.apply(item, policy_eval=policy_eval)
-            for item, policy_eval in self._iter_items(observation, action, task)
-        ]
-
-        collated: dict[str, Any] = {}
-        for key in applied[0]:
-            values = [a[key] for a in applied]
-            collated[key] = _collate(values) if isinstance(values[0], torch.Tensor) else values
-
-        # Route model-ready tensors into the observation; keep the padded action out.
+            raise ValueError("LingbotVLAV2ImageProcessorStep requires an observation dict.")
+        complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
         new_obs = dict(observation)
-        new_obs["images"] = collated["images"]
-        new_obs["img_masks"] = collated["img_masks"]
-        new_obs["lang_tokens"] = collated["lang_tokens"]
-        new_obs["lang_masks"] = collated["lang_masks"]
-        new_obs[OBS_STATE] = collated["state"]
-        new_obs["joint_mask"] = collated["joint_mask"]
-        new_obs["state_joint_mask"] = collated["state_joint_mask"]
-        new_obs["action_joint_mask"] = collated["action_joint_mask"]
-        if "image_grid_thw" in collated:
-            new_obs["image_grid_thw"] = collated["image_grid_thw"]
+
+        state = new_obs[OBS_STATE]
+        batch_size = state.shape[0]
+        image_keys = [f"{OBS_IMAGES}.{cam}" for cam in self.cameras]
+        pad_mask = complementary.get("action_is_pad")
+
+        images, img_masks, grids, pil_images, future_pil = [], [], [], [], []
+        for i in range(batch_size):
+            image_dict: dict[str, torch.Tensor] = {}
+            future_dict: dict[str, torch.Tensor] = {}
+            for key in image_keys:
+                img = new_obs.get(key)
+                if img is None:
+                    continue
+                current, future = _split_camera_frames(
+                    img[i], self.resize_imgs_with_padding, self.use_future_image
+                )
+                image_dict[key] = current
+                if future is not None:
+                    future_dict[key] = future
+
+            item_obs = {"image": image_dict, "state": state[i]}
+            item_images, item_masks, item_pil, item_grid = prepare_images(
+                self._image_processor,
+                item_obs,
+                image_keys=image_keys,
+                use_depth_align=self.use_depth_align,
+                return_image_grid_thw=self.return_image_grid_thw,
+                preprocess_device=self.preprocess_device,
+            )
+            images.append(item_images)
+            img_masks.append(item_masks)
+            grids.append(item_grid)
+            pil_images.append(item_pil)
+            if self.use_future_image and future_dict:
+                _future_images, _future_masks, future_pil_i, _future_grid = prepare_images(
+                    self._image_processor,
+                    {"image": future_dict, "state": state[i]},
+                    image_keys=image_keys,
+                    use_depth_align=self.use_depth_align,
+                    return_image_grid_thw=False,
+                    augment_params=None,
+                )
+                future_pil.append(future_pil_i)
+
+        new_obs["images"] = torch.stack(images, dim=0)
+        new_obs["img_masks"] = torch.stack(img_masks, dim=0)
+        if self.return_image_grid_thw:
+            new_obs["image_grid_thw"] = torch.stack(grids, dim=0)
         if self.use_depth_align:
-            new_obs["pil_images"] = collated["pil_images"]
-            # Single-frame (inference) items produce None per item, not a tensor —
-            # only route real future frames so teachers never see a junk key.
-            future = collated.get("future_pil_images") if self.use_future_image else None
-            if isinstance(future, torch.Tensor):
-                new_obs["future_pil_images"] = future
+            new_obs["pil_images"] = torch.stack(pil_images, dim=0)
+            if future_pil:
+                new_obs["future_pil_images"] = torch.stack(future_pil, dim=0)
                 if self.dataset_fps is not None:
                     offset = (
                         self.future_frame_offset
@@ -385,27 +723,14 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
                         else max(1, self.chunk_size - 1)
                     )
                     new_obs["future_video_effective_fps"] = _future_video_fps(
-                        self.dataset_fps, offset, collated.get("action_is_pad") if action is not None else None
+                        self.dataset_fps, offset, pad_mask
                     )
-
-        self._current_transition[TransitionKey.OBSERVATION] = new_obs
-        if action is not None:
-            self._current_transition[TransitionKey.ACTION] = collated["actions"]
-        return self._current_transition
+        transition[TransitionKey.OBSERVATION] = new_obs
+        return transition
 
     def get_config(self) -> dict[str, Any]:
-        # Serialize the parsed contents rather than the (machine-specific) paths so a
-        # pushed checkpoint reloads anywhere.
         return {
-            "robot_config": self.robot_config,
-            "norm_stats": self.norm_stats,
             "processor_path": self.processor_path,
-            "chunk_size": self.chunk_size,
-            "max_state_dim": self.max_state_dim,
-            "max_action_dim": self.max_action_dim,
-            "tokenizer_max_length": self.tokenizer_max_length,
-            "canonical_joints": self.canonical_joints,
-            "canonical_norm_type": self.canonical_norm_type,
             "cameras": self.cameras,
             "resize_imgs_with_padding": list(self.resize_imgs_with_padding),
             # Must round-trip: these cap the Qwen3-VL vision-token budget and change
@@ -414,22 +739,102 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
             "image_max_pixels": self.image_max_pixels,
             "image_min_pixels": self.image_min_pixels,
             "preprocess_device": self.preprocess_device,
-            "use_qwen3_chat_template": self.use_qwen3_chat_template,
             "return_image_grid_thw": self.return_image_grid_thw,
-            "qwen3vl_use_vision_boundaries": self.qwen3vl_use_vision_boundaries,
             "use_depth_align": self.use_depth_align,
             "use_future_image": self.use_future_image,
             "dataset_fps": self.dataset_fps,
             "future_frame_offset": self.future_frame_offset,
+            "chunk_size": self.chunk_size,
         }
+
+    def save_artifacts(self, save_directory: Path) -> dict[str, str]:
+        """Save the image processor so the step reloads without a hub lookup."""
+        artifact_path = Path("image_processor")
+        self._image_processor.save_pretrained(save_directory / artifact_path)
+        return {"processor_path": artifact_path.as_posix()}
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        obs = features[PipelineFeatureType.OBSERVATION]
-        obs["lang_tokens"] = PolicyFeature(type=FeatureType.LANGUAGE, shape=(self.tokenizer_max_length,))
-        obs["lang_masks"] = PolicyFeature(type=FeatureType.LANGUAGE, shape=(self.tokenizer_max_length,))
         return features
+
+
+@dataclass
+@ProcessorStepRegistry.register(name=CHAT_TEMPLATE_STEP)
+class LingbotVLAV2ChatTemplateProcessorStep(ProcessorStep):
+    """Format the task with the Qwen3 chat template, Pi0.5-style.
+
+    Mirrors ``Pi05PrepareStateTokenizerProcessorStep``: the raw task string is
+    rewritten into the model's prompt format (Qwen3 chat template, or the
+    ``<bos>…\n`` wrapping for non-chat-template checkpoints) so the downstream
+    standard ``TokenizerProcessorStep`` can tokenize it as-is.
+    """
+
+    tokenizer_name: str | None = None
+    task_key: str = "task"
+    use_qwen3_chat_template: bool = True
+
+    _tokenizer: Any = field(default=None, init=False, repr=False)
+
+    def __post_init__(self):
+        if not _transformers_available:
+            raise ImportError(
+                "transformers is required for LingbotVLAV2ChatTemplateProcessorStep. "
+                "Install it with `pip install 'lerobot[lingbot_vla2]'`."
+            )
+        if self.tokenizer_name is None:
+            raise ValueError("LingbotVLAV2ChatTemplateProcessorStep requires a tokenizer_name.")
+        self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
+
+    def __call__(self, transition):
+        transition = transition.copy()
+        observation = transition.get(TransitionKey.OBSERVATION)
+        if observation is None or not isinstance(observation, dict):
+            raise ValueError("LingbotVLAV2ChatTemplateProcessorStep requires an observation dict.")
+        state = observation.get(OBS_STATE)
+        batch_size = state.shape[0] if state is not None else 1
+
+        complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
+        task = complementary.get(self.task_key, DEFAULT_TASK)
+        prompts = [_normalize_task_at(task, i) for i in range(batch_size)]
+        if self.use_qwen3_chat_template:
+            prompts = [
+                self._tokenizer.apply_chat_template(
+                    [{"role": "user", "content": prompt}],
+                    tokenize=False,
+                    add_generation_prompt=False,
+                )
+                for prompt in prompts
+            ]
+        else:
+            prompts = [(f"<bos>{prompt}" if not prompt.startswith("<bos>") else prompt) for prompt in prompts]
+            prompts = [f"{prompt}\n" if not prompt.endswith("\n") else prompt for prompt in prompts]
+        complementary[self.task_key] = prompts
+        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        return transition
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "task_key": self.task_key,
+            "use_qwen3_chat_template": self.use_qwen3_chat_template,
+            "tokenizer_name": self.tokenizer_name,
+        }
+
+    def save_artifacts(self, save_directory: Path) -> dict[str, str]:
+        """Save the tokenizer so the step reloads without a hub lookup."""
+        artifact_path = Path("chat_template_tokenizer")
+        self._tokenizer.save_pretrained(save_directory / artifact_path)
+        return {"tokenizer_name": artifact_path.as_posix()}
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
+# ---------------------------------------------------------------------------
+# Pipeline builders
+# ---------------------------------------------------------------------------
 
 
 def make_lingbot_vla_v2_pre_post_processors(
@@ -441,75 +846,114 @@ def make_lingbot_vla_v2_pre_post_processors(
 ]:
     """Build the LingBot-VLA 2.0 pre- and post-processing pipelines.
 
-    Normalization + slot mapping live inside the feature-transform step. The per-slot
-    stats are resolved with the following precedence:
-    1. ``dataset_stats`` (from LeRobot's standard mechanism) → slot stats derived via
-       the slot-mapping offsets — the recommended path for fine-tuning.
-    2. ``config.norm_stats`` (embedded in the checkpoint) — the fallback for released
-       checkpoints and backward compatibility.
+    Standard steps carry rename / batch-dim / relative actions / normalization /
+    tokenization / device placement; the only custom step is the slot mapping
+    onto the canonical layout. Stats precedence:
+
+    1. ``dataset_stats`` (raw-feature stats from LeRobot's standard mechanism)
+       — the recommended path for fine-tuning.
+    2. ``config.norm_stats`` (per-slot stats embedded in the checkpoint),
+       rewritten into raw-feature space via the slot-mapping offsets.
+    3. Neither → identity passthrough: the steps are present but normalization
+       is a no-op.
     """
     resolve_robot_config_and_stats(config)
     if not config.robot_config:
         # No slot mappings provided (format-only converted checkpoint): use identity
         # passthrough — raw features are assumed to already be in canonical layout.
-        # This lets users evaluate the checkpoint without training first; fine-tuning
-        # overrides with the user's own slot mappings.
         config.robot_config = _make_identity_robot_config(config)
 
-    # Prefer LeRobot dataset_stats (derive slot stats via YAML offsets) over the
-    # checkpoint-embedded norm_stats. When neither is available (format-only converted
-    # checkpoint with no embedded stats), use an empty norm_stats dict so the processor
-    # builds but normalization is a no-op (identity passthrough).
-    norm_stats = config.norm_stats or {"norm_stats": {}}
-    if dataset_stats is not None:
-        norm_stats = _derive_slot_stats_from_dataset(config.robot_config, dataset_stats)
+    norm_map = _resolve_norm_map(config.canonical_norm_type)
+    stats = (
+        dataset_stats
+        if dataset_stats is not None
+        else _raw_stats_from_slot_stats(config.robot_config, config.norm_stats)
+    )
+    features = {**config.input_features, **config.output_features}
 
-    feature_step = LingbotVLAV2FeatureTransformStep(
+    relative_step = RelativeActionsProcessorStep(
+        **_relative_actions_settings(config),
+    )
+
+    slot_step = LingbotVLAV2SlotMappingProcessorStep(
         robot_config=config.robot_config,
-        norm_stats=norm_stats,
-        processor_path=config.processor_path or config.tokenizer_path,
+        canonical_joints=config.canonical_joints,
+        cameras=config.canonical_cameras,
         chunk_size=config.chunk_size,
         max_state_dim=config.max_state_dim,
         max_action_dim=config.max_action_dim,
-        tokenizer_max_length=config.tokenizer_max_length,
-        canonical_joints=config.canonical_joints,
-        canonical_norm_type=config.canonical_norm_type,
+        use_future_image=config.use_future_image,
+    )
+
+    image_step = LingbotVLAV2ImageProcessorStep(
+        processor_path=config.processor_path or config.tokenizer_path,
         cameras=config.canonical_cameras,
         resize_imgs_with_padding=tuple(config.resize_imgs_with_padding),
         image_max_pixels=config.image_max_pixels,
         image_min_pixels=config.image_min_pixels,
         preprocess_device=config.preprocess_device,
-        use_qwen3_chat_template=config.use_qwen3_chat_template,
         return_image_grid_thw=config.return_image_grid_thw,
-        qwen3vl_use_vision_boundaries=config.qwen3vl_use_vision_boundaries,
         use_depth_align=config.use_depth_align,
         use_future_image=config.use_future_image,
         dataset_fps=config.dataset_fps,
         future_frame_offset=config.future_frame_offset,
+        chunk_size=config.chunk_size,
     )
+
+    tokenizer_name = config.processor_path or config.tokenizer_path
 
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
-        feature_step,
+        relative_step,
+        NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats),
+        slot_step,
+        image_step,
+        LingbotVLAV2ChatTemplateProcessorStep(
+            tokenizer_name=tokenizer_name,
+            use_qwen3_chat_template=config.use_qwen3_chat_template,
+        ),
+        TokenizerProcessorStep(
+            tokenizer_name=tokenizer_name,
+            max_length=config.tokenizer_max_length,
+            padding_side="right",
+            padding="max_length",
+        ),
         DeviceProcessorStep(device=config.device),
     ]
     output_steps: list[ProcessorStep] = [
+        LingbotVLAV2InverseSlotMappingProcessorStep(
+            robot_config=config.robot_config,
+            canonical_joints=config.canonical_joints,
+            slot_mapping_step=slot_step,
+        ),
+        UnnormalizerProcessorStep(features=config.output_features, norm_map=norm_map, stats=stats),
+        AbsoluteActionsProcessorStep(enabled=relative_step.enabled, relative_step=relative_step),
         DeviceProcessorStep(device="cpu"),
     ]
 
-    return (
-        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
-            steps=input_steps,
-            name=POLICY_PREPROCESSOR_DEFAULT_NAME,
-        ),
-        PolicyProcessorPipeline[PolicyAction, PolicyAction](
-            steps=output_steps,
-            name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
-        ),
+    return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)
+
+
+def _reconnect_lingbot_steps(
+    preprocessor: PolicyProcessorPipeline,
+    postprocessor: PolicyProcessorPipeline,
+) -> None:
+    """Re-establish the cross-pipeline step references after deserialization.
+
+    The inverse slot-mapping step's reference to the preprocessor's slot-mapping
+    step and ``AbsoluteActionsProcessorStep.relative_step`` are not serializable;
+    rewire them the same way ``factory._reconnect_relative_absolute_steps`` does.
+    """
+    slot_step = next(
+        (s for s in preprocessor.steps if isinstance(s, LingbotVLAV2SlotMappingProcessorStep)), None
     )
+    relative_step = next((s for s in preprocessor.steps if isinstance(s, RelativeActionsProcessorStep)), None)
+    for step in postprocessor.steps:
+        if isinstance(step, LingbotVLAV2InverseSlotMappingProcessorStep) and step.slot_mapping_step is None:
+            step.slot_mapping_step = slot_step
+        if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
+            step.relative_step = relative_step
 
 
 def make_lingbot_vla_v2_pre_post_processors_from_pretrained(
@@ -527,84 +971,91 @@ def make_lingbot_vla_v2_pre_post_processors_from_pretrained(
 ]:
     """Load the processors saved alongside a LeRobot checkpoint.
 
-    The LingBot pipeline carries no LeRobot normalizer / unnormalizer steps (slot
-    mapping and normalization live inside the feature-transform step), so the generic
-    normalizer overrides injected by the training script are filtered out here — the
-    pipeline loader rejects override keys that match no step.
+    The saved steps carry the slot mapping / normalization stats of the
+    checkpoint's *source* embodiment. When fine-tuning on a new embodiment the
+    policy config's assets must win here too — explicit slot-mapping fields first,
+    the config's embedded contents as fallback (same rule as
+    ``resolve_robot_config_and_stats``) — forwarded as per-step overrides.
     """
-    preprocessor_overrides = {
-        key: value
-        for key, value in (preprocessor_overrides or {}).items()
-        if key in {"device_processor", "rename_observations_processor"}
-    }
-    postprocessor_overrides = {
-        key: value for key, value in (postprocessor_overrides or {}).items() if key == "device_processor"
-    }
+    preprocessor_overrides = dict(preprocessor_overrides or {})
+    postprocessor_overrides = dict(postprocessor_overrides or {})
     if "device_processor" not in postprocessor_overrides and "device_processor" in preprocessor_overrides:
         postprocessor_overrides["device_processor"] = preprocessor_overrides["device_processor"]
 
-    # The saved feature-transform step carries the slot mapping / normalization stats of
-    # the checkpoint's *source* embodiment. When fine-tuning on a new embodiment the
-    # policy config's assets must win here too — explicit ``robot_config_path`` /
-    # ``norm_stats_path`` first, the config's embedded contents as fallback (same rule
-    # as ``resolve_robot_config_and_stats``) — otherwise the training preprocessor
-    # silently keeps the source embodiment's mapping while the policy itself was
-    # already re-resolved onto the new one.
     resolve_robot_config_and_stats(config)
-    # Same config -> step parameter set as ``make_lingbot_vla_v2_pre_post_processors``
+
+    # Same config → step parameter set as ``make_lingbot_vla_v2_pre_post_processors``
     # (paths excluded: their resolved contents are forwarded instead). Only fields the
     # config actually carries (non-None) override the checkpoint's saved values.
-    feature_step_overrides: dict[str, Any] = {}
-    for step_param, config_attr in (
-        ("robot_config", "robot_config"),
-        ("norm_stats", "norm_stats"),
-        ("chunk_size", "chunk_size"),
-        ("max_state_dim", "max_state_dim"),
-        ("max_action_dim", "max_action_dim"),
-        ("tokenizer_max_length", "tokenizer_max_length"),
-        ("canonical_joints", "canonical_joints"),
-        ("canonical_norm_type", "canonical_norm_type"),
-        ("cameras", "canonical_cameras"),
-        ("resize_imgs_with_padding", "resize_imgs_with_padding"),
-        ("image_max_pixels", "image_max_pixels"),
-        ("image_min_pixels", "image_min_pixels"),
-        ("preprocess_device", "preprocess_device"),
-        ("use_qwen3_chat_template", "use_qwen3_chat_template"),
-        ("return_image_grid_thw", "return_image_grid_thw"),
-        ("qwen3vl_use_vision_boundaries", "qwen3vl_use_vision_boundaries"),
-        ("use_depth_align", "use_depth_align"),
-        ("use_future_image", "use_future_image"),
-        ("dataset_fps", "dataset_fps"),
-        ("future_frame_offset", "future_frame_offset"),
-    ):
-        value = getattr(config, config_attr, None)
-        if value is not None:
-            feature_step_overrides[step_param] = value
+    def _overrides(step_key: str, params: dict[str, Any]) -> None:
+        resolved = {key: value for key, value in params.items() if value is not None}
+        if resolved:
+            preprocessor_overrides.setdefault(step_key, {}).update(resolved)
+
+    _overrides(
+        SLOT_MAPPING_STEP,
+        {
+            "robot_config": config.robot_config,
+            "canonical_joints": config.canonical_joints,
+            "cameras": config.canonical_cameras,
+            "chunk_size": config.chunk_size,
+            "max_state_dim": config.max_state_dim,
+            "max_action_dim": config.max_action_dim,
+            "use_future_image": config.use_future_image,
+        },
+    )
     processor_path = config.processor_path or config.tokenizer_path
+    _overrides(
+        IMAGE_STEP,
+        {
+            "processor_path": processor_path,
+            "cameras": config.canonical_cameras,
+            "resize_imgs_with_padding": tuple(config.resize_imgs_with_padding)
+            if config.resize_imgs_with_padding
+            else None,
+            "image_max_pixels": config.image_max_pixels,
+            "image_min_pixels": config.image_min_pixels,
+            "return_image_grid_thw": config.return_image_grid_thw,
+            "use_depth_align": config.use_depth_align,
+            "use_future_image": config.use_future_image,
+            "dataset_fps": config.dataset_fps,
+            "future_frame_offset": config.future_frame_offset,
+            "chunk_size": config.chunk_size,
+        },
+    )
+    if config.use_qwen3_chat_template is not None:
+        preprocessor_overrides.setdefault(CHAT_TEMPLATE_STEP, {})["use_qwen3_chat_template"] = (
+            config.use_qwen3_chat_template
+        )
     if processor_path is not None:
-        feature_step_overrides["processor_path"] = processor_path
+        preprocessor_overrides.setdefault("tokenizer_processor", {})["tokenizer_name"] = processor_path
+        preprocessor_overrides.setdefault(CHAT_TEMPLATE_STEP, {})["tokenizer_name"] = processor_path
 
     # GPU preprocessing default: when the rollout inference device is CUDA and nobody
     # explicitly configured preprocess_device (policy config, saved checkpoint, or an
-    # override), default it to that device. The fast path (prepare_images_on_device) is
-    # pure torch/torchvision — bit-exact vs the CPU path (bench/check_gpu_preprocess.py)
+    # override), default it to that device. The fast path (prepare_images_on_device)
+    # is pure torch/torchvision — bit-exact vs the CPU path (bench/check_gpu_preprocess.py)
     # — and saves ~171ms of per-tick host preprocessing on the measured 4090 setup
     # (x86 shared-host CPU contention; on GB10 both paths measure ~5ms). Explicit
     # config always wins, and ``preprocess_device="cpu"`` is the documented opt-out
     # (keeps the original per-camera HF processor path).
-    if "preprocess_device" not in feature_step_overrides and config.preprocess_device is None:
+    if config.preprocess_device is None:
         dev_override = (preprocessor_overrides.get("device_processor") or {}).get("device")
         target_dev = dev_override or getattr(config, "device", None)
-        if target_dev is not None and str(target_dev).startswith("cuda") and torch.cuda.is_available():
-            feature_step_overrides["preprocess_device"] = target_dev
-
-    if feature_step_overrides:
-        preprocessor_overrides["lingbot_vla_v2_feature_transform"] = feature_step_overrides
+        if (
+            target_dev is not None
+            and str(target_dev).startswith("cuda")
+            and torch.cuda.is_available()
+            and "preprocess_device" not in preprocessor_overrides.get(IMAGE_STEP, {})
+        ):
+            preprocessor_overrides.setdefault(IMAGE_STEP, {})["preprocess_device"] = target_dev
 
     preprocessor = PolicyProcessorPipeline.from_pretrained(
         pretrained_model_name_or_path=pretrained_path,
         config_filename=preprocessor_config_filename,
         overrides=preprocessor_overrides,
+        # Same standard converters as ``make_policy_processor_pipelines`` /
+        # the generic loader in ``policies.factory``.
         to_transition=batch_to_transition,
         to_output=transition_to_batch,
         revision=pretrained_revision,
@@ -617,4 +1068,5 @@ def make_lingbot_vla_v2_pre_post_processors_from_pretrained(
         to_output=transition_to_policy_action,
         revision=pretrained_revision,
     )
+    _reconnect_lingbot_steps(preprocessor, postprocessor)
     return preprocessor, postprocessor

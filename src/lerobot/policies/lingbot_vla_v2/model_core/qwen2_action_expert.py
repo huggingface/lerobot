@@ -251,7 +251,9 @@ class Qwen2FusedExperts(nn.Module):
             self._sparse_cache_key = cache_key
         return self._gate_up_proj_cache, self._sparse_wd_cache
 
-    def _sparse_forward(self, routing_weights, selected_experts, hidden_states, use_grouped_mm=False, static_capacity=False):
+    def _sparse_forward(
+        self, routing_weights, selected_experts, hidden_states, use_grouped_mm=False, static_capacity=False
+    ):
         """Padded sparse MoE: real per-token expert activation with two fixed
         batched-GEMM launches.
 
@@ -341,7 +343,9 @@ class Qwen2FusedExperts(nn.Module):
         if backend == "sparse":
             return self._sparse_forward(routing_weights, selected_experts, hidden_states)
         if backend == "sparse_static":
-            return self._sparse_forward(routing_weights, selected_experts, hidden_states, static_capacity=True)
+            return self._sparse_forward(
+                routing_weights, selected_experts, hidden_states, static_capacity=True
+            )
         if backend == "sparse_static_gmm":
             return self._sparse_forward(
                 routing_weights, selected_experts, hidden_states, use_grouped_mm=True, static_capacity=True
@@ -352,7 +356,11 @@ class Qwen2FusedExperts(nn.Module):
         # dense two-GEMM path for small token counts (flow-matching denoise:
         # T ~= 51). Pure torch, static shapes, no graph breaks under torch.compile.
         dense_max_tokens = getattr(module, "_dense_max_tokens", 512)
-        if backend in ("auto", "dense") and dense_max_tokens > 0 and hidden_states.shape[0] <= dense_max_tokens:
+        if (
+            backend in ("auto", "dense")
+            and dense_max_tokens > 0
+            and hidden_states.shape[0] <= dense_max_tokens
+        ):
             return self._dense_forward(routing_weights, selected_experts, hidden_states)
 
         # pure-torch grouped-by-expert eager fallback (CPU / large T / training).

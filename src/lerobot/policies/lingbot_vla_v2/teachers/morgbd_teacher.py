@@ -29,11 +29,11 @@ complete runtime-weight validation. ``MoRGBDTeacher.infer_feat`` implements the 
 used by the alignment recipe::
 
     feat, cls = teacher.infer_feat(
-        image,                   # (B, 3, H, W) in [0, 1]
-        depth,                   # (B, H, W) or (B, 1, H, W)
+        image,  # (B, 3, H, W) in [0, 1]
+        depth,  # (B, H, W) or (B, 1, H, W)
         num_tokens=256,
-        resolution_level=3,      # only used when num_tokens is None
-        depth_down_scale=1,      # accepted for signature parity; inert (see below)
+        resolution_level=3,  # only used when num_tokens is None
+        depth_down_scale=1,  # accepted for signature parity; inert (see below)
         enable_depth_mask=False,
     )
     # feat: (B, 1024, 16, 16) patch features for 256 tokens on a square image
@@ -115,8 +115,7 @@ _DEFAULT_MLP_RATIO = 4.0
 _DEFAULT_INTERPOLATE_OFFSET = 0.1
 
 _DEPTH_EMBED_KEY_ALIASES = {
-    f"encoder.backbone.depth_patch_embed.proj.{suffix}":
-    f"encoder.backbone.depth_mask_patch_embed.proj.{suffix}"
+    f"encoder.backbone.depth_patch_embed.proj.{suffix}": f"encoder.backbone.depth_mask_patch_embed.proj.{suffix}"
     for suffix in ("weight", "bias")
 }
 
@@ -181,11 +180,7 @@ class _Attention(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         batch_size, num_tokens, dim = x.shape
         head_dim = dim // self.num_heads
-        qkv = (
-            self.qkv(x)
-            .reshape(batch_size, num_tokens, 3, self.num_heads, head_dim)
-            .permute(2, 0, 3, 1, 4)
-        )
+        qkv = self.qkv(x).reshape(batch_size, num_tokens, 3, self.num_heads, head_dim).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
         out = F.scaled_dot_product_attention(q, k, v)
         out = out.permute(0, 2, 1, 3).reshape(batch_size, num_tokens, dim)
@@ -232,8 +227,7 @@ class _PatchEmbed(nn.Module):
         _, _, height, width = x.shape
         if height % self.patch_size or width % self.patch_size:
             raise ValueError(
-                f"Input spatial size {(height, width)} must be a multiple of "
-                f"patch size {self.patch_size}."
+                f"Input spatial size {(height, width)} must be a multiple of patch size {self.patch_size}."
             )
         return self.proj(x).flatten(2).transpose(1, 2)  # (B, N, D)
 
@@ -314,14 +308,16 @@ class _RGBDDinoVisionTransformer(nn.Module):
         num_patches = patch_pos_embed.shape[1]
         grid_origin = int(math.sqrt(num_patches))
         if num_patches != grid_origin * grid_origin:
-            raise ValueError(
-                f"Positional embedding has {num_patches} patches, not a square grid."
-            )
+            raise ValueError(f"Positional embedding has {num_patches} patches, not a square grid.")
         if grid_h * grid_w == num_patches and grid_h == grid_w:
             return patch_pos_embed
         kwargs: dict[str, Any] = (
-            {"scale_factor": (float(grid_h + self.interpolate_offset) / grid_origin,
-                              float(grid_w + self.interpolate_offset) / grid_origin)}
+            {
+                "scale_factor": (
+                    float(grid_h + self.interpolate_offset) / grid_origin,
+                    float(grid_w + self.interpolate_offset) / grid_origin,
+                )
+            }
             if self.interpolate_offset > 0
             else {"size": (grid_h, grid_w)}
         )
@@ -370,9 +366,7 @@ class _RGBDDinoVisionTransformer(nn.Module):
                 normed = self.norm(x)
                 outputs.append(normed)
         if len(outputs) != len(list(blocks_to_take)):
-            raise ValueError(
-                f"Requested layers {layers} exceed the {len(self.blocks)}-block backbone."
-            )
+            raise ValueError(f"Requested layers {layers} exceed the {len(self.blocks)}-block backbone.")
         return outputs
 
 
@@ -424,7 +418,9 @@ class _RGBDEncoder(nn.Module):
         self.intermediate_layers = intermediate_layers
         self.backbone = _RGBDDinoVisionTransformer(**_DINOV2_ARCHS[backbone])
         dim_features = self.backbone.blocks[0].attn.qkv.in_features
-        num_projections = intermediate_layers if isinstance(intermediate_layers, int) else len(intermediate_layers)
+        num_projections = (
+            intermediate_layers if isinstance(intermediate_layers, int) else len(intermediate_layers)
+        )
         self.output_projections = nn.ModuleList(
             nn.Conv2d(dim_features, dim_out, kernel_size=1, stride=1, padding=0)
             for _ in range(num_projections)
@@ -462,9 +458,7 @@ class _RGBDEncoder(nn.Module):
         else:
             raise NotImplementedError(f"remap_depth_in={remap_depth_in!r} is not supported.")
 
-        outputs = self.backbone.intermediate_layer_features(
-            image, depth, self.intermediate_layers
-        )
+        outputs = self.backbone.intermediate_layer_features(image, depth, self.intermediate_layers)
         num_img_tokens = token_rows * token_cols
         projected = [
             projection(
@@ -585,7 +579,9 @@ class _ConvStack(nn.Module):
                 dim_res_blocks[:-1], dim_res_blocks[1:], resamplers, strict=True
             )
         )
-        counts = num_res_blocks if isinstance(num_res_blocks, Sequence) else [num_res_blocks] * len(dim_res_blocks)
+        counts = (
+            num_res_blocks if isinstance(num_res_blocks, Sequence) else [num_res_blocks] * len(dim_res_blocks)
+        )
         self.res_blocks = nn.ModuleList(
             nn.Sequential(
                 *(
@@ -662,7 +658,10 @@ class MoRGBDTeacher(nn.Module):
 
     @classmethod
     def from_pretrained(
-        cls, pretrained_model_name_or_path: str | Path, *, device: torch.device | str | None = None,
+        cls,
+        pretrained_model_name_or_path: str | Path,
+        *,
+        device: torch.device | str | None = None,
         strict: bool = True,
     ) -> MoRGBDTeacher:
         """Load a published ``depth/model.pt`` checkpoint (weights_only)."""
@@ -678,8 +677,7 @@ class MoRGBDTeacher(nn.Module):
             model_state = checkpoint["model"]
         except KeyError as error:
             raise ValueError(
-                f"{checkpoint_path} is not a published LingBot-Depth checkpoint "
-                f"(missing {error} entry)."
+                f"{checkpoint_path} is not a published LingBot-Depth checkpoint (missing {error} entry)."
             ) from error
         model = cls(**model_config)
         model._load_checkpoint_state(model_state, strict=strict)
@@ -690,7 +688,11 @@ class MoRGBDTeacher(nn.Module):
         return model
 
     def _load_checkpoint_state(
-        self, state: Mapping[str, Tensor], *, strict: bool = True, assign: bool = False,
+        self,
+        state: Mapping[str, Tensor],
+        *,
+        strict: bool = True,
+        assign: bool = False,
     ) -> None:
         """Validate full runtime coverage after migration (also used by CPU preflight).
 
@@ -780,7 +782,9 @@ class MoRGBDTeacher(nn.Module):
         base_w = round((num_tokens * aspect_ratio) ** 0.5)
 
         with torch.autocast(
-            device_type=self.device.type, dtype=torch.bfloat16, enabled=use_fp16 and self.dtype != torch.bfloat16
+            device_type=self.device.type,
+            dtype=torch.bfloat16,
+            enabled=use_fp16 and self.dtype != torch.bfloat16,
         ):
             features, cls_token = self.encoder(
                 image, depth, base_h, base_w, remap_depth_in=self.remap_depth_in

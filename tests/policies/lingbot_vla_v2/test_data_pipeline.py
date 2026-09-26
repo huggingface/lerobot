@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Numerical coverage for the canonical-space normalization and slot mapping.
+"""Numerical coverage for the raw-space normalization feeding the canonical layout.
 
-These tests pin the exact transforms the released checkpoints were trained with —
-the per-slot norm modes, the horizon-indexed action stats, and the raw->canonical
-slot slicing. They are the executable companion to the design discussion on why
-``dataset.meta.stats`` (flat per-dim stats, no q02/q98, raw key space) cannot drive
-this path: every assertion here would change value if the standard
-``NormalizerProcessorStep`` were substituted for the canonical one.
+Normalization now runs through the standard ``NormalizerProcessorStep`` in raw
+feature space (before the slot-mapping step). Since the stats are per-dim
+independent, slicing the raw stats with the slot offsets reproduces the released
+checkpoints' per-slot statistics exactly; these tests pin that equivalence and
+the upstream→standard norm-mode mapping (``meanstd`` → MEAN_STD,
+``bounds_99_woclip`` → QUANTILES, i.e. q01/q99 without clipping).
 """
 
 import numpy as np
@@ -27,120 +27,150 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from lerobot.policies.lingbot_vla_v2.preprocessing.data_transform import Normalizer  # noqa: E402
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature  # noqa: E402
+from lerobot.lerobot_types import TransitionKey  # noqa: E402
+from lerobot.policies.lingbot_vla_v2.processor_lingbot_vla_v2 import (  # noqa: E402
+    _raw_stats_from_slot_stats,
+    _resolve_norm_map,
+)
+from lerobot.processor import NormalizerProcessorStep, UnnormalizerProcessorStep  # noqa: E402
+from lerobot.utils.constants import ACTION, OBS_STATE  # noqa: E402
 
-ARM = "observation.state.arm.position"
-ACT_ARM = "action.arm.position"
+ARM = f"{OBS_STATE}.arm.position"
+ACT_ARM = f"{ACTION}.arm.position"
 
 
-def _meanstd_stats():
-    return {
-        ARM: {"mean": np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]), "std": np.full(6, 0.5)},
-        ACT_ARM: {"mean": np.zeros(6), "std": np.ones(6)},
+def _normalizer(stats, mode=NormalizationMode.MEAN_STD):
+    features = {
+        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,)),
+        ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(6,)),
     }
+    return NormalizerProcessorStep(
+        features=features,
+        norm_map={"VISUAL": NormalizationMode.IDENTITY, "STATE": mode, "ACTION": mode},
+        stats={OBS_STATE: stats, ACTION: stats},
+    )
+
+
+def _transition(state=None, action=None):
+    transition = {}
+    if state is not None:
+        transition[TransitionKey.OBSERVATION] = {OBS_STATE: state}
+    if action is not None:
+        transition[TransitionKey.ACTION] = action
+    return transition
 
 
 def test_meanstd_normalization_is_exact():
-    n = Normalizer(norm_stats=_meanstd_stats(), norm_type={ARM: "meanstd"})
-    x = {ARM: torch.tensor([2.0, 4.0, 6.0, 8.0, 10.0, 12.0])}
-    out = n.normalize(x)
-    # (x - mean) / (std + 1e-6) with mean=[1..6], std=0.5 -> [2,4,6,8,10,12]
-    expected = (x[ARM] - torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])) / 0.5
-    torch.testing.assert_close(out[ARM], expected, atol=1e-4, rtol=1e-4)
+    stats = {
+        "mean": np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]),
+        "std": np.full(6, 0.5),
+    }
+    step = _normalizer(stats)
+    x = torch.tensor([[2.0, 4.0, 6.0, 8.0, 10.0, 12.0]])
+    out = step(_transition(state=x))[TransitionKey.OBSERVATION][OBS_STATE]
+    expected = (x - torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])) / (0.5 + 1e-8)
+    torch.testing.assert_close(out, expected, atol=1e-4, rtol=1e-4)
+
+
+def test_quantiles_maps_bounds_99_woclip_without_clipping():
+    """QUANTILES is the standard equivalent of upstream bounds_99_woclip: q01/q99,
+    mapped to [-1, 1], with no clipping of out-of-range values."""
+    stats = {
+        "q01": np.full(6, -1.0),
+        "q99": np.full(6, 1.0),
+        "min": np.full(6, -100.0),  # must be ignored by the quantile mode
+        "max": np.full(6, 100.0),
+    }
+    step = _normalizer(stats, mode=NormalizationMode.QUANTILES)
+    x = torch.tensor([[0.0, 1.0, -1.0, 0.5, -0.5, 2.0]])
+    out = step(_transition(action=x))[TransitionKey.ACTION]
+    expected = 2.0 * (x - (-1.0)) / (1.0 - (-1.0)) - 1.0
+    torch.testing.assert_close(out, expected, atol=1e-5, rtol=1e-5)
+    # 2.0 stays outside [-1, 1] (no clip) — a bounds-with-clip mode would clamp it.
+    assert out[0, -1].item() == pytest.approx(2.0, abs=1e-5)
 
 
 def test_normalize_unnormalize_roundtrip_recovers_input():
-    n = Normalizer(norm_stats=_meanstd_stats(), norm_type={ARM: "meanstd", ACT_ARM: "meanstd"})
-    x = {
-        ARM: torch.tensor([2.0, 4.0, 6.0, 8.0, 10.0, 12.0]),
-        ACT_ARM: torch.tensor([0.1, -0.2, 0.3, -0.4, 0.5, -0.6]),
+    stats = {"mean": np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]), "std": np.full(6, 0.5)}
+    normalizer = _normalizer(stats)
+    unnormalizer = UnnormalizerProcessorStep(
+        features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(6,))},
+        norm_map={"ACTION": NormalizationMode.MEAN_STD},
+        stats={ACTION: stats},
+    )
+    x = torch.tensor([0.1, -0.2, 0.3, -0.4, 0.5, -0.6])
+    normalized = normalizer(_transition(action=x))[TransitionKey.ACTION]
+    back = unnormalizer(_transition(action=normalized))[TransitionKey.ACTION]
+    torch.testing.assert_close(back, x, atol=1e-4, rtol=1e-4)
+
+
+def test_raw_space_normalization_matches_per_slot_slicing():
+    """Normalizing the raw vector then slicing equals slicing the stats per slot —
+    the equivalence that lets the standard step replace the per-slot normalizer."""
+    raw_mean = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0])
+    raw_std = np.array([0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1])
+    # Slot layout: arm = raw[0:6], effector = raw[6:7].
+    robot_config = {
+        "states": [
+            {ARM: {"origin_keys": [{OBS_STATE: {"start": 0, "end": 6}}]}},
+            {f"{OBS_STATE}.effector.position": {"origin_keys": [{OBS_STATE: {"start": 6, "end": 7}}]}},
+        ],
+        "actions": [
+            {ACT_ARM: {"origin_keys": [{ACTION: {"start": 0, "end": 6}}]}},
+            {f"{ACTION}.effector.position": {"origin_keys": [{ACTION: {"start": 6, "end": 7}}]}},
+        ],
     }
-    back = n.unnormalize(n.normalize(x))
-    torch.testing.assert_close(back[ARM], x[ARM], atol=1e-4, rtol=1e-4)
-    torch.testing.assert_close(back[ACT_ARM], x[ACT_ARM], atol=1e-4, rtol=1e-4)
-
-
-def test_bounds_99_woclip_uses_quantile_bounds_not_minmax():
-    """bounds_99_woclip reads q01/q99 (no clipping) — the robotwin profile's mode.
-    With q01/q99 set far inside min/max, the output range differs from a min/max
-    mapping, proving the quantile keys (not min/max) drive it."""
-    stats = {
-        ACT_ARM: {
-            "q01": np.full(6, -1.0),
-            "q99": np.full(6, 1.0),
-            "min": np.full(6, -100.0),  # must be ignored by bounds_99
-            "max": np.full(6, 100.0),
+    slot_stats = {
+        "norm_stats": {
+            ARM: {"mean": raw_mean[0:6].tolist(), "std": raw_std[0:6].tolist()},
+            f"{OBS_STATE}.effector.position": {"mean": raw_mean[6:7].tolist(), "std": raw_std[6:7].tolist()},
+            ACT_ARM: {"mean": raw_mean[0:6].tolist(), "std": raw_std[0:6].tolist()},
+            f"{ACTION}.effector.position": {"mean": raw_mean[6:7].tolist(), "std": raw_std[6:7].tolist()},
         }
     }
-    n = Normalizer(norm_stats=stats, norm_type={ACT_ARM: "bounds_99_woclip"})
-    x = {ACT_ARM: torch.tensor([0.0, 1.0, -1.0, 0.5, -0.5, 2.0])}
-    out = n.normalize(x)[ACT_ARM]
-    # (x - q01) / (q99 - q01) * 2 - 1  == x here since q01=-1, q99=1; and NO clamp.
-    expected = (x[ACT_ARM] - (-1.0)) / (1.0 - (-1.0)) * 2.0 - 1.0
-    torch.testing.assert_close(out, expected, atol=1e-4, rtol=1e-4)
-    # 2.0 stays 2.0 (no clip) — a bounds-with-clip mode would have clamped it.
-    assert out[-1].item() == pytest.approx(2.0, abs=1e-4)
+    raw_stats = _raw_stats_from_slot_stats(robot_config, slot_stats)
+    step = _normalizer(raw_stats[OBS_STATE])
+    x = torch.tensor([[2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0]])
+    out = step(_transition(state=x))[TransitionKey.OBSERVATION][OBS_STATE]
+    # Per-slot reference: each slot normalized with its own sliced stats.
+    arm = (x[:, 0:6] - torch.tensor(raw_mean[0:6])).float() / (torch.tensor(raw_std[0:6]) + 1e-8).float()
+    effector = (x[:, 6:7] - torch.tensor(raw_mean[6:7])).float() / (torch.tensor(raw_std[6:7]) + 1e-8).float()
+    torch.testing.assert_close(out[:, 0:6], arm, atol=1e-5, rtol=1e-5)
+    torch.testing.assert_close(out[:, 6:7], effector, atol=1e-5, rtol=1e-5)
 
 
-def test_bounds_98_requires_q02_q98_keys():
-    """bounds_98* modes read q02/q98, which are absent from LeRobot's default
-    quantile set — the structural reason dataset.meta.stats cannot feed this mode."""
-    stats = {ACT_ARM: {"q02": np.full(6, -2.0), "q98": np.full(6, 2.0)}}
-    n = Normalizer(norm_stats=stats, norm_type={ACT_ARM: "bounds_98_woclip"})
-    x = {ACT_ARM: torch.zeros(6)}
-    out = n.normalize(x)[ACT_ARM]
-    # (0 - (-2)) / (2 - (-2)) * 2 - 1 = 0
-    torch.testing.assert_close(out, torch.zeros(6), atol=1e-4, rtol=1e-4)
-
-
-def test_horizon_indexed_action_stats_are_per_timestep():
-    """Action stats are [chunk_size, dim]: each denoising step has its own mean/std.
-    This is the horizon dimension that flat per-dim dataset stats cannot express."""
+def test_horizon_indexed_action_stats_broadcast_per_timestep():
+    """Action stats are [chunk_size, dim]: each denoising step has its own mean/std;
+    the standard step broadcasts them against (B, chunk, dim) chunks."""
     chunk, dim = 4, 3
-    # Distinct mean per timestep — a flat stat would collapse these to one row.
     mean = np.arange(chunk * dim, dtype=np.float64).reshape(chunk, dim)
     std = np.ones((chunk, dim))
-    stats = {ACT_ARM: {"mean": mean, "std": std}}
-    n = Normalizer(norm_stats=stats, norm_type={ACT_ARM: "meanstd"})
-    x = {ACT_ARM: torch.zeros(chunk, dim)}
-    out = n.normalize(x)[ACT_ARM]
+    step = NormalizerProcessorStep(
+        features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(dim,))},
+        norm_map={"ACTION": NormalizationMode.MEAN_STD},
+        stats={ACTION: {"mean": mean, "std": std}},
+    )
+    x = torch.zeros(2, chunk, dim)
+    out = step(_transition(action=x))[TransitionKey.ACTION]
     # out[t] = (0 - mean[t]) / 1 == -mean[t]; per-timestep means preserved.
-    torch.testing.assert_close(out, -torch.from_numpy(mean).float(), atol=1e-4, rtol=1e-4)
+    torch.testing.assert_close(out[0], -torch.from_numpy(mean).float(), atol=1e-5, rtol=1e-5)
+    torch.testing.assert_close(out[1], out[0], atol=1e-6, rtol=1e-6)
 
 
-def test_horizon_stats_sliced_to_shorter_value_horizon():
-    """A value with a shorter horizon than the stats must reuse the leading slice."""
-    stats = {ACT_ARM: {"mean": np.arange(12, dtype=np.float64).reshape(4, 3), "std": np.ones((4, 3))}}
-    n = Normalizer(norm_stats=stats, norm_type={ACT_ARM: "meanstd"})
-    x = {ACT_ARM: torch.zeros(2, 3)}  # shorter horizon than the stats' 4
-    out = n.normalize(x)[ACT_ARM]
-    expected = -torch.from_numpy(np.arange(12, dtype=np.float64).reshape(4, 3)[:2]).float()
-    torch.testing.assert_close(out, expected, atol=1e-4, rtol=1e-4)
+def test_norm_mode_resolution_maps_upstream_modes():
+    uniform_meanstd = _resolve_norm_map({"arm.position": "meanstd", "effector.position": "meanstd"})
+    assert uniform_meanstd["STATE"] is NormalizationMode.MEAN_STD
+    assert uniform_meanstd["ACTION"] is NormalizationMode.MEAN_STD
 
+    quantiles = _resolve_norm_map({"arm.position": "bounds_99_woclip"})
+    assert quantiles["STATE"] is NormalizationMode.QUANTILES
+    assert quantiles["ACTION"] is NormalizationMode.QUANTILES
 
-def test_horizon_mismatch_raises_not_broadcasts():
-    """A value horizon longer than the stats must error — never silently broadcast."""
-    stats = {ACT_ARM: {"mean": np.zeros((2, 3)), "std": np.ones((2, 3))}}
-    n = Normalizer(norm_stats=stats, norm_type={ACT_ARM: "meanstd"})
-    with pytest.raises(ValueError, match="horizon mismatch"):
-        n.normalize({ACT_ARM: torch.zeros(5, 3)})
+    # Mixed per-slot modes collapse to the first joint's mode (standard step is
+    # per-type); the resolution must at least stay deterministic and standard.
+    mixed = _resolve_norm_map({"arm.position": "bounds_99_woclip", "hand.position": "meanstd"})
+    assert mixed["ACTION"] is NormalizationMode.QUANTILES
 
-
-def test_dim_mismatch_raises():
-    stats = {ACT_ARM: {"mean": np.zeros(3), "std": np.ones(3)}}
-    n = Normalizer(norm_stats=stats, norm_type={ACT_ARM: "meanstd"})
-    # 5-dim value vs 3-dim stats: the elementwise op cannot broadcast -> RuntimeError.
-    with pytest.raises((ValueError, KeyError, IndexError, RuntimeError)):
-        n.normalize({ACT_ARM: torch.zeros(5)})
-
-
-def test_sincos_only_allowed_for_state_keys():
-    stats = {"observation.state.joint": {"mean": np.zeros(2), "std": np.ones(2)}}
-    n = Normalizer(norm_stats=stats, norm_type={"observation.state.joint": "sincos"})
-    out = n.normalize({"observation.state.joint": torch.zeros(2)})
-    # sincos concatenates cos and sin -> doubles the last dim.
-    assert out["observation.state.joint"].shape[-1] == 4
-    # sincos on a non-state key must raise.
-    n_bad = Normalizer(norm_stats={ACT_ARM: {"mean": np.zeros(2), "std": np.ones(2)}}, norm_type={ACT_ARM: "sincos"})
-    with pytest.raises(ValueError, match="sincos"):
-        n_bad.normalize({ACT_ARM: torch.zeros(2)})
+    identity = _resolve_norm_map({"reserved.slots": "identity"})
+    assert identity["STATE"] is NormalizationMode.IDENTITY

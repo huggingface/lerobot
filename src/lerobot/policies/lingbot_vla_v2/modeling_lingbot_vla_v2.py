@@ -2,57 +2,52 @@ from __future__ import annotations
 
 import functools
 from collections import deque
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .teachers.depth_teachers import DepthTeacherBundle
 
 import einops
 import torch
+import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
-import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
-from typing import List, Optional, Tuple, Union
-
-from transformers import AutoConfig, AutoTokenizer, PretrainedConfig, PreTrainedModel
-from transformers.models.auto import CONFIG_MAPPING
+from transformers import AutoConfig, PretrainedConfig, PreTrainedModel
 from transformers.cache_utils import Cache
+from transformers.models.auto import CONFIG_MAPPING
 from transformers.utils import logging
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import populate_queues
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 
 from .configuration_lingbot_vla_v2 import LingbotVLAV2Config as LeRobotLingbotVLAV2Config
-from .configuration_lingbot_vla_v2 import resolve_robot_config_and_stats
-from .model_core.qwen3vl_in_vla import (
-    Qwen3VLForConditionalGeneration,
-    Qwen3VLTextModel,
-    Qwen3VLPreTrainedModel,
-    apply_lingbot_qwen3_vl_patch,
-    apply_rotary_pos_emb,
+from .model_core.flex_attention import (
+    build_block_mask,
+    flex_attention_forward,
+    flex_attention_with_block_mask,
 )
 from .model_core.modeling_lingbot_vla_v2_base import (
-    AdaRMSNorm,
-    FixAdaRMSNorm,
-    replace_lnorm_with_adanorm,
     FlowMatching as FlowMatchingV1,
+    replace_lnorm_with_adanorm,
+)
+from .model_core.moe_loss import sequence_wise_balance_loss as triton_sequence_wise_balance_loss
+from .model_core.qwen2_action_expert import (
+    Qwen2ForCausalLM,
+    Qwen2TokenMoeBlock,
+)
+from .model_core.qwen3vl_in_vla import (
+    Qwen3VLForConditionalGeneration,
+    apply_rotary_pos_emb,
 )
 from .model_core.utils import (
     block_suffix_to_fv_,
-    create_sinusoidal_pos_embedding,
     flash_varlen_prefix_attention,
     make_att_2d_masks,
     our_eager_attention_forward,
     our_sdpa_attention_forward,
     prefix_query_segments,
     prefix_query_token_spans,
-    sample_beta,
-)
-from .model_core.flex_attention import build_block_mask, flex_attention_forward, flex_attention_with_block_mask
-
-from .model_core.moe_loss import sequence_wise_balance_loss as triton_sequence_wise_balance_loss
-from .model_core.qwen2_action_expert import (
-    Qwen2ForCausalLM,
-    Qwen2TokenMoeBlock,
-    Qwen2FusedExperts,
-    FixQwen2RMSNorm,
 )
 
 try:
@@ -140,10 +135,6 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
     def __init__(self, config: QwenvlWithExpertV2Config, eval=False):
         super().__init__(config=config)
         self.config = config
-        # The model relies on the patched Qwen3-VL classes (custom text decoder
-        # layer / vision forward signature); apply the patch idempotently here so
-        # building the model directly (without the processor) works as well.
-        apply_lingbot_qwen3_vl_patch()
         # Map our attention_implementation to a transformers-valid attn class for the
         # HF model instantiation. "fa2" -> flash_attention_2; everything else (eager /
         # flex / flex_cached) builds with "eager" — the flex paths override attention in
@@ -262,7 +253,9 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
         # calls — including the CUDA-graph capture itself — skip preprcess_grid_thw
         # entirely, which is what makes the tower capturable (its .item()/.tolist()
         # host syncs cannot be captured).
-        trainable_position = torch.is_grad_enabled() and self.qwenvl.model.visual.pos_embed.weight.requires_grad
+        trainable_position = (
+            torch.is_grad_enabled() and self.qwenvl.model.visual.pos_embed.weight.requires_grad
+        )
         if trainable_position:
             # An inference cache becomes stale as soon as the next update can
             # change pos_embed. Keep only parameter-independent grid metadata.
@@ -588,9 +581,9 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
                 if detach_prefix:
                     q_p, k_p, v_p = q_p.detach(), k_p.detach(), v_p.detach()
                 mask_p = attention_mask[:, :prefix_len, :prefix_len]
-                if (
-                    getattr(self.config, "attn_split_prefix_backend", "flash") == "flash"
-                    and q_p.dtype in (torch.bfloat16, torch.float16)
+                if getattr(self.config, "attn_split_prefix_backend", "flash") == "flash" and q_p.dtype in (
+                    torch.bfloat16,
+                    torch.float16,
                 ):
                     att_p = flash_varlen_prefix_attention(q_p, k_p, v_p, mask_p)
                 else:
@@ -792,7 +785,6 @@ class FlowMatchingV2(FlowMatchingV1):
             raise ValueError("LingbotVLAV2Policy requires image_grid_thw from the Qwen3-VL image processor.")
         bsize = images.shape[0]
         device = images.device
-        dtype = images.dtype
         if images.ndim == 3:
             bsize = 1
             num_images = images.shape[0]
@@ -1720,7 +1712,6 @@ class FlowMatchingV2(FlowMatchingV1):
         """
         if not images.is_cuda or getattr(self, "_vision_graph_disabled", False):
             return None
-        core = self.qwenvl_with_expert
         sig = (tuple(images.shape), images.dtype, str(images.device), tuple(flat_grid_thw.shape))
         gs = getattr(self, "_vision_graph_state", None)
         if gs is not None and gs["sig"] != sig:
@@ -1745,8 +1736,13 @@ class FlowMatchingV2(FlowMatchingV1):
         core = self.qwenvl_with_expert
         prev_flag = core._capture_grid_cache
         prev_precompute = getattr(core.config, "precompute_grid_thw", False)
-        prev_grid = (core.pos_embeds, core.position_embeddings, core.cu_seqlens,
-                     core.visual_split_sizes, core.visual_max_seqlen)
+        prev_grid = (
+            core.pos_embeds,
+            core.position_embeddings,
+            core.cu_seqlens,
+            core.visual_split_sizes,
+            core.visual_max_seqlen,
+        )
         static_in = images.clone()
         try:
             # Arm + seed the capture grid cache: populate pos_embeds/cu_seqlens/
@@ -1773,12 +1769,18 @@ class FlowMatchingV2(FlowMatchingV1):
         except Exception as exc:
             logger.warning(
                 "use_cudagraph_prefix_full: vision warm-up failed (%s: %s); eager ViT",
-                type(exc).__name__, exc,
+                type(exc).__name__,
+                exc,
             )
             core._capture_grid_cache = prev_flag
             core.config.precompute_grid_thw = prev_precompute
-            (core.pos_embeds, core.position_embeddings, core.cu_seqlens,
-             core.visual_split_sizes, core.visual_max_seqlen) = prev_grid
+            (
+                core.pos_embeds,
+                core.position_embeddings,
+                core.cu_seqlens,
+                core.visual_split_sizes,
+                core.visual_max_seqlen,
+            ) = prev_grid
             self._vision_graph_disabled = True
             return None
         try:
@@ -1788,12 +1790,18 @@ class FlowMatchingV2(FlowMatchingV1):
         except Exception as exc:
             logger.warning(
                 "use_cudagraph_prefix_full: vision capture failed (%s: %s); eager ViT",
-                type(exc).__name__, exc,
+                type(exc).__name__,
+                exc,
             )
             core._capture_grid_cache = prev_flag
             core.config.precompute_grid_thw = prev_precompute
-            (core.pos_embeds, core.position_embeddings, core.cu_seqlens,
-             core.visual_split_sizes, core.visual_max_seqlen) = prev_grid
+            (
+                core.pos_embeds,
+                core.position_embeddings,
+                core.cu_seqlens,
+                core.visual_split_sizes,
+                core.visual_max_seqlen,
+            ) = prev_grid
             self._vision_graph_disabled = True
             return None
         finally:
@@ -1905,9 +1913,7 @@ class FlowMatchingV2(FlowMatchingV1):
             if warned is None:
                 warned = self._prefix_graph_warned = set()
             if sig not in warned:
-                logger.warning(
-                    "use_cudagraph_prefix: prefix shapes changed; re-capturing the prefix graph"
-                )
+                logger.warning("use_cudagraph_prefix: prefix shapes changed; re-capturing the prefix graph")
                 warned.add(sig)
             # Drop the stale graph. The aliased denoise graph still holds
             # references to the old pool tensors until its own signature
@@ -1918,9 +1924,7 @@ class FlowMatchingV2(FlowMatchingV1):
             if getattr(self, "_prefix_recaptures", 0) >= 4:
                 # Circuit breaker: shape flicker must not re-capture forever.
                 self._prefix_graph_disabled = True
-                logger.warning(
-                    "use_cudagraph_prefix: re-capture limit reached; using the eager prefix"
-                )
+                logger.warning("use_cudagraph_prefix: re-capture limit reached; using the eager prefix")
                 return _eager_finish()
             gs = self._capture_prefix_graph(
                 prefix_llm_fn,
@@ -1947,7 +1951,13 @@ class FlowMatchingV2(FlowMatchingV1):
             gs["visual_pos_masks"],
             *gs["deepstack"],
         ]
-        srcs = [prefix_embs, prefix_att_2d_masks, prefix_position_ids, visual_pos_masks, *deepstack_visual_embeds]
+        srcs = [
+            prefix_embs,
+            prefix_att_2d_masks,
+            prefix_position_ids,
+            visual_pos_masks,
+            *deepstack_visual_embeds,
+        ]
         torch._foreach_copy_(dsts, srcs)
         gs["graph"].replay()
         return prefix_pad_masks, prefix_position_ids, gs["out"]
@@ -2136,9 +2146,9 @@ class FlowMatchingV2(FlowMatchingV1):
             if mode == "global":
                 seq_lengths = None
             else:
-                B = losses.shape[0]
-                N = router_logits_list[0].shape[0]
-                seq_lengths = [N // B] * B
+                batch = losses.shape[0]
+                tokens = router_logits_list[0].shape[0]
+                seq_lengths = [tokens // batch] * batch
             seqwise_moe_layer_ids = sorted(getattr(self.config, "token_moe_layers", None) or [])
             # Per-layer e_score_correction_bias so the loss's f_i top-k matches the
             # router's actual (bias-corrected) selection.
@@ -2227,7 +2237,7 @@ class FlowMatchingV2(FlowMatchingV1):
                 # ---- moe_seqwise/* : per-layer raw sequence-wise balance loss (pre-coeff) + average ----
                 if seqwise_layer_losses and len(seqwise_layer_losses) == len(all_moe_indices):
                     sw_vals = []
-                    for lid, sw in zip(all_moe_indices, seqwise_layer_losses):
+                    for lid, sw in zip(all_moe_indices, seqwise_layer_losses, strict=True):
                         v = sw.detach()
                         moe_metrics[f"moe_seqwise/layer{lid:02d}"] = v
                         sw_vals.append(v)
@@ -2235,7 +2245,7 @@ class FlowMatchingV2(FlowMatchingV1):
                 # ---- moe_zloss/* : per-layer raw router z-loss (pre-coeff) + average/weighted loss ----
                 if router_z_layer_losses and len(router_z_layer_losses) == len(all_moe_indices):
                     zl_vals = []
-                    for lid, zl in zip(all_moe_indices, router_z_layer_losses):
+                    for lid, zl in zip(all_moe_indices, router_z_layer_losses, strict=True):
                         v = zl.detach()
                         moe_metrics[f"moe_zloss/layer{lid:02d}"] = v
                         zl_vals.append(v)
@@ -2264,10 +2274,11 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
     Native-resolution image tokens are described by ``image_grid_thw``.
 
     The model expects already model-ready tensors in the batch (produced by the
-    lingbot_vla_v2 processor / feature transform):
+    lingbot_vla_v2 processor pipeline):
         - ``images``: patchified pixels for Qwen3-VL
         - ``img_masks``: per-view validity mask
-        - ``lang_tokens`` / ``lang_masks``: tokenized instruction + mask
+        - ``observation.language.tokens`` / ``observation.language.attention_mask``:
+          tokenized instruction + mask (standard TokenizerProcessorStep keys)
         - ``image_grid_thw``: (num_images, 3) temporal/height/width patch grid
         - ``observation.state``: (B, max_state_dim) padded state
         - ``action``: (B, chunk_size, max_action_dim) padded action (training)
@@ -2282,7 +2293,6 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
-        self.language_tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_path)
         self.model = FlowMatchingV2(config, eval=False)
 
         if not getattr(self.config, "use_lm_head", False):
@@ -2296,12 +2306,6 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         if isinstance(model_dtype, torch.dtype) and model_dtype.is_floating_point:
             self.model.to(model_dtype)
 
-        # Inference-time action de-normalizer: an unapply-only FeatureTransform (built
-        # without the image processor / tokenizer) that inverts the per-slot normalization
-        # and the canonical slot mapping on the model's actions. Training-only instances
-        # may omit robot_config, but inference refuses to emit normalized canonical values.
-        self._action_unapply_ft = self._build_action_unapply_transform()
-
         # Opt-in torch.compile for the denoise inner loop (see config docs).
         if getattr(self.config, "compile_predict_velocity", False):
             self.model._use_compile_predict_velocity = True
@@ -2310,15 +2314,6 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
             )
             if getattr(self.config, "compile_prefix", False):
                 self.model._use_compile_prefix = True
-            # handle_kv_cache specializes per layer_idx (36 layers); the default
-            # recompile limit (8) silently falls parts of the fn back to eager
-            # mid-run. Raising it here covers the deployment path — the bench
-            # harness only raises it for its own --compile flag.
-            import torch._dynamo as _dynamo
-
-            _dynamo.config.recompile_limit = max(
-                getattr(_dynamo.config, "recompile_limit", 8), 64
-            )
         # Independent of the compile flags (see config docs): the prefix CUDA
         # graph supersedes compile_prefix when both are set.
         if getattr(self.config, "use_cudagraph_prefix", False):
@@ -2335,78 +2330,6 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
 
         self.reset()
         torch.set_float32_matmul_precision("high")
-
-    def _build_action_unapply_transform(self):
-        """Build a lightweight (processor-free) FeatureTransform for inference unapply."""
-        cfg = self.config
-        try:
-            resolve_robot_config_and_stats(cfg)
-        except OSError as exc:
-            raise RuntimeError(
-                "Could not load the robot config for the inference action de-normalizer. "
-                "Returning normalized canonical actions as robot commands is unsafe; "
-                f"fix the checkpoint's robot_config assets. ({exc})"
-            ) from exc
-        if not getattr(cfg, "robot_config", None):
-            # Training-only instances (forward/loss path) never call select_action;
-            # keep them constructible. _postprocess_actions raises if used for inference.
-            return None
-        try:
-            from .configuration_lingbot_vla_v2 import build_feature_transform_configs
-            from .preprocessing.feature_transform import FeatureTransform
-
-            data_config, model_config = build_feature_transform_configs(cfg)
-            return FeatureTransform(
-                data_config=data_config,
-                model_config=model_config,
-                processor=None,
-                chunk_size=cfg.chunk_size,
-                robot_config=cfg.robot_config,
-                norm_stats=cfg.norm_stats,
-            )
-        except Exception as exc:  # noqa: BLE001 - de-normalizer is build-time critical
-            raise RuntimeError(
-                "Could not build the inference action de-normalizer. Returning normalized "
-                f"canonical actions as robot commands is unsafe. ({exc})"
-            ) from exc
-
-    def _postprocess_actions(self, actions: Tensor, batch: dict) -> Tensor:
-        """Invert normalization + the canonical slot mapping on a model action chunk.
-
-        ``actions`` is ``(B, chunk, max_action_dim)`` in the normalized canonical space.
-        Uses the per-joint masks and observation state carried in the (preprocessed) batch.
-        Raises when those safety-critical inputs are unavailable rather than emitting
-        normalized canonical values as robot commands.
-        """
-        ft = self._action_unapply_ft
-        action_joint_mask = batch.get("action_joint_mask")
-        state_joint_mask = batch.get("state_joint_mask")
-        state = batch.get(OBS_STATE)
-        if ft is None:
-            raise RuntimeError(
-                "No action de-normalizer available: this policy instance was built without a "
-                "robot_config, so select_action cannot map canonical actions back to robot "
-                "commands. Refusing to return normalized canonical values as robot commands."
-            )
-        if action_joint_mask is None or state_joint_mask is None or state is None:
-            raise RuntimeError(
-                "Batch is missing the joint masks / observation state required to invert the "
-                "canonical slot mapping (got "
-                f"action_joint_mask={action_joint_mask is not None}, "
-                f"state_joint_mask={state_joint_mask is not None}, state={state is not None}). "
-                "Refusing to fall back to a truncation of normalized canonical actions."
-            )
-
-        recovered = []
-        for i in range(actions.shape[0]):
-            item = {
-                "actions": actions[i].detach().to("cpu", torch.float32),
-                "action_joint_mask": action_joint_mask[i].detach().to("cpu"),
-                "state": state[i].detach().to("cpu", torch.float32),
-                "state_joint_mask": state_joint_mask[i].detach().to("cpu"),
-            }
-            recovered.append(ft.unapply(item)[ACTION])
-        return torch.stack(recovered, dim=0).to(actions.device)
 
     def reset(self):
         """Reset the rolling action queue used by select_action."""
@@ -2430,14 +2353,18 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
     # wrapping, and saved checkpoints. Each DDP rank builds its own frozen copy.
 
     @torch.compiler.disable
-    def _ensure_align_teachers(self) -> "DepthTeacherBundle":
+    def _ensure_align_teachers(self) -> DepthTeacherBundle:
         if self._align_teachers is None:
             from .teachers.depth_teachers import DepthTeacherBundle
 
             device = next(self.model.parameters()).device
             # Lazy teacher construction must not perturb the student's resumed
             # per-rank noise/timestep RNG stream.
-            devices = [device.index if device.index is not None else torch.cuda.current_device()] if device.type == "cuda" else []
+            devices = (
+                [device.index if device.index is not None else torch.cuda.current_device()]
+                if device.type == "cuda"
+                else []
+            )
             with torch.random.fork_rng(devices=devices):
                 self._align_teachers = DepthTeacherBundle.build(self.config.align_params, device)
         return self._align_teachers
@@ -2541,8 +2468,8 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         dtype = next(self.parameters()).dtype
         images = batch["images"].to(dtype=dtype)
         img_masks = batch["img_masks"]
-        lang_tokens = batch["lang_tokens"]
-        lang_masks = batch["lang_masks"]
+        lang_tokens = batch[OBS_LANGUAGE_TOKENS]
+        lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
         state = batch[OBS_STATE].to(dtype=dtype)
         state = F.pad(state, (0, self.config.max_state_dim - state.shape[-1]))
         image_grid_thw = batch.get("image_grid_thw")
@@ -2564,7 +2491,9 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         # real training computes them from frozen teachers when the native-depth
         # branch is configured. Inference follows predict_action_chunk instead and
         # never builds/runs teachers.
-        align_targets = self._compute_align_targets(batch) if self.training and self.config.align_params else {}
+        align_targets = (
+            self._compute_align_targets(batch) if self.training and self.config.align_params else {}
+        )
 
         (
             losses,
@@ -2638,11 +2567,11 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         inference_delay: int = 0,
         prev_chunk_left_over: Tensor | None = None,
     ) -> Tensor:
-        """Run flow-matching denoising and return a de-normalized action chunk (B, chunk, action_dim).
+        """Run flow-matching denoising and return the canonical action chunk (B, chunk, max_action_dim).
 
-        ``sample_actions`` returns the normalized 55-D canonical action; this inverts the
-        per-slot normalization and the canonical slot mapping back to the raw dataset action
-        (see ``_postprocess_actions``).
+        The output stays in the normalized canonical space; the policy postprocessor
+        inverts the slot mapping, unnormalizes, and re-absolutizes the actions (see
+        ``processor_lingbot_vla_v2``).
 
         RTC args (from the rollout RTC engine): ``prev_chunk_left_over`` is the
         normalized leftover prefix of the previous chunk (already truncated to the
@@ -2663,10 +2592,9 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
             prev_chunk_left_over=prev_chunk_left_over,
         )
         # The RTC engine keeps a guidance reference in the SAMPLING (normalized) space;
-        # this policy's public output is already de-normalized, so stash the pre-inversion
-        # chunk for it (see get_last_normalized_chunk).
+        # stash the chunk for it (see get_last_normalized_chunk).
         self._last_normalized_chunk = actions.detach()
-        return self._postprocess_actions(actions, batch)
+        return actions
 
     def get_last_normalized_chunk(self) -> Tensor:
         """Normalized sampling-space output of the most recent ``predict_action_chunk``."""

@@ -19,15 +19,17 @@ pytest.importorskip("transformers")
 from lerobot.policies import factory
 from lerobot.policies.lingbot_vla_v2.configuration_lingbot_vla_v2 import LingbotVLAV2Config
 
-# Override key for the LingBot feature-transform step. Written out (not derived) on
-# purpose: a typo here fails with a confusing KeyError, see the assertion below.
-FEATURE_TRANSFORM_STEP = "lingbot_vla_v2_feature_transform"
+# Override keys of the custom LingBot steps. Written out (not derived) on purpose:
+# a typo here fails with a confusing KeyError, see the assertion below.
+SLOT_MAPPING_STEP = "lingbot_vla_v2_slot_mapping"
+IMAGE_STEP = "lingbot_vla_v2_image"
+CHAT_TEMPLATE_STEP = "lingbot_vla_v2_chat_template"
 
 
-def test_saved_checkpoint_filters_normalizer_overrides(monkeypatch):
-    """The LingBot pipeline has no LeRobot normalizer steps; generic normalizer
-    overrides from the training script must be dropped before the pipeline loader
-    (which rejects override keys matching no step) sees them."""
+def test_saved_checkpoint_forwards_standard_and_config_overrides(monkeypatch):
+    """The pipeline is standard now: normalizer overrides pass through, and the
+    config-derived custom-step overrides are forwarded so fine-tuning on a new
+    embodiment wins over the checkpoint's saved slot mapping."""
     loaded_calls = []
 
     class DummyPipeline:
@@ -58,24 +60,37 @@ def test_saved_checkpoint_filters_normalizer_overrides(monkeypatch):
     ]
     pre_overrides = loaded_calls[0][1]
     post_overrides = loaded_calls[1][1]
-    # Normalizer overrides must be filtered out (the point of this test): the LingBot
-    # pipeline has no LeRobot normalizer / unnormalizer steps.
-    assert "normalizer_processor" not in pre_overrides
-    assert "unnormalizer_processor" not in post_overrides
+    # The standard steps exist in the pipeline now, so their overrides pass through
+    # (no more filtering of normalizer / unnormalizer keys).
+    assert pre_overrides["normalizer_processor"] == {"stats": {}}
+    assert post_overrides["unnormalizer_processor"] == {"stats": {}}
     # Generic overrides pass through untouched.
     assert pre_overrides["device_processor"] == {"device": "cuda"}
     assert pre_overrides["rename_observations_processor"] == {"rename_map": {}}
-    assert post_overrides == {"device_processor": {"device": "cuda"}}
-    # The config-derived feature-transform overrides are forwarded so fine-tuning on a
-    # new embodiment wins over the checkpoint's saved slot mapping (same rule as
+    # The postprocessor mirrors the preprocessor's device unless told otherwise.
+    assert post_overrides["device_processor"] == {"device": "cuda"}
+
+    # The config-derived custom-step overrides are forwarded (same rule as
     # ``resolve_robot_config_and_stats``; see
     # ``make_lingbot_vla_v2_pre_post_processors_from_pretrained``).
-    assert FEATURE_TRANSFORM_STEP in pre_overrides, (
-        f"expected the config-derived step overrides under {FEATURE_TRANSFORM_STEP!r}, "
-        f"got {sorted(pre_overrides)}"
+    assert SLOT_MAPPING_STEP in pre_overrides, (
+        f"expected the config-derived step overrides under {SLOT_MAPPING_STEP!r}, got {sorted(pre_overrides)}"
     )
     cfg = LingbotVLAV2Config()
-    ft_overrides = pre_overrides[FEATURE_TRANSFORM_STEP]
-    assert ft_overrides["chunk_size"] == cfg.chunk_size
-    assert ft_overrides["cameras"] == cfg.canonical_cameras
-    assert ft_overrides["processor_path"] == (cfg.processor_path or cfg.tokenizer_path)
+    slot_overrides = pre_overrides[SLOT_MAPPING_STEP]
+    assert slot_overrides["chunk_size"] == cfg.chunk_size
+    assert slot_overrides["max_state_dim"] == cfg.max_state_dim
+    assert slot_overrides["max_action_dim"] == cfg.max_action_dim
+    assert slot_overrides["canonical_joints"] == cfg.canonical_joints
+    assert slot_overrides["cameras"] == cfg.canonical_cameras
+    # robot_config is None on a slot-less config (identity passthrough); None fields
+    # never override the checkpoint's saved slot mapping.
+    assert "robot_config" not in slot_overrides
+
+    image_overrides = pre_overrides[IMAGE_STEP]
+    assert image_overrides["processor_path"] == (cfg.processor_path or cfg.tokenizer_path)
+    assert image_overrides["cameras"] == cfg.canonical_cameras
+
+    tokenizer_name = cfg.processor_path or cfg.tokenizer_path
+    assert pre_overrides["tokenizer_processor"]["tokenizer_name"] == tokenizer_name
+    assert pre_overrides[CHAT_TEMPLATE_STEP]["tokenizer_name"] == tokenizer_name

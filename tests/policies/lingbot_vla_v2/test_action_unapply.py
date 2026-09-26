@@ -12,116 +12,134 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Processor-free tests for the LingBot-VLA 2.0 inference action de-normalization.
+"""Processor-free tests for the LingBot-VLA 2.0 postprocessor action path.
 
-These exercise the ``unapply`` path used by ``LingbotVLAV2Policy._postprocess_actions``
-(which builds a ``processor=None`` FeatureTransform), so they run on plain CPU without a
-Qwen3-VL processor or checkpoint.
+These exercise the inverse slot mapping
+(``LingbotVLAV2InverseSlotMappingProcessorStep``) paired with the standard
+``UnnormalizerProcessorStep`` — the path that turns the model's normalized 55-D
+canonical chunks back into raw robot actions — on plain CPU without a Qwen3-VL
+processor or checkpoint.
 """
-
-import json
-from types import SimpleNamespace
 
 import pytest
 
 torch = pytest.importorskip("torch")
 pytest.importorskip("transformers")
 
-SO101_ROBOT_CONFIG = """
-states:
-  - observation.state.arm.position:
-      origin_keys:
-        - observation.state:
-            start: 0
-            end: 6
-actions:
-  - action.arm.position:
-      origin_keys:
-        - action:
-            start: 0
-            end: 6
-      subtract_state: False
-images:
-  - observation.images.camera_top:
-      origin_keys: observation.images.front
-norm_stats: {norm_stats_path}
-"""
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature  # noqa: E402
+from lerobot.lerobot_types import TransitionKey  # noqa: E402
+from lerobot.policies.lingbot_vla_v2.processor_lingbot_vla_v2 import (  # noqa: E402
+    LingbotVLAV2InverseSlotMappingProcessorStep,
+    _raw_stats_from_slot_stats,
+)
+from lerobot.processor import UnnormalizerProcessorStep  # noqa: E402
+from lerobot.utils.constants import ACTION  # noqa: E402
 
 
-def _unapply_transform(tmp_path, mean, std):
-    from lerobot.policies.lingbot_vla_v2.preprocessing.feature_transform import FeatureTransform
-
-    norm_stats_path = tmp_path / "norm_stats.json"
-    norm_stats_path.write_text(
-        json.dumps(
+def _so101_robot_config():
+    return {
+        "states": [
             {
-                "norm_stats": {
-                    "observation.state.arm.position": {"mean": mean, "std": std},
-                    "action.arm.position": {"mean": mean, "std": std},
+                "observation.state.arm.position": {
+                    "origin_keys": [{"observation.state": {"start": 0, "end": 6}}]
                 }
-            }
-        )
-    )
-    robot_config_path = tmp_path / "so101_robot.yaml"
-    robot_config_path.write_text(SO101_ROBOT_CONFIG.format(norm_stats_path=norm_stats_path))
-
-    data_config = SimpleNamespace(
-        joints=["{'arm.position': 6}"],
-        norm_type=["{'arm.position': 'meanstd'}"],
-        cameras=["camera_top"],
-        img_size=224,
-        chat_template="default",
-        text_keys="task",
-    )
-    model_config = SimpleNamespace(
-        max_state_dim=55,
-        max_action_dim=55,
-        chunk_size=50,
-        tokenizer_max_length=72,
-        use_qwen3_chat_template=True,
-        return_image_grid_thw=True,
-        qwen3vl_use_vision_boundaries=True,
-        resize_imgs_with_padding=(224, 224),
-    )
-    # processor=None -> unapply-only transform (no Qwen3-VL processor needed).
-    return FeatureTransform(
-        robot_config_path=str(robot_config_path),
-        data_config=data_config,
-        model_config=model_config,
-        processor=None,
-        chunk_size=50,
-        norm_stats_path=str(norm_stats_path),
-    )
+            },
+        ],
+        "actions": [
+            {"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 6}}]}},
+        ],
+        "images": [
+            {"observation.images.camera_top": {"origin_keys": "observation.images.front"}},
+        ],
+    }
 
 
-def test_action_unapply_denormalizes(tmp_path):
-    """unapply inverts meanstd normalization + the canonical slot mapping on actions."""
+def _canonical_joints():
+    return {"arm.position": 6, "reserved.slots": 4}
+
+
+def test_action_unapply_denormalizes():
+    """Inverse slot mapping + unnormalize recover the raw action chunk."""
     mean = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
     std = [2.0, 3.0, 4.0, 5.0, 6.0, 7.0]
-    ft = _unapply_transform(tmp_path, mean, std)
+    inverse = LingbotVLAV2InverseSlotMappingProcessorStep(
+        robot_config=_so101_robot_config(),
+        canonical_joints=_canonical_joints(),
+    )
+    unnormalizer = UnnormalizerProcessorStep(
+        features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(6,))},
+        norm_map={"ACTION": NormalizationMode.MEAN_STD},
+        stats={"action": {"mean": mean, "std": std}},
+    )
 
-    mean_t = torch.tensor(mean)
-    std_t = torch.tensor(std)
     raw = torch.arange(18, dtype=torch.float32).reshape(3, 6)  # known raw action chunk
-    normalized = (raw - mean_t) / (std_t + 1e-6)
-    # 55-D canonical chunk: the 6 real joints occupy the first slots, the rest is padding.
-    chunk = torch.zeros(3, 55)
+    normalized = (raw - torch.tensor(mean)) / (torch.tensor(std) + 1e-8)
+    # 10-D canonical chunk (6 arm + 4 reserved): real joints first, rest padding.
+    chunk = torch.zeros(3, 10)
     chunk[:, :6] = normalized
 
-    action_joint_mask = torch.zeros(55, dtype=torch.bool)
-    action_joint_mask[:6] = True
-    state_joint_mask = torch.zeros(55, dtype=torch.bool)
-    state_joint_mask[:6] = True
-    state = torch.zeros(55)  # non-subtract_state -> state does not affect the action
+    transition = inverse({TransitionKey.ACTION: chunk})
+    recovered = unnormalizer(transition)[TransitionKey.ACTION]
+    assert recovered.shape == (3, 6)
+    torch.testing.assert_close(recovered, raw, atol=1e-4, rtol=1e-4)
 
-    recovered = ft.unapply(
-        {
-            "actions": chunk,
-            "action_joint_mask": action_joint_mask,
-            "state": state,
-            "state_joint_mask": state_joint_mask,
-        }
+
+def test_inverse_slot_mapping_handles_single_step_chunks():
+    """select_action feeds (B, max_action_dim) single-step actions through the same step."""
+    inverse = LingbotVLAV2InverseSlotMappingProcessorStep(
+        robot_config=_so101_robot_config(),
+        canonical_joints=_canonical_joints(),
     )
-    assert "action" in recovered
-    assert recovered["action"].shape == (3, 6)
-    torch.testing.assert_close(recovered["action"], raw, atol=1e-4, rtol=1e-4)
+    chunk = torch.randn(2, 10)
+    raw = inverse({TransitionKey.ACTION: chunk})[TransitionKey.ACTION]
+    assert raw.shape == (2, 6)
+    torch.testing.assert_close(raw, chunk[:, :6])
+
+
+def test_inverse_slot_mapping_without_action_spans_raises():
+    inverse = LingbotVLAV2InverseSlotMappingProcessorStep(
+        robot_config={"states": [], "actions": []},
+        canonical_joints=_canonical_joints(),
+    )
+    with pytest.raises(ValueError, match="no action slot mapping"):
+        inverse({TransitionKey.ACTION: torch.zeros(1, 10)})
+
+
+def test_raw_stats_from_slot_stats_scatters_spans():
+    """Checkpoint-embedded per-slot stats are rewritten into raw-feature space."""
+    robot_config = {
+        "states": [
+            {
+                "observation.state.arm.position": {
+                    "origin_keys": [{"observation.state": {"start": 2, "end": 5}}]
+                }
+            },
+        ],
+        "actions": [
+            {"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 3}}]}},
+        ],
+    }
+    slot_stats = {
+        "norm_stats": {
+            "observation.state.arm.position": {"mean": [10.0, 11.0, 12.0], "std": [1.0, 2.0, 3.0]},
+            "action.arm.position": {"mean": [0.0, 0.0, 0.0], "std": [1.0, 1.0, 1.0]},
+        }
+    }
+    raw = _raw_stats_from_slot_stats(robot_config, slot_stats)
+    assert raw is not None
+    # The state spans sit at raw dims [2:5]; the uncovered dims get identity stats.
+    torch.testing.assert_close(
+        torch.tensor(raw["observation.state"]["mean"]),
+        torch.tensor([0.0, 0.0, 10.0, 11.0, 12.0]),
+    )
+    torch.testing.assert_close(
+        torch.tensor(raw["observation.state"]["std"]),
+        torch.tensor([1.0, 1.0, 1.0, 2.0, 3.0]),
+    )
+    torch.testing.assert_close(torch.tensor(raw["action"]["mean"]), torch.zeros(3))
+
+
+def test_raw_stats_absent_returns_none():
+    """No embedded stats → None → the normalizer steps are inert (identity path)."""
+    assert _raw_stats_from_slot_stats(_so101_robot_config(), None) is None
+    assert _raw_stats_from_slot_stats(_so101_robot_config(), {"norm_stats": {}}) is None

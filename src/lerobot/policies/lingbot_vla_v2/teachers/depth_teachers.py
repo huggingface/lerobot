@@ -67,7 +67,8 @@ def _load_depth_models(params: dict, device: torch.device) -> tuple[torch.nn.Mod
         str(_require_file(depth_cfg.get("moge_path"), "align_params.depth.moge_path")), device=device
     )
     morgbd = MoRGBDTeacher.from_pretrained(
-        str(_require_file(depth_cfg.get("morgbd_path"), "align_params.depth.morgbd_path")), device=device,
+        str(_require_file(depth_cfg.get("morgbd_path"), "align_params.depth.morgbd_path")),
+        device=device,
         strict=bool(depth_cfg.get("strict_load", True)),
     )
     return _freeze(moge, device), _freeze(morgbd, device)
@@ -143,7 +144,7 @@ class DepthTeacherBundle:
             raise ValueError("future-video alignment requires use_patch_loss or use_cls_loss.")
         num_future = int(config.get("num_future_frames", 1))
         # Preserve upstream's historical interpretation verbatim: axis 1 is the
-        # canonical-camera axis after FeatureTransform, even though it is sliced
+        # canonical-camera axis after the processor's image step, even though it is sliced
         # as ``num_future_frames``. The released recipe uses one camera/frame; do
         # not reject multi-camera or num_future_frames>1 experiments here.
         input_size = int(config.get("input_size", 256))

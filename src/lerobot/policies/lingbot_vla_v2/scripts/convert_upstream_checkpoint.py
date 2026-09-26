@@ -382,7 +382,13 @@ def main():
         # Canonical features; training re-infers them from the dataset anyway.
         input_features={
             OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(55,)),
-            **{cam: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 256, 256) if args.profile == "robotwin" else (3, 224, 224)) for cam in camera_keys},
+            **{
+                cam: PolicyFeature(
+                    type=FeatureType.VISUAL,
+                    shape=(3, 256, 256) if args.profile == "robotwin" else (3, 224, 224),
+                )
+                for cam in camera_keys
+            },
         },
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(55,))},
         # Depth/DINO distillation branch: heads build from the dict (no teacher
@@ -394,7 +400,9 @@ def main():
         setattr(config, key, value)
     config.dtype = args.dtype
     if args.profile == "robotwin":
-        config.canonical_norm_type.update({k: "bounds_99_woclip" for k in ("arm.position", "end.position", "effector.position")})
+        config.canonical_norm_type.update(
+            dict.fromkeys(("arm.position", "end.position", "effector.position"), "bounds_99_woclip")
+        )
         config.loss_type = "L1_fm"
         config.resize_imgs_with_padding = (256, 256)
         config.image_min_pixels = config.image_max_pixels = 256 * 256

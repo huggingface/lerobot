@@ -40,14 +40,23 @@ from pathlib import Path
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--adapter", required=True, type=Path,
-                        help="Directory with adapter_config.json + adapter_model.safetensors (the lerobot "
-                             "pretrained_model dir of a PEFT checkpoint).")
-    parser.add_argument("--output", required=True, type=Path,
-                        help="Output directory for the merged standard checkpoint.")
-    parser.add_argument("--tokenizer-path", type=str, default=None,
-                        help="Local Qwen3-VL tokenizer/processor dir. Overrides the checkpoint's "
-                             "embedded tokenizer_path when that is a Hub id and the machine is offline.")
+    parser.add_argument(
+        "--adapter",
+        required=True,
+        type=Path,
+        help="Directory with adapter_config.json + adapter_model.safetensors (the lerobot "
+        "pretrained_model dir of a PEFT checkpoint).",
+    )
+    parser.add_argument(
+        "--output", required=True, type=Path, help="Output directory for the merged standard checkpoint."
+    )
+    parser.add_argument(
+        "--tokenizer-path",
+        type=str,
+        default=None,
+        help="Local Qwen3-VL tokenizer/processor dir. Overrides the checkpoint's "
+        "embedded tokenizer_path when that is a Hub id and the machine is offline.",
+    )
     args = parser.parse_args()
 
     import torch

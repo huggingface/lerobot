@@ -25,7 +25,7 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 
 def _slot_mappings_to_robot_config(config: "LingbotVLAV2Config") -> dict | None:
     """Convert the dataclass slot-mapping fields into the robot_config dict format
-    the processor's FeatureTransform expects.
+    the processor's slot-mapping step expects.
 
     Returns None if no slot mappings are defined (e.g. a format-only converted
     checkpoint that hasn't been fine-tuned yet).
@@ -49,8 +49,7 @@ def _slot_mappings_to_robot_config(config: "LingbotVLAV2Config") -> dict | None:
         ]
     if config.camera_mapping:
         robot_config["images"] = [
-            {canonical: {"origin_keys": raw_key}}
-            for canonical, raw_key in config.camera_mapping.items()
+            {canonical: {"origin_keys": raw_key}} for canonical, raw_key in config.camera_mapping.items()
         ]
 
     return robot_config if robot_config else None
@@ -62,45 +61,12 @@ def resolve_robot_config_and_stats(config: "LingbotVLAV2Config") -> None:
     The slot mappings (state_slots / action_slots / camera_mapping) are the
     canonical source — they live in config.json as typed fields with CLI override
     and validation. The robot_config dict is derived from them for the processor's
-    FeatureTransform. norm_stats are either embedded in the checkpoint or derived
+    slot-mapping step. norm_stats are either embedded in the checkpoint or derived
     from the dataset at training time.
     """
     derived = _slot_mappings_to_robot_config(config)
     if derived is not None:
         config.robot_config = derived
-
-
-def build_feature_transform_configs(cfg) -> tuple:
-    """Build the ``data_config`` / ``model_config`` namespaces for ``FeatureTransform``.
-
-    Single source of truth shared by the processor (apply side) and the policy's
-    inference de-normalizer (unapply side). Both sides must agree on the canonical
-    layout and the Qwen3-VL token math, otherwise actions get de-normalized under a
-    different layout than they were produced with. Accepts either the policy config
-    (exposes ``canonical_cameras``) or the processor step (exposes ``cameras``).
-    """
-    from types import SimpleNamespace
-
-    cameras = getattr(cfg, "canonical_cameras", None) or cfg.cameras
-    data_config = SimpleNamespace(
-        joints=[f"{{'{k}': {v}}}" for k, v in cfg.canonical_joints.items()],
-        norm_type=[f"{{'{k}': '{v}'}}" for k, v in cfg.canonical_norm_type.items()],
-        cameras=list(cameras),
-        img_size=cfg.resize_imgs_with_padding[0],
-        chat_template="default",
-        text_keys="task",
-    )
-    model_config = SimpleNamespace(
-        max_state_dim=cfg.max_state_dim,
-        max_action_dim=cfg.max_action_dim,
-        chunk_size=cfg.chunk_size,
-        tokenizer_max_length=cfg.tokenizer_max_length,
-        use_qwen3_chat_template=cfg.use_qwen3_chat_template,
-        return_image_grid_thw=cfg.return_image_grid_thw,
-        qwen3vl_use_vision_boundaries=cfg.qwen3vl_use_vision_boundaries,
-        resize_imgs_with_padding=tuple(cfg.resize_imgs_with_padding),
-    )
-    return data_config, model_config
 
 
 @dataclass
@@ -184,17 +150,24 @@ class LingbotVLAV2Config(PreTrainedConfig):
     # ==================== Feature transform (slot mapping) ====================
     # Per-embodiment slot mapping: raw dataset state/action/image keys → canonical
     # slots. Lives in config.json as typed fields (no YAML path needed).
-    # The processor builds the FeatureTransform from these fields; norm_stats are
+    # The processor builds the slot-mapping step from these fields; norm_stats are
     # derived from the dataset at training time and embedded in the checkpoint.
     state_slots: dict[str, SlotMapping] | None = None
     action_slots: dict[str, SlotMapping] | None = None
+    # Relative actions (standard ``RelativeActionsProcessorStep``): subtract the
+    # current state from the action for the non-excluded dims. Enabled
+    # automatically when any action slot declares ``subtract_state``; the
+    # non-subtracting slots are added to ``relative_exclude_joints`` so they stay
+    # absolute.
+    use_relative_actions: bool = False
+    relative_exclude_joints: list[str] = field(default_factory=list)
     # Camera mapping: canonical camera name → raw dataset camera key.
     camera_mapping: dict[str, str] | None = None
     # Embedded norm_stats (filled at save time, or derived from dataset_stats at
     # training time). Self-contained so a saved checkpoint works on any machine.
     norm_stats: dict | None = None
     # Derived from state_slots/action_slots/camera_mapping by
-    # resolve_robot_config_and_stats(); consumed by the processor's FeatureTransform.
+    # resolve_robot_config_and_stats(); consumed by the processor's slot-mapping step.
     # Not serialized directly — the slot-mapping fields above are the canonical source.
     robot_config: dict | None = None
     # Path (or hub id) to the Qwen3-VL processor (image processor + tokenizer). Falls
@@ -489,11 +462,11 @@ class LingbotVLAV2Config(PreTrainedConfig):
         if self.attention_implementation == "fa2":
             try:
                 import flash_attn  # noqa: F401
-            except ImportError:
+            except ImportError as err:
                 raise ValueError(
                     "attention_implementation='fa2' requires the flash-attn package. "
                     "Install it with: pip install flash-attn --no-build-isolation"
-                )
+                ) from err
 
         if self.split_gate_liner and self.nosplit_gate_liner:
             raise ValueError("split_gate_liner and nosplit_gate_liner cannot both be True.")
@@ -636,9 +609,7 @@ class LingbotVLAV2Config(PreTrainedConfig):
         if self.use_moe and self.use_moe_expert_lr and self.token_top_k > 0:
             expert_lr_scale = (self.token_num_experts / self.token_top_k) ** 0.5
         if self.optimizer_type != "adamw":
-            raise ValueError(
-                f"optimizer_type must be 'adamw', got {self.optimizer_type!r}."
-            )
+            raise ValueError(f"optimizer_type must be 'adamw', got {self.optimizer_type!r}.")
         return LingbotAdamWConfig(
             lr=self.optimizer_lr,
             betas=self.optimizer_betas,

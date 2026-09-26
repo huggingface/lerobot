@@ -31,7 +31,12 @@ from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.lingbot_vla_v2.configuration_lingbot_vla_v2 import LingbotVLAV2Config, SlotMapping
 from lerobot.policies.lingbot_vla_v2.modeling_lingbot_vla_v2 import LingbotVLAV2Policy
 from lerobot.policies.lingbot_vla_v2.processor_lingbot_vla_v2 import make_lingbot_vla_v2_pre_post_processors
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import (
+    ACTION,
+    OBS_LANGUAGE_ATTENTION_MASK,
+    OBS_LANGUAGE_TOKENS,
+    OBS_STATE,
+)
 
 
 def _make_tiny_vlm_config():
@@ -167,12 +172,24 @@ def test_tiny_policy_construction_and_processor(batch_size, monkeypatch):
     assert OBS_STATE in processed_batch
     assert "observation.images.camera_top" in processed_batch
     assert ACTION in processed_batch
-    assert "lang_tokens" in processed_batch
-    assert "lang_masks" in processed_batch
+    # Standard TokenizerProcessorStep output keys.
+    assert OBS_LANGUAGE_TOKENS in processed_batch
+    assert OBS_LANGUAGE_ATTENTION_MASK in processed_batch
+    # Slot-mapping + Qwen3-VL image step outputs.
+    assert "images" in processed_batch
+    assert "img_masks" in processed_batch
+    assert "image_grid_thw" in processed_batch
+    assert "state_joint_mask" in processed_batch
+    assert "action_joint_mask" in processed_batch
+    assert "joint_mask" in processed_batch
 
     # Verify shapes after slot mapping
     assert processed_batch[OBS_STATE].shape[-1] == config.max_state_dim
     assert processed_batch[ACTION].shape[-1] == config.max_action_dim
+    assert processed_batch[OBS_LANGUAGE_TOKENS].shape[-1] == config.tokenizer_max_length
+    # The 7 real dims (6 arm + 1 effector) are marked valid in the joint masks.
+    assert int(processed_batch["action_joint_mask"][0].sum()) == 7
+    assert int(processed_batch["state_joint_mask"][0].sum()) == 7
 
 
 def test_identity_passthrough_processor():
@@ -182,6 +199,32 @@ def test_identity_passthrough_processor():
     # Should build processor with identity passthrough
     preprocessor, postprocessor = make_lingbot_vla_v2_pre_post_processors(config)
 
-    assert len(preprocessor.steps) == 4  # rename, to_batch, feature_transform, device
-    assert len(postprocessor.steps) == 1  # device
-    assert preprocessor.steps[2].__class__.__name__ == "LingbotVLAV2FeatureTransformStep"
+    # Standard pipeline: rename, batch-dim, relative, normalize, slot mapping,
+    # image, chat template, tokenizer, device.
+    assert [type(step).__name__ for step in preprocessor.steps] == [
+        "RenameObservationsProcessorStep",
+        "AddBatchDimensionProcessorStep",
+        "RelativeActionsProcessorStep",
+        "NormalizerProcessorStep",
+        "LingbotVLAV2SlotMappingProcessorStep",
+        "LingbotVLAV2ImageProcessorStep",
+        "LingbotVLAV2ChatTemplateProcessorStep",
+        "TokenizerProcessorStep",
+        "DeviceProcessorStep",
+    ]
+    # Inverse slot mapping, unnormalize, absolute actions, device.
+    assert [type(step).__name__ for step in postprocessor.steps] == [
+        "LingbotVLAV2InverseSlotMappingProcessorStep",
+        "UnnormalizerProcessorStep",
+        "AbsoluteActionsProcessorStep",
+        "DeviceProcessorStep",
+    ]
+    # No slot mappings and no embedded stats → normalization is a no-op.
+    assert not preprocessor.steps[3].stats
+    assert not postprocessor.steps[1].stats
+    # The identity slot mapping reads cumulative raw spans.
+    slot_step = preprocessor.steps[4]
+    assert slot_step.robot_config is not None
+    state_spans = [spans for _joint, _dim, spans in slot_step._state_plan if spans is not None]
+    assert state_spans[0] == [("observation.state", 0, 14)]
+    assert state_spans[1] == [("observation.state", 14, 28)]

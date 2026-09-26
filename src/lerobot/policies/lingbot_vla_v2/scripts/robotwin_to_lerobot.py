@@ -38,7 +38,6 @@ from pathlib import Path
 import h5py
 import numpy as np
 import torch
-from PIL import Image
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
@@ -90,9 +89,7 @@ def _load_episode(ep_path: Path) -> dict:
             key = f"vision/{src_cam}/colors"
             if key not in f:
                 continue
-            images[dst_cam] = np.stack(
-                [_decode_jpeg(b) for b in f[key][()]], axis=0
-            )  # (T-1, H, W, 3) uint8
+            images[dst_cam] = np.stack([_decode_jpeg(b) for b in f[key][()]], axis=0)  # (T-1, H, W, 3) uint8
 
         instructions = None
         if "instructions" in f:
@@ -167,13 +164,29 @@ def _create_dataset(
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="RoboTwin HDF5 -> lerobot v3 dataset converter")
-    ap.add_argument("--input-dir", required=True, help="Directory containing episode_*.hdf5 files (searched recursively)")
+    ap.add_argument(
+        "--input-dir", required=True, help="Directory containing episode_*.hdf5 files (searched recursively)"
+    )
     ap.add_argument("--repo-id", required=True, help="lerobot repo_id (e.g. my_robotwin_task)")
-    ap.add_argument("--out-dir", default=None, help="Output root directory (defaults to HF_LEROBOT_HOME/repo_id)")
-    ap.add_argument("--fps", type=int, default=15, help="Collection frequency (the HDF5 frequency takes precedence when present)")
+    ap.add_argument(
+        "--out-dir", default=None, help="Output root directory (defaults to HF_LEROBOT_HOME/repo_id)"
+    )
+    ap.add_argument(
+        "--fps",
+        type=int,
+        default=15,
+        help="Collection frequency (the HDF5 frequency takes precedence when present)",
+    )
     ap.add_argument("--robot-type", default="aloha_agilex", help="robot_type tag")
-    ap.add_argument("--mode", choices=["video", "image"], default="video", help="Store frames as video or as individual images")
-    ap.add_argument("--max-episodes", type=int, default=None, help="Only convert the first N episodes (for debugging)")
+    ap.add_argument(
+        "--mode",
+        choices=["video", "image"],
+        default="video",
+        help="Store frames as video or as individual images",
+    )
+    ap.add_argument(
+        "--max-episodes", type=int, default=None, help="Only convert the first N episodes (for debugging)"
+    )
     args = ap.parse_args()
 
     input_dir = Path(args.input_dir)
@@ -212,9 +225,9 @@ def main() -> None:
             state, action, images = data["state"], data["action"], data["images"]
             instrs = data["instructions"] or [""]
             task = instrs[0]
-            T = state.shape[0]
+            n_steps = state.shape[0]
 
-            for i in range(T):
+            for i in range(n_steps):
                 frame = {
                     "observation.state": torch.from_numpy(state[i]),
                     "action": torch.from_numpy(action[i]),
@@ -228,13 +241,15 @@ def main() -> None:
                 dataset.add_frame(frame)
 
             dataset.save_episode()
-            n_frames += T
-            print(f"  {ep_path.name}: {T} frames")
+            n_frames += n_steps
+            print(f"  {ep_path.name}: {n_steps} frames")
         except Exception as e:  # noqa: BLE001 - a single episode failure must not abort the whole batch
             print(f"  {ep_path.name}: failed ({e}), skipping", file=sys.stderr)
 
     print(f"Done: {len(ep_files)} episodes / {n_frames} frames -> {dataset.root}")
-    print("Next steps: generate norm_stats (--quantiles) + converter --profile robotwin, then it is ready for lerobot-train")
+    print(
+        "Next steps: generate norm_stats (--quantiles) + converter --profile robotwin, then it is ready for lerobot-train"
+    )
 
 
 if __name__ == "__main__":

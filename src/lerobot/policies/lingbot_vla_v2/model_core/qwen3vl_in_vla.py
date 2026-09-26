@@ -15,7 +15,6 @@ from transformers.models.qwen3_vl.configuration_qwen3_vl import (
     Qwen3VLTextConfig,
     Qwen3VLVisionConfig,
 )
-import transformers.models.qwen3_vl.modeling_qwen3_vl as hf_qwen3vl
 from transformers.models.qwen3_vl.modeling_qwen3_vl import (
     Qwen3VLForConditionalGeneration as _Qwen3VLForConditionalGeneration,
     Qwen3VLModel as _Qwen3VLModel,
@@ -25,7 +24,7 @@ from transformers.models.qwen3_vl.modeling_qwen3_vl import (
     Qwen3VLTextMLP,
     Qwen3VLTextRMSNorm,
     Qwen3VLTextRotaryEmbedding,
-    Qwen3VLVisionModel,
+    Qwen3VLVisionModel as _Qwen3VLVisionModel,
     Qwen3VLVisionMLP,
     apply_rotary_pos_emb,
     apply_rotary_pos_emb_vision,
@@ -36,11 +35,17 @@ from transformers.models.qwen3_vl.modeling_qwen3_vl import (
 logger = logging.get_logger(__name__)
 
 
-def _qwen3vl_no_init_weights(self, module):
-    return
+class Qwen3VLPreTrainedModel(_Qwen3VLPreTrainedModel):
+    """Vendored base class: weight init is a no-op.
 
+    Every vendored model below is either built for checkpoint conversion (all
+    weights overwritten) or trained from a released checkpoint, so skipping the
+    random init keeps 6B CPU construction tractable. Defining it on our own
+    subclass — not by patching the HF class — keeps the module side-effect free.
+    """
 
-Qwen3VLPreTrainedModel = _Qwen3VLPreTrainedModel
+    def _init_weights(self, module) -> None:
+        return
 
 
 class Qwen3VLVisionAttention(nn.Module):
@@ -242,43 +247,6 @@ class Qwen3VLTextDecoderLayer(GradientCheckpointingLayer):
         )
 
 
-class Qwen3VLTextModel(_Qwen3VLTextModel):
-    def __init__(self, config: Qwen3VLTextConfig):
-        Qwen3VLPreTrainedModel.__init__(self, config)
-        self.padding_idx = config.pad_token_id
-        self.vocab_size = config.vocab_size
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        self.layers = nn.ModuleList(
-            [Qwen3VLTextDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
-        )
-        self.norm = Qwen3VLTextRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.rotary_emb = Qwen3VLTextRotaryEmbedding(config=config)
-        self.gradient_checkpointing = False
-        self.post_init()
-
-
-class Qwen3VLModel(_Qwen3VLModel):
-    def __init__(self, config: Qwen3VLConfig):
-        Qwen3VLPreTrainedModel.__init__(self, config)
-        self.visual = Qwen3VLVisionModel._from_config(config.vision_config)
-        self.language_model = Qwen3VLTextModel._from_config(config.text_config)
-        self.rope_deltas = None
-        self.post_init()
-
-
-class Qwen3VLForConditionalGeneration(_Qwen3VLForConditionalGeneration, GenerationMixin):
-    # transformers>=5.5 expects a dict {tied_key: source_key} (was a list in 4.57).
-    _tied_weights_keys = {"lm_head.weight": "model.language_model.embed_tokens.weight"}
-    config_class = Qwen3VLConfig
-    _no_split_modules = ["Qwen3VLTextDecoderLayer", "Qwen3VLVisionBlock"]
-
-    def __init__(self, config):
-        Qwen3VLPreTrainedModel.__init__(self, config)
-        self.model = Qwen3VLModel(config)
-        self.lm_head = nn.Linear(config.text_config.hidden_size, config.text_config.vocab_size, bias=False)
-        self.post_init()
-
-
 @torch.compiler.disable
 def preprcess_grid_thw(self, grid_thw: torch.Tensor):
     rotary_pos_emb = self.rot_pos_emb(grid_thw)
@@ -360,22 +328,57 @@ def forward_without_grid_thw(
     return hidden_states, deepstack_feature_lists
 
 
-_lingbot_qwen3vl_patch_applied = False
+class Qwen3VLVisionModel(_Qwen3VLVisionModel):
+    """Vendored vision tower: LingBot's cached-grid forward + custom blocks.
+
+    Subclasses the HF vision model (no monkey-patching, so importing this module
+    has no global side effects on transformers) to install the host-sync-free
+    grid-metadata forward and the vendored ``Qwen3VLVisionBlock`` /
+    ``Qwen3VLVisionAttention`` (cached per-image split sizes for CUDA-graph
+    capture). The stock blocks built by the HF ``__init__`` are replaced;
+    state-dict keys are identical.
+    """
+
+    preprcess_grid_thw = preprcess_grid_thw
+    forward = forward_without_grid_thw
+
+    def __init__(self, config, *inputs, **kwargs) -> None:
+        super().__init__(config, *inputs, **kwargs)
+        self.blocks = nn.ModuleList([Qwen3VLVisionBlock(config) for _ in range(config.depth)])
 
 
-def apply_lingbot_qwen3_vl_patch():
-    global _lingbot_qwen3vl_patch_applied
-    if _lingbot_qwen3vl_patch_applied:
-        return
-    _lingbot_qwen3vl_patch_applied = True
-    logger.info("apply Qwen3-VL Lingbot patch")
-    _Qwen3VLPreTrainedModel._init_weights = _qwen3vl_no_init_weights
-    hf_qwen3vl.Qwen3VLPreTrainedModel = Qwen3VLPreTrainedModel
-    hf_qwen3vl.Qwen3VLTextDecoderLayer = Qwen3VLTextDecoderLayer
-    hf_qwen3vl.Qwen3VLTextModel = Qwen3VLTextModel
-    hf_qwen3vl.Qwen3VLModel = Qwen3VLModel
-    hf_qwen3vl.Qwen3VLForConditionalGeneration = Qwen3VLForConditionalGeneration
-    hf_qwen3vl.Qwen3VLVisionAttention = Qwen3VLVisionAttention
-    hf_qwen3vl.Qwen3VLVisionBlock = Qwen3VLVisionBlock
-    hf_qwen3vl.Qwen3VLVisionModel.forward = forward_without_grid_thw
-    hf_qwen3vl.Qwen3VLVisionModel.preprcess_grid_thw = preprcess_grid_thw
+class Qwen3VLTextModel(_Qwen3VLTextModel):
+    def __init__(self, config: Qwen3VLTextConfig):
+        Qwen3VLPreTrainedModel.__init__(self, config)
+        self.padding_idx = config.pad_token_id
+        self.vocab_size = config.vocab_size
+        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
+        self.layers = nn.ModuleList(
+            [Qwen3VLTextDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
+        )
+        self.norm = Qwen3VLTextRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.rotary_emb = Qwen3VLTextRotaryEmbedding(config=config)
+        self.gradient_checkpointing = False
+        self.post_init()
+
+
+class Qwen3VLModel(_Qwen3VLModel):
+    def __init__(self, config: Qwen3VLConfig):
+        Qwen3VLPreTrainedModel.__init__(self, config)
+        self.visual = Qwen3VLVisionModel._from_config(config.vision_config)
+        self.language_model = Qwen3VLTextModel._from_config(config.text_config)
+        self.rope_deltas = None
+        self.post_init()
+
+
+class Qwen3VLForConditionalGeneration(_Qwen3VLForConditionalGeneration, GenerationMixin):
+    # transformers>=5.5 expects a dict {tied_key: source_key} (was a list in 4.57).
+    _tied_weights_keys = {"lm_head.weight": "model.language_model.embed_tokens.weight"}
+    config_class = Qwen3VLConfig
+    _no_split_modules = ["Qwen3VLTextDecoderLayer", "Qwen3VLVisionBlock"]
+
+    def __init__(self, config):
+        Qwen3VLPreTrainedModel.__init__(self, config)
+        self.model = Qwen3VLModel(config)
+        self.lm_head = nn.Linear(config.text_config.hidden_size, config.text_config.vocab_size, bias=False)
+        self.post_init()

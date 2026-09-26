@@ -5,23 +5,25 @@
 #   --loads--> the lingbot_vla_v2 checkpoint converted to lerobot (with embedded robot_config + norm_stats)
 #
 # Differences from the upstream deploy/lingbot_vla_v2_policy.py:
-#   the upstream version loads the upstream ckpt format (reads lingbotvla_cli.yaml + the
-#   upstream FeatureTransform); this version loads the lerobot format:
+#   the upstream version loads the upstream ckpt format (reads lingbotvla_cli.yaml +
+#   the upstream feature transform); this version loads the lerobot format:
 #   LingbotVLAV2Policy.from_pretrained + its bundled preprocessor.
 #
 # Key contracts (verified by reading the source; do not break them):
 #   - policy.select_action(batch) expects a batch that has **already been through the
-#     preprocessor** (it must contain model keys such as images/img_masks/lang_tokens),
-#     not raw obs. So this server must first run obs through the preprocessor built by
-#     make_lingbot_vla_v2_pre_post_processors, then feed the result to select_action, and
-#     pass the output through the postprocessor (unnormalize + canonical -> raw).
+#     preprocessor** (it must contain model keys such as images/img_masks/
+#     observation.language_tokens), not raw obs. So this server must first run obs through
+#     the preprocessor built by make_lingbot_vla_v2_pre_post_processors, then feed the
+#     result to select_action, and pass the output through the postprocessor
+#     (inverse slot mapping + unnormalize + re-absolutize -> raw).
 #   - The eval client sends upstream keys: cam_high/cam_left_wrist/cam_right_wrist (HWC uint8)
 #     + observation.state (joint_action.vector) + task. This server maps them to the lerobot
 #     canonical camera keys, and the preprocessor then handles normalization/tokenization/
 #     canonical slot mapping.
-#   - Actions: select_action returns in raw space (post-processing has already unnormalized,
-#     added back the subtract_state offset, and mapped canonical 55-dim -> robot-specific
-#     dims). RoboTwin robotwin.yaml uses subtract_state=False (absolute angles).
+#   - Actions: select_action returns in normalized canonical space; the postprocessor
+#     unnormalizes, adds back the relative-action state offset where applicable, and maps
+#     canonical 55-dim -> robot-specific dims. RoboTwin robotwin.yaml uses
+#     subtract_state=False (absolute angles).
 #
 # Usage:
 #   python -m deploy.lingbot_vla_v2_policy_lerobot \
@@ -30,7 +32,6 @@
 #   python experiment/robotwin/eval_policy_client_lingbotvla.py --config <task.yml> --port 8006
 
 import argparse
-import os
 from typing import Any
 
 import numpy as np
@@ -90,10 +91,8 @@ class LerobotLingbotVLAv2Server:
         # The preprocessor / postprocessor are loaded from the ckpt (robot_config +
         # norm_stats were embedded at conversion time), so normalization stays consistent
         # between training and inference.
-        self.preprocessor, self.postprocessor = (
-            make_lingbot_vla_v2_pre_post_processors_from_pretrained(
-                self.policy.config, model_path
-            )
+        self.preprocessor, self.postprocessor = make_lingbot_vla_v2_pre_post_processors_from_pretrained(
+            self.policy.config, model_path
         )
         # Robot action dims: the ckpt's output_features.action is the canonical 55; the actual
         # raw dims are sliced out by the postprocessor (unapply) according to the robot_config
@@ -125,9 +124,7 @@ class LerobotLingbotVLAv2Server:
                 img = np.ascontiguousarray(observation[up_key])  # HWC uint8
                 out[lerobot_key] = torch.from_numpy(img)
         if "observation.state" in observation:
-            out[OBS_STATE] = torch.from_numpy(
-                np.asarray(observation["observation.state"], dtype=np.float32)
-            )
+            out[OBS_STATE] = torch.from_numpy(np.asarray(observation["observation.state"], dtype=np.float32))
         if "task" in observation:
             out["task"] = observation["task"]
         return out
@@ -141,8 +138,8 @@ class LerobotLingbotVLAv2Server:
         raw_frame = self._to_raw_lerobot_frame(observation)
         # Full pipeline: raw obs -> preprocessor -> select_action -> postprocessor -> raw action.
         batch = self.preprocessor(raw_frame)
-        action = self.policy.select_action(batch)   # canonical space, already de-normed
-        action = self.postprocessor(action)          # canonical 55 -> robot raw joint angles
+        action = self.policy.select_action(batch)  # normalized canonical space
+        action = self.postprocessor(action)  # unnormalize + canonical 55 -> robot raw joint angles
         if isinstance(action, torch.Tensor):
             action = action.float().cpu().numpy()
         action = np.asarray(action, dtype=np.float32).reshape(-1)
@@ -163,7 +160,9 @@ def str2bool(v):
 
 def main():
     parser = argparse.ArgumentParser(description="LingBot-VLA v2 (lerobot ckpt) RoboTwin policy server")
-    parser.add_argument("--model_path", type=str, required=True, help="Directory of the lerobot-converted ckpt")
+    parser.add_argument(
+        "--model_path", type=str, required=True, help="Directory of the lerobot-converted ckpt"
+    )
     parser.add_argument("--port", type=int, default=8006)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--use_bf16", type=str2bool, default=True)
