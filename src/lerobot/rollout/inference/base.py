@@ -29,10 +29,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from threading import Lock
-
-import torch
+from typing import TYPE_CHECKING
 
 from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT
+
+if TYPE_CHECKING:
+    import torch
 
 logger = logging.getLogger(__name__)
 
