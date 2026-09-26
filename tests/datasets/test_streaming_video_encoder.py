@@ -18,6 +18,7 @@
 
 import queue
 import threading
+import time
 
 import numpy as np
 import pytest
@@ -437,11 +438,89 @@ class TestStreamingVideoEncoder:
         mp4_path, _ = results[f"{OBS_IMAGES}.cam"]
         assert mp4_path.exists()
 
-        # Some frames should have been dropped (queue was tiny)
+        # Whether the tiny queue actually overflows depends on how fast the encoder
+        # drains it, so assert the invariant instead: every fed frame is either encoded
+        # or accounted for as dropped.
         dropped = encoder._dropped_frames.get(f"{OBS_IMAGES}.cam", 0)
-        # We can't guarantee drops but can verify no crash occurred
-        assert dropped >= 0
+        with av.open(str(mp4_path)) as container:
+            stream = container.streams.video[0]
+            encoded_frames = sum(1 for _ in container.decode(stream))
+        assert encoded_frames + dropped == num_frames
 
+        encoder.close()
+
+    def _stall_queue(self, encoder, video_key, maxsize=1):
+        """Swap in a frame queue the encoder thread never drains.
+
+        A real encoder keeps consuming at whatever rate the codec manages, so a test
+        cannot reliably fill its queue; small frames never overflow even a queue of 1.
+        Replacing the queue after ``start_episode`` makes "full" deterministic while
+        leaving the thread alive, so ``feed_frame`` takes the queue-full path rather
+        than the dead-thread one.
+        """
+        stalled: queue.Queue = queue.Queue(maxsize=maxsize)
+        encoder._frame_queues[video_key] = stalled
+        return stalled
+
+    def test_stalled_queue_drops_by_default(self, tmp_path):
+        """Test that a full queue drops frames instead of blocking the caller."""
+        video_key = f"{OBS_IMAGES}.cam"
+        encoder = StreamingVideoEncoder(
+            fps=30,
+            rgb_encoder=self._make_encoder_config(
+                vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13
+            ),
+            queue_maxsize=1,
+        )
+        encoder.start_episode([video_key], tmp_path)
+        self._stall_queue(encoder, video_key)
+
+        num_frames = 5
+        for _ in range(num_frames):
+            encoder.feed_frame(video_key, np.zeros((64, 96, 3), dtype=np.uint8))
+
+        # Only the first frame fits the queue; every later one times out and is dropped.
+        assert encoder._dropped_frames[video_key] == num_frames - 1
+
+        encoder.cancel_episode()
+        encoder.close()
+
+    def test_stalled_queue_waits_when_not_dropping(self, tmp_path):
+        """Test that drop_on_full=False waits for a slot instead of losing frames."""
+        video_key = f"{OBS_IMAGES}.cam"
+        encoder = StreamingVideoEncoder(
+            fps=30,
+            rgb_encoder=self._make_encoder_config(
+                vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30, preset=13
+            ),
+            queue_maxsize=1,
+            drop_on_full=False,
+        )
+        encoder.start_episode([video_key], tmp_path)
+        stalled = self._stall_queue(encoder, video_key)
+
+        num_frames = 5
+        drained = []
+
+        def drain():
+            for _ in range(num_frames):
+                # Slower than the 0.1s drop timeout, so every frame but the first has
+                # to wait for a slot: dropping would lose frames the drainer expects.
+                time.sleep(0.15)
+                drained.append(stalled.get(timeout=10))
+
+        drainer = threading.Thread(target=drain, daemon=True)
+        drainer.start()
+
+        for _ in range(num_frames):
+            encoder.feed_frame(video_key, np.zeros((64, 96, 3), dtype=np.uint8))
+
+        drainer.join(timeout=10)
+        assert not drainer.is_alive()
+        assert len(drained) == num_frames
+        assert encoder._dropped_frames.get(video_key, 0) == 0
+
+        encoder.cancel_episode()
         encoder.close()
 
 
@@ -494,6 +573,37 @@ class TestStreamingEncoderIntegration:
         assert "action" in dataset.meta.stats
 
         dataset.finalize()
+
+    def test_create_forwards_drop_on_full(self, tmp_path):
+        """Test that create() forwards encoder_drop_on_full to the streaming encoder."""
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+        features = {
+            "observation.images.cam": {
+                "dtype": "video",
+                "shape": (64, 96, 3),
+                "names": ["height", "width", "channels"],
+            },
+        }
+
+        def make(root, **kwargs):
+            return LeRobotDataset.create(
+                repo_id="test/drop_on_full",
+                fps=30,
+                features=features,
+                root=tmp_path / root,
+                use_videos=True,
+                streaming_encoding=True,
+                **kwargs,
+            )
+
+        default = make("default")
+        assert default.writer._streaming_encoder.drop_on_full is True
+        default.finalize()
+
+        blocking = make("blocking", encoder_drop_on_full=False)
+        assert blocking.writer._streaming_encoder.drop_on_full is False
+        blocking.finalize()
 
     def test_streaming_disabled_creates_pngs(self, tmp_path):
         """Test that disabling streaming encoding falls back to PNG path."""
