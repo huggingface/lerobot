@@ -764,6 +764,8 @@ class PI0Policy(PreTrainedPolicy):
 
     config_class = PI0Config
     name = "pi0"
+    # Read from this class only, so each subclass opts in on its own.
+    _supports_meta_load = True
 
     def supports_rtc(self) -> bool:
         return True
@@ -790,7 +792,7 @@ class PI0Policy(PreTrainedPolicy):
         if config.gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
 
-        # Parameters built on the meta device have no data to move yet; the loader places them.
+        # On the meta device, load_complete_checkpoint places the parameters and then moves the buffers.
         if not next(self.model.parameters()).is_meta:
             self.model.to(config.device)
 
@@ -821,21 +823,7 @@ class PI0Policy(PreTrainedPolicy):
         if pretrained_name_or_path is None:
             raise ValueError("pretrained_name_or_path is required")
 
-        # Use provided config if available, otherwise create default config
-        if config is None:
-            config = PreTrainedConfig.from_pretrained(
-                pretrained_name_or_path=pretrained_name_or_path,
-                force_download=force_download,
-                resume_download=resume_download,
-                proxies=proxies,
-                token=token,
-                cache_dir=cache_dir,
-                local_files_only=local_files_only,
-                revision=revision,
-                **kwargs,
-            )
-
-        download_kwargs = {
+        download_kwargs: dict[str, Any] = {
             "force_download": force_download,
             "resume_download": resume_download,
             "proxies": proxies,
@@ -844,7 +832,18 @@ class PI0Policy(PreTrainedPolicy):
             "local_files_only": local_files_only,
             "revision": revision,
         }
-        model = load_complete_checkpoint(cls, pretrained_name_or_path, config, download_kwargs, **kwargs)
+        # Use provided config if available, otherwise create default config
+        if config is None:
+            config = PreTrainedConfig.from_pretrained(
+                pretrained_name_or_path=pretrained_name_or_path, **download_kwargs, **kwargs
+            )
+
+        print(f"Loading model from: {pretrained_name_or_path}")
+        require_package("transformers", extra="pi")
+        from transformers.utils import cached_file
+
+        resolved_file = cached_file(pretrained_name_or_path, "model.safetensors", **download_kwargs)
+        model = load_complete_checkpoint(cls, resolved_file, config, **kwargs)
         if model is not None:
             return model
 
@@ -854,11 +853,7 @@ class PI0Policy(PreTrainedPolicy):
 
         # Load state dict (expects keys with "model." prefix)
         try:
-            print(f"Loading model from: {pretrained_name_or_path}")
             try:
-                from transformers.utils import cached_file
-
-                resolved_file = cached_file(pretrained_name_or_path, "model.safetensors", **download_kwargs)
                 from safetensors.torch import load_file
 
                 original_state_dict = load_file(resolved_file)
@@ -920,7 +915,11 @@ class PI0Policy(PreTrainedPolicy):
     def _fix_pytorch_state_dict_keys(
         self, state_dict, model_config
     ):  # see openpi `BaseModelConfig, _fix_pytorch_state_dict_keys`
-        """Fix state dict keys to match current model architecture."""
+        """Fix state dict keys to match current model architecture.
+
+        Each key is handled on its own and values are only renamed, copied or dropped, which
+        `load_complete_checkpoint` relies on.
+        """
         import re
 
         fixed_state_dict = {}
