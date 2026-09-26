@@ -16,54 +16,61 @@
 
 """Checkpoint loading shared by the openpi-derived policies that remap keys (pi0, pi05, pi0_fast)."""
 
-from pathlib import Path
-from typing import Any
-
 import torch
 from safetensors import safe_open
 
 from lerobot.configs import PreTrainedConfig
-from lerobot.policies.pretrained import T, _load_state_dict_into_meta_model, _parameters_on_meta
+from lerobot.policies.pretrained import (
+    T,
+    _load_state_dict_into_meta_model,
+    _parameters_on_meta,
+    _shares_parameters,
+)
 
 
 def load_complete_checkpoint(
-    policy_cls: type[T],
-    pretrained_name_or_path: str | Path,
-    config: PreTrainedConfig,
-    download_kwargs: dict[str, Any],
-    **kwargs,
+    policy_cls: type[T], model_file: str, config: PreTrainedConfig, **kwargs
 ) -> T | None:
-    """Build `policy_cls` with its parameters on the meta device and stream the checkpoint straight into them.
+    """Build `policy_cls` with its parameters on the meta device and stream `model_file` straight into them.
 
-    This skips randomly initializing weights that the checkpoint replaces, and never holds a second full
-    copy of them. Returns None, before reading any weight, when the checkpoint cannot be read or its keys or
-    shapes (after the policy's `_fix_pytorch_state_dict_keys`) differ from the policy's, so that
-    `from_pretrained` loads the regular way, with the same result as before.
+    This skips randomly initializing weights that the checkpoint replaces, and never holds a second full copy
+    of them. Returns None, before reading any weight, when the file cannot be read, its keys or shapes differ
+    from the policy's, or the policy shares a parameter or computed a buffer from one. `from_pretrained` then
+    builds the policy and calls `load_state_dict`. Errors while reading the weights raise.
+
+    Only a class that sets `_supports_meta_load` in its own body takes this path, so a subclass has to opt in.
+    That promises the constructor never reads, moves or holds on to a parameter, that
+    `_fix_pytorch_state_dict_keys` handles each key on its own and only renames, copies or drops values (this
+    path calls it once per key and uses only names and shapes), and that `_prepare_pretrained_state_dict`,
+    which this path skips, changes nothing in a complete checkpoint.
     """
-    from transformers.utils import cached_file
-
+    # Read from the class itself, so that a subclass does not inherit its parent's promise.
+    if not vars(policy_cls).get("_supports_meta_load", False):
+        return None
     try:
-        model_file = cached_file(pretrained_name_or_path, "model.safetensors", **download_kwargs)
         checkpoint = safe_open(model_file, framework="pt", device="cpu")
     except Exception:
-        # The regular path tries again and reports the failure as it always has.
         return None
     with checkpoint:
         with _parameters_on_meta():
             policy = policy_cls(config, **kwargs)
 
-        def policy_keys(key: str, shape: list[int]) -> dict[str, torch.Size]:
+        def remap(key: str, shape: list[int]) -> dict[str, torch.Size]:
             fixed = policy._fix_pytorch_state_dict_keys({key: torch.empty(shape, device="meta")}, config)
             return {k if k.startswith("model.") else f"model.{k}": v.shape for k, v in fixed.items()}
 
-        file_shapes = {key: checkpoint.get_slice(key).get_shape() for key in checkpoint.keys()}  # noqa: SIM118
-        targets = {key: policy_keys(key, shape) for key, shape in file_shapes.items()}
-        shapes = {name: shape for names in targets.values() for name, shape in names.items()}
-        if shapes != {name: tensor.shape for name, tensor in policy.state_dict().items()}:
+        # A file key gives zero, one or two model names: the fixes drop some keys and copy lm_head.
+        names = {key: remap(key, checkpoint.get_slice(key).get_shape()) for key in checkpoint.keys()}  # noqa: SIM118
+        shapes = {name: shape for fixed in names.values() for name, shape in fixed.items()}
+        if (
+            shapes != {name: tensor.shape for name, tensor in policy.state_dict().items()}
+            or _shares_parameters(policy)
+            or any(buffer.is_meta for buffer in policy.buffers())
+        ):
             return None
-        print(f"Loading model from: {pretrained_name_or_path}")
-        tensors = ((name, checkpoint.get_tensor(key)) for key, names in targets.items() for name in names)
+        tensors = ((name, checkpoint.get_tensor(key)) for key, fixed in names.items() for name in fixed)
         _load_state_dict_into_meta_model(policy, tensors, config.device)
+    # Buffers the constructor computed, like rotary tables, are not in the checkpoint and are still on the CPU.
     policy.model.to(config.device)
     print("All keys loaded successfully!")
     return policy

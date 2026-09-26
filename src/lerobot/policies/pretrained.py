@@ -22,7 +22,6 @@ import threading
 import warnings
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
-from itertools import chain
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, TypeVar, Unpack
 
@@ -94,11 +93,12 @@ register_module_parameter_registration_hook(_parameter_to_meta)
 def _parameters_on_meta() -> Iterator[None]:
     """Create the parameters of modules built inside this block on the meta device.
 
-    A meta tensor has a shape and a dtype but no memory, so building a model this way skips
-    allocating and randomly initializing weights that a checkpoint will replace. Only parameters
-    move: buffers and plain tensors are still computed, so values a constructor derives (rotary
-    tables, masks) stay correct without coming from the checkpoint. Only the thread that entered
-    the block is affected, and a parameter registered in two modules stays shared.
+    A meta tensor has a shape and a dtype but no memory. Modules like `nn.Linear` register a parameter
+    before they initialize it, so building them here skips allocating and randomly initializing weights
+    that a checkpoint will replace; `nn.Parameter(torch.randn(n))` is still drawn before it moves. Buffers
+    and plain tensors are still computed, so values built from the config (rotary tables, masks) stay
+    correct, but one computed from a parameter ends up on meta. Only the thread that entered the block is
+    affected, and a parameter registered in two modules stays shared.
     """
     previous = getattr(_meta_init, "replacements", None)
     _meta_init.replacements = WeakIdKeyDictionary() if previous is None else previous
@@ -106,6 +106,10 @@ def _parameters_on_meta() -> Iterator[None]:
         yield
     finally:
         _meta_init.replacements = previous
+
+
+def _shares_parameters(model: nn.Module) -> bool:
+    return len(list(model.parameters())) != len(list(model.named_parameters(remove_duplicate=False)))
 
 
 def _load_state_dict_into_meta_model(
@@ -117,9 +121,9 @@ def _load_state_dict_into_meta_model(
     on the CPU into the dtype the constructor gave the matching parameter or buffer, then moved to
     `device`, so the constructor's precision choices are kept and only one checkpoint tensor is held
     at a time. Raises if the model shares a parameter between modules, because `assign=True` would
-    give each name its own tensor, and if any tensor is still on the meta device afterwards.
+    give each name its own tensor, and if a buffer computed from a parameter is left on the meta device.
     """
-    if len(list(model.parameters())) != len(list(model.named_parameters(remove_duplicate=False))):
+    if _shares_parameters(model):
         raise ValueError(f"{type(model).__name__} shares parameters between modules, which is not supported")
     targets = model.state_dict(keep_vars=True)
     tensors = {}
@@ -130,14 +134,11 @@ def _load_state_dict_into_meta_model(
         tensors[name] = tensor if target is None else tensor.to(dtype=target.dtype, copy=True).to(device)
     model.load_state_dict(tensors, strict=True, assign=True)
 
-    on_meta = [
-        name
-        for name, tensor in chain(model.named_parameters(), model.named_buffers(remove_duplicate=False))
-        if tensor.is_meta
-    ]
+    on_meta = [name for name, buffer in model.named_buffers(remove_duplicate=False) if buffer.is_meta]
     if on_meta:
         raise RuntimeError(
-            f"The checkpoint has no value for these tensors of {type(model).__name__}: {on_meta}"
+            f"{type(model).__name__} computed these buffers from parameters, so no checkpoint can fill them: "
+            f"{on_meta}"
         )
 
 

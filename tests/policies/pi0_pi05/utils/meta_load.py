@@ -26,6 +26,17 @@ from lerobot.policies.common import openpi_checkpoint
 
 EMBED_TOKENS = "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
 
+# Every download option of `from_pretrained`, none at its default value.
+DOWNLOAD_ARGUMENTS = {
+    "force_download": True,
+    "resume_download": True,
+    "proxies": {"https": "http://proxy:8080"},
+    "token": "secret",
+    "cache_dir": "/cache",
+    "local_files_only": True,
+    "revision": "v1",
+}
+
 
 def use_tiny_backbone(monkeypatch, modeling_module):
     """Make the policy in `modeling_module` have a few million parameters instead of billions."""
@@ -45,6 +56,11 @@ def use_tiny_backbone(monkeypatch, modeling_module):
         "gemma": modeling_module.CONFIG_MAPPING["gemma"],
     }
     monkeypatch.setattr(modeling_module, "CONFIG_MAPPING", configs)
+
+
+def drop_projector_bias(state_dict):
+    """Make a checkpoint that the meta-device path turns down."""
+    del state_dict["paligemma_with_expert.paligemma.model.multi_modal_projector.linear.bias"]
 
 
 def save_checkpoint(policy_cls, config, path, renames=None, edit=None):

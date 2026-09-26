@@ -16,6 +16,8 @@
 
 """PI0Policy.from_pretrained builds parameters on the meta device and matches the regular load."""
 
+import sys
+
 import pytest
 import torch
 
@@ -26,9 +28,12 @@ import transformers.utils  # noqa: E402
 from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
 from lerobot.policies.pi0 import PI0Config, PI0Policy, modeling_pi0  # noqa: E402
 from lerobot.policies.pretrained import _parameters_on_meta  # noqa: E402
+from lerobot.utils import import_utils  # noqa: E402
 from tests.policies.pi0_pi05.utils.meta_load import (  # noqa: E402
+    DOWNLOAD_ARGUMENTS,
     EMBED_TOKENS,
     assert_same,
+    drop_projector_bias,
     load,
     save_checkpoint,
     use_tiny_backbone,
@@ -86,6 +91,8 @@ def test_frozen_parameters_keep_requires_grad(config, tmp_path, monkeypatch):
 
 def test_subclass_with_its_own_constructor(config, tmp_path, monkeypatch):
     class Subclass(PI0Policy):
+        _supports_meta_load = True
+
         def __init__(self, config, extra=None):
             super().__init__(config)
             self.extra = extra
@@ -94,6 +101,45 @@ def test_subclass_with_its_own_constructor(config, tmp_path, monkeypatch):
     model, used_meta = load(Subclass, path, config, monkeypatch, extra=1)
     expected, _ = load(PI0Policy, path, config, monkeypatch, regular=True)
     assert used_meta and type(model) is Subclass and model.extra == 1
+    assert_same(model, expected)
+
+
+def test_subclass_loads_the_regular_way(config, tmp_path, monkeypatch):
+    # A subclass may, for example, change values in its key fixes, which only the regular path applies.
+    class Subclass(PI0Policy):
+        def _fix_pytorch_state_dict_keys(self, state_dict, model_config):
+            fixed = super()._fix_pytorch_state_dict_keys(state_dict, model_config)
+            return {key: value + 1 for key, value in fixed.items()}
+
+    path = save(config, tmp_path / "ckpt")
+    model, used_meta = load(Subclass, path, config, monkeypatch)
+    expected, _ = load(Subclass, path, config, monkeypatch, regular=True)
+    assert not used_meta
+    assert_same(model, expected)
+
+
+def tie_lm_head(policy):
+    paligemma = policy.model.paligemma_with_expert.paligemma
+    paligemma.lm_head.weight = paligemma.model.language_model.embed_tokens.weight
+
+
+def derive_buffer(policy):
+    policy.model.register_buffer("doubled", policy.model.state_proj.bias.detach() * 2, persistent=False)
+
+
+@pytest.mark.parametrize("change", [tie_lm_head, derive_buffer])
+def test_model_the_loader_cannot_fill_loads_the_regular_way(config, tmp_path, monkeypatch, change):
+    class Subclass(PI0Policy):
+        _supports_meta_load = True
+
+        def __init__(self, config):
+            super().__init__(config)
+            change(self)
+
+    path = save(config, tmp_path / "ckpt")
+    model, used_meta = load(Subclass, path, config, monkeypatch)
+    expected, _ = load(Subclass, path, config, monkeypatch, regular=True)
+    assert not used_meta
     assert_same(model, expected)
 
 
@@ -141,17 +187,29 @@ def test_unreadable_checkpoint_loads_the_regular_way(config, tmp_path, monkeypat
     assert_same(model, expected)
 
 
-@pytest.mark.parametrize("regular", [False, True])
-def test_download_arguments_reach_the_weights(config, tmp_path, monkeypatch, regular):
-    path = save(config, tmp_path / "ckpt")
+@pytest.mark.parametrize("complete", [True, False])
+def test_download_arguments_reach_the_weights(config, tmp_path, monkeypatch, complete):
+    path = save(config, tmp_path / "ckpt", None if complete else drop_projector_bias)
     cached_file = transformers.utils.cached_file
     calls = []
 
     def record(*args, **kwargs):
         calls.append(kwargs)
-        return cached_file(*args, **{**kwargs, "revision": None, "token": None})
+        return cached_file(*args)
 
     monkeypatch.setattr(transformers.utils, "cached_file", record)
-    arguments = {"revision": "v1", "token": "secret", "cache_dir": str(tmp_path / "cache")}
-    load(PI0Policy, path, config, monkeypatch, regular=regular, **arguments)
-    assert calls and all(call.items() >= arguments.items() for call in calls)
+    _, used_meta = load(PI0Policy, path, config, monkeypatch, **DOWNLOAD_ARGUMENTS)
+    # One lookup, with every option, serves whichever path loads the weights.
+    assert calls == [DOWNLOAD_ARGUMENTS] and used_meta == complete
+
+
+def test_missing_weights_raise(config, tmp_path, monkeypatch):
+    with pytest.raises(OSError, match="model.safetensors"):
+        load(PI0Policy, tmp_path, config, monkeypatch)
+
+
+def test_missing_transformers_names_the_extra(config, tmp_path, monkeypatch):
+    monkeypatch.setitem(import_utils._require_package_cache, "transformers", False)
+    monkeypatch.setitem(sys.modules, "transformers.utils", None)
+    with pytest.raises(ImportError, match=r"lerobot\[pi\]"):
+        PI0Policy.from_pretrained(tmp_path, config=config)
