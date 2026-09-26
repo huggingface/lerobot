@@ -284,6 +284,47 @@ def test_policy_defaults(dummy_dataset_metadata, policy_name: str):
     policy_cls(policy_cfg)
 
 
+@pytest.mark.skipif(
+    "diffusion" not in AVAILABLE_POLICIES, reason="diffusers is required (install lerobot[diffusion])"
+)
+def test_diffusion_predict_action_chunk_warms_up_empty_queues(dummy_dataset_metadata):
+    """Regression test for the async-inference path (https://github.com/huggingface/lerobot/issues/3861).
+
+    The async ``PolicyServer`` calls ``predict_action_chunk()`` directly with a single, un-warmed
+    observation and never populates the observation-history queues that ``select_action()`` relies on.
+    With ``n_obs_steps > 1`` the model needs a temporal observation dimension, so ``predict_action_chunk``
+    must build it from the single frame itself (mirroring ``populate_queues``) instead of crashing in
+    ``generate_actions`` (previously ``stack expects a non-empty TensorList`` / a ``n_obs_steps`` assertion).
+    """
+    policy_cls = get_policy_class("diffusion")
+    policy_cfg = make_policy_config("diffusion")
+    features = dataset_to_policy_features(dummy_dataset_metadata.features)
+    policy_cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
+    policy_cfg.input_features = {
+        key: ft for key, ft in features.items() if key not in policy_cfg.output_features
+    }
+    policy = policy_cls(policy_cfg)
+    policy.to(DEVICE)
+    policy.reset()
+
+    assert policy.config.n_obs_steps > 1, "Test should exercise a multi-step observation history"
+    assert all(len(q) == 0 for q in policy._queues.values()), "Queues must be empty for this path"
+
+    batch_size = 2
+    # A single observation frame, exactly as the async server provides it: state is (B, state_dim)
+    # and each image is (B, C, H, W), with no temporal (n_obs_steps) dimension.
+    batch = {OBS_STATE: torch.randn(batch_size, policy_cfg.robot_state_feature.shape[0], device=DEVICE)}
+    for key, ft in policy_cfg.image_features.items():
+        c, h, w = ft.shape
+        batch[key] = torch.rand(batch_size, c, h, w, device=DEVICE)
+
+    actions = policy.predict_action_chunk(batch)
+
+    assert actions.ndim == 3
+    assert actions.shape[0] == batch_size
+    assert actions.shape[-1] == policy_cfg.action_feature.shape[0]
+
+
 @pytest.mark.parametrize("policy_name", AVAILABLE_POLICIES)
 def test_save_and_load_pretrained(dummy_dataset_metadata, tmp_path, policy_name: str):
     policy_cls = get_policy_class(policy_name)
