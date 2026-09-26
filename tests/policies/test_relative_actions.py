@@ -383,7 +383,12 @@ def test_cached_anchor_and_queue_binding_not_in_config():
     step(create_transition(observation={OBS_STATE: torch.tensor([[1.0, 2.0, 3.0, 4.0]])}))
     step.bind_action_queue(lambda: 0)
     assert step.get_cached_state() is not None
-    assert set(step.get_config()) == {"enabled", "exclude_joints", "action_names"}
+    assert set(step.get_config()) == {
+        "enabled",
+        "exclude_joints",
+        "action_names",
+        "se3_pose_groups",
+    }
 
 
 # --------------------------------------------------------------------------------------
@@ -471,3 +476,89 @@ def test_bare_loop_holds_the_anchor_across_a_chunk():
         relative_step(create_transition(observation={OBS_STATE: anchor + tick}))
         action = absolute_step(create_transition(action=select_action()))[TransitionKey.ACTION]
         torch.testing.assert_close(action, anchor + offset)
+
+
+# --------------------------------------------------------------------------------------
+# SE(3) pose groups
+# --------------------------------------------------------------------------------------
+# Subtracting rotation components is only valid for scalar quantities such as joint angles.
+# On an end-effector pose, rotations compose by multiplication, so `se3_pose_groups` routes
+# those dimensions through `inv(T_state) @ T_action` instead.
+
+
+def _random_poses(rng, *shape):
+    """`[x, y, z, rx, ry, rz]` with an axis-angle rotation of random axis and angle."""
+    xyz = rng.normal(0.0, 1.0, (*shape, 3))
+    axis = rng.normal(0.0, 1.0, (*shape, 3))
+    axis /= np.linalg.norm(axis, axis=-1, keepdims=True)
+    angle = rng.uniform(0.0, np.pi, (*shape, 1))
+    return np.concatenate([xyz, axis * angle], axis=-1)
+
+
+def test_se3_pose_groups_round_trip():
+    rng = np.random.default_rng(0)
+    actions = torch.tensor(_random_poses(rng, 4, 5), dtype=torch.float64)
+    state = torch.tensor(_random_poses(rng, 4), dtype=torch.float64)
+    mask = [True] * 6
+    groups = [[0, 1, 2, 3, 4, 5]]
+
+    relative = to_relative_actions(actions, state, mask, se3_pose_groups=groups)
+    assert not torch.allclose(relative, actions - state.unsqueeze(-2))  # not a subtraction
+    back = to_absolute_actions(relative, state, mask, se3_pose_groups=groups)
+    torch.testing.assert_close(back, actions)
+
+
+def test_se3_pose_groups_leave_other_dims_component_wise():
+    rng = np.random.default_rng(1)
+    poses = _random_poses(rng, 3, 2)
+    gripper = rng.uniform(0.0, 1.0, (3, 2, 1))
+    actions = torch.tensor(np.concatenate([poses, gripper], -1), dtype=torch.float64)
+    state = torch.tensor(
+        np.concatenate([_random_poses(rng, 3), rng.uniform(0.0, 1.0, (3, 1))], -1), dtype=torch.float64
+    )
+    mask = [True] * 6 + [True]
+    groups = [[0, 1, 2, 3, 4, 5]]
+
+    relative = to_relative_actions(actions, state, mask, se3_pose_groups=groups)
+    # the seventh dim is outside the pose group, so it is still `action - state`
+    torch.testing.assert_close(relative[..., 6], actions[..., 6] - state[..., 6].unsqueeze(-1))
+    torch.testing.assert_close(to_absolute_actions(relative, state, mask, se3_pose_groups=groups), actions)
+
+
+def test_se3_rotation_matches_proper_composition():
+    """The relative rotation must be `inv(R_state) @ R_action`, not a component difference."""
+    rng = np.random.default_rng(2)
+    actions = torch.tensor(_random_poses(rng, 200, 1), dtype=torch.float64)
+    state = torch.tensor(_random_poses(rng, 200), dtype=torch.float64)
+    relative = to_relative_actions(actions, state, [True] * 6, se3_pose_groups=[[0, 1, 2, 3, 4, 5]])
+
+    def as_matrix(rotvec):
+        angle = np.linalg.norm(rotvec, axis=-1, keepdims=True)
+        axis = np.divide(rotvec, angle, out=np.zeros_like(rotvec), where=angle > 0)
+        kx, ky, kz = axis[..., 0], axis[..., 1], axis[..., 2]
+        zero = np.zeros_like(kx)
+        skew = np.stack([zero, -kz, ky, kz, zero, -kx, -ky, kx, zero], axis=-1).reshape(
+            *rotvec.shape[:-1], 3, 3
+        )
+        angle = angle[..., None]
+        return np.eye(3) + np.sin(angle) * skew + (1 - np.cos(angle)) * (skew @ skew)
+
+    expected = np.swapaxes(as_matrix(state.numpy()[:, 3:]), -1, -2)[:, None] @ as_matrix(
+        actions.numpy()[..., 3:]
+    )
+    np.testing.assert_allclose(as_matrix(relative.numpy()[..., 3:]), expected, atol=1e-10)
+
+
+def test_se3_pose_groups_are_validated():
+    actions = torch.zeros(1, 7)
+    state = torch.zeros(1, 7)
+    with pytest.raises(ValueError, match="six indices"):
+        to_relative_actions(actions, state, [True] * 7, se3_pose_groups=[[0, 1, 2]])
+    with pytest.raises(ValueError, match="outside the action"):
+        to_relative_actions(actions, state, [True] * 7, se3_pose_groups=[[0, 1, 2, 3, 4, 99]])
+    with pytest.raises(ValueError, match="more than one"):
+        to_relative_actions(
+            actions, state, [True] * 7, se3_pose_groups=[[0, 1, 2, 3, 4, 5], [5, 6, 0, 1, 2, 3]]
+        )
+    with pytest.raises(ValueError, match="excluded from the relative conversion"):
+        to_relative_actions(actions, state, [True] * 5 + [False, True], se3_pose_groups=[[0, 1, 2, 3, 4, 5]])

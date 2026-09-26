@@ -70,6 +70,9 @@ class PI05Config(PreTrainedConfig):
     relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
     # Populated at runtime from dataset metadata by make_policy.
     action_feature_names: list[str] | None = None
+    # Action index groups shaped [x, y, z, rx, ry, rz] (axis-angle) that are composed in
+    # SE(3) instead of subtracted. Leave empty for joint-space actions.
+    relative_se3_pose_groups: list[list[int]] = field(default_factory=list)
 
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
