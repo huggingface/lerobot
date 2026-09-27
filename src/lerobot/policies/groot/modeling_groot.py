@@ -251,7 +251,7 @@ class GrootPolicy(PreTrainedPolicy):
         field_kwargs = {key: value for key, value in kwargs.items() if key in field_names}
 
         if config is None:
-            # Create default config with the pretrained path (a `base_model_path` kwarg still wins, as before)
+            # Create default config with the pretrained path
             config = GrootConfig(**{"base_model_path": str(pretrained_name_or_path), **field_kwargs})
 
             # Add minimal visual feature required for validation
@@ -265,8 +265,7 @@ class GrootPolicy(PreTrainedPolicy):
                     ),
                 }
         else:
-            # Override base_model_path in place, as before: callers such as make_policy keep this object as
-            # `cfg.policy`, which is saved as train_config.json next to `policy.config` (config.json).
+            # Override the base_model_path with the provided path
             config.base_model_path = str(pretrained_name_or_path)
             if field_kwargs:
                 config = dataclasses.replace(config, **field_kwargs)
