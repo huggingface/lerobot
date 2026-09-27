@@ -119,7 +119,7 @@ class Evo1Config(PreTrainedConfig):
             warnings.warn(
                 "`vlm_dtype` is deprecated and ignored; use `--policy.dtype` instead.",
                 FutureWarning,
-                stacklevel=2,
+                stacklevel=3,
             )
             self.vlm_dtype = None
 

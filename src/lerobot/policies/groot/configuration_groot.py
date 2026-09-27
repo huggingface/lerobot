@@ -383,7 +383,7 @@ class GrootConfig(PreTrainedConfig):
             warnings.warn(
                 "`model_params_fp32` is deprecated and ignored; use `--policy.dtype` instead.",
                 FutureWarning,
-                stacklevel=2,
+                stacklevel=3,
             )
             self.model_params_fp32 = None
 

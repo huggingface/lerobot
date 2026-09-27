@@ -164,10 +164,9 @@ class EO1Config(PreTrainedConfig):
         # "follow the Qwen2.5-VL checkpoint dtype", and those checkpoints are published in bf16.
         if self.dtype == "auto":
             warnings.warn(
-                'dtype="auto" is deprecated and will be removed in a future release; '
-                "it resolves to torch.bfloat16.",
+                "`dtype='auto'` is deprecated and ignored; use `--policy.dtype` instead.",
                 FutureWarning,
-                stacklevel=2,
+                stacklevel=3,
             )
             self.dtype = torch.bfloat16
 

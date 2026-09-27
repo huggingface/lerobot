@@ -247,7 +247,7 @@ class FastWAMConfig(PreTrainedConfig):
             warnings.warn(
                 "`torch_dtype` is deprecated and ignored; use `--policy.dtype` instead.",
                 FutureWarning,
-                stacklevel=2,
+                stacklevel=3,
             )
             self.torch_dtype = None
 
