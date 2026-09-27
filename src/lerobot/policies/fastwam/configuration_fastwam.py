@@ -252,6 +252,10 @@ class FastWAMConfig(PreTrainedConfig):
             self.torch_dtype = None
 
         super().__post_init__()
+        if self.dtype not in {torch.float32, torch.float16, torch.bfloat16}:
+            raise ValueError(
+                f"Unsupported dtype={self.dtype!r}. Expected torch.float32, torch.float16 or torch.bfloat16."
+            )
         self.image_size = tuple(self.image_size)
         self.model_id = _validate_wan_model_id(self.model_id, "model_id")
         self.input_features = _coerce_policy_features(self.input_features)

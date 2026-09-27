@@ -120,6 +120,10 @@ class LingBotVAConfig(PreTrainedConfig):
         super().__post_init__()
         if self.attn_mode not in ("torch", "flashattn", "flex"):
             raise ValueError(f"attn_mode must be one of 'torch', 'flashattn', 'flex'; got {self.attn_mode!r}")
+        if self.dtype not in {torch.bfloat16, torch.float16, torch.float32}:
+            raise ValueError(
+                f"Unsupported dtype={self.dtype!r}. Expected torch.bfloat16, torch.float16 or torch.float32."
+            )
 
     @property
     def chunk_size(self) -> int:

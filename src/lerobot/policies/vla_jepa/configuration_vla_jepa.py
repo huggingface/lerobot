@@ -151,6 +151,10 @@ class VLAJEPAConfig(PreTrainedConfig):
             self.torch_dtype = None
 
         super().__post_init__()
+        if self.dtype not in {torch.float32, torch.float16, torch.bfloat16}:
+            raise ValueError(
+                f"Unsupported dtype={self.dtype!r}. Expected torch.float32, torch.float16 or torch.bfloat16."
+            )
         if self.freeze_qwen and self.enable_world_model:
             # freezing qwen backbone makes world model training irrelevant since no grad flows
             self.enable_world_model = False

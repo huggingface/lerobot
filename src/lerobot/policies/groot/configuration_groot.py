@@ -447,6 +447,9 @@ class GrootConfig(PreTrainedConfig):
             raise ValueError(message)
 
         super().__post_init__()
+        # The two states the former boolean could express; anything else would be silently ignored.
+        if self.dtype not in {torch.float32, torch.bfloat16}:
+            raise ValueError(f"Unsupported dtype={self.dtype!r}. Expected torch.float32 or torch.bfloat16.")
 
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
