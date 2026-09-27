@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
 import torch
-from huggingface_hub import hf_hub_download
+from huggingface_hub import HfApi, hf_hub_download
 from huggingface_hub.constants import HF_HUB_OFFLINE, SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import EntryNotFoundError, HFValidationError, HfHubHTTPError
 from torch import Tensor
@@ -81,30 +81,42 @@ def _probe_finetuned_checkpoint(
     propagate, because silently rerouting a fine-tuned checkpoint down the
     base-GR00T path hands back the wrong model that looks loaded (#4711, the
     failure class of #4577).
+
+    Online this is a HEAD-style existence check (`HfApi().file_exists`) — no
+    multi-GB download just to learn whether the file is there. Offline (or
+    `local_files_only`) it falls back to a cache-only `hf_hub_download`,
+    because the HEAD probe cannot resolve from the local cache.
     """
     if os.path.isdir(model_id):
         return os.path.exists(os.path.join(model_id, SAFETENSORS_SINGLE_FILE))
 
     offline = local_files_only or HF_HUB_OFFLINE
     try:
-        # A HEAD-style existence check would be cheaper; hf_hub_download with
-        # force_download=False reuses the cached blob, so repeated probes of the
-        # same repo stay cheap.
-        hf_hub_download(
-            repo_id=model_id,
-            filename=SAFETENSORS_SINGLE_FILE,
+        if offline:
+            # Cache-only resolution: returns the cached blob when present,
+            # raises (LocalEntryNotFoundError ⊂ EntryNotFoundError) when not.
+            hf_hub_download(
+                repo_id=model_id,
+                filename=SAFETENSORS_SINGLE_FILE,
+                revision=revision,
+                cache_dir=cache_dir,
+                force_download=False,
+                proxies=proxies,
+                token=token,
+                local_files_only=True,
+            )
+            return True
+        return HfApi().file_exists(
+            model_id,
+            SAFETENSORS_SINGLE_FILE,
             revision=revision,
-            cache_dir=cache_dir,
-            force_download=False,  # Just check, don't force download
-            proxies=proxies,
             token=token,
-            local_files_only=local_files_only,
         )
-        return True
     except (EntryNotFoundError, HfHubHTTPError, HFValidationError):
         # Definitive absence: missing file (EntryNotFoundError, including the
-        # local-files-only cache miss), missing repo/revision or gated repo
-        # (HfHubHTTPError), or not a repo id at all (HFValidationError).
+        # cache-only miss), missing repo/revision or gated repo
+        # (HfHubHTTPError / GatedRepoError), or not a repo id at all
+        # (HFValidationError — file_exists validates the repo id too).
         return False
     except Exception as e:
         if offline:
@@ -269,7 +281,7 @@ class GrootPolicy(PreTrainedPolicy):
         if is_finetuned_checkpoint:
             # This is a fine-tuned LeRobot checkpoint - use parent class loading
             logger.info("Detected fine-tuned LeRobot checkpoint, loading with state dict...")
-            return super().from_pretrained(
+            policy = super().from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
                 config=config,
                 force_download=force_download,
@@ -282,49 +294,56 @@ class GrootPolicy(PreTrainedPolicy):
                 strict=strict,
                 **kwargs,
             )
-
-        # This is a base GR00T model - load it fresh
-        logger.info("Detected base GR00T model, loading from HuggingFace...")
-
-        if config is None:
-            # Create default config with the pretrained path
-            config = GrootConfig(
-                base_model_path=str(pretrained_name_or_path),
-            )
-
-            # Add minimal visual feature required for validation
-            # validate_features() will automatically add state and action features
-            # These are placeholders - actual robot features come from the preprocessor
-            if not config.input_features:
-                config.input_features = {
-                    f"{OBS_IMAGES}.camera": PolicyFeature(
-                        type=FeatureType.VISUAL,
-                        shape=(3, 224, 224),  # Default image size from config
-                    ),
-                }
         else:
-            # Override the base_model_path with the provided path
-            config.base_model_path = str(pretrained_name_or_path)
+            # This is a base GR00T model - load it fresh
+            logger.info("Detected base GR00T model, loading from HuggingFace...")
 
-        # Pass through any additional config overrides from kwargs
-        for key, value in kwargs.items():
-            if hasattr(config, key):
-                setattr(config, key, value)
+            if config is None:
+                # Create default config with the pretrained path
+                config = GrootConfig(
+                    base_model_path=str(pretrained_name_or_path),
+                )
 
-        inferred_version = infer_groot_model_version(config.base_model_path)
-        if inferred_version is not None and inferred_version != GROOT_N1_7:
-            message = (
-                f"GR00T model_version '{GROOT_N1_7}' does not match base_model_path "
-                f"'{config.base_model_path}', which looks like '{inferred_version}'."
-            )
-            if inferred_version == GROOT_N1_5:
-                message = f"{message} {GROOT_N1_5_REMOVAL_GUIDANCE}"
-            raise ValueError(message)
-        # Create a fresh policy instance - this will automatically load the GR00T model
-        # in __init__ via _create_groot_model()
-        policy = cls(config)
+                # Add minimal visual feature required for validation
+                # validate_features() will automatically add state and action features
+                # These are placeholders - actual robot features come from the preprocessor
+                if not config.input_features:
+                    config.input_features = {
+                        f"{OBS_IMAGES}.camera": PolicyFeature(
+                            type=FeatureType.VISUAL,
+                            shape=(3, 224, 224),  # Default image size from config
+                        ),
+                    }
+            else:
+                # Override the base_model_path with the provided path
+                config.base_model_path = str(pretrained_name_or_path)
 
-        policy.eval()
+            # Pass through any additional config overrides from kwargs
+            for key, value in kwargs.items():
+                if hasattr(config, key):
+                    setattr(config, key, value)
+
+            inferred_version = infer_groot_model_version(config.base_model_path)
+            if inferred_version is not None and inferred_version != GROOT_N1_7:
+                message = (
+                    f"GR00T model_version '{GROOT_N1_7}' does not match base_model_path "
+                    f"'{config.base_model_path}', which looks like '{inferred_version}'."
+                )
+                if inferred_version == GROOT_N1_5:
+                    message = f"{message} {GROOT_N1_5_REMOVAL_GUIDANCE}"
+                raise ValueError(message)
+            # Create a fresh policy instance - this will automatically load the GR00T model
+            # in __init__ via _create_groot_model()
+            policy = cls(config)
+            policy.eval()
+
+        # Record what was actually loaded so eval harnesses can assert it before
+        # a run instead of trusting the load silently (#4711).
+        policy.loaded_checkpoint_source = {
+            "is_finetuned_checkpoint": is_finetuned_checkpoint,
+            "repo_id": str(pretrained_name_or_path),
+            "revision": revision,
+        }
         return policy
 
     def get_optim_params(self):  # type: ignore[override]
