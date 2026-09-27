@@ -349,10 +349,8 @@ class GrootConfig(PreTrainedConfig):
     # The native N1.7 fine-tuning recipe keeps model parameters in FP32 and computes under BF16 autocast.
     dtype: torch.dtype | None = torch.float32
 
-    # Deprecated: superseded by `dtype`. Declared so checkpoints written before the rename still
-    # parse — draccus rejects config.json keys the dataclass no longer declares.
-    # TODO: remove this field and the migration in `__post_init__` once published checkpoints
-    # have been re-saved.
+    # Deprecated and ignored: superseded by `dtype`. Declared only so configs written before the
+    # rename still parse — draccus rejects config.json keys the dataclass no longer declares.
     model_params_fp32: bool | None = None
 
     # TODO(Steven): Remove these deprecated fields in a future release.
@@ -383,12 +381,10 @@ class GrootConfig(PreTrainedConfig):
     def __post_init__(self):
         if self.model_params_fp32 is not None:
             warnings.warn(
-                "`model_params_fp32` is deprecated and will be removed in a future release; use `dtype`.",
+                "`model_params_fp32` is deprecated and ignored; use `--policy.dtype` instead.",
                 FutureWarning,
                 stacklevel=2,
             )
-            self.dtype = torch.float32 if self.model_params_fp32 else torch.bfloat16
-            # Clear it so a re-saved config does not re-trigger this warning forever.
             self.model_params_fp32 = None
 
         if self.tokenizer_assets_repo is not None:

@@ -128,10 +128,8 @@ class VLAJEPAConfig(PreTrainedConfig):
     gripper_joint_names: list[str] = field(default_factory=lambda: ["gripper"])
     dtype: torch.dtype | None = torch.bfloat16
 
-    # Deprecated: renamed to `dtype`. Declared so checkpoints written before the rename still
-    # parse — draccus rejects config.json keys the dataclass no longer declares.
-    # TODO: remove this field and the migration in `__post_init__` once published checkpoints
-    # have been re-saved.
+    # Deprecated and ignored: superseded by `dtype`. Declared only so configs written before the
+    # rename still parse — draccus rejects config.json keys the dataclass no longer declares.
     torch_dtype: str | None = None
 
     optimizer_lr: float = 1e-4
@@ -146,12 +144,10 @@ class VLAJEPAConfig(PreTrainedConfig):
     def __post_init__(self) -> None:
         if self.torch_dtype is not None:
             warnings.warn(
-                "`torch_dtype` is deprecated and will be removed in a future release; use `dtype`.",
+                "`torch_dtype` is deprecated and ignored; use `--policy.dtype` instead.",
                 FutureWarning,
                 stacklevel=2,
             )
-            self.dtype = self._decode_dtype(self.torch_dtype)
-            # Clear it so a re-saved config does not re-trigger this warning forever.
             self.torch_dtype = None
 
         super().__post_init__()

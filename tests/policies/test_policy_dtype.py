@@ -188,16 +188,16 @@ def test_restricted_policies_reject_none(config_cls):
 # --------------------------------------------------------------------------------------
 
 # (config class, legacy payload, expected dtype, deprecated key named in the warning)
+# The renamed keys (`torch_dtype`, `vlm_dtype`, `model_params_fp32`) are deprecated and ignored:
+# they warn and `dtype` keeps the class default. EO1's legacy value "auto" still resolves to bf16.
 LEGACY_CASES = [
     (FastWAMConfig, {"torch_dtype": "bfloat16"}, torch.bfloat16, "torch_dtype"),
-    (FastWAMConfig, {"torch_dtype": "float32"}, torch.float32, "torch_dtype"),
+    (FastWAMConfig, {"torch_dtype": "float32"}, torch.bfloat16, "torch_dtype"),
     (VLAJEPAConfig, {"torch_dtype": "bfloat16"}, torch.bfloat16, "torch_dtype"),
     (Evo1Config, {"vlm_dtype": "bfloat16"}, torch.bfloat16, "vlm_dtype"),
-    # `zuoxingdong/evo1_libero`, the checkpoint the EVO1 docs reproduce from, stores
-    # float32 here — the old value must be carried over verbatim, never defaulted.
-    (Evo1Config, {"vlm_dtype": "float32"}, torch.float32, "vlm_dtype"),
+    (Evo1Config, {"vlm_dtype": "float32"}, torch.bfloat16, "vlm_dtype"),
     (GrootConfig, {"model_params_fp32": True}, torch.float32, "model_params_fp32"),
-    (GrootConfig, {"model_params_fp32": False}, torch.bfloat16, "model_params_fp32"),
+    (GrootConfig, {"model_params_fp32": False}, torch.float32, "model_params_fp32"),
     (EO1Config, {"dtype": "auto"}, torch.bfloat16, "auto"),
 ]
 
