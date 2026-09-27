@@ -91,8 +91,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     # They register into draccus' process-global type registry (the same mechanism it uses
     # for Path/PathLike), not into this class's ChoiceRegistry, at import of this module.
     # `staticmethod` is required: draccus calls the registered object directly and a
-    # `classmethod` object is not callable. Keep the register decorator ABOVE it — the
-    # reverse order silently produces a wrong result instead of raising.
+    # `classmethod` object is not callable.
     @draccus.decode.register(torch.dtype)
     @staticmethod
     def _decode_dtype(value: Any, path: Sequence[str] = ()) -> torch.dtype:
