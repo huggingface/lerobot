@@ -421,7 +421,7 @@ class PaliGemmaWithExpertModel(
 
     def _vision_autocast(self, image: torch.Tensor) -> bool:
         """Whether to run the vision tower in bfloat16 for this call."""
-        return not self.training and self.precision == "bfloat16" and image.device.type == "cuda"
+        return not self.training and self.precision == torch.bfloat16 and image.device.type == "cuda"
 
     def embed_language_tokens(self, tokens: torch.Tensor):
         return self.paligemma.model.language_model.get_input_embeddings()(tokens)

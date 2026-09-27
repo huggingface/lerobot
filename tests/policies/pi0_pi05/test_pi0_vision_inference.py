@@ -144,7 +144,7 @@ def test_autocast_is_off_on_cpu():
 def test_autocast_is_enabled_for_bfloat16_inference_on_cuda():
     image = torch.zeros(1, 3, 4, 4, device="cuda")
 
-    inference = _autocast_stub("bfloat16", training=False)
+    inference = _autocast_stub(torch.bfloat16, training=False)
     assert PaliGemmaWithExpertModel._vision_autocast(inference, image) is True  # noqa: SLF001
 
     training = _autocast_stub("bfloat16", training=True)
