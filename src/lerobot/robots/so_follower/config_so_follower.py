@@ -53,10 +53,11 @@ class SOFollowerConfig:
     position_i_coefficient: int = 0
     position_d_coefficient: int = 32
 
-    # Protection registers written to the gripper motor at connect time to avoid burning out the servo when it is
-    # held closed (#1809). The defaults were chosen for the stock SO-100/SO-101 gripper; a gripper that needs more
-    # force to close can raise them. Values are raw Feetech STS3215 register values:
-    # - `gripper_max_torque_limit` -> `Max_Torque_Limit`: 0-1000, in 0.1% of stall torque.
+    # Protection registers written to the gripper motor at connect time to avoid burning out the servo (#1809).
+    # The defaults were chosen for the stock SO-100/SO-101 gripper; a gripper that needs more force to close can
+    # raise them. Values are raw Feetech STS3215 register values:
+    # - `gripper_max_torque_limit` -> `Max_Torque_Limit`: 0-1000, in 0.1% of stall torque. The memory table says
+    #   the servo copies it into `Torque_Limit` at power-up, so a changed value may need a power cycle to apply.
     # - `gripper_protection_current` -> `Protection_Current`: 0-511, in 6.5 mA steps.
     # - `gripper_overload_torque` -> `Overload_Torque`: 0-100, in % of max torque. A load above this threshold
     #   for `Protection_Time` makes the servo drop its output to `Protective_Torque`.
