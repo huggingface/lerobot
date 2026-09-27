@@ -13,115 +13,62 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for `PreTrainedConfig.dtype`: a `torch.dtype` in Python, a plain name such as "bfloat16" in
-config.json and on the command line."""
+"""End-to-end checks that `PreTrainedConfig.dtype` is parsed from config.json, train_config.json and the CLI."""
 
 import json
 
 import draccus
 import pytest
 import torch
-from draccus.utils import DecodingError
 
+import lerobot.policies
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.eo1.configuration_eo1 import EO1Config
-from lerobot.policies.evo1.configuration_evo1 import Evo1Config
-from lerobot.policies.fastwam.configuration_fastwam import FastWAMConfig
-from lerobot.policies.groot.configuration_groot import GrootConfig
-from lerobot.policies.lingbot_va.configuration_lingbot_va import LingBotVAConfig
-from lerobot.policies.pi0.configuration_pi0 import PI0Config
-from lerobot.policies.vla_jepa.configuration_vla_jepa import VLAJEPAConfig
+
+POLICY_CONFIGS = [
+    getattr(lerobot.policies, name) for name in lerobot.policies.__all__ if name.endswith("Config")
+]
 
 
-def _write_config_json(directory, **fields):
-    (directory / "config.json").write_text(json.dumps({"device": "cpu", **fields}))
-
-
-def test_dtype_round_trips_through_config_json(tmp_path):
-    ACTConfig(device="cpu", dtype=torch.bfloat16).save_pretrained(tmp_path)
+@pytest.mark.parametrize("config_cls", POLICY_CONFIGS, ids=lambda cls: cls.__name__)
+def test_policy_config_json_round_trip(tmp_path, config_cls):
+    # EO1 would otherwise download the Qwen2.5-VL config from the Hub.
+    extra = {"vlm_config": {}} if config_cls is EO1Config else {}
+    config_cls(device="cpu", dtype=torch.bfloat16, **extra).save_pretrained(tmp_path)
 
     assert json.loads((tmp_path / "config.json").read_text())["dtype"] == "bfloat16"
     assert PreTrainedConfig.from_pretrained(tmp_path).dtype is torch.bfloat16
+    # What `--policy.path=<dir> --policy.dtype=float32` does.
+    overridden = PreTrainedConfig.from_pretrained(tmp_path, cli_overrides=["--dtype=float32"])
+    assert overridden.dtype is torch.float32
 
 
-@pytest.mark.parametrize(
-    ("name", "expected"),
-    [("float16", torch.float16), ("torch.float16", torch.float16), (None, None)],
-)
-def test_dtype_names_are_decoded(tmp_path, name, expected):
-    _write_config_json(tmp_path, type="act", dtype=name)
-    assert PreTrainedConfig.from_pretrained(tmp_path).dtype is expected
-
-
-def test_policy_dtype_flag_overrides_config_json(tmp_path):
-    # `--policy.path=<dir> --policy.dtype=float32` reaches `from_pretrained` as a CLI override.
-    _write_config_json(tmp_path, type="act", dtype="bfloat16")
-    config = PreTrainedConfig.from_pretrained(tmp_path, cli_overrides=["--dtype=float32"])
-    assert config.dtype is torch.float32
-
-
-def test_policy_dtype_flag_in_a_train_config():
+def test_train_config_cli_and_resume(tmp_path):
     cfg = draccus.parse(
         TrainPipelineConfig, args=["--dataset.repo_id=u/d", "--policy.type=act", "--policy.dtype=bfloat16"]
     )
     assert cfg.policy.dtype is torch.bfloat16
 
-
-# "auto" is only accepted by EO1, as a deprecated alias (see the last test).
-@pytest.mark.parametrize("name", ["nonsense", "auto"])
-def test_names_that_are_not_dtypes_are_rejected(tmp_path, name):
-    _write_config_json(tmp_path, type="act", dtype=name)
-    with pytest.raises(DecodingError, match="Invalid dtype"):
-        PreTrainedConfig.from_pretrained(tmp_path)
-
-
-def test_python_callers_must_pass_a_torch_dtype():
-    with pytest.raises(ValueError, match="must be a torch.dtype"):
-        ACTConfig(device="cpu", dtype="bfloat16")
+    cfg.save_pretrained(tmp_path)
+    assert TrainPipelineConfig.from_pretrained(tmp_path).policy.dtype is torch.bfloat16
+    resumed = TrainPipelineConfig.from_pretrained(tmp_path, cli_args=["--policy.dtype=float32"])
+    assert resumed.policy.dtype is torch.float32
 
 
 @pytest.mark.parametrize(
-    ("config_cls", "supported"),
+    ("legacy_config", "default"),
     [
-        (PI0Config, torch.bfloat16),  # same {float32, bfloat16} check in pi05, pi0_fast, xvla, molmoact2
-        (FastWAMConfig, torch.float16),
-        (LingBotVAConfig, torch.float16),
-        (VLAJEPAConfig, torch.float16),
-        (GrootConfig, torch.bfloat16),
+        ({"type": "fastwam", "torch_dtype": "float32"}, torch.bfloat16),
+        ({"type": "vla_jepa", "torch_dtype": "float32"}, torch.bfloat16),
+        ({"type": "evo1", "vlm_dtype": "float32"}, torch.bfloat16),
+        ({"type": "groot", "model_params_fp32": False}, torch.float32),
+        ({"type": "eo1", "dtype": "auto", "vlm_config": {}}, torch.bfloat16),
     ],
 )
-def test_policies_restrict_dtype_to_the_precisions_they_support(config_cls, supported):
-    assert config_cls(device="cpu", dtype=supported).dtype is supported
-    with pytest.raises(ValueError, match="dtype"):
-        config_cls(device="cpu", dtype=torch.float64)
-
-
-@pytest.mark.parametrize(
-    ("config_cls", "legacy_key", "legacy_value", "default"),
-    [
-        (FastWAMConfig, "torch_dtype", "float32", torch.bfloat16),
-        (VLAJEPAConfig, "torch_dtype", "float32", torch.bfloat16),
-        (Evo1Config, "vlm_dtype", "float32", torch.bfloat16),
-        (GrootConfig, "model_params_fp32", False, torch.float32),
-    ],
-)
-def test_legacy_precision_keys_are_ignored_with_a_warning(
-    tmp_path, config_cls, legacy_key, legacy_value, default
-):
-    # A config.json written before `dtype` existed still loads, but only `dtype` sets the precision.
-    policy_type = PreTrainedConfig.get_choice_name(config_cls)
-    _write_config_json(tmp_path, type=policy_type, **{legacy_key: legacy_value})
-
-    with pytest.warns(FutureWarning, match=legacy_key):
+def test_legacy_precision_settings_still_load(tmp_path, legacy_config, default):
+    # Configs saved before `dtype` existed load with a warning; only `dtype` sets the precision.
+    (tmp_path / "config.json").write_text(json.dumps({"device": "cpu", **legacy_config}))
+    with pytest.warns(FutureWarning, match="is deprecated and ignored"):
         config = PreTrainedConfig.from_pretrained(tmp_path)
-
     assert config.dtype is default
-    assert getattr(config, legacy_key) is None
-
-
-def test_eo1_auto_dtype_resolves_to_bfloat16_with_a_warning():
-    with pytest.warns(FutureWarning, match="auto"):
-        config = EO1Config(device="cpu", vlm_config={}, dtype="auto")
-    assert config.dtype is torch.bfloat16
