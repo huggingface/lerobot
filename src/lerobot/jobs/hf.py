@@ -122,6 +122,15 @@ def build_remote_config_file(cfg, repo_id: str, dest: Path, tags: list[str] | No
     # trainer image doesn't know about.
     data = remote.to_dict()
     data.pop("job", None)
+    # `policy.dtype` is newer than the released trainer image. Omit it only when both the value and the
+    # policy class default are None: the pod then decodes the missing key back to the same None.
+    policy = data.get("policy")
+    if (
+        isinstance(policy, dict)
+        and policy.get("dtype") is None
+        and getattr(type(remote.policy), "dtype", None) is None
+    ):
+        policy.pop("dtype", None)
     if not remote.save_checkpoint_to_hub:
         data.pop("save_checkpoint_to_hub", None)
 
