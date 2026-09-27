@@ -357,7 +357,12 @@ class NativeHTTPRangeFetcher:
             if not refresh and relative_path in self._resolved_urls:
                 return self._resolved_urls[relative_path]
         source = self._source_url(relative_path)
-        response = self._request("HEAD", source, headers=self.api._build_hf_headers(), follow_redirects=False)
+        # A cached Hub redirect can contain the same expired signed URL. Refresh
+        # the redirect as well as our local entry, without changing source identity.
+        request_url = str(httpx.URL(source).copy_add_param("_refresh", str(uuid4()))) if refresh else source
+        response = self._request(
+            "HEAD", request_url, headers=self.api._build_hf_headers(), follow_redirects=False
+        )
         try:
             hf_raise_for_status(response)
             location = response.headers.get("Location")
@@ -415,7 +420,8 @@ class NativeHTTPRangeFetcher:
         headers = self._headers_for(resolved, source)
         headers["Range"] = f"bytes={offset}-{offset + length - 1}"
         payload, status_code, timings = self._read_range_response(resolved, headers)
-        if status_code == 403:
+        if status_code in (401, 403):
+            self._record_timing(range_url_refreshes=1.0)
             refresh_start = time.perf_counter()
             resolved = self._resolve_url(relative_path, refresh=True)
             resolve_s += time.perf_counter() - refresh_start
@@ -423,9 +429,12 @@ class NativeHTTPRangeFetcher:
             headers["Range"] = f"bytes={offset}-{offset + length - 1}"
             payload, status_code, retry_timings = self._read_range_response(resolved, headers)
             for key, value in retry_timings.items():
-                timings[key] += value
-        if status_code == 403:
-            raise PermissionError(f"HTTP range request returned 403 after URL refresh: {relative_path}")
+                timings[key] = timings.get(key, 0.0) + value
+        if status_code in (401, 403):
+            self._record_timing(range_failed_requests=1.0)
+            raise PermissionError(
+                f"HTTP range request returned {status_code} after URL refresh: {relative_path}"
+            )
         if status_code != 206:
             raise RuntimeError(f"HTTP range request returned {status_code} after retries: {relative_path}")
         self._record_timing(
@@ -524,7 +533,7 @@ class NativeHTTPRangeFetcher:
         header_start = time.perf_counter()
         with self.client.stream("GET", url, headers=headers) as response:
             header_s = time.perf_counter() - header_start
-            if response.status_code == 403 or response.status_code in self._RETRYABLE_STATUS_CODES:
+            if response.status_code in (401, 403) or response.status_code in self._RETRYABLE_STATUS_CODES:
                 return (
                     b"",
                     response.status_code,
