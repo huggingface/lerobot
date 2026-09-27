@@ -16,6 +16,7 @@
 import logging
 import math
 from pprint import pformat
+from typing import Literal, cast
 
 import torch
 
@@ -32,12 +33,14 @@ from .storage import DEFAULT_STORAGE_FORMAT, load_dataset_metadata
 from .streaming_dataset import StreamingLeRobotDataset
 from .utils import resolve_episode_indices
 
+logger = logging.getLogger(__name__)
+
 
 def resolve_delta_timestamps(
     cfg: PreTrainedConfig | RewardModelConfig,
     ds_meta: LeRobotDatasetMetadata,
     rename_map: dict[str, str] | None = None,
-) -> dict[str, list] | None:
+) -> dict[str, list[float]] | None:
     """Resolves delta_timestamps by reading from the 'delta_indices' properties of the config.
 
     Args:
@@ -48,7 +51,7 @@ def resolve_delta_timestamps(
             delta_timestamps against.
 
     Returns:
-        dict[str, list] | None: A dictionary of delta_timestamps, e.g.:
+        dict[str, list[float]] | None: A dictionary of delta_timestamps, e.g.:
             {
                 "observation.state": [-0.04, -0.02, 0]
                 "observation.action": [-0.02, 0, 0.02]
@@ -66,8 +69,8 @@ def resolve_delta_timestamps(
         explicit_state_indices if explicit_state_indices is not None else cfg.observation_delta_indices
     )
 
-    delta_timestamps = {}
-    matched_image_keys = []
+    delta_timestamps: dict[str, list[float]] = {}
+    matched_image_keys: list[str] = []
     for key in ds_meta.features:
         policy_key = (rename_map or {}).get(key, key)
         if policy_key == REWARD and cfg.reward_delta_indices is not None:
@@ -97,12 +100,12 @@ def resolve_delta_timestamps(
         )
 
     if len(delta_timestamps) == 0:
-        delta_timestamps = None
+        return None
 
     return delta_timestamps
 
 
-def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDataset:
+def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
 
     Args:
@@ -112,20 +115,21 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         NotImplementedError: The MultiLeRobotDataset is currently deactivated.
 
     Returns:
-        LeRobotDataset | MultiLeRobotDataset
+        LeRobotDataset | StreamingLeRobotDataset: a StreamingLeRobotDataset when `cfg.dataset.streaming` is set.
     """
     image_transforms = (
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
     )
 
     if isinstance(cfg.dataset.repo_id, str):
+        repo_type = cast(Literal["dataset", "bucket"], cfg.dataset.repo_type)
         # Storage-aware loader: same as LeRobotDatasetMetadata(...), plus support
         # for datasets whose root is an object-store URI (e.g. ``hf://``).
         ds_meta = load_dataset_metadata(
             cfg.dataset.repo_id,
             root=cfg.dataset.root,
             revision=cfg.dataset.revision,
-            repo_type=cfg.dataset.repo_type,
+            repo_type=repo_type,
         )
         delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, ds_meta, cfg.rename_map)
         episodes = resolve_episode_indices(
@@ -139,7 +143,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 "support remote map-style access without streaming mode."
             )
         if not cfg.dataset.streaming:
-            if cfg.dataset.repo_type == "bucket" and ds_meta.storage_format == DEFAULT_STORAGE_FORMAT:
+            if repo_type == "bucket" and ds_meta.storage_format == DEFAULT_STORAGE_FORMAT:
                 raise ValueError(
                     f"repo_type='bucket' is streaming-only for the default {DEFAULT_STORAGE_FORMAT!r} "
                     "storage format: set dataset.streaming=true to train from an HF Storage Bucket."
@@ -155,7 +159,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 return_uint8=True,
                 depth_output_unit=cfg.dataset.depth_output_unit,
                 tolerance_s=cfg.tolerance_s,
-                repo_type=cfg.dataset.repo_type,
+                repo_type=repo_type,
             )
         else:
             dataset = StreamingLeRobotDataset(
@@ -168,7 +172,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 max_num_shards=cfg.num_workers,
                 tolerance_s=cfg.tolerance_s,
                 return_uint8=True,
-                repo_type=cfg.dataset.repo_type,
+                repo_type=repo_type,
             )
     else:
         raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")
@@ -179,7 +183,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             image_transforms=image_transforms,
             video_backend=cfg.dataset.video_backend,
         )
-        logging.info(
+        logger.info(
             "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
             f"{pformat(dataset.repo_id_to_index, indent=2)}"
         )
@@ -197,7 +201,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
 
 def make_train_eval_datasets(
     cfg: TrainPipelineConfig,
-) -> tuple[LeRobotDataset | MultiLeRobotDataset, LeRobotDataset | None]:
+) -> tuple[LeRobotDataset | StreamingLeRobotDataset, LeRobotDataset | None]:
     """Create train and optional eval datasets by splitting episodes based on eval_split.
 
     The last ceil(n_episodes * eval_split) episodes per task are held out for evaluation.
@@ -229,7 +233,7 @@ def make_train_eval_datasets(
             f"eval_split={cfg.dataset.eval_split} leaves 0 training episodes from {len(base_episodes)} total."
         )
 
-    logging.info(
+    logger.info(
         f"Train/eval split: {len(train_episodes)} train, {len(eval_episodes)} eval "
         f"(eval_split={cfg.dataset.eval_split}, {len(task_to_episodes)} tasks)"
     )

@@ -38,6 +38,7 @@ from lerobot.__version__ import __version__
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.types import PolicyFeature
 from lerobot.distributed.checkpoint import (
     is_sharded_module,
     load_sharded_model,
@@ -347,6 +348,16 @@ def save_training_state(
 # ---------------------------------------------------------------------------------------------
 
 
+def _resume_checkpoint_dir(cfg: TrainPipelineConfig) -> Path:
+    """Return the checkpoint directory a resumed run restores from."""
+    if cfg.checkpoint_path is None:
+        raise ValueError(
+            "cfg.checkpoint_path is unset: `--resume=true` needs `--config_path=<checkpoint>` and "
+            "cannot be combined with `--policy.path` / `--reward_model.path`."
+        )
+    return cfg.checkpoint_path
+
+
 def resume_before_prepare(cfg: TrainPipelineConfig) -> int:
     """Phase 1 — before `accelerator.prepare()`: restore RNG and return the step counter.
 
@@ -363,10 +374,10 @@ def resume_before_prepare(cfg: TrainPipelineConfig) -> int:
 
     Raises:
         NotADirectoryError: If the checkpoint has no `training_state/` directory.
-        ValueError: If the resumed topology crosses the sharded/non-sharded boundary relative
-            to the one recorded in the checkpoint.
+        ValueError: If `cfg.checkpoint_path` is unset, or if the resumed topology crosses the
+            sharded/non-sharded boundary relative to the one recorded in the checkpoint.
     """
-    training_state_dir = cfg.checkpoint_path / TRAINING_STATE_DIR
+    training_state_dir = _resume_checkpoint_dir(cfg) / TRAINING_STATE_DIR
     if not training_state_dir.is_dir():
         raise NotADirectoryError(training_state_dir)
     metadata = load_training_metadata(training_state_dir)
@@ -481,10 +492,11 @@ def resume_after_prepare(
         scheduler (LRScheduler | None): The scheduler to restore, or None if the run has none.
 
     Raises:
+        ValueError: If `cfg.checkpoint_path` is unset.
         FileNotFoundError: If the checkpoint format declares DCP model shards but the shard
             directory is missing (e.g. it was pruned before upload).
     """
-    checkpoint_dir = cfg.checkpoint_path
+    checkpoint_dir = _resume_checkpoint_dir(cfg)
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
     training_state_dir = checkpoint_dir / TRAINING_STATE_DIR
     unwrapped = accelerator.unwrap_model(policy)
@@ -694,9 +706,9 @@ _BASE_MODEL_MAPPING = {
 def build_card_context(
     cfg: TrainPipelineConfig | None,
     dataset_meta: "LeRobotDatasetMetadata | None",
-    input_features: dict | None,
-    output_features: dict | None,
-) -> dict:
+    input_features: dict[str, PolicyFeature] | None,
+    output_features: dict[str, PolicyFeature] | None,
+) -> dict[str, Any]:
     """Collect optional data for the model-card template.
 
     Returns plain values only (no Markdown) — the template in
@@ -709,15 +721,17 @@ def build_card_context(
             if available.
         dataset_meta (LeRobotDatasetMetadata | None): Dataset metadata supplying the dataset,
             robot-type, and camera sections, if available.
-        input_features (dict | None): The policy's input feature declarations, if any.
-        output_features (dict | None): The policy's output feature declarations, if any.
+        input_features (dict[str, PolicyFeature] | None): The policy's input feature
+            declarations, if any.
+        output_features (dict[str, PolicyFeature] | None): The policy's output feature
+            declarations, if any.
 
     Returns:
-        dict: Template context with `training`, `input_features`, `output_features`,
+        dict[str, Any]: Template context with `training`, `input_features`, `output_features`,
             `dataset`, `robot_type`, and `cameras` entries; unavailable pieces stay
             empty/None.
     """
-    context = {
+    context: dict[str, Any] = {
         "training": None,
         "input_features": input_features or {},
         "output_features": output_features or {},

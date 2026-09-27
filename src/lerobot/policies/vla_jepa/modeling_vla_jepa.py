@@ -97,7 +97,7 @@ class VLAJEPAModel(nn.Module):
             if image_size is None:
                 first_image_shape = next(iter(config.image_features.values())).shape
                 image_size = first_image_shape[-1]
-            self.video_predictor = ActionConditionedVideoPredictor(
+            self.video_predictor: ActionConditionedVideoPredictor | None = ActionConditionedVideoPredictor(
                 num_frames=config.num_video_frames // tubelet_size,
                 img_size=(image_size, image_size),
                 patch_size=16,
@@ -227,6 +227,8 @@ class VLAJEPAModel(nn.Module):
         `reduction="none"` returns a per-sample loss (B,) for sample weighting (RA-BC);
         "mean" returns the scalar loss.
         """
+        if self.video_predictor is None:
+            raise RuntimeError("The world model loss requires `enable_world_model=True`.")
         # Match the world model's expected view count: pad with the first view, or trim extras.
         num_views = self.config.num_world_model_views
         if videos.shape[1] < num_views:
@@ -395,7 +397,7 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         self.reset()
 
     def reset(self) -> None:
-        self._queues = {ACTION: deque(maxlen=self.config.n_action_steps)}
+        self._queues: dict[str, deque[Tensor]] = {ACTION: deque(maxlen=self.config.n_action_steps)}
 
     # ---- Format Conversion: LeRobot → Native ----
 

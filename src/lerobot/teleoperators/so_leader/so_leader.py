@@ -133,14 +133,14 @@ class SOLeader(Teleoperator):
         range_mins[full_turn_motor] = 0
         range_maxes[full_turn_motor] = 4095
 
-        self.calibration = {}
+        self.calibration: dict[str, MotorCalibration] = {}
         for motor, m in self.bus.motors.items():
             self.calibration[motor] = MotorCalibration(
                 id=m.id,
                 drive_mode=0,
-                homing_offset=homing_offsets[motor],
-                range_min=range_mins[motor],
-                range_max=range_maxes[motor],
+                homing_offset=int(homing_offsets[motor]),
+                range_min=int(range_mins[motor]),
+                range_max=int(range_maxes[motor]),
             )
 
         self.bus.write_calibration(self.calibration)

@@ -38,7 +38,7 @@ import logging
 import math
 from collections import deque
 from os import PathLike
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self, cast
 
 import numpy as np
 import torch
@@ -61,6 +61,8 @@ from ..pretrained import PreTrainedPolicy
 from ..utils import populate_queues
 from .configuration_wall_x import WallXConfig
 from .constant import WALL_X_GENERATION_PROMPT_IDS
+from .qwen_model import Qwen2_5_VLConfig
+from .qwen_model.vision_attention import VisionAttentionBackend
 
 if TYPE_CHECKING or _wallx_deps_available:
     from peft import LoraConfig, get_peft_model
@@ -74,7 +76,6 @@ if TYPE_CHECKING or _wallx_deps_available:
 
     from .qwen_model import (
         Qwen2_5_VLACausalLMOutputWithPast,
-        Qwen2_5_VLConfig,
         Qwen2_5_VLMoEModel,
         configure_wall_x_vision_attention,
     )
@@ -84,10 +85,12 @@ else:
     odeint = None
     AutoProcessor = None
     BatchFeature = None
-    Qwen2_5_VLForConditionalGeneration = None
+    # Conditional base: when transformers is unavailable the class still parses
+    # (inheriting from nn.Module) but cannot be instantiated—require_package in
+    # WallXPolicy.__init__ gives the user a clear error before that happens.
+    Qwen2_5_VLForConditionalGeneration = nn.Module
     cached_file = None
     is_torchdynamo_compiling = None
-    Qwen2_5_VLConfig = None
     Qwen2_5_VisionTransformerPretrainedModel = None
     Qwen2_5_VLACausalLMOutputWithPast = None
     Qwen2_5_VLMoEModel = None
@@ -258,13 +261,7 @@ class ActionHead(nn.Module):
         return self.propri_proj(proprioception)
 
 
-# Conditional base: when transformers is unavailable the class still parses
-# (inheriting from nn.Module) but cannot be instantiated—require_package in
-# WallXPolicy.__init__ gives the user a clear error before that happens.
-_Qwen2_5_VLForAction_Base = Qwen2_5_VLForConditionalGeneration if _wallx_deps_available else nn.Module
-
-
-class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
+class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
     """
     Qwen2.5 Vision-Language Mixture of Experts model for action processing.
 
@@ -284,11 +281,11 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
     @classmethod
     def from_pretrained(
         cls,
-        pretrained_name_or_path,
-        config=None,
-        action_tokenizer_path=None,
-        attn_implementation: str = "eager",
-        vision_attn_implementation: str = "auto",
+        pretrained_name_or_path: str | PathLike,
+        config: Qwen2_5_VLConfig | None = None,
+        action_tokenizer_path: str | PathLike | None = None,
+        attn_implementation: str | None = "eager",
+        vision_attn_implementation: VisionAttentionBackend = "auto",
         cache_dir: str | PathLike | None = None,
         force_download: bool = False,
         local_files_only: bool = False,
@@ -296,7 +293,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         revision: str = "main",
         strict: bool = False,
         **kwargs: Any,
-    ):
+    ) -> Self:
         """
         Load model from pretrained model path.
 
@@ -393,14 +390,14 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
 
     def __init__(
         self,
-        config,
-        use_fast_tokenizer=False,
-        processor=None,
-        action_tokenizer=None,
-        action_mapper=None,
-        flow_loss_weight=1.0,
-        vision_attn_implementation: str = "auto",
-    ):
+        config: Qwen2_5_VLConfig,
+        use_fast_tokenizer: bool = False,
+        processor: Any = None,
+        action_tokenizer: Any = None,
+        action_mapper: Any = None,
+        flow_loss_weight: float = 1.0,
+        vision_attn_implementation: VisionAttentionBackend = "auto",
+    ) -> None:
         """
         Initialize the Qwen2.5 VLMoE model for action processing.
 
@@ -632,17 +629,21 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
 
                     # Determine if processing image or video token
                     if ed_image < ed_video:
+                        if image_grid_thw is None:
+                            raise ValueError("Found image tokens in input_ids but image_grid_thw is None.")
                         # Process image token
                         t, h, w = (
                             image_grid_thw[image_index][0],
                             image_grid_thw[image_index][1],
                             image_grid_thw[image_index][2],
                         )
-                        second_per_grid_t = 0
+                        second_per_grid_t: float = 0
                         image_index += 1
                         remain_images -= 1
                         ed = ed_image
                     else:
+                        if video_grid_thw is None:
+                            raise ValueError("Found video tokens in input_ids but video_grid_thw is None.")
                         # Process video token
                         t, h, w = (
                             video_grid_thw[video_index][0],
@@ -714,6 +715,8 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
                 max_position_ids = position_ids.max(0, keepdim=False)[0].max(-1, keepdim=True)[0]
                 mrope_position_deltas = max_position_ids + 1 - attention_mask.shape[-1]
             else:
+                if input_ids is None:
+                    raise ValueError("get_rope_index needs input_ids when attention_mask is None.")
                 position_ids = (
                     torch.arange(input_ids.shape[1], device=input_ids.device)
                     .view(1, 1, -1)
@@ -751,7 +754,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         second_per_grid_ts: torch.Tensor | None = None,
         dof_mask: torch.FloatTensor | None = None,
         agent_pos_mask: torch.FloatTensor | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> tuple | Qwen2_5_VLACausalLMOutputWithPast:
         """
         Forward pass for training with multi-modal inputs including vision, text, and action data.
@@ -875,6 +878,8 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
                 mask = input_ids == self.action_token_id_set["propri_token_id"]
                 proprioception_rows = mask.any(dim=-1)
                 if proprioception_rows.any():
+                    if agent_pos_mask is None:
+                        raise ValueError("proprioception requires agent_pos_mask.")
                     active_proprioception = proprioception[proprioception_rows].to(
                         inputs_embeds.device, inputs_embeds.dtype
                     )
@@ -908,6 +913,8 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
                 mask = input_ids == self.action_token_id_set["action_token_id"]
                 action_rows = mask.any(dim=-1)
                 if action_rows.any():
+                    if dof_mask is None:
+                        raise ValueError("action_chunk requires dof_mask.")
                     active_action_chunk = action_chunk[action_rows].to(
                         inputs_embeds.device, inputs_embeds.dtype
                     )
@@ -977,13 +984,16 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         if action_chunk is not None:
             action_mask = input_ids == self.action_token_id_set["action_token_id"]
             if action_mask.any():
+                if dof_mask is None:
+                    raise ValueError("action_chunk requires dof_mask.")
                 action_rows = action_mask.any(dim=-1)
                 active_dof_mask = dof_mask[action_rows]
                 action_hidden_states = hidden_states[action_mask].to(torch.float32)
                 flow = flow.reshape(-1, flow.shape[-1]).to(torch.float32)
                 _flow_loss = self.action_preprocessor.flow_loss(action_hidden_states, flow, active_dof_mask)
-                if isinstance(_flow_loss, torch.Tensor):
-                    flow_loss = _flow_loss.mean()
+                if not isinstance(_flow_loss, torch.Tensor):
+                    raise TypeError("ActionHead.flow_loss must return a tensor.")
+                flow_loss = _flow_loss.mean()
                 if loss is not None:
                     loss = loss + self.flow_loss_weight * flow_loss.to(torch.float32)
                 else:
@@ -1055,13 +1065,13 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         rope_deltas: torch.LongTensor | None = None,
         cache_position: torch.LongTensor | None = None,
         second_per_grid_ts: torch.Tensor | None = None,
-        num_inference_timesteps: int | None = 10,
+        num_inference_timesteps: int = 10,
         dof_mask: torch.FloatTensor | None = None,
         agent_pos_mask: torch.FloatTensor | None = None,
         generation_prompt_ids: torch.LongTensor | None = None,
         re_generate: bool = False,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         """
         Multi-modal prediction method supporting text generation, fast action prediction, and diffusion-based action prediction.
 
@@ -1108,7 +1118,12 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
                 - 'predict_output_text': Generated text (for text/fast modes)
                 - 'gt_output_text': Ground truth text (for text/fast modes)
         """
-        batch_size = input_ids.shape[0] if input_ids is not None else inputs_embeds.shape[0]
+        if input_ids is not None:
+            batch_size = input_ids.shape[0]
+        elif inputs_embeds is not None:
+            batch_size = inputs_embeds.shape[0]
+        else:
+            raise ValueError("predict requires input_ids or inputs_embeds.")
 
         # Text and fast modes require batch size 1 for autoregressive generation
         if predict_mode in ["text", "fast"]:
@@ -1171,6 +1186,8 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
 
             # Process proprioceptive data
             if proprioception is not None:
+                if agent_pos_mask is None:
+                    raise ValueError("proprioception requires agent_pos_mask.")
                 proprioception = proprioception.to(inputs_embeds.device).to(inputs_embeds.dtype)
                 agent_pos_mask = agent_pos_mask.to(inputs_embeds.device).to(inputs_embeds.dtype)
                 proprio_embed = self.action_preprocessor.proprioception_proj(
@@ -1321,6 +1338,8 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
                 print("Error in decoding action, predict_action is None")
                 output["predict_action"] = None
             else:
+                if dof_mask is None or pixel_values is None:
+                    raise ValueError("Fast action prediction requires dof_mask and pixel_values.")
                 # Convert discrete tokens to continuous actions
                 predict_action = torch.tensor(predict_action, device=self.device)
                 dof_mask = dof_mask.to(self.device).to(pixel_values.dtype)
@@ -1330,6 +1349,8 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
 
             # Process ground truth actions if available
             if action_chunk is not None:
+                if dof_mask is None:
+                    raise ValueError("Ground-truth action_chunk requires dof_mask.")
                 # Apply DOF mask to get ground truth actions
                 # removed unnormalization step for now
                 action_chunk = action_chunk[:, :, dof_mask[0, 0, :].bool()]
@@ -1339,6 +1360,8 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
 
         # Handle diffusion-based action prediction
         if predict_mode == "diffusion":
+            if dof_mask is None:
+                raise ValueError("Diffusion action prediction requires dof_mask.")
             # Initialize with random noise
             noisy_action = torch.randn(
                 size=(batch_size, pred_horizon, action_dim),
@@ -1764,7 +1787,7 @@ class WallXPolicy(PreTrainedPolicy):
     config_class = WallXConfig
     name = "wall_x"
 
-    def __init__(self, config: WallXConfig, **kwargs):
+    def __init__(self, config: WallXConfig, **kwargs: Any) -> None:
         require_package("transformers", extra="wallx")
         require_package("peft", extra="wallx")
         require_package("torchdiffeq", extra="wallx")
@@ -1774,11 +1797,12 @@ class WallXPolicy(PreTrainedPolicy):
         self.config = config
 
         # Initialize the wall-x model
+        vision_attn_implementation = cast(VisionAttentionBackend, config.vision_attn_implementation)
         self.model = Qwen2_5_VLMoEForAction.from_pretrained(
             pretrained_name_or_path=config.pretrained_name_or_path,
             action_tokenizer_path=config.action_tokenizer_path,
             attn_implementation=config.attn_implementation,
-            vision_attn_implementation=config.vision_attn_implementation,
+            vision_attn_implementation=vision_attn_implementation,
         )
         self.model.to(config.device)
         self.model.to_bfloat16_for_selected_params()
@@ -1937,6 +1961,10 @@ class WallXPolicy(PreTrainedPolicy):
         generation_prompt_ids = batch.get(WALL_X_GENERATION_PROMPT_IDS)
         batch = self._pretokenized_inputs(batch)
 
+        if self.config.output_features is None:
+            raise ValueError("WALL-X needs `output_features` to unpad predicted actions.")
+        action_dim = self.config.output_features[ACTION].shape[0]
+
         if self.config.prediction_mode == "diffusion":
             output = self.model(
                 **batch,
@@ -1953,7 +1981,7 @@ class WallXPolicy(PreTrainedPolicy):
             output = self.model(
                 **batch,
                 generation_prompt_ids=generation_prompt_ids,
-                action_dim=self.config.output_features[ACTION].shape[0],
+                action_dim=action_dim,
                 pred_horizon=self.config.chunk_size,
                 mode="predict",
                 predict_mode="fast",
@@ -1965,7 +1993,6 @@ class WallXPolicy(PreTrainedPolicy):
         actions = output["predict_action"]
 
         # Unpad actions to actual action dimension
-        action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :action_dim]
 
         return actions

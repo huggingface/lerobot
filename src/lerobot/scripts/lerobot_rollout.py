@@ -164,6 +164,7 @@ Usage examples
 """
 
 import logging
+import threading
 
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
@@ -234,6 +235,8 @@ def rollout(cfg: RolloutConfig):
 
     signal_handler = ProcessSignalHandler(use_threads=True, display_pid=False)
     shutdown_event = signal_handler.shutdown_event
+    if not isinstance(shutdown_event, threading.Event):
+        raise RuntimeError("ProcessSignalHandler(use_threads=True) must hand out a threading.Event")
     if cfg.interactive:
         # /reset and /stop end the control loop via the local flag; process signals still
         # propagate through the parent event.
