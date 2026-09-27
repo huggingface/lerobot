@@ -100,7 +100,7 @@ def test_molmoact2_policy_registration():
     assert cfg.per_episode_seed is False
     assert cfg.eval_seed is None
     assert cfg.normalize_language is True
-    assert cfg.dtype == "bfloat16"
+    assert cfg.dtype == torch.bfloat16
     assert cfg.llm_residual_dropout == 0.1
     assert not hasattr(cfg, "model_dtype")
     assert cfg.get_scheduler_preset().num_decay_steps == 24_000
