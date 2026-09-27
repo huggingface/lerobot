@@ -90,7 +90,7 @@ class MyPolicyConfig(PreTrainedConfig):
         return None
 ```
 
-The string you pass to `@register_subclass` must match `MyPolicy.name` (next section) and is what users supply as `--policy.type` on the CLI. Default to `AdamW` from `lerobot.optim` for `get_optimizer_preset` unless you genuinely need otherwise.
+The string you pass to `@register_subclass` must match `MyPolicy.name` (next section) and is what users supply as `--policy.type` on the CLI. Default to `AdamW` from `lerobot.optim` for `get_optimizer_preset` unless you genuinely need otherwise. `PreTrainedConfig` already declares `dtype: torch.dtype | None`; to give your policy a default precision, redeclare it with a `torch.dtype` value (e.g. `dtype: torch.dtype | None = torch.bfloat16`), not a string.
 
 ### Policy class
 
