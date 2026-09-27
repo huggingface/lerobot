@@ -106,15 +106,9 @@ class EO1Config(PreTrainedConfig):
     supervise_padding_action_dims: bool = True
     supervise_padding_actions: bool = True
 
-    # Policy-level dtype request for the Qwen backbone. The EO1 flow-matching head still keeps
-    # its own parameters in fp32. Qwen2.5-VL checkpoints are published in bf16, so bf16 is both
-    # the default and what the former "auto" sentinel always resolved to.
-    #
-    # `Literal["auto"]` only widens what this field ACCEPTS, so checkpoints written before the
-    # rename still parse; `__post_init__` resolves it immediately, so `config.dtype` is never a
-    # string by the time any consumer reads it.
-    # TODO: drop the Literal and the migration in `__post_init__` once published EO1 checkpoints
-    # have been re-saved.
+    # Policy-level dtype request for the Qwen backbone. `torch.bfloat16` is set as the default because
+    # `Qwen/Qwen2.5-VL-3B-Instruct` is published in bf16. The EO1 flow-matching head still keeps its own
+    # parameters in fp32. `Literal["auto"]` is introduced only for backward compatibility.
     dtype: torch.dtype | Literal["auto"] | None = torch.bfloat16
     force_fp32_autocast: bool = True
 
@@ -160,8 +154,8 @@ class EO1Config(PreTrainedConfig):
     scheduler_decay_lr: float = 0.0
 
     def __post_init__(self):
-        # Resolve the legacy sentinel before the base class validates `dtype`. "auto" meant
-        # "follow the Qwen2.5-VL checkpoint dtype", and those checkpoints are published in bf16.
+        # Resolve the legacy sentinel before the base class validates `dtype`. "auto" meant "follow the
+        # `Qwen/Qwen2.5-VL-3B-Instruct` checkpoint dtype".
         if self.dtype == "auto":
             warnings.warn(
                 "`dtype='auto'` is deprecated and ignored; use `--policy.dtype` instead.",
