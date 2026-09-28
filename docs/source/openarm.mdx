@@ -19,8 +19,9 @@ To get your OpenArm, assembled or DIY, and join the global community, browse ver
 ## Platform Requirements
 
 <Tip warning={true}>
-  **Linux Only**: OpenArm currently only works on Linux. The CAN bus USB adapter
-  does not have macOS drivers and has not been tested on Windows.
+  **Linux and macOS**: OpenArm runs on Linux (SocketCAN, CAN FD) and on macOS
+  through a PEAK PCAN adapter (classic CAN). Windows has not been tested. See
+  [macOS CAN Bus Setup](#macos-can-bus-setup) below for the macOS instructions.
 </Tip>
 
 ## Safety Guide
@@ -47,7 +48,13 @@ The hardware repositories are available at [github.com/enactic/openarm](https://
 
 ## CAN Bus Setup
 
-OpenArm uses CAN bus communication with Damiao motors. Once you have the CAN bus USB adapter plugged into your Linux PC, follow the [Damiao Motors and CAN Bus guide](./damiao) to configure the interface.
+OpenArm uses CAN bus communication with Damiao motors, driven through the
+[`motorbridge`](https://pypi.org/project/motorbridge/) controller (the same backend used by the
+reBot B601).
+
+### Linux
+
+Once you have the CAN bus USB adapter plugged into your Linux PC, follow the [Damiao Motors and CAN Bus guide](./damiao) to configure the interface.
 
 Quick setup:
 
@@ -59,12 +66,44 @@ lerobot-setup-can --mode=setup --interfaces=can0,can1
 lerobot-setup-can --mode=test --interfaces=can0,can1
 ```
 
-## Install LeRobot 🤗
+<Tip warning={true}>
+  With the `motorbridge` backend the CAN interface bitrate is configured at the OS level, so the
+  interface must be brought up **before** connecting (the command above handles this). The
+  `can_bitrate` / `can_data_bitrate` config fields are informational and are not passed to the
+  controller. When `use_can_fd=True` (the default), OpenArm opens the channel with CAN FD via
+  `motorbridge`'s `from_socketcanfd`.
+</Tip>
 
-Follow our [Installation Guide](./installation), then install the Damiao motor support:
+### macOS CAN Bus Setup
+
+On macOS, OpenArm uses a PEAK PCAN adapter through `motorbridge`'s native libusb PCAN backend,
+which reaches **both** adapter channels (`can0` → `PCAN_USBBUS1`, `can1` → `PCAN_USBBUS2`) — enough
+for a leader + follower or bimanual setup on a single multi-channel adapter. This backend is
+**classic CAN only**, so `use_can_fd` is ignored on macOS and the arm runs at the classic 1 Mbps
+bitrate.
+
+The libusb backend is not in the PyPI `motorbridge` wheel yet; build it from the
+[`feat/pcan-usb-fd-native`](https://github.com/CarolinePascal/motorbridge/tree/feat/pcan-usb-fd-native)
+branch:
 
 ```bash
-pip install -e ".[damiao]"
+git clone -b feat/pcan-usb-fd-native https://github.com/CarolinePascal/motorbridge.git
+cd motorbridge
+cargo build --release -p motor_cli -p motor_abi --features motor_core/pcan-usb-fd
+pip install -e bindings/python
+```
+
+Then use OpenArm exactly as on Linux — pass the plain channel name (`--robot.port=can0`,
+`--teleop.port=can1`). LeRobot detects macOS automatically, forces classic CAN, and routes the
+channel through the libusb backend (equivalent to `motorbridge`'s `pcanfd:` prefix). No SocketCAN
+setup or `lerobot-setup-can` step is needed on macOS.
+
+## Install LeRobot 🤗
+
+Follow our [Installation Guide](./installation), then install the OpenArm support:
+
+```bash
+pip install -e ".[openarms]"
 ```
 
 ## Usage
