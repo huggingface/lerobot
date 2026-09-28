@@ -88,22 +88,6 @@ Install LeRobot with Reachy 2 dependencies:
 pip install -e ".[reachy2]"
 ```
 
-### (Optional but recommended) Install pollen_data_acquisition_server
-
-How you manage Reachy 2 recording sessions is up to you, but the **easiest** way is to use this server so you can control sessions directly from the VR teleoperation app.
-
-> **Note:** Currently, only the VR teleoperation application works as a client for this server, so this step primarily targets teleoperation. You’re free to develop custom clients to manage sessions to your needs.
-
-In your LeRobot environment, install the server from source:
-
-```bash
-git clone https://github.com/pollen-robotics/pollen_data_acquisition_server.git
-cd pollen_data_acquisition_server
-pip install -e .
-```
-
-Find the [pollen_data_acquisition_server documentation here](https://github.com/pollen-robotics/pollen_data_acquisition_server).
-
 ## Step 1: Recording
 
 ### Get Reachy 2 IP address
@@ -113,30 +97,13 @@ We strongly recommend connecting all devices (PC and robot) via **Ethernet**.
 
 ### Launch recording
 
-There are two ways to manage recording sessions when using the Reachy 2 VR teleoperation application:
+Use LeRobot's `lerobot-record` command to manage recording sessions. The `pollen_data_acquisition_server` workflow previously documented here is no longer available.
 
-- **Using the data acquisition server (recommended for VR teleop)**: The VR app orchestrates sessions (via the server it tells LeRobot when to create datasets, start/stop episodes) while also controlling the robot’s motions.
-- **Using LeRobot’s record script**: LeRobot owns session control and decides when to start/stop episodes. If you also use the VR teleop app, it’s only for motion control.
+When using the Reachy 2 VR teleoperation application, choose "Standard session". The VR application controls the robot's motion, while `lerobot-record` manages the dataset and starts and stops episodes.
 
-### Option 1: Using Pollen data acquisition server (recommended for VR teleop)
-
-Make sure you have installed pollen_data_acquisition_server, as explained in the Setup section.
-
-Launch the data acquisition server to be able to manage your session directly from the teleoperation application:
-
-```bash
-python -m pollen_data_acquisition_server.server
-```
-
-Then get into the teleoperation application and choose "Data acquisition session".
-You can finally setup your session by following the screens displayed.
-
-> Even without the VR app, you can use the `pollen_data_acquisition_server` with your own client implementation.
-
-### Option 2: Using lerobot.record
+### Record with `lerobot-record`
 
 Reachy 2 is fully supported by LeRobot’s recording features.
-If you choose this option but still want to use the VR teleoperation application, select "Standard session" in the app.
 
 **Example: start a recording without the mobile base:**
 First add reachy2 and reachy2_teleoperator to the imports of the record script. Then you can use the following command:
@@ -307,3 +274,11 @@ lerobot-eval \
   --dataset.num_episodes=10 \
   --policy.path=outputs/train/reachy2_test/checkpoints/last/pretrained_model
 ```
+
+Sections that were moved:
+
+[ <a href="#record-with-lerobot-record">(Optional but recommended) Install pollen_data_acquisition_server</a><a id="optional-but-recommended-install-pollendataacquisitionserver"></a> ]
+
+[ <a href="#record-with-lerobot-record">Option 1: Using Pollen data acquisition server (recommended for VR teleop)</a><a id="option-1-using-pollen-data-acquisition-server-recommended-for-vr-teleop"></a> ]
+
+[ <a href="#record-with-lerobot-record">Option 2: Using lerobot.record</a><a id="option-2-using-lerobotrecord"></a> ]

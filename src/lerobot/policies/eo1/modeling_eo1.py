@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import logging
 from collections import deque
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -29,22 +30,32 @@ from torch import Tensor
 
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
+from lerobot.utils.language import require_single_text_output
 
 from ..common.flow_matching import euler_integrate, sample_noise, sample_time_beta
 from ..common.vla_utils import create_sinusoidal_pos_embedding, pad_vector
 from ..pretrained import PreTrainedPolicy
 from .configuration_eo1 import EO1Config
+from .processor_eo1 import EO1_SPECIAL_TOKENS
 
 if TYPE_CHECKING or _transformers_available:
     from transformers.activations import ACT2FN
-    from transformers.models.qwen2_5_vl import Qwen2_5_VLForConditionalGeneration
+    from transformers.models.qwen2_5_vl import Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor
     from transformers.utils import torch_compilable_check
 else:
     ACT2FN = None
     Qwen2_5_VLForConditionalGeneration = None
+    Qwen2_5_VLProcessor = None
     torch_compilable_check = None
 
 logger = logging.getLogger(__name__)
+
+
+def _original_action_dim(config: EO1Config) -> int:
+    """Dataset action size before padding to `max_action_dim` (the ACTION entry `validate_features()` fills in)."""
+    if config.output_features is None:
+        raise ValueError("`output_features` must be resolved before EO-1 can size its actions.")
+    return config.output_features[ACTION].shape[0]
 
 
 class EO1Policy(PreTrainedPolicy):
@@ -73,6 +84,7 @@ class EO1Policy(PreTrainedPolicy):
             )
 
         self.model = EO1VisionFlowMatchingModel(config, vlm_backbone)
+        self._text_processor = None
         if config.gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
 
@@ -90,9 +102,24 @@ class EO1Policy(PreTrainedPolicy):
         state = self.prepare_state(batch[OBS_STATE])
         actions = self.prepare_action(batch[ACTION])
         model_inputs = self._get_model_inputs(batch, {OBS_STATE, ACTION})
-        loss = self.model(states=state, action=actions, **model_inputs)
+        outputs = self.model(states=state, action=actions, **model_inputs)
+        loss = None
+        if outputs.flow_loss is not None:
+            loss = self.config.flow_loss_weight * outputs.flow_loss
+        if outputs.text_loss is not None:
+            weighted_text_loss = self.config.text_loss_weight * outputs.text_loss
+            loss = weighted_text_loss if loss is None else loss + weighted_text_loss
+        if loss is None:
+            raise RuntimeError(
+                "EO-1 batch produced neither action nor text supervision. "
+                "Check the selected recipe and target annotations."
+            )
 
-        loss_dict = {"loss": loss.item()}
+        loss_dict = {"loss": float(loss.detach())}
+        if outputs.flow_loss is not None:
+            loss_dict["flow_loss"] = float(outputs.flow_loss.detach())
+        if outputs.text_loss is not None:
+            loss_dict["text_loss"] = float(outputs.text_loss.detach())
         return loss, loss_dict
 
     @torch.no_grad()
@@ -103,14 +130,67 @@ class EO1Policy(PreTrainedPolicy):
         model_inputs = self._get_model_inputs(batch, {OBS_STATE})
         actions = self.model.sample_actions(states=states, **model_inputs).to(torch.float32)
 
-        original_action_dim = self.config.output_features[ACTION].shape[0]
-        return actions[:, :, :original_action_dim]
+        return actions[:, :, : _original_action_dim(self.config)]
 
     def prepare_state(self, state: Tensor) -> Tensor:
         return pad_vector(state, self.config.max_state_dim)
 
     def prepare_action(self, action: Tensor) -> Tensor:
         return pad_vector(action, self.config.max_action_dim)
+
+    def _get_text_processor(self):
+        if self._text_processor is None:
+            self._text_processor = Qwen2_5_VLProcessor.from_pretrained(
+                self.config.vlm_base,
+                use_fast=self.config.use_fast_processor,
+                fix_mistral_regex=True,
+            )
+            self._text_processor.tokenizer.add_tokens(EO1_SPECIAL_TOKENS, special_tokens=True)
+        return self._text_processor
+
+    def supports_text_generation(self) -> bool:
+        return True
+
+    @torch.no_grad()
+    def generate_text(self, batch: dict[str, Tensor]) -> str:
+        """Decode one response conditioned on images and projected robot state."""
+        self.eval()
+        processor = self._get_text_processor()
+        input_names = ("input_ids", "attention_mask", "pixel_values", "image_grid_thw", "mm_token_type_ids")
+        inputs = {name: batch[name] for name in input_names if name in batch}
+        inputs["inputs_embeds"] = self.model.embed_prefix(
+            inputs["input_ids"],
+            states=self.prepare_state(batch[OBS_STATE]),
+            state_token_id=batch["state_token_id"],
+            action_token_id=batch["action_token_id"],
+        )
+        prompt_length = inputs["input_ids"].shape[1]
+        do_sample = self.config.text_temperature > 0
+        tokenizer = processor.tokenizer
+        pad_token_id = tokenizer.pad_token_id
+        if pad_token_id is None:
+            pad_token_id = tokenizer.eos_token_id
+        generation_kwargs: dict[str, Any] = {
+            "max_new_tokens": 100,
+            "min_new_tokens": 0,
+            "do_sample": do_sample,
+            "pad_token_id": pad_token_id,
+        }
+        if do_sample:
+            generation_kwargs.update(
+                temperature=self.config.text_temperature,
+                top_p=self.config.text_top_p,
+            )
+        generated = self.model.vlm_backbone.generate(**inputs, **generation_kwargs)
+        outputs = [
+            text.strip()
+            for text in processor.batch_decode(
+                generated[:, prompt_length:],
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=True,
+            )
+        ]
+        return require_single_text_output(outputs, policy_name="EO-1")
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -154,12 +234,19 @@ class EO1VisionActionProjector(torch.nn.Sequential):
         return self[0].weight.dtype
 
 
+@dataclass
+class EO1Output:
+    loss: Tensor | None = None
+    flow_loss: Tensor | None = None
+    text_loss: Tensor | None = None
+
+
 class EO1VisionFlowMatchingModel(nn.Module):
     def __init__(
         self,
         config: EO1Config,
-        vlm_backbone: Qwen2_5_VLForConditionalGeneration | None = None,
-    ):
+        vlm_backbone: Qwen2_5_VLForConditionalGeneration,
+    ) -> None:
         require_package("transformers", extra="eo1")
         super().__init__()
 
@@ -231,7 +318,7 @@ class EO1VisionFlowMatchingModel(nn.Module):
     def get_placeholder_mask(
         self,
         input_ids: torch.LongTensor | None,
-        inputs_embeds: torch.FloatTensor | None,
+        inputs_embeds: torch.FloatTensor,
         state_features: torch.FloatTensor | None = None,
         action_features: torch.FloatTensor | None = None,
         *,
@@ -352,12 +439,13 @@ class EO1VisionFlowMatchingModel(nn.Module):
         states: torch.FloatTensor | None = None,
         action: torch.FloatTensor | None = None,
         action_is_pad: torch.BoolTensor | None = None,
+        text_labels: torch.LongTensor | None = None,
         *,
         state_token_id: int,
         action_token_id: int,
         **kwargs,
-    ) -> Tensor:
-        """Run the EO1 training forward pass and compute the flow-matching loss."""
+    ) -> EO1Output:
+        """Run EO-1 flow and sparse assistant-token supervision in one sequence."""
 
         # 1. Build the EO1 prefix with state placeholders resolved.
         inputs_embeds = self.embed_prefix(
@@ -367,35 +455,52 @@ class EO1VisionFlowMatchingModel(nn.Module):
             action_token_id=action_token_id,
         )
 
-        # 2. Sample the diffusion target and replace the action placeholders.
-        time = self.sample_time(action.shape[0], inputs_embeds.device)
-        noise = self.sample_noise(action.shape, inputs_embeds.device)
-
-        time_expanded = time[:, None, None]
-        x_t = time_expanded * noise + (1 - time_expanded) * action
-        u_t = noise - action
-        action_time_embs = self.embed_suffix(time, x_t)
+        # 2. Sample the diffusion target only for rows carrying action placeholders.
         _, action_mask = self.get_placeholder_mask(
             input_ids,
             inputs_embeds,
-            action_features=action_time_embs,
             state_token_id=state_token_id,
             action_token_id=action_token_id,
         )
-        action_time_embs = action_time_embs.to(inputs_embeds.device, inputs_embeds.dtype)
-        inputs_embeds = inputs_embeds.masked_scatter(action_mask, action_time_embs)
+        action_token_mask = action_mask[..., 0]
+        action_rows = action_token_mask.any(dim=-1)
+        u_t = None
+        if action_rows.any():
+            if action is None:
+                raise ValueError("`action` is required when the batch carries action placeholder tokens.")
+            active_action = action[action_rows]
+            time = self.sample_time(active_action.shape[0], inputs_embeds.device)
+            noise = self.sample_noise(active_action.shape, inputs_embeds.device)
+            time_expanded = time[:, None, None]
+            x_t = time_expanded * noise + (1 - time_expanded) * active_action
+            u_t = noise - active_action
+            action_time_embs = self.embed_suffix(time, x_t)
+            expected_tokens = int(action_token_mask.sum().item())
+            if expected_tokens != action_time_embs.shape[0] * action_time_embs.shape[1]:
+                raise ValueError("EO-1 requires one action placeholder per supervised horizon step.")
+            inputs_embeds = inputs_embeds.masked_scatter(
+                action_mask,
+                action_time_embs.to(inputs_embeds.device, inputs_embeds.dtype),
+            )
 
         # 3. Optionally drop padded action tokens from backbone attention.
         if attention_mask is not None:
             attention_mask = attention_mask.to(inputs_embeds.device)
 
-        if not self.config.supervise_padding_actions:
-            action_is_pad = action_is_pad.to(device=inputs_embeds.device, dtype=torch.bool)
-            action_token_mask = action_mask[..., 0]
+        active_action_is_pad: Tensor | None = None
+        if action_rows.any() and not self.config.supervise_padding_actions:
+            if action_is_pad is None or attention_mask is None:
+                raise ValueError(
+                    "`action_is_pad` and `attention_mask` are required to drop padded action tokens "
+                    "(`supervise_padding_actions=False`)."
+                )
+            active_action_is_pad = action_is_pad[action_rows].to(
+                device=inputs_embeds.device, dtype=torch.bool
+            )
             action_padding_mask = torch.zeros_like(action_token_mask)
             action_padding_mask = action_padding_mask.masked_scatter(
                 action_token_mask,
-                action_is_pad.reshape(-1),
+                active_action_is_pad.reshape(-1),
             )
             attention_mask = attention_mask.masked_fill(action_padding_mask, 0)
 
@@ -430,27 +535,38 @@ class EO1VisionFlowMatchingModel(nn.Module):
             image_grid_thw,
             mm_token_type_ids,
         )
-        action_hidden_states = hidden_states[action_mask[..., 0]]
+        text_loss = None
+        if text_labels is not None:
+            shifted_labels = text_labels[:, 1:].contiguous()
+            text_mask = shifted_labels != -100
+            if text_mask.any():
+                text_hidden = hidden_states[:, :-1][text_mask]
+                text_hidden = text_hidden.to(self.vlm_backbone.lm_head.weight.dtype)
+                text_logits = self.vlm_backbone.lm_head(text_hidden).float()
+                text_loss = F.cross_entropy(text_logits, shifted_labels[text_mask].to(text_logits.device))
 
-        # 5. Project the action-token hidden states back to the flow target space.
-        def action_out_proj_func(action_hidden_states: torch.FloatTensor) -> torch.FloatTensor:
-            with self.flow_head_autocast_context():
-                action_hidden_states = action_hidden_states.to(dtype=self.action_out_proj.dtype)
-                return self.action_out_proj(action_hidden_states)
+        flow_loss = None
+        if action_rows.any():
+            assert u_t is not None
 
-        v_t = self._apply_checkpoint(action_out_proj_func, action_hidden_states)
-        v_t = v_t.reshape(u_t.shape).to(dtype=u_t.dtype)
-        losses = F.mse_loss(u_t, v_t, reduction="none")
+            def action_out_proj_func(action_hidden_states: torch.FloatTensor) -> torch.FloatTensor:
+                with self.flow_head_autocast_context():
+                    action_hidden_states = action_hidden_states.to(dtype=self.action_out_proj.dtype)
+                    return self.action_out_proj(action_hidden_states)
 
-        # 6. Apply the configured supervision mask and reduce the loss.
-        if not self.config.supervise_padding_action_dims:
-            original_action_dim = self.config.output_features[ACTION].shape[0]
-            losses = losses[..., :original_action_dim]
+            v_t = self._apply_checkpoint(action_out_proj_func, hidden_states[action_token_mask])
+            v_t = v_t.reshape(u_t.shape).to(dtype=u_t.dtype)
+            losses = F.mse_loss(u_t, v_t, reduction="none")
+            if not self.config.supervise_padding_action_dims:
+                losses = losses[..., : _original_action_dim(self.config)]
+            if not self.config.supervise_padding_actions:
+                if active_action_is_pad is None:
+                    raise RuntimeError("`active_action_is_pad` is missing although action rows are present.")
+                losses = losses[~active_action_is_pad]
+            flow_loss = losses.mean()
 
-        if not self.config.supervise_padding_actions:
-            losses = losses[~action_is_pad]
-
-        return losses.mean()
+        losses = [value for value in (flow_loss, text_loss) if value is not None]
+        return EO1Output(loss=sum(losses) if losses else None, flow_loss=flow_loss, text_loss=text_loss)
 
     @torch.no_grad()
     def sample_actions(
@@ -467,6 +583,10 @@ class EO1VisionFlowMatchingModel(nn.Module):
         **kwargs,
     ) -> Tensor:
         """Sample actions from the model."""
+        if input_ids is None:
+            raise ValueError("input_ids are required for EO1 action sampling.")
+        if attention_mask is None:
+            raise ValueError("attention_mask is required for EO1 action sampling.")
         if states is None:
             raise ValueError("states are required for EO1 action sampling.")
         if mm_token_type_ids is None:

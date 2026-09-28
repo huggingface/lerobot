@@ -101,6 +101,7 @@ class PI0Config(PreTrainedConfig):
     scheduler_decay_lr: float = 2.5e-6
 
     tokenizer_max_length: int = 48  # see openpi `__post_init__`
+    text_tokenizer_name: str = "google/paligemma-3b-pt-224"
 
     def __post_init__(self):
         super().__post_init__()
@@ -122,6 +123,10 @@ class PI0Config(PreTrainedConfig):
 
     def validate_features(self) -> None:
         """Validate and set up input/output features."""
+        if self.input_features is None or self.output_features is None:
+            raise ValueError(
+                "PI0 requires `input_features` and `output_features` to be resolved before validation."
+            )
         for i in range(self.empty_cameras):
             key = f"{OBS_IMAGES}.empty_camera_{i}"
             empty_camera = PolicyFeature(

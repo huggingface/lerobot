@@ -236,7 +236,7 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
     multi-frame ``video_url`` items where supported.
     """
     try:
-        from openai import OpenAI  # type: ignore[import-not-found]
+        from openai import OpenAI
     except ImportError as exc:
         raise ImportError(
             "openai package is required for backend='openai'. Install with `pip install openai`."

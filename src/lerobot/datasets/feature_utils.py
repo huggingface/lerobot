@@ -22,15 +22,10 @@ import numpy as np
 from PIL import Image as PILImage
 
 from lerobot.configs import VIDEO_ENCODER_INFO_KEYS, is_depth_map
-from lerobot.utils.constants import DEFAULT_FEATURES
+from lerobot.utils.constants import DEFAULT_FEATURES, LANGUAGE_PERSISTENT
 from lerobot.utils.utils import is_valid_numpy_dtype_string
 
-from .language import (
-    LANGUAGE_PERSISTENT,
-    is_language_column,
-    language_events_column_feature,
-    language_persistent_column_feature,
-)
+from .language import is_language_column, language_events_column_feature, language_persistent_column_feature
 from .utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
@@ -39,6 +34,8 @@ from .utils import (
     DEFAULT_VIDEO_PATH,
     DatasetInfo,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def get_hf_features_from_features(features: dict) -> datasets.Features:
@@ -406,7 +403,7 @@ def validate_feature_language(name: str, value) -> str:
         str: Always an empty string — language values are non-fatal.
     """
     if value is not None:
-        logging.warning(
+        logger.warning(
             f"The feature '{name}' is a 'language' column populated by the annotation pipeline, "
             f"not at record time. The provided value will be dropped."
         )

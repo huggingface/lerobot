@@ -76,6 +76,9 @@ def video_file_groups(
     columns = [f"videos/{key}/{field}" for key in meta.video_keys for field in ("chunk_index", "file_index")]
     if not columns:
         return {}
+    video_path = meta.video_path
+    if video_path is None:
+        raise ValueError("Video features require a video_path template in the dataset metadata")
     table = meta.episodes.select_columns(columns).with_format(None)
     if episode_indices is not None:
         table = table.select(indices)
@@ -87,7 +90,7 @@ def video_file_groups(
             chunks = batch[f"videos/{key}/chunk_index"]
             files = batch[f"videos/{key}/file_index"]
             for position, (chunk, file) in enumerate(zip(chunks, files, strict=True)):
-                path = str(Path(meta.video_path.format(video_key=key, chunk_index=chunk, file_index=file)))
+                path = str(Path(video_path.format(video_key=key, chunk_index=chunk, file_index=file)))
                 groups[path].append((int(indices[offset + position]), camera))
         offset += count
     return dict(groups)

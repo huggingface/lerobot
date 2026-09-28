@@ -11,10 +11,8 @@ import pyarrow as pa  # noqa: E402
 
 from lerobot.datasets import LeRobotDataset  # noqa: E402
 from lerobot.datasets.io_utils import write_info  # noqa: E402
-from lerobot.datasets.language import (  # noqa: E402
+from lerobot.datasets.language import (
     EVENT_ONLY_STYLES,
-    LANGUAGE_EVENTS,
-    LANGUAGE_PERSISTENT,
     PERSISTENT_STYLES,
     STYLE_REGISTRY,
     VIEW_DEPENDENT_STYLES,
@@ -27,6 +25,7 @@ from lerobot.datasets.language import (  # noqa: E402
 )
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset  # noqa: E402
 from lerobot.datasets.utils import DEFAULT_DATA_PATH  # noqa: E402
+from lerobot.utils.constants import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT
 
 
 def test_language_arrow_schema_has_expected_fields():

@@ -191,10 +191,14 @@ class DatasetReader(BaseDatasetReader):
         self._build_index_mapping()
         return True
 
-    def load_and_activate(self) -> None:
-        """Load HF dataset from disk and build index mapping. Call after data is on disk."""
+    def load_and_activate(self) -> datasets.Dataset:
+        """Load HF dataset from disk and build index mapping. Call after data is on disk.
+
+        Returns the loaded dataset (also stored in :attr:`hf_dataset`).
+        """
         self.hf_dataset = self._load_hf_dataset()
         self._build_index_mapping()
+        return self.hf_dataset
 
     def _build_index_mapping(self) -> None:
         """Build absolute-to-relative index mapping from loaded hf_dataset."""
@@ -280,8 +284,8 @@ class DatasetReader(BaseDatasetReader):
 
         return True
 
-    def get_episodes_file_paths(self) -> list[Path]:
-        """Return deduplicated file paths (data + video) for selected episodes.
+    def get_episodes_file_paths(self) -> list[str]:
+        """Return deduplicated relative file paths (data + video) for selected episodes.
 
         Used to build the ``allow_patterns`` list for ``snapshot_download``.
         """
@@ -302,6 +306,8 @@ class DatasetReader(BaseDatasetReader):
         self, abs_idx: int, ep_idx: int
     ) -> tuple[dict[str, list[int]], dict[str, torch.Tensor]]:
         """Compute query indices for delta timestamps."""
+        if self.delta_indices is None:
+            raise RuntimeError("Query indices require delta_timestamps, but the reader has none.")
         ep = self._meta.episodes[ep_idx]
         ep_start = ep["dataset_from_index"]
         ep_end = ep["dataset_to_index"]
@@ -339,14 +345,18 @@ class DatasetReader(BaseDatasetReader):
         transform, which is column-wise, so outputs are identical to a plain
         row query.
         """
-        transform = self.hf_dataset.format["format_kwargs"].get("transform")
-        if self._column_views_source is not self.hf_dataset or self._column_views_transform is not transform:
+        hf_dataset = self.hf_dataset
+        if hf_dataset is None:
+            raise RuntimeError("hf_dataset is not loaded; call load_and_activate() first.")
+        transform = hf_dataset.format["format_kwargs"].get("transform")
+        stale = self._column_views_source is not hf_dataset or self._column_views_transform is not transform
+        if stale:
             # hf_dataset was (re)loaded or its transform changed: drop stale views
             self._column_views = {}
-            self._column_views_source = self.hf_dataset
+            self._column_views_source = hf_dataset
             self._column_views_transform = transform
         if key not in self._column_views:
-            self._column_views[key] = self.hf_dataset.select_columns(key)
+            self._column_views[key] = hf_dataset.select_columns(key)
         return self._column_views[key]
 
     def _get_query_timestamps(
@@ -391,7 +401,7 @@ class DatasetReader(BaseDatasetReader):
             for i, rel in enumerate(rel_per_item)
         ]
 
-    def _query_hf_dataset(self, query_indices_per_item: list[dict[str, list[int]]]) -> list[dict]:
+    def _query_hf_dataset(self, query_indices_per_item: list[dict[str, list[int]] | None]) -> list[dict]:
         """Tabular columns to gather for each requested item, as one ``{key: stacked tensor}`` dict.
 
         Per non-video key: the referenced rows stacked into the item's delta window.
@@ -407,7 +417,7 @@ class DatasetReader(BaseDatasetReader):
         for query_indices in query_indices_per_item:
             rel = {
                 key: self._to_relative(q_idx)
-                for key, q_idx in query_indices.items()
+                for key, q_idx in (query_indices or {}).items()
                 if key not in self._meta.video_keys
             }
             rel_per_item.append(rel)
@@ -492,7 +502,7 @@ class DatasetReader(BaseDatasetReader):
             result[i][group_meta[path]] = decoded[path][start : start + length].squeeze(0)
         return result
 
-    def get_item(self, idx) -> dict:
+    def get_item(self, idx: int) -> dict:
         """Return one fully assembled frame dict for a single *relative* index.
 
         "Relative" is the row position in the (possibly episode-filtered) ``hf_dataset``,
@@ -525,16 +535,15 @@ class DatasetReader(BaseDatasetReader):
         Returns:
             One fully assembled frame dict per entry in ``indices``, in order.
         """
-        if self.hf_dataset is None:
-            # One-shot load after finalize()
-            self.load_and_activate()
+        # One-shot load after finalize()
+        hf_dataset = self.hf_dataset if self.hf_dataset is not None else self.load_and_activate()
         if len(indices) == 0:
             return []
 
         n = len(indices)
 
         # Batched tabular gather: one Arrow read for all base rows.
-        base = self.hf_dataset[indices]
+        base = hf_dataset[indices]
         items: list[dict] = [{key: base[key][i] for key in base} for i in range(n)]
         ep_idxs = [int(items[i]["episode_index"]) for i in range(n)]
         abs_idxs = [int(items[i]["index"]) for i in range(n)]

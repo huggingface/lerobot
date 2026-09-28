@@ -15,7 +15,7 @@ import json
 import os
 import tempfile
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Generator
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
@@ -121,7 +121,7 @@ def _read_arrays(archive: ZipFile, file_index: int, item: dict[str, Any]) -> dic
         # Older Python ZIP readers seek relative to the shared descriptor while
         # opening ZIP64 headers. Hold their own source lock across that sequence
         # so other headers or payload reads cannot move it; decompress unlocked.
-        with archive._lock:
+        with archive._lock:  # type: ignore[attr-defined]  # CPython ZipFile's shared seek lock.
             member = archive.open(f"{file_index}/{name}.npy")
         with member:
             arrays[name] = np.lib.format.read_array(member, allow_pickle=False)
@@ -136,7 +136,7 @@ def _iter_arrays(
     *,
     workers: int,
     max_pending_bytes: int = 256 * 1024**2,
-) -> Iterator[dict[str, NDArray[np.generic]]]:
+) -> Generator[dict[str, NDArray[np.generic]]]:
     """Decompress in parallel with ordered, count- and byte-bounded read-ahead.
 
     ZIP uncompressed member sizes bound admitted array bytes. An oversized record
