@@ -49,8 +49,7 @@ import enum
 import logging
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from threading import Event, Lock
-from typing import Any
+from threading import Event, Lock, Thread
 
 import numpy as np
 
@@ -61,6 +60,9 @@ from lerobot.common.control_utils import (
 )
 from lerobot.datasets import VideoEncodingManager
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
+from lerobot.lerobot_types import RobotAction
+from lerobot.teleoperators import Teleoperator
+from lerobot.utils.action_interpolator import ActionInterpolator
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
@@ -70,6 +72,7 @@ from lerobot.utils.utils import log_say
 
 from ..configs import DAggerKeyboardConfig, DAggerPedalConfig, DAggerStrategyConfig
 from ..context import RolloutContext
+from ..inference import InferenceEngine
 from .core import (
     RolloutStrategy,
     estimate_max_episode_seconds,
@@ -201,7 +204,7 @@ def _init_dagger_keyboard(events: DAggerEvents, cfg: DAggerKeyboardConfig):
     )
 
 
-def _init_dagger_pedal(events: DAggerEvents, cfg: DAggerPedalConfig):
+def _init_dagger_pedal(events: DAggerEvents, cfg: DAggerPedalConfig) -> Thread | None:
     """Initialise foot pedal listener with DAgger 3-pedal controls.
 
     Returns the pedal listener thread (or ``None`` if evdev is unavailable).
@@ -243,20 +246,20 @@ class DAggerStrategy(RolloutStrategy):
 
     config: DAggerStrategyConfig
 
-    def __init__(self, config: DAggerStrategyConfig):
+    def __init__(self, config: DAggerStrategyConfig) -> None:
         super().__init__(config)
         self._listener = None
-        self._pedal_thread = None
+        self._pedal_thread: Thread | None = None
         self._events = DAggerEvents()
         self._push_executor: ThreadPoolExecutor | None = None
-        self._pending_push: Future | None = None
+        self._pending_push: Future[None] | None = None
         self._needs_push = Event()
         self._episode_lock = Lock()
 
     def setup(self, ctx: RolloutContext) -> None:
         """Initialise the inference engine and input device listener."""
         self._init_engine(ctx)
-        dataset_cfg = ctx.runtime.cfg.dataset  # never None: dataset_mode="required"
+        dataset_cfg = self._require_dataset_cfg(ctx.runtime.cfg)
         if self.config.num_episodes is None:
             self.config.num_episodes = dataset_cfg.num_episodes
             logger.info(
@@ -342,13 +345,13 @@ class DAggerStrategy(RolloutStrategy):
         Both autonomous and correction frames are recorded; corrections are
         tagged with ``intervention=True``.
         """
-        engine = self._engine
+        engine = self._require_engine()
         cfg = ctx.runtime.cfg
         robot = ctx.hardware.robot_wrapper
-        teleop = ctx.hardware.teleop
-        dataset = ctx.data.dataset
+        teleop = self._require_teleop(ctx.hardware)
+        dataset = self._require_dataset(ctx.data)
         events = self._events
-        interpolator = self._interpolator
+        interpolator = self._require_interpolator()
         features = ctx.data.dataset_features
 
         timer = CycleTimer(cfg.fps, interpolator.multiplier)
@@ -361,7 +364,7 @@ class DAggerStrategy(RolloutStrategy):
         events.reset()
         engine.resume()
 
-        last_action: dict[str, Any] | None = None
+        last_action: RobotAction | None = None
         correction_tick = 0
         start_time = time.perf_counter()
         episode_start = time.perf_counter()
@@ -387,6 +390,7 @@ class DAggerStrategy(RolloutStrategy):
                             new_phase,
                             engine,
                             interpolator,
+                            teleop,
                             ctx,
                             last_action,
                             timer,
@@ -519,14 +523,17 @@ class DAggerStrategy(RolloutStrategy):
         ``intervention=True``.  Stopping the correction saves the episode.
         The dataset can be uploaded on demand via the upload key/pedal.
         """
-        engine = self._engine
+        engine = self._require_engine()
         cfg = ctx.runtime.cfg
         robot = ctx.hardware.robot_wrapper
-        teleop = ctx.hardware.teleop
-        dataset = ctx.data.dataset
+        teleop = self._require_teleop(ctx.hardware)
+        dataset = self._require_dataset(ctx.data)
         events = self._events
-        interpolator = self._interpolator
+        interpolator = self._require_interpolator()
         features = ctx.data.dataset_features
+        num_episodes = self.config.num_episodes
+        if num_episodes is None:  # resolved from --dataset.num_episodes in setup()
+            raise RuntimeError(f"{type(self).__name__}: num_episodes not resolved; call setup() first")
 
         timer = CycleTimer(cfg.fps, interpolator.multiplier)
         correction_stride = interpolator.multiplier
@@ -538,18 +545,16 @@ class DAggerStrategy(RolloutStrategy):
         events.reset()
         engine.resume()
 
-        last_action: dict[str, Any] | None = None
+        last_action: RobotAction | None = None
         start_time = time.perf_counter()
         correction_tick = 0
         recorded = 0
-        logger.info(
-            "DAgger corrections-only recording started (target: %d episodes)", self.config.num_episodes
-        )
+        logger.info("DAgger corrections-only recording started (target: %d episodes)", num_episodes)
 
         with VideoEncodingManager(dataset):
             try:
                 while (
-                    recorded < self.config.num_episodes
+                    recorded < num_episodes
                     and not events.stop_recording.is_set()
                     and not ctx.runtime.shutdown_event.is_set()
                 ):
@@ -568,6 +573,7 @@ class DAggerStrategy(RolloutStrategy):
                             new_phase,
                             engine,
                             interpolator,
+                            teleop,
                             ctx,
                             last_action,
                             timer,
@@ -587,11 +593,7 @@ class DAggerStrategy(RolloutStrategy):
                                 dataset.save_episode()
                             recorded += 1
                             self._needs_push.set()
-                            logger.info(
-                                "Correction %d/%d saved",
-                                recorded,
-                                self.config.num_episodes,
-                            )
+                            logger.info("Correction %d/%d saved", recorded, num_episodes)
                             log_say(f"Correction {recorded} saved", play_sounds)
                             # ``save_episode`` blocks inside the timed loop body: report
                             # the correction, then drop the partial group and the gap it
@@ -682,10 +684,11 @@ class DAggerStrategy(RolloutStrategy):
         self,
         old_phase: DAggerPhase,
         new_phase: DAggerPhase,
-        engine,
-        interpolator,
+        engine: InferenceEngine,
+        interpolator: ActionInterpolator,
+        teleop: Teleoperator,
         ctx: RolloutContext,
-        prev_action: dict | None,
+        prev_action: RobotAction | None,
         timer: CycleTimer | None = None,
     ) -> None:
         """Execute side-effects for a validated phase transition, including smooth handovers.
@@ -709,7 +712,6 @@ class DAggerStrategy(RolloutStrategy):
         PAUSED -> AUTONOMOUS:
             Reset and resume the inference engine.
         """
-        teleop = ctx.hardware.teleop
         robot = ctx.hardware.robot_wrapper
 
         logger.info("Phase transition: %s -> %s", old_phase.value, new_phase.value)
@@ -791,7 +793,7 @@ class DAggerStrategy(RolloutStrategy):
         if self._pending_push is not None and not self._pending_push.done():
             logger.info("Previous push still in progress; queueing next")
 
-        def _push():
+        def _push() -> None:
             try:
                 with self._episode_lock:
                     if safe_push_to_hub(

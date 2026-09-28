@@ -41,6 +41,8 @@ This is a Gaussian Actor policy (Gaussian policy with a tanh squash) — the pol
 [EVO1](https://github.com/MINT-SJTU/Evo-1) is a Vision-Language-Action policy built around an InternVL3 backbone and a continuous flow-matching action head. It embeds camera images and the language instruction with InternVL3 and predicts future action chunks via flow matching.
 {% elif model_name == "fastwam" %}
 [FastWAM](https://arxiv.org/abs/2603.16666) is a World Action Model policy that keeps video world-modeling during training but predicts actions directly at inference time, initializing its visual world-model components from the Wan2.2 video-diffusion stack.
+{% elif model_name == "flux3" %}
+FLUX 3 Action (`flux3`) is Black Forest Labs' video-action model: the FLUX.3 video trunk with an action modality that is denoised jointly with the next video frames, finetuned per robot embodiment with fresh action heads.
 {% elif model_name == "lingbot_va" %}
 [LingBot-VA](https://github.com/Robbyant/lingbot-va) is an autoregressive video-action world-model policy built on the Wan2.2 video-diffusion stack. It interleaves the prediction of future video latents and robot actions in a single autoregressive sequence, feeding observed keyframes back into its KV cache for closed-loop world modeling.
 {% elif model_name == "lawam" %}
@@ -86,6 +88,7 @@ This policy has been trained and pushed to the Hub using [LeRobot](https://githu
   "wall_x": "walloss",
   "evo1": "evo1",
   "fastwam": "fastwam",
+  "flux3": "flux3",
   "lingbot_va": "lingbot_va",
   "lawam": "lawam"
 } %}

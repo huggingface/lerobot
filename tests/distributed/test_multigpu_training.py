@@ -59,7 +59,7 @@ from lerobot.common.train_utils import resume_after_prepare, resume_before_prepa
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
 from lerobot.distributed.checkpoint import full_model_state_dict, is_sharded_module
-from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR
+from lerobot.utils.constants import PRETRAINED_MODEL_DIR, SCALER_STATE, TRAINING_STATE_DIR
 
 # The spawned children re-import this module by name, so this import must resolve there too:
 # torch.multiprocessing propagates the parent's sys.path through the spawn preparation data.
@@ -73,10 +73,17 @@ PARITY_STEPS = 3
 GA_UPDATES = 3
 SAMPLES_PER_UPDATE = 4  # per rank per optimizer update — the fixed effective batch of test 5
 GRAD_CLIP_NORM = 100.0  # generous: exercises the clip call without perturbing parity
+# fp16 scaler settings pinned for determinism: an init scale small enough that a finite step
+# never overflows on its own, and a growth interval long enough that only a real overflow can
+# ever move the scale.
+FP16_INIT_SCALE = 256.0
+FP16_GROWTH_INTERVAL = 10**9
+FP16_BACKOFF_FACTOR = 0.5
 # Generous headroom for cold NCCL init plus the lerobot re-import in 4 spawned children, while
 # still bounding a deadlocked collective to minutes instead of a hung CI job.
 WATCHDOG_TIMEOUT_S = 240.0
 _JOIN_POLL_S = 5.0
+_PORT_RETRIES = 3  # rendezvous port clashes only; see _spawn
 
 
 # -------------------------------------------------------------------------------------------
@@ -91,7 +98,25 @@ def _find_free_port() -> int:
 
 
 def _spawn(world_size: int, worker, *args, timeout_s: float = WATCHDOG_TIMEOUT_S) -> None:
-    """Run ``worker(rank, world_size, port, *args)`` on ``world_size`` fresh processes.
+    """Run ``worker(rank, world_size, port, *args)``, retrying only a rendezvous port clash.
+
+    ``_find_free_port`` closes its probe socket before the workers bind it, so the port can be
+    taken in between and rank 0's ``TCPStore`` fails with ``EADDRINUSE`` before any test code
+    runs. That is an artefact of the harness, not a result, so it is retried with a fresh port.
+    The match is deliberately narrow: every other worker exception propagates on the first
+    attempt, because a blanket retry would paper over a genuinely flaky test.
+    """
+    for attempt in range(_PORT_RETRIES):
+        try:
+            _spawn_once(world_size, worker, *args, timeout_s=timeout_s)
+            return
+        except Exception as error:  # noqa: PERF203
+            if "EADDRINUSE" not in str(error) or attempt == _PORT_RETRIES - 1:
+                raise
+
+
+def _spawn_once(world_size: int, worker, *args, timeout_s: float = WATCHDOG_TIMEOUT_S) -> None:
+    """One spawn attempt on ``world_size`` fresh processes.
 
     Watchdog approach: ``mp.spawn(join=False)`` returns a ``ProcessContext`` whose ``join`` is
     polled under a deadline. On timeout every surviving worker is SIGKILLed and the test fails
@@ -144,12 +169,18 @@ def _make_cfg(
     dp_shard: int = 1,
     checkpoint_format: CheckpointFormat = CheckpointFormat.SAFETENSORS,
     grad_accum: int = 1,
+    mixed_precision: str = "no",
 ) -> TrainPipelineConfig:
     cfg = TrainPipelineConfig(dataset=DatasetConfig(repo_id="lerobot/dummy"), batch_size=BATCH_SIZE)
     cfg.checkpoint_format = checkpoint_format
     cfg.parallelism.dp_replicate = dp_replicate
     cfg.parallelism.dp_shard = dp_shard
-    cfg.accelerator.mixed_precision = "no"  # fp32 end to end: the parity tests depend on it
+    # Defaults to fp32 end to end: the parity tests depend on it.
+    cfg.accelerator.mixed_precision = mixed_precision
+    if mixed_precision == "fp16":
+        cfg.accelerator.grad_scaler.init_scale = FP16_INIT_SCALE
+        cfg.accelerator.grad_scaler.growth_interval = FP16_GROWTH_INTERVAL
+        cfg.accelerator.grad_scaler.backoff_factor = FP16_BACKOFF_FACTOR
     cfg.accelerator.gradient_accumulation.steps = grad_accum
     # The dummy policy declares no _fsdp_wrap_modules; the size-based wrap policy shards its
     # Linear without needing class names (the set_fsdp_wrap_modules no-op branch).
@@ -199,6 +230,20 @@ def _gather_full(model, optimizer) -> tuple[dict, dict]:
     )
 
 
+def _local_params(policy) -> list[torch.Tensor]:
+    """Snapshot this rank's own parameter values, sharded or not.
+
+    Per-rank and collective-free on purpose: "did MY weights move?" is exactly the question an
+    overflow test must ask on every rank, and a gathered comparison would answer it on rank 0
+    only.
+    """
+    snapshot = []
+    for param in policy.parameters():
+        tensor = param.detach()
+        snapshot.append((tensor.to_local() if hasattr(tensor, "to_local") else tensor).clone())
+    return snapshot
+
+
 def _assert_tree_equal(reference, actual, path: str) -> None:
     """Exact (bitwise for tensors) equality of nested state dicts, with a failing path."""
     if isinstance(reference, torch.Tensor):
@@ -224,25 +269,45 @@ def _assert_tree_equal(reference, actual, path: str) -> None:
 # -------------------------------------------------------------------------------------------
 
 
-def _train_and_save_worker(rank: int, world_size: int, port: int, tmp_dir: str, fmt_value: str) -> None:
+def _train_and_save_worker(
+    rank: int,
+    world_size: int,
+    port: int,
+    tmp_dir: str,
+    fmt_value: str,
+    mixed_precision: str = "no",
+) -> None:
     """FSDP2 (dp_shard=world_size): train SAVE_STEP steps, save_checkpoint, store the gathered
     full model/optimizer state as the rank-0 reference for the resume workers."""
     _init_worker_env(rank, world_size, port)
     tmp = Path(tmp_dir)
     fmt = CheckpointFormat(fmt_value)
-    cfg = _make_cfg(world_size, dp_shard=world_size, checkpoint_format=fmt)
+    cfg = _make_cfg(world_size, dp_shard=world_size, checkpoint_format=fmt, mixed_precision=mixed_precision)
     accelerator = _build_accelerator(cfg)
     policy = _make_policy(SEED)
     optimizer = torch.optim.Adam(policy.parameters(), lr=1e-2)
     # FSDP2 requires model and optimizer in one prepare() call (accelerate rebinds param groups).
     policy, optimizer = accelerator.prepare(policy, optimizer)
     assert is_sharded_module(accelerator.unwrap_model(policy)), "prepare() did not shard the policy"
+    assert (accelerator.scaler is not None) == (mixed_precision == "fp16")
 
     for step in range(SAVE_STEP):
-        loss, _ = policy(_batch(step, rank, accelerator.device))
+        with accelerator.autocast():
+            loss, _ = policy(_batch(step, rank, accelerator.device))
         accelerator.backward(loss)
         optimizer.step()
         optimizer.zero_grad()
+        # The pinned scale makes a finite step impossible to skip, so the optimizer state the
+        # checkpoint captures is real (and `_growth_tracker` counts the applied updates).
+        assert not accelerator.optimizer_step_was_skipped
+
+    scaler_state = accelerator.scaler.state_dict() if accelerator.scaler is not None else None
+    if scaler_state is not None:
+        # The checkpoint records rank 0's scaler; that is only sound because every rank agrees.
+        scales = accelerator.gather(
+            torch.tensor([scaler_state["scale"]], device=accelerator.device, dtype=torch.float32)
+        )
+        assert scales.min().item() == scales.max().item() == FP16_INIT_SCALE
 
     checkpoint_dir = tmp / "checkpoint"
     save_checkpoint(
@@ -254,24 +319,47 @@ def _train_and_save_worker(rank: int, world_size: int, port: int, tmp_dir: str, 
         from accelerate.utils.constants import FSDP_MODEL_NAME, OPTIMIZER_NAME
 
         pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
+        training_state_dir = checkpoint_dir / TRAINING_STATE_DIR
         assert (pretrained_dir / f"{FSDP_MODEL_NAME}_0").is_dir() == fmt.wants_dcp
         assert (pretrained_dir / "model.safetensors").is_file() == fmt.wants_safetensors
         assert (pretrained_dir / "config.json").is_file()
         assert (pretrained_dir / "train_config.json").is_file()
         # Sharded runs always use the DCP optimizer channel, never the safetensors one.
-        assert (checkpoint_dir / TRAINING_STATE_DIR / f"{OPTIMIZER_NAME}_0").is_dir()
-        assert not (checkpoint_dir / TRAINING_STATE_DIR / "optimizer_state.safetensors").exists()
-        torch.save({"model": model_state, "optimizer": optimizer_state}, tmp / "reference_state.pt")
+        assert (training_state_dir / f"{OPTIMIZER_NAME}_0").is_dir()
+        assert not (training_state_dir / "optimizer_state.safetensors").exists()
+        # The scaler sidecar exists exactly when there is a scaler to persist.
+        assert (training_state_dir / SCALER_STATE).is_file() == (mixed_precision == "fp16")
+        torch.save(
+            {"model": model_state, "optimizer": optimizer_state, "scaler": scaler_state},
+            tmp / "reference_state.pt",
+        )
     accelerator.wait_for_everyone()
     dist.destroy_process_group()
 
 
-def _resume_and_verify_worker(rank: int, world_size: int, port: int, tmp_dir: str, fmt_value: str) -> None:
+def _resume_and_verify_worker(
+    rank: int,
+    world_size: int,
+    port: int,
+    tmp_dir: str,
+    fmt_value: str,
+    mixed_precision: str = "no",
+) -> None:
     """Two-phase resume at dp_shard=world_size; the gathered state must match the saved
-    reference exactly (DCP round-trips are bit-exact)."""
+    reference exactly (DCP round-trips are bit-exact).
+
+    Under fp16 this also covers the seam that makes the DCP resume possible at all: the
+    optimizer state is empty here, so torch materializes it with a dummy `optimizer.step()`
+    which must not reach the (still lazily uninitialized) GradScaler.
+    """
     _init_worker_env(rank, world_size, port)
     tmp = Path(tmp_dir)
-    cfg = _make_cfg(world_size, dp_shard=world_size, checkpoint_format=CheckpointFormat(fmt_value))
+    cfg = _make_cfg(
+        world_size,
+        dp_shard=world_size,
+        checkpoint_format=CheckpointFormat(fmt_value),
+        mixed_precision=mixed_precision,
+    )
     cfg.checkpoint_path = tmp / "checkpoint"
     accelerator = _build_accelerator(cfg)
 
@@ -283,11 +371,105 @@ def _resume_and_verify_worker(rank: int, world_size: int, port: int, tmp_dir: st
     policy, optimizer = accelerator.prepare(policy, optimizer)
     resume_after_prepare(cfg, accelerator, policy, optimizer, None)  # phase 2: DCP reshard-load
 
+    reference = torch.load(tmp / "reference_state.pt", map_location="cpu", weights_only=True)
+    if accelerator.scaler is not None:
+        # Restored on every rank, and untouched by the optimizer DCP load that ran just above.
+        assert accelerator.scaler.state_dict() == reference["scaler"]
+
     model_state, optimizer_state = _gather_full(policy, optimizer)
     if accelerator.is_main_process:
-        reference = torch.load(tmp / "reference_state.pt", map_location="cpu", weights_only=True)
         _assert_tree_equal(reference["model"], model_state, "model")
         _assert_tree_equal(reference["optimizer"], optimizer_state, "optimizer")
+    accelerator.wait_for_everyone()
+    dist.destroy_process_group()
+
+
+def _overflow_worker(
+    rank: int,
+    world_size: int,
+    port: int,
+    tmp_dir: str,
+    dp_replicate: int,
+    dp_shard: int,
+    mixed_precision: str,
+    tag: str,
+) -> None:
+    """Three steps — finite, overflowing, finite — with per-rank assertions at each one.
+
+    The overflow is injected where it can actually arise for the topology under test, which is
+    the whole point: what makes the skip unanimous differs between them. The discriminator is
+    whether the mesh has a replicate dim, not whether it is sharded.
+
+    - **Pure FSDP2** (``dp_replicate == 1``): inject after the reduce-scatter, into one rank's
+      local gradient shard. Nothing communicates the gradients afterwards, so the skip can only
+      become unanimous through torch's cross-mesh reduction of the GradScaler's found-inf flag.
+    - **Replicated meshes — DDP and HSDP** (``dp_replicate > 1``): inject before the reduction,
+      as an inf observation on one rank. A post-reduction injection would be meaningless here:
+      torch reduces found-inf with ``Partial("max")`` only along sharded mesh dims and leaves
+      the replicate dim ``Replicate()``, so poking one rank after the fact would make replica
+      peers disagree by construction — a state real training cannot produce, because the
+      replicate all-reduce has already made their gradients identical.
+
+    With ``mixed_precision="no"`` only the finite step runs; the test uses that to obtain the
+    fp32 reference gradient norm.
+    """
+    _init_worker_env(rank, world_size, port)
+    cfg = _make_cfg(world_size, dp_replicate=dp_replicate, dp_shard=dp_shard, mixed_precision=mixed_precision)
+    accelerator = _build_accelerator(cfg)
+    # DDP and HSDP both reduce across replicas, so both need the pre-reduction injection.
+    replicated = dp_replicate > 1
+    fp16 = mixed_precision == "fp16"
+    policy = _make_policy(SEED)
+    optimizer = torch.optim.SGD(policy.parameters(), lr=0.1)
+    policy, optimizer = accelerator.prepare(policy, optimizer)
+    scaler = accelerator.scaler
+    assert (scaler is not None) == fp16
+    if fp16:
+        assert scaler.get_scale() == FP16_INIT_SCALE
+
+    def run_step(step: int, *, overflow: bool) -> float:
+        batch = _batch(step, rank, accelerator.device)
+        if overflow and replicated and rank == 0:
+            batch = {"observation.state": batch["observation.state"].clone()}
+            batch["observation.state"][0, 0] = float("inf")
+        with accelerator.autocast():
+            loss, _ = policy(batch)
+        accelerator.backward(loss)
+        if overflow and not replicated and rank == 0:
+            grad = next(p.grad for p in policy.parameters() if p.grad is not None)
+            (grad.to_local() if hasattr(grad, "to_local") else grad).fill_(float("inf"))
+        grad_norm = accelerator.clip_grad_norm_(policy.parameters(), GRAD_CLIP_NORM)
+        optimizer.step()
+        optimizer.zero_grad()
+        return float(grad_norm)
+
+    before = _local_params(policy)
+    clean_grad_norm = run_step(0, overflow=False)
+    assert not accelerator.optimizer_step_was_skipped
+    # Not vacuous: the finite step really moved this rank's weights.
+    assert any(not torch.equal(b, a) for b, a in zip(before, _local_params(policy), strict=True))
+    if fp16:
+        # The clip ran on unscaled gradients — an unscaled norm would be ~FP16_INIT_SCALE times
+        # larger, and the caller cross-checks this value against the fp32 run.
+        assert scaler.get_scale() == FP16_INIT_SCALE
+
+    if fp16:
+        before = _local_params(policy)
+        run_step(1, overflow=True)
+        # The three claims of fp16 overflow handling, asserted on EVERY rank.
+        assert accelerator.optimizer_step_was_skipped
+        assert all(torch.equal(b, a) for b, a in zip(before, _local_params(policy), strict=True))
+        assert scaler.get_scale() == FP16_INIT_SCALE * FP16_BACKOFF_FACTOR
+
+        # ...and the run recovers: the next finite step applies at the backed-off scale.
+        before = _local_params(policy)
+        run_step(2, overflow=False)
+        assert not accelerator.optimizer_step_was_skipped
+        assert any(not torch.equal(b, a) for b, a in zip(before, _local_params(policy), strict=True))
+        assert scaler.get_scale() == FP16_INIT_SCALE * FP16_BACKOFF_FACTOR
+
+    if accelerator.is_main_process:
+        (Path(tmp_dir) / f"grad_norm_{tag}.json").write_text(json.dumps(clean_grad_norm))
     accelerator.wait_for_everyone()
     dist.destroy_process_group()
 
@@ -464,6 +646,70 @@ def test_save_pretrained_all_ranks_no_deadlock(tmp_path):
     killed by :func:`_spawn`'s timeout — completing at all is half of what this test asserts.
     """
     _spawn(4, _save_pretrained_all_ranks_worker, str(tmp_path))
+
+
+@pytest.mark.multigpu
+@pytest.mark.skipif(torch.cuda.device_count() < 4, reason="requires 4 GPUs")
+def test_fp16_fsdp2_train_save_resume_round_trip(tmp_path):
+    """The round trip above, in fp16: weights, optimizer state AND loss scale must survive.
+
+    The resume is where fp16 and DCP meet: torch materializes the empty optimizer state with a
+    dummy `optimizer.step()`, which asserts outright if it is routed through the lazily
+    uninitialized GradScaler — so this test fails loudly if the unwrap in
+    `lerobot.distributed.checkpoint` is ever removed.
+    """
+    fmt = CheckpointFormat.SAFETENSORS_AND_DCP.value
+    _spawn(4, _train_and_save_worker, str(tmp_path), fmt, "fp16")
+    _spawn(4, _resume_and_verify_worker, str(tmp_path), fmt, "fp16")
+
+
+@pytest.mark.multigpu
+@pytest.mark.skipif(torch.cuda.device_count() < 4, reason="requires 4 GPUs")
+def test_fp16_overflow_skips_the_update_on_every_rank_fsdp2(tmp_path):
+    """dp_shard=4: an overflow confined to one rank's gradient shard skips all four updates.
+
+    The worker asserts per rank that the step was skipped, that its own weights are unchanged,
+    that the scale backed off, and that the next finite step applies normally.
+    """
+    _spawn(4, _overflow_worker, str(tmp_path), 1, 4, "fp16", "fsdp2")
+
+
+@pytest.mark.multigpu
+@pytest.mark.skipif(torch.cuda.device_count() < 2, reason="requires 2 GPUs")
+def test_fp16_overflow_skips_the_update_on_every_rank_ddp(tmp_path):
+    """dp_replicate=2: the same contract on the replicated path, where the all-reduce — not a
+    DTensor reduction — is what makes every rank see the overflow."""
+    _spawn(2, _overflow_worker, str(tmp_path), 2, 1, "fp16", "ddp")
+
+
+@pytest.mark.multigpu
+@pytest.mark.skipif(torch.cuda.device_count() < 4, reason="requires 4 GPUs")
+def test_fp16_overflow_skips_the_update_on_every_rank_hsdp(tmp_path):
+    """2x2: the composition, where the two mechanisms have to hold at once.
+
+    HSDP is the only topology where "the skip is unanimous" has two halves — torch reduces the
+    found-inf flag across the shard dim, while agreement across the replicate dim rests on
+    FSDP2's all-reduce having already made those gradients identical. Covering FSDP2 and DDP
+    separately does not exercise the two together.
+    """
+    _spawn(4, _overflow_worker, str(tmp_path), 2, 2, "fp16", "hsdp")
+
+
+@pytest.mark.multigpu
+@pytest.mark.skipif(torch.cuda.device_count() < 4, reason="requires 4 GPUs")
+def test_fp16_clip_grad_norm_sees_unscaled_gradients(tmp_path):
+    """The fp16 gradient norm must match the fp32 one, not FP16_INIT_SCALE times it.
+
+    `accelerator.clip_grad_norm_` unscales before clipping; if it did not, clipping would fire
+    on scaled gradients and silently rescale every update. The tolerance is fp16's, not fp32's:
+    the forward and backward really do run in half precision.
+    """
+    _spawn(4, _overflow_worker, str(tmp_path), 1, 4, "fp16", "fp16")
+    _spawn(4, _overflow_worker, str(tmp_path), 1, 4, "no", "fp32")
+    fp16_norm = json.loads((tmp_path / "grad_norm_fp16.json").read_text())
+    fp32_norm = json.loads((tmp_path / "grad_norm_fp32.json").read_text())
+    assert fp32_norm > 0.0
+    assert fp16_norm == pytest.approx(fp32_norm, rel=2e-2, abs=1e-4)
 
 
 @pytest.mark.multigpu

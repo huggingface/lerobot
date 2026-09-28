@@ -155,7 +155,7 @@ class DatasetWriter:
 
     def _create_episode_buffer(self, episode_index: int | None = None) -> dict:
         current_ep_idx = self._meta.total_episodes if episode_index is None else episode_index
-        ep_buffer = {}
+        ep_buffer: dict = {}
         ep_buffer["size"] = 0
         ep_buffer["task"] = []
         for key in self._meta.features:
@@ -309,10 +309,10 @@ class DatasetWriter:
         self._wait_image_writer()
 
         has_video_keys = len(self._meta.video_keys) > 0
-        use_streaming = self._streaming_encoder is not None and has_video_keys
+        streaming_encoder = self._streaming_encoder if has_video_keys else None
         use_batched_encoding = self._batch_encoding_size > 1
 
-        if use_streaming:
+        if streaming_encoder is not None:
             non_video_buffer = {
                 k: v
                 for k, v in episode_buffer.items()
@@ -325,8 +325,8 @@ class DatasetWriter:
 
         ep_metadata = self._save_episode_data(episode_buffer)
 
-        if use_streaming:
-            streaming_results = self._streaming_encoder.finish_episode()
+        if streaming_encoder is not None:
+            streaming_results = streaming_encoder.finish_episode()
             for video_key in self._meta.video_keys:
                 normalization_factor = 255.0 if video_key not in self._meta.depth_keys else 1.0
                 temp_path, video_stats = streaming_results[video_key]
@@ -514,6 +514,12 @@ class DatasetWriter:
         else:
             ep_path = temp_path
 
+        video_path_template = self._meta.video_path
+        if video_path_template is None:
+            raise ValueError(
+                f"Dataset '{self._meta.repo_id}' has no video_path template: it stores no videos."
+            )
+
         ep_size_in_mb = get_file_size_in_mb(ep_path)
         ep_duration_in_s = get_video_duration_in_s(ep_path)
 
@@ -530,7 +536,7 @@ class DatasetWriter:
                     old_chunk_idx, old_file_idx, self._meta.chunks_size
                 )
             latest_duration_in_s = 0.0
-            new_path = self._root / self._meta.video_path.format(
+            new_path = self._root / video_path_template.format(
                 video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
             )
             new_path.parent.mkdir(parents=True, exist_ok=True)
@@ -540,7 +546,7 @@ class DatasetWriter:
             chunk_idx = latest_ep[f"videos/{video_key}/chunk_index"][0]
             file_idx = latest_ep[f"videos/{video_key}/file_index"][0]
 
-            latest_path = self._root / self._meta.video_path.format(
+            latest_path = self._root / video_path_template.format(
                 video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
             )
             latest_size_in_mb = get_file_size_in_mb(latest_path)
@@ -548,7 +554,7 @@ class DatasetWriter:
 
             if latest_size_in_mb + ep_size_in_mb >= self._meta.video_files_size_in_mb:
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self._meta.chunks_size)
-                new_path = self._root / self._meta.video_path.format(
+                new_path = self._root / video_path_template.format(
                     video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
                 )
                 new_path.parent.mkdir(parents=True, exist_ok=True)

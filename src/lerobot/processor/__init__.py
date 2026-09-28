@@ -43,6 +43,7 @@ from .device_processor import DeviceProcessorStep
 from .env_processor import IsaaclabArenaProcessorStep, LiberoProcessorStep
 from .factory import (
     DefaultPolicyProcessorSteps,
+    load_pretrained_policy_processors,
     make_default_policy_processor_steps,
     make_default_pre_post_processors,
     make_default_processors,
@@ -94,6 +95,7 @@ from .policy_robot_bridge import (
 from .relative_action_processor import (
     AbsoluteActionsProcessorStep,
     RelativeActionsProcessorStep,
+    bind_relative_anchor,
     to_absolute_actions,
     to_relative_actions,
 )
@@ -130,6 +132,7 @@ __all__ = [
     "InfoProcessorStep",
     "InterventionActionProcessorStep",
     "DefaultPolicyProcessorSteps",
+    "load_pretrained_policy_processors",
     "make_default_policy_processor_steps",
     "make_default_pre_post_processors",
     "make_default_processors",
@@ -139,6 +142,7 @@ __all__ = [
     "make_policy_processor_pipelines",
     "AbsoluteActionsProcessorStep",
     "RelativeActionsProcessorStep",
+    "bind_relative_anchor",
     "MapDeltaActionToRobotActionStep",
     "MapTensorToDeltaActionDictStep",
     "NewLineTaskProcessorStep",

@@ -49,11 +49,11 @@ lerobot-rollout \
     --duration=60
 ```
 
-| Flag             | Description                                            |
-| ---------------- | ------------------------------------------------------ |
-| `--duration`     | Run time in seconds (0 = infinite)                     |
-| `--task`         | Task description passed to the policy                  |
-| `--display_data` | Stream observations/actions to Rerun for visualization |
+| Flag             | Description                                            | Default |
+| ---------------- | ------------------------------------------------------ | ------- |
+| `--duration`     | Run time in seconds (0 = infinite)                     | 0       |
+| `--task`         | Task description passed to the policy                  | --      |
+| `--display_data` | Stream observations/actions to Rerun for visualization | false   |
 
 ### Sentry (`--strategy.type=sentry`)
 
@@ -74,12 +74,12 @@ lerobot-rollout \
     --duration=3600
 ```
 
-| Flag                                   | Description                                                 |
-| -------------------------------------- | ----------------------------------------------------------- |
-| `--strategy.upload_every_n_episodes`   | Push to Hub every N episodes (default: 5)                   |
-| `--strategy.target_video_file_size_mb` | Target video file size for episode rotation (default: auto) |
-| `--dataset.repo_id`                    | **Required.** Hub repository for the recorded dataset       |
-| `--dataset.push_to_hub`                | Whether to push to Hub on teardown (default: true)          |
+| Flag                                   | Description                                           | Default |
+| -------------------------------------- | ----------------------------------------------------- | ------- |
+| `--strategy.upload_every_n_episodes`   | Push to Hub every N episodes                          | 5       |
+| `--strategy.target_video_file_size_mb` | Target video file size for episode rotation           | auto    |
+| `--dataset.repo_id`                    | **Required.** Hub repository for the recorded dataset | --      |
+| `--dataset.push_to_hub`                | Whether to push to Hub on teardown                    | true    |
 
 ### Highlight (`--strategy.type=highlight`)
 

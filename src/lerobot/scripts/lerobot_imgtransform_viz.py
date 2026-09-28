@@ -33,6 +33,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import draccus
+import torch
 from torchvision.transforms import ToPILImage
 
 from lerobot.configs import DatasetConfig
@@ -61,7 +62,9 @@ def save_all_transforms(cfg: ImageTransformsConfig, original_frame, output_dir, 
     print(f"    {output_dir_all}")
 
 
-def save_each_transform(cfg: ImageTransformsConfig, original_frame, output_dir, n_examples):
+def save_each_transform(
+    cfg: ImageTransformsConfig, original_frame: torch.Tensor, output_dir: Path, n_examples: int
+) -> None:
     if not cfg.enable:
         logging.warning(
             "No single transforms will be saved, because `image_transforms.enable=False`. To enable, set `enable` to True in `ImageTransformsConfig` or in the command line with `--image_transforms.enable=True`."
@@ -90,9 +93,9 @@ def save_each_transform(cfg: ImageTransformsConfig, original_frame, output_dir, 
             tf_cfg_kwgs_max[key] = [max_, max_]
             tf_cfg_kwgs_avg[key] = [avg, avg]
 
-        tf_min = _single_transform(replace(tf_cfg, **{"kwargs": tf_cfg_kwgs_min}))
-        tf_max = _single_transform(replace(tf_cfg, **{"kwargs": tf_cfg_kwgs_max}))
-        tf_avg = _single_transform(replace(tf_cfg, **{"kwargs": tf_cfg_kwgs_avg}))
+        tf_min = _single_transform(replace(tf_cfg, kwargs=tf_cfg_kwgs_min))
+        tf_max = _single_transform(replace(tf_cfg, kwargs=tf_cfg_kwgs_max))
+        tf_avg = _single_transform(replace(tf_cfg, kwargs=tf_cfg_kwgs_avg))
 
         tf_frame_min = tf_min(original_frame)
         tf_frame_max = tf_max(original_frame)
