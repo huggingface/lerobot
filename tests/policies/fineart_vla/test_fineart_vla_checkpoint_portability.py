@@ -23,13 +23,21 @@ import numpy as np
 import pytest
 import torch
 
-from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.datasets.recipe import MessageTurn, TrainingRecipe
-from lerobot.policies import make_pre_post_processors
-from lerobot.processor import ActionTokenizerProcessorStep, DataProcessorPipeline, NormalizerProcessorStep
-from lerobot.processor.converters import identity_transition
-from lerobot.processor.render_messages_processor import RenderMessagesStep
-from lerobot.utils.constants import ACTION
+pytest.importorskip("datasets", reason="recipes require lerobot[dataset]")
+pytest.importorskip("av", reason="recipes require lerobot[dataset]")
+pytest.importorskip("transformers")
+
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature  # noqa: E402
+from lerobot.datasets.recipe import MessageTurn, TrainingRecipe  # noqa: E402
+from lerobot.policies import make_pre_post_processors  # noqa: E402
+from lerobot.processor import (  # noqa: E402
+    ActionTokenizerProcessorStep,
+    DataProcessorPipeline,
+    NormalizerProcessorStep,
+)
+from lerobot.processor.converters import identity_transition  # noqa: E402
+from lerobot.processor.render_messages_processor import RenderMessagesStep  # noqa: E402
+from lerobot.utils.constants import ACTION  # noqa: E402
 
 
 class _ActionTokenizer:

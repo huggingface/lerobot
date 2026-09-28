@@ -23,18 +23,22 @@ supervised target span must end with an EOS token so the LM head learns
 to stop instead of rambling to ``max_length`` at inference).
 """
 
+import pytest
 import torch
 
-from lerobot.datasets.recipe import MessageTurn, TrainingRecipe
-from lerobot.lerobot_types import TransitionKey
-from lerobot.policies.fineart_vla.text_processor_fineart_vla import (
+pytest.importorskip("datasets", reason="recipes require lerobot[dataset]")
+pytest.importorskip("av", reason="recipes require lerobot[dataset]")
+
+from lerobot.datasets.recipe import MessageTurn, TrainingRecipe  # noqa: E402
+from lerobot.lerobot_types import TransitionKey  # noqa: E402
+from lerobot.policies.fineart_vla.text_processor_fineart_vla import (  # noqa: E402
     FineARTVLATextTokenizerStep,
     _flatten_say_tool_calls,
     _format_messages,
 )
-from lerobot.processor import PolicyProcessorPipeline
-from lerobot.processor.render_messages_processor import RenderTrainingMessagesStep
-from lerobot.utils.constants import (
+from lerobot.processor import PolicyProcessorPipeline  # noqa: E402
+from lerobot.processor.render_messages_processor import RenderTrainingMessagesStep  # noqa: E402
+from lerobot.utils.constants import (  # noqa: E402
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
     POLICY_PREPROCESSOR_DEFAULT_NAME,

@@ -41,6 +41,14 @@ def test_policy_factory_and_cli_use_canonical_name(policy_type):
     assert policy_class.__name__ == "FineARTVLAPolicy"
     assert policy_class.name == "fineart_vla"
     assert policy_class.config_class is FineARTVLAConfig
+
+
+def test_preprocessor_keeps_canonical_text_tokenizer_step():
+    # The default config embeds a recipe, so building the pipeline needs the dataset extra.
+    pytest.importorskip("datasets", reason="recipes require lerobot[dataset]")
+    pytest.importorskip("av", reason="recipes require lerobot[dataset]")
+
+    config = make_policy_config("fineart_vla", device="cpu", enable_fast_action_loss=False)
     preprocessor, _ = make_pre_post_processors(config)
     assert any(isinstance(step, FineARTVLATextTokenizerStep) for step in preprocessor.steps)
 

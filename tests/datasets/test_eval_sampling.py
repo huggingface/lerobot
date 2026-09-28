@@ -2,7 +2,10 @@ from collections import Counter
 
 import pytest
 
-from lerobot.datasets.eval_sampling import balanced_eval_indices
+pytest.importorskip("datasets", reason="lerobot.datasets requires lerobot[dataset]")
+pytest.importorskip("av", reason="lerobot.datasets requires lerobot[dataset]")
+
+from lerobot.datasets.eval_sampling import balanced_eval_indices  # noqa: E402
 
 
 def test_one_task_covers_all_episodes_and_late_frames():

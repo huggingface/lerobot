@@ -5,13 +5,26 @@ from dataclasses import asdict
 import pytest
 import torch
 
-from lerobot.datasets.recipe import TrainingRecipe
-from lerobot.lerobot_types import TransitionKey
-from lerobot.policies.fineart_vla.configuration_fineart_vla import FineARTVLAConfig
-from lerobot.policies.fineart_vla.text_processor_fineart_vla import FineARTVLATextTokenizerStep
-from lerobot.processor.render_messages_processor import RenderRuntimeMessagesStep, RenderTrainingMessagesStep
-from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_STATE, QUERY_KIND, QUERY_TEXT
-from tests.policies.fineart_vla.test_fineart_vla_text_processor import _CharTokenizer
+pytest.importorskip("datasets", reason="recipes require lerobot[dataset]")
+pytest.importorskip("av", reason="recipes require lerobot[dataset]")
+
+from lerobot.datasets.recipe import TrainingRecipe  # noqa: E402
+from lerobot.lerobot_types import TransitionKey  # noqa: E402
+from lerobot.policies.fineart_vla.configuration_fineart_vla import FineARTVLAConfig  # noqa: E402
+from lerobot.policies.fineart_vla.text_processor_fineart_vla import (  # noqa: E402
+    FineARTVLATextTokenizerStep,
+)
+from lerobot.processor.render_messages_processor import (  # noqa: E402
+    RenderRuntimeMessagesStep,
+    RenderTrainingMessagesStep,
+)
+from lerobot.utils.constants import (  # noqa: E402
+    OBS_LANGUAGE_TOKENS,
+    OBS_STATE,
+    QUERY_KIND,
+    QUERY_TEXT,
+)
+from tests.policies.fineart_vla.test_fineart_vla_text_processor import _CharTokenizer  # noqa: E402
 
 
 def test_subtask_recipe_is_embedded_and_keeps_70_30_mix():

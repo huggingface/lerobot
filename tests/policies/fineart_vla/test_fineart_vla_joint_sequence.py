@@ -31,10 +31,14 @@ layout is rebuilt around the *generated* subtask, so these tests pin:
 
 from pathlib import Path
 
+import pytest
 import torch
 
-from lerobot.datasets.recipe import TrainingRecipe
-from lerobot.policies.fineart_vla.text_processor_fineart_vla import (
+pytest.importorskip("datasets", reason="recipes require lerobot[dataset]")
+pytest.importorskip("av", reason="recipes require lerobot[dataset]")
+
+from lerobot.datasets.recipe import TrainingRecipe  # noqa: E402
+from lerobot.policies.fineart_vla.text_processor_fineart_vla import (  # noqa: E402
     FineARTVLATextTokenizerStep,
     encode_prompt_with_targets,
 )

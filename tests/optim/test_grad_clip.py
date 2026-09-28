@@ -11,6 +11,15 @@ from torch import nn
 from lerobot.optim.grad_clip import clip_grad_norm_with_groups_
 
 
+def _require_update_policy():
+    """Import the trainer, skipping when its dataset dependencies are absent."""
+    pytest.importorskip("datasets", reason="the trainer requires lerobot[dataset]")
+    pytest.importorskip("av", reason="the trainer requires lerobot[dataset]")
+    from lerobot.scripts.lerobot_train import update_policy
+
+    return update_policy
+
+
 def parameter_with_grad(values):
     parameter = nn.Parameter(torch.ones(len(values)))
     parameter.grad = torch.tensor(values, dtype=torch.float32)
@@ -63,7 +72,7 @@ def test_group_coverage_and_overlap_are_rejected():
 
 
 def test_trainer_refuses_nonfinite_update_and_preserves_optimizer_scheduler():
-    from lerobot.scripts.lerobot_train import update_policy
+    update_policy = _require_update_policy()
     from lerobot.utils.logging_utils import MetricsTracker
 
     class Policy(nn.Module):
@@ -129,7 +138,7 @@ def test_ddp_clips_synchronized_gradients_identically(tmp_path):
 
 
 def test_trainer_applies_limits_and_reports_raw_norm_on_success():
-    from lerobot.scripts.lerobot_train import update_policy
+    update_policy = _require_update_policy()
     from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 
     class Policy(nn.Module):
