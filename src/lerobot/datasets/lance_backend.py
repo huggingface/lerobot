@@ -132,7 +132,7 @@ class LanceDatasetReader(BaseDatasetReader):
         revision: str | None = None,
         return_uint8: bool = False,
         depth_output_unit: str = DEFAULT_DEPTH_UNIT,
-        storage_options: dict | None = None,
+        storage_options: dict[str, str] | None = None,
         video_decoder_cache_size: int | None = None,
         token: str | bool | None = None,
     ):
@@ -140,7 +140,7 @@ class LanceDatasetReader(BaseDatasetReader):
         self.meta = meta
         self.repo_id = meta.repo_id
         self.tolerance_s = tolerance_s
-        self._storage_options = storage_options
+        self._storage_options = dict(storage_options) if storage_options is not None else None
         self._token = token
 
         self._db_uri, _ = resolve_lance_root(self.repo_id, root, self._storage_options, revision, token)

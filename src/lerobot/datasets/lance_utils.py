@@ -248,8 +248,8 @@ def to_lance_column(key: str) -> str:
 
 
 def _storage_options(
-    db_uri: str, storage_options: dict | None, revision: str | None, token: str | bool | None = None
-) -> dict:
+    db_uri: str, storage_options: dict[str, str] | None, revision: str | None, token: str | bool | None = None
+) -> dict[str, str]:
     options = dict(storage_options or {})
     if db_uri.startswith("hf://"):
         if "token" not in options:
@@ -266,7 +266,7 @@ def _storage_options(
 
 def _connect(
     db_uri: str,
-    storage_options: dict | None,
+    storage_options: dict[str, str] | None,
     revision: str | None = None,
     token: str | bool | None = None,
 ):
@@ -321,6 +321,8 @@ def localize_root(
     revision: str | None = None,
     token: str | bool | None = None,
     force_cache_sync: bool = False,
+    *,
+    storage_options: dict[str, str] | None = None,
 ) -> Path:
     """Materialize ``meta/`` for a remote Lance dataset and return the local dir holding it.
 
@@ -328,7 +330,12 @@ def localize_root(
     tables are never downloaded.
     """
     _, local_root = resolve_lance_root(
-        repo_id, root, revision=revision, token=token, force_cache_sync=force_cache_sync
+        repo_id,
+        root,
+        storage_options=storage_options,
+        revision=revision,
+        token=token,
+        force_cache_sync=force_cache_sync,
     )
     return local_root
 
@@ -336,7 +343,7 @@ def localize_root(
 def resolve_lance_root(
     repo_id: str | None,
     root: str | Path | None,
-    storage_options: dict | None = None,
+    storage_options: dict[str, str] | None = None,
     revision: str | None = None,
     token: str | bool | None = None,
     force_cache_sync: bool = False,

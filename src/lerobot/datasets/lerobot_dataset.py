@@ -74,6 +74,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         repo_type: str = "dataset",
         token: str | bool | None = None,
         video_decoder_cache_size: int | None = None,
+        storage_options: dict[str, str] | None = None,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -221,6 +222,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 number of open video decoders each DataLoader worker keeps. Larger values cut
                 re-reads under a shuffled sampler at the cost of RAM. Defaults to the reader's own
                 default (256 for ``"lance"``).
+            storage_options (dict[str, str] | None, optional): Storage connection options used for
+                both remote metadata and data reads. Currently supported by the Lance backend,
+                which forwards them to ``lancedb.connect``. Defaults to None.
 
         Note:
             Write-mode parameters (``streaming_encoding``, ``batch_encoding_size``) passed to
@@ -238,7 +242,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._storage_root = root if root is not None and is_remote_uri(root) else None
         if self._storage_root is not None:
             root = localize_remote_root(
-                repo_id, self._storage_root, revision, token=token, force_cache_sync=force_cache_sync
+                repo_id,
+                self._storage_root,
+                revision,
+                token=token,
+                force_cache_sync=force_cache_sync,
+                storage_options=storage_options,
             )
         self._requested_root = Path(root) if root else None
         self.delta_timestamps = delta_timestamps
@@ -309,6 +318,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             }
             if video_decoder_cache_size is not None:
                 reader_kwargs["video_decoder_cache_size"] = video_decoder_cache_size
+            if storage_options:
+                reader_kwargs["storage_options"] = storage_options
             self.reader = make_dataset_reader(self.meta.storage_format, **reader_kwargs)
             self.episodes = self.reader.episodes
             self.writer = None
@@ -317,6 +328,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         if video_decoder_cache_size is not None:
             raise ValueError("video_decoder_cache_size only applies to non-default storage formats.")
+        if storage_options:
+            raise ValueError("storage_options is not supported by the default 'lerobot' storage format.")
         # The default format is always served by DatasetReader.
         reader = DatasetReader(
             meta=self.meta,

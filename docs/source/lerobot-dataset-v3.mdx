@@ -379,4 +379,29 @@ lerobot-train \
   --policy.type=act
 ```
 
+For object stores that need an explicit endpoint or region, pass `storage_options` to `LeRobotDataset`:
+
+```python
+dataset = LeRobotDataset(
+    "my-org/pusht-lance",
+    root="s3://my-bucket/pusht-lance",
+    storage_options={
+        "aws_endpoint": "https://s3.example.com",
+        "aws_region": "us-east-1",
+    },
+)
+```
+
+The same options are available in `DatasetConfig` and through the training CLI:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=my-org/pusht-lance \
+  --dataset.root=s3://my-bucket/pusht-lance \
+  --dataset.storage_options='{"aws_endpoint":"https://s3.example.com","aws_region":"us-east-1"}' \
+  --policy.type=act
+```
+
+Keys and values must be strings. Options are forwarded to `lancedb.connect` for both metadata loading and data reads, including train/eval splits and DataLoader workers. `storage_options` defaults to `None`; non-empty options are currently supported only by the Lance backend and cannot be used with `dataset.streaming=true`. Training configurations are logged and saved, so supply credentials through environment variables or your storage provider's credential mechanism instead of placing secrets in the configuration.
+
 Visualization works with both viewers. `lerobot-dataset-viz --repo-id lance-format/pusht-lance --episode-index 0` opens an episode in Rerun as usual, and `--display-mode foxglove` serves it to [Foxglove](https://foxglove.dev) over WebSocket. Either way only the frames on screen are fetched, with no MCAP export or download.

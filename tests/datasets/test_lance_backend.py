@@ -37,7 +37,7 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import lance_backend, lance_utils
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.dataset_reader import DatasetReader
-from lerobot.datasets.factory import make_dataset
+from lerobot.datasets.factory import make_dataset, make_train_eval_datasets
 from lerobot.datasets.lance_backend import LanceDatasetReader, lance_mp_context
 from lerobot.datasets.language import (
     LANGUAGE_COLUMNS,
@@ -360,9 +360,73 @@ def test_force_cache_sync_refreshes_remote_meta(video_dataset_roots):
     assert refreshed.meta.fps != 999  # re-materialized from the meta table
 
 
+@pytest.mark.parametrize("entry_point", ["dataset", "factory", "train_eval"])
+def test_storage_options_remote_reads(dataset_roots, tmp_path, monkeypatch, entry_point):
+    src_root, lance_root = dataset_roots
+    remote_root = "s3://test-bucket/dataset"
+    storage_options = {"aws_endpoint": "https://s3.example.com", "aws_region": "us-east-1"}
+    expected_options = storage_options.copy()
+    connections = []
+    connect = lancedb.connect
+
+    def connect_with_options(uri, **kwargs):
+        # Emulate a store that requires these options, while reading real local
+        # Lance tables. Missing options must fail even on the first metadata read.
+        assert uri in (remote_root, str(lance_root))
+        assert kwargs.get("storage_options") == expected_options
+        if uri == remote_root:
+            connections.append(kwargs["storage_options"].copy())
+        return connect(str(lance_root), **kwargs)
+
+    monkeypatch.setattr(lance_utils, "HF_LEROBOT_HOME", tmp_path / "cache")
+    monkeypatch.setattr(lancedb, "connect", connect_with_options)
+    if entry_point == "dataset":
+        datasets = [LeRobotDataset(DUMMY_REPO_ID, root=remote_root, storage_options=storage_options)]
+    else:
+        cfg = TrainPipelineConfig(
+            dataset=DatasetConfig(
+                repo_id=DUMMY_REPO_ID,
+                root=remote_root,
+                storage_options=storage_options,
+                eval_split=0.34 if entry_point == "train_eval" else 0.0,
+            ),
+            policy=make_policy_config("act"),
+        )
+        datasets = list(make_train_eval_datasets(cfg)) if entry_point == "train_eval" else [make_dataset(cfg)]
+
+    # Cold metadata loading has already connected, before any frame was read.
+    assert len(connections) == 1
+    assert storage_options == expected_options
+    storage_options["aws_region"] = "changed-after-construction"
+    upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root)
+    if entry_point == "train_eval":
+        assert len(datasets[0]) + len(datasets[1]) == len(upstream)
+        assert set(datasets[0].episodes).isdisjoint(datasets[1].episodes)
+    for dataset in datasets:
+        sample = dataset[0]
+        reference = LeRobotDataset(DUMMY_REPO_ID, root=src_root, delta_timestamps=dataset.delta_timestamps)
+        assert_items_equal(sample, reference[int(sample["index"])])
+
+        previous_connections = len(connections)
+        restored = pickle.loads(pickle.dumps(dataset))
+        assert_items_equal(restored[0], sample)
+        assert len(connections) == previous_connections + 1
+        dataset.reader.close()
+        assert_items_equal(dataset[0], sample)
+        assert len(connections) == previous_connections + 2
+
+
+def test_default_storage_rejects_storage_options(dataset_roots):
+    src_root, _ = dataset_roots
+    with pytest.raises(ValueError, match="storage_options.*default"):
+        LeRobotDataset(DUMMY_REPO_ID, root=src_root, storage_options={"aws_region": "us-east-1"})
+
+    assert len(LeRobotDataset(DUMMY_REPO_ID, root=src_root, storage_options={})) == 90
+
+
 def test_pickle_and_dataloader(dataset_roots):
     _, lance_root = dataset_roots
-    lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
+    lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, storage_options={"aws_region": "us-east-1"})
     restored = pickle.loads(pickle.dumps(lance_ds))
     assert_items_equal(restored[7], lance_ds[7])
 

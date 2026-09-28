@@ -55,10 +55,15 @@ class DatasetConfig:
     streaming: bool = False
     # Fraction of episodes held out per task for offline evaluation (0.0 = disabled).
     eval_split: float = 0.0
+    # Storage connection options (string keys and values), currently supported by the Lance backend.
+    # Configs are logged and saved: provide credentials through the environment instead.
+    storage_options: dict[str, str] | None = None
 
     def __post_init__(self) -> None:
         if self.repo_type not in ("dataset", "bucket"):
             raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {self.repo_type!r}")
+        if self.streaming and self.storage_options:
+            raise ValueError("dataset.storage_options is not supported with dataset.streaming=true.")
         if self.eval_split != 0.0 and self.streaming:
             raise ValueError(
                 "eval_split requires map-style datasets and is not supported with dataset.streaming=true."
