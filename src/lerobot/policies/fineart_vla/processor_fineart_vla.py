@@ -70,6 +70,8 @@ def make_fineart_vla_pre_post_processors(
             raise ValueError("FineART-VLA FAST action loss requires recipe_path to build action supervision.")
         return make_pi05_pre_post_processors(config, dataset_stats=dataset_stats)
 
+    if config.input_features is None or config.output_features is None or config.device is None:
+        raise ValueError("FineART-VLA processors require input/output features and a device")
     recipe = TrainingRecipe.from_dict(config.recipe)
 
     relative_step = RelativeActionsProcessorStep(

@@ -18,7 +18,7 @@ import builtins
 import logging
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
+from typing import TYPE_CHECKING, Literal, TypedDict, Unpack, cast
 
 import numpy as np
 import torch
@@ -209,12 +209,14 @@ class PI0FastPaliGemma(nn.Module):
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         past_key_values: list[torch.FloatTensor] | None = None,
-        inputs_embeds: list[torch.FloatTensor] | None = None,
+        inputs_embeds: list[torch.Tensor | None] | None = None,
         use_cache: bool | None = None,
-        adarms_cond: list[torch.Tensor] | None = None,
+        adarms_cond: list[torch.Tensor | None] | None = None,
     ):
         if adarms_cond is None:
             adarms_cond = [None, None]
+        if inputs_embeds is None:
+            raise ValueError("inputs_embeds must be a [prefix, suffix] pair (either entry may be None)")
         if inputs_embeds[1] is None:
             prefix_output = self.paligemma.model.language_model.forward(
                 inputs_embeds=inputs_embeds[0],
@@ -251,7 +253,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         self.paligemma_with_expert = PI0FastPaliGemma(
             paligemma_config,
             use_adarms=[False, True],
-            precision=config.dtype,
+            precision=cast(Literal["bfloat16", "float32"], config.dtype),
         )
 
         # Initialize gradient checkpointing flag
@@ -260,7 +262,15 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         # Compile model if requested
         if config.compile_model:
             torch.set_float32_matmul_precision("high")
-            self.forward = torch.compile(self.forward, mode=config.compile_mode)
+            self.forward = torch.compile(self.forward, mode=config.compile_mode)  # type: ignore[method-assign]
+
+    def _require_paligemma_tokenizer(self) -> "AutoTokenizer":
+        """The PaliGemma tokenizer autoregressive decoding needs for its BOS / end-of-action ids."""
+        if self._paligemma_tokenizer is None:
+            raise ValueError(
+                "PI0FastPytorch needs a PaliGemma tokenizer to decode actions; pass `paligemma_tokenizer`."
+            )
+        return self._paligemma_tokenizer
 
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
@@ -511,12 +521,12 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
     @torch.no_grad()
     def sample_actions_fast(
         self,
-        images,
-        img_masks,
-        tokens,
-        masks,
-        max_decoding_steps=None,
-        temperature=0.0,
+        images: list[torch.Tensor],
+        img_masks: list[torch.Tensor],
+        tokens: torch.Tensor,
+        masks: torch.Tensor,
+        max_decoding_steps: int | None = None,
+        temperature: float = 0.0,
     ) -> torch.Tensor:
         """
         Inefficient but safe autoregressive decoding for FAST tokens.
@@ -529,6 +539,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         bsize = tokens.shape[0]
         device = tokens.device
         lm_head = self.paligemma_with_expert.paligemma.lm_head
+        tokenizer = self._require_paligemma_tokenizer()
 
         # 1. Initial embedding: the prompt's existing BOS is the only BOS in the sequence.
         prefix_embs, prefix_pad_masks, prefix_att_masks, total_t_images, _ = self.embed_prefix_fast(
@@ -542,7 +553,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
 
         generated_action_tokens = torch.zeros((bsize, max_decoding_steps), dtype=torch.long, device=device)
-        eos_token_id = self._paligemma_tokenizer.eos_token_id
+        eos_token_id = tokenizer.eos_token_id
         finished = torch.zeros(bsize, dtype=torch.bool, device=device)
 
         # 2. Decoding Loop (each step re-computes full sequence)
@@ -608,21 +619,18 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
     @torch.no_grad()
     def sample_actions_fast_kv_cache(
         self,
-        images,
-        img_masks,
-        tokens,
-        masks,
-        max_decoding_steps=None,
-        temperature=0.0,
+        images: list[torch.Tensor],
+        img_masks: list[torch.Tensor],
+        tokens: torch.Tensor,
+        masks: torch.Tensor,
+        max_decoding_steps: int | None = None,
+        temperature: float = 0.0,
     ) -> torch.Tensor:
         """
         Optimized autoregressive decoding for FAST tokens using KV Caching.
 
-        Greedy decoding stops once every sequence emits the end-of-action marker. The
-        returned tensor keeps its fixed shape, with positions not generated after the
-        batch-wide stop left zero-filled. Stochastic decoding always runs to
-        ``max_decoding_steps`` so early stopping does not change the RNG state used by
-        subsequent calls.
+        Each sequence stops at EOS. The returned tensor keeps its fixed shape, with
+        positions after EOS left zero-filled, and decoding ends once all sequences finish.
         """
         if max_decoding_steps is None:
             max_decoding_steps = self.config.max_action_tokens
@@ -630,6 +638,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         bsize = tokens.shape[0]
         device = tokens.device
         lm_head = self.paligemma_with_expert.paligemma.lm_head
+        tokenizer = self._require_paligemma_tokenizer()
 
         generated_action_tokens = torch.zeros((bsize, max_decoding_steps), dtype=torch.long, device=device)
         if max_decoding_steps == 0:
@@ -668,7 +677,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         prediction_hidden = _gather_last_valid_language_hidden(prefix_out, masks, total_t_images)
         next_token = _sample_next_token(lm_head(prediction_hidden), temperature)
         generated_action_tokens[:, 0] = next_token.squeeze(-1)
-        eos_token_id = self._paligemma_tokenizer.eos_token_id
+        eos_token_id = tokenizer.eos_token_id
         finished = next_token.squeeze(-1).eq(eos_token_id)
         if finished.all():
             return generated_action_tokens
@@ -1195,6 +1204,8 @@ class PI0FastPolicy(PreTrainedPolicy):
 
         # Detokenize action tokens to continuous actions
         action_horizon = self.config.chunk_size
+        if self.config.output_features is None:
+            raise ValueError("output_features must be set (validate_features) before predicting actions")
         action_dim = self.config.output_features[ACTION].shape[0]
 
         continuous_actions = self.detokenize_actions(

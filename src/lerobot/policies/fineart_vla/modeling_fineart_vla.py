@@ -36,12 +36,12 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_TOKENS,
 )
 
+from ..common.vla_utils import make_att_2d_masks
 from ..pi05.modeling_pi05 import (
-    ActionSelectKwargs,
     PI05Policy,
     PI05Pytorch as PI05PytorchBase,
-    make_att_2d_masks,
 )
+from ..pretrained import RTCActionSelectKwargs
 from .configuration_fineart_vla import FineARTVLAConfig
 from .processor_fineart_vla import make_fineart_vla_pre_post_processors  # noqa: F401
 
@@ -64,7 +64,8 @@ class PI05Pytorch(PI05PytorchBase):  # see openpi `PI0Pytorch`
     use_on_device_suffix_mask = True
     precompute_denoise_times = True
 
-    def forward(self, images, img_masks, tokens, masks, actions, noise, time) -> Tensor:
+    # This flow-only override does not implement the base policy's RTC/MEM training inputs.
+    def forward(self, images, img_masks, tokens, masks, actions, noise, time) -> Tensor:  # type: ignore[override]
         """Do a full training forward pass and compute the loss."""
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
@@ -906,7 +907,7 @@ class FineARTVLAPolicy(PI05Policy):
         if getattr(config, "knowledge_insulation", False):
             backbone = self.model.paligemma_with_expert
             backbone._fineart_vla_orig_forward = backbone.forward
-            backbone.forward = types.MethodType(_paligemma_forward_ki, backbone)
+            backbone.forward = types.MethodType(_paligemma_forward_ki, backbone)  # type: ignore[method-assign]
             logger.info(
                 "FineART-VLA: knowledge insulation enabled — action→VLM K/V gradients are blocked in attention."
             )
@@ -1269,6 +1270,8 @@ class FineARTVLAPolicy(PI05Policy):
         flow_per_dim = functional.mse_loss(u_t, v_t, reduction="none")
         # Truncate to the actual action dimensionality (PI05 pads
         # internally to max_action_dim).
+        if self.config.output_features is None:
+            raise ValueError("output_features must be configured before computing actions")
         original_action_dim = self.config.output_features[ACTION].shape[0]
         flow_per_dim = flow_per_dim[:, :, :original_action_dim]
         per_sample_flow = flow_per_dim.mean(dim=(1, 2))
@@ -1398,6 +1401,8 @@ class FineARTVLAPolicy(PI05Policy):
 
         # ---- flow loss averaged over the K blocks -------------------
         # Project all blocks together before averaging their losses.
+        if self.config.output_features is None:
+            raise ValueError("output_features must be configured before computing actions")
         original_action_dim = self.config.output_features[ACTION].shape[0]
         v_t = model.action_out_proj(suffix_out.to(dtype=torch.float32))
         v_t = v_t.view(batch_size, k, chunk, -1)  # (B, k, chunk, motor)
@@ -1651,7 +1656,7 @@ class FineARTVLAPolicy(PI05Policy):
     @staticmethod
     def _batch_size_from_observation(batch: dict[str, Any]) -> int:
         state = batch.get("observation.state")
-        if torch.is_tensor(state) and state.ndim > 0:
+        if isinstance(state, Tensor) and state.ndim > 0:
             return int(state.shape[0])
         for key, value in batch.items():
             if isinstance(key, str) and key.startswith("observation.images.") and torch.is_tensor(value):
@@ -1811,7 +1816,9 @@ class FineARTVLAPolicy(PI05Policy):
         return groups
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+    def predict_action_chunk(
+        self, batch: dict[str, Tensor], **kwargs: Unpack[RTCActionSelectKwargs]
+    ) -> Tensor:
         # Guard before first-observation FP8 calibration to prevent recursive prediction.
         if self.config.use_flashrt_fp8_mlp and not getattr(self, "_fp8_applied", False):
             self._fp8_applied = True
@@ -1823,7 +1830,7 @@ class FineARTVLAPolicy(PI05Policy):
 
     @torch.no_grad()
     def _predict_action_chunk_with_marks(
-        self, batch: dict[str, Tensor], marks: Tensor, **kwargs: Unpack[ActionSelectKwargs]
+        self, batch: dict[str, Tensor], marks: Tensor, **kwargs: Unpack[RTCActionSelectKwargs]
     ) -> Tensor:
         """Base ``predict_action_chunk`` plus causal marks on the generated-subtask span."""
         self.eval()
@@ -1833,5 +1840,7 @@ class FineARTVLAPolicy(PI05Policy):
         actions = self.model.sample_actions(
             images, img_masks, tokens, masks, lang_causal_marks=marks, **kwargs
         )
+        if self.config.output_features is None:
+            raise ValueError("output_features must be configured before computing actions")
         original_action_dim = self.config.output_features[ACTION].shape[0]
         return actions[:, :, :original_action_dim]

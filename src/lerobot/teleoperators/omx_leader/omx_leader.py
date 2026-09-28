@@ -98,7 +98,7 @@ class OmxLeader(Teleoperator):
                 self.bus.write("Drive_Mode", motor, DriveMode.NON_INVERTED.value)
         drive_modes = {motor: 1 if motor == "gripper" else 0 for motor in self.bus.motors}
 
-        self.calibration = {}
+        self.calibration: dict[str, MotorCalibration] = {}
         for motor, m in self.bus.motors.items():
             self.calibration[motor] = MotorCalibration(
                 id=m.id,

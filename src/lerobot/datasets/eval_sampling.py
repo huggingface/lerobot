@@ -25,12 +25,12 @@ def balanced_eval_indices(tasks: Sequence[int], episodes: Sequence[int], max_sam
         raise ValueError("Matching task/episode lengths and a nonnegative cap are required")
     if max_samples == 0 or max_samples >= len(tasks):
         return list(range(len(tasks)))
-    groups = defaultdict(lambda: defaultdict(list))
+    groups: dict[int, dict[int, list[int]]] = defaultdict(lambda: defaultdict(list))
     for index, (task, episode) in enumerate(zip(tasks, episodes, strict=True)):
         groups[int(task)][int(episode)].append(index)
     task_groups = [groups[key] for key in sorted(groups)]
     quotas = _allocate([sum(map(len, group.values())) for group in task_groups], max_samples)
-    selected = []
+    selected: list[int] = []
     for group, quota in zip(task_groups, quotas, strict=True):
         frames = [group[key] for key in sorted(group)]
         for values, count in zip(frames, _allocate(list(map(len, frames)), quota), strict=True):

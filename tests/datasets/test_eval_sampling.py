@@ -33,3 +33,46 @@ def test_bad_inputs():
         balanced_eval_indices([0], [], 2)
     with pytest.raises(ValueError):
         balanced_eval_indices([], [], -1)
+
+
+def test_eval_loader_balances_only_frames_left_after_episode_trimming():
+    from types import SimpleNamespace
+
+    import pyarrow as pa
+    import torch
+
+    from lerobot.scripts.lerobot_train import make_dataloaders
+
+    class Dataset(torch.utils.data.Dataset):
+        episodes = None
+        absolute_to_relative_idx = None
+        meta = SimpleNamespace(
+            has_language_columns=False,
+            episodes={"dataset_from_index": [0, 6], "dataset_to_index": [6, 12]},
+        )
+        hf_dataset = SimpleNamespace(
+            data=pa.table({"task_index": [0] * 6 + [1] * 6, "episode_index": [0] * 6 + [1] * 6})
+        )
+
+        def __len__(self):
+            return 12
+
+        def __getitem__(self, index):
+            return index
+
+    config = SimpleNamespace(
+        trainable_config=SimpleNamespace(drop_n_first_frames=1, drop_n_last_frames=1),
+        dataset=SimpleNamespace(streaming=False),
+        resume=False,
+        seed=0,
+        batch_size=2,
+        num_workers=0,
+        max_eval_samples=4,
+        prefetch_factor=None,
+        persistent_workers=False,
+        dataloader_multiprocessing_context=None,
+    )
+    _, loader = make_dataloaders(config, Dataset(), Dataset(), 0, SimpleNamespace(device_type="cpu"))
+
+    # Two temporal midpoints per episode, in the original dataset coordinates.
+    assert torch.cat(list(loader)).tolist() == [2, 4, 8, 10]

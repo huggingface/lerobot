@@ -21,8 +21,10 @@ from .evo1.configuration_evo1 import Evo1Config as Evo1Config
 from .factory import get_policy_class, make_policy, make_policy_config, make_pre_post_processors
 from .fastwam.configuration_fastwam import FastWAMConfig as FastWAMConfig
 from .fineart_vla.configuration_fineart_vla import FineARTVLAConfig as FineARTVLAConfig
+from .flux3.configuration_flux3 import Flux3Config as Flux3Config
 from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig as GaussianActorConfig
 from .groot.configuration_groot import GrootConfig as GrootConfig
+from .lawam.configuration_lawam import LaWAMConfig as LaWAMConfig
 from .lingbot_va.configuration_lingbot_va import LingBotVAConfig as LingBotVAConfig
 from .molmoact2.configuration_molmoact2 import MolmoAct2Config as MolmoAct2Config
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig as MultiTaskDiTConfig
@@ -49,9 +51,11 @@ __all__ = [
     "EO1Config",
     "FastWAMConfig",
     "FineARTVLAConfig",
+    "Flux3Config",
     "GaussianActorConfig",
     "Evo1Config",
     "GrootConfig",
+    "LaWAMConfig",
     "LingBotVAConfig",
     "MolmoAct2Config",
     "MultiTaskDiTConfig",

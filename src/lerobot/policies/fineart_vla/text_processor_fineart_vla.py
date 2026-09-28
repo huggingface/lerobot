@@ -329,7 +329,7 @@ class FineARTVLATextTokenizerStep(ProcessorStep):
         self._tokenizer = register_paligemma_loc_tokens(AutoTokenizer.from_pretrained(self.tokenizer_name))
         return self._tokenizer
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition | None:
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
         complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}) or {}
         messages = complementary.get("messages_rendered") or complementary.get("messages") or []
@@ -501,7 +501,7 @@ class FineARTVLATextTokenizerStep(ProcessorStep):
                 "memory": self.memory_dropout_prob,
                 "subtask": self.subtask_dropout_prob,
                 "interjection": self.interjection_dropout_prob,
-            }.get(kind, 0.0)
+            }.get(kind or "", 0.0)
             if prob > 0.0 and rng.random() < prob:
                 continue
             keep_indices.append(idx)

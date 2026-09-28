@@ -101,4 +101,4 @@ def test_pretrained_pi0_fast_keeps_saved_tokenizer(monkeypatch):
         dataset_repo_id="user/dataset",
     )
 
-    assert calls[0]["overrides"] == {}
+    assert not calls[0]["overrides"]

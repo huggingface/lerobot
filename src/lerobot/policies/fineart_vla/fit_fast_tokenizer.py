@@ -365,7 +365,7 @@ def fit_fast_tokenizer(
     # Sort once because episode order is only guaranteed within each shard.
     order = np.argsort(eps, kind="stable")
     eps_sorted = eps[order]
-    boundaries = np.searchsorted(eps_sorted, np.arange(int(eps_sorted.max()) + 2))
+    boundaries = np.asarray(np.searchsorted(eps_sorted, np.arange(int(eps_sorted.max()) + 2)))
     ep_to_slice: dict[int, tuple[int, int]] = {
         int(ep): (int(boundaries[ep]), int(boundaries[ep + 1]))
         for ep in range(len(boundaries) - 1)

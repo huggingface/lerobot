@@ -189,7 +189,10 @@ class FineARTVLAConfig(PI05Config):
                 packaged = Path(__file__).parents[2] / "configs" / path
                 if packaged.exists():
                     path = str(packaged)
-            self.recipe = asdict(resolve_recipe_override(self.recipe, path))
+            resolved_recipe = resolve_recipe_override(self.recipe, path)
+            if resolved_recipe is None:
+                raise ValueError("recipe_path must resolve to a training recipe")
+            self.recipe = asdict(resolved_recipe)
         if self.enable_fast_action_loss and self.recipe is None:
             raise ValueError("FineART-VLA FAST action loss requires recipe_path to build action supervision.")
         if self.text_loss_weight > 0 and self.unfreeze_lm_head:
