@@ -51,6 +51,6 @@ jobs:
           persist-credentials: false
 
       - name: Secret Scanning
-        uses: trufflesecurity/trufflehog@27b0417c16317ca9a472a9a8092acce143b49c55  # v3.95.9
+        uses: trufflesecurity/trufflehog@f714bf454f350590f4a24c3ddb1aef02c35bf5b6  # v3.97.5
         with:
           extra_args: --only-verified
