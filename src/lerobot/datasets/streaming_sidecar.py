@@ -68,7 +68,11 @@ def streaming_data_root(
 
 
 def make_sidecar_spec(
-    meta: LeRobotDatasetMetadata, data_root: str, *, token: str | bool | None = None
+    meta: LeRobotDatasetMetadata,
+    data_root: str,
+    *,
+    token: str | bool | None = None,
+    storage_options: dict[str, str] | None = None,
 ) -> SidecarSpec:
     """Describe the full dataset's video sources and their revision or object identities.
 
@@ -79,6 +83,8 @@ def make_sidecar_spec(
             Root containing the source videos.
         token (`str | bool | None`, *optional*):
             Hub authentication for revision resolution and bucket metadata reads.
+        storage_options (`dict[str, str] | None`, *optional*):
+            Fsspec connection options for source object metadata reads.
 
     Returns:
         `SidecarSpec`: Source identity used to validate and key the local sidecar cache.
@@ -111,7 +117,9 @@ def make_sidecar_spec(
             (path, f"{stats[path].st_mtime_ns}:{stats[path].st_ctime_ns}") for path in relative_paths
         )
     elif location.kind is not LocationKind.HF_DATASET:
-        filesystem, fs_root = fsspec.core.url_to_fs(data_root, skip_instance_cache=True)
+        options = location.storage_options(token, storage_options)
+        options["skip_instance_cache"] = True
+        filesystem, fs_root = fsspec.core.url_to_fs(data_root, **options)
         infos = {path: filesystem.info(f"{fs_root.rstrip('/')}/{path}") for path in relative_paths}
         source_files = tuple((path, int(infos[path]["size"])) for path in relative_paths)
         fingerprints = tuple(
@@ -148,6 +156,7 @@ def build_mp4_sidecar(
     range_backend: str = "native-http",
     max_probe_bytes: int = 64 * 1024 * 1024,
     token: str | bool | None = None,
+    storage_options: dict[str, str] | None = None,
 ) -> None:
     """Index the specified videos into a local sidecar without publishing it.
 
@@ -164,6 +173,8 @@ def build_mp4_sidecar(
             Maximum header or tail probe size; defaults to 64 MiB.
         token (`str | bool | None`, *optional*):
             Authentication for source reads, never stored in the sidecar.
+        storage_options (`dict[str, str] | None`, *optional*):
+            Fsspec connection options for source reads, never stored in the sidecar.
     """
     EpisodeVideoManifest.write_file_sidecar(
         destination,
@@ -174,6 +185,7 @@ def build_mp4_sidecar(
         workers=workers,
         max_probe_bytes=max_probe_bytes,
         token=token,
+        storage_options=storage_options,
     )
 
 
@@ -199,14 +211,15 @@ def download_published_sidecar(
     *,
     cache_root: str | Path = DEFAULT_SIDECAR_CACHE,
     token: str | bool | None = None,
+    storage_options: dict[str, str] | None = None,
 ) -> bool:
     """Copy a published sidecar for later validation, returning False when absent."""
     location = StorageLocation.parse(spec.data_root)
     if location.kind is LocationKind.LOCAL and location.local_path.is_dir():
         return False
     source_url = published_sidecar_url(spec, cache_root)
-    storage_options = StorageLocation.parse(source_url).storage_options(token)
-    filesystem, source = fsspec.core.url_to_fs(source_url, **storage_options)
+    options = StorageLocation.parse(source_url).storage_options(token, storage_options)
+    filesystem, source = fsspec.core.url_to_fs(source_url, **options)
     if not filesystem.exists(source):
         return False
     with filesystem.open(source, "rb") as remote, destination.open("wb") as local:
@@ -223,6 +236,7 @@ def ensure_dataset_mp4_sidecar(
     range_backend: str = "native-http",
     lock_timeout_s: float = 30 * 60,
     token: str | bool | None = None,
+    storage_options: dict[str, str] | None = None,
 ) -> Path | None:
     """Reuse or safely build a validated local video index.
 
@@ -245,6 +259,8 @@ def ensure_dataset_mp4_sidecar(
             Maximum time to wait for another builder; defaults to 30 minutes.
         token (`str | bool | None`, *optional*):
             Hub authentication for metadata, sidecar and source reads.
+        storage_options (`dict[str, str] | None`, *optional*):
+            Fsspec connection options for sidecar and source reads.
 
     Returns:
         `Path | None`: Validated local sidecar path, or None for datasets without video.
@@ -252,7 +268,7 @@ def ensure_dataset_mp4_sidecar(
     if not meta.video_keys:
         return None
 
-    spec = make_sidecar_spec(meta, data_root, token=token)
+    spec = make_sidecar_spec(meta, data_root, token=token, storage_options=storage_options)
     logging.info(
         "Resolving training-time MP4 sidecar for %s@%s (%d files)",
         spec.repo_id,
@@ -268,12 +284,14 @@ def ensure_dataset_mp4_sidecar(
             workers=workers,
             range_backend=range_backend,
             token=token,
+            storage_options=storage_options,
         ),
         download=lambda path, target_spec: download_published_sidecar(
             path,
             target_spec,
             cache_root=cache_root,
             token=token,
+            storage_options=storage_options,
         ),
         lock_timeout_s=lock_timeout_s,
     )
