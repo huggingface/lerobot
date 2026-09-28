@@ -241,6 +241,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         native_http_subranges: int = 1,
         sidecar_lock_timeout_s: float = 30 * 60,
         sampling_strategy: StreamingSamplingStrategy | str = StreamingSamplingStrategy.REMAINING,
+        storage_options: dict[str, str] | None = None,
     ) -> None:
         """Initialize an episode-scoped streaming reader.
 
@@ -319,6 +320,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             sampling_strategy (`StreamingSamplingStrategy | str`, *optional*, defaults to `"remaining"`):
                 Weight episodes by remaining anchors, or draw one anchor per episode each
                 shuffled round. Neither strategy is a global uniform shuffle.
+            storage_options (`dict[str, str] | None`, *optional*):
+                Fsspec connection options for Parquet, video and sidecar reads. Non-empty options
+                select the fsspec range reader. Pass revision through the dedicated argument.
         """
         super().__init__()
         if is_bucket_root(repo_id, root):
@@ -326,6 +330,12 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             root, repo_type = None, "bucket"
         if repo_type not in ("dataset", "bucket"):
             raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {repo_type!r}")
+        options = dict(storage_options or {})
+        if any(key.lower() == "revision" for key in options):
+            raise ValueError(
+                "storage_options must not contain 'revision'; use the revision argument instead."
+            )
+
         self.repo_id = repo_id
         self.repo_type = repo_type
         self._requested_root = Path(root) if root else None
@@ -358,6 +368,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         self._return_uint8 = return_uint8
         self._depth_output_unit = depth_output_unit
         self._streaming_io_token = None if self.streaming_from_local else token
+        self._storage_options = options
         self._video_backend = video_backend if video_backend is not None else get_safe_default_video_backend()
         if self._video_backend == "video_reader":
             self._video_backend = "pyav"
@@ -441,6 +452,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 range_backend=sidecar_backend,
                 lock_timeout_s=sidecar_lock_timeout_s,
                 token=self._streaming_io_token,
+                storage_options=self._storage_options,
             )
         except TimeoutError as exc:
             exc.add_note(
@@ -548,6 +560,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 self._data_root,
                 columns=self._projected_columns,
                 token=self._streaming_io_token,
+                storage_options=self._storage_options,
             )
             parquet_executor = ThreadPoolExecutor(
                 max_workers=max_workers, thread_name_prefix="lerobot-parquet"
@@ -859,6 +872,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             workers=workers,
             sidecar_path=self._sidecar_path,
             token=self._streaming_io_token,
+            storage_options=self._storage_options,
         )
         return EpisodeByteCache(
             manifest,
@@ -876,6 +890,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             video_backend=self._video_backend,
             tolerance_s=self.tolerance_s,
             token=self._streaming_io_token,
+            storage_options=self._storage_options,
         )
 
     def _make_episode_item(

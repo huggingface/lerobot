@@ -173,6 +173,7 @@ def test_rotation_keeps_bytes_until_last_decode(
     ds.decoded_queue_size = queue_size
     ds._data_root = str(tmp_path)
     ds._streaming_io_token = None
+    ds._storage_options = {}
     ds._projected_columns = ("episode_index",)
     monkeypatch.setattr(ds, "_rank_episodes", lambda: ([0, 1, 2], 0, 1))
     monkeypatch.setattr(ds, "_episode_frame_count", lambda ep: 1)

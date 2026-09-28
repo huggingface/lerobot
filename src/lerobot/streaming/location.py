@@ -113,9 +113,14 @@ class StorageLocation:
             raise ValueError(f"{self.uri!r} is not a local path")
         return Path(self.uri).expanduser()
 
-    def storage_options(self, token: str | bool | None) -> dict[str, str | bool]:
-        """Fsspec options for reading this root: the Hub token, for Hub roots only."""
-        return {"token": token} if token is not None and self.is_hf else {}
+    def storage_options(
+        self, token: str | bool | None, options: dict[str, str] | None = None
+    ) -> dict[str, str | bool]:
+        """Copy fsspec connection options, adding the Hub token for Hub roots only."""
+        resolved: dict[str, str | bool] = dict(options or {})
+        if token is not None and self.is_hf:
+            resolved.setdefault("token", token)
+        return resolved
 
     def pinned(self, *, token: str | bool | None = None) -> StorageLocation:
         """Resolve a dataset branch or tag to its commit; other roots are returned unchanged."""
