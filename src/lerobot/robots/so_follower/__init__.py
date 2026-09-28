@@ -19,6 +19,7 @@ from .config_so_follower import (
     SO101FollowerConfig,
     SOFollowerConfig,
     SOFollowerRobotConfig,
+    SpectrobotTrifoldConfig,
 )
 from .so_follower import SO100Follower, SO101Follower, SOFollower
 
@@ -35,8 +36,11 @@ __all__ = [
     "SO101FollowerDragonMultitactile",
     "SO101FollowerDragonTactileBench",
     "SO101FollowerTeensyTactile",
+    "SpectrobotTrifold",
+    "SpectrobotTrifoldConfig",
 ]
 from .so_follower_dragontactile import SO101FollowerDragontactile
 from .so_follower_dragon_multitactile import SO101FollowerDragonMultitactile
 from .so_follower_dragon_tactile_bench import SO101FollowerDragonTactileBench
 from .so_follower_teensy_tactile import SO101FollowerTeensyTactile
+from .spectrobot_trifold import SpectrobotTrifold

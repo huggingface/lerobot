@@ -83,6 +83,7 @@ from lerobot.robots import (  # noqa: F401
     reachy2,
     rebot_b601_follower,
     so_follower,
+    spectrobot,
     unitree_g1 as unitree_g1_robot,
 )
 from lerobot.teleoperators import (  # noqa: F401
@@ -107,7 +108,12 @@ from lerobot.teleoperators import (  # noqa: F401
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging, move_cursor_up
-from lerobot.utils.visualization_utils import init_rerun, log_rerun_data, shutdown_rerun
+from lerobot.utils.visualization_utils import (
+    TactileForce3DLogger,
+    init_rerun,
+    log_rerun_data,
+    shutdown_rerun,
+)
 
 
 @dataclass
@@ -157,6 +163,9 @@ def teleop_loop(
     """
 
     display_len = max(len(key) for key in robot.action_features)
+    # Robots with a tactile finger (e.g. spectrobot_trifold) also get a 3D view of the force vector in Rerun
+    tactile_layout = getattr(robot, "tactile_layout", None)
+    log_tactile_3d = TactileForce3DLogger(tactile_layout) if display_data and tactile_layout else None
     start = time.perf_counter()
     while True:
         loop_start = time.perf_counter()
@@ -191,6 +200,8 @@ def teleop_loop(
                 action=teleop_action,
                 compress_images=display_compressed_images,
             )
+            if log_tactile_3d is not None:
+                log_tactile_3d(obs)
 
             print("\n" + "-" * (display_len + 10))
             print(f"{'NAME':<{display_len}} | {'NORM':>7}")

@@ -38,6 +38,7 @@ from lerobot.robots import (  # noqa: F401
     omx_follower,
     rebot_b601_follower,
     so_follower,
+    spectrobot,
 )
 from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,

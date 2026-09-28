@@ -96,7 +96,7 @@ class HighlightStrategyConfig(RolloutStrategyConfig):
 
 
 @dataclass
-class DAggerKeyboardConfig:
+class   DAggerKeyboardConfig:
     """Keyboard key bindings for DAgger controls.
 
     Keys are specified as single characters (e.g. ``"c"``, ``"h"``) or

@@ -1,177 +1,278 @@
+
+<p align="center"><img src="media/readme/hero-full-v2.webp" alt="SpectRobot" width="80%"></p>
+
 <p align="center">
-  <img alt="LeRobot, Hugging Face Robotics Library" src="./media/readme/lerobot-logo-thumbnail.png" width="100%">
+  <b>Learning tactile perception from high-bandwidth single-point sensing</b><br>
+  Joseph Rigal¹, Emmanuel Virot¹*, Caroline Pascal²<br>
+  ¹ Wormsensing, Seyssinet-Pariset, France · ² Hugging Face, Paris, France · * Corresponding author
 </p>
 
-<div align="center">
+<p align="center">
+  <a href="https://arxiv.org/abs/2609.24621">📄 Paper</a> ·
+  <a href="https://spectrobot-project.github.io">🌐 Project page</a> ·
+  <a href="https://huggingface.co/jogarulfop">🤗 Datasets &amp; models</a> ·
+  <a href="https://github.com/spectrobot-project">💻 Code</a>
+</p>
 
-[![Tests](https://github.com/huggingface/lerobot/actions/workflows/latest_deps_tests.yml/badge.svg?branch=main)](https://github.com/huggingface/lerobot/actions/workflows/latest_deps_tests.yml?query=branch%3Amain)
-[![Tests](https://github.com/huggingface/lerobot/actions/workflows/docker_publish.yml/badge.svg?branch=main)](https://github.com/huggingface/lerobot/actions/workflows/docker_publish.yml?query=branch%3Amain)
-[![Python versions](https://img.shields.io/pypi/pyversions/lerobot)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/huggingface/lerobot/blob/main/LICENSE)
-[![Status](https://img.shields.io/pypi/status/lerobot)](https://pypi.org/project/lerobot/)
-[![Version](https://img.shields.io/pypi/v/lerobot)](https://pypi.org/project/lerobot/)
-[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-v2.1-ff69b4.svg)](https://github.com/huggingface/lerobot/blob/main/CODE_OF_CONDUCT.md)
-[![Discord](https://img.shields.io/badge/Discord-Join_Us-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/q8Dzzpym3f)
+## Context
 
-</div>
+Tactile sensing is being used more and more in learning-based robot manipulation, but most approaches rely on spatially distributed sensors (skins, arrays, vision-based tactile pads). **SpectRobot** takes the opposite approach: a **single-point, high-bandwidth vibration sensor** is mounted on the gripper, and its signal is turned into a compact **time-frequency spectrogram**. The spectrogram is just another image, so standard vision encoders and vision learning pipelines (here ACT) can use it without changes. It also carries temporal and frequency information that cameras cannot see.
 
-**LeRobot** aims to provide models, datasets, and tools for real-world robotics in PyTorch. The goal is to lower the barrier to entry so that everyone can contribute to and benefit from shared datasets and pretrained models.
+<p align="center"><img src="media/readme/architecture-pipeline.webp" alt="ACT learning pipeline fusing top camera, wrist camera and tactile spectrogram through a ResNet and transformer encoder/decoder" width="85%"><br>
+<sub>Learning pipeline: top camera, wrist camera and tactile spectrogram are fused by ACT (adapted from T. Z. Zhao et al., 2023).</sub></p>
 
-🤗 A hardware-agnostic, Python-native interface that standardizes control across diverse platforms, from low-cost arms (SO-100) to humanoids.
 
-🤗 A standardized, scalable LeRobotDataset format (Parquet + MP4 or images) hosted on the Hugging Face Hub, enabling efficient storage, streaming and visualization of massive robotic datasets.
+## What this robot type does
 
-🤗 State-of-the-art policies that have been shown to transfer to the real-world ready for training and deployment.
+`spectrobot` is a LeRobot robot type (`--robot.type=spectrobot`). It is a normal SO-101 follower arm that also streams **vibration / tactile sensors**. Each sensor's signal is turned into a **spectrogram image** (224×224 RGB, updated at 30 fps) and added to the observation next to the camera images. That means any image policy (ACT, pi05, …) can use it without changes.
 
-🤗 Comprehensive support for the open-source ecosystem to democratize physical AI.
+The code is in `lespectrobot/src/lerobot/robots/spectrobot/`:
 
-## Quick Start
+| File | Role |
+|---|---|
+| `config_spectrobot.py` | CLI parameters (`SpectRoFollowerConfig`, `TactileSensorConfig`) |
+| `spectrobot.py` | Acquisition backends (Teensy / openDAQ) + spectrogram rendering |
+| `firmware_teensy_ad8688_spi_8ch_20ksps/` | Arduino firmware for the Teensy + ADS8688 ADC board |
 
-LeRobot can be installed directly from PyPI.
+Two acquisition back-ends are supported, chosen with `--robot.tactile_data_stream`:
+
+- **`teensy_ADS8688`**: a cheap Teensy 4.x reading an ADS8688 ADC over SPI, streaming over USB serial.
+- **`OpenDAQ`**: a DEWESoft IOLITE-X (or any openDAQ device), read through the `opendaq` Python package.
+
+---
+
+## 1. Setup
+
+### Environment
+```bash
+git clone ...
+cd spectrobot
+uv venv
+uv pip install e .[lerobot]
+uv pip install pyserial        # Teensy backend
+uv pip install opendaq         # openDAQ backend (only if you use the IOLITE)
+```
+
+### USB ports
+```bash
+lerobot-find-port
+ls -l /dev/ttyACM*
+```
+The Teensy also shows up as a `/dev/ttyACM*`. Unplug and replug each device to see which port belongs to which: leader arm, follower arm, Teensy.
+
+To give your user permanent serial access, run this once and then log out and back in:
+```bash
+sudo usermod -a -G dialout $USER
+```
+
+### Cameras
+```bash
+lerobot-find-cameras opencv
+```
+
+## 2. Describing the sensors (`--robot.tactile_sensors`)
+
+Each sensor is one entry in a dict. **The dict key is the sensor name.** If `observation_key` is not given, the observation is named `tactile_spectrogram_<name>_nfft_<nfft>`.
+
+| Field | Meaning | Used by |
+|---|---|---|
+| `channel` | Hardware input index (0-based) | both |
+| `observation_key` | Name of the image in the dataset / policy input | both |
+| `sample_rate_hz` | Real sampling rate of that channel. Sets the frequency axis (0 → fs/2) | both |
+| `nfft` | FFT window length (frequency resolution vs. time span) | both |
+| `min_db`, `max_db` | dB window mapped to black → white | both |
+| `measurement` | `"Voltage"` or `"IEPE"` | **openDAQ only** |
+| `range_choice` | Input range in mV: `10000`, `5000`, `1000`, `200` | **openDAQ only** |
+| `hpf_choice` | High-pass filter: `0.0`/`0.1` → HPF off (0), `1.0` → HPF 1 | **openDAQ only** |
+| `excitation_choice` | IEPE current in mA: `2`, `4`, `6` (only when `measurement: IEPE`) | **openDAQ only** |
+
+If `--robot.tactile_sensors` is not given, defaults are used: `mems_acc`/`dgf_iepe`/`pzt_disk` for Teensy, and `dragonfly`/`dgf_passif`/`pastille_pzt`/`strain_gauge`/`acc_mems` for openDAQ. See `_make_*_default_sensors()` in `spectrobot.py`.
+
+> ⚠️ Keep the **same `observation_key`s** between recording, training and rollout. A trained policy looks for exactly those feature names.
+
+### 2.a With the Teensy (`teensy_ADS8688`)
+
+- The firmware samples **all 8 ADS8688 inputs at 20 kHz each**, in a fixed ±10.24 V range, and sends them interleaved. Use `sample_rate_hz: 20000` for every sensor.
+- `--robot.tactile_serial_port` is the **Teensy** port. Its default is `/dev/ttyACM0`, which is often the arm's port, so always set it explicitly.
+- Only `channel`, `observation_key`, `sample_rate_hz`, `nfft`, `min_db` and `max_db` have an effect. `measurement`/`range`/`hpf`/`excitation` are ignored because there is nothing on the Teensy side to configure (see §3).
+- Typical dB window for this ADC: around `min_db: -110`, `max_db: -40`.
 
 ```bash
-pip install lerobot
-lerobot-info
+lerobot-teleoperate \
+  --robot.type=spectrobot \
+  --robot.port=/dev/ttyACM0 \
+  --robot.id=my_awesome_follower_arm \
+  --robot.cameras="{ top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30} }" \
+  --robot.tactile_data_stream=teensy_ADS8688 \
+  --robot.tactile_serial_port=/dev/ttyACM2 \
+  --robot.tactile_sensors="{ \
+    mems_acc: {channel: 0, observation_key: tactile_spectrogram_mems_acc_nfft_512, sample_rate_hz: 20000, nfft: 512, min_db: -110.0, max_db: -40.0}, \
+    dgf_iepe: {channel: 1, observation_key: tactile_spectrogram_dgf_iepe_nfft_512, sample_rate_hz: 20000, nfft: 512, min_db: -107.0, max_db: -37.0}, \
+    pzt_disk: {channel: 2, observation_key: tactile_spectrogram_pzt_disk_nfft_512, sample_rate_hz: 20000, nfft: 512, min_db: -110.0, max_db: -40.0} \
+  }" \
+  --teleop.type=so101_leader \
+  --teleop.port=/dev/ttyACM1 \
+  --teleop.id=my_awesome_leader_arm \
+  --display_data=true
 ```
 
-> [!IMPORTANT]
-> For detailed installation guide, please see the [Installation Documentation](https://huggingface.co/docs/lerobot/installation).
+### 2.b With openDAQ (IOLITE-X)
 
-## Robots & Control
+- The first device whose name contains `IOLITE-X` is used. If there is none, the first openDAQ device found is used.
+- Every field is applied to the channel's amplifier: measurement mode, range, HPF and IEPE excitation.
+- If all sensors have the same `sample_rate_hz`, that rate is written to the device (`SampleRate`). If the rates differ, the device rate is left unchanged. **`sample_rate_hz` must match the real device rate**, or the frequency axis will be wrong.
+- IEPE sensors read through the IOLITE have a very different dB level than the Teensy (e.g. `min_db: -70`, `max_db: 40`). Re-tune the dB window when you change hardware.
 
-<div align="center">
-  <img src="./media/readme/robots_control_video.webp" width="640px" alt="Reachy 2 Demo">
-</div>
-
-LeRobot provides a unified `Robot` class interface that decouples control logic from hardware specifics. It supports a wide range of robots and teleoperation devices.
-
-```python
-from lerobot.robots.myrobot import MyRobot
-
-# Connect to a robot
-robot = MyRobot(config=...)
-robot.connect()
-
-# Read observation and send action
-obs = robot.get_observation()
-action = model.select_action(obs)
-robot.send_action(action)
+```bash
+lerobot-teleoperate \
+  --robot.type=spectrobot \
+  --robot.port=/dev/ttyACM1 \
+  --robot.id=my_awesome_follower_arm \
+  --robot.cameras="{ top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30} }" \
+  --robot.tactile_data_stream=OpenDAQ \
+  --robot.tactile_sensors="{ \
+    dragonfly1: {channel: 0, observation_key: tactile_spectrogram_dragonfly1_nfft_512, sample_rate_hz: 20000, nfft: 512, min_db: -70.0, max_db: 40.0, measurement: IEPE, range_choice: 10000, hpf_choice: 0.1, excitation_choice: 4}, \
+    pzt_disk:   {channel: 1, observation_key: tactile_spectrogram_pzt_disk_nfft_512,   sample_rate_hz: 20000, nfft: 512, min_db: -120.0, max_db: -20.0, measurement: Voltage, range_choice: 10000, hpf_choice: 0.0} \
+  }" \
+  --teleop.type=so101_leader \
+  --teleop.port=/dev/ttyACM0 \
+  --teleop.id=my_awesome_leader_arm \
+  --display_data=true
 ```
 
-**Supported Hardware:** SO100, LeKiwi, Koch, HopeJR, OMX, EarthRover, Reachy2, Gamepads, Keyboards, Phones, OpenARM, Unitree G1.
+---
 
-While these devices are natively integrated into the LeRobot codebase, the library is designed to be extensible. You can easily implement the Robot interface to utilize LeRobot's data collection, training, and visualization tools for your own custom robot.
+## 3. IEPE vs. Voltage
 
-For detailed hardware setup guides, see the [Hardware Documentation](https://huggingface.co/docs/lerobot/integrate_hardware).
+**Voltage**: the sensor produces a voltage by itself, or is conditioned elsewhere, and the input only measures it. Examples: piezo disk (PZT), passive DGF, MEMS accelerometer with its own supply, strain-gauge amplifier output.
 
-## LeRobot Dataset
+**IEPE** (Integrated Electronics Piezo-Electric, also called ICP): the sensor contains a small amplifier and is powered over its **signal cable** by a **constant current** (typically 2–6 mA, from a supply of about 18–30 V). The signal is a small AC voltage riding on a DC bias of about 8–12 V. The acquisition side must therefore:
+1. **provide the excitation current**, and
+2. **remove the DC bias**, using AC coupling / a high-pass filter, so that only the vibration signal remains.
 
-To solve the data fragmentation problem in robotics, we utilize the **LeRobotDataset** format.
+In IEPE mode the IOLITE does both: `excitation_choice` sets the current and the AC coupling removes the bias.
 
-- **Structure:** Synchronized MP4 videos (or images) for vision and Parquet files for state/action data.
-- **HF Hub Integration:** Explore thousands of robotics datasets on the [Hugging Face Hub](https://huggingface.co/lerobot).
-- **Tools:** Seamlessly delete episodes, split by indices/fractions, add/remove features, and merge multiple datasets.
+### IEPE with the Teensy is **Voltage**
 
-```python
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+The ADS8688 **cannot** provide excitation current. It only measures voltages. With the Teensy setup, an IEPE sensor is therefore connected to a separate **IEPE conditioning card** (in the paper's low-cost bench, a ZONRI IEPE interface converter). That card sends the excitation current to the sensor, removes the bias, and outputs a clean **voltage**, which the ADS8688 then reads.
 
-# Load a dataset from the Hub
-dataset = LeRobotDataset("lerobot/aloha_mobile_cabinet")
+So from spectrobot's point of view, **every Teensy channel is a Voltage measurement**, including IEPE sensors. The `measurement`/`excitation_choice`/`hpf_choice` fields are ignored on the Teensy. Excitation current and filtering are set **on the IEPE card**, not in the command line. You can still name the sensor `dgf_iepe` to remember what is physically plugged in.
 
-# Access data (automatically handles video decoding)
-episode_index=0
-print(f"{dataset[episode_index]['action'].shape=}\n")
+| | Teensy + ADS8688 | openDAQ / IOLITE |
+|---|---|---|
+| Voltage sensor | `channel` + dB window | `measurement: Voltage` |
+| IEPE sensor | through an external IEPE card, which outputs a voltage, read as **Voltage** | `measurement: IEPE`, `excitation_choice: 2/4/6`, HPF |
+| Range | fixed ±10.24 V (firmware) | `range_choice` |
+| Sample rate | fixed 20 kHz / channel (firmware) | `sample_rate_hz` (device) |
+
+---
+
+## 4. Parameters that are adjustable in code but already well chosen
+
+These values are hard-coded or have defaults. You *can* change them, but they were chosen to match the hardware and the policies, so **don't touch them without a good reason**. Changing any of them changes the images, so old datasets and policies will no longer match.
+
+| Parameter | Where | Value | Why |
+|---|---|---|---|
+| Image size | `self._target_size` in `spectrobot.py` | 224×224 | Native input size of the ResNet/ViT vision backbones used by ACT/pi05 |
+| Spectrogram fps | `--robot.tactile_fps` | 30 | Same as the cameras and the dataset fps |
+| Ring buffer length | `(224-1)*nfft/2 + nfft` | 57 600 samples for nfft 512 | Gives exactly 224 time columns (50 % overlap), so no temporal interpolation. At 20 kHz this is ≈2.9 s of history |
+| `nfft` | per sensor | 512 | 257 frequency bins (≈39 Hz resolution at 20 kHz). Good balance between frequency detail and time span |
+| Overlap | `_render_spectrogram_frame` | nfft/2 | Standard Hann-window 50 % overlap |
+| dB scaling | `10*log10(Sxx + 1e-12)` then clip `[min_db, max_db]` | grayscale → RGB | Compresses the dynamic range. The dB window is the only thing tuned per sensor |
+| Baudrate | `TACTILE_BAUDRATE` | 2 000 000 | Enough for 8 ch × 20 kHz × 16 bit ≈ 2.6 Mbit/s over USB (Teensy USB ignores the value anyway) |
+| Voltage conversion | `raw_to_volts` | ±10.24 V / 65536 | Matches the ADS8688 range set by the firmware |
+| Serial queue | `queue.Queue(maxsize=100)` | 100 packets | Drops the oldest data rather than growing latency |
+| Firmware | `.ino` | 8 ch, 20 kHz/ch, SPI 20 MHz, 384 samples/packet | 384 = 48 full 8-channel frames, so a packet never splits a frame |
+
+
+## 5. Record → Train → Rollout
+
+Use the same `--robot.tactile_*` arguments in every step. The examples below use the Teensy; replace them with the openDAQ block if needed.
+
+### Record
+```bash
+lerobot-record \
+  --robot.type=spectrobot \
+  --robot.port=/dev/ttyACM0 \
+  --robot.id=my_awesome_follower_arm \
+  --robot.cameras="{ top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30} }" \
+  --robot.tactile_data_stream=teensy_ADS8688 \
+  --robot.tactile_serial_port=/dev/ttyACM2 \
+  --robot.tactile_sensors="{ dgf_iepe: {channel: 1, observation_key: tactile_spectrogram_dgf_iepe_nfft_512, sample_rate_hz: 20000, nfft: 512, min_db: -107.0, max_db: -37.0} }" \
+  --teleop.type=so101_leader \
+  --teleop.port=/dev/ttyACM1 \
+  --teleop.id=my_awesome_leader_arm \
+  --dataset.repo_id="${HF_USER}/my_task" \
+  --dataset.num_episodes=40 \
+  --dataset.single_task="Plug the cable into the electrical outlet" \
+  --dataset.episode_time_s=60 \
+  --dataset.reset_time_s=11 \
+  --display_data=true
 ```
+If the recording crashed, remove the local copy with `rm -rf ~/.cache/huggingface/lerobot/${HF_USER}/my_task`.
 
-Learn more about it in the [LeRobotDataset Documentation](https://huggingface.co/docs/lerobot/lerobot-dataset-v3)
-
-## SoTA Models
-
-LeRobot implements state-of-the-art policies in pure PyTorch, covering Imitation Learning, Reinforcement Learning, and Vision-Language-Action (VLA) models, with more coming soon. It also provides you with the tools to instrument and inspect your training process.
-
-<p align="center">
-  <img alt="Gr00t Architecture" src="./media/readme/VLA_architecture.jpg" width="640px">
-</p>
-
-Training a policy is as simple as running a script configuration:
-
+### Train
 ```bash
 lerobot-train \
-  --policy=act \
-  --dataset.repo_id=lerobot/aloha_mobile_cabinet
+  --dataset.repo_id="${HF_USER}/my_task" \
+  --policy.type=act \
+  --output_dir=outputs/train/act_my_task \
+  --job_name=act_my_task \
+  --policy.device=cuda \
+  --wandb.enable=true \
+  --policy.repo_id="${HF_USER}/policy_act_my_task" \
+  --save_freq=50_000 \
+  --steps=100_000 \
+  --batch_size=8
 ```
+To resume, use `--config_path=outputs/train/act_my_task/checkpoints/last/pretrained_model/train_config.json --resume=true`.
 
-| Category                   | Models                                                                                                                                                                                                                  |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Imitation Learning**     | [ACT](./docs/source/policy_act_README.md), [Diffusion](./docs/source/policy_diffusion_README.md), [VQ-BeT](./docs/source/policy_vqbet_README.md), [Multitask DiT Policy](./docs/source/policy_multi_task_dit_README.md) |
-| **Reinforcement Learning** | [HIL-SERL](./docs/source/hilserl.mdx), [TDMPC](./docs/source/policy_tdmpc_README.md) & QC-FQL (coming soon)                                                                                                             |
-| **VLAs Models**            | [Pi0Fast](./docs/source/pi0fast.mdx), [Pi0.5](./docs/source/pi05.mdx), [GR00T N1.5](./docs/source/policy_groot_README.md), [SmolVLA](./docs/source/policy_smolvla_README.md), [XVLA](./docs/source/xvla.mdx)            |
+### Rollout
+```bash
+lerobot-rollout \
+  --strategy.type=episodic \
+  --policy.path=outputs/train/act_my_task/checkpoints/last/pretrained_model \
+  --robot.type=spectrobot \
+  --robot.port=/dev/ttyACM0 \
+  --robot.id=my_awesome_follower_arm \
+  --robot.cameras="{ top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30} }" \
+  --robot.tactile_data_stream=teensy_ADS8688 \
+  --robot.tactile_serial_port=/dev/ttyACM2 \
+  --robot.tactile_sensors="{ dgf_iepe: {channel: 1, observation_key: tactile_spectrogram_dgf_iepe_nfft_512, sample_rate_hz: 20000, nfft: 512, min_db: -107.0, max_db: -37.0} }" \
+  --dataset.repo_id="${HF_USER}/rollout_my_task" \
+  --dataset.num_episodes=20 \
+  --dataset.single_task="Plug the cable into the electrical outlet" \
+  --dataset.push_to_hub=true \
+  --display_data=true
+```
+Other strategies are `--strategy.type=base` (no recording) and `--strategy.type=dagger` (add `--teleop.*` to take over and correct the policy).
 
-Similarly to the hardware, you can easily implement your own policy & leverage LeRobot's data collection, training, and visualization tools, and share your model to the HF Hub
+### Dataset editing
 
-For detailed policy setup guides, see the [Policy Documentation](https://huggingface.co/docs/lerobot/bring_your_own_policies). For GPU/RAM requirements and expected training time per policy, see the [Compute Hardware Guide](https://huggingface.co/docs/lerobot/hardware_guide).
-
-## Inference & Evaluation
-
-Evaluate your policies in simulation or on real hardware using the unified evaluation script. LeRobot supports standard benchmarks like **LIBERO**, **MetaWorld** and more to come.
+You may want to record with multiple sensors but train and roll out with only one or a few of them. You can use the `keep_cameras` command below to create a copy of the original dataset that contains only the sensors you need.
 
 ```bash
-# Evaluate a policy on the LIBERO benchmark
-lerobot-eval \
-  --policy.path=lerobot/pi0_libero_finetuned \
-  --env.type=libero \
-  --env.task=libero_object \
-  --eval.n_episodes=10
+# multi-sensor -> single sensor: keep only the listed cameras, drop every other camera/sensor
+lerobot-edit-dataset --repo_id ${HF_USER}/my_task_multitactile --new_repo_id ${HF_USER}/my_task_dgf_iepe \
+  --operation.type keep_cameras \
+  --operation.camera_names "['top','wrist','tactile_spectrogram_dgf_iepe_nfft_512']" --push_to_hub true
+```
+Camera names can be the short name (`top`) or the full key (`observation.images.top`); an unknown name raises an error listing the available cameras. The same thing from Python:
+```python
+from lerobot.datasets import LeRobotDataset, keep_cameras
+
+dataset = LeRobotDataset("<hf_user>/my_task_multitactile")
+single = keep_cameras(dataset, ["top", "wrist", "tactile_spectrogram_dgf_iepe_nfft_512"],
+                      repo_id="<hf_user>/my_task_dgf_iepe")
+single.push_to_hub()
 ```
 
-Learn how to implement your own simulation environment or benchmark and distribute it from the HF Hub by following the [EnvHub Documentation](https://huggingface.co/docs/lerobot/envhub)
+---
 
-## Resources
+## 6. Troubleshooting
 
-- **[Documentation](https://huggingface.co/docs/lerobot/index):** The complete guide to tutorials & API.
-- **[Chinese Tutorials: LeRobot+SO-ARM101中文教程-同济子豪兄](https://zihao-ai.feishu.cn/wiki/space/7589642043471924447)** Detailed doc for assembling, teleoperate, dataset, train, deploy. Verified by Seed Studio and 5 global hackathon players.
-- **[Discord](https://discord.gg/q8Dzzpym3f):** Join the `LeRobot` server to discuss with the community.
-- **[X](https://x.com/LeRobotHF):** Follow us on X to stay up-to-date with the latest developments.
-- **[Robot Learning Tutorial](https://huggingface.co/spaces/lerobot/robot-learning-tutorial):** A free, hands-on course to learn robot learning using LeRobot.
-
-## Citation
-
-If you use LeRobot in your project, please cite the GitHub repository to acknowledge the ongoing development and contributors:
-
-```bibtex
-@misc{cadene2024lerobot,
-    author = {Cadene, Remi and Alibert, Simon and Soare, Alexander and Gallouedec, Quentin and Zouitine, Adil and Palma, Steven and Kooijmans, Pepijn and Aractingi, Michel and Shukor, Mustafa and Aubakirova, Dana and Russi, Martino and Capuano, Francesco and Pascal, Caroline and Choghari, Jade and Moss, Jess and Wolf, Thomas},
-    title = {LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch},
-    howpublished = "\url{https://github.com/huggingface/lerobot}",
-    year = {2024}
-}
-```
-
-If you are referencing our research or the academic paper, please also cite our ICLR publication:
-
-<details>
-<summary><b>ICLR 2026 Paper</b></summary>
-
-```bibtex
-@inproceedings{cadenelerobot,
-  title={LeRobot: An Open-Source Library for End-to-End Robot Learning},
-  author={Cadene, Remi and Alibert, Simon and Capuano, Francesco and Aractingi, Michel and Zouitine, Adil and Kooijmans, Pepijn and Choghari, Jade and Russi, Martino and Pascal, Caroline and Palma, Steven and Shukor, Mustafa and Moss, Jess and Soare, Alexander and Aubakirova, Dana and Lhoest, Quentin and Gallou\'edec, Quentin and Wolf, Thomas},
-  booktitle={The Fourteenth International Conference on Learning Representations},
-  year={2026},
-  url={https://arxiv.org/abs/2602.22818}
-}
-```
-
-</details>
-
-## Contribute
-
-We welcome contributions from everyone in the community! To get started, please read our [CONTRIBUTING.md](https://github.com/huggingface/lerobot/blob/main/CONTRIBUTING.md) guide. Whether you're adding a new feature, improving documentation, or fixing a bug, your help and feedback are invaluable. We're incredibly excited about the future of open-source robotics and can't wait to work with you on what's next—thank you for your support!
-
-<p align="center">
-  <img alt="SO101 Video" src="./media/readme/so100_video.webp" width="640px">
-</p>
-
-<div align="center">
-<sub>Built by the <a href="https://huggingface.co/lerobot">LeRobot</a> team at <a href="https://huggingface.co">Hugging Face</a> with ❤️</sub>
-</div>
+- **Spectrogram stays black**: the backend failed to start. Look for `Failed to initialize tactile backend` in the log. Common causes are a wrong `tactile_serial_port`, a missing `pyserial`/`opendaq` package, or no openDAQ device found.
+- **Saturated white / all black image**: adjust `min_db`/`max_db`.
+- **Wrong frequency axis**: `sample_rate_hz` does not match the real acquisition rate.
+- **Policy complains about missing features**: the `observation_key`s differ from those used at recording.
+- Debug a script: `python -m debugpy --wait-for-client --listen 0.0.0.0:5678 src/lerobot/scripts/lerobot_teleoperate.py <args>`

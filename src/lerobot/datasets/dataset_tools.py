@@ -470,6 +470,45 @@ def remove_feature(
     )
 
 
+def keep_cameras(
+    dataset: LeRobotDataset,
+    cameras_to_keep: str | list[str],
+    output_dir: str | Path | None = None,
+    repo_id: str | None = None,
+) -> LeRobotDataset:
+    """Keep only the given cameras/sensors of a LeRobotDataset and drop every other camera feature.
+
+    Useful to turn a dataset recorded with multiple sensors (e.g. several tactile spectrograms)
+    into a dataset with a single sensor.
+
+    Args:
+        dataset: The source LeRobotDataset.
+        cameras_to_keep: Camera name(s) to keep. Either the short name (e.g. 'top', 'wrist',
+            'tactile_spectrogram_dgf_iepe_nfft_512') or the full key (e.g. 'observation.images.top').
+        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
+        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
+
+    Returns:
+        New dataset containing only the requested camera features.
+    """
+    if isinstance(cameras_to_keep, str):
+        cameras_to_keep = [cameras_to_keep]
+
+    camera_keys = dataset.meta.camera_keys
+    kept = [key for key in camera_keys if key in cameras_to_keep or key.split(".")[-1] in cameras_to_keep]
+    kept_names = set(kept) | {key.split(".")[-1] for key in kept}
+    missing = [name for name in cameras_to_keep if name not in kept_names]
+    if missing:
+        raise ValueError(f"Cameras {missing} not found in dataset. Available cameras: {camera_keys}")
+
+    camera_keys_to_remove = [key for key in camera_keys if key not in kept]
+    if not camera_keys_to_remove:
+        raise ValueError(f"Nothing to remove: dataset only contains {camera_keys}")
+
+    logging.info(f"Keeping cameras {kept}, removing {camera_keys_to_remove}")
+    return remove_feature(dataset, camera_keys_to_remove, output_dir=output_dir, repo_id=repo_id)
+
+
 def _fractions_to_episode_indices(
     total_episodes: int,
     splits: dict[str, float],

@@ -131,6 +131,7 @@ from lerobot.robots import (  # noqa: F401
     reachy2,
     rebot_b601_follower,
     so_follower,
+    spectrobot,
     unitree_g1 as unitree_g1_robot,
 )
 from lerobot.teleoperators import (  # noqa: F401
@@ -159,7 +160,7 @@ from lerobot.utils.utils import (
     init_logging,
     log_say,
 )
-from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+from lerobot.utils.visualization_utils import TactileForce3DLogger, init_rerun, log_rerun_data
 
 
 @dataclass
@@ -239,6 +240,10 @@ def record_loop(
 ):
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
+
+    # Robots with a tactile finger (e.g. spectrobot_trifold) also get a 3D view of the force vector in Rerun
+    tactile_layout = getattr(robot, "tactile_layout", None)
+    log_tactile_3d = TactileForce3DLogger(tactile_layout) if display_data and tactile_layout else None
 
     teleop_arm = teleop_keyboard = None
     if isinstance(teleop, list):
@@ -334,6 +339,8 @@ def record_loop(
             log_rerun_data(
                 observation=obs_processed, action=action_values, compress_images=display_compressed_images
             )
+            if log_tactile_3d is not None:
+                log_tactile_3d(obs)
 
         dt_s = time.perf_counter() - start_loop_t
 

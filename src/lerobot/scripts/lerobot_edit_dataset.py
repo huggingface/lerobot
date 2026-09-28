@@ -100,6 +100,13 @@ Remove camera feature:
         --operation.type remove_feature \
         --operation.feature_names "['observation.image']"
 
+Keep only some cameras/sensors (drop every other camera feature):
+    lerobot-edit-dataset \
+        --repo_id lerobot/multi_sensor_dataset \
+        --new_repo_id lerobot/single_sensor_dataset \
+        --operation.type keep_cameras \
+        --operation.camera_names "['top', 'wrist', 'tactile_spectrogram_dgf_iepe_nfft_512']"
+
 Modify tasks - set a single task for all episodes (WARNING: modifies in-place):
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
@@ -222,6 +229,7 @@ from lerobot.datasets import (
     LeRobotDataset,
     convert_image_to_video_dataset,
     delete_episodes,
+    keep_cameras,
     merge_datasets,
     modify_tasks,
     recompute_stats,
@@ -263,6 +271,12 @@ class MergeConfig(OperationConfig):
 @dataclass
 class RemoveFeatureConfig(OperationConfig):
     feature_names: list[str] | None = None
+
+
+@OperationConfig.register_subclass("keep_cameras")
+@dataclass
+class KeepCamerasConfig(OperationConfig):
+    camera_names: list[str] | None = None
 
 
 @OperationConfig.register_subclass("modify_tasks")
@@ -502,6 +516,41 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
 
     logging.info(f"Dataset saved to {output_dir}")
     logging.info(f"Remaining features: {list(new_dataset.meta.features.keys())}")
+
+    if cfg.push_to_hub:
+        logging.info(f"Pushing to hub as {output_repo_id}")
+        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
+
+
+def handle_keep_cameras(cfg: EditDatasetConfig) -> None:
+    if not isinstance(cfg.operation, KeepCamerasConfig):
+        raise ValueError("Operation config must be KeepCamerasConfig")
+
+    if not cfg.operation.camera_names:
+        raise ValueError("camera_names must be specified for keep_cameras operation")
+
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    output_repo_id, output_dir = get_output_path(
+        cfg.repo_id,
+        new_repo_id=cfg.new_repo_id,
+        root=cfg.root,
+        new_root=cfg.new_root,
+    )
+
+    # In case of in-place modification, make the dataset point to the backup directory
+    if output_dir == dataset.root:
+        dataset.root = dataset.root.with_name(dataset.root.name + "_old")
+
+    logging.info(f"Keeping cameras {cfg.operation.camera_names} from {cfg.repo_id}")
+    new_dataset = keep_cameras(
+        dataset,
+        cameras_to_keep=cfg.operation.camera_names,
+        output_dir=output_dir,
+        repo_id=output_repo_id,
+    )
+
+    logging.info(f"Dataset saved to {output_dir}")
+    logging.info(f"Remaining cameras: {new_dataset.meta.camera_keys}")
 
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {output_repo_id}")
@@ -788,6 +837,8 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
         handle_merge(cfg)
     elif operation_type == "remove_feature":
         handle_remove_feature(cfg)
+    elif operation_type == "keep_cameras":
+        handle_keep_cameras(cfg)
     elif operation_type == "modify_tasks":
         handle_modify_tasks(cfg)
     elif operation_type == "convert_image_to_video":

@@ -38,14 +38,14 @@ class SO101FollowerDragontactile(SOFollower):
 
     def __init__(self, config: SO101FollowerConfig):
         super().__init__(config)
-        self._tactile_obs_key = "tactile_spectrogram_dgf_passif_10kHz_nfft_512"   
+        self._tactile_obs_key = "tactile_spectrogram_dragonfly_10kHz_nfft_512"   
         # 100kHz_tactile_spectrogram, 10kHz_tactile_spectrogram, 0_1kHz_tactile_spectrogram, 5_6kHz_tactile_spectrogram
         # tactile_spectrogram_nfft_512, tactile_spectrogram_nfft_4096, tactile_spectrogram_nfft_8192
         # tactile_spectrogram_10kHz_nfft_512
         # tactile_spectrogram_channel_1_nfft_512 (dgf_iepe), tactile_spectrogram_channel_2_nfft_512 (pzt_disk), tactile_spectrogram_channel_3_nfft_512 (acc mems)
 
         self._sampling_rate_hz = 20_000 # fs = 20 kHz
-        self._current_channel = 1 # 0 DGF, 1 ACC, 2 LOAD_CELL
+        self._current_channel = 0 # 0 DGF, 1 ACC, 2 LOAD_CELL
 
         self._crop_data = 1 # crop the data with this factor from 0 Hz to 10/self._crop_data kHz
         self._begin_crop_freq = 0 # crop from this frequency (Hz)
@@ -59,8 +59,8 @@ class SO101FollowerDragontactile(SOFollower):
         print("We have a window duration of :",self._window_duration," in the spectrogram. ")
         
         # Fixed color scale for stable spectrogram visualization across frames.
-        self._spectrogram_min_db = -120.0
-        self._spectrogram_max_db = -50.0
+        self._spectrogram_min_db = -70.0
+        self._spectrogram_max_db = 40.0
 
         display_buffer_size = int(self._sampling_rate_hz * self._window_duration)
         self._display_buffer = np.zeros(display_buffer_size, dtype=np.float32)
@@ -118,7 +118,7 @@ class SO101FollowerDragontactile(SOFollower):
     @staticmethod
     def _configure_iepe_amplifier(amplifier) -> None:
         try:
-            amplifier.set_property_value("Measurement", 0)  # 1 = IEPE, 0 = Voltage
+            amplifier.set_property_value("Measurement", 1)  # 1 = IEPE, 0 = Voltage
             amplifier.set_property_value("Range", 0)  # 10V
             amplifier.set_property_value("HPFilter", 0)  # 0.1Hz
             # amplifier.set_property_value("Excitation", 1)  # 4mA

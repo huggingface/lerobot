@@ -113,18 +113,36 @@ class SerialReader(threading.Thread):
                     magic, sequence, count, lost = HEADER.unpack_from(buffer, 0)
 
                     if magic != MAGIC or count == 0 or count > MAX_PACKET_SAMPLES:
-                        del buffer[1]
+                        del buffer[0] # Drop just the first byte and search again like the notebook
                         continue
 
-                    packet_size = HEADER.size + 2 * count
-                    if len(buffer) < packet_size:
-                        break
+                    # The firmware sends count = total words (e.g., 384).
+                    # 2 bytes per word.
+                    packet_size = HEADER.size + (count * 2)
 
+                    # Wait until the full packet is actually in the buffer
+                    while len(buffer) < packet_size:
+                        chunk = ser.read(packet_size - len(buffer))
+                        if chunk:
+                            buffer.extend(chunk)
+                        else:
+                            break # Timeout
+
+                    if len(buffer) < packet_size:
+                        continue # Still don't have enough data, loop again
+
+                    # Parse as 1D, then reshape into (frames, channels) exactly like the notebook
                     raw = np.frombuffer(buffer[HEADER.size : packet_size], dtype="<u2").copy()
+                    
+                    # Reshape to 2D matrix: rows=frames, cols=8 channels
+                    # We use -1 to let numpy calculate the frame count automatically based on total words
+                    raw = raw.reshape(-1, 8) 
+                    
                     del buffer[:packet_size]
 
                     try:
                         self.output_queue.put_nowait((sequence, lost, raw))
+
                     except queue.Full:
                         try:
                             _ = self.output_queue.get_nowait()
@@ -160,9 +178,9 @@ class SO101FollowerTeensyTactile(SOFollower):
 
     # Sensor channel configurations: label and dB normalization limits
     _all_channel_definitions = {
-        0: {"key": "mems_acc", "name": "mems_acc", "min_db": -110.0, "max_db": -40.0},
-        1: {"key": "dgf_iepe", "name": "dgf_iepe", "min_db": -107.0, "max_db": -37.0},
-        2: {"key": "pzt_disk", "name": "pzt_disk", "min_db": -110.0, "max_db": -40.0},
+        0: {"key": "dgf_iepe", "name": "dgf_iepe", "min_db": -110.0, "max_db": -40.0},
+        1: {"key": "pzt_disk", "name": "pzt_disk", "min_db": -107.0, "max_db": -37.0},
+        2: {"key": "acc_mems", "name": "acc_mems", "min_db": -110.0, "max_db": -40.0},
     }
 
     def __init__(self, config: SO101FollowerTeensyTactileConfig):
@@ -192,7 +210,7 @@ class SO101FollowerTeensyTactile(SOFollower):
 
         # Force hardware to ALWAYS read all 3 channels to maintain timing and format expectations
         mode_cmd = b"A"
-        self._num_hw_channels = 3
+        self._num_hw_channels = 8
 
         self._channel_definitions = {
             ch: self._all_channel_definitions[ch]
@@ -233,7 +251,7 @@ class SO101FollowerTeensyTactile(SOFollower):
         self._data_queue = queue.Queue(maxsize=100)
 
         # Serial reader thread with channel mode command
-        port = getattr(config, "serial_port", "/dev/ttyACM0")
+        port = getattr(config, "serial_port", "/dev/ttyACM2")
         baudrate = getattr(config, "baudrate", 2_000_000)
         self._serial_thread = SerialReader(
             port, baudrate, self._data_queue, self._stop_event, mode_command=mode_cmd
@@ -316,21 +334,20 @@ class SO101FollowerTeensyTactile(SOFollower):
 
     def _drain_queue(self) -> None:
         """Drains incoming raw ADC packets and demultiplexes into per-channel buffers."""
-        packets_read = 0
-
         while True:
             try:
                 sequence, lost, raw = self._data_queue.get_nowait()
-                packets_read += 1
             except queue.Empty:
                 break
 
             if raw.size == 0:
                 continue
 
-            # 3-channel interleaved scan (Hardware is always forced to send 3 channels): [CH0, CH1, CH2, CH0, CH1, CH2...]
-            for ch in range(self._num_hw_channels):
-                ch_raw = raw[ch :: self._num_hw_channels]
+            # raw is now a 2D array of shape (frames, 8)
+            # We only process the specific target channels requested by the config
+            for ch in self._target_channels:
+                ch_raw = raw[:, ch]  # Safely extract all frames for this specific channel column
+                
                 if ch_raw.size:
                     volts = raw_to_volts(ch_raw, self._v_min, self._v_max)
                     self._push_to_ring_buffer(self._buffers[ch], volts)

@@ -87,7 +87,7 @@ class SO101FollowerDragonTactileBench(SOFollower):
     _height = 224
     _target_size = (_width, _height)
 
-    _spectrogram_min_db_dgf = -70.0
+    _spectrogram_min_db_dgf = -72.0
     _spectrogram_max_db_dgf = 40.0
 
     _spectrogram_min_db_dgf_passif = -120.0
@@ -96,14 +96,14 @@ class SO101FollowerDragonTactileBench(SOFollower):
     _spectrogram_min_db_load_cell = -80.0
     _spectrogram_max_db_load_cell = -10.0
 
-    _spectrogram_min_db_strain_gauge = -110.0
+    _spectrogram_min_db_strain_gauge = -117.0
     _spectrogram_max_db_strain_gauge = -40.0
 
     _spectrogram_min_db_pastille_pzt = -120.0
     _spectrogram_max_db_pastille_pzt = -20.0
 
     _spectrogram_min_db_mems_acc = -120.0
-    _spectrogram_max_db_mems_acc = -20.0
+    _spectrogram_max_db_mems_acc = -30.0
 
     # Rates & Downsampling
     _sampling_rate_hz = 200_000

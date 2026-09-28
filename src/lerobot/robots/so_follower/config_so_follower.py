@@ -74,7 +74,47 @@ class SO101FollowerDragonTactileBenchConfig(SOFollowerRobotConfig):
 @dataclass
 class SO101FollowerTeensyTactileConfig(SOFollowerRobotConfig):
     num_channels: str = "1"
-    
+
+
+@RobotConfig.register_subclass("spectrobot_trifold")
+@dataclass
+class SpectrobotTrifoldConfig(SOFollowerRobotConfig):
+    # IOLITE-X hardware channel index of each of the 3 IEPE Dragonfly sensors
+    dragonfly_channels: list[int] = field(default_factory=lambda: [0, 1, 2])
+
+    # Spectrograms added to the observation: one grayscale image per sensor and/or one RGB image
+    # with R, G, B = dragonfly_1, dragonfly_2, dragonfly_3
+    per_sensor_spectrograms: bool = True
+    rgb_spectrogram: bool = True
+    # dB range mapped to black..white in the spectrogram images
+    spectrogram_min_db: float = -72.0
+    spectrogram_max_db: float = 40.0
+
+    # Force vector KPI, in the finger frame (z along the finger towards the tip, x and y across it).
+    # The 20 kS/s stream is block-averaged down to this rate before computing the force
+    force_rate_hz: int = 1000
+    # Moving-average window applied on the downsampled signals
+    force_window_s: float = 0.02
+    # Time constant of the slow baseline removed from each signal (drift / IEPE settling)
+    force_baseline_tau_s: float = 0.5
+    # Force is reported as 0 during the first seconds, while the baseline settles
+    force_warmup_s: float = 2.0
+    # Rotation axis measured by each sensor (row i = sensor i, flip a sign to invert a sensor).
+    # Default: ch0 -> rotation around y, ch1 -> rotation around x, ch2 -> rotation around z
+    sensor_rotation_axes: list[list[float]] = field(
+        default_factory=lambda: [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
+    )
+    # Moment per unit of rotation signal (N.m / signal unit). 1.0 until calibrated
+    rotation_stiffness: float = 1.0
+    # Point where the force is applied, from the sensors (m). The force is recovered from M = r x F
+    force_lever_arm_m: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.075])
+    # Rolling window of the 3 sensor signals kept for display (baseline removed, downsampled)
+    timeseries_duration_s: float = 2.0
+    timeseries_rate_hz: int = 200
+    # Rerun 3D view: arrow length in meters per unit. None auto-scales each vector on its recent peak
+    force_arrow_scale: float | None = None
+
+
 
 SO100FollowerConfig = SOFollowerRobotConfig 
 SO101FollowerConfig = SOFollowerRobotConfig
