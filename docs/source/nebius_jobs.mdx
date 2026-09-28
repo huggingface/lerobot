@@ -1,0 +1,237 @@
+# Train and resume ACT on Nebius Serverless Jobs
+
+This guide runs a short, single-GPU [ACT](./act) training job on [Nebius Serverless AI Jobs](https://docs.nebius.com/serverless/jobs/manage), saves full checkpoints to the Hugging Face Hub, and resumes in a second job. It uses `lerobot-train` inside a container, with `--job.target=local`: the trainer runs locally **inside the Nebius job**. LeRobot's other `--job.target` values select Hugging Face Jobs hardware, not Nebius resources.
+
+The example trains from scratch on the public [PushT dataset](https://huggingface.co/datasets/lerobot/pusht). Its 200 steps are a smoke test of training and checkpoint recovery, not a policy-quality benchmark. No robot, inference endpoint, or local GPU is needed.
+
+## Prerequisites
+
+- A Nebius project with billing enabled, permission to create Serverless jobs, a subnet, and available quota for one GPU. This example uses the `gpu-h100-sxm` platform and `1gpu-16vcpu-200gb` preset in `eu-north1`. Check [pricing and quotas](https://docs.nebius.com/serverless/pricing-quotas) and select a supported single-GPU preset for your region.
+- The [Nebius CLI](https://docs.nebius.com/cli/install), [configured for that project](https://docs.nebius.com/cli/configure). The commands below use CLI `0.12.279`. Check `nebius version` and `nebius ai job create --help`; older versions may lack `--env-secret` or `--dry-run`.
+- Docker with Buildx, and a container registry you can push to. Build for `linux/amd64`, including on Apple Silicon. The job must be able to pull the image.
+- A Hugging Face account and a token with read access to your dataset and write access to the destination model repository. Use a **new, private model repository** for this run. Accept any dataset access conditions before using your own private or gated dataset.
+
+Store the Hub token in [Nebius SecretStash](https://docs.nebius.com/mysterybox/overview) with a payload key named `HF_TOKEN`. The job creation guide describes creating this secret in the console's **Secret environment variables** section. Record its secret/version selector; the commands pass that selector, not the token. Do not put tokens in the Dockerfile, image, training arguments, or source control.
+
+## Build a pinned training image
+
+The image pins LeRobot to a source commit that supports full Hub checkpoints and Hub resume, and installs the `training` extra from that commit's `uv.lock`. CUDA and uv images are pinned by digest. ACT needs no policy-specific extra. The operating-system packages are resolved when you build; retain the resulting image digest to reuse exactly the same environment for resume.
+
+In a new directory, save this as `Dockerfile`:
+
+```dockerfile
+FROM ghcr.io/astral-sh/uv:0.12.19@sha256:04d046b13e60d6bcec73cbc5e1cad25d680dea90c8573340950a0ac2d1aef424 AS uv
+FROM nvidia/cuda:12.8.1-base-ubuntu24.04@sha256:133c78a0575303be34164d0b90137a042172bdf60696af01a3c424ab402d86e2
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates git python3.12 python3.12-venv ffmpeg libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=uv /uv /usr/local/bin/uv
+WORKDIR /lerobot
+RUN git init . \
+    && git remote add origin https://github.com/huggingface/lerobot.git \
+    && git fetch --depth=1 origin e595b7902714ba51f91e47523f66f89c5181b649 \
+    && git checkout --detach FETCH_HEAD \
+    && uv sync --locked --python python3.12 --extra training --no-dev
+ENV PATH="/lerobot/.venv/bin:$PATH" PYTHONUNBUFFERED=1
+ENTRYPOINT ["lerobot-train"]
+```
+
+The CUDA wheels come from the PyTorch index specified by LeRobot's lockfile. Dependencies are installed at image build time; the job still downloads its dataset and ACT's default ResNet backbone weights at runtime.
+
+Authenticate to your registry using its Docker login instructions, then build and push. Substitute a registry path you control:
+
+```bash
+export IMAGE_TAG="docker.io/YOUR_USER/lerobot-act:nebius-smoke"
+docker buildx build --platform linux/amd64 --push \
+  --tag "$IMAGE_TAG" --metadata-file image-metadata.json .
+export IMAGE_DIGEST=$(python3 -c \
+  'import json; print(json.load(open("image-metadata.json"))["containerimage.digest"])')
+export IMAGE="${IMAGE_TAG}@${IMAGE_DIGEST}"
+printf '%s\n' "$IMAGE" > image-reference.txt
+```
+
+For a private registry, create a separate SecretStash secret containing the `REGISTRY_USERNAME` and `REGISTRY_PASSWORD` payload keys and add `--registry-secret YOUR_REGISTRY_SECRET_SELECTOR` to each `nebius ai job create` command below. The Hub token does not grant registry access.
+
+Before submitting a job, verify the image's CLI locally:
+
+```bash
+docker run --rm --platform linux/amd64 "$IMAGE" --help
+```
+
+## Configure the run
+
+Run the remaining commands in Bash, in the same terminal. Set the resource identifiers and your Hub namespace:
+
+```bash
+export PROJECT_ID="YOUR_NEBIUS_PROJECT_ID"
+export SUBNET_ID="YOUR_NEBIUS_SUBNET_ID"
+export HF_SECRET="YOUR_HF_SECRET_VERSION_SELECTOR"
+export MODEL_REPO="YOUR_HF_USER/act-pusht-nebius-smoke"
+export DATASET_REPO="lerobot/pusht"
+export DATASET_REVISION="7628202a2180972f291ba1bc6723834921e72c19"
+```
+
+The pinned dataset is in LeRobotDataset v3.0 format. For your own data, first [record and upload a dataset](./il_robots#record-a-dataset), then replace both the repository and revision. Nebius jobs do not upload datasets from your laptop automatically. Leave `dataset.root` unset so the container downloads the dataset from the Hub.
+
+Define the normal training arguments and shared Nebius resource settings:
+
+```bash
+TRAIN_ARGS="--job.target=local \
+--dataset.repo_id=$DATASET_REPO \
+--dataset.revision=$DATASET_REVISION \
+--dataset.video_backend=pyav \
+--policy.type=act --policy.device=cuda \
+--policy.repo_id=$MODEL_REPO --policy.private=true --policy.push_to_hub=true \
+--output_dir=/lerobot/outputs/act-pusht \
+--steps=200 --batch_size=8 --num_workers=0 \
+--save_freq=100 --save_checkpoint_to_hub=true \
+--env_eval_freq=0 --wandb.enable=false --log_freq=10"
+
+JOB_OPTIONS=(
+  --parent-id "$PROJECT_ID"
+  --subnet-id "$SUBNET_ID"
+  --image "$IMAGE"
+  --platform gpu-h100-sxm
+  --preset 1gpu-16vcpu-200gb
+  --disk-size 100Gi
+  --shm-size 2Gi
+  --timeout 1h
+  --restart-policy never
+  --on-demand
+  --env-secret "HF_TOKEN=$HF_SECRET"
+)
+# For a private registry, also append:
+# JOB_OPTIONS+=(--registry-secret YOUR_REGISTRY_SECRET_SELECTOR)
+```
+
+`num_workers=0` keeps the initial data-loading setup simple. Simulation evaluation and W&B are disabled. Each job has a one-hour timeout, the minimum supported by this CLI, and no automatic retry. It exits when training finishes; the timeout is a ceiling, not an expected training duration.
+
+`--policy.private=true` controls creation of a **new** Hub repository; it does not change an existing repository's visibility. Check the destination and use a fresh name before submitting. Run only one job at a time against this model repository.
+
+## Submit and monitor
+
+First validate the request without provisioning resources:
+
+```bash
+nebius ai job create "${JOB_OPTIONS[@]}" \
+  --name lerobot-act-smoke --args "$TRAIN_ARGS" --dry-run
+```
+
+A successful dry run does not prove that the image starts, CUDA works, the Hub token has the right permissions, or training fits within the timeout. Submit only after checking the image, project, preset, and destination:
+
+```bash
+nebius ai job create "${JOB_OPTIONS[@]}" \
+  --name lerobot-act-smoke --args "$TRAIN_ARGS"
+```
+
+Copy the job ID from the create response:
+
+```bash
+export JOB_ID="YOUR_JOB_ID"
+nebius ai job get "$JOB_ID"
+nebius ai job logs "$JOB_ID" --follow
+```
+
+Expect training logs to reach step 200, checkpoints to be uploaded at steps 100 and 200, and the job to reach `COMPLETED`. Stopping log streaming does not cancel the job. To stop a running job explicitly:
+
+```bash
+nebius ai job cancel "$JOB_ID"
+```
+
+The job's container disk is temporary. Cancellation, failure, or timeout can discard anything not yet uploaded. A full checkpoint upload after each save preserves the model, processors, optimizer state, RNG state, and step counter under `checkpoints/<step>/` in the Hub model repository. Upload time counts toward the job timeout.
+
+## Retrieve the model and full checkpoint
+
+After a successful run, the Hub repository root contains the published policy and processors for inference. The `checkpoints/` directory holds full training checkpoints; the root model alone is not sufficient for an exact training resume.
+
+Use the same pinned image to download all artifacts to your laptop. These commands prompt for a Hub token without adding it to shell history; Docker forwards it as an environment variable only to this local container:
+
+```bash
+read -r -s -p "Hugging Face token: " HF_TOKEN
+printf '\n'
+export HF_TOKEN
+mkdir -p artifacts
+docker run --rm --platform linux/amd64 \
+  -e HF_TOKEN -v "$PWD/artifacts:/artifacts" \
+  --entrypoint hf "$IMAGE" \
+  download "$MODEL_REPO" --repo-type model --local-dir /artifacts
+unset HF_TOKEN
+```
+
+For this 200-step run, check that the download includes:
+
+```text
+artifacts/
+  config.json
+  model.safetensors
+  checkpoints/
+    000100/
+      pretrained_model/
+      training_state/
+    000200/
+      pretrained_model/
+        train_config.json
+        model.safetensors
+      training_state/
+```
+
+Keep the processor files alongside `model.safetensors`. See [policy evaluation](./il_robots#run-inference-and-evaluate-your-policy) for using a trained policy. A smoke-test checkpoint is not evidence of safe or effective robot behavior.
+
+## Resume in a new job
+
+After the first job has stopped, keep `IMAGE`, `MODEL_REPO`, and `JOB_OPTIONS` unchanged and submit a second job:
+
+```bash
+RESUME_ARGS="--job.target=local \
+--config_path=$MODEL_REPO --resume=true \
+--output_dir=/lerobot/outputs/act-pusht-resume \
+--steps=300 --save_checkpoint_to_hub=true"
+
+nebius ai job create "${JOB_OPTIONS[@]}" \
+  --name lerobot-act-resume --args "$RESUME_ARGS" --dry-run
+nebius ai job create "${JOB_OPTIONS[@]}" \
+  --name lerobot-act-resume --args "$RESUME_ARGS"
+export RESUME_JOB_ID="YOUR_RESUME_JOB_ID"
+nebius ai job logs "$RESUME_JOB_ID" --follow
+nebius ai job get "$RESUME_JOB_ID"
+```
+
+`--config_path` loads the saved training configuration from the Hub; `--resume=true` downloads the highest-numbered checkpoint and restores training state. Other settings, including the dataset revision, batch size, model repository, and save interval, come from the saved configuration. `--steps=300` is the **total target step**, so a run resumed at 200 performs 100 more updates. Expect a new `checkpoints/000300/` directory in the same Hub repository. Download again to retrieve it.
+
+If the first job stopped after uploading step 100, resume starts there instead. If it never uploaded a full checkpoint, there is nothing to resume: fix the failure and start a fresh run. Do not replace this command with `--policy.path`, which starts from weights rather than restoring the full training state.
+
+To resume a specific downloaded checkpoint on another machine with the same LeRobot environment, use its local config and retain the complete adjacent `training_state/` directory:
+
+```bash
+lerobot-train \
+  --config_path=artifacts/checkpoints/000200/pretrained_model/train_config.json \
+  --resume=true --job.target=local \
+  --output_dir=outputs/act-pusht-local-resume --steps=300
+```
+
+That command retains `policy.device=cuda` and Hub uploads from the saved config. It requires a local NVIDIA GPU and Hub authentication. For CPU inspection, override `--policy.device=cpu`; to keep outputs local, set both `--policy.push_to_hub=false` and `--save_checkpoint_to_hub=false`.
+
+## Failures and cleanup
+
+| Symptom                      | What to check                                                                                                                              |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Job cannot be scheduled      | Region, GPU quota, selected platform/preset, subnet, and available capacity.                                                               |
+| Image pull fails             | `linux/amd64` image, digest, registry access, and `--registry-secret` for a private registry.                                              |
+| Hub returns 401/403          | Secret payload key `HF_TOKEN`, token permissions, repository namespace, and access to gated/private datasets.                              |
+| CUDA or video decoding fails | Confirm the pinned image and source commit. This example explicitly selects PyAV; do not mix an old image with current training flags.     |
+| Out of GPU memory            | Start a fresh run with a smaller batch size. Changing batch size on resume changes the training data sequence.                             |
+| Job fails or times out       | Inspect logs and the Hub `checkpoints/` tree. Resume only from a fully uploaded checkpoint; an interrupted upload is not a recovery point. |
+| Resume immediately exits     | Set `--steps` above the latest uploaded checkpoint's step.                                                                                 |
+
+Save logs before deleting job records:
+
+```bash
+nebius ai job logs "$JOB_ID" --since 2h > act-smoke.log
+nebius ai job logs "$RESUME_JOB_ID" --since 2h > act-resume.log
+nebius ai job delete "$JOB_ID"
+nebius ai job delete "$RESUME_JOB_ID"
+```
+
+Deleting a running job also cancels it. Finished jobs release their container VM automatically. Hub repositories, registry images, and SecretStash secrets are separate resources: retain them for recovery or remove the ones created for this experiment after verifying your local download. Revoke a dedicated experiment token when it is no longer needed. This example creates no endpoint or persistent Nebius volume.

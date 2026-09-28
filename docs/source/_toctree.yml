@@ -31,6 +31,8 @@
 - sections:
   - local: hardware_guide
     title: Compute Hardware Guide
+  - local: nebius_jobs
+    title: ACT on Nebius Serverless Jobs
   - local: torch_accelerators
     title: PyTorch accelerators
   title: "Compute & Hardware"
