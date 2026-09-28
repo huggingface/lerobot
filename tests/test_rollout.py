@@ -879,7 +879,7 @@ def test_handle_warmup_paces_then_flushes_and_exempts_the_reprimed_group(caplog,
     # budget, so `timer.restart()` must re-arm the start-up exemption; without it
     # every torch.compile run would warn once right after warm-up.
     fps, multiplier = 20.0, 2  # 25 ms slots, 50 ms cycle budget
-    engine = MagicMock(ready=False)
+    engine = MagicMock(ready=False, failed=False)
     strategy = BaseStrategy(BaseStrategyConfig())
     strategy._engine = engine
     strategy._interpolator = ActionInterpolator(multiplier=multiplier)

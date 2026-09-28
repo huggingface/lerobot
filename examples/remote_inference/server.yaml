@@ -1,0 +1,36 @@
+# Copy and adapt to the checkpoint, calibration, cameras and conventions you validated.
+deployment: manipulation
+model:
+  repo_or_path: /absolute/path/to/checkpoint
+  device: cuda
+execution:
+  supported_modes: [chunk]
+  action_fps: 30.0
+  action_deadline_s: 5.0
+  idle_timeout_s: 30.0
+  warmup_calls: 2
+language:
+  enabled: false
+  deadline_s: 60.0
+zenoh:
+  mode: peer
+  listen_endpoints: [tcp/0.0.0.0:7447]
+semantics: so101-degrees-gripper-percent-v1
+robot_type: so101_follower
+features:
+  - name: observation.state
+    shape: [6]
+    dtype: float32
+    names: [shoulder_pan.pos, shoulder_lift.pos, elbow_flex.pos, wrist_flex.pos, wrist_roll.pos, gripper.pos]
+    semantics: so101-degrees-gripper-percent-v1
+  - name: observation.images.front
+    shape: [480, 640, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: rgb-front-table-v1
+action_feature:
+  name: action
+  shape: [6]
+  dtype: float32
+  names: [shoulder_pan.pos, shoulder_lift.pos, elbow_flex.pos, wrist_flex.pos, wrist_roll.pos, gripper.pos]
+  semantics: so101-degrees-gripper-percent-v1

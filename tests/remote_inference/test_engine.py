@@ -1,0 +1,302 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
+"""Worker/control-thread boundaries independent of network and model latency."""
+
+import time
+from contextlib import contextmanager
+from threading import Event, Lock
+from types import SimpleNamespace
+
+import pytest
+import torch
+
+from lerobot.inference.contracts import (
+    ActionChunk,
+    ActionProvenance,
+    ExecutionMode,
+    FeatureSpec,
+    PolicyCapabilities,
+)
+from lerobot.remote_inference.client import RequestCancelled
+from lerobot.remote_inference.protocol import ErrorCode, ProtocolError
+from lerobot.rollout.inference.factory import RemoteInferenceConfig
+from lerobot.rollout.inference.remote import RemoteInferenceEngine
+
+
+class ControlledClient:
+    """Explicit completion gates expose races without a model or network sleep."""
+
+    def __init__(self):
+        feature = FeatureSpec(
+            "observation.state", (2,), "float32", names=("a.pos", "b.pos"), semantics="radians"
+        )
+        action = FeatureSpec("action", (2,), "float32", names=("a.pos", "b.pos"), semantics="radians")
+        self.capabilities = PolicyCapabilities(
+            (ExecutionMode.CHUNK,), 4, 4, 0.1, (feature,), action, language=True
+        )
+        self.descriptor = {"limits": {"max_input_chars": 4096}}
+        self.instance_id = "instance"
+        self.session_id = "session"
+        self.action_started, self.text_started, self.control_started = Event(), Event(), Event()
+        self.action_release, self.text_release = Event(), Event()
+        self.action_release.set()
+        self.closed = Event()
+        self.calls = []
+        self.requests = []
+        self.query_error = None
+        self.text = "an answer"
+        self.on_presence = None
+        self._lock = Lock()
+        self.active_calls = 0
+        self.max_active_calls = 0
+
+    @property
+    def present(self):
+        if self.on_presence is not None:
+            callback, self.on_presence = self.on_presence, None
+            callback()
+        return True
+
+    @contextmanager
+    def call(self, name, context):
+        with self._lock:
+            self.calls.append((name, context))
+            self.active_calls += 1
+            self.max_active_calls = max(self.active_calls, self.max_active_calls)
+        try:
+            yield
+        finally:
+            with self._lock:
+                self.active_calls -= 1
+
+    def control(self, operation, generation):
+        with self.call(operation, generation):
+            self.control_started.set()
+
+    def infer(self, request, *, cancelled):
+        with self.call("action", request.generation):
+            self.requests.append(request)
+            self.action_started.set()
+            assert self.action_release.wait(2), "test did not complete the action call"
+            if cancelled():
+                raise RequestCancelled()
+            actions = torch.ones(4, 2)
+            return ActionChunk(
+                None, actions, ActionProvenance(request.observation.capture_time, request.observation.task), 4
+            )
+
+    def query_language(self, observation, *, kind, text, intent_generation, generation, cancelled):
+        with self.call("language", generation):
+            self.text_started.set()
+            assert self.text_release.wait(2), "test did not complete the language call"
+            if self.query_error is not None:
+                raise self.query_error
+            # Deliberately return after cancellation, exercising the engine's
+            # context check independently of cooperative transport cancellation.
+            return self.text
+
+    def close(self):
+        self.closed.set()
+
+
+@pytest.fixture
+def session():
+    client = ControlledClient()
+    config = RemoteInferenceConfig(
+        deployment="test", semantics="radians", hold_mode="position", max_observation_age_s=5
+    )
+    wrapper = SimpleNamespace(observation_time=None)
+    engine = RemoteInferenceEngine(
+        client,
+        config,
+        {"observation.state": {"dtype": "float32", "shape": (2,), "names": ["a.pos", "b.pos"]}},
+        {},
+        wrapper,
+        "initial task",
+    )
+    try:
+        yield engine, client
+    finally:
+        client.action_release.set()
+        client.text_release.set()
+        engine.stop()
+        assert engine._thread is None or not engine._thread.is_alive()
+
+
+def wait_for(condition):
+    until = time.monotonic() + 2
+    while time.monotonic() < until:
+        if condition():
+            return True
+        Event().wait(0.002)
+    return False
+
+
+def capture(engine):
+    engine._robot.observation_time = time.monotonic()
+    engine.notify_observation({"a.pos": 0.0, "b.pos": 0.0})
+
+
+def start_query(engine, client):
+    engine.resume()
+    assert engine.ask("What is visible?")
+    engine.start()
+    assert not engine.dispatch_allowed()
+    engine.acknowledge_hold()
+    capture(engine)
+    assert client.text_started.wait(2)
+
+
+def test_query_waits_for_hold_acknowledgment_and_new_capture(session):
+    engine, client = session
+    engine.resume()
+    capture(engine)
+    assert engine.ask("What is visible?")
+    engine.start()
+    assert not client.control_started.wait(0.02)
+    assert not client.text_started.is_set()
+    assert not engine.dispatch_allowed()
+    engine.acknowledge_hold()
+    assert client.control_started.wait(2)
+    assert not client.text_started.wait(0.02), "the pre-hold capture cannot condition text"
+    capture(engine)
+    assert client.text_started.wait(2)
+    client.text_release.set()
+    assert wait_for(lambda: bool(engine._ready_answers))
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+    assert delivered == []
+    engine.pump_query()
+    assert delivered[0].answer == "an answer"
+    assert not client.action_started.is_set(), "action resumption requires another fresh capture"
+    capture(engine)
+    assert client.action_started.wait(2)
+    assert client.max_active_calls == 1
+
+
+def test_slow_action_finishes_before_language_begins_and_cannot_restore_motion(session):
+    engine, client = session
+    client.action_release.clear()
+    engine.resume()
+    capture(engine)
+    engine.start()
+    assert client.action_started.wait(2)
+    assert engine.ask("What is visible?")
+    assert not engine.dispatch_allowed()
+    engine.acknowledge_hold()
+    capture(engine)
+    assert not client.text_started.wait(0.02)
+    client.action_release.set()
+    assert client.text_started.wait(2)
+    assert engine.runtime.queue.empty()
+    assert not engine.dispatch_allowed()
+    assert client.max_active_calls == 1
+
+
+def test_vqa_after_autosteering_uses_its_own_query_context(session):
+    engine, client = session
+    engine.start_autosteer("goal", 10)
+    engine.stop_autosteer()
+    start_query(engine, client)
+    client.text_release.set()
+    assert wait_for(lambda: bool(engine._ready_answers))
+    assert engine._ready_answers[0].answer == "an answer"
+
+
+@pytest.mark.parametrize("operation", ["pause", "reset"])
+def test_invalidation_during_text_discards_answer_and_prevents_stale_resumption(session, operation):
+    engine, client = session
+    start_query(engine, client)
+    getattr(engine, operation)()
+    client.text_release.set()
+    assert wait_for(lambda: not engine._query_in_flight)
+    assert not engine._ready_answers
+    assert engine.task == "initial task"
+    assert engine.runtime.queue.empty()
+    assert not client.action_started.is_set()
+    assert not engine.dispatch_allowed()
+
+
+def test_cancelled_same_text_autosteer_intent_cannot_apply_old_subtask(session):
+    engine, client = session
+    engine.resume()
+    engine.start_autosteer("goal", 10)
+    engine.pump_query({})
+    engine.start()
+    assert not engine.dispatch_allowed()
+    engine.acknowledge_hold()
+    capture(engine)
+    assert client.text_started.wait(2)
+    engine.stop_autosteer()
+    engine.start_autosteer("goal", 10)
+    client.text_release.set()
+    assert wait_for(lambda: not engine._query_in_flight)
+    assert not engine._ready_answers
+    assert engine.task == "initial task"
+    assert engine.autosteer_goal == "goal"
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+def test_language_errors_reach_control_thread_and_only_uncertain_timeout_faults(session, terminal):
+    engine, client = session
+    client.query_error = (
+        TimeoutError("hung language") if terminal else ProtocolError(ErrorCode.EXECUTION, "empty answer")
+    )
+    start_query(engine, client)
+    client.text_release.set()
+    assert wait_for(lambda: bool(engine._ready_answers))
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+    engine.pump_query()
+    assert delivered[0].error
+    assert engine.failed is terminal
+    if terminal:
+        with pytest.raises(RuntimeError, match="new rollout"):
+            engine.resume()
+        assert not engine.dispatch_allowed()
+    else:
+        capture(engine)
+        assert client.action_started.wait(2)
+
+
+def test_planned_hold_preserves_pending_full_reset(session):
+    engine, client = session
+    engine.resume()
+    engine.reset()
+    assert engine.ask("What is visible?")
+    generation = engine.runtime.generation
+    engine.start()
+    engine.acknowledge_hold()
+    capture(engine)
+    assert client.text_started.wait(2)
+    assert client.calls[:2] == [("reset", generation), ("language", generation)]
+
+
+def test_reset_after_loop_snapshot_cannot_submit_before_control_ack(session):
+    engine, client = session
+    engine.resume()
+    capture(engine)
+
+    def reset_during_presence_check():
+        engine.reset()
+        capture(engine)
+
+    client.on_presence = reset_during_presence_check
+    engine.start()
+    assert client.action_started.wait(2)
+    assert client.calls[0] == ("reset", 1)
+    assert client.calls[1] == ("action", 1)
+
+
+def test_request_binds_latest_task_without_refreshing_capture_time(session):
+    engine, client = session
+    engine.resume()
+    capture(engine)
+    original_capture = engine._observation.capture_time
+    engine.set_task("updated task")
+    engine.start()
+    assert client.action_started.wait(2)
+    assert client.requests[0].observation.task == "updated task"
+    assert client.requests[0].observation.task_version == 1
+    assert client.requests[0].observation.capture_time == original_capture

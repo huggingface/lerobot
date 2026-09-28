@@ -1,0 +1,156 @@
+# Asynchronous remote inference
+
+Remote inference keeps observation capture, robot commands, operator interaction and recording on the robot computer. A separate process loads one checkpoint and its policy processors. `lerobot-rollout --inference.type=remote` obtains the serving contract without loading policy weights on the client.
+
+This implementation is under validation. Automated tests cover the codec, direct Zenoh connections and the documented router security example. Real robot operation, tail latency, and an end-to-end run with a language-capable checkpoint are still release gates. The existing async implementation remains available until those gates pass.
+
+## Install and configure a deployment
+
+Both computers need the `remote` extra. The robot computer also needs its ordinary rollout and hardware dependencies; the server needs the selected policy's dependencies.
+
+```bash
+uv sync --locked --extra remote --extra core_scripts --extra feetech
+# On the server, add the policy's extra when required, for example --extra pi.
+```
+
+The extra pins `eclipse-zenoh==1.9.0`; the lockfile currently selects MessagePack 1.2.2. Router validation uses `zenohd` 1.9.0. A successful transport test does not establish an adequate robot latency budget.
+
+Copy [`examples/remote_inference/server.yaml`](https://github.com/huggingface/lerobot/blob/main/examples/remote_inference/server.yaml) to a working configuration. It describes a candidate six-actuator SO-101 deployment with one front camera. **Adapt it to the actual checkpoint and robot before running.** The provided values are not a hardware-tested profile.
+
+```yaml
+# Essential fields; see the example for complete ordered features.
+deployment: manipulation
+model:
+  repo_or_path: /absolute/path/to/checkpoint
+  device: cuda
+execution:
+  supported_modes: [chunk]
+  action_fps: 30.0
+language:
+  enabled: false
+zenoh:
+  mode: peer
+  listen_endpoints: [tcp/0.0.0.0:7447]
+semantics: so101-degrees-gripper-percent-v1
+robot_type: so101_follower
+```
+
+`features` and `action_feature` are required. Each declares a name, shape, dtype, modality (`tensor` or `rgb`) and explicit semantic convention. State/action vectors also need their ordered component names. RGB uses height × width × 3, `uint8`, RGB channel order. The example's SO-101 convention means body joints in degrees and the gripper in the calibrated 0–100 range. Camera placement and calibration must also match the checkpoint. Matching dimensions alone does not verify these conventions.
+
+A local artifact is identified by its relevant file contents and effective inference configuration. For Hub models, configure `model.revision` with a pinned commit; the server resolves the artifact before loading. The client can require the resulting identity with `--inference.expected_artifact=...`. A deployment name is a routing name, not a checkpoint identity. Deployment identifiers must be single alphanumeric/underscore/dot/hyphen key segments; Hub IDs belong in `model.repo_or_path`.
+
+Start the server after adapting the complete configuration:
+
+```bash
+uv run --no-sync lerobot-policy-server --config_path=server.yaml
+```
+
+The server validates the contract, warms the enabled action/text paths, resets warmup state, and then advertises readiness. It admits one active robot session. A second session receives `BUSY`; restarting or reusing a client label does not replace the first session. Clients cannot ask the server to download arbitrary models.
+
+## Run the robot client
+
+This direct TCP example assumes a trusted laboratory network. Configure the hardware port, camera, checkpoint profile and budgets for your setup:
+
+```bash
+uv run --no-sync lerobot-rollout \
+    --inference.type=remote \
+    --inference.endpoint=tcp/192.168.1.42:7447 \
+    --inference.deployment=manipulation \
+    --inference.mode=chunk \
+    --inference.semantics=so101-degrees-gripper-percent-v1 \
+    --inference.hold_mode=position \
+    --inference.max_observation_age_s=2.0 \
+    --inference.refill_seconds=0.5 \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.use_degrees=true \
+    --robot.cameras='{front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}' \
+    --fps=30 \
+    --task="pick up the cube" \
+    --interactive=true
+```
+
+Do not pass `--policy.path`, local device overrides or compilation options with the remote backend. Negotiation checks ordered features, semantic profile, mode, artifact identity and policy action interval before policy motion. `--fps` is the policy action frequency; a higher interpolated motor frequency is a separate setting. Unsupported mismatches are errors. Use `--rename_map` only for the explicit observation mapping; the mapping is applied once.
+
+Remote rollout currently requires a robot implementation declaring a position-hold contract and position-only action fields. Other actuator modes, including mixed position/velocity robots, are rejected. This software hold has automated boundary tests; its actual hardware behavior still needs validation. It commands a held observed pose and cannot certify that the physical robot stopped or reached it.
+
+## Chunks, timing and faults
+
+The server returns canonical, postprocessed actions; robot-side action processors and interpolation remain local. Ordinary chunks honor the policy's execution slice. The client can hold at most one pending request or one accepted successor beyond the executing chunk.
+
+Choose `chunk`, `rtc_guided` or `rtc_trained` explicitly. A requested unsupported mode fails instead of silently changing behavior. Effective RTC settings belong to the deployment. Guided/trained modes additionally validate actual consumed overlap; trained RTC enforces checkpoint delay limits. Policies needing temporal observation history, temporal ensembling or unsupported `select_action()` preparation require a conforming adapter or are rejected.
+
+Plain prefetch uses an observation captured before the previous chunk finishes. Its latency/reactivity tradeoff differs from synchronous action selection. Measure source age and full encode/network/inference/decode turnaround on the intended machine, then choose:
+
+- `refill_seconds`: remaining playback at which to request a successor.
+- `max_observation_age_s`: maximum age of the source observation at dispatch.
+- `handshake_timeout_s`, `startup_timeout_s`, `action_timeout_s`, `language_timeout_s`: bounded operation deadlines.
+
+The current numerical defaults are starting values for validation, not measured performance guarantees. Warmup time, action turnaround and text-generation time are separate quantities. Client monotonic time controls deadlines; server reports contain durations rather than timestamps to compare across hosts.
+
+Raw RGB is the default lossless transport. `--inference.encoding=jpeg --inference.jpeg_quality=90` reduces bandwidth at the cost of image information. Validate policy behavior after enabling JPEG. Arbitrary tensors and depth data are never silently JPEG encoded. Typed MessagePack decoding bounds payloads, dimensions, dtype, image size and strings before tensor/image allocation. Non-finite actions and mismatched results are rejected.
+
+A late response can only be used while its request, session, server instance, generation and source age remain valid. Buffered actions may continue within the local limits; starvation, stale actions, malformed active replies or request expiry latch a fault. The dispatch gate checks every motor tick, including interpolation-only ticks. Fault handling invalidates queued/interpolated motion, holds locally, and does not home the robot. A returning network connection cannot resume motion: restart rollout to establish a new session.
+
+## Live instructions and language
+
+The existing interactive commands remain the operator interface: `/start`, `/subtask ...`, `/vqa ...`, `/autosteer ...`, `/autosteer off`, `/stop` and `/reset`. See [interactive rollout](./inference#interactive-sessions).
+
+Enable `language.enabled: true` only for a checkpoint implementing the policy language capability interface. The server validates and warms that path. Unsupported language capabilities are reported before accepting a query. A real language-capable checkpoint remains a required end-to-end release check; mock text tests are insufficient.
+
+A text query creates a planned local hold before submission. The control loop keeps observing and serving operator input, while the single server worker serializes generation changes and policy calls. The answer is delivered through the control-thread observer path. A healthy active run resumes only after obtaining a fresh action chunk; a paused, stopped, reset or intervened run stays inactive. An empty/invalid completed answer is a query error; an uncertain timed-out model call faults the session. Live instructions remain message content and never change deployment routing keys.
+
+Recording stays local. Task labels follow the action actually dispatched. A bounded asynchronous inference-event sidecar records request/task/generation/hold/fault provenance with control-tick or dataset identifiers where available; dropped event counts are reported. Logged or recorded commands do not prove physical execution.
+
+## Private connections through a router
+
+Use authenticated encrypted connections for private remote deployments. Bare TCP and a session ID provide no authentication. The example uses a pinned Zenoh router with TLS-only links, mutual certificate verification, disabled discovery and certificate-role ACLs. These controls depend on the actual topology; participants must connect as clients to the router without direct peer links. See the official [TLS configuration](https://zenoh.io/docs/manual/tls/) and [ACL semantics](https://zenoh.io/docs/manual/access-control/).
+
+The complete configurations are in [`examples/remote_inference/zenoh`](https://github.com/huggingface/lerobot/tree/main/examples/remote_inference/zenoh):
+
+| File | Purpose |
+| --- | --- |
+| `router.json5` | TLS listener and default-deny ACL for deployment `manipulation` |
+| `server.json5` | Policy-server connection using a `policy-server` certificate common name |
+| `robot.json5` | Robot connection using a `robot-client` certificate common name |
+
+Provision a private CA and distinct role certificates/keys under `./certs`, or replace the example paths with absolute paths. Only the router needs `router-key.pem`, only the server needs `policy-server-key.pem`, and only the robot needs `robot-client-key.pem`. All participants need the CA certificate. The router certificate must cover the DNS name used by the clients; replace `localhost` consistently for an actual network deployment. Keep the CA private key out of these runtime directories.
+
+Run the matching router from a directory where the certificate paths resolve:
+
+```bash
+zenohd --config examples/remote_inference/zenoh/router.json5
+```
+
+Change the server's `zenoh` section to:
+
+```yaml
+zenoh:
+  mode: client
+  connect_endpoints: [tls/localhost:7447]
+  config_file: examples/remote_inference/zenoh/server.json5
+```
+
+Use these client options with the ordinary rollout arguments:
+
+```bash
+--inference.endpoint=tls/localhost:7447 \
+--inference.zenoh_mode=client \
+--inference.zenoh_config_path=examples/remote_inference/zenoh/robot.json5
+```
+
+Transport configuration always takes explicit endpoints and disables multicast/gossip; the JSON5 file preserves TLS/ACL settings. The ACL permits robot observation/control traffic and server action/text replies. It prevents a different participant using a robot-role certificate from forging server actions, and prevents an unrecognized certificate role from subscribing to observations or querying the deployment. Change the deployment path in the ACL together with `deployment`; merely changing a message prefix does not authorize it. Router ACLs cannot govern a process's own local publication/subscription delivery or defend a compromised robot process.
+
+## Validation and remaining release checks
+
+Run the focused suites with the remote dependencies installed:
+
+```bash
+uv run --no-sync pytest tests/remote_inference/test_codec.py tests/remote_inference/test_zenoh.py -q
+LEROBOT_ZENOHD=/absolute/path/to/zenohd \
+  uv run --no-sync pytest tests/remote_inference/test_zenoh.py -q
+```
+
+The optional router test creates ephemeral test certificates and runs the actual checked-in security configurations with Zenoh 1.9.0. It verifies encrypted action/observation/text/control exchange, presence and rejected unauthorized operations. It does not run model inference or measure a private WAN.
+
+Before release, validate the supported policy configurations (ACT, Pi0/Pi05, trained-RTC Pi05, one-observation-step SmolVLA and an appropriate EO1 language checkpoint), real canonical processor behavior, hardware hold/stop and intervention races, and wired/private-network latency tails. Measure JPEG impact and edge encoding/CPU contention. The implementation progress document alongside the proposal tracks exact automated results and remaining gates. Legacy async/gRPC removal is intentionally gated on the complete real action and language workflow; unrelated RL transport remains in scope for preservation.

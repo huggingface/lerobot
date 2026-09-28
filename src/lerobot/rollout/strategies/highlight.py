@@ -107,7 +107,6 @@ class HighlightStrategy(RolloutStrategy):
         play_sounds = cfg.play_sounds
 
         start_time = time.perf_counter()
-        task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         logger.info("Highlight strategy recording started (press '%s' to save)", self.config.save_key)
 
         with VideoEncodingManager(dataset):
@@ -148,7 +147,7 @@ class HighlightStrategy(RolloutStrategy):
                             with timer.section("record"):
                                 obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
                                 action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
-                                frame = {**obs_frame, **action_frame, "task": task_str}
+                                frame = {**obs_frame, **action_frame, "task": engine.dispatched_task}
 
                                 toggled = False
                                 frame_consumed = False
@@ -194,6 +193,7 @@ class HighlightStrategy(RolloutStrategy):
                                     timer.log_episode_summary(f"episode {dataset.num_episodes}")
                                 timer.restart()
 
+                    engine.pump_query(obs_processed)
                     timer.wait()
 
             finally:

@@ -258,6 +258,7 @@ class RolloutController:
             # Restore here, not later on the serve thread, so a following set_task() survives.
             restored = self._ctx.policy.inference.set_task(self._initial_task)
             self._reset_requested.set()
+            self._ctx.policy.inference.pause()
             self._segment_stop.set()
             self._wake.set()
             return restored
@@ -269,6 +270,7 @@ class RolloutController:
                 return
             self._start_requested.clear()  # last command wins, see reset()
             self._stop_requested.set()
+            self._ctx.policy.inference.pause()
             self._segment_stop.set()
             self._wake.set()
 
@@ -412,6 +414,7 @@ class RolloutController:
                 logger.exception("Rollout strategy failed mid-segment")
             finally:
                 engine.pause()
+                self._strategy.hold_control_state(self._ctx.hardware)
         finally:
             # Clear and drop together under the control lock: ask() gates on _running under the same
             # lock, so a question either lands before this and is dropped, or is rejected outright.

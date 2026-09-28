@@ -109,6 +109,7 @@ class _StubRelativePolicy:
     def __init__(self, action_dim: int = 16):
         self.action_dim = action_dim
         self.config = SimpleNamespace(
+            n_obs_steps=1,
             action_feature_names=list(CKPT_ORDER),
             use_amp=False,
             chunk_size=30,
@@ -134,6 +135,10 @@ class _StubRelativePolicy:
     _action_queue_attrs = PreTrainedPolicy._action_queue_attrs
     drop_queued_actions = PreTrainedPolicy.drop_queued_actions
     count_queued_actions = PreTrainedPolicy.count_queued_actions
+    chunk_inference_spec = PreTrainedPolicy.chunk_inference_spec
+
+    def supports_rtc(self):
+        return True
 
     def supports_text_generation(self):
         return False

@@ -154,6 +154,15 @@ class RolloutStrategy(abc.ABC):
             self._interpolator.reset()
         self._cached_obs_processed = None
 
+    def hold_control_state(self, hw: HardwareContext) -> None:
+        """Apply a segment-end hold on the control thread after background dispatch is revoked."""
+        if self._interpolator is not None:
+            self._interpolator.reset()
+        self._cached_obs_processed = None
+        if hw.robot_wrapper.supports_hold:
+            hw.robot_wrapper.hold()
+            self._require_engine().acknowledge_hold()
+
     def _process_observation_and_notify(
         self, processors: ProcessorContext, obs_raw: RobotObservation
     ) -> RobotObservation:
@@ -191,6 +200,13 @@ class RolloutStrategy(abc.ABC):
             return False
         engine = self._require_engine()
         interpolator = self._require_interpolator()
+        # A compiled model can hang inside its first call. Warmup bypasses the
+        # normal dispatch path, so explicitly run the nonblocking deadline gate.
+        engine.dispatch_allowed()
+        if engine.failed:
+            # Let send_next_action apply the robot hold and acknowledge it; do
+            # not keep waiting, reset model state, or resume a faulted engine.
+            return False
         if not engine.ready:
             timer.wait()
             return True
@@ -207,6 +223,10 @@ class RolloutStrategy(abc.ABC):
         """Stop the inference engine, optionally return robot to initial position, and disconnect hardware."""
         if self._engine is not None:
             logger.info("Stopping inference engine...")
+            if self._engine.failed:
+                return_to_initial_position = False
+                if hw.robot_wrapper.supports_hold:
+                    hw.robot_wrapper.hold()
             self._engine.stop()
         robot = hw.robot_wrapper.inner
         if robot.is_connected:
@@ -404,11 +424,24 @@ def send_next_action(
     ready (e.g. empty async queue, interpolator not yet primed).
     """
     engine = ctx.policy.inference
+    engine.begin_control_tick()
     features = ctx.data.dataset_features
     ordered_keys = ctx.data.ordered_action_keys
     # ``nullcontext`` accepts (and ignores) the section name, so it stands in for
     # ``timer.section`` verbatim when no timer was passed.
     section = timer.section if timer is not None else contextlib.nullcontext
+
+    def dispatch_permitted() -> bool:
+        if engine.dispatch_allowed():
+            return True
+        interpolator.reset()
+        if ctx.hardware.robot_wrapper.supports_hold:
+            ctx.hardware.robot_wrapper.hold()
+        engine.acknowledge_hold()
+        return False
+
+    if not dispatch_permitted():
+        return None
 
     if interpolator.needs_new_action():
         with section("infer"):
@@ -416,6 +449,9 @@ def send_next_action(
             action_tensor = engine.get_action(obs_frame)
         if action_tensor is not None:
             interpolator.add(action_tensor.cpu())
+
+    if not dispatch_permitted():
+        return None
 
     interp = interpolator.get()
     if interp is None:
@@ -428,5 +464,10 @@ def send_next_action(
     action_dict = {k: interp[i].item() for i, k in enumerate(ordered_keys)}
     with section("send"):
         processed = ctx.processors.robot_action_processor((action_dict, obs_raw))
-        ctx.hardware.robot_wrapper.send_action(processed)
+        if not dispatch_permitted():
+            return None
+        dispatched = ctx.hardware.robot_wrapper.send_action(processed)
+        engine.record_dispatch(
+            action_dict, dispatched if isinstance(dispatched, dict) else processed, obs_raw
+        )
     return action_dict

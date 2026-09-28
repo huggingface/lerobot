@@ -23,8 +23,10 @@ from __future__ import annotations
 
 import abc
 import logging
+import math
 from dataclasses import dataclass, field
 from threading import Event
+from typing import Literal
 
 import draccus
 
@@ -72,6 +74,61 @@ class RTCInferenceConfig(InferenceEngineConfig):
     # (e.g. ``--inference.rtc.execution_horizon=...``).
     rtc: RTCConfig = field(default_factory=RTCConfig)
     queue_threshold: int = 30
+    max_observation_age_s: float = 5.0
+    action_timeout_s: float = 10.0
+    startup_timeout_s: float = 120.0
+    language_timeout_s: float = 120.0
+
+
+@InferenceEngineConfig.register_subclass("remote")
+@dataclass
+class RemoteInferenceConfig(InferenceEngineConfig):
+    """Exclusive remote deployment, with explicit robot semantics and local hold consent.
+
+    Timing defaults are conservative starting values for lab validation; operators must
+    measure their deployment's turnaround and choose a usable playback/age budget.
+    """
+
+    endpoint: str = "tcp/127.0.0.1:7447"
+    deployment: str = ""
+    instance: str | None = None
+    expected_artifact: str | None = None
+    mode: str = "chunk"
+    semantics: str = ""
+    hold_mode: str = ""
+    refill_seconds: float = 0.5
+    max_observation_age_s: float = 2.0
+    handshake_timeout_s: float = 10.0
+    action_timeout_s: float = 5.0
+    language_timeout_s: float = 60.0
+    startup_timeout_s: float = 10.0
+    encoding: Literal["raw", "jpeg"] = "raw"
+    jpeg_quality: int = 90
+    zenoh_config_path: str | None = None
+    zenoh_mode: Literal["peer", "client"] = "peer"
+
+    def __post_init__(self) -> None:
+        if self.zenoh_mode not in {"peer", "client"}:
+            raise ValueError("zenoh_mode must be peer (direct) or client (router)")
+        if not self.deployment or not self.semantics:
+            raise ValueError("Remote inference requires deployment and explicit robot/action semantics")
+        if self.hold_mode != "position":
+            raise ValueError("Remote inference requires --inference.hold_mode=position on a supported robot")
+        if self.mode not in {"chunk", "rtc_guided", "rtc_trained"}:
+            raise ValueError(f"Unsupported remote execution mode: {self.mode!r}")
+        if self.encoding not in {"raw", "jpeg"} or not 1 <= self.jpeg_quality <= 100:
+            raise ValueError("Remote encoding must be raw or jpeg, with jpeg_quality in [1, 100]")
+        for name in (
+            "refill_seconds",
+            "max_observation_age_s",
+            "handshake_timeout_s",
+            "action_timeout_s",
+            "language_timeout_s",
+            "startup_timeout_s",
+        ):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"Remote {name} must be finite and positive")
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +179,10 @@ def create_inference_engine(
             use_torch_compile=use_torch_compile,
             compile_warmup_inferences=compile_warmup_inferences,
             rtc_queue_threshold=config.queue_threshold,
+            max_observation_age_s=config.max_observation_age_s,
+            action_timeout_s=config.action_timeout_s,
+            startup_timeout_s=config.startup_timeout_s,
+            language_timeout_s=config.language_timeout_s,
             shutdown_event=shutdown_event,
         )
     raise ValueError(f"Unknown inference engine type: {type(config).__name__}")

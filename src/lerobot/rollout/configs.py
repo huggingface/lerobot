@@ -29,7 +29,7 @@ from lerobot.robots.config import RobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
 
-from .inference import InferenceEngineConfig, SyncInferenceConfig
+from .inference import InferenceEngineConfig, RemoteInferenceConfig, SyncInferenceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -396,6 +396,13 @@ class RolloutConfig:
             raise ValueError("--robot.type is required for rollout")
 
         policy_path = parser.get_path_arg("policy")
+        remote = isinstance(self.inference, RemoteInferenceConfig)
+        if remote and (
+            policy_path or self.policy is not None or self.device is not None or self.use_torch_compile
+        ):
+            raise ValueError(
+                "Remote inference owns policy/device configuration; omit --policy, --device and --use_torch_compile"
+            )
         if policy_path:
             yaml_overrides = parser.get_yaml_overrides("policy")
             cli_overrides = parser.get_cli_overrides("policy") or []
@@ -409,7 +416,7 @@ class RolloutConfig:
                 cli_overrides=policy_overrides,
             )
             self.policy.pretrained_path = policy_path
-        if self.policy is None:
+        if self.policy is None and not remote:
             raise ValueError("--policy.path is required for rollout")
 
         # --- Task resolution ---
@@ -427,6 +434,8 @@ class RolloutConfig:
         # Resolve device from the policy config when not explicitly set so all
         # components (policy.to, preprocessor, inference engine) use the same
         # device string instead of inconsistent fallbacks.
+        if remote:
+            return
         if self.device is None or not is_torch_device_available(self.device):
             resolved = self.policy.device
             if resolved:

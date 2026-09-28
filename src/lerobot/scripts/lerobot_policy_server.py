@@ -1,0 +1,173 @@
+#!/usr/bin/env python
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
+"""Load, validate and warm one pinned deployment, then serve one robot session."""
+
+import hashlib
+import json
+import logging
+import signal
+from collections.abc import Callable
+from dataclasses import asdict
+from pathlib import Path
+from typing import TYPE_CHECKING, cast
+
+import numpy as np
+from huggingface_hub import snapshot_download
+
+from lerobot.configs import parser
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.inference.contracts import ExecutionMode, ObservationSnapshot
+from lerobot.inference.policy_runner import PolicyRunner
+from lerobot.policies.factory import get_policy_class, make_pre_post_processors
+from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.remote_inference.configs import ServerConfig
+from lerobot.remote_inference.server import PolicyServer, SessionWorker
+from lerobot.transport.zenoh import ZenohTransport
+from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
+from lerobot.utils.utils import init_logging
+
+if TYPE_CHECKING or _peft_available:
+    from peft import PeftConfig, PeftModel
+
+logger = logging.getLogger(__name__)
+
+
+def resolve_artifact(repo_or_path: str, revision: str | None) -> Path:
+    """Hub downloads are operator-configured, resolved once before readiness."""
+    path = Path(repo_or_path)
+    if path.is_dir():
+        return path.resolve()
+    return Path(snapshot_download(repo_or_path, revision=revision))
+
+
+def artifact_identity(paths: dict[str, Path], effective: dict) -> str:
+    """Hash model, adapter and processor contents plus effective serving settings."""
+    digest = hashlib.sha256(json.dumps(effective, sort_keys=True, default=str).encode())
+    for role, root in sorted(paths.items()):
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or any(part.startswith(".") for part in path.relative_to(root).parts):
+                continue
+            # Include named file boundaries and lengths to avoid concatenation ambiguity.
+            name = f"{role}/{path.relative_to(root)}".encode()
+            digest.update(len(name).to_bytes(8, "big"))
+            digest.update(name)
+            digest.update(path.stat().st_size.to_bytes(8, "big"))
+            with path.open("rb") as stream:
+                while block := stream.read(1024 * 1024):
+                    digest.update(block)
+    return "sha256:" + digest.hexdigest()
+
+
+def load_deployment(cfg: ServerConfig) -> tuple[PolicyRunner, str]:
+    """Resolve contents, load canonical processors and reset all warmed model paths."""
+    if cfg.action_feature is None:
+        raise ValueError("An explicit action feature is required")
+    path = resolve_artifact(cfg.model.repo_or_path, cfg.model.revision)
+    artifacts = {"checkpoint": path}
+    policy_cfg = PreTrainedConfig.from_pretrained(path)
+    policy_cfg.pretrained_path = path
+    policy_cfg.device = cfg.model.device
+    if hasattr(policy_cfg, "rtc_config"):
+        policy_cfg.rtc_config = cfg.execution.rtc
+    policy_class = get_policy_class(policy_cfg.type)
+    if policy_cfg.use_peft:
+        require_package("peft", extra="peft")
+        adapter = PeftConfig.from_pretrained(str(path))
+        base = resolve_artifact(adapter.base_model_name_or_path, adapter.revision)
+        artifacts["base"] = base
+        policy = policy_class.from_pretrained(base, config=policy_cfg)
+        policy = cast(PreTrainedPolicy, PeftModel.from_pretrained(policy, path, config=adapter))
+    else:
+        policy = policy_class.from_pretrained(path, config=policy_cfg)
+    policy.to(cfg.model.device).eval()
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=policy_cfg,
+        pretrained_path=path,
+        preprocessor_overrides={
+            "device_processor": {"device": cfg.model.device},
+            "rename_observations_processor": {"rename_map": {}},
+        },
+    )
+    runner = PolicyRunner(
+        policy,
+        preprocessor,
+        postprocessor,
+        action_interval=1 / cfg.execution.action_fps,
+        features=tuple(cfg.features),
+        action_feature=cfg.action_feature,
+        modes=tuple(ExecutionMode(mode) for mode in cfg.execution.supported_modes),
+        robot_type=cfg.robot_type,
+        language_enabled=cfg.language.enabled,
+        max_text_input=cfg.language.max_input_chars,
+        max_text_output=cfg.language.max_output_chars,
+    )
+    identity = artifact_identity(artifacts, {"serving": asdict(cfg), "policy": asdict(policy_cfg)})
+    warmup = ObservationSnapshot(
+        {feature.name: np.zeros(feature.shape, dtype=feature.dtype) for feature in cfg.features},
+        0.0,
+        "warmup",
+        observation_id="warmup",
+    )
+    try:
+        for mode in runner.capabilities.modes:
+            previous = None
+            for _ in range(cfg.execution.warmup_calls):
+                previous = runner.predict(
+                    warmup,
+                    mode=mode,
+                    inference_delay=(
+                        min(1, runner.capabilities.training_max_delay)
+                        if previous is not None and mode is ExecutionMode.RTC_TRAINED
+                        else 0
+                    ),
+                    model_continuation=None if previous is None else previous.model_actions,
+                    canonical_continuation=None if previous is None else previous.canonical_actions,
+                )
+        if cfg.language.enabled:
+            # Warm both supported prompt paths; reset erases planner warmup state.
+            runner.query(warmup, kind="vqa", text="Describe the scene.")
+            runner.query(warmup, kind="next_subtask", text="Describe the next task.")
+    finally:
+        runner.reset(full=True)
+    return runner, identity
+
+
+@parser.wrap()
+def serve(cfg: ServerConfig) -> None:
+    """Serve the configured deployment until an operator terminates the process."""
+    init_logging()
+    runner, identity = load_deployment(cfg)
+    worker = SessionWorker(
+        runner,
+        deployment=cfg.deployment,
+        artifact_identity=identity,
+        semantics=cfg.semantics,
+        action_deadline_s=cfg.execution.action_deadline_s,
+        language_deadline_s=cfg.language.deadline_s,
+        idle_timeout_s=cfg.execution.idle_timeout_s,
+        max_input_chars=cfg.language.max_input_chars,
+        max_output_chars=cfg.language.max_output_chars,
+    )
+    server = PolicyServer(worker, ZenohTransport(cfg.zenoh))
+    signal.signal(signal.SIGTERM, lambda *_: server.stop())
+    signal.signal(signal.SIGINT, lambda *_: server.stop())
+    logger.info(
+        "Deployment warmed: name=%s instance=%s artifact=%s capabilities=%s",
+        cfg.deployment,
+        worker.instance_id,
+        identity,
+        runner.capabilities,
+    )
+    server.serve()
+
+
+def main() -> None:
+    """Register optional policy plugins and parse the server CLI."""
+    register_third_party_plugins()
+    cast(Callable[[], None], serve)()
+
+
+if __name__ == "__main__":
+    main()

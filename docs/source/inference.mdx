@@ -263,7 +263,7 @@ lerobot-rollout \
 
 ## Inference Backends
 
-Select a backend with `--inference.type=<name>`. All strategies work with both backends.
+Select a backend with `--inference.type=<name>`. Local synchronous and RTC inference use the policy configured below. The [remote backend](./remote_inference) obtains its policy contract from a server and does not load weights on the robot computer.
 
 ### Sync (default)
 
@@ -301,6 +301,18 @@ lerobot-rollout \
 | `--inference.queue_threshold`               | Backpressure threshold; trained RTC requires at least its maximum delay        |
 
 See the [Real-Time Chunking](./rtc) guide for details on tuning RTC parameters.
+
+Local RTC and remote inference share chunk scheduling, atomic continuation snapshots,
+per-action task/source provenance and consumption-aware merging. A queue pop commits an
+endpoint to interpolation; it does not imply that the robot has reached that endpoint.
+Both asynchronous backends require a supported local position-hold implementation and
+reject mixed actuator modes that do not have one. Synchronous inference is unchanged.
+
+Local RTC also exposes `--inference.max_observation_age_s`, `--inference.action_timeout_s`,
+`--inference.startup_timeout_s` and `--inference.language_timeout_s`. These bound stale
+motion and outstanding work; their defaults are provisional validation settings. Measure
+the chosen model and hardware before selecting a playback/age budget. A terminal fault
+invalidates interpolation, holds locally, and skips automatic homing at teardown.
 
 ---
 
@@ -357,9 +369,9 @@ Lines starting with `>` are what you type; the session renders no prompt of its 
 
 With `--use_torch_compile=true`, an instruction that tokenizes to a different length can trigger a recompilation, pausing inference for as long as the original warm-up took — leave compilation off if you expect to re-instruct often.
 
-`/vqa` and `/autosteer` need a policy with a text head (an implementation of `PreTrainedPolicy.generate_text()`); no built-in LeRobot policy ships one yet, so both commands are refused unless yours does.
+`/vqa` and `/autosteer` require a policy that declares text generation support and implements `PreTrainedPolicy.generate_text()`, such as an appropriately trained EO1 checkpoint. Capability is checked before accepting a query; checkpoint-specific behavior still needs validation.
 
-**`/vqa`** answers from the next observation and prints when ready, so you can keep typing meanwhile; only one question is in flight at a time (autosteer's own queries share that slot). Text generation is far slower than a control tick, so the robot drains its queued actions and then holds position until the answer lands, and that time counts against `--duration`. Questions are only accepted while a run is in progress — an idle engine has no current view — and one still unanswered when a segment ends is dropped and reported.
+**`/vqa`** answers from the next observation and prints when ready, so you can keep typing meanwhile; only one question is in flight at a time (autosteer's own queries share that slot). Asynchronous backends first enter an acknowledged local hold and invalidate queued/interpolated motion, then submit a fresh observation to the text path. A healthy active run resumes from a fresh action chunk after the answer; paused or stopped runs stay inactive. Synchronous text generation continues to run inline. Query time counts against `--duration`. Questions are only accepted while a run is in progress — an idle engine has no current view — and one still unanswered when a segment ends is dropped and reported.
 
 **`/autosteer`** hands the policy a goal and asks it for the next subtask every `--autosteer_interval_s` seconds (default 10), applying each one through the same path as `/subtask` and announcing it in the chat. Every query is a full text generation, so the interval is a cost knob: lower values re-plan sooner but spend more of the loop generating text instead of acting. Plan progress lives in the policy, not the rollout, so the plan dies with the segment; the sequencer also stops on `/reset`, `/subtask`, `/autosteer off`, and the first planning failure.
 

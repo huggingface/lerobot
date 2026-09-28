@@ -287,8 +287,11 @@ class EpisodicStrategy(RolloutStrategy):
                     with timer.section("record"):
                         obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
                         action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
-                        dataset.add_frame({**obs_frame, **action_frame, "task": single_task})
+                        dataset.add_frame(
+                            {**obs_frame, **action_frame, "task": self._require_engine().dispatched_task}
+                        )
 
+            self._require_engine().pump_query(obs_processed)
             timer.wait()
             timestamp = time.perf_counter() - start_t
 
