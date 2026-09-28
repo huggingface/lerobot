@@ -155,7 +155,6 @@ class DAggerKeyboardConfig:
     exit_early: str = "right"
     rerecord_episode: str = "left"
 
-
 @dataclass
 class DAggerPedalConfig:
     """Foot pedal configuration for DAgger controls.
@@ -211,6 +210,8 @@ class EpisodicStrategyConfig(RolloutStrategyConfig):
 
 @RolloutStrategyConfig.register_subclass("dagger")
 @dataclass
+@RolloutStrategyConfig.register_subclass("dagger")
+@dataclass
 class DAggerStrategyConfig(RolloutStrategyConfig):
     """Human-in-the-loop data collection (DAgger / RaC).
 
@@ -241,15 +242,12 @@ class DAggerStrategyConfig(RolloutStrategyConfig):
     ``push_to_hub`` is blocked while a correction is in progress.
     """
 
-    # TODO(Steven): DAgger shouldn't require a dataset (user may want to just rollout+intervene
-    # without recording), but for now we require it to simplify the implementation.
     dataset_mode: ClassVar[str] = "required"
     requires_teleop: ClassVar[bool] = True
 
     # Number of correction episodes to collect (corrections-only mode), or the
     # number of episodes to record when record_autonomous=True.
-    # When None, falls back to ``--dataset.num_episodes`` (resolved in
-    # ``RolloutConfig.__post_init__``).
+    # When None, falls back to ``--dataset.num_episodes`` (resolved in setup()).
     num_episodes: int | None = None
     record_autonomous: bool = False
     # Only meaningful when record_autonomous=True. True selects the Sentry-style
@@ -295,8 +293,6 @@ class DAggerStrategyConfig(RolloutStrategyConfig):
 
     def extra_dataset_features(self) -> dict[str, dict]:
         return {"intervention": {"dtype": "bool", "shape": (1,), "names": None}}
-
-
 # ---------------------------------------------------------------------------
 # Top-level rollout config
 # ---------------------------------------------------------------------------
@@ -424,23 +420,6 @@ class RolloutConfig:
         ):
             logger.warning("%s strategy forces streaming_encoding=True", strategy.type)
             self.dataset.streaming_encoding = True
-
-        # DAgger: resolve num_episodes from dataset config when not explicitly set.
-        # This is DAgger-specific (num_episodes means "correction episodes" or
-        # "recorded episodes", not part of the generic strategy interface above),
-        # so it stays as an isinstance check rather than a declared capability.
-        if isinstance(strategy, DAggerStrategyConfig) and strategy.num_episodes is None:
-            if self.dataset is not None:
-                strategy.num_episodes = self.dataset.num_episodes
-                logger.info(
-                    "DAgger num_episodes not set — using --dataset.num_episodes=%d",
-                    strategy.num_episodes,
-                )
-            else:
-                raise ValueError(
-                    "DAgger num_episodes must be set either via --strategy.num_episodes or "
-                    "--dataset.num_episodes"
-                )
 
         # --- Policy loading ---
         if self.robot is None:
