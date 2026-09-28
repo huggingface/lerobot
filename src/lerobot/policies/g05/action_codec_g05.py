@@ -1146,18 +1146,45 @@ class G05NativeActionCodec:
         rule_codes = {
             key: self.rule_codec.encode(components[key][..., 0].cpu(), threshold) for key in self.rule_parts
         }
+        active = [self._active_parts(payload) for payload in payloads]
         rows = []
         for index in range(len(chunks)):
             indices = []
             for level in range(self.num_residuals):
                 for key in self.neural_parts:
+                    if key not in active[index]:
+                        continue
                     indices.append(self.marker_indices[f"<{key}_{level}>"])
                     indices.extend(codes[key][index, level].tolist())
             for key in self.rule_parts:
+                if key not in active[index]:
+                    continue
                 indices.append(self.marker_indices[f"<{key}>"])
                 indices.extend(rule_codes[key][index].tolist())
             rows.append([self.action_token_begin + int(value) for value in indices])
         return rows
+
+    def _active_parts(self, payload: Mapping[str, Any]) -> set[str]:
+        """Body parts to tokenize: with `dropout_noop_parts`, those with at least one operated dim.
+
+        A part the robot does not have (all padded) or does not move carries no action, and the
+        released tokenizer leaves it out of the sequence; the decoder fills absent parts with zero
+        motion.
+        """
+        if not self.config.get("dropout_noop_parts", False):
+            return set(self.parts)
+        operated = payload.get("action_op_mask")
+        if operated is None and payload.get("action_dim_is_pad") is not None:
+            operated = ~torch.as_tensor(payload["action_dim_is_pad"]).bool()
+        if operated is None:
+            return set(self.parts)
+        operated = torch.as_tensor(operated).bool().reshape(-1, torch.as_tensor(operated).shape[-1]).any(0)
+        active, offset = set(), 0
+        for key, width in self.parts.items():
+            if bool(operated[offset : offset + width].any()):
+                active.add(key)
+            offset += width
+        return active
 
     @torch.no_grad()
     def decode_language_tokens(
