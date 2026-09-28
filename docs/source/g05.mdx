@@ -47,16 +47,18 @@ ActionCodec metadata, statistics, exact prompt template, and license. Loading
 rejects a different head, horizon, processor mode, or
 normalization contract.
 
-The converted checkpoints are private under the LeRobot organization:
-
 ### Converted Checkpoints
 
-| Repository           | Contract                     |
-| -------------------- | ---------------------------- |
-| `TBD/g05_base`       | 27D base, R1 Lite processor  |
-| `TBD/g05_libero`     | 20D LIBERO                   |
-| `TBD/g05_robotwin20` | 20D RoboTwin                 |
-| `TBD/g05_so101`      | 20D SO-101 (`so100` profile) |
+| Repository               | Contract                     |
+| ------------------------ | ---------------------------- |
+| `lerobot/g05_base`       | 27D base, R1 Lite processor  |
+| `lerobot/g05_libero`     | 20D LIBERO                   |
+| `lerobot/g05_robotwin20` | 20D RoboTwin                 |
+| `lerobot/g05_so101`      | 20D SO-101 (`so100` profile) |
+
+These checkpoints are released under the non-commercial
+[G0.5 Community License](https://huggingface.co/OpenGalaxea/G05/blob/main/licenses/LICENSE-G0.5);
+see [License](#license).
 
 `lerobot/g05_base` supplies those 27D model weights, both action heads, the
 ActionCodec tokenizer, and the released six-step R1 Lite processor/statistics
@@ -70,8 +72,20 @@ Install LeRobot with the G0.5 Transformers dependency:
 uv sync --extra g05 --extra test
 ```
 
-The LeRobot organization hosts the prepared base, LIBERO, RoboTwin, and SO-101
-checkpoints privately. Authenticate with `hf auth login` before loading them.
+> [!TIP]
+> Install [`flash-linear-attention`](https://github.com/fla-org/flash-linear-attention)
+> for training and inference on GPU. Most Qwen3.5 decoder layers are Gated DeltaNet
+> linear attention, and without it Transformers falls back to a much slower PyTorch
+> kernel, logging "The fast path is not available". It is pure Triton, so it
+> installs without a build:
+>
+> ```bash
+> uv pip install flash-linear-attention
+> ```
+>
+> Training is about 1.5x faster with it and uses less memory, with identical
+> losses. The first step takes about 20 s longer while Triton compiles its kernels.
+
 SO-100 and SO-101 share the released `so100` embodiment token and six-joint
 right-arm contract. A missing left-wrist camera is zero-padded.
 
@@ -105,7 +119,7 @@ System 2 is available only when the packaged checkpoint metadata has
 
 ```python
 action, text = policy.predict_action_chunk(batch, with_text=True)
-print(text)  # "Subtask: grasp the cup ..."
+print(text)  # "Subtask: grasp the cup"
 ```
 
 System 1 generates none and reports `text=None`.
@@ -130,28 +144,73 @@ lerobot-rollout \
   --fps=30
 ```
 
-| Command                  | Effect                                                        |
-| ------------------------ | ------------------------------------------------------------- |
-| `/start`                 | start (or restart) the policy control loop                    |
-| `/subtask <text>`        | set the instruction the policy follows                        |
-| `/vqa <text>`            | not supported on G0.5                                         |
-| `/autosteer <goal>\|off` | let the policy pick its own subtasks toward a high-level goal |
-| `/reset`                 | stop movement, return to initial position, restore the task   |
-| `/stop`                  | end the session and shut down                                 |
-| `/help`                  | show the command list                                         |
+| Command                  | Effect                                                         |
+| ------------------------ | -------------------------------------------------------------- |
+| `/start`                 | start (or restart) the policy control loop                     |
+| `/subtask <text>`        | set the instruction the policy follows                         |
+| `/vqa <text>`            | not supported on G0.5 (see [below](#why-vqa-is-not-supported)) |
+| `/autosteer <goal>\|off` | let the policy pick its own subtasks toward a high-level goal  |
+| `/reset`                 | stop movement, return to initial position, restore the task    |
+| `/stop`                  | end the session and shut down                                  |
+| `/help`                  | show the command list                                          |
 
 `/autosteer` needs a checkpoint with `predict_cot=true` and answers from the
 live observation, so it is rejected until `/start` is running. It prints the
 subtask it picks as `Autosteer subtask:`, and `--autosteer_interval_s` sets how
 many seconds of motion pass between two re-planning queries.
 
-`/vqa` is not supported on G0.5.
+Pick the runtime to match how the task is given, as G0.5 was trained:
+
+- **High-level task, no steering:** keep System 2. Each chunk predicts the
+  current subtask from the task, then acts on it.
+- **`/subtask` or `/autosteer`:** use `--policy.runtime_system=system1`. The
+  subtask becomes the task and the policy acts on it directly; `/autosteer` still
+  plans each subtask from the goal with a System 2 query. System 2 on a
+  subtask-as-task would plan a subtask of the subtask, a prompt it was not
+  trained on.
+
+#### Choosing the chain of thought
+
+`--policy.runtime_cot_fields` selects which of G0.5's trained chain-of-thought
+formats System 2 generates before each chunk. The action attends to the whole
+chain of thought, so whatever it contains conditions the action.
+
+| `runtime_cot_fields`    | Trained instruction                | Generated chain of thought |
+| ----------------------- | ---------------------------------- | -------------------------- |
+| `["subtask"]` (default) | `predict subtask`                  | the subtask                |
+| `["bbox", "subtask"]`   | `predict bbox, subtask and action` | boxes, then the subtask    |
+
+For example, `["bbox", "subtask"]` generates:
+
+```text
+BBox: cube <loc0397><loc0717><loc0625><loc0895>|Subtask: pick up the blue cube
+```
+
+- **`["subtask"]`** generates the fewest tokens per chunk, so it is the faster
+  choice.
+- **`["bbox", "subtask"]`** locates the relevant objects first, which grounds the
+  subtask and the action in the scene. Each box is a label followed by four
+  location tokens in `y1, x1, y2, x2` order; a token `<locNNNN>` is the
+  coordinate as a fraction of the image times 1024. Boxes refer to the BBox
+  camera (`--policy.cot_bbox_camera`, by default the first non-empty camera
+  slot).
+
+`lerobot/g05_base` and `lerobot/g05_so101` were trained on both formats; the
+LIBERO and RoboTwin checkpoints have `predict_cot=false` and no System 2. A
+fine-tune produces useful boxes only if its dataset had grounded `vqa`
+annotations on the BBox camera (see [Data Requirements](#data-requirements)).
+
+#### Why `/vqa` is not supported
+
+G0.5's text head is not a general vision-language assistant. It was trained to
+emit only the chain-of-thought formats above, after one of their fixed
+instructions, and its prompt has no slot for a free-form question. A `/vqa`
+question can only take the place of the task, so the model would reply with a
+subtask (and boxes) for that "task" instead of an answer. `/autosteer` works
+because its goal is a task, which is what that slot expects.
 
 In interactive mode `--duration` bounds each `/start` segment rather than the
 whole session.
-
-The checkpoint is non-commercial and may be private; authenticate with
-`hf auth login` before loading it.
 
 ## Data Requirements
 
@@ -176,7 +235,7 @@ and loaded by the normal LeRobot scripts.
 The objective preserves the packaged `ar.ce_weight`, optional
 `ar.ce_z_loss_scale`, and `fm.fm_weight`; the autoregressive loss jointly covers
 CoT text and ActionCodec targets.
-For example, fine-tune the private SO-101 checkpoint on a LeRobot dataset:
+For example, fine-tune the SO-101 checkpoint on a LeRobot dataset:
 
 ### Training Command Example
 
@@ -198,9 +257,15 @@ lerobot-train \
   --save_freq=1000
 ```
 
-The built-in recipe resolves the `subtask` and grounded `vqa` annotations at
-each sample timestamp, and emits each BBox or Subtask target when that
-annotation is present. Samples without them are skipped.
+The built-in recipe mixes three kinds of samples, like the upstream training mix:
+
+- 4/6 chain of thought: the task, then a BBox and/or Subtask target for the
+  `subtask` and grounded `vqa` annotations active at that timestamp, then the actions.
+- 1/6 subtask as task: the active subtask is the instruction, straight to actions.
+  This is what the policy sees once `/subtask` or `/autosteer` sets a subtask.
+- 1/6 plain: the task straight to actions, the System 1 prompt.
+
+A chain-of-thought sample with no annotation at its timestamp trains the plain prompt.
 
 Generate the required `subtask` and grounded `vqa` language columns with
 `lerobot-annotate` as described in the
@@ -221,44 +286,48 @@ checkpoint keeps its own embodiment and slot table.
 The joints are placed in the base layout from the dataset's joint names:
 `left_`-prefixed joints go on the left arm and the others on the right arm, a
 joint whose name contains `gripper` takes that arm's gripper slot, and the rest
-fill its nine control slots in order. A 6-joint OMX arm thus fills right-arm
-slots 10-14 and the right gripper, and a 7-DoF arm fills 10-16 and the gripper.
+fill its nine control slots in order. A 5-joint arm with a gripper thus fills
+right-arm slots 10-14 and the right gripper, and a 7-DoF arm fills 10-16 and the gripper.
 Set `--policy.state_slots` and `--policy.action_slots` to place the joints
 explicitly. The resolved slots are saved with the fine-tuned checkpoint.
 
-The example below uses an OMX dataset recorded with `top` and `wrist` cameras.
-The base checkpoint's image slots are a head view, the left wrist, and the right
-wrist; the single arm sits on the right, so its wrist camera takes the
-right-wrist slot and the left-wrist slot stays empty. List-valued flags take
+The example below fine-tunes on a single-arm robot recorded with a `front`
+camera and a `wrist` camera. The base checkpoint's image slots are a head view,
+the left wrist, and the right wrist; a single arm sits on the right, so its
+wrist camera takes the right-wrist slot and the left-wrist slot stays empty. List-valued flags take
 quoted JSON.
 
 ```bash
 lerobot-train \
-  --dataset.repo_id=${HF_USER}/omx_multicubes_annotated \
+  --dataset.repo_id=${HF_USER}/my_robot_dataset_annotated \
   --policy.path=lerobot/g05_base \
-  --policy.embodiment=omx \
-  --policy.camera_order='["observation.images.top", null, "observation.images.wrist"]' \
+  --policy.embodiment=my_robot \
+  --policy.camera_order='["observation.images.front", null, "observation.images.wrist"]' \
+  --policy.n_obs_steps=1 \
   --policy.use_language_recipe=true \
   --policy.device=cuda \
-  --policy.repo_id=${HF_USER}/g05_omx_finetuned \
-  --output_dir=outputs/train/g05_omx \
-  --job_name=g05_omx \
+  --policy.repo_id=${HF_USER}/g05_my_robot_finetuned \
+  --output_dir=outputs/train/g05_my_robot \
+  --job_name=g05_my_robot \
   --batch_size=16 \
   --steps=10000
 ```
+
+`--policy.n_obs_steps=1` feeds one frame per camera, as the upstream fine-tunes do;
+the base checkpoint's six-step history multiplies the images per sample by six.
 
 Normalization uses the dataset's own statistics (z-score for the base
 checkpoint; pass
 `--policy.normalization_mapping='{"VISUAL": "IDENTITY", "STATE": "QUANTILES", "ACTION": "QUANTILES"}'`
 for q01/q99). The gripper stays absolute (`relative_exclude_joints=["gripper"]`
 in the base checkpoint), while arm joints are trained as deltas. BBox targets
-come from the grounded `vqa` answers annotated on `observation.images.top`, the
-first non-empty camera slot.
+come from the grounded `vqa` answers annotated on `observation.images.front`,
+the first non-empty camera slot.
 
 The SO-101 recipe uses AdamW at `8e-5` with 1,000 warmup steps. The packaged
 LIBERO and RoboTwin configurations use their released `1e-5` recipe, with
 1,000 and 500 warmup steps respectively. All profiles preserve G0.5's parameter groups and
-learning-rate multipliers. Override these only when deliberately changing the author recipe:
+learning-rate multipliers. Override them to train with a different optimization recipe:
 
 ```bash
 --policy.optimizer_lr=2e-5 \
@@ -276,29 +345,29 @@ lerobot-train \
 
 ## Key Configuration Parameters
 
-| Parameter                                   | Description                                                      |
-| ------------------------------------------- | ---------------------------------------------------------------- |
-| `policy.checkpoint_profile`                 | Selects the packaged base, LIBERO, RoboTwin, or SO-101 contract  |
-| `policy.embodiment`                         | Robot name written in the prompt; selects a released slot table  |
-| `policy.state_slots`, `policy.action_slots` | Explicit policy-layout slot of each raw state/action value       |
-| `policy.camera_order`                       | Dataset camera per checkpoint image slot; `null` leaves it empty |
-| `policy.action_head`                        | Uses the checkpoint's `flow` or `actioncodec` action path        |
-| `policy.runtime_system`                     | Selects direct System 1 or unified System 2 reasoning and action |
-| `policy.chunk_size`                         | Number of actions predicted in each chunk                        |
-| `policy.n_action_steps`                     | Number of actions executed before replanning                     |
-| `policy.use_language_recipe`                | Enable G0.5's built-in language-supervision recipe               |
-| `policy.recipe_path`                        | Explicit external recipe override used during fine-tuning        |
-| `policy.optimizer_backbone_lr_multiplier`   | Learning-rate multiplier for the language backbone               |
-| `policy.optimizer_vision_lr_multiplier`     | Learning-rate multiplier for the vision tower                    |
+| Parameter                                   | Description                                                       |
+| ------------------------------------------- | ----------------------------------------------------------------- |
+| `policy.checkpoint_profile`                 | Selects the packaged base, LIBERO, RoboTwin, or SO-101 contract   |
+| `policy.embodiment`                         | Robot name written in the prompt; selects a released slot table   |
+| `policy.state_slots`, `policy.action_slots` | Explicit policy-layout slot of each raw state/action value        |
+| `policy.camera_order`                       | Dataset camera per checkpoint image slot; `null` leaves it empty  |
+| `policy.action_head`                        | Uses the checkpoint's `flow` or `actioncodec` action path         |
+| `policy.runtime_system`                     | Selects direct System 1 or unified System 2 reasoning and action  |
+| `policy.runtime_cot_fields`                 | System 2 chain of thought: `["subtask"]` or `["bbox", "subtask"]` |
+| `policy.chunk_size`                         | Number of actions predicted in each chunk                         |
+| `policy.n_action_steps`                     | Number of actions executed before replanning                      |
+| `policy.use_language_recipe`                | Enable G0.5's built-in language-supervision recipe                |
+| `policy.recipe_path`                        | Explicit external recipe override used during fine-tuning         |
+| `policy.optimizer_backbone_lr_multiplier`   | Learning-rate multiplier for the language backbone                |
+| `policy.optimizer_vision_lr_multiplier`     | Learning-rate multiplier for the vision tower                     |
 
-Do not override checkpoint contract fields unless deliberately converting or
-validating another embodiment. Incompatible action heads, dimensions, horizons,
-processor modes, and normalization contracts are rejected during loading.
+The action head, dimensions, horizon, processor modes, and normalization come
+from the checkpoint; incompatible overrides are rejected during loading.
 
 ## Evaluation
 
-Once the pinned LIBERO simulator and assets are installed, run the matching
-LeRobot rollout with the author camera names and relative control:
+With the LIBERO simulator installed, evaluate the LIBERO checkpoint with its
+camera names and relative control:
 
 ```bash
 lerobot-eval \

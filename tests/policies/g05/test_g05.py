@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -68,6 +69,8 @@ from lerobot.utils.constants import (
     MESSAGES_RENDERED,
     OBS_STATE,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
+    QUERY_KIND,
+    QUERY_TEXT,
 )
 
 
@@ -172,7 +175,7 @@ class TinyLanguageTrainingBackend(G05NativeBackend):
             )
         )
         self.processor = SimpleNamespace(
-            encode_train=lambda samples, device, action_codec: SimpleNamespace(
+            encode_train=lambda samples, device, action_codec, proprio_dropout_p=0.0: SimpleNamespace(
                 labels=torch.tensor([[-100, 0, 2]], device=device),
                 token_types=torch.zeros(1, 3, device=device),
                 split_index=3,
@@ -302,8 +305,8 @@ class _StubG05Tokenizer:
     def encode_inference(self, samples, device):
         return self._sequence(samples, device)
 
-    def encode_train(self, samples, device, action_codec):
-        del action_codec
+    def encode_train(self, samples, device, action_codec, proprio_dropout_p=0.0):
+        del action_codec, proprio_dropout_p
         return self._sequence(samples, device)
 
 
@@ -327,7 +330,8 @@ def test_text_generation_uses_base_policy_contract():
     assert G05Policy.generate_text is not PreTrainedPolicy.generate_text
     assert G05Policy.supports_text_generation is not PreTrainedPolicy.supports_text_generation
     assert policy.supports_text_generation()
-    assert policy.generate_text(batch) == "Subtask: move carefully"
+    # The reply is the subtask alone: a `next_subtask` answer is fed back as the task.
+    assert policy.generate_text(batch) == "move carefully"
     assert backend.last_samples[0]["command"] == "what do you see?"
 
 
@@ -1036,6 +1040,33 @@ def test_action_generation_commits_exact_cot_stop_and_keeps_history():
     torch.testing.assert_close(generation.history, torch.tensor([[8, 9, 7, 100]]))
 
 
+def test_cot_generation_never_samples_suppressed_action_tokens():
+    class GreedyBackend(G05NativeBackend):
+        def __init__(self):
+            nn.Module.__init__(self)
+            self.model_config = {"ar": {"do_sample": False}, "embodiment": "libero"}
+            # The most likely token is an action code (id 5); the stop token (2) comes next.
+            logits = torch.zeros(1, 8)
+            logits[0, 5], logits[0, 2] = 10.0, 5.0
+            self.model = SimpleNamespace(vlm=SimpleNamespace(logits=lambda hidden: logits))
+            self.processor = SimpleNamespace(pad_token_id=0)
+
+        def _decode_token(self, token_ids, *, token_types, positions, cache, active_mask=None):
+            return torch.ones(1, 4), token_types, positions
+
+    generation, *_ = GreedyBackend()._generate_text(
+        torch.zeros(1, 4),
+        token_types=torch.ones(1, 1),
+        positions=torch.zeros(3, 1, 1, dtype=torch.long),
+        cache=object(),
+        max_new_tokens=3,
+        stop_token_ids=2,
+        suppressed_tokens=(4, 7),
+    )
+
+    torch.testing.assert_close(generation.token_ids, torch.tensor([[2]]))
+
+
 def test_decode_token_restores_finished_linear_attention_rows():
     class MutatingVLM(nn.Module):
         def embed(self, token_ids):
@@ -1172,6 +1203,27 @@ def test_system2_recipe_bbox_and_subtask_use_checkpoint_field_order():
     assert sample["bbox"] == "BBox: cup <loc0102><loc0102><loc0512><loc0512>"
     assert sample["atomic_task"] == "Subtask: grasp the cup"
     assert "<EOC><bbox_text>|<atomic_task_text>|Action:" in sample["template"]
+
+
+@pytest.mark.parametrize(
+    ("fields", "prompt"),
+    [(("subtask",), "predict subtask"), (("bbox", "subtask"), "predict bbox, subtask and action")],
+)
+def test_system2_inference_prompt_follows_runtime_cot_fields(fields, prompt):
+    config = _config(predict_cot=True, runtime_system="system2", runtime_cot_fields=fields)
+    policy = G05Policy(config, backend=TinyG05Backend())
+    batch = _policy_batch("operator task")
+    del batch[ACTION]
+
+    sample = policy._prepare_author_batch(batch)["samples"][0]
+
+    assert sample["prompt"] == prompt
+    assert sample["command"] == "operator task"
+
+
+def test_runtime_cot_fields_rejects_an_unknown_prompt():
+    with pytest.raises(ValueError, match="runtime_cot_fields"):
+        _config(predict_cot=True, runtime_cot_fields=("subtask", "bbox"))
 
 
 def test_system2_recipe_no_cot_branch_uses_action_only_training_template():
@@ -1413,6 +1465,61 @@ def test_from_pretrained_constructs_on_meta_and_assigns_directly(tmp_path: Path,
     assert not next(loaded.parameters()).is_meta
     assert next(loaded.parameters()).device.type == "cpu"
     torch.testing.assert_close(loaded.backend.proj.weight, reference.backend.proj.weight)
+
+
+def test_action_cache_keeps_the_flow_loss_out_of_the_vlm():
+    # The author's flow loss detaches the VLM KV by default (fm.joint_training: false), so the
+    # action expert's flow loss does not train the VLM keys and values it attends to.
+    config = Qwen3_5TextConfig(
+        hidden_size=32,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=16,
+        num_hidden_layers=2,
+        layer_types=["linear_attention", "full_attention"],
+    )
+    backend = G05NativeBackend.__new__(G05NativeBackend)
+    nn.Module.__init__(backend)
+    backend.model = SimpleNamespace(
+        vlm=SimpleNamespace(config=config), action_expert=SimpleNamespace(config=config)
+    )
+    key = torch.randn(1, 1, 5, 16, requires_grad=True)
+    value = torch.randn(1, 1, 5, 16, requires_grad=True)
+    vlm_cache = DynamicCache(config=config)
+    vlm_cache.layers[1].update(key, value)
+
+    cache = G05NativeBackend._action_cache(backend, vlm_cache, 3, repeats=2)
+
+    assert cache.layers[1].keys.shape == (2, 1, 3, 16)
+    assert not cache.layers[1].keys.requires_grad
+    assert not cache.layers[1].values.requires_grad
+
+
+def test_action_cache_repeats_flow_samples_in_the_targets_row_order():
+    # _flow_loss tiles the targets, noise and masks with .repeat(samples, ...), so row r belongs to
+    # batch item r % B; the context the action expert reads must follow the same order.
+    config = Qwen3_5TextConfig(
+        hidden_size=32,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=16,
+        num_hidden_layers=2,
+        layer_types=["linear_attention", "full_attention"],
+    )
+    backend = G05NativeBackend.__new__(G05NativeBackend)
+    nn.Module.__init__(backend)
+    backend.model = SimpleNamespace(
+        vlm=SimpleNamespace(config=config), action_expert=SimpleNamespace(config=config)
+    )
+    batch = torch.arange(3, dtype=torch.float32).view(3, 1, 1, 1).expand(3, 1, 4, 16).contiguous()
+    vlm_cache = DynamicCache(config=config)
+    vlm_cache.layers[1].update(batch, batch.clone())
+
+    cache = G05NativeBackend._action_cache(backend, vlm_cache, 4, repeats=2)
+    rows = cache.layers[1].keys[:, 0, 0, 0].tolist()
+    targets = torch.arange(3).repeat(2).tolist()
+
+    assert rows == targets == [0, 1, 2, 0, 1, 2]
 
 
 def test_meta_loader_materializes_transformers_rotary_buffers():
@@ -1694,7 +1801,7 @@ def test_new_robot_takes_its_layout_from_the_dataset(tmp_path: Path):
     assert (config.raw_state_dim, config.raw_action_dim) == (6, 6)
     assert config.camera_order[1] in config.optional_camera_keys
     assert set(config.camera_sizes) == set(config.camera_order)
-    assert "camera=observation.images.top)" in config.recipe["bindings"]["bbox"]
+    assert "camera=observation.images.top)" in config.recipe["blend"]["cot"]["bindings"]["bbox"]
 
     preprocessor, postprocessor = make_pre_post_processors(config, dataset_stats=_raw_stats(6))
     projection = next(step for step in preprocessor.steps if isinstance(step, G05EmbodimentProjectionStep))
@@ -1765,6 +1872,64 @@ def test_first_cot_text_picks_the_first_non_empty_row():
     # System 1 emits no CoT, so the panel shows no reasoning line.
     assert _first_cot_text({}) is None
     assert _first_cot_text({"cot_text": ["   "]}) is None
+
+
+def test_cot_text_is_cut_before_the_action_segment():
+    from lerobot.policies.g05.modeling_g05 import _clean_cot_text, _cot_subtask
+
+    # Decoding stops at <EOV>, after the template's literal "|Action: ".
+    assert _clean_cot_text("Subtask: pick up the yellow cube|Action: ") == "Subtask: pick up the yellow cube"
+    both = _clean_cot_text("BBox: cube <loc0102><loc0102><loc0512><loc0512>|Subtask: grasp it|Action:")
+    assert both == "BBox: cube <loc0102><loc0102><loc0512><loc0512>|Subtask: grasp it"
+    assert _cot_subtask(both) == "grasp it"
+    assert _cot_subtask("BBox: cube <loc0102><loc0102><loc0512><loc0512>") is None
+    assert _cot_subtask("Subtask: ") is None
+
+
+def test_default_recipe_mixes_cot_subtask_as_task_and_plain_samples():
+    pytest.importorskip("datasets", reason="recipe rendering requires lerobot[dataset]")
+    from lerobot.datasets.language_render import render_sample
+    from lerobot.datasets.recipe import TrainingRecipe
+
+    recipe = TrainingRecipe.from_dict(_config(predict_cot=True, use_language_recipe=True).recipe)
+    subtask = {
+        "role": "assistant",
+        "content": "grasp the cup",
+        "style": "subtask",
+        "timestamp": 0.0,
+        "camera": None,
+        "tool_calls": None,
+    }
+    rendered = [
+        render_sample(
+            recipe=recipe, persistent=[subtask], events=[], t=0.5, sample_idx=index, default_task="tidy up"
+        )
+        for index in range(300)
+    ]
+    conversations = {
+        tuple(message["content"] for message in sample[MESSAGES_RENDERED]) for sample in rendered
+    }
+
+    # Upstream's CoT builders, AtomicTaskBaseSamplesBuilder and BaseSamplesBuilder.
+    assert conversations == {("tidy up", "Subtask: grasp the cup"), ("grasp the cup",), ("tidy up",)}
+    # A `next_subtask` query still plans from the goal, with the CoT branch's prompt.
+    query = RenderRuntimeMessagesStep(recipe).complementary_data(
+        {QUERY_KIND: "next_subtask", QUERY_TEXT: "tidy up"}
+    )
+    assert query[MESSAGES_RENDERED] == [{"role": "user", "content": "tidy up"}]
+
+
+def test_subtask_as_task_sample_trains_the_action_only_template():
+    policy = G05Policy(_config(predict_cot=True, runtime_system="system2"), backend=TinyG05Backend())
+    batch = _policy_batch("tidy up")
+    batch[MESSAGES_RENDERED] = [[{"role": "user", "content": "grasp the cup"}]]
+    batch["target_message_indices"] = [[]]
+
+    sample = policy._prepare_author_batch(batch)["samples"][0]
+
+    assert sample["command"] == "grasp the cup"
+    assert "atomic_task" not in sample
+    assert "<chat_assistant_prefix>Action: <EOV><EOC><action_action>|<eos>" in sample["template"]
 
 
 def test_with_text_pairs_same_pass_cot_with_its_chunk():
@@ -1899,6 +2064,36 @@ def test_training_sequences_encode_actions_in_one_batch_like_one_at_a_time():
         assert torch.equal(getattr(batched, name), getattr(one_at_a_time, name)), name
     assert batched.split_index == one_at_a_time.split_index
     assert (batched.token_types == G05TokenType.ACTION).sum(dim=1).tolist() == [3, 0, 3]
+
+
+def test_training_sequences_drop_the_state_token_with_proprio_dropout():
+    sample = {
+        "template": make_g05_prompt_template(1, predict_cot=False, flow_only=False),
+        "image0": (32, 32),
+        "embodiment": "omx",
+        "command": "task",
+        "proprio": {"value": torch.zeros(1, 6)},
+        "action": {"value": torch.ones(4, 6)},
+    }
+    tokenizer = _char_g05_tokenizer()
+    encode = partial(tokenizer.encode_train, device=torch.device("cpu"), action_codec=_BatchCountingCodec())
+
+    def state_tokens(sequence):
+        return (sequence.token_types == G05TokenType.PROPRIO).sum(dim=1).tolist()
+
+    assert state_tokens(encode([sample] * 4, proprio_dropout_p=0.0)) == [1, 1, 1, 1]
+    dropped = encode([sample] * 4, proprio_dropout_p=1.0)
+    assert state_tokens(dropped) == [0, 0, 0, 0]
+    # Only the state token goes: the action targets are untouched.
+    assert (dropped.token_types == G05TokenType.ACTION).sum(dim=1).tolist() == [3, 3, 3, 3]
+    torch.manual_seed(0)
+    mixed = state_tokens(encode([sample] * 200, proprio_dropout_p=0.2))
+    assert set(mixed) == {0, 1} and 20 < mixed.count(0) < 60
+
+
+def test_proprio_dropout_p_must_be_a_probability():
+    with pytest.raises(ValueError, match="proprio_dropout_p"):
+        G05Config(proprio_dropout_p=1.5)
 
 
 def test_mrope_positions_are_built_on_the_host_and_returned_on_the_token_device():
