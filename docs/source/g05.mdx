@@ -70,6 +70,21 @@ Install LeRobot with the G0.5 Transformers dependency:
 uv sync --extra g05 --extra test
 ```
 
+> [!TIP]
+> Install [`flash-linear-attention`](https://github.com/fla-org/flash-linear-attention)
+> for training and inference on GPU. Most Qwen3.5 decoder layers are Gated DeltaNet
+> linear attention, and without it Transformers falls back to a much slower PyTorch
+> kernel, logging "The fast path is not available". It is pure Triton, so it
+> installs without a build:
+>
+> ```bash
+> uv pip install flash-linear-attention
+> ```
+>
+> Fine-tuning `lerobot/g05_base` at batch 8 on one A100 80GB went from 1.6 to
+> 1.1 s/step and from 47.8 to 39.6 GB peak memory, with identical losses. The
+> first step takes about 20 s longer while Triton compiles its kernels.
+
 The LeRobot organization hosts the prepared base, LIBERO, RoboTwin, and SO-101
 checkpoints privately. Authenticate with `hf auth login` before loading them.
 SO-100 and SO-101 share the released `so100` embodiment token and six-joint

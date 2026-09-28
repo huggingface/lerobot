@@ -325,14 +325,17 @@ class G05Config(PreTrainedConfig):
             if key is None
         }
         self.camera_order = tuple(empty.get(index, key) for index, key in enumerate(self.camera_order))
-        self.camera_sizes = {key: tuple(size) for key, size in (self.camera_sizes or {}).items()}
+        self.camera_sizes = {
+            key: (int(size[0]), int(size[1])) for key, size in (self.camera_sizes or {}).items()
+        }
         self.optional_camera_keys = tuple(dict.fromkeys((*self.optional_camera_keys, *empty.values())))
         self.state_slots = tuple(int(slot) for slot in self.state_slots)
         self.action_slots = tuple(int(slot) for slot in self.action_slots)
         if self.normalization_clip is not None:
-            self.normalization_clip = tuple(self.normalization_clip)
-            if len(self.normalization_clip) != 2 or self.normalization_clip[0] >= self.normalization_clip[1]:
+            clip = tuple(float(value) for value in self.normalization_clip)
+            if len(clip) != 2 or clip[0] >= clip[1]:
                 raise ValueError("normalization_clip must be an increasing (minimum, maximum) pair.")
+            self.normalization_clip = (clip[0], clip[1])
         self.relative_exclude_joints = tuple(self.relative_exclude_joints)
         self.action_feature_names = tuple(self.action_feature_names)
         self.joint_signs = tuple(float(value) for value in self.joint_signs)
@@ -343,7 +346,7 @@ class G05Config(PreTrainedConfig):
             raise ValueError("joint_signs must cover exactly the raw state dimensions.")
         if self.joint_signs and len(self.joint_signs) != self.raw_action_dim:
             raise ValueError("joint_signs must cover exactly the raw action dimensions.")
-        if set(self.camera_sizes) != set(self.camera_order):
+        if set(self.camera_sizes) != set(self.camera_keys):
             # New cameras on a packaged checkpoint keep its per-slot sizes (config-file/CLI
             # dict values merge instead of replacing, so the saved entries are still there).
             profile = G05_CAMERA_SIZE_PROFILES.get(self.embodiment, {})
@@ -352,7 +355,7 @@ class G05Config(PreTrainedConfig):
                 key: self.camera_sizes.get(key)
                 or profile.get(key)
                 or (slot_sizes[index] if index < len(slot_sizes) else (256, 256))
-                for index, key in enumerate(self.camera_order)
+                for index, key in enumerate(self.camera_keys)
             }
         if self.recipe is not None and self.recipe_path is None:
             bindings = self.recipe.get("bindings") or {}
@@ -413,7 +416,7 @@ class G05Config(PreTrainedConfig):
                 raise ValueError("The released g05-libero config enables only the continuous flow path.")
             if not self.libero_gripper_binarize:
                 raise ValueError("g05-libero requires the official binary gripper command transform.")
-        if set(self.camera_sizes) != set(self.camera_order):
+        if set(self.camera_sizes) != set(self.camera_keys):
             raise ValueError("camera_sizes must contain exactly the ordered checkpoint camera keys.")
         if not set(self.optional_camera_keys) <= set(self.camera_order):
             raise ValueError("optional_camera_keys must be a subset of camera_order.")
@@ -432,14 +435,21 @@ class G05Config(PreTrainedConfig):
         return G05_EMBODIMENT_MAPPINGS.get(self.embodiment)
 
     @property
+    def camera_keys(self) -> tuple[str, ...]:
+        """The camera slots as observation keys; `__post_init__` names the empty ones."""
+        return tuple(key for key in self.camera_order if key is not None)
+
+    @property
     def bbox_camera(self) -> str:
         """Camera whose image the BBox targets are expressed in."""
-        filled = [key for key in self.camera_order if key not in self.optional_camera_keys]
-        return self.cot_bbox_camera or (filled or self.camera_order)[0]
+        filled = [key for key in self.camera_keys if key not in self.optional_camera_keys]
+        return self.cot_bbox_camera or (filled or list(self.camera_keys))[0]
 
     def _apply_slots(self) -> None:
         """Size the raw state/action from the slots and check they fit the policy layout."""
         mapping = self.slot_mapping
+        if mapping is None:
+            raise ValueError(f"G0.5 embodiment {self.embodiment!r} has no slots to apply.")
         if self.state_slots:
             self.raw_state_dim, self.raw_action_dim = len(self.state_slots), len(self.action_slots)
         for key, width in (("state", self.policy_state_dim), ("action", self.policy_action_dim)):
@@ -458,15 +468,17 @@ class G05Config(PreTrainedConfig):
         """Derive the slots of a robot without a named embodiment from the dataset's joint names."""
         if self.slot_mapping is not None:
             return
-        names = {key: _feature_names(features.get(key)) for key in (OBS_STATE, ACTION)}
-        missing = [key for key, value in names.items() if value is None]
-        if missing:
+        state_names, action_names = (_feature_names(features.get(key)) for key in (OBS_STATE, ACTION))
+        if state_names is None or action_names is None:
+            missing = [
+                key for key, names in ((OBS_STATE, state_names), (ACTION, action_names)) if names is None
+            ]
             raise ValueError(
                 f"G0.5 embodiment {self.embodiment!r} has no named slot table and the dataset gives "
                 f"no joint names for {missing}; set state_slots and action_slots."
             )
-        self.state_slots = derive_g05_slots(names[OBS_STATE], self.policy_state_dim)
-        self.action_slots = derive_g05_slots(names[ACTION], self.policy_action_dim)
+        self.state_slots = derive_g05_slots(state_names, self.policy_state_dim)
+        self.action_slots = derive_g05_slots(action_names, self.policy_action_dim)
         self._apply_slots()
 
     def validate_features(self) -> None:
@@ -483,7 +495,7 @@ class G05Config(PreTrainedConfig):
             OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(self.raw_state_dim,)),
             **{
                 key: PolicyFeature(type=FeatureType.VISUAL, shape=(3, *self.camera_sizes[key]))
-                for key in self.camera_order
+                for key in self.camera_keys
             },
         }
         if self.output_features is None:

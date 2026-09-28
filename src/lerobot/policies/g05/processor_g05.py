@@ -10,7 +10,7 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torchvision.transforms.functional as vision_functional
@@ -68,6 +68,9 @@ from .tokenizer_g05 import (
     G05_TOKEN_TYPES,
     G05Tokenizer,
 )
+
+if TYPE_CHECKING:
+    from lerobot.datasets.recipe import TrainingRecipe
 
 
 def _copy_feature_tree(
@@ -184,9 +187,9 @@ class G05ImageTransformStep(ObservationProcessorStep):
     def __post_init__(self) -> None:
         """Freeze the camera tables into tuples."""
         self.camera_order = tuple(self.camera_order)
-        self.camera_sizes = {key: tuple(value) for key, value in self.camera_sizes.items()}
-        self.mean = tuple(self.mean)
-        self.std = tuple(self.std)
+        self.camera_sizes = {key: (int(value[0]), int(value[1])) for key, value in self.camera_sizes.items()}
+        self.mean = (float(self.mean[0]), float(self.mean[1]), float(self.mean[2]))
+        self.std = (float(self.std[0]), float(self.std[1]), float(self.std[2]))
         self.optional_camera_keys = tuple(self.optional_camera_keys)
 
     def observation(self, observation: RobotObservation) -> RobotObservation:
@@ -492,7 +495,7 @@ class G05RelativeJointActionsStep(RelativeActionsProcessorStep):
             return transition
         new_transition = transition.copy()
         action = new_transition.get(TransitionKey.ACTION)
-        if action is not None and state is not None:
+        if isinstance(action, torch.Tensor) and state is not None:
             mask = self._build_mask(action.shape[-1])
             new_transition[TransitionKey.ACTION] = to_relative_actions(action, state, mask)
         return new_transition
@@ -713,6 +716,16 @@ def _tokenizer_policy_config(config: G05Config) -> dict[str, Any]:
     }
 
 
+def _training_recipe(config: G05Config) -> TrainingRecipe | None:
+    """The config's serialized recipe as the `TrainingRecipe` the render steps take."""
+    if config.recipe is None:
+        return None
+    # Imported here: recipes need the dataset extras, the policy does not.
+    from lerobot.datasets.recipe import TrainingRecipe
+
+    return TrainingRecipe.from_dict(config.recipe)
+
+
 def _slot_mapping(config: G05Config) -> dict[str, tuple[int, ...]]:
     """The config's state/action slots, which a policy without a named embodiment gets from its dataset."""
     mapping = config.slot_mapping
@@ -815,12 +828,14 @@ def reconcile_g05_processors(
     """
     if config.language_recipe_enabled and config.recipe is None:
         raise ValueError("G0.5 language training requires a recipe in policy config.")
-    for index, step in enumerate(preprocessor.steps):
+    steps = list(preprocessor.steps)
+    for index, step in enumerate(steps):
         if isinstance(step, RenderTrainingMessagesStep):
-            recipe = config.recipe if config.language_recipe_enabled else None
-            preprocessor.steps[index] = RenderTrainingMessagesStep(recipe, dataset_ctx=step.dataset_ctx)
+            recipe = _training_recipe(config) if config.language_recipe_enabled else None
+            steps[index] = RenderTrainingMessagesStep(recipe, dataset_ctx=step.dataset_ctx)
         if isinstance(step, G05TokenizerStep):
             step.policy_config = _tokenizer_policy_config(config)
+    preprocessor.steps = steps
     return preprocessor, postprocessor
 
 
@@ -913,14 +928,14 @@ def make_g05_pre_post_processors(
         # The runtime renderer always carries the checkpoint recipe so a saved
         # pipeline can answer `next_subtask`; the training renderer no-ops on a
         # `None` recipe, which is how recipe training stays opt-in.
-        RenderRuntimeMessagesStep(config.recipe),
-        RenderTrainingMessagesStep(config.recipe if render_training else None),
+        RenderRuntimeMessagesStep(_training_recipe(config)),
+        RenderTrainingMessagesStep(_training_recipe(config) if render_training else None),
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
     ]
     steps.append(
         G05ImageTransformStep(
-            camera_order=config.camera_order,
+            camera_order=config.camera_keys,
             camera_sizes=config.camera_sizes,
             mean=config.image_mean,
             std=config.image_std,
@@ -955,7 +970,7 @@ def make_g05_pre_post_processors(
                 embodiment=config.embodiment,
                 policy_state_dim=config.policy_state_dim,
                 policy_action_dim=config.policy_action_dim,
-                camera_order=config.camera_order,
+                camera_order=config.camera_keys,
                 state_slots=_slot_mapping(config)["state"],
                 action_slots=_slot_mapping(config)["action"],
             ),
@@ -975,7 +990,8 @@ def make_g05_pre_post_processors(
                 maximum=config.normalization_clip[1],
             )
         )
-    steps.append(DeviceProcessorStep(device=config.device))
+    # `PreTrainedConfig.__post_init__` resolves the device; the field is only typed optional.
+    steps.append(DeviceProcessorStep(device=config.device or "cpu"))
     checkpoint_root = _sidecar_root(config)
     steps.append(
         G05TokenizerStep(
@@ -993,7 +1009,7 @@ def make_g05_pre_post_processors(
     unnormalizer_cls = (
         G05StepwiseUnnormalizerStep if config.use_stepwise_action_norm else UnnormalizerProcessorStep
     )
-    unnormalizer_kwargs = {
+    unnormalizer_kwargs: dict[str, Any] = {
         "features": {ACTION: policy_features[ACTION]},
         "norm_map": config.normalization_mapping,
         "stats": projected_stats,
@@ -1126,7 +1142,7 @@ class G05TokenizerStep(ProcessorStep):
             if self._model_config is None:
                 raise RuntimeError("G0.5 tokenizer model config was not initialized.")
             action_config = self._model_config.get("AT_CONFIG")
-            if not Path(self.action_tokenizer_path).is_file():
+            if action_config is None or not Path(self.action_tokenizer_path).is_file():
                 return None
             self._action_codec = G05NativeActionCodec.load(
                 action_config,

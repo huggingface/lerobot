@@ -98,10 +98,12 @@ class G05GatedDeltaNet(Qwen3_5GatedDeltaNet):
             hidden_states = hidden_states * attention_mask[:, :, None]
 
         batch_size, sequence_length, _ = hidden_states.shape
-        use_cached_state = cache_params is not None and cache_params.has_previous_state(self.layer_idx)
-        if use_cached_state:
-            conv_state = cache_params.layers[self.layer_idx].conv_states
-            recurrent_state = cache_params.layers[self.layer_idx].recurrent_states
+        layer_cache = None
+        if cache_params is not None and cache_params.has_previous_state(self.layer_idx):
+            layer_cache = cache_params.layers[self.layer_idx]
+            conv_state = layer_cache.conv_states
+            recurrent_state = layer_cache.recurrent_states
+        use_cached_state = layer_cache is not None
 
         mixed_qkv = self.in_proj_qkv(hidden_states).transpose(1, 2)
         gate = self.in_proj_z(hidden_states).reshape(
@@ -113,7 +115,7 @@ class G05GatedDeltaNet(Qwen3_5GatedDeltaNet):
         beta = self.in_proj_b(hidden_states).sigmoid()
         decay = self.in_proj_a(hidden_states)
 
-        if use_cached_state:
+        if layer_cache is not None:
             if sequence_length == 1:
                 mixed_qkv = self.causal_conv1d_update(
                     mixed_qkv,
@@ -132,9 +134,7 @@ class G05GatedDeltaNet(Qwen3_5GatedDeltaNet):
                         groups=self.conv1d.groups,
                     )
                 )
-                cache_params.layers[self.layer_idx].conv_states.copy_(
-                    conv_input[..., -self.conv_kernel_size :]
-                )
+                layer_cache.conv_states.copy_(conv_input[..., -self.conv_kernel_size :])
         else:
             if cache_params is not None:
                 conv_state = functional.pad(
@@ -674,7 +674,7 @@ class G05NativeBackend(nn.Module):
             "action": lr,
             "vision": lr * backbone_lr_multiplier * vision_lr_multiplier,
         }
-        parameter_groups = [
+        parameter_groups: list[dict[str, Any]] = [
             {
                 "params": grouped[name],
                 "lr": learning_rates[name.split("_", 1)[0]],
@@ -690,7 +690,7 @@ class G05NativeBackend(nn.Module):
                 "vision_no_decay",
             )
         ]
-        expected = sum(parameter.requires_grad for parameter in self.model.parameters())
+        expected = sum(1 for parameter in self.model.parameters() if parameter.requires_grad)
         actual = sum(len(group["params"]) for group in parameter_groups)
         if actual != expected:
             raise RuntimeError(
@@ -1005,8 +1005,8 @@ class G05NativeBackend(nn.Module):
             grid_index = 0
             values = host_types[batch_index].tolist()
             for token_type, entries in itertools.groupby(enumerate(values), key=lambda item: item[1]):
-                entries = list(entries)
-                start, stop = entries[0][0], entries[-1][0] + 1
+                run = list(entries)
+                start, stop = run[0][0], run[-1][0] + 1
                 if int(token_type) == G05TokenType.PADDING:
                     continue
                 length = stop - start
@@ -1658,6 +1658,8 @@ class G05NativeBackend(nn.Module):
             action_dim_is_pad = batch.get("action_dim_is_pad")
             if not isinstance(action_dim_is_pad, Tensor):
                 action_dim_is_pad = None
+            if sequence.split_index is None:
+                raise ValueError("G0.5 flow training needs the prefix/suffix split of the token sequence.")
             prefix = int(sequence.split_index)
             loss_dict["fm_loss"] = self._flow_loss(
                 actions,
@@ -2257,7 +2259,7 @@ class G05Policy(PreTrainedPolicy):
             action = result.get(ACTION)
         if not isinstance(action, Tensor):
             raise ValueError(f"G0.5 {self.config.action_head} output is missing its action tensor.")
-        metadata_keys = ("decoded_action_tokens", "ar_absent_keys", "_timing")
+        metadata_keys: tuple[str, ...] = ("decoded_action_tokens", "ar_absent_keys", "_timing")
         if system_mode == "system2":
             metadata_keys = ("cot_text", "generated_ids", *metadata_keys)
         metadata = {key: result[key] for key in metadata_keys if key in result}
