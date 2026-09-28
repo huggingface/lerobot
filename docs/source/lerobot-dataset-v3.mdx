@@ -153,7 +153,7 @@ episode video bytes. Every selected frame is visited exactly once per streaming 
 On first use, LeRobot looks for a revision-matched MP4 index sidecar. If none is published with the
 dataset, it builds one in the revision-keyed local LeRobot cache under a process lock and installs it
 atomically. Training never uploads this sidecar. Dataset maintainers can build and publish one
-explicitly with `scripts/build_mp4_sidecar.py --push`.
+explicitly with `lerobot-build-mp4-sidecar --push`.
 
 The default memory cap is 8 GiB per DataLoader worker. It can be adjusted along with episode mixing
 and prefetch:

@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import re
 import shutil
+from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
 
@@ -25,6 +26,7 @@ from lerobot.streaming.sidecar import SidecarSpec, ensure_mp4_sidecar, sidecar_c
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
 DEFAULT_SIDECAR_CACHE = HF_LEROBOT_HOME / "streaming-sidecars"
+SIDECAR_REPO_BRANCH = "lerobot-sidecars"
 
 
 def range_backend_for_root(data_root: str) -> str:
@@ -193,9 +195,17 @@ def build_mp4_sidecar(
 
 
 def published_sidecar_url(spec: SidecarSpec, cache_root: str | Path = DEFAULT_SIDECAR_CACHE) -> str:
-    """Return the content-keyed sidecar location under the remote dataset's metadata."""
-    name = sidecar_cache_path(cache_root, spec).name
-    return f"{spec.data_root}/meta/mp4-sidecars/{name}"
+    """Locate indexes separately from immutable repository payloads, or inside a bucket."""
+    root = spec.data_root
+    if root.startswith("hf://datasets/"):
+        # Publication uses the source commit rather than its caller's tag/branch alias.
+        # Keep local cache keys unchanged so existing validated indexes remain reusable.
+        source = re.fullmatch(r"(hf://datasets/[^/]+/[^/@]+)@([0-9a-f]{40})(/.*)?", root)
+        if source is None:
+            raise ValueError("Repository sidecar publication requires a pinned source commit")
+        spec = replace(spec, revision=source[2])
+        root = f"{source[1]}@{SIDECAR_REPO_BRANCH}{source[3] or ''}"
+    return f"{root}/meta/mp4-sidecars/{sidecar_cache_path(cache_root, spec).name}"
 
 
 def download_published_sidecar(

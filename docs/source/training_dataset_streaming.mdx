@@ -67,7 +67,7 @@ a whole-file projected read.
 Dataset maintainers can build a sidecar ahead of time:
 
 ```bash
-uv run python scripts/build_mp4_sidecar.py \
+lerobot-build-mp4-sidecar \
   --repo-id=OWNER/DATASET \
   --revision=COMMIT_SHA \
   --data-root=hf://datasets/OWNER/DATASET@COMMIT_SHA \
@@ -76,6 +76,13 @@ uv run python scripts/build_mp4_sidecar.py \
 
 Publication is always explicit. Add `--push` only after validating the complete-dataset sidecar.
 Subset sidecars cannot be published.
+
+For dataset repositories, `--push` creates or updates the dedicated `lerobot-sidecars` branch.
+The source dataset branch/tag is unchanged. Training looks there for an index keyed to the
+pinned video-source commit and validates it before use. A tag and its resolved commit share
+the same published index; existing revision-keyed local caches remain reusable. Buckets still
+publish directly under `meta/mp4-sidecars/`. Publishing requires repository or bucket write access;
+training only needs read access and never creates a branch or uploads files.
 
 Sidecar schema v3 preserves MP4 composition timing and encoder-delay edits, including B-frame
 videos. Older sidecars are rebuilt automatically into a separate revision-keyed cache entry;
@@ -147,11 +154,6 @@ lerobot-train \
 Hub datasets use `repo_type=dataset` by default. For a complete local dataset, set `--dataset.root`
 to its directory. Training resolves metadata and payloads from the same source; no separate
 streaming payload-location flag is needed.
-
-If using a configuration from an earlier version of this PR, remove its `streaming_data_root`
-entry. For bucket loading, set `repo_id` to the bucket identifier and `repo_type=bucket`, and
-ensure the bucket also contains `meta/`. Split metadata/payload locations are no longer exposed
-through the training CLI; Python callers can still pass `data_root` to `StreamingLeRobotDataset`.
 
 ## Resume and shuffle migration
 

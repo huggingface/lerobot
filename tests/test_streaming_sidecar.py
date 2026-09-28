@@ -93,6 +93,29 @@ def test_sidecar_cache_path_is_revision_keyed(tmp_path: Path) -> None:
     assert first.parent == second.parent
 
 
+@pytest.mark.parametrize("root", ["hf://datasets/owner/dataset@main", "hf://buckets/owner/data", "/local"])
+def test_mutable_or_local_source_still_requires_revision_match(root: str) -> None:
+    expected = replace(_spec(), data_root=root)
+    assert not expected.matches(replace(expected, revision="different"))
+
+
+def test_existing_alias_cache_is_reused_without_rebuild(tmp_path: Path) -> None:
+    expected = replace(_spec("v3.0"), data_root=f"hf://datasets/owner/dataset@{'a' * 40}")
+    original_path = sidecar_cache_path(tmp_path, expected)
+    _write_valid(original_path, expected)
+
+    def unexpected_build(path: Path, spec: SidecarSpec) -> None:
+        pytest.fail("A valid existing local index must not be downloaded or rebuilt")
+
+    def unexpected_download(path: Path, spec: SidecarSpec) -> bool:
+        pytest.fail("A valid existing local index must not be downloaded or rebuilt")
+
+    assert (
+        ensure_mp4_sidecar(expected, tmp_path, build=unexpected_build, download=unexpected_download)
+        == original_path
+    )
+
+
 def test_source_generation_round_trip_and_replacement(tmp_path: Path) -> None:
     original = _spec()
     video = original.source_files[0][0]

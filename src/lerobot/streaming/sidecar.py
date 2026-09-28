@@ -112,10 +112,13 @@ class SidecarSpec:
 
     def matches(self, candidate: SidecarSpec) -> bool:
         """Return whether a candidate satisfies this expected specification."""
+        # Tags/branches may name the same immutable payload snapshot. Other roots still
+        # require the metadata revision to match; source paths/sizes/fingerprints always do.
+        pinned_repository = re.match(r"^hf://datasets/[^/]+/[^/@]+@[0-9a-f]{40}(?:/|$)", self.data_root)
         if (
             self.schema_version != candidate.schema_version
             or self.repo_id != candidate.repo_id
-            or self.revision != candidate.revision
+            or (self.revision != candidate.revision and not pinned_repository)
             or self.data_root != candidate.data_root
             or self.source_fingerprints != candidate.source_fingerprints
         ):

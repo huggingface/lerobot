@@ -13,9 +13,12 @@ import struct
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import torch
 
 from lerobot.streaming.episode_cache import EpisodeByteCache
 from lerobot.streaming.manifest import EpisodeVideoManifest
@@ -226,7 +229,7 @@ def test_torchcodec_frame_indices_are_clamped_to_decoder_bounds(monkeypatch, tmp
 
         def get_frames_at(self, *, indices):
             requested_indices.extend(indices)
-            return type("Frames", (), {"data": indices})()
+            return SimpleNamespace(data=indices, pts_seconds=torch.tensor([index / 30 for index in indices]))
 
     with _fake_cache(monkeypatch, tmp_path) as cache:
         monkeypatch.setattr(
@@ -236,9 +239,64 @@ def test_torchcodec_frame_indices_are_clamped_to_decoder_bounds(monkeypatch, tmp
         )
         monkeypatch.setattr(cache, "_open_decoder", lambda *_args: FakeDecoder())
 
-        cache.get_frames(0, "camera", [-0.1, 1.0])
+        cache.tolerance_s = 0.034
+        cache.get_frames(0, "camera", [-0.02, 10 / 30])
 
     assert requested_indices == [0, 9]
+
+
+@pytest.mark.parametrize("decoded_ts", [[0.12, 0.0, 0.12], [float("nan"), 0.0, 0.1]])
+def test_torchcodec_rejects_out_of_tolerance_timestamps(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, decoded_ts: list[float]
+) -> None:
+    """Average-fps frame selection must not silently return drifted or invalid PTS."""
+    decoder = SimpleNamespace(
+        metadata=SimpleNamespace(average_fps=30.0, num_frames=10),
+        get_frames_at=lambda **_: SimpleNamespace(
+            data=torch.zeros(3, 3, 2, 2, dtype=torch.uint8),
+            pts_seconds=torch.tensor(decoded_ts, dtype=torch.float64),
+        ),
+    )
+    with _fake_cache(monkeypatch, tmp_path) as cache:
+        monkeypatch.setattr(cache.manifest, "lookup", lambda *_: SimpleNamespace(source_start_pts=10.0))
+        monkeypatch.setattr(cache, "_open_decoder", lambda *_: decoder)
+        with pytest.raises(ValueError, match="tolerance"):
+            cache.get_frames(0, "camera", [10.1, 10.0, 10.1])
+        assert not cache._retained_episodes
+
+
+def test_torchcodec_timestamp_check_preserves_order_and_float64_precision(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Validate corresponding PTS without reordering duplicates or quantizing long timelines."""
+    timestamps = [7200.00002, 0.0, 7200.00002]
+    pixels = torch.arange(3, dtype=torch.uint8).view(3, 1, 1, 1)
+    decoder = SimpleNamespace(
+        metadata=SimpleNamespace(average_fps=30.0, num_frames=216002),
+        get_frames_at=lambda **_: SimpleNamespace(
+            data=pixels, pts_seconds=torch.tensor(timestamps, dtype=torch.float64)
+        ),
+    )
+    with _fake_cache(monkeypatch, tmp_path) as cache:
+        cache.tolerance_s = 1e-6
+        monkeypatch.setattr(cache.manifest, "lookup", lambda *_: SimpleNamespace(source_start_pts=100.0))
+        monkeypatch.setattr(cache, "_open_decoder", lambda *_: decoder)
+        assert cache.get_frames(0, "camera", [value + 100 for value in timestamps]) is pixels
+
+
+def test_torchcodec_does_not_hide_out_of_range_queries_by_clamping(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Clamping an estimated frame index must still enforce the original query tolerance."""
+    decoder = SimpleNamespace(
+        metadata=SimpleNamespace(average_fps=30.0, num_frames=10),
+        get_frames_at=lambda **_: SimpleNamespace(data=None, pts_seconds=torch.tensor([0.3])),
+    )
+    with _fake_cache(monkeypatch, tmp_path) as cache:
+        monkeypatch.setattr(cache.manifest, "lookup", lambda *_: SimpleNamespace(source_start_pts=0.0))
+        monkeypatch.setattr(cache, "_open_decoder", lambda *_: decoder)
+        with pytest.raises(ValueError, match="tolerance"):
+            cache.get_frames(0, "camera", [1.0])
 
 
 def test_frame_reads_serialize_access_to_each_decoder(monkeypatch, tmp_path):
@@ -256,7 +314,9 @@ def test_frame_reads_serialize_access_to_each_decoder(monkeypatch, tmp_path):
                 max_active = max(max_active, active)
             try:
                 time.sleep(0.01)
-                return type("Frames", (), {"data": indices})()
+                return SimpleNamespace(
+                    data=indices, pts_seconds=torch.tensor([index / 30 for index in indices])
+                )
             finally:
                 with state_lock:
                     active -= 1

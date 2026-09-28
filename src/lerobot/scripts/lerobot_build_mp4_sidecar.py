@@ -8,22 +8,30 @@
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 
+"""Build MP4 streaming sidecars with optional, explicit publication."""
+
 from __future__ import annotations
 
 import argparse
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import fsspec
+from huggingface_hub import HfApi
 
-from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.streaming_sidecar import (
-    build_mp4_sidecar,
-    make_sidecar_spec,
-    published_sidecar_url,
-    range_backend_for_root,
-)
 from lerobot.streaming.sidecar import SidecarSpec
+from lerobot.utils.import_utils import _datasets_available, require_package
+
+if TYPE_CHECKING or _datasets_available:
+    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+    from lerobot.datasets.streaming_sidecar import (
+        SIDECAR_REPO_BRANCH,
+        build_mp4_sidecar,
+        make_sidecar_spec,
+        published_sidecar_url,
+        range_backend_for_root,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -38,17 +46,32 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--range-backend", choices=("fsspec", "native-http"), default=None)
     parser.add_argument("--max-probe-mb", type=int, default=64)
-    parser.add_argument("--push", action="store_true", help="Explicitly publish the sidecar to data_root.")
+    parser.add_argument(
+        "--push",
+        action="store_true",
+        help="Publish to the repository's lerobot-sidecars branch, or directly to the bucket.",
+    )
     return parser.parse_args()
 
 
 def push_sidecar(local_path: str, spec: SidecarSpec) -> list[str]:
-    """Publish a sidecar to its HF data root when explicitly requested."""
+    """Explicitly publish an index without advancing the pinned dataset's source branch."""
+    require_package("datasets", "dataset")
     if not spec.data_root.startswith("hf://"):
         raise ValueError("--push currently supports only hf:// data roots")
 
     fs = fsspec.filesystem("hf")
     remote = published_sidecar_url(spec)
+    if spec.data_root.startswith("hf://datasets/"):
+        source = fs.resolve_path(spec.data_root)
+        # Keep source commits immutable. Index publication advances only this separate branch.
+        HfApi().create_branch(
+            repo_id=source.repo_id,
+            repo_type="dataset",
+            branch=SIDECAR_REPO_BRANCH,
+            revision=source.revision,
+            exist_ok=True,
+        )
     fs.put(str(Path(local_path)), remote)
     return [remote]
 
@@ -56,6 +79,7 @@ def push_sidecar(local_path: str, spec: SidecarSpec) -> list[str]:
 def main() -> None:
     """Build a local index and publish only a full-dataset sidecar when requested."""
     args = parse_args()
+    require_package("datasets", "dataset")
 
     meta = LeRobotDatasetMetadata(args.repo_id, revision=args.revision, repo_type=args.repo_type)
     meta.ensure_readable()

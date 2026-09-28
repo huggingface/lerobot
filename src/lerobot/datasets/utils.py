@@ -22,7 +22,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import datasets
 import numpy as np
 import packaging.version
 import torch
@@ -528,23 +527,3 @@ def create_lerobot_dataset_card(
         template_str=card_template,
         **kwargs,
     )
-
-
-def is_float_in_list(target, float_list, threshold=1e-6):
-    return any(abs(target - x) <= threshold for x in float_list)
-
-
-def find_float_index(target, float_list, threshold=1e-6):
-    for i, x in enumerate(float_list):
-        if abs(target - x) <= threshold:
-            return i
-    return -1
-
-
-def safe_shard(dataset: datasets.IterableDataset, index: int, num_shards: int) -> datasets.Dataset:
-    """
-    Safe shards the dataset.
-    """
-    shard_idx = min(dataset.num_shards, index + 1) - 1
-
-    return dataset.shard(num_shards, index=shard_idx)

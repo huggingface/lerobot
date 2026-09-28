@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 import struct
+from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
@@ -31,6 +32,97 @@ from lerobot.streaming.mp4 import (
 from lerobot.streaming.sidecar import SidecarSpec
 
 av = pytest.importorskip("av")
+
+
+@pytest.fixture
+def variable_rate_manifest(tmp_path: Path) -> EpisodeVideoManifest:
+    """Encode known irregular PTS rather than deriving an oracle from average FPS."""
+    path = tmp_path / "variable.mp4"
+    with av.open(str(path), "w") as output:
+        stream = output.add_stream("libx264", rate=4)
+        stream.width, stream.height, stream.pix_fmt = 64, 48, "yuv420p"
+        stream.options = {"bf": "0", "g": "24"}
+        for position, pts in enumerate([0, 1, 2, 6, 7, 8]):
+            frame = av.VideoFrame.from_ndarray(
+                np.full((48, 64, 3), position * 30, dtype=np.uint8), format="rgb24"
+            )
+            frame.pts, frame.time_base = pts, Fraction(1, 4)
+            for packet in stream.encode(frame):
+                output.mux(packet)
+        for packet in stream.encode():
+            output.mux(packet)
+    with av.open(str(path)) as source:
+        assert [float(frame.pts * frame.time_base) for frame in source.decode(video=0)] == [
+            0,
+            0.25,
+            0.5,
+            1.5,
+            1.75,
+            2.0,
+        ]
+    data = path.read_bytes()
+    index = parse_mp4_index(path.name, data)
+    span = index.sample_slice(0, 2.0, keyframe_pad_s=0, keyframe_pad_fraction=0)
+    values = {
+        "file_id": 0,
+        "mdat_offset": span.byte_offset,
+        "mdat_length": span.byte_length,
+        "first_pts": 0.0,
+        "last_pts": 2.0,
+        "frame_count": span.sample_hi - span.sample_lo + 1,
+        "sample_lo": span.sample_lo,
+        "sample_hi": span.sample_hi,
+        "source_start_pts": span.source_start_pts,
+    }
+    return EpisodeVideoManifest(
+        video_keys=["camera"],
+        files=[VideoFileRecord(path.name, len(data), index)],
+        spans={key: np.full((1, 1), value) for key, value in values.items()},
+    )
+
+
+def test_real_torchcodec_rejects_average_fps_drift(
+    variable_rate_manifest: EpisodeVideoManifest, tmp_path: Path
+) -> None:
+    """An actual VFR mini-MP4 must fail closed when index estimation picks another PTS."""
+    pytest.importorskip("torchcodec")
+    with EpisodeByteCache(variable_rate_manifest, tmp_path) as cache:
+        assert cache.get_frames(0, "camera", [0.0]).shape == (1, 3, 48, 64)
+        # Both real PTS map beyond the estimated frame count and clamp to the same
+        # index. One returned frame cannot satisfy both original timestamps.
+        with pytest.raises(ValueError, match="tolerance"):
+            cache.get_frames(0, "camera", [1.75, 2.0])
+        assert cache.decoder_fallback_count == 0
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_real_pyav_and_fallback_enforce_requested_tolerance(
+    variable_rate_manifest: EpisodeVideoManifest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fallback: bool,
+) -> None:
+    """Fallback uses the requested timestamps/tolerance, not index-to-average-fps guesses."""
+    from lerobot.streaming import episode_cache
+
+    original = episode_cache.open_video_decoder
+
+    def open_decoder(source, *, backend="torchcodec"):
+        if backend == "torchcodec":
+            raise ValueError("force PyAV fallback")
+        return original(source, backend=backend)
+
+    if fallback:
+        monkeypatch.setattr(episode_cache, "open_video_decoder", open_decoder)
+    with EpisodeByteCache(
+        variable_rate_manifest, tmp_path, video_backend="torchcodec" if fallback else "pyav"
+    ) as cache:
+        frames = cache.get_frames(0, "camera", [0.5, 0.0, 0.5])
+        assert frames.shape == (3, 3, 48, 64)
+        assert (frames[0] == frames[2]).all()
+        with pytest.raises(ValueError, match="tolerance"):
+            cache.get_frames(0, "camera", [0.51])
+        assert cache.decoder_fallback_count == int(fallback)
 
 
 @pytest.fixture(

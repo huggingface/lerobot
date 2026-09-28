@@ -295,21 +295,40 @@ class NativeHTTPRangeFetcher:
             "range_retry_attempts": 0.0,
             "range_retry_sleep_s": 0.0,
             "range_failed_requests": 0.0,
+            "head_retry_attempts": 0.0,
+            "head_retry_sleep_s": 0.0,
+            "head_failed_requests": 0.0,
         }
 
     def _request(
         self, method: str, url: str, *, headers: Mapping[str, str], follow_redirects: bool
     ) -> httpx.Response:
-        """Retry transport failures up to the configured request budget."""
+        """Retry HEAD resolution failures, leaving the final response to its caller.
+
+        Retryable statuses share the range request policy. Close intermediate
+        responses before backoff; permanent errors return immediately. HEAD
+        counters are separate from payload-range counters.
+        """
         last_exc: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
-                return self.client.request(method, url, headers=headers, follow_redirects=follow_redirects)
+                response = self.client.request(
+                    method, url, headers=headers, follow_redirects=follow_redirects
+                )
             except self._RETRYABLE_EXCEPTIONS as exc:
                 last_exc = exc
                 if attempt >= self.max_retries:
+                    self._record_timing(head_failed_requests=1.0)
                     break
-                time.sleep(min(0.5 * 2**attempt, 5.0))
+            else:
+                if response.status_code not in self._RETRYABLE_STATUS_CODES or attempt >= self.max_retries:
+                    if response.is_error:
+                        self._record_timing(head_failed_requests=1.0)
+                    return response
+                response.close()
+            sleep_s = min(0.5 * 2**attempt, 5.0)
+            self._record_timing(head_retry_attempts=1.0, head_retry_sleep_s=sleep_s)
+            time.sleep(sleep_s)
         if last_exc is None:
             raise RuntimeError("HTTP request failed without an exception")
         raise last_exc
@@ -367,10 +386,14 @@ class NativeHTTPRangeFetcher:
             hf_raise_for_status(response)
             location = response.headers.get("Location")
             resolved = urljoin(source, location) if location else source
+            # A redirect's Content-Length describes its body, not the video object.
+            size = response.headers.get("X-Linked-Size")
+            if size is None and not response.is_redirect:
+                size = response.headers.get("Content-Length")
             with self._lock:
                 self._resolved_urls[relative_path] = resolved
-                if "Content-Length" in response.headers:
-                    self._sizes[relative_path] = int(response.headers["Content-Length"])
+                if size is not None:
+                    self._sizes[relative_path] = int(size)
             return resolved
         finally:
             response.close()
@@ -382,6 +405,10 @@ class NativeHTTPRangeFetcher:
             if size is not None:
                 return size
         resolved = self._resolve_url(relative_path)
+        with self._lock:
+            size = self._sizes.get(relative_path)
+            if size is not None:
+                return size
         source = self._source_url(relative_path)
         response = self._request(
             "HEAD", resolved, headers=self._headers_for(resolved, source), follow_redirects=True

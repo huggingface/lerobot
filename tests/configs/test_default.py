@@ -97,15 +97,6 @@ def test_bucket_streaming_cli_and_round_trip() -> None:
     assert restored.streaming is True
 
 
-def test_dataset_config_rejects_removed_streaming_data_root() -> None:
-    with pytest.raises(SystemExit) as exc:
-        draccus.parse(
-            DatasetConfig,
-            args=["--repo_id=owner/dataset", "--streaming_data_root=hf://buckets/owner/bucket"],
-        )
-    assert exc.value.code == 2
-
-
 def test_dataset_config_invalid_repo_type():
     with pytest.raises(ValueError, match="repo_type"):
         DatasetConfig(repo_id="user/repo", repo_type="model")

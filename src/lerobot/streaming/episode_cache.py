@@ -22,12 +22,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, BinaryIO, NotRequired, TypedDict
 
+import torch
+
 from lerobot.streaming.manifest import EpisodeVideoManifest
 from lerobot.streaming.mp4 import Mp4SampleSlice, synthesize_mp4
 from lerobot.streaming.range_fetch import make_range_fetcher
 
 if TYPE_CHECKING:
-    import torch
     from torchcodec.decoders import VideoDecoder
 
 logger = logging.getLogger(__name__)
@@ -317,6 +318,9 @@ class EpisodeByteCache:
         Returns:
             `torch.Tensor`: Uint8 RGB frames in request order with shape (frames, channels, height, width).
 
+        Raises:
+            ValueError: A returned frame's presentation timestamp exceeds the configured tolerance.
+
         Note:
             The episode's bytes remain retained for the request, and access to its decoder is serialized.
         """
@@ -334,7 +338,7 @@ class EpisodeByteCache:
         decoder = entry.decoder
         try:
             with entry.lock:
-                if self.video_backend == "pyav":
+                if self.video_backend == "pyav" or isinstance(decoder, _PyAVVideoDecoder):
                     return decoder.get_frames_played_at(local_ts, tolerance_s=self.tolerance_s).data
                 metadata = decoder.metadata
                 fps = getattr(metadata, "average_fps", None)
@@ -347,7 +351,18 @@ class EpisodeByteCache:
                     num_frames = round(duration * fps)
                 last_index = max(0, int(num_frames) - 1)
                 indices = [min(max(round(ts * fps), 0), last_index) for ts in local_ts]
-                return decoder.get_frames_at(indices=indices).data
+                frames = decoder.get_frames_at(indices=indices)
+                # Estimated indices and approximate seeking can drift on variable-rate videos.
+                # Check the actual PTS in request order, including clamped and repeated frames.
+                query_ts = torch.tensor(local_ts, dtype=torch.float64)
+                decoded_ts = frames.pts_seconds.to(torch.float64)
+                if not ((query_ts - decoded_ts).abs() <= self.tolerance_s).all():
+                    raise ValueError(
+                        f"TorchCodec frame timestamps exceed tolerance {self.tolerance_s}: "
+                        f"episode={episode_index}, camera={camera_key}, "
+                        f"queries={query_ts}, decoded={decoded_ts}"
+                    )
+                return frames.data
         finally:
             if release is not None:
                 release()
@@ -562,8 +577,6 @@ class _PyAVVideoDecoder:
     def get_frames_at(self, *, indices: list[int]) -> SimpleNamespace:
         """Decode zero-based frame indices in request order as uint8 RGB tensors."""
         if not indices:
-            import torch
-
             return SimpleNamespace(data=torch.empty((0, 3, 0, 0), dtype=torch.uint8))
         timestamps = [index / self._fps for index in indices]
         return self._get_frames_played_at(timestamps, tolerance_s=0.5 / self._fps + 1e-6)
@@ -584,8 +597,6 @@ class _PyAVVideoDecoder:
         tolerance_s: float,
     ) -> SimpleNamespace:
         """Seek once and decode through the requested window under the decode lock."""
-        import torch
-
         first_ts = min(timestamps)
         last_ts = max(timestamps)
         loaded_frames: list[torch.Tensor] = []
@@ -609,8 +620,8 @@ class _PyAVVideoDecoder:
 
         if not loaded_frames:
             raise ValueError(f"PyAV decoded no frames for timestamps {timestamps}")
-        query_ts = torch.tensor(timestamps)
-        loaded_ts_tensor = torch.tensor(loaded_ts)
+        query_ts = torch.tensor(timestamps, dtype=torch.float64)
+        loaded_ts_tensor = torch.tensor(loaded_ts, dtype=torch.float64)
         distances = torch.cdist(query_ts[:, None], loaded_ts_tensor[:, None], p=1)
         minimum, closest = distances.min(1)
         if not (minimum <= tolerance_s).all():

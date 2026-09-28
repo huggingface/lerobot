@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import torch
 
 pytest.importorskip("datasets")
 
@@ -131,7 +132,7 @@ def test_decoder_eviction_does_not_split_lock(monkeypatch: pytest.MonkeyPatch) -
                 a_inside.set()
             with active_lock:
                 active -= 1
-            return SimpleNamespace(data=None)
+            return SimpleNamespace(data=None, pts_seconds=torch.tensor([0.0]))
 
     cache._open_decoder = lambda *a: Decoder()
     original = cache._decoder_for_frames
