@@ -492,7 +492,7 @@ def get_feature_stats(
     if reshaped.shape[0] < 2:
         stats = _compute_basic_stats(reshaped, sample_count, quantile_list)
     else:
-        running_stats = RunningQuantileStats()
+        running_stats = RunningQuantileStats(quantile_list=quantile_list)
         running_stats.update(reshaped)
         stats = running_stats.get_statistics()
         stats["count"] = np.array([sample_count])
