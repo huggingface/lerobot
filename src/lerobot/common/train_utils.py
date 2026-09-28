@@ -24,13 +24,16 @@ its writes live in the same method.
 """
 
 import logging
+import os
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 
+import httpx
 import torch.distributed as dist
-from huggingface_hub import HfApi, ModelCard, ModelCardData, snapshot_download
+from huggingface_hub import HfApi, ModelCard, ModelCardData, is_offline_mode, model_info, snapshot_download
+from huggingface_hub.errors import HFValidationError, OfflineModeIsEnabled
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
@@ -694,14 +697,6 @@ def publish_trained_model(
 # Model card
 # ---------------------------------------------------------------------------------------------
 
-_BASE_MODEL_MAPPING = {
-    "smolvla": "lerobot/smolvla_base",
-    "pi0": "lerobot/pi0_base",
-    "pi05": "lerobot/pi05_base",
-    "pi0_fast": "lerobot/pi0fast-base",
-    "xvla": "lerobot/xvla-base",
-}
-
 
 def build_card_context(
     cfg: TrainPipelineConfig | None,
@@ -765,6 +760,25 @@ def build_card_context(
     return context
 
 
+def _hub_base_model(model_cfg: PreTrainedConfig | RewardModelConfig) -> str | None:
+    """The Hub repo the model was fine-tuned from; a local checkpoint names none (as in transformers)."""
+    pretrained_path = model_cfg.pretrained_path
+    if pretrained_path is None or os.path.isdir(pretrained_path):
+        return None
+    return str(pretrained_path)
+
+
+def _hub_license(repo_id: str) -> str | None:
+    """The `license:` tag of a Hub repo, or None when it has none or cannot be reached (as in transformers)."""
+    if is_offline_mode():
+        return None
+    try:
+        info = model_info(repo_id)
+    except (httpx.HTTPError, HFValidationError, OfflineModeIsEnabled):
+        return None
+    return next((tag.removeprefix("license:") for tag in info.tags or [] if tag.startswith("license:")), None)
+
+
 def generate_model_card(
     model_cfg: PreTrainedConfig | RewardModelConfig,
     cfg: TrainPipelineConfig | None = None,
@@ -780,7 +794,8 @@ def generate_model_card(
 
     Args:
         model_cfg (PreTrainedConfig | RewardModelConfig): The model config providing type,
-            license, tags, repo id, and — for policies — the feature declarations.
+            license, tags, repo id, the pretrained path (the card's `base_model`, whose license
+            an unset `license` inherits), and — for policies — the feature declarations.
         cfg (TrainPipelineConfig | None, optional): The training config for the training and
             dataset card sections. Defaults to None.
         dataset_meta (LeRobotDatasetMetadata | None, optional): Dataset metadata for the
@@ -790,7 +805,10 @@ def generate_model_card(
         ModelCard: The rendered and validated LeRobot model card.
     """
     model_type = model_cfg.type
-    base_model = _BASE_MODEL_MAPPING.get(model_type)
+    # Like transformers' TrainingSummary: an unset license inherits the base repo's, and an
+    # unknown one is left out of the card rather than guessed.
+    base_model = _hub_base_model(model_cfg)
+    card_license = model_cfg.license or (base_model and _hub_license(base_model)) or None
 
     if isinstance(model_cfg, RewardModelConfig):
         tags = {"robotics", "lerobot", "reward-model", model_type}
@@ -811,7 +829,7 @@ def generate_model_card(
         context["base_model"] = base_model
 
     card_data = ModelCardData(
-        license=model_cfg.license or "apache-2.0",
+        license=card_license,
         library_name="lerobot",
         pipeline_tag="robotics",
         tags=list(tags.union(model_cfg.tags or [])),
