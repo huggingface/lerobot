@@ -161,11 +161,14 @@ def render_sample(
     sample_idx: int,
     task: str | None = None,
     dataset_ctx: Any | None = None,
+    default_task: str | None = None,
 ) -> RenderedMessages | None:
     """Render recipe-defined messages and supervision for one dataset sample.
 
     Resolves bindings against ``persistent`` and ``events`` at frame timestamp
-    ``t``. Blend recipes first route matching sparse VQA annotations, then use
+    ``t``. ``task`` overrides ``${task}`` outright; ``default_task`` is the sample's
+    canonical task, used only when the episode has no ``task_aug`` rephrasing.
+    Blend recipes first route matching sparse VQA annotations, then use
     deterministic weighted selection for the remaining samples. Returns
     ``None`` when the selected recipe provides no text or low-level action
     supervision for this sample.
@@ -184,6 +187,7 @@ def render_sample(
             sample_idx=sample_idx,
             task=task,
             dataset_ctx=dataset_ctx,
+            default_task=default_task,
         )
         if vqa_rendered is not None:
             return vqa_rendered
@@ -199,6 +203,7 @@ def render_sample(
         sample_idx=sample_idx,
         task=task,
         dataset_ctx=dataset_ctx,
+        default_task=default_task,
     )
     return _render_message_recipe(selected_recipe, bindings)
 
@@ -212,6 +217,7 @@ def _render_vqa_if_present(
     sample_idx: int,
     task: str | None,
     dataset_ctx: Any | None,
+    default_task: str | None = None,
 ) -> RenderedMessages | None:
     """Render a matching VQA component, or return ``None`` for normal selection.
 
@@ -231,6 +237,7 @@ def _render_vqa_if_present(
             sample_idx=sample_idx,
             task=task,
             dataset_ctx=dataset_ctx,
+            default_task=default_task,
         )
         rendered = _render_message_recipe(component, bindings)
         if rendered is not None:
@@ -288,10 +295,13 @@ def _resolve_bindings(
     sample_idx: int,
     task: str | None,
     dataset_ctx: Any | None,
+    default_task: str | None = None,
 ) -> dict[str, LanguageRow | str | None]:
     """Resolve every binding in ``recipe`` (plus ``task``) at time ``t``."""
     bindings: dict[str, LanguageRow | str | None] = {
-        "task": _resolve_task(task, dataset_ctx, persistent=persistent, sample_idx=sample_idx),
+        "task": _resolve_task(
+            task, dataset_ctx, persistent=persistent, sample_idx=sample_idx, default_task=default_task
+        ),
     }
     declared = recipe.bindings or {}
     specs = {**DEFAULT_BINDINGS, **declared}
@@ -311,12 +321,13 @@ def _resolve_task(
     *,
     persistent: Sequence[LanguageRow] = (),
     sample_idx: int = 0,
+    default_task: str | None = None,
 ) -> str | None:
     """Return the task string for ``sample_idx``.
 
     Resolution order:
 
-    1. Explicit ``task`` override (caller-supplied) wins.
+    1. Explicit ``task`` override (caller-supplied, e.g. a runtime instruction) wins.
     2. If ``persistent`` contains rows of style ``task_aug`` (role=user),
        deterministically pick one by ``sample_idx`` so each frame of an
        episode rotates through the available rephrasings across an epoch.
@@ -325,8 +336,9 @@ def _resolve_task(
        in: ``${task}`` automatically picks a rephrasing when one exists,
        and falls back to the canonical task otherwise. Recipes that want
        the literal canonical task can override the binding.
-    3. Otherwise read the canonical task from ``dataset_ctx`` (which is
-       backed by ``meta/tasks.parquet``).
+    3. Otherwise the sample's canonical ``default_task`` (the dataset task of
+       that frame, as training passes it), then the one in ``dataset_ctx``
+       (backed by ``meta/tasks.parquet``).
     """
     if task is not None:
         return task
@@ -342,6 +354,8 @@ def _resolve_task(
         if chosen:
             return str(chosen)
 
+    if default_task is not None:
+        return default_task
     if dataset_ctx is None:
         return None
     if isinstance(dataset_ctx, dict):
