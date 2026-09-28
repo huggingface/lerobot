@@ -312,6 +312,7 @@ class G05Tokenizer:
         mode: str | None,
         action_codec: Any | None,
         action_ids: list[int] | None = None,
+        drop_proprio: bool = False,
     ) -> tuple[list[int], list[int], list[float]]:
         """Encode a whole sample into ids, labels and per-token type codes."""
         pred_eov = bool(self.model_config.get("input_preprocessor", {}).get("pred_eov", False))
@@ -320,6 +321,8 @@ class G05Tokenizer:
         labels: list[int] = []
         types: list[float] = []
         for segment in segments:
+            if drop_proprio and segment.processor == "proprio":
+                continue
             segment_ids, segment_labels, segment_types = self._serialize_segment(
                 segment, sample, action_codec=action_codec, action_ids=action_ids
             )
@@ -366,16 +369,21 @@ class G05Tokenizer:
         *,
         device: torch.device,
         action_codec: Any | None,
+        proprio_dropout_p: float = 0.0,
     ) -> G05SequenceBatch:
         """Encode prefix and suffix samples for supervised training.
 
         The action chunks go through the codec in one batch, and the padded sequences are
-        built on the host and moved to ``device`` in one copy per tensor.
+        built on the host and moved to ``device`` in one copy per tensor. Each sample drops
+        its <state> token with probability ``proprio_dropout_p`` (upstream's ``mlp_dropout``).
         """
         action_ids = self._encode_actions(samples, action_codec)
+        drop_proprio = [proprio_dropout_p > 0 and float(torch.rand(())) < proprio_dropout_p for _ in samples]
         prefix_rows = [
-            self._serialize(sample, mode="prefix", action_codec=action_codec, action_ids=ids)
-            for sample, ids in zip(samples, action_ids, strict=True)
+            self._serialize(
+                sample, mode="prefix", action_codec=action_codec, action_ids=ids, drop_proprio=drop
+            )
+            for sample, ids, drop in zip(samples, action_ids, drop_proprio, strict=True)
         ]
         suffix_rows = [
             self._serialize(sample, mode="suffix", action_codec=action_codec, action_ids=ids)

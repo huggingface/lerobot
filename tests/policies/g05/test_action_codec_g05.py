@@ -184,3 +184,28 @@ def test_batched_language_encoding_matches_one_chunk_at_a_time() -> None:
     batched = codec.encode_batch_for_language([{"value": chunk} for chunk in chunks])
 
     assert batched == [codec.encode_for_language({"value": chunk}) for chunk in chunks]
+
+
+def test_padded_body_parts_are_left_out_of_the_action_tokens() -> None:
+    config = {**_tiny_codec_config(), "dropout_noop_parts": True}
+    codec = G05NativeActionCodec(config, action_token_begin=100)
+    codec.module.eval()
+    actions = torch.linspace(-1, 1, 8 * 8).reshape(8, 8)
+    # A one-arm robot: only the right arm and gripper exist.
+    is_pad = torch.tensor([True] * 4 + [False] * 4)
+
+    full = codec.encode_for_language({"value": actions})
+    one_arm = codec.encode_for_language({"value": actions, "action_dim_is_pad": is_pad})
+    decoded, absent = codec.decode_language_tokens(torch.tensor(one_arm), horizon=8, action_dim=8)
+    reference, _ = codec.decode_language_tokens(torch.tensor(full), horizon=8, action_dim=8)
+
+    assert len(one_arm) == len(full) // 2
+    assert absent == {"left_control", "left_gripper"}
+    torch.testing.assert_close(decoded[:, 4:], reference[:, 4:])
+    assert torch.equal(decoded[:, :4], torch.zeros(8, 4))
+    # Without the released flag every part stays in the sequence.
+    assert len(
+        G05NativeActionCodec(_tiny_codec_config(), action_token_begin=100).encode_for_language(
+            {"value": actions, "action_dim_is_pad": is_pad}
+        )
+    ) == len(full)

@@ -66,6 +66,7 @@ from lerobot.utils.language import semantic_message_content_text
 
 from .action_codec_g05 import G05NativeActionCodec
 from .configuration_g05 import (
+    G05_COT_PROMPTS,
     G05_POLICY_PARTS,
     G05Config,
     make_g05_cot_prompt_template,
@@ -98,10 +99,12 @@ class G05GatedDeltaNet(Qwen3_5GatedDeltaNet):
             hidden_states = hidden_states * attention_mask[:, :, None]
 
         batch_size, sequence_length, _ = hidden_states.shape
-        use_cached_state = cache_params is not None and cache_params.has_previous_state(self.layer_idx)
-        if use_cached_state:
-            conv_state = cache_params.layers[self.layer_idx].conv_states
-            recurrent_state = cache_params.layers[self.layer_idx].recurrent_states
+        layer_cache = None
+        if cache_params is not None and cache_params.has_previous_state(self.layer_idx):
+            layer_cache = cache_params.layers[self.layer_idx]
+            conv_state = layer_cache.conv_states
+            recurrent_state = layer_cache.recurrent_states
+        use_cached_state = layer_cache is not None
 
         mixed_qkv = self.in_proj_qkv(hidden_states).transpose(1, 2)
         gate = self.in_proj_z(hidden_states).reshape(
@@ -113,7 +116,7 @@ class G05GatedDeltaNet(Qwen3_5GatedDeltaNet):
         beta = self.in_proj_b(hidden_states).sigmoid()
         decay = self.in_proj_a(hidden_states)
 
-        if use_cached_state:
+        if layer_cache is not None:
             if sequence_length == 1:
                 mixed_qkv = self.causal_conv1d_update(
                     mixed_qkv,
@@ -132,9 +135,7 @@ class G05GatedDeltaNet(Qwen3_5GatedDeltaNet):
                         groups=self.conv1d.groups,
                     )
                 )
-                cache_params.layers[self.layer_idx].conv_states.copy_(
-                    conv_input[..., -self.conv_kernel_size :]
-                )
+                layer_cache.conv_states.copy_(conv_input[..., -self.conv_kernel_size :])
         else:
             if cache_params is not None:
                 conv_state = functional.pad(
@@ -674,7 +675,7 @@ class G05NativeBackend(nn.Module):
             "action": lr,
             "vision": lr * backbone_lr_multiplier * vision_lr_multiplier,
         }
-        parameter_groups = [
+        parameter_groups: list[dict[str, Any]] = [
             {
                 "params": grouped[name],
                 "lr": learning_rates[name.split("_", 1)[0]],
@@ -690,7 +691,7 @@ class G05NativeBackend(nn.Module):
                 "vision_no_decay",
             )
         ]
-        expected = sum(parameter.requires_grad for parameter in self.model.parameters())
+        expected = sum(1 for parameter in self.model.parameters() if parameter.requires_grad)
         actual = sum(len(group["params"]) for group in parameter_groups)
         if actual != expected:
             raise RuntimeError(
@@ -1005,8 +1006,8 @@ class G05NativeBackend(nn.Module):
             grid_index = 0
             values = host_types[batch_index].tolist()
             for token_type, entries in itertools.groupby(enumerate(values), key=lambda item: item[1]):
-                entries = list(entries)
-                start, stop = entries[0][0], entries[-1][0] + 1
+                run = list(entries)
+                start, stop = run[0][0], run[-1][0] + 1
                 if int(token_type) == G05TokenType.PADDING:
                     continue
                 length = stop - start
@@ -1251,8 +1252,12 @@ class G05NativeBackend(nn.Module):
         initial_history: Tensor | None = None,
         initial_history_mask: Tensor | None = None,
         forced_first_tokens: Tensor | None = None,
+        suppressed_tokens: tuple[int, int] | None = None,
     ) -> tuple[G05TextGeneration, Any, Tensor, Tensor, Tensor]:
-        """Generate the chain-of-thought text tokens."""
+        """Generate the chain-of-thought text tokens.
+
+        ``suppressed_tokens`` is a ``[begin, end)`` id range that is never sampled.
+        """
         generated = []
         batch_size = last_hidden.shape[0]
         finished = torch.zeros(batch_size, dtype=torch.bool, device=last_hidden.device)
@@ -1269,6 +1274,9 @@ class G05NativeBackend(nn.Module):
 
         for step in range(max_new_tokens):
             logits = self.model.vlm.logits(last_hidden)
+            if suppressed_tokens is not None:
+                logits = logits.clone()
+                logits[..., suppressed_tokens[0] : suppressed_tokens[1]] = torch.finfo(logits.dtype).min
             next_token = self._sample_next_token(logits, history, history_mask)
             if step == 0 and forced_first_tokens is not None:
                 next_token = torch.where(forced_first_tokens.ge(0), forced_first_tokens, next_token)
@@ -1320,7 +1328,11 @@ class G05NativeBackend(nn.Module):
         )
 
     def _action_cache(self, vlm_cache, prefix_length: int, *, repeats: int = 1):
-        """Build the action expert's attention cache."""
+        """Build the action expert's attention cache.
+
+        The prefix keys and values are detached, as the author's flow loss does by default
+        (``fm.joint_training: false``): the flow loss does not train the VLM (knowledge insulation).
+        """
         cache = DynamicCache(config=self.model.action_expert.config)
         layer_types = self.model.vlm.config.layer_types
         for layer_index, layer_type in enumerate(layer_types):
@@ -1332,8 +1344,10 @@ class G05NativeBackend(nn.Module):
             key = source.keys[..., :prefix_length, :].detach()
             value = source.values[..., :prefix_length, :].detach()
             if repeats > 1:
-                key = key.repeat_interleave(repeats, dim=0)
-                value = value.repeat_interleave(repeats, dim=0)
+                # Tiled like every other flow-sample tensor in `_flow_loss` (`.repeat(samples, ...)`,
+                # rows [b0, b1, ..., b0, b1, ...]) and like the author's SparseKVCache.repeat.
+                key = key.repeat(repeats, *([1] * (key.ndim - 1)))
+                value = value.repeat(repeats, *([1] * (value.ndim - 1)))
             cache.layers[layer_index].update(key, value)
         return cache
 
@@ -1530,21 +1544,26 @@ class G05NativeBackend(nn.Module):
                 cache=cache,
                 max_new_tokens=int(self.model_config["ar"].get("max_new_tokens", 300)),
                 stop_token_ids=(self.processor.eov_token_id, self.processor.eos_token_id),
+                # Action codes only follow <EOV>; sampled inside the CoT they end up as the
+                # text of a subtask (seen on SO-101 autosteer).
+                suppressed_tokens=_action_token_range(self.processor),
             )
             sequence.token_types = token_types
             result["generated_ids"] = cot_generation.token_ids
             result["cot_text"] = [
-                self.processor.decode(
-                    ids[
-                        : next(
-                            (
-                                index
-                                for index, token_id in enumerate(ids.tolist())
-                                if token_id in {self.processor.eov_token_id, self.processor.eos_token_id}
-                            ),
-                            len(ids),
-                        )
-                    ]
+                _clean_cot_text(
+                    self.processor.decode(
+                        ids[
+                            : next(
+                                (
+                                    index
+                                    for index, token_id in enumerate(ids.tolist())
+                                    if token_id in {self.processor.eov_token_id, self.processor.eos_token_id}
+                                ),
+                                len(ids),
+                            )
+                        ]
+                    )
                 )
                 for ids in cot_generation.token_ids
             ]
@@ -1658,6 +1677,8 @@ class G05NativeBackend(nn.Module):
             action_dim_is_pad = batch.get("action_dim_is_pad")
             if not isinstance(action_dim_is_pad, Tensor):
                 action_dim_is_pad = None
+            if sequence.split_index is None:
+                raise ValueError("G0.5 flow training needs the prefix/suffix split of the token sequence.")
             prefix = int(sequence.split_index)
             loss_dict["fm_loss"] = self._flow_loss(
                 actions,
@@ -1695,6 +1716,31 @@ def _native_backend(config: G05Config, checkpoint_dir: str | Path | None) -> nn.
         }
     )
     return G05NativeBackend.from_config(model_config, checkpoint_dir)
+
+
+def _action_token_range(processor: Any) -> tuple[int, int] | None:
+    """``[begin, end)`` ids of the ActionCodec codes and group markers, when the vocabulary has them."""
+    begin = getattr(processor, "action_token_begin", None)
+    end = getattr(processor, "action_token_end_with_markers", None)
+    return (int(begin), int(end)) if begin is not None and end is not None else None
+
+
+def _clean_cot_text(text: str) -> str:
+    """The chain of thought alone: the text before ``Action:``, without ``|`` separators.
+
+    The target is ``BBox: ...|Subtask: ...|Action: <EOV>``, so decoding up to ``<EOV>`` still
+    holds the literal ``|Action:``; upstream cuts it the same way.
+    """
+    return text.split("Action:", 1)[0].strip().strip("|").strip()
+
+
+def _cot_subtask(text: str) -> str | None:
+    """The ``Subtask:`` field of a cleaned chain of thought, or None when it has none."""
+    for segment in text.split("|"):
+        segment = segment.strip()
+        if segment.startswith("Subtask:"):
+            return segment.removeprefix("Subtask:").strip() or None
+    return None
 
 
 def _first_cot_text(metadata: Mapping[str, Any]) -> str | None:
@@ -1745,7 +1791,9 @@ class G05Policy(PreTrainedPolicy):
         text = _first_cot_text(metadata)
         if text is None:
             raise ValueError("G0.5 text generation returned no text.")
-        return text
+        # A `next_subtask` reply becomes the next task, so it must be the subtask alone. The
+        # runtime renderer drops the query kind, and G0.5 answers every query with its CoT.
+        return _cot_subtask(text) or text
 
     @classmethod
     def _load_as_safetensor(
@@ -2067,11 +2115,7 @@ class G05Policy(PreTrainedPolicy):
             sample["bbox"] = bbox
         if subtask is not None:
             sample["atomic_task"] = f"Subtask: {subtask}"
-        sample["prompt"] = {
-            ("bbox",): "predict bbox",
-            ("subtask",): "predict subtask",
-            ("bbox", "subtask"): "predict bbox, subtask and action",
-        }[fields]
+        sample["prompt"] = G05_COT_PROMPTS[fields]
         return True
 
     def _prepare_author_batch(
@@ -2166,7 +2210,9 @@ class G05Policy(PreTrainedPolicy):
                             flow_only="<action_action" not in self.config.prompt_template,
                         )
                     else:
-                        sample["prompt"] = "predict subtask"
+                        sample["prompt"] = G05_COT_PROMPTS[
+                            tuple(getattr(self.config, "runtime_cot_fields", ("subtask",)))
+                        ]
                         atomic_task = batch.get("atomic_task")
                         if atomic_task is not None:
                             atomic_task = str(self._batch_item(atomic_task, index, batch_size))
@@ -2257,7 +2303,7 @@ class G05Policy(PreTrainedPolicy):
             action = result.get(ACTION)
         if not isinstance(action, Tensor):
             raise ValueError(f"G0.5 {self.config.action_head} output is missing its action tensor.")
-        metadata_keys = ("decoded_action_tokens", "ar_absent_keys", "_timing")
+        metadata_keys: tuple[str, ...] = ("decoded_action_tokens", "ar_absent_keys", "_timing")
         if system_mode == "system2":
             metadata_keys = ("cot_text", "generated_ids", *metadata_keys)
         metadata = {key: result[key] for key in metadata_keys if key in result}

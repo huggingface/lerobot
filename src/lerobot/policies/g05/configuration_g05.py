@@ -26,30 +26,52 @@ _DEFAULT_BBOX_BINDING = re.compile(r"emitted_at\(t, style=vqa, role=assistant, c
 
 
 def _g05_default_recipe(bbox_camera: str = "observation.images.exterior") -> dict:
-    """G0.5's native BBox/Subtask chain-of-thought supervision.
+    """G0.5's native training mix: chain-of-thought, subtask-as-task, and plain samples.
+
+    Mirrors the upstream ``MixedSamplesBuilder``. ``cot`` covers ``SubtaskCoTBuilder`` (x2),
+    ``BBoxCoTBuilder`` and ``BBoxSubtaskCoTBuilder``: the task, then the BBox and/or Subtask
+    chain of thought, then actions. ``atomic_task`` is ``AtomicTaskBaseSamplesBuilder``: the
+    active subtask as the task, straight to actions, which is what the policy sees once a
+    subtask is steered in (``/subtask``, ``/autosteer``). ``base`` is ``BaseSamplesBuilder``:
+    the task straight to actions, the System 1 prompt.
 
     Serialized like EO-1's default recipe so policy config discovery stays
     independent of the dataset extras that `lerobot.datasets.recipe` needs.
     """
     return {
-        "bindings": {"bbox": _bbox_binding(bbox_camera)},
-        "messages": [
-            {"role": "user", "content": "${task}", "stream": "low_level"},
-            {
-                "role": "assistant",
-                "content": "BBoxJSON: ${bbox}",
-                "stream": "low_level",
-                "target": True,
-                "if_present": "bbox",
+        "blend": {
+            "cot": {
+                "weight": 4.0,
+                "bindings": {"bbox": _bbox_binding(bbox_camera)},
+                "messages": [
+                    {"role": "user", "content": "${task}", "stream": "low_level"},
+                    {
+                        "role": "assistant",
+                        "content": "BBoxJSON: ${bbox}",
+                        "stream": "low_level",
+                        "target": True,
+                        "if_present": "bbox",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "Subtask: ${subtask}",
+                        "stream": "low_level",
+                        "target": True,
+                        "if_present": "subtask",
+                    },
+                ],
             },
-            {
-                "role": "assistant",
-                "content": "Subtask: ${subtask}",
-                "stream": "low_level",
-                "target": True,
-                "if_present": "subtask",
+            "atomic_task": {
+                "weight": 1.0,
+                "messages": [
+                    {"role": "user", "content": "${subtask}", "stream": "low_level", "if_present": "subtask"}
+                ],
             },
-        ],
+            "base": {
+                "weight": 1.0,
+                "messages": [{"role": "user", "content": "${task}", "stream": "low_level"}],
+            },
+        }
     }
 
 
@@ -86,6 +108,14 @@ G05_CAMERA_SIZE_PROFILES: dict[str, dict[str, tuple[int, int]]] = {
     "so100": dict.fromkeys(G05_CAMERA_PROFILES["so100"], (256, 256)),
     "galaxea_r1lite": dict.fromkeys(G05_CAMERA_PROFILES["galaxea_r1lite"], (256, 256)),
     "galaxea_r1pro": dict.fromkeys(G05_CAMERA_PROFILES["galaxea_r1pro"], (256, 256)),
+}
+
+
+# The CoT prompt text of each upstream builder, keyed by the fields it generates, in order.
+G05_COT_PROMPTS: dict[tuple[str, ...], str] = {
+    ("bbox",): "predict bbox",
+    ("subtask",): "predict subtask",
+    ("bbox", "subtask"): "predict bbox, subtask and action",
 }
 
 
@@ -292,6 +322,14 @@ class G05Config(PreTrainedConfig):
     recipe_path: str | None = None
     recipe: dict[str, Any] | None = field(default_factory=_g05_default_recipe)
     cot_bbox_camera: str | None = None
+    # The System 2 chain of thought generated at inference: ("subtask",) is upstream's
+    # SubtaskCoTBuilder prompt, ("bbox", "subtask") its BBoxSubtaskCoTBuilder prompt (boxes
+    # first, then the subtask; the action attends to both).
+    runtime_cot_fields: tuple[str, ...] = ("subtask",)
+    # Training-only probability of dropping a sample's <state> token from the prompt, as upstream's
+    # `proprio_encoder: mlp_dropout` (its default p is 0.2). Keeps the policy from acting on the
+    # arm state alone and ignoring the cameras.
+    proprio_dropout_p: float = 0.2
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -325,14 +363,17 @@ class G05Config(PreTrainedConfig):
             if key is None
         }
         self.camera_order = tuple(empty.get(index, key) for index, key in enumerate(self.camera_order))
-        self.camera_sizes = {key: tuple(size) for key, size in (self.camera_sizes or {}).items()}
+        self.camera_sizes = {
+            key: (int(size[0]), int(size[1])) for key, size in (self.camera_sizes or {}).items()
+        }
         self.optional_camera_keys = tuple(dict.fromkeys((*self.optional_camera_keys, *empty.values())))
         self.state_slots = tuple(int(slot) for slot in self.state_slots)
         self.action_slots = tuple(int(slot) for slot in self.action_slots)
         if self.normalization_clip is not None:
-            self.normalization_clip = tuple(self.normalization_clip)
-            if len(self.normalization_clip) != 2 or self.normalization_clip[0] >= self.normalization_clip[1]:
+            clip = tuple(float(value) for value in self.normalization_clip)
+            if len(clip) != 2 or clip[0] >= clip[1]:
                 raise ValueError("normalization_clip must be an increasing (minimum, maximum) pair.")
+            self.normalization_clip = (clip[0], clip[1])
         self.relative_exclude_joints = tuple(self.relative_exclude_joints)
         self.action_feature_names = tuple(self.action_feature_names)
         self.joint_signs = tuple(float(value) for value in self.joint_signs)
@@ -343,7 +384,7 @@ class G05Config(PreTrainedConfig):
             raise ValueError("joint_signs must cover exactly the raw state dimensions.")
         if self.joint_signs and len(self.joint_signs) != self.raw_action_dim:
             raise ValueError("joint_signs must cover exactly the raw action dimensions.")
-        if set(self.camera_sizes) != set(self.camera_order):
+        if set(self.camera_sizes) != set(self.camera_keys):
             # New cameras on a packaged checkpoint keep its per-slot sizes (config-file/CLI
             # dict values merge instead of replacing, so the saved entries are still there).
             profile = G05_CAMERA_SIZE_PROFILES.get(self.embodiment, {})
@@ -352,13 +393,14 @@ class G05Config(PreTrainedConfig):
                 key: self.camera_sizes.get(key)
                 or profile.get(key)
                 or (slot_sizes[index] if index < len(slot_sizes) else (256, 256))
-                for index, key in enumerate(self.camera_order)
+                for index, key in enumerate(self.camera_keys)
             }
         if self.recipe is not None and self.recipe_path is None:
-            bindings = self.recipe.get("bindings") or {}
-            if _DEFAULT_BBOX_BINDING.fullmatch(bindings.get("bbox", "")):
-                # The built-in recipe reads the boxes annotated on the bbox camera.
-                self.recipe["bindings"] = {**bindings, "bbox": _bbox_binding(self.bbox_camera)}
+            for component in [self.recipe, *(self.recipe.get("blend") or {}).values()]:
+                bindings = component.get("bindings") or {}
+                if _DEFAULT_BBOX_BINDING.fullmatch(bindings.get("bbox", "")):
+                    # The built-in recipe reads the boxes annotated on the bbox camera.
+                    component["bindings"] = {**bindings, "bbox": _bbox_binding(self.bbox_camera)}
         # Both follow from the camera slots and the history length; a saved value would go
         # stale when a fine-tune changes either (e.g. `n_obs_steps=1` on the 6-step base).
         self.num_input_images = len(self.camera_order) * self.n_obs_steps
@@ -387,6 +429,8 @@ class G05Config(PreTrainedConfig):
             raise ValueError("G0.5 System 2 requires predict_cot=True in the packaged checkpoint.")
         if self.language_recipe_enabled and not self.predict_cot:
             raise ValueError("G0.5 recipe-driven CoT training requires predict_cot=True.")
+        if not 0.0 <= self.proprio_dropout_p <= 1.0:
+            raise ValueError(f"proprio_dropout_p must be in [0, 1], got {self.proprio_dropout_p}.")
         if not 1 <= self.n_action_steps <= self.chunk_size:
             raise ValueError("n_action_steps must be between 1 and chunk_size.")
         if self.action_head == "actioncodec" and not self.discrete_action:
@@ -413,10 +457,15 @@ class G05Config(PreTrainedConfig):
                 raise ValueError("The released g05-libero config enables only the continuous flow path.")
             if not self.libero_gripper_binarize:
                 raise ValueError("g05-libero requires the official binary gripper command transform.")
-        if set(self.camera_sizes) != set(self.camera_order):
+        if set(self.camera_sizes) != set(self.camera_keys):
             raise ValueError("camera_sizes must contain exactly the ordered checkpoint camera keys.")
         if not set(self.optional_camera_keys) <= set(self.camera_order):
             raise ValueError("optional_camera_keys must be a subset of camera_order.")
+        self.runtime_cot_fields = tuple(self.runtime_cot_fields)
+        if self.runtime_cot_fields not in G05_COT_PROMPTS:
+            raise ValueError(
+                f"runtime_cot_fields must be one of {sorted(G05_COT_PROMPTS)}, got {self.runtime_cot_fields}."
+            )
         if self.cot_bbox_camera is not None and self.cot_bbox_camera not in self.camera_order:
             raise ValueError("cot_bbox_camera must be one of camera_order.")
         if any(len(size) != 2 or min(size) <= 0 for size in self.camera_sizes.values()):
@@ -432,14 +481,21 @@ class G05Config(PreTrainedConfig):
         return G05_EMBODIMENT_MAPPINGS.get(self.embodiment)
 
     @property
+    def camera_keys(self) -> tuple[str, ...]:
+        """The camera slots as observation keys; `__post_init__` names the empty ones."""
+        return tuple(key for key in self.camera_order if key is not None)
+
+    @property
     def bbox_camera(self) -> str:
         """Camera whose image the BBox targets are expressed in."""
-        filled = [key for key in self.camera_order if key not in self.optional_camera_keys]
-        return self.cot_bbox_camera or (filled or self.camera_order)[0]
+        filled = [key for key in self.camera_keys if key not in self.optional_camera_keys]
+        return self.cot_bbox_camera or (filled or list(self.camera_keys))[0]
 
     def _apply_slots(self) -> None:
         """Size the raw state/action from the slots and check they fit the policy layout."""
         mapping = self.slot_mapping
+        if mapping is None:
+            raise ValueError(f"G0.5 embodiment {self.embodiment!r} has no slots to apply.")
         if self.state_slots:
             self.raw_state_dim, self.raw_action_dim = len(self.state_slots), len(self.action_slots)
         for key, width in (("state", self.policy_state_dim), ("action", self.policy_action_dim)):
@@ -458,15 +514,17 @@ class G05Config(PreTrainedConfig):
         """Derive the slots of a robot without a named embodiment from the dataset's joint names."""
         if self.slot_mapping is not None:
             return
-        names = {key: _feature_names(features.get(key)) for key in (OBS_STATE, ACTION)}
-        missing = [key for key, value in names.items() if value is None]
-        if missing:
+        state_names, action_names = (_feature_names(features.get(key)) for key in (OBS_STATE, ACTION))
+        if state_names is None or action_names is None:
+            missing = [
+                key for key, names in ((OBS_STATE, state_names), (ACTION, action_names)) if names is None
+            ]
             raise ValueError(
                 f"G0.5 embodiment {self.embodiment!r} has no named slot table and the dataset gives "
                 f"no joint names for {missing}; set state_slots and action_slots."
             )
-        self.state_slots = derive_g05_slots(names[OBS_STATE], self.policy_state_dim)
-        self.action_slots = derive_g05_slots(names[ACTION], self.policy_action_dim)
+        self.state_slots = derive_g05_slots(state_names, self.policy_state_dim)
+        self.action_slots = derive_g05_slots(action_names, self.policy_action_dim)
         self._apply_slots()
 
     def validate_features(self) -> None:
@@ -483,7 +541,7 @@ class G05Config(PreTrainedConfig):
             OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(self.raw_state_dim,)),
             **{
                 key: PolicyFeature(type=FeatureType.VISUAL, shape=(3, *self.camera_sizes[key]))
-                for key in self.camera_order
+                for key in self.camera_keys
             },
         }
         if self.output_features is None:
