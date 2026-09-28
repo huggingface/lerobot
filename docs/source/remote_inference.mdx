@@ -111,6 +111,43 @@ Plain prefetch uses an observation captured before the previous chunk finishes. 
 
 The current numerical defaults are starting values for validation, not measured performance guarantees. Warmup time, action turnaround and text-generation time are separate quantities. Client monotonic time controls deadlines; server reports contain durations rather than timestamps to compare across hosts.
 
+In plain chunk mode, requesting too early can produce a backward movement at each
+chunk transition: the next prediction starts from the captured pose, while the
+robot continues executing the old chunk before reaching that prediction. A quick
+response does not make the observation fresh at dispatch. For example, requesting
+with one second of old playback remaining and receiving the response in 100 ms
+leaves roughly 900 ms of waiting before the successor starts. Interpolation smooths
+the transition over motor ticks but does not reconcile the two predicted trajectories.
+
+The first OMX/SmolVLA localhost run measured 104 ms median and 133 ms maximum
+steady request turnaround, with recurring backward motion at a one-second refill
+threshold. For a controlled retest on that setup, use
+`--inference.refill_seconds=0.2`, retaining `--inference.mode=chunk`, the existing
+interpolation and age limit. The operator reported substantially improved motion
+with that change; this is a setup-specific result, not a general default. Keep sufficient
+headroom above measured turnaround; a very small threshold can exhaust playback.
+The runtime also uses recent turnaround plus one policy interval as a refill floor.
+If independent chunk transitions still cause pullbacks, explicitly test supported
+guided RTC, which conditions predictions on the remaining trajectory, rather than
+assuming plain prefetch provides that continuity.
+
+To compare guided RTC with that SmolVLA baseline, stop the previous server and run:
+
+```bash
+uv run --no-sync lerobot-policy-server \
+  --config_path=examples/remote_inference/omx_smolvla_local.yaml \
+  --execution.supported_modes='[rtc_guided]' \
+  --execution.rtc.enabled=true \
+  --execution.rtc.mode=guided \
+  --execution.rtc.execution_horizon=15
+```
+
+On the client, change to `--inference.mode=rtc_guided` and start with
+`--inference.refill_seconds=0.5`; keep the other working SmolVLA arguments.
+Guidance adds computation, so measure its turnaround independently. The 15-action
+guidance horizon covers 0.5 seconds at 30 Hz. These starting values still need a
+hardware run. This comparison is for SmolVLA; XVLA currently supports plain chunks.
+
 Raw RGB is the default lossless transport. `--inference.encoding=jpeg --inference.jpeg_quality=90` reduces bandwidth at the cost of image information. Validate policy behavior after enabling JPEG. Arbitrary tensors and depth data are never silently JPEG encoded. Typed MessagePack decoding bounds payloads, dimensions, dtype, image size and strings before tensor/image allocation. Non-finite actions and mismatched results are rejected.
 
 A late response can only be used while its request, session, server instance, generation and source age remain valid. Buffered actions may continue within the local limits; starvation, stale actions, malformed active replies or request expiry latch a fault. The dispatch gate checks every motor tick, including interpolation-only ticks. Fault handling invalidates queued/interpolated motion, holds locally, and does not home the robot. A returning network connection cannot resume motion: restart rollout to establish a new session.

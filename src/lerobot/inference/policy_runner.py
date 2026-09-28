@@ -229,7 +229,9 @@ class PolicyRunner:
         if mode not in self.capabilities.modes:
             raise ValueError(f"Execution mode {mode.value!r} was not enabled by this deployment.")
         started = time.perf_counter()
-        with torch.inference_mode():
+        # Guided RTC locally enables autograd for its prefix correction. no_grad
+        # permits that override; inference_mode would suppress its gradient graph.
+        with torch.inference_mode(mode is not ExecutionMode.RTC_GUIDED), torch.no_grad():
             prepared = self.preprocessor(self._batch(observation))
             preprocessed_at = time.perf_counter()
             kwargs: dict[str, Any] = {}
