@@ -70,6 +70,7 @@ class EpisodeByteCache:
         video_backend: str = "torchcodec",
         tolerance_s: float = 1e-4,
         token: str | bool | None = None,
+        storage_options: dict[str, str] | None = None,
     ) -> None:
         """Configure byte fetching, synthesis, decoder limits, and backend selection.
 
@@ -86,6 +87,7 @@ class EpisodeByteCache:
             native_http_retries=native_http_retries,
             native_http_subranges=native_http_subranges,
             token=token,
+            storage_options=storage_options,
         )
         self.byte_budget = byte_budget
         self.max_open_decoders = max_open_decoders
