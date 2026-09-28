@@ -127,6 +127,37 @@ class TestGenerateModelCard:
         assert card.data.datasets == "user/dataset"
         assert "lerobot" in card.data.tags
 
+    def test_hub_parent_becomes_base_model_and_lends_its_license(self, monkeypatch):
+        monkeypatch.setattr(train_utils.ModelCard, "validate", lambda self: None)
+        monkeypatch.setattr(train_utils, "is_offline_mode", lambda: False)
+        looked_up = []
+
+        def fake_model_info(repo_id):
+            looked_up.append(repo_id)
+            return SimpleNamespace(tags=["robotics", "license:gemma"])
+
+        monkeypatch.setattr(train_utils, "model_info", fake_model_info)
+        policy = make_dummy_policy(repo_id="user/policy")
+        policy.config.pretrained_path = Path("user/parent")
+
+        card = generate_model_card(policy.config, cfg=make_cfg(), dataset_meta=None)
+        assert looked_up == ["user/parent"]
+        assert card.data.base_model == "user/parent"
+        assert card.data.license == "gemma"
+
+        policy.config.license = "mit"
+        assert generate_model_card(policy.config, cfg=make_cfg(), dataset_meta=None).data.license == "mit"
+
+    def test_local_parent_is_not_a_base_model(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(train_utils.ModelCard, "validate", lambda self: None)
+        monkeypatch.setattr(train_utils, "model_info", lambda repo_id: pytest.fail("no Hub lookup expected"))
+        policy = make_dummy_policy(repo_id="user/policy")
+        policy.config.pretrained_path = tmp_path
+
+        card = generate_model_card(policy.config, cfg=make_cfg(), dataset_meta=None)
+        assert card.data.base_model is None
+        assert card.data.license is None
+
 
 class TestDeprecatedPushModelToHub:
     """`push_model_to_hub` stays callable for external scripts, delegating to the publisher."""
