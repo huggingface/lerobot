@@ -33,7 +33,7 @@ RUN git init . \
     && git remote add origin https://github.com/huggingface/lerobot.git \
     && git fetch --depth=1 origin e595b7902714ba51f91e47523f66f89c5181b649 \
     && git checkout --detach FETCH_HEAD \
-    && uv sync --locked --python python3.12 --extra training --no-dev
+    && uv sync --locked --python python3.12 --extra training --no-dev --no-cache
 ENV PATH="/lerobot/.venv/bin:$PATH" PYTHONUNBUFFERED=1
 ENTRYPOINT ["lerobot-train"]
 ```
@@ -43,14 +43,26 @@ The CUDA wheels come from the PyTorch index specified by LeRobot's lockfile. Dep
 Authenticate to your registry using its Docker login instructions, then build and push. Substitute a registry path you control:
 
 ```bash
-export IMAGE_TAG="docker.io/YOUR_USER/lerobot-act:nebius-smoke"
+export IMAGE_TAG="docker.io/YOUR_USER/act:UNIQUE_RUN_ID"
 docker buildx build --platform linux/amd64 --push \
   --tag "$IMAGE_TAG" --metadata-file image-metadata.json .
 export IMAGE_DIGEST=$(python3 -c \
   'import json; print(json.load(open("image-metadata.json"))["containerimage.digest"])')
-export IMAGE="${IMAGE_TAG}@${IMAGE_DIGEST}"
-printf '%s\n' "$IMAGE" > image-reference.txt
+export IMAGE="$IMAGE_TAG"
+printf '%s@%s\n' "$IMAGE" "$IMAGE_DIGEST" > image-reference.txt
+test "${#IMAGE}" -le 64 || { echo "Use an image reference of at most 64 characters"; exit 1; }
+
+verify_image() {
+  test "$(docker buildx imagetools inspect "$IMAGE" | awk '$1 == "Digest:" {print $2; exit}')" = "$IMAGE_DIGEST"
+}
+verify_image || { echo "Registry image digest does not match the build"; exit 1; }
 ```
+
+<Tip warning={true}>
+
+With Nebius CLI `0.12.279`, job validation rejects image references longer than 64 characters because the reference is copied into a VM label. This includes digest-qualified references. Use a **unique short tag**, retain its digest, and do not overwrite it. The `verify_image` check compares the registry's digest with the build before submission; repeat it before resuming. This workaround records and checks the image identity, but does not make the tag immutable.
+
+</Tip>
 
 For a private registry, create a separate SecretStash secret containing the `REGISTRY_USERNAME` and `REGISTRY_PASSWORD` payload keys and add `--registry-secret YOUR_REGISTRY_SECRET_SELECTOR` to each `nebius ai job create` command below. The Hub token does not grant registry access.
 
@@ -106,7 +118,7 @@ JOB_OPTIONS=(
 # JOB_OPTIONS+=(--registry-secret YOUR_REGISTRY_SECRET_SELECTOR)
 ```
 
-`num_workers=0` keeps the initial data-loading setup simple. Simulation evaluation and W&B are disabled. Each job has a one-hour timeout, the minimum supported by this CLI, and no automatic retry. It exits when training finishes; the timeout is a ceiling, not an expected training duration.
+`num_workers=0` keeps the initial data-loading setup simple. Simulation evaluation and W&B are disabled. With this image, an optional TorchCodec import warning can appear before training starts; the command explicitly uses PyAV. Each job has a one-hour timeout, the minimum supported by this CLI, and no automatic retry. It exits when training finishes; the timeout is a ceiling, not an expected training duration.
 
 `--policy.private=true` controls creation of a **new** Hub repository; it does not change an existing repository's visibility. Check the destination and use a fresh name before submitting. Run only one job at a time against this model repository.
 
@@ -122,6 +134,7 @@ nebius ai job create "${JOB_OPTIONS[@]}" \
 A successful dry run does not prove that the image starts, CUDA works, the Hub token has the right permissions, or training fits within the timeout. Submit only after checking the image, project, preset, and destination:
 
 ```bash
+verify_image || { echo "Image digest changed; stop before submitting"; exit 1; }
 nebius ai job create "${JOB_OPTIONS[@]}" \
   --name lerobot-act-smoke --args "$TRAIN_ARGS"
 ```
@@ -189,6 +202,7 @@ RESUME_ARGS="--job.target=local \
 --output_dir=/lerobot/outputs/act-pusht-resume \
 --steps=300 --save_checkpoint_to_hub=true"
 
+verify_image || { echo "Image digest changed; stop before resuming"; exit 1; }
 nebius ai job create "${JOB_OPTIONS[@]}" \
   --name lerobot-act-resume --args "$RESUME_ARGS" --dry-run
 nebius ai job create "${JOB_OPTIONS[@]}" \
@@ -228,8 +242,8 @@ That command retains `policy.device=cuda` and Hub uploads from the saved config.
 Save logs before deleting job records:
 
 ```bash
-nebius ai job logs "$JOB_ID" --since 2h > act-smoke.log
-nebius ai job logs "$RESUME_JOB_ID" --since 2h > act-resume.log
+nebius ai job logs "$JOB_ID" --since 2h --tail 1000 > act-smoke.log
+nebius ai job logs "$RESUME_JOB_ID" --since 2h --tail 1000 > act-resume.log
 nebius ai job delete "$JOB_ID"
 nebius ai job delete "$RESUME_JOB_ID"
 ```
