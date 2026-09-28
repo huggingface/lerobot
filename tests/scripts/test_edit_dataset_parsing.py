@@ -14,11 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import draccus
+import httpx
 import numpy as np
 import pytest
+from huggingface_hub.errors import RepositoryNotFoundError
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
@@ -34,6 +37,7 @@ from lerobot.scripts.lerobot_edit_dataset import (
     ReencodeVideosConfig,
     RemoveFeatureConfig,
     SplitConfig,
+    _resolve_private,
     _validate_config,
     handle_delete_episodes,
     handle_modify_tasks,
@@ -233,3 +237,86 @@ class TestPushPrivate:
 
         mock_push.assert_called_once()
         assert mock_push.call_args.kwargs["private"] is True
+
+    def test_push_inherits_private_source(self, tmp_path, empty_lerobot_dataset_factory):
+        features = {"action": {"dtype": "float32", "shape": (2,), "names": None}}
+        dataset = empty_lerobot_dataset_factory(root=tmp_path / "input", features=features, use_videos=False)
+        for _ in range(2):
+            for _ in range(3):
+                dataset.add_frame({"action": np.zeros(2, dtype=np.float32), "task": "task"})
+            dataset.save_episode()
+        dataset.finalize()
+
+        cfg = parse_cfg(
+            [
+                "--repo_id",
+                dataset.repo_id,
+                "--root",
+                str(tmp_path / "input"),
+                "--new_repo_id",
+                "user/edited",
+                "--new_root",
+                str(tmp_path / "output"),
+                "--push_to_hub",
+                "true",
+                "--operation.type",
+                "delete_episodes",
+                "--operation.episode_indices",
+                "[0]",
+            ]
+        )
+        with (
+            patch("lerobot.datasets.dataset_metadata.get_safe_version", return_value="v3.0"),
+            patch("lerobot.datasets.dataset_metadata.snapshot_download"),
+            patch(
+                "lerobot.scripts.lerobot_edit_dataset.HfApi.repo_info",
+                return_value=SimpleNamespace(private=True),
+            ) as repo_info,
+            patch.object(LeRobotDataset, "push_to_hub", autospec=True) as mock_push,
+        ):
+            handle_delete_episodes(cfg)
+
+        repo_info.assert_called_once_with(dataset.repo_id, repo_type="dataset")
+        assert mock_push.call_args.kwargs["private"] is True
+
+
+class TestResolvePrivate:
+    """Test that editing a private Hub dataset never publishes the result by default."""
+
+    @staticmethod
+    def _cfg(*extra: str) -> EditDatasetConfig:
+        return parse_cfg(["--repo_id", "user/source", "--operation.type", "delete_episodes", *extra])
+
+    @staticmethod
+    def _hub(visibility: dict[str, bool]):
+        """Patch HfApi.repo_info with a fake Hub where only the given repos exist."""
+
+        def repo_info(repo_id, repo_type=None):
+            if repo_id not in visibility:
+                request = httpx.Request("GET", f"https://huggingface.co/api/datasets/{repo_id}")
+                raise RepositoryNotFoundError("not found", response=httpx.Response(404, request=request))
+            return SimpleNamespace(private=visibility[repo_id])
+
+        return patch("lerobot.scripts.lerobot_edit_dataset.HfApi.repo_info", side_effect=repo_info)
+
+    def test_private_source_makes_output_private(self):
+        with self._hub({"user/source": True}):
+            assert _resolve_private(self._cfg(), ["user/source"]) is True
+
+    def test_public_source_keeps_default(self):
+        with self._hub({"user/source": False}):
+            assert _resolve_private(self._cfg(), ["user/source"]) is None
+
+    def test_source_not_on_hub_keeps_default(self):
+        with self._hub({}):
+            assert _resolve_private(self._cfg(), ["local/only"]) is None
+
+    def test_any_private_source_makes_merge_private(self):
+        with self._hub({"user/a": False, "user/b": True}):
+            assert _resolve_private(self._cfg(), ["user/a", "user/b"]) is True
+
+    @pytest.mark.parametrize("flag, expected", [("true", True), ("false", False)])
+    def test_explicit_flag_wins_without_lookup(self, flag, expected):
+        with self._hub({"user/source": True}) as repo_info:
+            assert _resolve_private(self._cfg("--private", flag), ["user/source"]) is expected
+        repo_info.assert_not_called()
