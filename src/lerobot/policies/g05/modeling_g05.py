@@ -62,6 +62,7 @@ from lerobot.optim.optimizers import OptimizerParams
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, MESSAGES_RENDERED, OBS_STATE
 from lerobot.utils.device_utils import resolve_safetensors_device
+from lerobot.utils.language import semantic_message_content_text
 
 from .action_codec_g05 import G05NativeActionCodec
 from .configuration_g05 import (
@@ -1905,6 +1906,35 @@ class G05Policy(PreTrainedPolicy):
             return value[index]
         return value
 
+    @staticmethod
+    def _sample_messages(batch: Mapping[str, Any], index: int, batch_size: int) -> Any:
+        """One sample's recipe-rendered conversation, or None when no recipe ran."""
+        messages = batch.get(MESSAGES_RENDERED)
+        if (
+            isinstance(messages, list | tuple)
+            and len(messages) == batch_size
+            and (not messages or isinstance(messages[0], list | tuple))
+        ):
+            messages = messages[index]
+        return [messages] if isinstance(messages, Mapping) else messages
+
+    @classmethod
+    def _rendered_task(cls, batch: Mapping[str, Any], index: int, batch_size: int) -> str | None:
+        """The task text of one sample's rendered user turn.
+
+        The recipe's ``${task}`` rotates through the episode's ``task_aug`` rephrasings, so
+        using it as the command gives the task-prompt diversity the annotations provide.
+        """
+        messages = cls._sample_messages(batch, index, batch_size)
+        if not isinstance(messages, list | tuple):
+            return None
+        for message in reversed(messages):
+            if isinstance(message, Mapping) and message.get("role") == "user":
+                text = semantic_message_content_text(message.get("content"))
+                if text:
+                    return text
+        return None
+
     def _recipe_cot_targets(
         self,
         batch: Mapping[str, Any],
@@ -1913,18 +1943,11 @@ class G05Policy(PreTrainedPolicy):
     ) -> tuple[str | None, str | None]:
         """Read the selected recipe's supervised Subtask/BBox messages."""
 
-        messages = batch.get(MESSAGES_RENDERED)
         target_indices = batch.get("target_message_indices")
-        if messages is None or target_indices is None:
+        sample_messages = self._sample_messages(batch, index, batch_size)
+        if sample_messages is None or target_indices is None:
             return None, None
 
-        sample_messages = messages
-        if (
-            isinstance(messages, list | tuple)
-            and len(messages) == batch_size
-            and (not messages or isinstance(messages[0], list | tuple))
-        ):
-            sample_messages = messages[index]
         sample_target_indices = target_indices
         has_batched_target_indices = (isinstance(target_indices, Tensor) and target_indices.ndim > 1) or (
             isinstance(target_indices, list | tuple)
@@ -1933,8 +1956,6 @@ class G05Policy(PreTrainedPolicy):
         )
         if has_batched_target_indices:
             sample_target_indices = target_indices[index]
-        if isinstance(sample_messages, Mapping):
-            sample_messages = [sample_messages]
         if isinstance(sample_target_indices, Tensor):
             sample_target_indices = sample_target_indices.detach().cpu().tolist()
         if not isinstance(sample_messages, list | tuple) or not isinstance(
@@ -2110,6 +2131,8 @@ class G05Policy(PreTrainedPolicy):
             )
         )
         for index, raw_task in enumerate(tasks):
+            if task is None:
+                raw_task = self._rendered_task(batch, index, batch_size) or raw_task
             proprio = state[index]
             if proprio.ndim == 1:
                 proprio = proprio.unsqueeze(0)

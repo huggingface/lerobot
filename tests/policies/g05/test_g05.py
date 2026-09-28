@@ -1949,3 +1949,22 @@ def test_image_counts_follow_the_history_length_not_the_saved_values():
     config = _new_robot_config(n_obs_steps=1, num_input_images=18, num_prompt_images=3)
 
     assert (config.num_input_images, config.num_prompt_images) == (3, 3)
+
+
+def test_recipe_training_uses_the_rendered_task_rephrasing():
+    policy = G05Policy(_config(predict_cot=True, runtime_system="system2"), backend=TinyG05Backend())
+    batch = _policy_batch("operator task")
+    batch[MESSAGES_RENDERED] = [
+        [
+            {"role": "user", "content": "gather every cube in the blue square"},
+            {"role": "assistant", "content": "Subtask: grasp the cup"},
+        ]
+    ]
+    batch["target_message_indices"] = [[1]]
+
+    rephrased = policy._prepare_author_batch(batch)["samples"][0]
+    del batch[MESSAGES_RENDERED], batch["target_message_indices"]
+    canonical = policy._prepare_author_batch(batch)["samples"][0]
+
+    assert rephrased["command"] == "gather every cube in the blue square"
+    assert canonical["command"] == "operator task"

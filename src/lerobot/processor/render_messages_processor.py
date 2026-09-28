@@ -115,7 +115,9 @@ class RenderTrainingMessagesStep(ProcessorStep):
             events=events,
             t=unwrap_scalar(timestamp),
             sample_idx=int(unwrap_scalar(sample_idx)),
-            task=complementary_data.get("task"),
+            # The dataset task is the fallback, not an override, so ``${task}`` can
+            # rotate through the episode's ``task_aug`` rephrasings.
+            default_task=complementary_data.get("task"),
             dataset_ctx=self.dataset_ctx,
         )
         if rendered is None:
@@ -168,7 +170,7 @@ class RenderTrainingMessagesStep(ProcessorStep):
                 events=events_batch[i] if i < len(events_batch) else [],
                 t=_batch_value(timestamp, i),
                 sample_idx=int(_batch_value(complementary_data.get("index", 0), i)),
-                task=_batch_value(complementary_data.get("task"), i),
+                default_task=_batch_value(complementary_data.get("task"), i),
                 dataset_ctx=self.dataset_ctx,
             )
             if rendered is None:
