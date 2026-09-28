@@ -60,6 +60,8 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
+from lerobot.configs import FeatureType
+from lerobot.inference.contracts import FeatureSpec
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.import_utils import require_package
 
@@ -332,6 +334,35 @@ class SmolVLAPolicy(PreTrainedPolicy):
                 loss = losses.sum() / num_valid
             loss_dict["loss"] = loss.item()
             return loss, loss_dict
+
+    def validate_chunk_input_features(self, features: tuple[FeatureSpec, ...]) -> None:
+        """Preserve prepare_images' camera subset, resizing and padding semantics.
+
+        The deployment explicitly selects physical cameras. Missing visual slots
+        remain missing; prepare_images applies the checkpoint's empty-camera limit
+        and masks exactly as in local inference. Never synthesize unmasked cameras.
+        """
+        expected = self.config.input_features or {}
+        supplied = {feature.name: feature for feature in features}
+        required = {name for name, feature in expected.items() if feature.type != FeatureType.VISUAL}
+        if not required <= supplied.keys() or not supplied.keys() <= expected.keys():
+            raise ValueError("SmolVLA requires all nonvisual inputs and only known camera features.")
+        if not any(expected[name].type == FeatureType.VISUAL for name in supplied):
+            raise ValueError("SmolVLA requires at least one camera.")
+        for name, feature in supplied.items():
+            policy_feature = expected[name]
+            if policy_feature.type == FeatureType.VISUAL:
+                shape = policy_feature.shape
+                if len(shape) != 3 or shape[0] != 3 or feature.kind != "rgb":
+                    raise ValueError(f"SmolVLA requires RGB camera inputs: {name}.")
+                if self.config.resize_imgs_with_padding is None and feature.shape != (
+                    shape[1],
+                    shape[2],
+                    shape[0],
+                ):
+                    raise ValueError(f"RGB feature shape differs without policy resizing: {name}.")
+            elif feature.kind != "tensor" or feature.shape != tuple(policy_feature.shape):
+                raise ValueError(f"Tensor feature shape differs from checkpoint: {name}.")
 
     def prepare_images(self, batch):
         """Apply SmolVLA preprocessing to the images, like resizing to 224x224 and padding to keep aspect ratio, and

@@ -49,6 +49,29 @@ The server validates the contract, warms the enabled action/text paths, resets w
 
 ## Run the robot client
 
+For a same-machine OMX/SmolVLA test, use `examples/remote_inference/omx_smolvla_local.yaml`
+for the server and connect to `tcp/127.0.0.1:7447` from a second process. That example
+deploys `imstevenpmwork/super_chatton_smolvla` with normalized OMX joints
+(`--robot.use_degrees=false`) and maps wrist/front to camera1/camera2. Use the matching
+client deployment `omx-smolvla` and semantics `omx-normalized-joints-gripper-percent-v1`.
+SmolVLA explicitly supports a subset of checkpoint camera entries and performs its own
+resize/padding; the wire schema fixes the two physical inputs at 640×480. Missing slots
+remain absent so the policy applies its usual empty-camera masks. Other policies retain
+exact checkpoint feature/shape validation unless they declare their own input contract.
+The OMX position-hold driver path has an automated test; physical behavior remains a
+hardware validation requirement.
+
+For `imstevenpmwork/xvla_super_chatton_2`, use
+`examples/remote_inference/omx_xvla_local.yaml`, deployment `omx-xvla`, and the same
+OMX semantic profile. Its mapping is front→`observation.images.image` and
+wrist→`observation.images.image2`. XVLA preserves its internal image resizing,
+missing-view masks and state zero-padding; differing state widths require identity
+state normalization and cannot exceed the model's state width. This checkpoint
+executes 30 actions per chunk (one second at 30 Hz), versus 50 for the SmolVLA
+example. Use `chunk` mode; XVLA does not declare RTC support. Both examples bind
+port 7447, so stop the previous server before switching. The model device is set
+in server YAML; omit local `--device` and `--policy.path` from the remote client.
+
 This direct TCP example assumes a trusted laboratory network. Configure the hardware port, camera, checkpoint profile and budgets for your setup:
 
 ```bash

@@ -43,6 +43,8 @@ class OmxFollower(Robot):
 
     config_class = OmxFollowerConfig
     name = "omx_follower"
+    # All commands, including the current-limited gripper, are position targets.
+    supports_position_hold = True
 
     def __init__(self, config: OmxFollowerConfig):
         super().__init__(config)

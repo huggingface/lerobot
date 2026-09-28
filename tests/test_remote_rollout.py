@@ -146,6 +146,33 @@ def test_hold_freezes_first_measured_pose_and_rejects_velocity_modes():
         wrapper.configure_position_hold()
 
 
+def test_omx_hold_uses_position_driver_without_an_extra_sensor_read():
+    from lerobot.robots.omx_follower import OmxFollower, OmxFollowerConfig
+
+    names = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")
+    measured = {name: float(index) for index, name in enumerate(names)}
+    writes = []
+    reads = []
+    robot = OmxFollower.__new__(OmxFollower)
+    robot.id = "test_omx"
+    robot.config = OmxFollowerConfig(port="unused")
+    robot.cameras = {}
+    robot.bus = SimpleNamespace(
+        motors=dict.fromkeys(names),
+        is_connected=True,
+        sync_read=lambda register: reads.append(register) or measured.copy(),
+        sync_write=lambda register, values: writes.append((register, values.copy())),
+    )
+    wrapper = ThreadSafeRobot(robot)
+    wrapper.configure_position_hold()
+    wrapper.get_observation()
+    wrapper.hold()
+    wrapper.hold()
+    assert reads == ["Present_Position"]
+    assert writes == [("Goal_Position", measured), ("Goal_Position", measured)]
+    assert not robot.config.use_degrees
+
+
 def test_same_text_autosteer_restart_discards_previous_intent():
     engine = GateEngine()
     engine.start_autosteer("same goal", 0)
