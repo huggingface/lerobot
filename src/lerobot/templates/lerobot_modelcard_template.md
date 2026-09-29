@@ -45,6 +45,8 @@ This is a Gaussian Actor policy (Gaussian policy with a tanh squash) — the pol
 FLUX 3 Action (`flux3`) is Black Forest Labs' video-action model: the FLUX.3 video trunk with an action modality that is denoised jointly with the next video frames, finetuned per robot embodiment with fresh action heads.
 {% elif model_name == "lingbot_va" %}
 [LingBot-VA](https://github.com/Robbyant/lingbot-va) is an autoregressive video-action world-model policy built on the Wan2.2 video-diffusion stack. It interleaves the prediction of future video latents and robot actions in a single autoregressive sequence, feeding observed keyframes back into its KV cache for closed-loop world modeling.
+{% elif model_name == "lingbot_vla_v2" %}
+[LingBot-VLA 2.0](https://github.com/Robbyant/lingbot-vla-v2) is a cross-embodiment Vision-Language-Action policy that pairs a Qwen3-VL-4B backbone with a sparse-MoE Qwen2 action expert, predicting action chunks via flow matching over a unified 55-D canonical state/action space.
 {% elif model_name == "lawam" %}
 [LaWAM](https://arxiv.org/abs/2606.15768) is a latent world action model that pairs a Qwen3-VL backbone with a latent action/world model and a flow-matching action head for dynamics-aware robot policies.
 {% else %}
@@ -90,6 +92,7 @@ This policy has been trained and pushed to the Hub using [LeRobot](https://githu
   "fastwam": "fastwam",
   "flux3": "flux3",
   "lingbot_va": "lingbot_va",
+  "lingbot_vla_v2": "lingbot_vla_v2",
   "lawam": "lawam"
 } %}
 {% if policy_docs.get(model_name) %}Learn how to train and run it in the [LeRobot {{ model_name }} guide](https://huggingface.co/docs/lerobot/main/en/{{ policy_docs[model_name] }}), or browse the [full documentation](https://huggingface.co/docs/lerobot/index).
