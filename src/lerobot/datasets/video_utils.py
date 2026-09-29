@@ -52,6 +52,7 @@ from lerobot.utils.import_utils import get_safe_default_video_backend
 from .compute_stats import RunningQuantileStats, auto_downsample_height_width
 from .depth_utils import quantize_depth
 from .pyav_utils import get_pix_fmt_channels
+from .utils import EpisodeDroppedError
 
 logger = logging.getLogger(__name__)
 
@@ -1078,19 +1079,15 @@ class StreamingVideoEncoder:
             consecutive = self._consecutive_repeats.get(video_key, 0) + 1
             self._consecutive_repeats[video_key] = consecutive
             if self.max_repeated_frames and consecutive >= self.max_repeated_frames:
-                raise RuntimeError(
-                    f"Encoder for {video_key} fell behind: repeated the previous frame "
-                    f"{consecutive} time(s) in a row (>= max_repeated_frames="
-                    f"{self.max_repeated_frames}, ~{self.max_repeated_frames / self.fps:.1f}s of video). "
-                    f"The encoder cannot keep up; use vcodec='auto' for hardware encoding or "
-                    f"increase encoder_queue_maxsize."
+                raise EpisodeDroppedError(
+                    f"Encoder for {video_key} fell behind by {consecutive} frame(s) in a row "
+                    f"(1 second of consecutive missing frames). Discarding this episode."
                 ) from None
             count = self._repeated_frames[video_key]
             # Log periodically to avoid spam (1st, then every 10th)
             if count == 1 or count % 10 == 0:
                 logger.warning(
                     f"Encoder queue full for {video_key}, repeated the previous frame {count} time(s). "
-                    f"Consider using vcodec='auto' for hardware encoding or increasing encoder_queue_maxsize."
                 )
 
     def finish_episode(self) -> dict[str, tuple[Path, dict | None]]:
