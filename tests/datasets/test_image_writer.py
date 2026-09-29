@@ -179,6 +179,31 @@ def test_save_image_numpy_multiprocessing(tmp_path, img_array_factory):
         writer.stop()
 
 
+@pytest.mark.parametrize("num_processes", [0, 2])
+def test_consecutive_write_failures_tracked(tmp_path, img_array_factory, num_processes):
+    """The per-camera consecutive-failure counter is updated by workers (threads and processes) and
+    resets on a successful write."""
+    writer = AsyncImageWriter(num_processes=num_processes, num_threads=2)
+
+    def fpath(i):
+        p = tmp_path / "images" / "cam" / "episode-000000" / f"frame-{i:06d}.png"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+
+    try:
+        bad_image = np.zeros((3,), dtype=np.uint8)  # invalid shape -> write_image fails
+        for i in range(3):
+            writer.save_image(bad_image, fpath(i))
+        writer.wait_until_done()
+        assert writer.consecutive_write_failures().get("cam", 0) == 3
+
+        writer.save_image(img_array_factory(), fpath(3))  # a successful write resets the counter
+        writer.wait_until_done()
+        assert writer.consecutive_write_failures().get("cam", 0) == 0
+    finally:
+        writer.stop()
+
+
 def test_save_image_torch(tmp_path, img_tensor_factory):
     writer = AsyncImageWriter()
     try:

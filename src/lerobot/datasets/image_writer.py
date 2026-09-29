@@ -13,10 +13,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import functools
 import logging
 import multiprocessing
 import queue
 import threading
+from collections.abc import Callable, MutableMapping
 from pathlib import Path
 
 import numpy as np
@@ -143,7 +145,7 @@ def save_kwargs_for_path(fpath: Path, compress_level: int) -> dict:
         raise ValueError(f"Unsupported image file extension: {suffix}")
 
 
-def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1):
+def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1) -> bool:
     """
     Saves a NumPy array or PIL Image to a file.
 
@@ -165,6 +167,9 @@ def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path, compress_level
         TypeError: If the input 'image' is not a NumPy array or a
             PIL.Image.Image object.
 
+    Returns:
+        ``True`` if the image was written, ``False`` if the write failed (the error is logged).
+
     Side Effects:
         Logs an error message if the image writing process fails for any reason.
     """
@@ -176,30 +181,46 @@ def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path, compress_level
         else:
             raise TypeError(f"Unsupported image type: {type(image)}")
         img.save(fpath, **save_kwargs_for_path(fpath, compress_level))
+        return True
     except Exception as e:
         logger.error("Error writing image %s: %s", fpath, e)
+        return False
 
 
-def worker_thread_loop(queue: queue.Queue):
+def worker_thread_loop(queue: queue.Queue, on_result: Callable[[Path, bool], None] | None = None):
     while True:
         item = queue.get()
         if item is None:
             queue.task_done()
             break
         image_array, fpath, compress_level = item
-        write_image(image_array, fpath, compress_level)
+        success = write_image(image_array, fpath, compress_level)
+        if on_result is not None:
+            on_result(fpath, success)
         queue.task_done()
 
 
-def worker_process(queue: queue.Queue, num_threads: int):
+def worker_process(
+    queue: queue.Queue, num_threads: int, on_result: Callable[[Path, bool], None] | None = None
+):
     threads = []
     for _ in range(num_threads):
-        t = threading.Thread(target=worker_thread_loop, args=(queue,))
+        t = threading.Thread(target=worker_thread_loop, args=(queue, on_result))
         t.daemon = True
         t.start()
         threads.append(t)
     for t in threads:
         t.join()
+
+
+def _record_write_result(failures: MutableMapping[str, int], lock, fpath: Path, success: bool) -> None:
+    """Reset the camera's failure counter on success, or increment it on failure.
+
+    The shared ``failures``/``lock`` let threads and processes update the same counters safely.
+    """
+    key = Path(fpath).parent.parent.name
+    with lock:
+        failures[key] = 0 if success else failures.get(key, 0) + 1
 
 
 class AsyncImageWriter:
@@ -224,23 +245,40 @@ class AsyncImageWriter:
         self.threads = []
         self.processes = []
         self._stopped = False
+        # Consecutive write failures per camera key, used to fail fast on persistent disk-write
+        # errors. Backed by a plain dict + lock for threads, or a multiprocessing.Manager dict +
+        # lock for processes.
+        self._mp_manager = None
+        self._consecutive_write_failures: MutableMapping[str, int] = {}
+        self._failures_lock = threading.Lock()
 
         if num_threads <= 0 and num_processes <= 0:
             raise ValueError("Number of threads and processes must be greater than zero.")
 
         if self.num_processes == 0:
             # Use threading
+            recorder = functools.partial(
+                _record_write_result, self._consecutive_write_failures, self._failures_lock
+            )
             self.queue = queue.Queue()
             for _ in range(self.num_threads):
-                t = threading.Thread(target=worker_thread_loop, args=(self.queue,))
+                t = threading.Thread(target=worker_thread_loop, args=(self.queue, recorder))
                 t.daemon = True
                 t.start()
                 self.threads.append(t)
         else:
             # Use multiprocessing
+            self._mp_manager = multiprocessing.Manager()
+            self._consecutive_write_failures = self._mp_manager.dict()
+            self._failures_lock = self._mp_manager.Lock()
+            recorder = functools.partial(
+                _record_write_result, self._consecutive_write_failures, self._failures_lock
+            )
             self.queue = multiprocessing.JoinableQueue()
             for _ in range(self.num_processes):
-                p = multiprocessing.Process(target=worker_process, args=(self.queue, self.num_threads))
+                p = multiprocessing.Process(
+                    target=worker_process, args=(self.queue, self.num_threads, recorder)
+                )
                 p.daemon = True
                 p.start()
                 self.processes.append(p)
@@ -252,6 +290,11 @@ class AsyncImageWriter:
             # Convert tensor to numpy array to minimize main process time
             image = image.cpu().numpy()
         self.queue.put((image, fpath, compress_level))
+
+    def consecutive_write_failures(self) -> dict[str, int]:
+        """Snapshot of the current consecutive-failure count per camera key."""
+        with self._failures_lock:
+            return dict(self._consecutive_write_failures)
 
     def wait_until_done(self):
         self.queue.join()
@@ -275,5 +318,8 @@ class AsyncImageWriter:
                     p.terminate()
             self.queue.close()
             self.queue.join_thread()
+            if self._mp_manager is not None:
+                self._mp_manager.shutdown()
+                self._mp_manager = None
 
         self._stopped = True
