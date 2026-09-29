@@ -149,7 +149,7 @@ class OpenArmMini(Teleoperator):
 
         print("\nSetting motor ranges\n")
 
-        motor_resolution = self.bus.model_resolution_table[list(self.bus.motors.values())[0].model]
+        motor_resolution = self.bus.resolution(next(iter(self.bus.motors.values())).model)
         max_res = motor_resolution - 1
 
         for motor_name, motor in self.bus.motors.items():
