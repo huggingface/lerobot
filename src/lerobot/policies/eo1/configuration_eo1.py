@@ -158,7 +158,7 @@ class EO1Config(PreTrainedConfig):
         # `Qwen/Qwen2.5-VL-3B-Instruct` checkpoint dtype".
         if self.dtype == "auto":
             warnings.warn(
-                "`dtype='auto'` is deprecated and ignored; use `--policy.dtype` instead.",
+                "`dtype='auto'` is deprecated; use `--policy.dtype` instead.",
                 FutureWarning,
                 stacklevel=3,
             )

@@ -69,6 +69,6 @@ def test_train_config_cli_and_resume(tmp_path):
 def test_legacy_precision_settings_still_load(tmp_path, legacy_config, default):
     # Configs saved before `dtype` existed load with a warning; only `dtype` sets the precision.
     (tmp_path / "config.json").write_text(json.dumps({"device": "cpu", **legacy_config}))
-    with pytest.warns(FutureWarning, match="is deprecated and ignored"):
+    with pytest.warns(FutureWarning, match="is deprecated"):
         config = PreTrainedConfig.from_pretrained(tmp_path)
     assert config.dtype is default

@@ -381,7 +381,7 @@ class GrootConfig(PreTrainedConfig):
     def __post_init__(self):
         if self.model_params_fp32 is not None:
             warnings.warn(
-                "`model_params_fp32` is deprecated and ignored; use `--policy.dtype` instead.",
+                "`model_params_fp32` is deprecated; use `--policy.dtype` instead.",
                 FutureWarning,
                 stacklevel=3,
             )

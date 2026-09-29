@@ -249,7 +249,7 @@ class FastWAMConfig(PreTrainedConfig):
     def __post_init__(self) -> None:
         if self.torch_dtype is not None:
             warnings.warn(
-                "`torch_dtype` is deprecated and ignored; use `--policy.dtype` instead.",
+                "`torch_dtype` is deprecated; use `--policy.dtype` instead.",
                 FutureWarning,
                 stacklevel=3,
             )

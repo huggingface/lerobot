@@ -117,7 +117,7 @@ class Evo1Config(PreTrainedConfig):
     def __post_init__(self):
         if self.vlm_dtype is not None:
             warnings.warn(
-                "`vlm_dtype` is deprecated and ignored; use `--policy.dtype` instead.",
+                "`vlm_dtype` is deprecated; use `--policy.dtype` instead.",
                 FutureWarning,
                 stacklevel=3,
             )
