@@ -110,6 +110,31 @@ def test_record_and_resume(tmp_path):
     assert dataset.meta.total_tasks == 1
 
 
+def test_record_saves_action_returned_by_robot(tmp_path):
+    robot_cfg = MockRobotConfig(action_scale=0.5, random_values=False, static_values=[2.0, 4.0, 6.0])
+    teleop_cfg = MockTeleopConfig(random_values=False, static_values=[2.0, 4.0, 6.0])
+    dataset_cfg = DatasetRecordConfig(
+        repo_id=DUMMY_REPO_ID,
+        single_task="Dummy task",
+        root=tmp_path / "sent_action",
+        num_episodes=1,
+        episode_time_s=0.1,
+        reset_time_s=0,
+        push_to_hub=False,
+    )
+
+    dataset = record(
+        RecordConfig(
+            robot=robot_cfg,
+            dataset=dataset_cfg,
+            teleop=teleop_cfg,
+            play_sounds=False,
+        )
+    )
+
+    assert dataset[0]["action"].tolist() == [1.0, 2.0, 3.0]
+
+
 def test_record_and_replay(tmp_path, cadence_log):
     robot_cfg = MockRobotConfig()
     teleop_cfg = MockTeleopConfig()

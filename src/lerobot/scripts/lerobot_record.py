@@ -359,12 +359,15 @@ def record_loop(
             # Action can eventually be clipped using `max_relative_target`,
             # so action actually sent is saved in the dataset. action = postprocessor.process(action)
             # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
-            _sent_action = robot.send_action(robot_action_to_send)
+            # Robot implementations may clip or otherwise modify the command before
+            # sending it. Record the value returned by the robot, which is the action
+            # that was actually sent to the hardware.
+            sent_action = robot.send_action(robot_action_to_send)
 
         # Write to dataset
         if dataset is not None:
             with timer.section("record"):
-                action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
+                action_frame = build_dataset_frame(dataset.features, sent_action, prefix=ACTION)
                 frame = {**observation_frame, **action_frame, "task": single_task}
                 dataset.add_frame(frame)
 
