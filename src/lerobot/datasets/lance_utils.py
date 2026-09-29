@@ -247,6 +247,7 @@ VIDEO_BLOB_COLUMN = "video_bytes"
 # Only connection routing belongs in the metadata cache identity. Credentials and
 # request tuning must not change cache paths or become part of the digest.
 _METADATA_ROUTING_OPTIONS = {
+    "revision",
     "endpoint",
     "endpoint_url",
     "region",
