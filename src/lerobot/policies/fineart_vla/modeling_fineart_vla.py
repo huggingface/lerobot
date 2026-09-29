@@ -1725,20 +1725,12 @@ class FineARTVLAPolicy(PI05Policy):
         backbone_scale = float(getattr(self.config, "backbone_lr_scale", 1.0))
         expert_scale = float(getattr(self.config, "action_expert_lr_scale", 1.0))
         conditioning_scale = self.config.conditioning_lr_scale
-        conditioning_limit = self.config.conditioning_grad_clip_norm
-        expert_limit = self.config.action_expert_grad_clip_norm
-        split_conditioning = conditioning_scale != 1.0 or conditioning_limit is not None
+        split_conditioning = conditioning_scale != 1.0
         backend = {
             "foreach": getattr(self.config, "optimizer_foreach", False),
             "fused": getattr(self.config, "optimizer_fused", True),
         }
-        if (
-            head_scale == 1.0
-            and backbone_scale == 1.0
-            and expert_scale == 1.0
-            and not split_conditioning
-            and expert_limit is None
-        ):
+        if head_scale == 1.0 and backbone_scale == 1.0 and expert_scale == 1.0 and not split_conditioning:
             return [{"params": self.parameters(), **backend}]
 
         # Keep the tied LM projection and embeddings in the same optimizer group.
@@ -1780,21 +1772,13 @@ class FineARTVLAPolicy(PI05Policy):
         if backbone_params:
             groups.append({"params": backbone_params, "lr": base_lr * backbone_scale, "name": "backbone"})
         if expert_params:
-            groups.append(
-                {
-                    "params": expert_params,
-                    "lr": base_lr * expert_scale,
-                    "name": "action_expert",
-                    "grad_clip_norm": expert_limit,
-                }
-            )
+            groups.append({"params": expert_params, "lr": base_lr * expert_scale, "name": "action_expert"})
         if conditioning_params:
             groups.append(
                 {
                     "params": conditioning_params,
                     "lr": base_lr * expert_scale * conditioning_scale,
                     "name": "conditioning",
-                    "grad_clip_norm": conditioning_limit,
                 }
             )
         elif split_conditioning:
@@ -1825,13 +1809,6 @@ class FineARTVLAPolicy(PI05Policy):
         )
         for group in groups:
             group.update(backend)
-            if group.get("grad_clip_norm") is not None or group["name"] == "conditioning":
-                logger.info(
-                    "FineARTVLA %s: lr=%g, pre-global gradient limit=%s",
-                    group["name"],
-                    group["lr"],
-                    group.get("grad_clip_norm"),
-                )
         return groups
 
     @torch.no_grad()

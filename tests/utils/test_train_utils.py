@@ -229,14 +229,7 @@ def test_dataloaders_filter_boundaries_without_consuming_policy_rng(
     rng = torch.get_rng_state().clone()
     next(iter(train))
     assert torch.equal(rng, torch.get_rng_state())
-    eval_indices = torch.cat(list(evaluation)).tolist()
-    if max_eval_samples:
-        # Which frames get picked is the balanced sampler's contract; here we only
-        # pin that the cap holds and that the selection stays inside the
-        # boundary-filtered frames.
-        assert len(eval_indices) == max_eval_samples
-        assert eval_indices == sorted(eval_indices)
-        assert set(eval_indices) <= set(expected)
-    else:
-        assert eval_indices == expected
+    assert torch.cat(list(evaluation)).tolist() == (
+        expected[:max_eval_samples] if max_eval_samples else expected
+    )
     assert torch.equal(rng, torch.get_rng_state())

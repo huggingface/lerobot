@@ -72,17 +72,6 @@ def test_config_save_load_roundtrip(tmp_path):
     assert restored.text_loss_weight == 0.5
 
 
-def test_joint_subtask_checkpoints_are_rejected(tmp_path):
-    FineARTVLAConfig(device="cpu").save_pretrained(tmp_path)
-    path = tmp_path / "config.json"
-    saved = json.loads(path.read_text())
-    saved["joint_subtask_conditioning"] = True
-    path.write_text(json.dumps(saved))
-
-    with pytest.raises(ValueError, match="joint-subtask"):
-        PreTrainedConfig.from_pretrained(tmp_path)
-
-
 class _ActionTokenizer:
     def __call__(self, actions):
         return np.asarray(actions).round().astype(np.int64)

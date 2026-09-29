@@ -14,7 +14,6 @@
 
 """FineART-VLA, built on Physical Intelligence's pi0.5 and openpi implementation."""
 
-import logging
 import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -158,10 +157,6 @@ class FineARTVLAConfig(PI05Config):
     conditioning_lr_scale: float = 1.0
     """Additional LR multiplier for time MLPs and adaptive scale/shift/gate projections."""
 
-    conditioning_grad_clip_norm: float | None = None
-    action_expert_grad_clip_norm: float | None = None
-    """Independent group limits before global clipping; supported on single-device/DDP training."""
-
     # Reuse each VLM prefix across independent denoising draws; 1 restores single-draw flow.
     flow_num_repeats: int = 5
 
@@ -176,10 +171,6 @@ class FineARTVLAConfig(PI05Config):
         super().__post_init__()
         if not math.isfinite(self.conditioning_lr_scale) or self.conditioning_lr_scale < 0:
             raise ValueError("conditioning_lr_scale must be finite and nonnegative")
-        for name in ("conditioning_grad_clip_norm", "action_expert_grad_clip_norm"):
-            value = getattr(self, name)
-            if value is not None and (not math.isfinite(value) or value <= 0):
-                raise ValueError(f"{name} must be finite and positive")
         if self.recipe_path is not None:
             from lerobot.datasets.recipe import resolve_recipe_override
 
@@ -214,23 +205,3 @@ class FineARTVLAConfig(PI05Config):
             self.use_flex_attention or self.use_manual_attention or self.use_flashrt_adarms
         ):
             raise ValueError("KI attention and AdaRMS optimizations require knowledge_insulation=True")
-
-    @classmethod
-    def _migrate_pretrained_config(cls, config: dict) -> dict:
-        """Migrate checkpoint data without registering a custom policy-choice decoder."""
-        config = dict(config)
-        if config.pop("joint_subtask_conditioning", False):
-            raise ValueError(
-                "This checkpoint requests the legacy joint-subtask prompt layout. "
-                "The shared runtime needs a matching joint-sequence processor before it can be deployed; "
-                "do not silently switch it to the default subtask-only action prompt."
-            )
-        for key in ("subtask_replan_steps", "apply_chat_template"):
-            if key in config:
-                config.pop(key)
-                logging.warning(
-                    "Ignoring legacy FineART-VLA checkpoint option %s; rollout owns autosteer_interval_s "
-                    "and the saved recipe/processors own prompt formatting.",
-                    key,
-                )
-        return config
