@@ -56,8 +56,7 @@ class DM05ClipNormalizedProcessorStep(ProcessorStep):
         result = transition.copy()
         if self.clip_state:
             observation = result.get(TransitionKey.OBSERVATION)
-            state = observation.get(OBS_STATE) if isinstance(observation, dict) else None
-            if state is not None:
+            if isinstance(observation, dict) and (state := observation.get(OBS_STATE)) is not None:
                 result[TransitionKey.OBSERVATION] = {
                     **observation,
                     OBS_STATE: torch.as_tensor(state).clamp(-1.0, 1.0),

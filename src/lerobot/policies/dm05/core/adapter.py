@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 import torch
@@ -39,7 +39,7 @@ def flatten_feature_names(names: Any) -> list[str] | None:
             if [index for _, index in indexed_names] != list(range(len(indexed_names))):
                 return None
             return [str(name) for name, _ in indexed_names]
-        values = names.values()
+        values: Iterable[Any] = names.values()
     elif isinstance(names, Sequence):
         values = names
     else:

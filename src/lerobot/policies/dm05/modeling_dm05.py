@@ -141,7 +141,7 @@ def _apply_core_overrides(core_config: Any, config: DM05Config, dtype: torch.dty
     core_config.gradient_checkpointing = bool(
         core_config.vlm_gradient_checkpointing or core_config.ae_gradient_checkpointing
     )
-    core_config.ae_gradient_checkpointing_layers = int(config.ae_gradient_checkpointing_layers)
+    core_config.ae_gradient_checkpointing_layers = int(config.ae_gradient_checkpointing_layers or 1)
     core_config.llm_attn_implementation = config.llm_attn_implementation
     core_config.vision_attn_implementation = config.vision_attn_implementation
     core_config.action_attn_implementation = config.action_attn_implementation
@@ -197,6 +197,12 @@ def _core_config_payload(model: Any) -> dict | None:
     return payload
 
 
+class DM05ActionSelectKwargs(ActionSelectKwargs, total=False):
+    """`predict_action_chunk` keywords: the shared ones plus a per-call denoising step count."""
+
+    diffusion_steps: int
+
+
 class DM05Policy(PreTrainedPolicy):
     """LeRobot policy wrapper around the core DM05 model."""
 
@@ -230,7 +236,7 @@ class DM05Policy(PreTrainedPolicy):
             local_rank = os.environ.get("LOCAL_RANK")
             if local_rank is not None:
                 config.device = f"cuda:{int(local_rank)}"
-        if is_lerobot_checkpoint:
+        if is_lerobot_checkpoint and config.core_config is not None:
             core_config = _apply_core_overrides(
                 core_config_cls(**config.core_config),
                 config,
@@ -454,7 +460,7 @@ class DM05Policy(PreTrainedPolicy):
 
         dtype = next((p.dtype for p in self.model.parameters() if p.is_floating_point()), torch.float32)
         prefill_actions = model_inputs.get("prefill_actions")
-        if torch.is_tensor(prefill_actions):
+        if isinstance(prefill_actions, torch.Tensor):
             model_inputs["prefill_actions"] = prefill_actions.to(device=device, dtype=dtype)
         if not include_actions:
             return model_inputs
@@ -547,7 +553,9 @@ class DM05Policy(PreTrainedPolicy):
         return loss, {}
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+    def predict_action_chunk(
+        self, batch: dict[str, Tensor], **kwargs: Unpack[DM05ActionSelectKwargs]
+    ) -> Tensor:
         """Predict a full action chunk for one processed observation batch."""
         self.eval()
         model_inputs = self._prepare_model_inputs(batch, include_actions=False)

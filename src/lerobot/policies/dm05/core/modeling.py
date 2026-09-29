@@ -1582,7 +1582,7 @@ class DM05ForCausalLM(DM05CorePreTrainedModel):
             horizon=actions.shape[1],
             device=actions.device,
         )
-        if action_prefix_mask is not None:
+        if action_prefix_mask is not None and prefill_actions is not None:
             prefill_actions = prefill_actions.to(
                 device=actions.device,
                 dtype=actions.dtype,
@@ -1737,7 +1737,7 @@ class DM05ForCausalLM(DM05CorePreTrainedModel):
             horizon=self.model.config.chunk_size,
             device=device,
         )
-        if action_prefix_mask is not None:
+        if action_prefix_mask is not None and prefill_actions is not None:
             prefill_actions = prefill_actions.to(device=device, dtype=dtype)
 
         # Step 1: get KV cache.
@@ -1765,7 +1765,7 @@ class DM05ForCausalLM(DM05CorePreTrainedModel):
                 raise ValueError(f"initial_noise must have shape {expected_shape}.")
             x_t = initial_noise.to(device=device, dtype=dtype)
         expanded_action_dim_mask = _expand_action_dim_mask(action_dim_mask, x_t)
-        if prefill_actions is not None:
+        if action_prefix_mask is not None and prefill_actions is not None:
             x_t = torch.where(action_prefix_mask[..., None], prefill_actions, x_t)
         time_val = 1.0
         dt = -1.0 / diffusion_steps
@@ -1799,7 +1799,7 @@ class DM05ForCausalLM(DM05CorePreTrainedModel):
 
             v_t = self.model.action_out_proj(suffix_out)
             x_t = x_t + v_t * dt
-            if prefill_actions is not None:
+            if action_prefix_mask is not None and prefill_actions is not None:
                 x_t = torch.where(action_prefix_mask[..., None], prefill_actions, x_t)
             time_val += dt
         if expanded_action_dim_mask is not None:

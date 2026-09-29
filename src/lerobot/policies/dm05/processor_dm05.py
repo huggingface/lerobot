@@ -88,14 +88,15 @@ def dm05_image_keys(config: DM05Config) -> list[str]:
     Pinned rather than read from each observation, so an extra camera at inference cannot change
     the prompt with no error. Empty for a base checkpoint, whose cameras come from the dataset.
     """
+    if config.input_features is None:
+        raise ValueError("DM05Config.input_features must be resolved before building the processors.")
+    input_features = config.input_features
     image_keys = (
         list(config.image_keys)
         if config.image_keys
-        else sorted(
-            key for key, feature in config.input_features.items() if feature.type is FeatureType.VISUAL
-        )
+        else sorted(key for key, feature in input_features.items() if feature.type is FeatureType.VISUAL)
     )
-    if unknown := [key for key in image_keys if key not in config.input_features]:
+    if unknown := [key for key in image_keys if key not in input_features]:
         raise ValueError(f"DM05 image_keys are not declared in input_features: {unknown}.")
     return image_keys
 
@@ -122,6 +123,11 @@ def make_dm05_pre_post_processors(
     """Build the LeRobot processor pipeline for the OpenDM adapter."""
 
     config.validate_features()
+    if config.device is None or config.input_features is None or config.output_features is None:
+        raise ValueError(
+            "DM05Config.device, input_features and output_features must be resolved before building the "
+            "processors."
+        )
     # OpenDM normalizes only numeric state/action fields.
     normalizer = NormalizerProcessorStep(
         features={
@@ -204,7 +210,7 @@ def make_dm05_pre_post_processors_from_pretrained(
     # Fine-tuning stats arrive as the caller's normalizer overrides (lerobot-train injects the
     # dataset's); eval and resume keep the checkpoint's own, which the model was trained against.
     del dataset_stats, dataset_meta
-    config_overrides = {
+    config_overrides: dict[str, dict[str, Any]] = {
         "dm05_tokenizer_processor": {
             "image_keys": dm05_image_keys(config),
             "add_state": config.add_state,
