@@ -168,9 +168,6 @@ class FineARTVLAConfig(PI05Config):
     # PaLM-style z-loss stabilizes large-vocabulary CE; 0 disables it.
     text_ce_z_loss_weight: float = 1e-4
 
-    use_flashrt_fp8_mlp: bool = False
-    """Use calibrated FlashRT FP8 MLP kernels."""
-
     # Applied to FineART-VLA parameter groups, leaving the shared AdamW config unchanged.
     optimizer_foreach: bool | None = False
     optimizer_fused: bool | None = True

@@ -975,18 +975,6 @@ class FineARTVLAPolicy(PI05Policy):
                 persistent=False,
             )
 
-    def apply_flashrt_fp8_mlp(self, batch: dict[str, Tensor], *, safety: float = 1.05) -> bool:
-        """Opt-in: swap every Gemma + SigLIP MLP to FlashRT fused FP8 kernels.
-
-        Calibrates static activation scales once on ``batch`` (one representative
-        observation, already through the preprocessor) and swaps the MLP modules
-        in place. Returns False (no-op, BF16 kept) if the kernels are missing.
-        Gated by ``config.use_flashrt_fp8_mlp`` — see flashrt_fp8.py.
-        """
-        from .flashrt_fp8 import apply_fp8_mlp  # noqa: PLC0415
-
-        return apply_fp8_mlp(self, batch, safety=safety)
-
     def _unfreeze_lm_head(self) -> None:
         """Walk the PaliGemma submodules and re-enable gradients on
         ``lm_head`` + the immediately preceding norm / last text-model
@@ -1850,10 +1838,6 @@ class FineARTVLAPolicy(PI05Policy):
     def predict_action_chunk(
         self, batch: dict[str, Tensor], **kwargs: Unpack[RTCActionSelectKwargs]
     ) -> Tensor:
-        # Guard before first-observation FP8 calibration to prevent recursive prediction.
-        if self.config.use_flashrt_fp8_mlp and not getattr(self, "_fp8_applied", False):
-            self._fp8_applied = True
-            self.apply_flashrt_fp8_mlp(batch)
         marks = batch.get(OBS_LANGUAGE_CAUSAL_MARKS)
         if marks is None:
             return super().predict_action_chunk(batch, **kwargs)
