@@ -1,0 +1,214 @@
+# LimX TRON1
+
+The [LimX Dynamics](https://www.limxdynamics.com/) TRON1 legged robots are supported in LeRobot.
+TRON1 ships as several legged builds — a 6-DoF point foot (`PF_*`), an 8-DoF sole foot (`SF_*`) and
+an 8-DoF wheel foot (`WF_*`) — and LeRobot drives all of them as a single `limx_tron1` robot whose
+joint layout is selected from the `ROBOT_TYPE` value.
+
+<Tip>
+  This integration talks to the robot's own control process through the vendor
+  low-level SDK, which is published on PyPI as prebuilt wheels (`limxsdk`). It
+  is imported lazily, on `connect()`, so `--robot.type=limx_tron1` stays
+  discoverable even when the extra is not installed.
+</Tip>
+
+## Supported Hardware
+
+| Build      | Joints | Fourth per-leg joint | `ROBOT_TYPE` prefix |
+| ---------- | ------ | -------------------- | ------------------- |
+| Point foot | 6      | — (none)             | `PF_*`              |
+| Sole foot  | 8      | `ankle`              | `SF_*`              |
+| Wheel foot | 8      | `wheel`              | `WF_*`              |
+
+Every build is addressed positionally: LeRobot commands joint positions in radians. The point-foot
+build is the default when `robot_type` is not set.
+
+The point-foot family ships as `PF_P441A/B/C/C2` and `PF_TRON1A/B`; the sole- and wheel-foot
+families ship as `SF_TRON1A/B` and `WF_TRON1A/B`. The wheel-legged builds (`WL_P311D/E`) are a
+different `RobotType.Wheellegged` robot and are **not** covered by this robot type.
+
+## Install
+
+TRON1 support is an optional extra, because it pulls in the vendor SDK:
+
+```bash
+pip install -e '.[limx_tron1]'
+```
+
+If the extra is not installed, connecting fails with an error telling you to install it.
+
+<Warning>
+  The vendor publishes a different newest build per platform: `4.1.1` ships
+  Linux wheels only, while `4.1.0` is the newest Windows one. The extra
+  therefore asks for `limxsdk>=4.1.0` so that Windows resolves at all; a Linux
+  install picks up `4.1.1`.
+</Warning>
+
+## The `ROBOT_TYPE` Variable
+
+The vendor package picks its joint table from the `ROBOT_TYPE` environment variable, which it reads
+**when it is first imported**. Two consequences shape this integration:
+
+- The driver exports `ROBOT_TYPE` from `robot_type` immediately before it imports the package, so
+  the variable is in place in time.
+- A process cannot switch robot builds once the package has loaded. Run a separate process per
+  build.
+
+Only the `PF_`/`SF_`/`WF_` prefix matters for the joint layout — it selects the 6- or 8-joint table.
+Set `robot_type` to your build (for example `"PF_TRON1A"`); leave it `None` only if your environment
+already exports `ROBOT_TYPE`, in which case the point-foot layout is assumed.
+
+## Connecting to a Real Robot
+
+The vendor's SDK header documents the robot address for a real deployment. In short:
+
+1. Connect the development computer to the robot's control network; the robot is at `10.192.1.2`
+   (verify with `ping 10.192.1.2`).
+2. Bring the robot up with the vendor's own procedure. The vendor's TRON1 controller arms itself
+   from the remote control (`L1 + Y` to start, `L1 + X` to stop), so the robot's own controller —
+   not this driver — gates when motor commands take effect.
+3. Put the robot in a safe posture before connecting, since a connected driver will republish
+   whatever target it last held.
+
+The vendor also ships a MuJoCo simulator (`tron1-mujoco-sim`) you can run first, without the robot.
+
+## Verify the Connection
+
+```python
+from lerobot.robots.limx_tron1 import LimxTron1, LimxTron1Config
+
+robot = LimxTron1(LimxTron1Config(robot_ip="10.192.1.2", robot_type="PF_TRON1A"))
+robot.connect()
+print(robot.get_observation())
+robot.disconnect()
+```
+
+`get_observation()` returns one `"<joint>.pos"` entry per joint, in radians, keyed by the joint
+names in the configuration (see [Joint Names](#joint-names)).
+
+## Send Actions
+
+`send_action()` consumes exactly the keys that `get_observation()` produces, so a policy trained on
+recorded observations can be replayed without a translation layer:
+
+```python
+obs = robot.get_observation()
+robot.send_action({key: value for key, value in obs.items()})  # holds the measured pose
+```
+
+Actions are joint positions in radians. The driver republishes the latest target at `publish_rate`
+while connected, so the controller keeps receiving setpoints between `send_action()` calls, and
+interpolates towards them rather than applying them instantly.
+
+Nothing is published until either `start_pose` or a first action provides a target, so connecting
+alone does not move the robot.
+
+## Configuration
+
+| Field                 | Default               | Description                                                                                     |
+| --------------------- | --------------------- | ----------------------------------------------------------------------------------------------- |
+| `robot_ip`            | `10.192.1.2`          | Address of the robot's own control process                                                      |
+| `robot_type`          | `None`                | Robot build exported as `ROBOT_TYPE`. Only the `PF_`/`SF_`/`WF_` prefix selects the layout      |
+| `kp`                  | vendor build defaults | Position gains, in `joint_names` order. Defaults per build; see [Gains](#gains)                 |
+| `kd`                  | vendor build defaults | Derivative gains, matching `kp` joint for joint                                                 |
+| `joint_names`         | vendor build names    | Joint names, in SDK vector order. Override to match an existing dataset                         |
+| `publish_rate`        | `500.0`               | Command publish rate in Hz. 500 Hz matches the vendor's own TRON1 loop                          |
+| `start_pose`          | `None`                | Pose to hold once connected. `None` leaves the robot where it is                                |
+| `observation_timeout` | `1.0`                 | Seconds to wait for a fresh state sample                                                        |
+| `state_max_age`       | `None`                | Reject state older than this many seconds. `None` disables the check; on hardware prefer `~0.5` |
+
+Example:
+
+```bash
+lerobot-record \
+  --robot.type=limx_tron1 \
+  --robot.robot_ip=10.192.1.2 \
+  --robot.robot_type=PF_TRON1A
+```
+
+## Joint Names
+
+The vendor SDK addresses joints positionally, so this integration uses the vendor's own joint names
+(from the build's `params.yaml`). The order is left leg first, then right leg:
+
+```
+# point foot (6)
+abad_L_Joint  hip_L_Joint  knee_L_Joint  abad_R_Joint  hip_R_Joint  knee_R_Joint
+
+# sole foot (8)
+abad_L_Joint  hip_L_Joint  knee_L_Joint  ankle_L_Joint
+abad_R_Joint  hip_R_Joint  knee_R_Joint  ankle_R_Joint
+
+# wheel foot (8)
+abad_L_Joint  hip_L_Joint  knee_L_Joint  wheel_L_Joint
+abad_R_Joint  hip_R_Joint  knee_R_Joint  wheel_R_Joint
+```
+
+<Warning>
+  If you already have a dataset or policy checkpoint that uses different joint
+  names, pass your own table via `--robot.joint_names=[...]` (6 or 8 entries, in
+  the order above) rather than renaming inside the dataset. No translation is
+  done for you.
+</Warning>
+
+## Gains
+
+`kp` and `kd` default to the vendor's own deployment values for each build
+(`tron1-rl-deploy-python`, `controllers/model/{PF,SF,WF}_TRON1A/params.yaml`) — one
+`stiffness`/`damping` pair reused across the leg joints, with a lower damping on the fourth per-leg
+joint of the sole- and wheel-foot builds:
+
+| Build      | `kp`   | `kd`               |
+| ---------- | ------ | ------------------ |
+| Point foot | `42.0` | `3.5` (uniform)    |
+| Sole foot  | `45.0` | `3.0`, ankle `1.5` |
+| Wheel foot | `42.0` | `2.5`, wheel `0.8` |
+
+These are the vendor's shipping gains, not an estimate. They are controller-specific, not
+universal — override `kp`/`kd` for a different controller.
+
+## Control Mode
+
+Commands are sent in the SDK's **mode 0** (torque-position hybrid) with a position target, zero
+desired velocity and **zero feedforward torque**, which reduces it to pure PD position tracking.
+This is exactly what the vendor's own TRON1 controller ships on the real robot (`mode` 0, `tau` 0,
+`dq` 0), so it is the vendor-validated choice rather than an assumption.
+
+The command carries no `motor_names` and no `parallel_solve_required`: the legged builds route
+commands by index and have no parallel-linkage conversion, and the vendor's own controller leaves
+both fields empty.
+
+## Safety
+
+- `start_pose` is only published once a target exists, so connecting does not command a motion.
+- `state_max_age` is disabled by default. On hardware, set it (for example `0.5`) so a stale state
+  sample is rejected instead of being fed to a policy.
+- The robot's own controller owns calibration, zeroing and motor arming; `calibrate()` is a no-op
+  here and `is_calibrated` reports `True`.
+- The driver publishes pure position commands: velocity and torque terms are sent as zero, with the
+  configured `kp`/`kd` doing the work. Targets are not clamped — the robot's own controller enforces
+  its joint limits.
+
+## Network Security Boundary
+
+The vendor control channel is plaintext and unauthenticated. It is intended for a trusted, local
+robot network only — do not expose the control port beyond that boundary.
+
+## Troubleshooting
+
+| Symptom                                   | Likely cause                                                                        |
+| ----------------------------------------- | ----------------------------------------------------------------------------------- |
+| `'limxsdk' is required but not installed` | Install it with `pip install -e '.[limx_tron1]'`                                    |
+| `failed to initialise against 10.192.1.2` | The robot-side control process is not running, or `robot_ip` is wrong               |
+| `no fresh state sample within 1.0s`       | No state is arriving: the control process is not publishing, or `robot_ip` is wrong |
+| The robot follows the wrong joint table   | `robot_type` prefix does not match the build; `PF_` is assumed when unset           |
+| `unknown TRON1 build`                     | `robot_type` has an unsupported prefix (only `PF_`/`SF_`/`WF_` are recognised)      |
+| Observation keys do not match a dataset   | Pass a matching `joint_names` table; see [Joint Names](#joint-names)                |
+
+## Out of Scope
+
+- **Cameras.** This integration exposes joint positions only. Image observations are not part of it,
+  so it does not accept a `cameras` configuration.
+- **Wheel-legged builds (`WL_*`).** These are a different `RobotType.Wheellegged` robot, not the
+  point-foot family this robot type covers.
+- **Simulation environments.** No LeRobot environment ships with this robot.
