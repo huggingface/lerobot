@@ -29,6 +29,27 @@ from .config_so_leader import SOLeaderTeleopConfig
 
 logger = logging.getLogger(__name__)
 
+_HOMING_POSITION_DIAGRAM = r"""
+       ╭─────┬────────────────────┬──────╮ ◉╲═════╗   ← moveable claw
+       │     │      forearm       │  ▤▤  │╤══╲════╝
+       ╰┬───┬┴────────────────────┴──────┴┴═══════╝
+        │   │                                  ███
+        │   │                                  ███  ← handle
+        │   │                                  ███
+        │   │   upper arm
+        │   │
+        │   │
+        │   │
+   ╭────┴───┴────╮
+   │   base ◉    │
+   ╰──┬───────┬──╯
+  ╭───┴───────┴───╮
+  │▓▓▓ C-clamp ▓▓▓│
+  ╰───────────────╯
+ ═══════════════════════════════════════════════════
+                table edge
+"""
+
 
 class SOLeader(Teleoperator):
     """Generic SO leader base for SO-100/101/10X teleoperators."""
@@ -97,7 +118,9 @@ class SOLeader(Teleoperator):
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
-        input(f"Move {self} to the middle of its range of motion and press ENTER....")
+        print(_HOMING_POSITION_DIAGRAM)
+        print("Video walkthrough: https://huggingface.co/docs/lerobot/main/en/so101#calibration-video")
+        input(f"Move {self} to the middle of its range of motion (shown above) and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
 
         full_turn_motor = "wrist_roll"
@@ -110,14 +133,14 @@ class SOLeader(Teleoperator):
         range_mins[full_turn_motor] = 0
         range_maxes[full_turn_motor] = 4095
 
-        self.calibration = {}
+        self.calibration: dict[str, MotorCalibration] = {}
         for motor, m in self.bus.motors.items():
             self.calibration[motor] = MotorCalibration(
                 id=m.id,
                 drive_mode=0,
-                homing_offset=homing_offsets[motor],
-                range_min=range_mins[motor],
-                range_max=range_maxes[motor],
+                homing_offset=int(homing_offsets[motor]),
+                range_min=int(range_mins[motor]),
+                range_max=int(range_maxes[motor]),
             )
 
         self.bus.write_calibration(self.calibration)
