@@ -225,10 +225,130 @@ def test_close_during_blocked_call_keeps_ownership_until_worker_finishes(worker)
         assert entered.wait(2)
         close = worker.submit(control_request(worker, session, 0, "close"))
         assert not close.done()
-        assert_error(worker.submit(open_request(worker)).result(2), ErrorCode.BUSY)
+        rejected = worker.submit(open_request(worker)).result(2)
+        assert_error(rejected, ErrorCode.BUSY)
+        assert "admission_blocker=unfinished_inference" in rejected.body["message"]
+        state = worker.descriptor["session"]
+        assert state["owner"] == session
+        assert state["cleanup_pending"]
+        assert state["cleanup_reason"] == "client_close"
+        assert state["inference_pending"]
         release.set()
         action.result(2)
         assert close.result(2).message_type is MessageType.ACK
+        assert admit(worker) != session
+    finally:
+        release.set()
+
+
+@pytest.fixture
+def cleanup_clock(monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr("lerobot.remote_inference.server.time", SimpleNamespace(monotonic=lambda: clock[0]))
+    return clock
+
+
+def test_absent_client_retains_ownership_during_grace_then_allows_fresh_session(
+    worker, cleanup_clock, caplog
+):
+    caplog.set_level("INFO", logger="lerobot.remote_inference.server")
+    session = admit(worker)
+    assert worker.descriptor["limits"]["idle_timeout_s"] == 30.0
+    worker.expire(present=False)
+    cleanup_clock[0] += 29
+    worker.expire(present=False)
+    state = worker.descriptor["session"]
+    assert state["owner"] == session
+    assert state["client_present"] is False
+    assert state["absence_grace_remaining_s"] == 1.0
+    assert not state["cleanup_pending"]
+    rejected = worker.submit(open_request(worker)).result(2)
+    assert_error(rejected, ErrorCode.BUSY)
+    assert "admission_blocker=absence_grace" in rejected.body["message"]
+    assert "absence_grace_remaining_s=1.0" in rejected.body["message"]
+    cleanup_clock[0] += 1
+    worker.expire(present=False)
+    # This control either queues after the worker close or observes its completion.
+    assert_error(worker.submit(control_request(worker, session, 0, "status")).result(2), ErrorCode.STALE)
+    assert worker.descriptor["available"]
+    assert worker.descriptor["session"]["owner"] is None
+    assert admit(worker) != session
+    assert worker.runner.policy.resets == 4  # constructor, first open, close, new open
+    assert "Session client absent" in caplog.text
+    assert "Session cleanup queued" in caplog.text
+    assert "Session released" in caplog.text
+
+
+def test_present_paused_client_never_expires_and_restored_presence_restarts_grace(worker, cleanup_clock):
+    session = admit(worker)
+    worker.expire(present=True)
+    cleanup_clock[0] += 300
+    worker.expire(present=True)
+    assert worker.session_id == session
+    assert worker.descriptor["session"]["absence_grace_remaining_s"] is None
+    worker.expire(present=False)
+    cleanup_clock[0] += 29
+    worker.expire(present=True)
+    state = worker.descriptor["session"]
+    assert state["client_present"]
+    assert state["admission_blocker"] == "active_session"
+    assert state["absence_grace_remaining_s"] is None
+    cleanup_clock[0] += 100
+    worker.expire(present=False)
+    assert worker.descriptor["session"]["absence_grace_remaining_s"] == 30.0
+    assert worker.session_id == session
+
+
+def test_absence_cleanup_never_reuses_a_blocked_model_after_grace(worker, cleanup_clock):
+    session = admit(worker)
+    entered, release = block_predict(worker)
+    try:
+        action = worker.submit(action_request(worker, session))
+        assert entered.wait(2)
+        worker.expire(present=False)
+        cleanup_clock[0] += 30
+        worker.expire(present=False)
+        state = worker.descriptor["session"]
+        assert state["owner"] == session
+        assert state["absence_grace_remaining_s"] == 0.0
+        assert state["cleanup_reason"] == "client_absence"
+        assert state["admission_blocker"] == "unfinished_inference"
+        # Neither additional absence nor a late presence token revokes an ordered close.
+        cleanup_clock[0] += 300
+        worker.expire(present=False)
+        worker.expire(present=True)
+        assert_error(worker.submit(open_request(worker)).result(2), ErrorCode.BUSY)
+        assert worker.runner.policy.resets == 2
+        after_cleanup = worker.submit(control_request(worker, session, 0, "status"))
+        assert not after_cleanup.done()
+        release.set()
+        assert_error(action.result(2), ErrorCode.TIMEOUT)
+        assert_error(after_cleanup.result(2), ErrorCode.STALE)
+        assert admit(worker) != session
+    finally:
+        release.set()
+
+
+def test_absence_cleanup_retries_a_full_worker_queue_without_extending_grace(worker, cleanup_clock):
+    session = admit(worker)
+    entered, release = block_predict(worker)
+    try:
+        action = worker.submit(action_request(worker, session))
+        assert entered.wait(2)
+        queued = [worker.submit(control_request(worker, session, 0, "status")) for _ in range(8)]
+        worker.expire(present=False)
+        cleanup_clock[0] += 30
+        worker.expire(present=False)
+        state = worker.descriptor["session"]
+        assert state["admission_blocker"] == "cleanup_queue_full"
+        assert not state["cleanup_pending"]
+        assert state["absence_grace_remaining_s"] == 0.0
+        release.set()
+        action.result(2)
+        for future in queued:
+            assert future.result(2).message_type is MessageType.ACK
+        worker.expire(present=False)
+        assert_error(worker.submit(control_request(worker, session, 0, "status")).result(2), ErrorCode.STALE)
         assert admit(worker) != session
     finally:
         release.set()

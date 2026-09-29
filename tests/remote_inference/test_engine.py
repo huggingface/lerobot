@@ -5,7 +5,7 @@
 
 import time
 from contextlib import contextmanager
-from threading import Event, Lock
+from threading import Event, Lock, Thread
 from types import SimpleNamespace
 
 import pytest
@@ -100,11 +100,15 @@ class ControlledClient:
         self.closed.set()
 
 
-@pytest.fixture
-def session():
+@pytest.fixture(params=["append", "aligned"])
+def session(request):
     client = ControlledClient()
     config = RemoteInferenceConfig(
-        deployment="test", semantics="radians", hold_mode="position", max_observation_age_s=5
+        deployment="test",
+        semantics="radians",
+        hold_mode="position",
+        max_observation_age_s=5,
+        chunk_merge=request.param,
     )
     wrapper = SimpleNamespace(observation_time=None)
     engine = RemoteInferenceEngine(
@@ -300,3 +304,38 @@ def test_request_binds_latest_task_without_refreshing_capture_time(session):
     assert client.requests[0].observation.task == "updated task"
     assert client.requests[0].observation.task_version == 1
     assert client.requests[0].observation.capture_time == original_capture
+
+
+def test_retarget_and_result_acceptance_have_one_order(session, monkeypatch):
+    """A task change cannot slip between reading its version and merging a result."""
+    engine, client = session
+    accepting, release, changed = Event(), Event(), Event()
+    original_accept = engine.runtime.accept
+
+    def gated_accept(*args, **kwargs):
+        accepting.set()
+        assert release.wait(2)
+        return original_accept(*args, **kwargs)
+
+    monkeypatch.setattr(engine.runtime, "accept", gated_accept)
+    engine.resume()
+    capture(engine)
+    engine.start()
+    assert accepting.wait(2)
+
+    def retarget():
+        engine.set_task("new task")
+        changed.set()
+
+    thread = Thread(target=retarget)
+    thread.start()
+    try:
+        assert not changed.wait(0.03), "retarget interleaved with result acceptance"
+    finally:
+        release.set()
+        thread.join(2)
+    assert changed.is_set()
+    assert not engine.failed
+    # The result was accepted before the task change. Its original label remains
+    # valid for buffered continuity; subsequent requests use the new instruction.
+    assert engine.runtime.queue.snapshot().provenance[0].task == "initial task"

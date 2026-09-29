@@ -10,6 +10,8 @@ from lerobot.inference.contracts import FeatureSpec
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.transport.zenoh import ZenohConfig
 
+from .chunk_contract import validate_blendable_components
+
 
 @dataclass
 class ModelConfig:
@@ -30,6 +32,8 @@ class ExecutionConfig:
     action_deadline_s: float = 5.0
     idle_timeout_s: float = 30.0
     warmup_calls: int = 2
+    # Explicit continuous canonical coordinates; never infer gripper suitability.
+    blendable_components: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -64,6 +68,9 @@ class ServerConfig:
             raise ValueError("Deployment, model.repo_or_path and explicit semantics are required")
         if not self.features or self.action_feature is None:
             raise ValueError("Explicit canonical features and action_feature are required")
+        validate_blendable_components(self.action_feature, self.execution.blendable_components)
+        if self.execution.blendable_components and "chunk" not in self.execution.supported_modes:
+            raise ValueError("blendable_components requires the chunk execution mode")
         if self.language.motion_during_query != "hold":
             raise ValueError("Only planned holds during language generation are supported")
         for value in (

@@ -119,11 +119,16 @@ class ObservationSnapshot:
     task: str
     task_version: int = 0
     observation_id: str = ""
+    action_cursor: int | None = None
+    execution_generation: int | None = None
 
     def __post_init__(self) -> None:
         """Copy camera buffers so asynchronous encoding sees a stable frame."""
         if not math.isfinite(self.capture_time):
             raise ValueError("Observation capture time must be finite.")
+        for anchor in (self.action_cursor, self.execution_generation):
+            if anchor is not None and (type(anchor) is not int or anchor < 0):
+                raise ValueError("Observation action anchors must be nonnegative integers.")
         # Cameras commonly recycle their arrays. Own exactly one bounded request
         # snapshot; copies remain read-only until the runner creates its batch.
         owned: dict[str, np.ndarray] = {}
@@ -132,6 +137,15 @@ class ObservationSnapshot:
             array.setflags(write=False)
             owned[name] = array
         object.__setattr__(self, "features", MappingProxyType(owned))
+
+
+@dataclass(frozen=True)
+class ActionSource:
+    """One original contributor identity, without recursive blend history."""
+
+    capture_time: float
+    observation_id: str
+    request_id: str
 
 
 @dataclass(frozen=True)
@@ -147,6 +161,11 @@ class ActionProvenance:
     session_id: str = ""
     server_instance_id: str = ""
     artifact_identity: str = ""
+    # The primary IDs identify the incoming prediction. capture_time is the
+    # conservative age bound; this summary retains the oldest original source.
+    oldest_contributor: ActionSource | None = None
+    contributor_count: int = 1
+    contributor_digest: str = ""
 
 
 @dataclass(frozen=True)

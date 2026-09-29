@@ -28,8 +28,11 @@ from lerobot.inference.contracts import (
 from lerobot.inference.execution import ChunkRequest
 from lerobot.transport.zenoh import BoundedSubscriber, PresenceToken, ZenohConfig, ZenohTransport
 
+from .build_info import SOFTWARE_BUILD
+from .chunk_contract import chunk_settings, required_chunk_capabilities, validate_chunk_contract
 from .codec import RGBImage, decode_message, encode_message, peek_envelope
 from .protocol import (
+    PROTOCOL_VERSION,
     Envelope,
     ErrorCode,
     MessageType,
@@ -67,6 +70,10 @@ class RemoteClient:
         self.config = config
         self.descriptor = descriptor
         self.capabilities = parse_capabilities(descriptor["capabilities"])
+        self.chunk_settings = chunk_settings(
+            config.chunk_merge, config.blend_steps, config.blend_weight, config.blend_components
+        )
+        self.blend_indices: tuple[int, ...] = ()
         self.instance_id = descriptor["instance_id"]
         self.artifact_identity = descriptor["artifact_identity"]
         self.session_id = ""
@@ -84,6 +91,7 @@ class RemoteClient:
     @classmethod
     def connect(cls, config: RemoteInferenceConfig) -> RemoteClient:
         """Discover exactly one ready deployment within the handshake deadline."""
+        logger.info("Remote client software=%s protocol=%s", asdict(SOFTWARE_BUILD), PROTOCOL_VERSION)
         transport = ZenohTransport(
             ZenohConfig(
                 mode=config.zenoh_mode,
@@ -122,6 +130,13 @@ class RemoteClient:
                     "Expected exactly one ready instance; select --inference.instance if ambiguous",
                 )
             descriptor = next(iter(descriptors.values()))
+            logger.info(
+                "Remote server deployment=%s instance=%s software=%r protocol=%s",
+                config.deployment,
+                descriptor["instance_id"],
+                descriptor.get("software", "unavailable (peer does not report its loaded build)"),
+                PROTOCOL_VERSION,
+            )
             if config.expected_artifact and config.expected_artifact != descriptor.get("artifact_identity"):
                 raise ProtocolError(
                     ErrorCode.INCOMPATIBLE, "Expected artifact differs from deployed checkpoint"
@@ -180,6 +195,22 @@ class RemoteClient:
             or ExecutionMode(mode) not in caps.modes
         ):
             raise ProtocolError(ErrorCode.INCOMPATIBLE, "Robot features, conventions, cadence or mode differ")
+        required = required_chunk_capabilities(self.chunk_settings)
+        if required:
+            if mode != ExecutionMode.CHUNK:
+                raise ProtocolError(ErrorCode.INCOMPATIBLE, "Aligned merge requires chunk execution")
+            advertised = self.descriptor.get("execution_contracts", [])
+            if not isinstance(advertised, list) or any(name not in advertised for name in required):
+                raise ProtocolError(
+                    ErrorCode.UNSUPPORTED,
+                    "Server does not support the requested chunk alignment/blending contract; update the server",
+                )
+            try:
+                self.blend_indices = validate_chunk_contract(
+                    self.chunk_settings, caps, self.descriptor.get("blendable_components", [])
+                )
+            except ValueError as exc:
+                raise ProtocolError(ErrorCode.INCOMPATIBLE, str(exc)) from exc
         request = Envelope(
             MessageType.OPEN,
             self.instance_id,
@@ -192,15 +223,33 @@ class RemoteClient:
                 "action_interval": action_interval,
                 "mode": mode,
                 "encoding": self.config.encoding,
+                **(
+                    {"chunk_settings": self.chunk_settings, "required_capabilities": required}
+                    if required
+                    else {}
+                ),
             },
         )
         accepted = self._query(
             self._instance_key + "/open", request, self.config.handshake_timeout_s, MessageType.ACCEPTED
         )
+        if required:
+            try:
+                accepted_settings = accepted.body.get("chunk_settings")
+                if not isinstance(accepted_settings, dict):
+                    raise ValueError("Missing accepted chunk settings")
+                validate_chunk_contract(
+                    accepted_settings, caps, accepted.body.get("blendable_components", [])
+                )
+            except ValueError as exc:
+                raise ProtocolError(
+                    ErrorCode.INCOMPATIBLE, "Admission changed the advertised contract"
+                ) from exc
         if (
             accepted.body.get("artifact_identity") != self.artifact_identity
             or parse_capabilities(accepted.body["capabilities"]) != caps
             or accepted.body.get("mode") != mode
+            or (required and accepted.body.get("chunk_settings") != self.chunk_settings)
         ):
             raise ProtocolError(ErrorCode.INCOMPATIBLE, "Admission changed the advertised contract")
         self.session_id = accepted.session_id
@@ -224,6 +273,9 @@ class RemoteClient:
             mode,
             caps.action_interval,
             accepted.body.get("limits"),
+        )
+        logger.info(
+            "Remote chunk execution settings=%s blend_indices=%s", self.chunk_settings, self.blend_indices
         )
 
     @property
@@ -332,6 +384,8 @@ class RemoteClient:
                 "cursor": request.continuation.cursor,
             }
         )
+        if self.chunk_settings["chunk_merge"] == "aligned":
+            body["observation_cursor"] = request.observation.action_cursor
         envelope = Envelope(
             MessageType.OBSERVATION,
             self.instance_id,
@@ -381,9 +435,15 @@ class RemoteClient:
         )
 
     def _validate_context(self, response: Envelope, body: dict, expected: MessageType) -> None:
+        context_keys = ["artifact_identity", "observation_id", "capture_time", "task", "task_version"]
+        if expected is MessageType.ACTION and self.chunk_settings["chunk_merge"] == "aligned":
+            context_keys.extend(["observation_cursor", "cursor"])
+            if any(type(response.body.get(key)) is not int for key in ("observation_cursor", "cursor")):
+                raise ProtocolError(
+                    ErrorCode.MALFORMED, "Result action cursor context differs from its request"
+                )
         if response.message_type is not expected or any(
-            response.body.get(key) != body[key]
-            for key in ("artifact_identity", "observation_id", "capture_time", "task", "task_version")
+            response.body.get(key) != body[key] for key in context_keys
         ):
             raise ProtocolError(ErrorCode.MALFORMED, "Result execution context differs from its request")
 

@@ -59,6 +59,12 @@ class RemoteInferenceEngine(InferenceEngine):
             action_timeout_s=config.action_timeout_s,
             startup_timeout_s=config.startup_timeout_s,
             training_max_delay=client.capabilities.training_max_delay,
+            chunk_merge=config.chunk_merge,
+            blend_steps=config.blend_steps,
+            blend_weight=config.blend_weight,
+            blend_indices=tuple(
+                client.capabilities.action_feature.names.index(name) for name in config.blend_components
+            ),
         )
         self._lock = RLock()
         self._observation: ObservationSnapshot | None = None
@@ -214,6 +220,11 @@ class RemoteInferenceEngine(InferenceEngine):
             task, version = self._task, self._task_version
         snapshot = ObservationSnapshot(mapped, sampled, task, version, uuid4().hex)
         with self._lock:
+            # Sampling and endpoint commits both belong to this control thread;
+            # no pop occurs between the hardware read and this anchor. Workers
+            # may replace the future, but never advance the commitment cursor.
+            if self.config.chunk_merge == "aligned":
+                snapshot = self.runtime.anchor_observation(snapshot)
             self._observation = snapshot
 
     def dispatch_allowed(self) -> bool:
@@ -255,7 +266,7 @@ class RemoteInferenceEngine(InferenceEngine):
             self._global_shutdown.set()
 
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
-        item = self.runtime.pop()
+        item = self.runtime.pop(control_tick=self._tick)
         if item is None:
             return None
         action, provenance = item
@@ -327,6 +338,13 @@ class RemoteInferenceEngine(InferenceEngine):
     def _loop(self) -> None:
         try:
             while not self._stop_event.is_set() and not self.failed:
+                # Control-thread dispatch only queues bounded diagnostics. Log
+                # from this worker so first-dispatch reporting adds no motor I/O.
+                with self.runtime.lock:
+                    dispatch_events = list(self.runtime.dispatch_events)
+                    self.runtime.dispatch_events.clear()
+                for event in dispatch_events:
+                    self._event("first_dispatch", **event)
                 with self._lock:
                     control = self._control
                     observation = self._observation
@@ -401,6 +419,17 @@ class RemoteInferenceEngine(InferenceEngine):
                     capture_time=observation.capture_time,
                     task_version=observation.task_version,
                     delay=request.delay,
+                    chunk_merge=self.config.chunk_merge,
+                    configured_refill_s=self.runtime.refill_seconds,
+                    effective_refill_s=self.runtime.effective_refill,
+                    scheduling="fresh_advanced_observation"
+                    if self.config.chunk_merge == "aligned"
+                    else "playback_threshold",
+                    recent_turnaround_s=self.runtime.turnaround,
+                    playback_at_submission_s=request.playback_at_submission,
+                    observation_age_at_submission_s=request.submitted_at - observation.capture_time,
+                    observation_cursor=observation.action_cursor,
+                    submission_cursor=request.continuation.cursor,
                 )
                 try:
                     request_generation = request.generation
@@ -414,7 +443,10 @@ class RemoteInferenceEngine(InferenceEngine):
                     )
                 except RequestCancelled:
                     continue
-                accepted = self.runtime.accept(request, result, task_version=self.task_version)
+                # Acceptance and an operator retarget must have one order: an
+                # old in-flight result cannot pass using a previously read version.
+                with self._task_lock:
+                    accepted = self.runtime.accept(request, result, task_version=self._task_version)
                 self._event(
                     "result",
                     request_id=request.request_id,
@@ -423,6 +455,7 @@ class RemoteInferenceEngine(InferenceEngine):
                     source_age_s=time.monotonic() - observation.capture_time,
                     queue_playback_s=self.runtime.queue.qsize() * self.runtime.interval,
                     server_durations=result.server_durations,
+                    merge=self.runtime.last_accept.copy(),
                 )
         except Exception as exc:
             self._traceback = traceback.format_exc()

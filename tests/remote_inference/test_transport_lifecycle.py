@@ -5,6 +5,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
+from time import monotonic
 from uuid import uuid4
 
 import pytest
@@ -34,6 +35,53 @@ def exchange(transport, key, request):
     response = decode_message(replies[0])
     assert response.request_id == request.request_id
     return response
+
+
+def test_transport_loss_cleans_up_and_readmits_without_restarting_server(remote_server):
+    worker, config = remote_server
+    key = instance_prefix(config.deployment, worker.instance_id) + "/open"
+    disconnected = ZenohTransport(ZenohConfig(connect_endpoints=[config.endpoint])).open()
+
+    def wait_for(predicate):
+        deadline = monotonic() + 3
+        while not predicate():
+            assert monotonic() < deadline, "server did not observe the lifecycle transition"
+            Event().wait(0.01)
+
+    try:
+        first = exchange(disconnected, key, open_request(worker))
+        assert first.message_type is MessageType.ACCEPTED
+        disconnected.declare_token(
+            session_prefix(config.deployment, worker.instance_id, first.session_id) + "/alive"
+        )
+        wait_for(lambda: worker.descriptor["session"]["client_present"] is True)
+        # Close only the transport, as after a crashed process: no session CLOSE operation.
+        disconnected.close()
+        wait_for(lambda: worker.descriptor["session"]["client_present"] is False)
+        with ZenohTransport(ZenohConfig(connect_endpoints=[config.endpoint])) as replacement:
+            rejected = exchange(replacement, key, open_request(worker))
+            assert rejected.message_type is MessageType.ERROR
+            assert rejected.body["code"] == ErrorCode.BUSY
+            assert "admission_blocker=absence_grace" in rejected.body["message"]
+            # The exact 30-second boundary is covered with a controlled clock in test_session.
+            worker.idle_timeout_s = 0.02
+            wait_for(lambda: worker.descriptor["available"])
+            worker.idle_timeout_s = 30.0
+            accepted = exchange(replacement, key, open_request(worker))
+            assert accepted.message_type is MessageType.ACCEPTED
+            assert accepted.session_id != first.session_id
+            assert worker.runner.policy.resets == 4
+            control_key = (
+                session_prefix(config.deployment, worker.instance_id, accepted.session_id) + "/control"
+            )
+            assert (
+                exchange(
+                    replacement, control_key, control_request(worker, accepted.session_id, 0, "close")
+                ).message_type
+                is MessageType.ACK
+            )
+    finally:
+        disconnected.close()
 
 
 def test_closed_open_retry_replies_stale_and_does_not_block_next_session(remote_server):

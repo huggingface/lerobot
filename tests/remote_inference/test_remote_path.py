@@ -59,7 +59,13 @@ def remote_server(request):
     else:
         runner = runner_for(ConformingPolicy(tiny_config()))
     worker = SessionWorker(
-        runner, deployment="loopback", artifact_identity="processor-test", semantics="radians-v1"
+        runner,
+        deployment="loopback",
+        artifact_identity="processor-test",
+        semantics="radians-v1",
+        blendable_components=("joint_0.pos", "joint_1.pos")
+        if getattr(request, "param", None) == "robot"
+        else (),
     )
     transport = ZenohTransport(ZenohConfig(listen_endpoints=[endpoint]))
     server = PolicyServer(worker, transport)
@@ -100,6 +106,34 @@ def admit(client):
         action_interval=caps.action_interval,
         mode="chunk",
     )
+
+
+@pytest.mark.parametrize("server_build", [None, {"lerobot_version": "0.0.1", "revision": "older-build"}])
+def test_build_diagnostics_are_optional_and_do_not_gate_compatible_admission(
+    remote_server, monkeypatch, caplog, server_build
+):
+    worker, config = remote_server
+    original_descriptor = type(worker)._descriptor_locked
+
+    def descriptor(self):
+        value = original_descriptor(self)
+        if server_build is None:
+            del value["software"]
+        else:
+            value["software"] = server_build
+        return value
+
+    monkeypatch.setattr(type(worker), "_descriptor_locked", descriptor)
+    with caplog.at_level("INFO", logger="lerobot.remote_inference.client"):
+        client = RemoteClient.connect(config)
+        try:
+            admit(client)
+            assert client.session_id
+        finally:
+            client.close()
+    assert "Remote client software=" in caplog.text
+    assert "Remote server deployment=loopback" in caplog.text
+    assert ("unavailable" if server_build is None else "older-build") in caplog.text
 
 
 def runtime_for(client):
@@ -151,6 +185,64 @@ def test_direct_remote_actions_match_local_canonical_pipeline_and_reset(remote_s
         assert next_result.provenance.generation == generation
         assert runtime.accept(next_request, next_result, task_version=source.task_version)
         assert not runtime.accept(request, result, task_version=source.task_version)
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("remote_server", ["robot"], indirect=True)
+@pytest.mark.parametrize("blend_steps", [0, 2])
+def test_direct_remote_aligned_chunks_trim_and_blend_canonical_future(remote_server, blend_steps):
+    _, config = remote_server
+    config = replace(
+        config,
+        chunk_merge="aligned",
+        blend_steps=blend_steps,
+        blend_components=["joint_0.pos", "joint_1.pos"] if blend_steps else [],
+    )
+    client = RemoteClient.connect(config)
+    try:
+        admit(client)
+        runtime = ChunkRuntime(
+            mode=ExecutionMode.CHUNK,
+            action_interval=client.capabilities.action_interval,
+            refill_seconds=0.2,
+            max_observation_age_s=5,
+            action_timeout_s=2,
+            startup_timeout_s=3,
+            chunk_merge=config.chunk_merge,
+            blend_steps=blend_steps,
+            blend_weight=config.blend_weight,
+            blend_indices=client.blend_indices,
+        )
+        runtime.active = True
+        source = replace(
+            observation(),
+            features={OBS_STATE: observation().features[OBS_STATE]},
+            capture_time=time.monotonic(),
+            action_cursor=0,
+            execution_generation=runtime.generation,
+        )
+        first = runtime.begin(source)
+        assert first is not None
+        result = client.infer(first)
+        assert runtime.accept(first, result, task_version=source.task_version)
+        assert runtime.pop() is not None
+
+        next_source = replace(
+            source, observation_id="advanced", capture_time=time.monotonic(), action_cursor=1
+        )
+        next_request = runtime.begin(next_source)
+        assert next_request is not None
+        assert runtime.pop() is not None  # a target commits after the observation, before this result
+        incoming = client.infer(next_request)
+        assert runtime.accept(next_request, incoming, task_version=source.task_version)
+        future = runtime.queue.snapshot().canonical_actions
+        expected = incoming.canonical_actions[1:].clone()
+        if blend_steps:
+            expected[0, :2] = 0.5 * result.canonical_actions[2, :2] + 0.5 * expected[0, :2]
+        torch.testing.assert_close(future, expected)
+        assert runtime.last_accept["trimmed_actions"] == 1
+        assert runtime.last_accept["blended_steps"] == (1 if blend_steps else 0)
     finally:
         client.close()
 

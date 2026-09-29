@@ -33,6 +33,7 @@ import draccus
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.processor import PolicyProcessorPipeline
+from lerobot.remote_inference.chunk_contract import chunk_settings
 
 from ..robot_wrapper import ThreadSafeRobot
 from .base import InferenceEngine
@@ -97,6 +98,10 @@ class RemoteInferenceConfig(InferenceEngineConfig):
     semantics: str = ""
     hold_mode: str = ""
     refill_seconds: float = 0.5
+    chunk_merge: Literal["append", "aligned"] = "append"
+    blend_steps: int = 0
+    blend_weight: float = 0.5
+    blend_components: list[str] = field(default_factory=list)
     max_observation_age_s: float = 2.0
     handshake_timeout_s: float = 10.0
     action_timeout_s: float = 5.0
@@ -116,6 +121,9 @@ class RemoteInferenceConfig(InferenceEngineConfig):
             raise ValueError("Remote inference requires --inference.hold_mode=position on a supported robot")
         if self.mode not in {"chunk", "rtc_guided", "rtc_trained"}:
             raise ValueError(f"Unsupported remote execution mode: {self.mode!r}")
+        chunk_settings(self.chunk_merge, self.blend_steps, self.blend_weight, self.blend_components)
+        if self.mode != "chunk" and self.chunk_merge != "append":
+            raise ValueError("chunk_merge=aligned is available only with mode=chunk")
         if self.encoding not in {"raw", "jpeg"} or not 1 <= self.jpeg_quality <= 100:
             raise ValueError("Remote encoding must be raw or jpeg, with jpeg_quality in [1, 100]")
         for name in (

@@ -149,6 +149,30 @@ class ActionQueue:
             self._cursor = 0
             self._generation += 1
 
+    def replace_future(
+        self,
+        actions: Tensor,
+        provenance: list[Any],
+        *,
+        snapshot: QueueSnapshot,
+    ) -> bool:
+        """Replace only the uncommitted future if its atomic cursor is unchanged.
+
+        Plain aligned playback has no model-space continuation. Keeping the same
+        values in both queues preserves existing snapshot shape invariants.
+        """
+        if len(actions) != len(provenance):
+            raise ValueError("Every replacement action requires provenance")
+        with self.lock:
+            if snapshot.generation != self._generation or snapshot.cursor != self._cursor:
+                return False
+            self.queue = actions.clone()
+            self.original_queue = actions.clone()
+            self._provenance_queue = list(provenance)
+            self._task_queue = [source.task for source in provenance]
+            self.last_index = 0
+            return True
+
     def qsize(self) -> int:
         """Get the number of remaining actions in the queue.
 
@@ -240,6 +264,7 @@ class ActionQueue:
 
             if self.cfg.enabled:
                 self._replace_actions_queue(original_actions, processed_actions, delay, task)
+                assert self.queue is not None
                 self._provenance_queue = [provenance] * len(self.queue)
                 return True
 
@@ -295,6 +320,7 @@ class ActionQueue:
             return
 
         existing_tasks = self._task_queue or [None] * len(self.queue)
+        assert self.original_queue is not None
         self.original_queue = torch.cat([self.original_queue, original_actions.clone()])
         self.original_queue = self.original_queue[self.last_index :]
 

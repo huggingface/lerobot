@@ -15,7 +15,7 @@ import math
 import time
 from collections import OrderedDict
 from concurrent.futures import Future
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from queue import Empty, Full, Queue
 from threading import Event, Lock, Thread
 from typing import Any
@@ -28,6 +28,15 @@ from lerobot.inference.contracts import ExecutionMode, FeatureSpec, ObservationS
 from lerobot.inference.policy_runner import PolicyRunner
 from lerobot.transport.zenoh import ZenohTransport
 
+from .build_info import SOFTWARE_BUILD
+from .chunk_contract import (
+    CHUNK_ALIGNMENT,
+    CHUNK_BLENDING,
+    chunk_settings,
+    required_chunk_capabilities,
+    validate_blendable_components,
+    validate_chunk_contract,
+)
 from .codec import CodecLimits, decode_message, encode_message
 from .protocol import (
     Envelope,
@@ -53,11 +62,15 @@ class _Session:
     identity: str
     generation: int = 0
     mode: ExecutionMode = ExecutionMode.CHUNK
+    chunk_settings: dict[str, Any] = field(default_factory=lambda: chunk_settings("append", 0, 0.5, []))
     busy: bool = False
     ready: bool = False
     closing: bool = False
     faulted: bool = False
-    touched: float = 0.0
+    present: bool | None = None
+    absent_since: float | None = None
+    cleanup_reason: str | None = None
+    cleanup_queue_blocked: bool = False
     last_sequence: int = -1
 
 
@@ -76,6 +89,7 @@ class SessionWorker:
         idle_timeout_s: float = 30.0,
         max_input_chars: int = 4096,
         max_output_chars: int = 8192,
+        blendable_components: tuple[str, ...] = (),
     ) -> None:
         """Start the single policy worker with bounded command and identity bookkeeping."""
         self.runner = runner
@@ -88,6 +102,19 @@ class SessionWorker:
         self.idle_timeout_s = idle_timeout_s
         self.max_input_chars = max_input_chars
         self.max_output_chars = max_output_chars
+        validate_blendable_components(runner.capabilities.action_feature, blendable_components)
+        if blendable_components and (
+            runner.capabilities.action_representation != "canonical"
+            or ExecutionMode.CHUNK not in runner.capabilities.modes
+        ):
+            raise ValueError("Blending requires canonical chunk execution")
+        self.blendable_components = tuple(blendable_components)
+        self.execution_contracts = (
+            [CHUNK_ALIGNMENT, *([CHUNK_BLENDING] if blendable_components else [])]
+            if ExecutionMode.CHUNK in runner.capabilities.modes
+            and runner.capabilities.action_representation == "canonical"
+            else []
+        )
         self._lock = Lock()
         self._commands: Queue[tuple[Envelope, Future[Envelope], float]] = Queue(maxsize=8)
         self._session: _Session | None = None
@@ -102,14 +129,51 @@ class SessionWorker:
     @property
     def descriptor(self) -> dict[str, Any]:
         """Describe the preloaded artifact and its effective serving contract."""
+        with self._lock:
+            return self._descriptor_locked()
+
+    def _session_diagnostics_locked(self) -> dict[str, Any]:
+        session = self._session
+        remaining = (
+            None
+            if session is None or session.absent_since is None
+            else max(0.0, self.idle_timeout_s - (time.monotonic() - session.absent_since))
+        )
+        return {
+            "owner": None if session is None else session.identity,
+            "client_present": None if session is None else session.present,
+            "absence_grace_remaining_s": remaining,
+            "cleanup_pending": session is not None and session.closing,
+            "cleanup_reason": None if session is None else session.cleanup_reason,
+            "inference_pending": session is not None and session.busy,
+            "admission_blocker": (
+                None
+                if session is None
+                else "unfinished_inference"
+                if session.closing and session.busy
+                else "worker_cleanup_pending"
+                if session.closing
+                else "cleanup_queue_full"
+                if session.cleanup_queue_blocked
+                else "absence_grace"
+                if session.absent_since is not None
+                else "active_session"
+            ),
+        }
+
+    def _descriptor_locked(self) -> dict[str, Any]:
         return {
             "deployment": self.deployment,
             "instance_id": self.instance_id,
             "artifact_identity": self.artifact_identity,
+            "software": asdict(SOFTWARE_BUILD),
             "semantics": self.semantics,
             "capabilities": asdict(self.runner.capabilities),
+            "execution_contracts": list(self.execution_contracts),
+            "blendable_components": list(self.blendable_components),
             "ready": not self._stopping.is_set(),
             "available": self._session is None and not self._stopping.is_set(),
+            "session": self._session_diagnostics_locked(),
             "session_status": (
                 "idle"
                 if self._session is None
@@ -124,6 +188,7 @@ class SessionWorker:
             "limits": {
                 "action_deadline_s": self.action_deadline_s,
                 "language_deadline_s": self.language_deadline_s,
+                "idle_timeout_s": self.idle_timeout_s,
                 "max_input_chars": self.max_input_chars,
                 "max_output_chars": self.max_output_chars,
                 "codec": asdict(CodecLimits()),
@@ -148,7 +213,7 @@ class SessionWorker:
                             MessageType.DESCRIPTOR,
                             self.instance_id,
                             request_id=message.request_id,
-                            body=self.descriptor,
+                            body=self._descriptor_locked(),
                         )
                     )
                     return future
@@ -160,12 +225,28 @@ class SessionWorker:
                     if message.request_id in self._opens:
                         return self._opens[message.request_id]
                     if self._session is not None:
-                        raise ProtocolError(ErrorCode.BUSY, "Deployment has an active session")
+                        state = self._session_diagnostics_locked()
+                        detail = (
+                            f"Deployment owned by session={state['owner']}; "
+                            f"admission_blocker={state['admission_blocker']} "
+                            f"client_present={state['client_present']} "
+                            f"absence_grace_remaining_s={state['absence_grace_remaining_s']} "
+                            f"cleanup_pending={state['cleanup_pending']} "
+                            f"inference_pending={state['inference_pending']}. "
+                            "A new session requires the previous owner's close/reset to finish; "
+                            "unfinished model calls are never taken over."
+                        )
+                        logger.info("Session admission blocked instance=%s %s", self.instance_id, detail)
+                        raise ProtocolError(ErrorCode.BUSY, detail)
                     if self._commands.full():
                         raise ProtocolError(ErrorCode.BUSY, "Policy command queue is full")
                     self._validate_open(message.body)
                     self._session = _Session(
-                        uuid4().hex, mode=ExecutionMode(message.body["mode"]), touched=time.monotonic()
+                        uuid4().hex,
+                        mode=ExecutionMode(message.body["mode"]),
+                        chunk_settings=message.body.get(
+                            "chunk_settings", chunk_settings("append", 0, 0.5, [])
+                        ),
                     )
                     self._seen.clear()
                     self._controls.clear()
@@ -181,7 +262,6 @@ class SessionWorker:
                     session = self._session
                     if session is None or message.session_id != session.identity:
                         raise ProtocolError(ErrorCode.STALE, "Session does not match")
-                    session.touched = time.monotonic()
                     if message.message_type is MessageType.CONTROL:
                         if message.request_id in self._controls:
                             return self._controls[message.request_id]
@@ -193,7 +273,7 @@ class SessionWorker:
                         if operation != "close" and message.generation < session.generation:
                             raise ProtocolError(ErrorCode.STALE, "Obsolete control generation")
                         if operation == "close":
-                            session.closing = True
+                            self._mark_closing_locked(session, reason="client_close")
                             _remember(
                                 self._closed_controls, (message.session_id, message.request_id), future, 32
                             )
@@ -231,10 +311,35 @@ class SessionWorker:
                 future.set_result(message.error(code, str(exc)))
         return future
 
+    def _mark_closing_locked(self, session: _Session, *, reason: str) -> None:
+        if not session.closing:
+            session.closing = True
+            session.cleanup_reason = reason
+            logger.info(
+                "Session cleanup queued instance=%s session=%s reason=%s inference_pending=%s; "
+                "ownership releases only after worker close/reset completes",
+                self.instance_id,
+                session.identity,
+                reason,
+                session.busy,
+            )
+
     def _validate_open(self, body: dict[str, Any]) -> None:
         caps = self.runner.capabilities
-        if body.get("required_capabilities"):
+        required = body.get("required_capabilities", [])
+        if not isinstance(required, list) or any(
+            not isinstance(name, str) or name not in self.execution_contracts for name in required
+        ):
             raise ProtocolError(ErrorCode.UNSUPPORTED, "Unknown required protocol capabilities")
+        settings = body.get("chunk_settings", chunk_settings("append", 0, 0.5, []))
+        try:
+            validate_chunk_contract(settings, caps, self.blendable_components)
+        except ValueError as exc:
+            raise ProtocolError(ErrorCode.INCOMPATIBLE, str(exc)) from exc
+        if required != required_chunk_capabilities(settings):
+            raise ProtocolError(ErrorCode.INCOMPATIBLE, "Required capabilities differ from chunk_settings")
+        if settings["chunk_merge"] == "aligned" and body.get("mode") != ExecutionMode.CHUNK:
+            raise ProtocolError(ErrorCode.INCOMPATIBLE, "Aligned merge requires chunk execution")
         if body.get("expected_artifact") not in (None, self.artifact_identity):
             raise ProtocolError(ErrorCode.INCOMPATIBLE, "Deployed artifact identity differs")
         if body.get("semantics") != self.semantics:
@@ -288,6 +393,14 @@ class SessionWorker:
             if type(body.get("intent_generation")) is not int or body["intent_generation"] < 0:
                 raise ProtocolError(ErrorCode.MALFORMED, "Invalid query intent")
         else:
+            if self._session is not None and self._session.chunk_settings["chunk_merge"] == "aligned":
+                if any(
+                    type(body.get(key)) is not int or not 0 <= body[key] < 2**63
+                    for key in ("observation_cursor", "cursor")
+                ):
+                    raise ProtocolError(ErrorCode.MALFORMED, "Aligned chunks require bounded action cursors")
+                if body["cursor"] < body["observation_cursor"]:
+                    raise ProtocolError(ErrorCode.MALFORMED, "Request cursor predates the observation")
             if type(body.get("delay")) is not int or not 0 <= body["delay"] <= caps.prediction_steps:
                 raise ProtocolError(ErrorCode.MALFORMED, "Invalid RTC delay")
             for name in ("model_continuation", "canonical_continuation"):
@@ -314,13 +427,14 @@ class SessionWorker:
         if message.message_type is MessageType.OPEN:
             self.runner.reset(full=True)
             session.ready = True
+            logger.info("Session admitted instance=%s session=%s", self.instance_id, session.identity)
             return Envelope(
                 MessageType.ACCEPTED,
                 self.instance_id,
                 session.identity,
                 0,
                 message.request_id,
-                {**self.descriptor, "mode": session.mode.value},
+                {**self.descriptor, "mode": session.mode.value, "chunk_settings": session.chunk_settings},
             )
         if message.message_type is MessageType.CONTROL:
             operation = message.body["operation"]
@@ -336,9 +450,18 @@ class SessionWorker:
             response = message.reply(
                 MessageType.ACK, {"operation": operation, "applied_generation": session.generation}
             )
+            if operation == "status":
+                with self._lock:
+                    response.body["session"] = self._session_diagnostics_locked()
             if operation == "close":
                 with self._lock:
                     self._session = None
+                logger.info(
+                    "Session released instance=%s session=%s reason=%s; deployment available for a new session",
+                    self.instance_id,
+                    session.identity,
+                    session.cleanup_reason,
+                )
             return response
         if session.faulted or session.closing or message.generation != session.generation:
             return message.error(ErrorCode.STALE, "Motion generation invalidated")
@@ -351,6 +474,11 @@ class SessionWorker:
             key: body[key]
             for key in ("artifact_identity", "observation_id", "capture_time", "task", "task_version")
         }
+        if (
+            message.message_type is MessageType.OBSERVATION
+            and session.chunk_settings["chunk_merge"] == "aligned"
+        ):
+            identity.update({key: body[key] for key in ("observation_cursor", "cursor")})
         if message.message_type is MessageType.LANGUAGE_REQUEST:
             answer = self.runner.query(observation, kind=body["kind"], text=body["text"])
             if not isinstance(answer, str) or not answer.strip() or len(answer) > self.max_output_chars:
@@ -468,22 +596,49 @@ class SessionWorker:
             session = self._session
             if session is None or session.closing:
                 return
+            now = time.monotonic()
             if present:
-                session.touched = time.monotonic()
+                if session.present is False:
+                    logger.info(
+                        "Session presence restored instance=%s session=%s; absence cleanup cancelled",
+                        self.instance_id,
+                        session.identity,
+                    )
+                session.present = True
+                session.absent_since = None
+                session.cleanup_queue_blocked = False
                 return
-            if time.monotonic() - session.touched < self.idle_timeout_s:
+            session.present = False
+            if session.absent_since is None:
+                session.absent_since = now
+                logger.info(
+                    "Session client absent instance=%s session=%s grace_s=%.3f inference_pending=%s",
+                    self.instance_id,
+                    session.identity,
+                    self.idle_timeout_s,
+                    session.busy,
+                )
+            if now - session.absent_since < self.idle_timeout_s:
                 return
-            identity, generation = session.identity, session.generation
-        self.submit(
-            Envelope(
+            if self._commands.full():
+                if not session.cleanup_queue_blocked:
+                    logger.info(
+                        "Session absence grace expired instance=%s session=%s; cleanup waiting for worker queue capacity",
+                        self.instance_id,
+                        session.identity,
+                    )
+                session.cleanup_queue_blocked = True
+                return
+            close = Envelope(
                 MessageType.CONTROL,
                 self.instance_id,
-                identity,
-                generation,
+                session.identity,
+                session.generation,
                 uuid4().hex,
                 {"operation": "close"},
             )
-        )
+            self._mark_closing_locked(session, reason="client_absence")
+            self._commands.put_nowait((close, Future(), now))
 
     def close(self) -> None:
         """Stop after bounded waiting, retaining a hung worker instead of replacing it."""

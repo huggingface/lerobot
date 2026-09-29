@@ -12,6 +12,8 @@ motor tick, including ticks without a queue pop. All clocks here are client-loca
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import time
 from collections import deque
@@ -25,7 +27,7 @@ import torch
 from lerobot.policies.rtc.action_queue import ActionQueue, QueueSnapshot
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 
-from .contracts import ActionChunk, ActionProvenance, ExecutionMode, ObservationSnapshot
+from .contracts import ActionChunk, ActionProvenance, ActionSource, ExecutionMode, ObservationSnapshot
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,7 @@ class ChunkRequest:
     mode: ExecutionMode
     delay: int
     submitted_at: float
+    playback_at_submission: float = 0.0
 
 
 def estimate_delay(
@@ -69,6 +72,10 @@ class ChunkRuntime:
         action_timeout_s: float,
         startup_timeout_s: float,
         training_max_delay: int = 0,
+        chunk_merge: str = "append",
+        blend_steps: int = 0,
+        blend_weight: float = 0.5,
+        blend_indices: tuple[int, ...] = (),
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         """Allocate one action queue and a bounded steady-state latency window."""
@@ -77,7 +84,27 @@ class ChunkRuntime:
                 raise ValueError("Execution intervals, ages and deadlines must be finite and positive")
         if not math.isfinite(refill_seconds) or refill_seconds < 0:
             raise ValueError("Refill playback threshold must be finite and nonnegative")
+        if chunk_merge not in {"append", "aligned"} or (
+            chunk_merge != "append" and mode is not ExecutionMode.CHUNK
+        ):
+            raise ValueError("Aligned replacement is supported only for plain chunks")
+        if type(blend_steps) is not int or blend_steps < 0:
+            raise ValueError("Blend steps must be a nonnegative integer")
+        if not math.isfinite(blend_weight) or not 0 < blend_weight <= 1:
+            raise ValueError("Incoming blend weight must be in (0, 1]")
+        if len(set(blend_indices)) != len(blend_indices) or any(
+            type(index) is not int or index < 0 for index in blend_indices
+        ):
+            raise ValueError("Blend indices must be distinct nonnegative integers")
+        if blend_steps and (chunk_merge != "aligned" or not blend_indices):
+            raise ValueError("Blending requires alignment and explicit continuous components")
+        if blend_indices and not blend_steps:
+            raise ValueError("Blend components require a positive blend window")
         self.mode = mode
+        self.chunk_merge = chunk_merge
+        self.blend_steps = blend_steps
+        self.blend_weight = blend_weight
+        self.blend_indices = blend_indices
         self.interval = action_interval
         self.refill_seconds = refill_seconds
         self.max_age = max_observation_age_s
@@ -97,11 +124,35 @@ class ChunkRuntime:
         self.started_at = clock()
         self.turnarounds: deque[float] = deque(maxlen=100)
         self._completed = 0
+        self._last_anchor: tuple[int, float, int] | None = None
+        self._last_action: torch.Tensor | None = None
+        self._last_dispatch_request = ""
+        self.dispatch_events: deque[dict] = deque(maxlen=128)
+        self.last_accept: dict = {}
 
     @property
     def turnaround(self) -> float:
         """Largest complete action turnaround in the recent steady-state window."""
         return max(self.turnarounds, default=0.0)
+
+    @property
+    def effective_refill(self) -> float:
+        """Append/RTC playback threshold including measured turnaround headroom."""
+        return max(self.refill_seconds, self.turnaround + self.interval)
+
+    def anchor_observation(self, observation: ObservationSnapshot) -> ObservationSnapshot:
+        """Bind a control-thread sample before committing the next endpoint.
+
+        The sampling caller must not pop actions between capture and this call.
+        The rollout control thread owns both operations; a worker may replace
+        the future concurrently but cannot advance this commitment cursor.
+        """
+        with self.lock:
+            return replace(
+                observation,
+                action_cursor=self.queue.snapshot().cursor,
+                execution_generation=self.generation,
+            )
 
     def invalidate(self, *, held: bool = False) -> int:
         """Revoke old motion locally and return the new execution generation."""
@@ -112,6 +163,9 @@ class ChunkRuntime:
             self.current = None
             self.held = held
             self.has_executed = False
+            self._last_anchor = None
+            self._last_action = None
+            self._last_dispatch_request = ""
             self.started_at = self.clock()
             return self.generation
 
@@ -141,6 +195,8 @@ class ChunkRuntime:
             if self.failure or not self.active or self.held or self.pending is not None:
                 return False
             snapshot = self.queue.snapshot()
+            if self.chunk_merge == "aligned":
+                return True  # begin also requires a fresh capture and an advanced step
             if self.mode is ExecutionMode.CHUNK:
                 # One accepted successor beyond the executing chunk, never a chain
                 # of old-observation predictions hidden behind newer provenance.
@@ -150,7 +206,7 @@ class ChunkRuntime:
                 if self.current and sources and self.current.request_id not in sources:
                     return False
             playback = self.queue.qsize() * self.interval
-            return playback <= max(self.refill_seconds, self.turnaround + self.interval) + 1e-9
+            return playback <= self.effective_refill + 1e-9
 
     def begin(self, observation: ObservationSnapshot) -> ChunkRequest | None:
         """Reserve inference against one atomic cursor/continuation snapshot."""
@@ -161,6 +217,27 @@ class ChunkRuntime:
             if age < 0 or age > self.max_age:
                 return None  # wait for a fresh capture; startup/dispatch deadlines still apply
             snapshot = self.queue.snapshot()
+            if self.chunk_merge == "aligned":
+                if (
+                    observation.execution_generation != self.generation
+                    or observation.action_cursor is None
+                    or observation.action_cursor > snapshot.cursor
+                    or observation.capture_time < self.started_at
+                ):
+                    return None
+                if self._last_anchor is not None and (
+                    (
+                        observation.task_version == self._last_anchor[2]
+                        and observation.action_cursor <= self._last_anchor[0]
+                    )
+                    or observation.capture_time <= self._last_anchor[1]
+                ):
+                    return None
+                self._last_anchor = (
+                    observation.action_cursor,
+                    observation.capture_time,
+                    observation.task_version,
+                )
             available = 0 if snapshot.model_actions is None else len(snapshot.model_actions)
             self.pending = ChunkRequest(
                 observation,
@@ -170,12 +247,14 @@ class ChunkRuntime:
                 self.mode,
                 estimate_delay(self.turnaround, self.interval, self.mode, self.training_max_delay, available),
                 self.clock(),
+                len(snapshot.provenance) * self.interval,
             )
             return self.pending
 
     def accept(self, request: ChunkRequest, chunk: ActionChunk, *, task_version: int) -> bool:
         """Validate context and timing, then atomically merge with original provenance."""
         with self.lock:
+            self.last_accept = {"accepted": False}
             self.check_deadlines()
             if self.failure or self.pending is not request or request.generation != self.generation:
                 return False
@@ -197,11 +276,18 @@ class ChunkRuntime:
                 or model.ndim != 2
                 or len(actions) != len(model)
                 or not len(actions)
+                or type(chunk.execution_steps) is not int
+                or not 0 < chunk.execution_steps <= len(actions)
                 or not torch.isfinite(actions).all()
                 or not torch.isfinite(model).all()
             ):
                 self.fault("Invalid action chunk")
                 return False
+            # The runner/client already enforces the slice. Keep the shared
+            # executor strict even for independently supplied ActionChunks.
+            if self.mode is ExecutionMode.CHUNK:
+                actions = actions[: chunk.execution_steps]
+                model = model[: chunk.execution_steps]
             progress = self.queue.snapshot().cursor - request.continuation.cursor
             measured = math.ceil(elapsed / self.interval)
             available = request.continuation.model_actions
@@ -223,7 +309,27 @@ class ChunkRuntime:
                 task_version=request.observation.task_version,
                 observation_id=request.observation.observation_id,
             )
-            return self.queue.merge(
+            self.last_accept.update(
+                turnaround_s=elapsed,
+                playback_at_submission_s=request.playback_at_submission,
+                timing_margin_s=request.playback_at_submission - elapsed if self.has_executed else None,
+                cursor_advance=progress,
+                trimmed_actions=trim,
+                overlap_steps=0,
+                blended_steps=0,
+                source_age_at_acceptance_s=now - provenance.capture_time,
+                remaining_old_playback_s=self.queue.qsize() * self.interval,
+                estimated_first_dispatch_source_age_s=now
+                - provenance.capture_time
+                + (
+                    self.queue.qsize() * self.interval
+                    if self.chunk_merge == "append" and self.mode is ExecutionMode.CHUNK
+                    else 0
+                ),
+            )
+            if self.chunk_merge == "aligned":
+                return self._accept_aligned(request, actions, provenance, now)
+            accepted = self.queue.merge(
                 model,
                 actions,
                 measured,
@@ -231,6 +337,90 @@ class ChunkRuntime:
                 provenance=provenance,
                 snapshot=request.continuation,
             )
+            self.last_accept["accepted"] = accepted
+            return accepted
+
+    @staticmethod
+    def _same_context(old: ActionProvenance, new: ActionProvenance) -> bool:
+        return all(
+            getattr(old, key) == getattr(new, key)
+            for key in (
+                "task",
+                "task_version",
+                "generation",
+                "session_id",
+                "server_instance_id",
+                "artifact_identity",
+            )
+        )
+
+    @staticmethod
+    def _blended_provenance(old: ActionProvenance, new: ActionProvenance) -> ActionProvenance:
+        """Summarize all contributing history in constant storage, without refreshing age."""
+        oldest = old.oldest_contributor or ActionSource(old.capture_time, old.observation_id, old.request_id)
+        if new.capture_time < oldest.capture_time:
+            oldest = ActionSource(new.capture_time, new.observation_id, new.request_id)
+        digest = hashlib.sha256(
+            json.dumps(
+                [old.contributor_digest, old.request_id, old.capture_time, new.request_id, new.capture_time],
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        return replace(
+            new,
+            capture_time=oldest.capture_time,
+            oldest_contributor=oldest,
+            contributor_count=min(old.contributor_count + 1, 2**63 - 1),
+            contributor_digest=digest,
+        )
+
+    def _accept_aligned(
+        self, request: ChunkRequest, actions: torch.Tensor, provenance: ActionProvenance, now: float
+    ) -> bool:
+        snapshot = self.queue.snapshot()
+        anchor = request.observation.action_cursor
+        if anchor is None or request.observation.execution_generation != self.generation:
+            self.fault("Aligned result lacks its observation commitment anchor")
+            return False
+        trim = snapshot.cursor - anchor
+        self.last_accept["trimmed_actions"] = trim
+        if trim < 0 or trim >= len(actions):
+            self.last_accept["rejection"] = "no usable aligned suffix"
+            return False
+        future = actions[trim:].clone()
+        sources = [provenance] * len(future)
+        previous = snapshot.canonical_actions
+        overlap = min(len(previous), len(future)) if previous is not None else 0
+        self.last_accept["overlap_steps"] = overlap
+        if self.blend_indices and max(self.blend_indices) >= future.shape[1]:
+            self.fault("Blend component index exceeds canonical action dimensions")
+            return False
+        if previous is not None and self.blend_weight < 1:
+            for index in range(min(overlap, self.blend_steps)):
+                old = snapshot.provenance[index]
+                if (
+                    old is None
+                    or not self._same_context(old, provenance)
+                    or not 0 <= now - old.capture_time <= self.max_age
+                ):
+                    continue
+                coordinates = list(self.blend_indices)
+                future[index, coordinates] = (1 - self.blend_weight) * previous[
+                    index, coordinates
+                ] + self.blend_weight * future[index, coordinates]
+                sources[index] = self._blended_provenance(old, provenance)
+                self.last_accept["blended_steps"] += 1
+        if self._last_action is not None:
+            self.last_accept["transition_delta"] = (future[0] - self._last_action).tolist()
+        if overlap and previous is not None:
+            self.last_accept["replacement_delta"] = (future[0] - previous[0]).tolist()
+        accepted = self.queue.replace_future(future, sources, snapshot=snapshot)
+        self.last_accept.update(
+            accepted=accepted,
+            usable_actions=len(future),
+            estimated_first_dispatch_source_age_s=now - sources[0].capture_time,
+        )
+        return accepted
 
     def dispatch_allowed(self) -> bool:
         """Check permission and the committed endpoint's age on every motor tick."""
@@ -243,7 +433,7 @@ class ChunkRuntime:
                 return False
             return self.current is not None or not self.queue.empty()
 
-    def pop(self) -> tuple[torch.Tensor, ActionProvenance] | None:
+    def pop(self, *, control_tick: int | None = None) -> tuple[torch.Tensor, ActionProvenance] | None:
         """Commit an endpoint to interpolation; its provenance remains age-checked."""
         with self.lock:
             if not self.dispatch_allowed():
@@ -259,4 +449,23 @@ class ChunkRuntime:
                 return None
             self.current = provenance
             self.has_executed = True
-            return (action, provenance) if self.dispatch_allowed() else None
+            if not self.dispatch_allowed():
+                return None
+            if provenance.request_id != self._last_dispatch_request:
+                self._last_dispatch_request = provenance.request_id
+                self.dispatch_events.append(
+                    {
+                        "time": self.clock(),
+                        "generation": provenance.generation,
+                        **({"control_tick": control_tick} if control_tick is not None else {}),
+                        "request_id": provenance.request_id,
+                        "source_age_s": self.clock() - provenance.capture_time,
+                        "contributor_count": provenance.contributor_count,
+                        "action_cursor": self.queue.snapshot().cursor,
+                        "transition_delta": None
+                        if self._last_action is None
+                        else (action - self._last_action).tolist(),
+                    }
+                )
+            self._last_action = action.clone()
+            return action, provenance

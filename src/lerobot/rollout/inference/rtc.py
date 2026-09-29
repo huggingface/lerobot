@@ -680,7 +680,8 @@ class RTCInferenceEngine(InferenceEngine):
                     execution_steps=len(processed),
                     provenance=ActionProvenance(capture_time, task, task_version),
                 )
-                accepted = self._runtime.accept(request, chunk, task_version=self.task_version)
+                with self._task_lock:
+                    accepted = self._runtime.accept(request, chunk, task_version=self._task_version)
                 if accepted:
                     consecutive_discards = 0
                 elif request.generation != self._runtime.generation:
