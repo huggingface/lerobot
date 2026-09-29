@@ -34,6 +34,7 @@ from collections import OrderedDict, defaultdict
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
+from itertools import batched
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
 
@@ -74,6 +75,9 @@ from .lance_utils import (  # noqa: F401
 )
 from .utils import resolve_episode_indices
 from .video_utils import FrameTimestampError, decode_video_frames_pyav
+
+_RGB_DECODE_MAX_FRAMES = 64
+_RGB_DECODE_MAX_BYTES = 64 << 20
 
 
 class _SamplePlan(TypedDict):
@@ -481,20 +485,100 @@ class LanceDatasetReader(BaseDatasetReader):
                     results[sample_idx][key] = self._decode_depth_window(source, shifted_ts, file_key)
                 return
             fps = decoder.metadata.average_fps
-            for sample_idx, shifted_ts in file_requests:
-                indices = [round(ts * fps) for ts in shifted_ts]
-                batch = decoder.get_frames_at(indices=indices)
-                distance = (torch.tensor(shifted_ts, dtype=torch.float64) - batch.pts_seconds).abs()
+            request_indices = [[round(ts * fps) for ts in shifted_ts] for _, shifted_ts in file_requests]
+
+            def _finish_request(
+                sample_idx: int, shifted_ts: list[float], frames: torch.Tensor, loaded_pts: torch.Tensor
+            ) -> None:
+                distance = (
+                    torch.tensor(shifted_ts, dtype=torch.float64, device=loaded_pts.device) - loaded_pts
+                ).abs()
                 if (distance > self.tolerance_s).any():
                     raise FrameTimestampError(
                         f"Query timestamps violate tolerance_s={self.tolerance_s} for video "
                         f"'{key}' (chunk {chunk_idx}, file {file_idx}): queried {shifted_ts}, "
-                        f"loaded {batch.pts_seconds.tolist()}."
+                        f"loaded {loaded_pts.tolist()}."
                     )
+                results[sample_idx][key] = frames.squeeze(0)
+
+            # Avoid set/map construction and an advanced-index copy when this file
+            # contributes to only one sample in the batch. The decoded tensor is
+            # the final sample output, so splitting it would add another full-size
+            # output allocation without reducing the required result memory.
+            if len(file_requests) == 1:
+                sample_idx, shifted_ts = file_requests[0]
+                batch = decoder.get_frames_at(indices=request_indices[0])
                 frames = batch.data
                 if not self.return_uint8:
                     frames = (frames / 255.0).type(torch.float32)
-                results[sample_idx][key] = frames.squeeze(0)
+                _finish_request(sample_idx, shifted_ts, frames, batch.pts_seconds)
+                return
+
+            unique_indices = sorted({index for indices in request_indices for index in indices})
+            shape = self.meta.features[key].get("shape") or ()
+            frame_values = int(np.prod(shape)) if shape else 0
+            value_bytes = np.dtype(np.uint8 if self.return_uint8 else np.float32).itemsize
+            byte_limited_frames = (
+                max(1, _RGB_DECODE_MAX_BYTES // (frame_values * value_bytes))
+                if frame_values
+                else _RGB_DECODE_MAX_FRAMES
+            )
+            decode_batch_size = min(_RGB_DECODE_MAX_FRAMES, byte_limited_frames)
+
+            # Keep the low-overhead gather/scatter path when all unique frames
+            # already fit within the configured per-decode limits.
+            if len(unique_indices) <= decode_batch_size:
+                batch = decoder.get_frames_at(indices=unique_indices)
+                frames = batch.data
+                if not self.return_uint8:
+                    frames = (frames / 255.0).type(torch.float32)
+                positions = {index: position for position, index in enumerate(unique_indices)}
+                for (sample_idx, shifted_ts), indices in zip(file_requests, request_indices, strict=True):
+                    source_positions = [positions[index] for index in indices]
+                    _finish_request(
+                        sample_idx,
+                        shifted_ts,
+                        frames[source_positions],
+                        batch.pts_seconds[source_positions],
+                    )
+                return
+
+            index_batches = iter(batched(unique_indices, decode_batch_size))
+
+            first_indices = list(next(index_batches))
+            first_batch = decoder.get_frames_at(indices=first_indices)
+            first_frames = first_batch.data
+            if not self.return_uint8:
+                first_frames = (first_frames / 255.0).type(torch.float32)
+            sample_frames = [
+                first_frames.new_empty((len(indices), *first_frames.shape[1:])) for indices in request_indices
+            ]
+            sample_pts = [first_batch.pts_seconds.new_empty(len(indices)) for indices in request_indices]
+
+            def _scatter_batch(indices: list[int], frames: torch.Tensor, pts: torch.Tensor) -> None:
+                positions = {index: position for position, index in enumerate(indices)}
+                for request_pos, requested in enumerate(request_indices):
+                    output_positions = [pos for pos, index in enumerate(requested) if index in positions]
+                    if not output_positions:
+                        continue
+                    source_positions = [positions[requested[pos]] for pos in output_positions]
+                    sample_frames[request_pos][output_positions] = frames[source_positions]
+                    sample_pts[request_pos][output_positions] = pts[source_positions]
+
+            _scatter_batch(first_indices, first_frames, first_batch.pts_seconds)
+            del first_batch, first_frames
+            for index_batch in index_batches:
+                indices = list(index_batch)
+                batch = decoder.get_frames_at(indices=indices)
+                frames = batch.data
+                if not self.return_uint8:
+                    frames = (frames / 255.0).type(torch.float32)
+                _scatter_batch(indices, frames, batch.pts_seconds)
+
+            for (sample_idx, shifted_ts), frames, loaded_pts in zip(
+                file_requests, sample_frames, sample_pts, strict=True
+            ):
+                _finish_request(sample_idx, shifted_ts, frames, loaded_pts)
 
         decode_pool = _opened(self._decode_pool)
         futures = [decode_pool.submit(_decode_file, k, r) for k, r in requests.items()]
