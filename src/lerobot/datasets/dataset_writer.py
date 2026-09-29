@@ -58,6 +58,7 @@ from .utils import (
     DEFAULT_DEPTH_PATH,
     DEFAULT_EPISODES_PATH,
     DEFAULT_IMAGE_PATH,
+    EpisodeDroppedError,
     update_chunk_file_indices,
 )
 from .video_utils import (
@@ -145,6 +146,9 @@ class DatasetWriter:
 
         # Writer state
         self.image_writer: AsyncImageWriter | None = None
+        # Consecutive write failures per camera key for the synchronous path (image_writer is None);
+        # the async path tracks these on the AsyncImageWriter itself.
+        self._sync_write_failures: dict[str, int] = {}
         self.episode_buffer: dict = self._create_episode_buffer()
         self._pq_writer: pq.ParquetWriter | None = None
         self._latest_episode: dict | None = None
@@ -194,9 +198,28 @@ class DatasetWriter:
         if self.image_writer is None:
             if isinstance(image, torch.Tensor):
                 image = image.cpu().numpy()
-            write_image(image, fpath, compress_level=compress_level)
+            success = write_image(image, fpath, compress_level=compress_level)
+            key = fpath.parent.parent.name
+            self._sync_write_failures[key] = 0 if success else self._sync_write_failures.get(key, 0) + 1
         else:
             self.image_writer.save_image(image=image, fpath=fpath, compress_level=compress_level)
+
+    def _raise_on_persistent_write_failures(self) -> None:
+        """Abort the current episode when disk writes keep failing.
+
+        If a camera misses ``fps`` frames back-to-back (roughly one second of data), the episode is
+        considered unrecoverable and ``EpisodeDroppedError`` is raised to stop the recording loop."""
+        failures = (
+            self.image_writer.consecutive_write_failures()
+            if self.image_writer is not None
+            else self._sync_write_failures
+        )
+        for key, count in failures.items():
+            if count >= self._meta.fps:
+                raise EpisodeDroppedError(
+                    f"Camera {key} failed to write {count} frame(s) to disk in a row "
+                    f"(1 second of consecutive missing frames). Discarding this episode."
+                )
 
     def add_frame(self, frame: dict) -> None:
         """
@@ -255,7 +278,9 @@ class DatasetWriter:
                 self.episode_buffer[key].append(None)
             elif self._meta.features[key]["dtype"] in ["image", "video"]:
                 img_path = self._get_image_file_path(
-                    episode_index=self.episode_buffer["episode_index"], image_key=key, frame_index=frame_index
+                    episode_index=self.episode_buffer["episode_index"],
+                    image_key=key,
+                    frame_index=frame_index,
                 )
                 if frame_index == 0:
                     img_path.parent.mkdir(parents=True, exist_ok=True)
@@ -266,6 +291,57 @@ class DatasetWriter:
                 self.episode_buffer[key].append(frame[key])
 
         self.episode_buffer["size"] += 1
+
+        # Early abort: stop the doomed episode mid-recording rather than limping to save_episode.
+        self._raise_on_persistent_write_failures()
+
+    def _repeat_missing_camera_frames(
+        self, episode_buffer: dict, png_keys: list[str]
+    ) -> dict[str, set[int]] | None:
+        """Fill camera frames that failed to write by repeating the previous frame's file (a leading
+        gap is backfilled from the first existing frame), keeping the video aligned with the tabular
+        data.
+
+        Returns a ``{key: {repeated frame indices}}`` mapping, or ``None`` if too many consecutive
+        frames are missing and the episode should be discarded.
+        """
+        fps = self._meta.fps
+        repeated: dict[str, set[int]] = {}
+        for key in png_keys:
+            paths = [Path(p) for p in episode_buffer[key]]
+            exists = [p.is_file() for p in paths]
+            if not any(exists):
+                return None
+            run = max_run = 0
+            for e in exists:
+                run = 0 if e else run + 1
+                max_run = max(max_run, run)
+            if max_run >= fps:  # ~1s of consecutive missing frames -> too degraded
+                return None
+            first = exists.index(True)
+            reps: set[int] = set()
+            last_src: Path | None = None
+            for i, (p, e) in enumerate(zip(paths, exists, strict=True)):
+                if e:
+                    last_src = p
+                else:
+                    shutil.copyfile(last_src if last_src is not None else paths[first], p)
+                    reps.add(i)
+            if reps:
+                repeated[key] = reps
+        return repeated
+
+    @staticmethod
+    def _drop_repeated_paths(buffer: dict, repeated: dict[str, set[int]]) -> dict:
+        """Return a shallow copy of ``buffer`` with repeated camera-frame paths removed, so
+        duplicated frames do not skew the episode statistics."""
+        if not repeated:
+            return buffer
+        view = dict(buffer)
+        for key, idxs in repeated.items():
+            if key in view:
+                view[key] = [p for i, p in enumerate(view[key]) if i not in idxs]
+        return view
 
     def save_episode(
         self,
@@ -286,30 +362,27 @@ class DatasetWriter:
         self._wait_image_writer()
 
         # A missing camera frame on disk (failed PNG write) would misalign frames with the
-        # tabular data, so discard the episode. Each expected path is checked individually
-        # rather than counting files in the directory, so stale files from an earlier run
-        # cannot mask a gap or fail a valid episode. With streaming encoding, video keys never
-        # touch disk (the encoder guarantees one video frame per recorded frame), so only
-        # image keys are left to check.
+        # tabular data. Rather than dropping it, repeat the previous frame to fill the gap, keeping one frame per recorded row. Each expected path is
+        # checked individually so stale files from an earlier run cannot mask a gap. With
+        # streaming encoding, video keys never touch disk (the encoder guarantees one video
+        # frame per recorded frame), so only image keys are left to check.
         episode_index = episode_buffer["episode_index"]
         if isinstance(episode_index, np.ndarray):
             episode_index = int(episode_index.flat[0])
         episode_length = episode_buffer["size"]
         png_keys = self._meta.image_keys if self._streaming_encoder is not None else self._meta.camera_keys
-        missing = {}
-        for key in png_keys:
-            n_missing = sum(1 for fpath in episode_buffer[key] if not Path(fpath).is_file())
-            if n_missing:
-                missing[key] = n_missing
-        if missing:
-            details = ", ".join(f"{key}: {count} missing" for key, count in missing.items())
+        repeated = self._repeat_missing_camera_frames(episode_buffer, png_keys)
+        if repeated is None:
             logger.warning(
-                "\n" + "!" * 80 + f"\nEpisode {episode_index}: some of the {episode_length} recorded camera "
-                f"frames were not written to disk ({details}).\n"
-                "Discarding this episode and moving on.\n" + "!" * 80
+                f"Too many of the {episode_length} recorded camera frames in episode {episode_index} "
+                "failed to write to disk (more than 1 second of consecutive missing frames). "
+                "Discarding this episode."
             )
             self.clear_episode_buffer(delete_images=True)
             return False
+        if repeated:
+            for key, idxs in repeated.items():
+                logger.warning(f"Episode finished with {len(idxs)} repeated frame(s) for {key}.")
 
         # size and task are special cases that won't be added to hf_dataset
         episode_buffer.pop("size")
@@ -348,14 +421,18 @@ class DatasetWriter:
                 if self._meta.features.get(k, {}).get("dtype") not in ("video",)
             }
             non_video_features = {k: v for k, v in self._meta.features.items() if v["dtype"] != "video"}
-            ep_stats = compute_episode_stats(non_video_buffer, non_video_features)
+            ep_stats = compute_episode_stats(
+                self._drop_repeated_paths(non_video_buffer, repeated), non_video_features
+            )
         else:
-            ep_stats = compute_episode_stats(episode_buffer, self._meta.features)
+            ep_stats = compute_episode_stats(
+                self._drop_repeated_paths(episode_buffer, repeated), self._meta.features
+            )
 
         ep_metadata = self._save_episode_data(episode_buffer)
 
         if use_streaming:
-            streaming_results = self._streaming_encoder.finish_episode()
+            streaming_results = self._streaming_encoder.finish_episode(episode_index=episode_index)
             for video_key in self._meta.video_keys:
                 normalization_factor = 255.0 if video_key not in self._meta.depth_keys else 1.0
                 temp_path, video_stats = streaming_results[video_key]
