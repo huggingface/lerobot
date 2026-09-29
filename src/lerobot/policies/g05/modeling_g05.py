@@ -66,6 +66,7 @@ from lerobot.utils.language import semantic_message_content_text
 
 from .action_codec_g05 import G05NativeActionCodec
 from .configuration_g05 import (
+    G05_COT_PROMPTS,
     G05_POLICY_PARTS,
     G05Config,
     make_g05_cot_prompt_template,
@@ -1251,8 +1252,12 @@ class G05NativeBackend(nn.Module):
         initial_history: Tensor | None = None,
         initial_history_mask: Tensor | None = None,
         forced_first_tokens: Tensor | None = None,
+        suppressed_tokens: tuple[int, int] | None = None,
     ) -> tuple[G05TextGeneration, Any, Tensor, Tensor, Tensor]:
-        """Generate the chain-of-thought text tokens."""
+        """Generate the chain-of-thought text tokens.
+
+        ``suppressed_tokens`` is a ``[begin, end)`` id range that is never sampled.
+        """
         generated = []
         batch_size = last_hidden.shape[0]
         finished = torch.zeros(batch_size, dtype=torch.bool, device=last_hidden.device)
@@ -1269,6 +1274,9 @@ class G05NativeBackend(nn.Module):
 
         for step in range(max_new_tokens):
             logits = self.model.vlm.logits(last_hidden)
+            if suppressed_tokens is not None:
+                logits = logits.clone()
+                logits[..., suppressed_tokens[0] : suppressed_tokens[1]] = torch.finfo(logits.dtype).min
             next_token = self._sample_next_token(logits, history, history_mask)
             if step == 0 and forced_first_tokens is not None:
                 next_token = torch.where(forced_first_tokens.ge(0), forced_first_tokens, next_token)
@@ -1530,6 +1538,9 @@ class G05NativeBackend(nn.Module):
                 cache=cache,
                 max_new_tokens=int(self.model_config["ar"].get("max_new_tokens", 300)),
                 stop_token_ids=(self.processor.eov_token_id, self.processor.eos_token_id),
+                # Action codes only follow <EOV>; sampled inside the CoT they end up as the
+                # text of a subtask (seen on SO-101 autosteer).
+                suppressed_tokens=_action_token_range(self.processor),
             )
             sequence.token_types = token_types
             result["generated_ids"] = cot_generation.token_ids
@@ -1699,6 +1710,13 @@ def _native_backend(config: G05Config, checkpoint_dir: str | Path | None) -> nn.
         }
     )
     return G05NativeBackend.from_config(model_config, checkpoint_dir)
+
+
+def _action_token_range(processor: Any) -> tuple[int, int] | None:
+    """``[begin, end)`` ids of the ActionCodec codes and group markers, when the vocabulary has them."""
+    begin = getattr(processor, "action_token_begin", None)
+    end = getattr(processor, "action_token_end_with_markers", None)
+    return (int(begin), int(end)) if begin is not None and end is not None else None
 
 
 def _clean_cot_text(text: str) -> str:
@@ -2091,11 +2109,7 @@ class G05Policy(PreTrainedPolicy):
             sample["bbox"] = bbox
         if subtask is not None:
             sample["atomic_task"] = f"Subtask: {subtask}"
-        sample["prompt"] = {
-            ("bbox",): "predict bbox",
-            ("subtask",): "predict subtask",
-            ("bbox", "subtask"): "predict bbox, subtask and action",
-        }[fields]
+        sample["prompt"] = G05_COT_PROMPTS[fields]
         return True
 
     def _prepare_author_batch(
@@ -2190,7 +2204,9 @@ class G05Policy(PreTrainedPolicy):
                             flow_only="<action_action" not in self.config.prompt_template,
                         )
                     else:
-                        sample["prompt"] = "predict subtask"
+                        sample["prompt"] = G05_COT_PROMPTS[
+                            tuple(getattr(self.config, "runtime_cot_fields", ("subtask",)))
+                        ]
                         atomic_task = batch.get("atomic_task")
                         if atomic_task is not None:
                             atomic_task = str(self._batch_item(atomic_task, index, batch_size))

@@ -111,6 +111,14 @@ G05_CAMERA_SIZE_PROFILES: dict[str, dict[str, tuple[int, int]]] = {
 }
 
 
+# The CoT prompt text of each upstream builder, keyed by the fields it generates, in order.
+G05_COT_PROMPTS: dict[tuple[str, ...], str] = {
+    ("bbox",): "predict bbox",
+    ("subtask",): "predict subtask",
+    ("bbox", "subtask"): "predict bbox, subtask and action",
+}
+
+
 def make_g05_prompt_template(num_images: int, *, predict_cot: bool, flow_only: bool) -> str:
     """Reproduce the selected author SamplesBuilder template exactly."""
 
@@ -314,6 +322,10 @@ class G05Config(PreTrainedConfig):
     recipe_path: str | None = None
     recipe: dict[str, Any] | None = field(default_factory=_g05_default_recipe)
     cot_bbox_camera: str | None = None
+    # The System 2 chain of thought generated at inference: ("subtask",) is upstream's
+    # SubtaskCoTBuilder prompt, ("bbox", "subtask") its BBoxSubtaskCoTBuilder prompt (boxes
+    # first, then the subtask; the action attends to both).
+    runtime_cot_fields: tuple[str, ...] = ("subtask",)
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -443,6 +455,11 @@ class G05Config(PreTrainedConfig):
             raise ValueError("camera_sizes must contain exactly the ordered checkpoint camera keys.")
         if not set(self.optional_camera_keys) <= set(self.camera_order):
             raise ValueError("optional_camera_keys must be a subset of camera_order.")
+        self.runtime_cot_fields = tuple(self.runtime_cot_fields)
+        if self.runtime_cot_fields not in G05_COT_PROMPTS:
+            raise ValueError(
+                f"runtime_cot_fields must be one of {sorted(G05_COT_PROMPTS)}, got {self.runtime_cot_fields}."
+            )
         if self.cot_bbox_camera is not None and self.cot_bbox_camera not in self.camera_order:
             raise ValueError("cot_bbox_camera must be one of camera_order.")
         if any(len(size) != 2 or min(size) <= 0 for size in self.camera_sizes.values()):

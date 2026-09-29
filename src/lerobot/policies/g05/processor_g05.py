@@ -713,6 +713,7 @@ def _tokenizer_policy_config(config: G05Config) -> dict[str, Any]:
         "chunk_size": config.chunk_size,
         "processor_metadata": config.processor_metadata,
         "cot_bbox_camera": config.cot_bbox_camera,
+        "runtime_cot_fields": config.runtime_cot_fields,
     }
 
 

@@ -1039,6 +1039,33 @@ def test_action_generation_commits_exact_cot_stop_and_keeps_history():
     torch.testing.assert_close(generation.history, torch.tensor([[8, 9, 7, 100]]))
 
 
+def test_cot_generation_never_samples_suppressed_action_tokens():
+    class GreedyBackend(G05NativeBackend):
+        def __init__(self):
+            nn.Module.__init__(self)
+            self.model_config = {"ar": {"do_sample": False}, "embodiment": "libero"}
+            # The most likely token is an action code (id 5); the stop token (2) comes next.
+            logits = torch.zeros(1, 8)
+            logits[0, 5], logits[0, 2] = 10.0, 5.0
+            self.model = SimpleNamespace(vlm=SimpleNamespace(logits=lambda hidden: logits))
+            self.processor = SimpleNamespace(pad_token_id=0)
+
+        def _decode_token(self, token_ids, *, token_types, positions, cache, active_mask=None):
+            return torch.ones(1, 4), token_types, positions
+
+    generation, *_ = GreedyBackend()._generate_text(
+        torch.zeros(1, 4),
+        token_types=torch.ones(1, 1),
+        positions=torch.zeros(3, 1, 1, dtype=torch.long),
+        cache=object(),
+        max_new_tokens=3,
+        stop_token_ids=2,
+        suppressed_tokens=(4, 7),
+    )
+
+    torch.testing.assert_close(generation.token_ids, torch.tensor([[2]]))
+
+
 def test_decode_token_restores_finished_linear_attention_rows():
     class MutatingVLM(nn.Module):
         def embed(self, token_ids):
@@ -1175,6 +1202,27 @@ def test_system2_recipe_bbox_and_subtask_use_checkpoint_field_order():
     assert sample["bbox"] == "BBox: cup <loc0102><loc0102><loc0512><loc0512>"
     assert sample["atomic_task"] == "Subtask: grasp the cup"
     assert "<EOC><bbox_text>|<atomic_task_text>|Action:" in sample["template"]
+
+
+@pytest.mark.parametrize(
+    ("fields", "prompt"),
+    [(("subtask",), "predict subtask"), (("bbox", "subtask"), "predict bbox, subtask and action")],
+)
+def test_system2_inference_prompt_follows_runtime_cot_fields(fields, prompt):
+    config = _config(predict_cot=True, runtime_system="system2", runtime_cot_fields=fields)
+    policy = G05Policy(config, backend=TinyG05Backend())
+    batch = _policy_batch("operator task")
+    del batch[ACTION]
+
+    sample = policy._prepare_author_batch(batch)["samples"][0]
+
+    assert sample["prompt"] == prompt
+    assert sample["command"] == "operator task"
+
+
+def test_runtime_cot_fields_rejects_an_unknown_prompt():
+    with pytest.raises(ValueError, match="runtime_cot_fields"):
+        _config(predict_cot=True, runtime_cot_fields=("subtask", "bbox"))
 
 
 def test_system2_recipe_no_cot_branch_uses_action_only_training_template():

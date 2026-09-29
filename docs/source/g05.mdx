@@ -144,20 +144,70 @@ lerobot-rollout \
   --fps=30
 ```
 
-| Command                  | Effect                                                        |
-| ------------------------ | ------------------------------------------------------------- |
-| `/start`                 | start (or restart) the policy control loop                    |
-| `/subtask <text>`        | set the instruction the policy follows                        |
-| `/vqa <text>`            | not supported on G0.5                                         |
-| `/autosteer <goal>\|off` | let the policy pick its own subtasks toward a high-level goal |
-| `/reset`                 | stop movement, return to initial position, restore the task   |
-| `/stop`                  | end the session and shut down                                 |
-| `/help`                  | show the command list                                         |
+| Command                  | Effect                                                         |
+| ------------------------ | -------------------------------------------------------------- |
+| `/start`                 | start (or restart) the policy control loop                     |
+| `/subtask <text>`        | set the instruction the policy follows                         |
+| `/vqa <text>`            | not supported on G0.5 (see [below](#why-vqa-is-not-supported)) |
+| `/autosteer <goal>\|off` | let the policy pick its own subtasks toward a high-level goal  |
+| `/reset`                 | stop movement, return to initial position, restore the task    |
+| `/stop`                  | end the session and shut down                                  |
+| `/help`                  | show the command list                                          |
 
 `/autosteer` needs a checkpoint with `predict_cot=true` and answers from the
 live observation, so it is rejected until `/start` is running. It prints the
 subtask it picks as `Autosteer subtask:`, and `--autosteer_interval_s` sets how
 many seconds of motion pass between two re-planning queries.
+
+Pick the runtime to match how the task is given, as G0.5 was trained:
+
+- **High-level task, no steering:** keep System 2. Each chunk predicts the
+  current subtask from the task, then acts on it.
+- **`/subtask` or `/autosteer`:** use `--policy.runtime_system=system1`. The
+  subtask becomes the task and the policy acts on it directly; `/autosteer` still
+  plans each subtask from the goal with a System 2 query. System 2 on a
+  subtask-as-task would plan a subtask of the subtask, a prompt it was not
+  trained on.
+
+#### Choosing the chain of thought
+
+`--policy.runtime_cot_fields` selects which of G0.5's trained chain-of-thought
+formats System 2 generates before each chunk. The action attends to the whole
+chain of thought, so whatever it contains conditions the action.
+
+| `runtime_cot_fields`    | Trained instruction                | Generated chain of thought |
+| ----------------------- | ---------------------------------- | -------------------------- |
+| `["subtask"]` (default) | `predict subtask`                  | the subtask                |
+| `["bbox", "subtask"]`   | `predict bbox, subtask and action` | boxes, then the subtask    |
+
+For example, `["bbox", "subtask"]` generates:
+
+```text
+BBox: cube <loc0397><loc0717><loc0625><loc0895>|Subtask: pick up the blue cube
+```
+
+- **`["subtask"]`** generates the fewest tokens per chunk, so it is the faster
+  choice.
+- **`["bbox", "subtask"]`** locates the relevant objects first, which grounds the
+  subtask and the action in the scene. Each box is a label followed by four
+  location tokens in `y1, x1, y2, x2` order; a token `<locNNNN>` is the
+  coordinate as a fraction of the image times 1024. Boxes refer to the BBox
+  camera (`--policy.cot_bbox_camera`, by default the first non-empty camera
+  slot).
+
+`lerobot/g05_base` and `lerobot/g05_so101` were trained on both formats; the
+LIBERO and RoboTwin checkpoints have `predict_cot=false` and no System 2. A
+fine-tune produces useful boxes only if its dataset had grounded `vqa`
+annotations on the BBox camera (see [Data Requirements](#data-requirements)).
+
+#### Why `/vqa` is not supported
+
+G0.5's text head is not a general vision-language assistant. It was trained to
+emit only the chain-of-thought formats above, after one of their fixed
+instructions, and its prompt has no slot for a free-form question. A `/vqa`
+question can only take the place of the task, so the model would reply with a
+subtask (and boxes) for that "task" instead of an answer. `/autosteer` works
+because its goal is a task, which is what that slot expects.
 
 In interactive mode `--duration` bounds each `/start` segment rather than the
 whole session.
@@ -295,20 +345,21 @@ lerobot-train \
 
 ## Key Configuration Parameters
 
-| Parameter                                   | Description                                                      |
-| ------------------------------------------- | ---------------------------------------------------------------- |
-| `policy.checkpoint_profile`                 | Selects the packaged base, LIBERO, RoboTwin, or SO-101 contract  |
-| `policy.embodiment`                         | Robot name written in the prompt; selects a released slot table  |
-| `policy.state_slots`, `policy.action_slots` | Explicit policy-layout slot of each raw state/action value       |
-| `policy.camera_order`                       | Dataset camera per checkpoint image slot; `null` leaves it empty |
-| `policy.action_head`                        | Uses the checkpoint's `flow` or `actioncodec` action path        |
-| `policy.runtime_system`                     | Selects direct System 1 or unified System 2 reasoning and action |
-| `policy.chunk_size`                         | Number of actions predicted in each chunk                        |
-| `policy.n_action_steps`                     | Number of actions executed before replanning                     |
-| `policy.use_language_recipe`                | Enable G0.5's built-in language-supervision recipe               |
-| `policy.recipe_path`                        | Explicit external recipe override used during fine-tuning        |
-| `policy.optimizer_backbone_lr_multiplier`   | Learning-rate multiplier for the language backbone               |
-| `policy.optimizer_vision_lr_multiplier`     | Learning-rate multiplier for the vision tower                    |
+| Parameter                                   | Description                                                       |
+| ------------------------------------------- | ----------------------------------------------------------------- |
+| `policy.checkpoint_profile`                 | Selects the packaged base, LIBERO, RoboTwin, or SO-101 contract   |
+| `policy.embodiment`                         | Robot name written in the prompt; selects a released slot table   |
+| `policy.state_slots`, `policy.action_slots` | Explicit policy-layout slot of each raw state/action value        |
+| `policy.camera_order`                       | Dataset camera per checkpoint image slot; `null` leaves it empty  |
+| `policy.action_head`                        | Uses the checkpoint's `flow` or `actioncodec` action path         |
+| `policy.runtime_system`                     | Selects direct System 1 or unified System 2 reasoning and action  |
+| `policy.runtime_cot_fields`                 | System 2 chain of thought: `["subtask"]` or `["bbox", "subtask"]` |
+| `policy.chunk_size`                         | Number of actions predicted in each chunk                         |
+| `policy.n_action_steps`                     | Number of actions executed before replanning                      |
+| `policy.use_language_recipe`                | Enable G0.5's built-in language-supervision recipe                |
+| `policy.recipe_path`                        | Explicit external recipe override used during fine-tuning         |
+| `policy.optimizer_backbone_lr_multiplier`   | Learning-rate multiplier for the language backbone                |
+| `policy.optimizer_vision_lr_multiplier`     | Learning-rate multiplier for the vision tower                     |
 
 The action head, dimensions, horizon, processor modes, and normalization come
 from the checkpoint; incompatible overrides are rejected during loading.
