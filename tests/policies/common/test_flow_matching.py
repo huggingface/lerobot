@@ -21,6 +21,9 @@ smolvla sampling loop (including its RTC hook semantics): any divergence from th
 reference is a behavior change for released checkpoints.
 """
 
+from unittest.mock import patch
+
+import pytest
 import torch
 
 from lerobot.policies.common.flow_matching import (
@@ -142,16 +145,18 @@ def _make_denoise_fn():
     return denoise_fn
 
 
-def test_euler_integrate_matches_historical_loop():
+@pytest.mark.parametrize("precompute_times", [False, True])
+def test_euler_integrate_matches_historical_loop(precompute_times):
     torch.manual_seed(3)
     denoise_fn = _make_denoise_fn()
     noise = torch.randn(2, 6, 4)
     ref = _reference_pi0_loop(denoise_fn, noise, 10, rtc_enabled=False, rtc_processor=None, kw={})
-    out = euler_integrate(denoise_fn, noise, 10)
+    out = euler_integrate(denoise_fn, noise, 10, precompute_times=precompute_times)
     assert torch.equal(out, ref)
 
 
-def test_euler_integrate_rtc_guidance_and_kwarg_forwarding():
+@pytest.mark.parametrize("precompute_times", [False, True])
+def test_euler_integrate_rtc_guidance_and_kwarg_forwarding(precompute_times):
     torch.manual_seed(4)
     denoise_fn = _make_denoise_fn()
     noise = torch.randn(2, 6, 4)
@@ -169,6 +174,7 @@ def test_euler_integrate_rtc_guidance_and_kwarg_forwarding():
         inference_delay=3,
         prev_chunk_left_over=leftover,
         execution_horizon=25,
+        precompute_times=precompute_times,
     )
     assert torch.equal(out, ref)
     assert len(new_proc.guidance_calls) == 6
@@ -193,7 +199,8 @@ def test_euler_integrate_debug_tracking_fires_even_when_rtc_disabled():
     assert torch.equal(proc.tracked[-1]["x_t"], out)
 
 
-def test_euler_integrate_clamps_trained_rtc_prefix_and_sets_clean_time():
+@pytest.mark.parametrize("precompute_times", [False, True])
+def test_euler_integrate_clamps_trained_rtc_prefix_and_sets_clean_time(precompute_times):
     noise = torch.ones(1, 4, 1)
     hard_prefix = torch.tensor([[[2.0], [3.0], [0.0], [0.0]]])
     hard_prefix_mask = torch.tensor([[[True], [True], [False], [False]]])
@@ -209,7 +216,19 @@ def test_euler_integrate_clamps_trained_rtc_prefix_and_sets_clean_time():
         2,
         hard_prefix=hard_prefix,
         hard_prefix_mask=hard_prefix_mask,
+        precompute_times=precompute_times,
     )
 
     torch.testing.assert_close(out[:, :2], hard_prefix[:, :2])
     assert all(torch.equal(time[:, :2], torch.zeros(1, 2)) for time in seen_times)
+
+
+def test_precomputed_times_use_one_tensor_creation_and_preserve_rounding():
+    noise = torch.randn(2, 3, 4)
+    denoise = _make_denoise_fn()
+    expected = _reference_pi0_loop(denoise, noise, 7, False, None, {})
+    with patch("lerobot.policies.common.flow_matching.torch.tensor", wraps=torch.tensor) as create:
+        actual = euler_integrate(denoise, noise, 7, precompute_times=True)
+    assert create.call_count == 1
+    assert len(create.call_args.args[0]) == 7
+    assert torch.equal(actual, expected)
