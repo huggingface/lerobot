@@ -81,11 +81,6 @@ class FineARTVLAConfig(PI05Config):
     unfreeze_lm_head: bool = True
     """Train PaliGemma's language head."""
 
-    # Optional context dropout improves tolerance to missing or stale language state.
-    plan_dropout_prob: float = 0.0
-    memory_dropout_prob: float = 0.0
-    subtask_dropout_prob: float = 0.0
-
     # FAST adds discrete-action CE to the text and flow objectives from paper §III.B-C.
     enable_fast_action_loss: bool = True
     """Add FAST action-token cross-entropy."""

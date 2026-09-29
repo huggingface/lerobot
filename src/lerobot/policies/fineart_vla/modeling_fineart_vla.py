@@ -48,6 +48,17 @@ from .processor_fineart_vla import make_fineart_vla_pre_post_processors  # noqa:
 
 logger = logging.getLogger(__name__)
 
+# Tokenizers with PaliGemma's <loc> tokens registered, cached per name for text generation.
+_LOC_TOKENIZER_CACHE: dict[str, Any] = {}
+
+
+def _get_loc_tokenizer(tok_name: str, auto_tokenizer_cls: Any, register_loc_fn: Any) -> Any:
+    tokenizer = _LOC_TOKENIZER_CACHE.get(tok_name)
+    if tokenizer is None:
+        tokenizer = register_loc_fn(auto_tokenizer_cls.from_pretrained(tok_name))
+        _LOC_TOKENIZER_CACHE[tok_name] = tokenizer
+    return tokenizer
+
 
 def _last_valid_prefix_hidden(hidden: Tensor, mask: Tensor) -> Tensor:
     """Select the prompt endpoint, including noncontiguous masked image/text padding."""
@@ -1568,8 +1579,7 @@ class FineARTVLAPolicy(PI05Policy):
         if tokenizer is None:
             from transformers import AutoTokenizer  # noqa: PLC0415
 
-            from .text_generation import _get_loc_tokenizer  # noqa: PLC0415
-            from .text_processor_fineart_vla import register_paligemma_loc_tokens  # noqa: PLC0415
+            from .processor_fineart_vla import register_paligemma_loc_tokens  # noqa: PLC0415
 
             tok_name = getattr(self.config, "tokenizer_name", None) or "google/paligemma-3b-pt-224"
             tokenizer = _get_loc_tokenizer(tok_name, AutoTokenizer, register_paligemma_loc_tokens)
