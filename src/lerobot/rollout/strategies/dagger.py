@@ -122,6 +122,10 @@ class DAggerEvents:
         # Session-level flags
         self.stop_recording = Event()
         self.upload_requested = Event()
+        # events for arrow keys
+        self.exit_early = Event()
+        self.rerecord_episode = Event()
+
 
     # -- Thread-safe phase access ------------------------------------------
 
@@ -196,12 +200,19 @@ def _init_dagger_keyboard(events: DAggerEvents, cfg: DAggerKeyboardConfig):
             events.request_transition(key_to_event[name])
         if name == cfg.upload:
             events.upload_requested.set()
+        # dispatch for arrow keys:
+        if name == cfg.exit_early:
+            events.exit_early.set()
+        if name == cfg.rerecord_episode:
+            events.rerecord_episode.set()
 
     return create_key_listener(
         dispatch,
         controls_help=(
             f"pause_resume='{cfg.pause_resume}', correction='{cfg.correction}', "
-            f"upload='{cfg.upload}', ESC=stop"
+            f"upload='{cfg.upload}', ESC=stop, "
+            f"(episodic only): exit_early='{cfg.exit_early}, rerecord_episode='{cfg.rerecord_episode}'"
+
         ),
     )
 
@@ -296,13 +307,18 @@ class DAggerStrategy(RolloutStrategy):
     def run(self, ctx: RolloutContext) -> None:
         """Run DAgger episodes with human-in-the-loop intervention."""
         if self.config.record_autonomous:
-            # remember defaults to non-sentry because that mode broken rn
             if self.config.use_sentry_rotation:
                 logger.info("Running DAgger + sentry")
                 self._run_continuous(ctx)
             else:
                 logger.info("Running DAgger + episodic")
                 self._run_episodic(ctx)
+        else:
+            # let user know that this flag doesnt do anything on this logic branch
+            if self.config.use_sentry_rotation:
+                logger.warning("--strategy.use_sentry_rotation=True does nothing when --strategy.record_autonomous=False")
+            # capture only HIL corrections where each correction is an episode
+            self._run_corrections_only(ctx)
 
     def teardown(self, ctx: RolloutContext) -> None:
         """Stop listeners, finalise the dataset, and disconnect hardware."""
@@ -364,7 +380,6 @@ class DAggerStrategy(RolloutStrategy):
         
 
         # timing setup
-        control_interval = interpolator.get_control_interval(cfg.fps)
         task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         timer = CycleTimer(cfg.fps, interpolator.multiplier)
         correction_stride = interpolator.multiplier
@@ -377,7 +392,7 @@ class DAggerStrategy(RolloutStrategy):
         record_stride = max(1, cfg.interpolation_multiplier)
 
         # TODO: the use of cfg.dataset.episode_time_s -> episode_time_s -> control_time_s is redundant? and confusing
-        #   but is left like this to mimic the variable structure in episodic.py that follows the same pathing pretty much
+        #   i left like this to mimic the variable structure in episodic.py that follows the same pathing pretty much
         episode_time_s = cfg.dataset.episode_time_s
 
         # used in reset "phase" (not DAggerPhase)
@@ -416,7 +431,7 @@ class DAggerStrategy(RolloutStrategy):
                     rerecord_occurred_during_main_loop = False
 
                     # per episode last_action and ticks (strides stay the same, instantiated earlier)
-                    # last_action: dict[str, Any] | None = None # NOTE: used for pause phase, can use for rewinding phase
+                    # NOTE: used for pause phase, can use for rewinding phase
                     last_action: RobotAction | None = None
                     record_tick = 0
 
@@ -432,6 +447,12 @@ class DAggerStrategy(RolloutStrategy):
                     engine.resume()
 
                     while not events.stop_recording.is_set() and not ctx.runtime.shutdown_event.is_set() and timestamp < control_time_s:
+                        
+                        
+                        if cfg.duration > 0 and (time.perf_counter() - episode_start) >= cfg.duration:
+                            logger.info("Duration limit reached (%.0fs)", cfg.duration)
+                            break
+
                         # loop_start = time.perf_counter()
                         timer.tick(new_cycle=interpolator.needs_new_action())
 
@@ -445,8 +466,10 @@ class DAggerStrategy(RolloutStrategy):
                                 new_phase,
                                 engine,
                                 interpolator,
+                                teleop,
                                 ctx,
                                 last_action,
+                                timer
                             )
                             if new_phase == DAggerPhase.AUTONOMOUS:
                                 last_action = None
@@ -516,12 +539,10 @@ class DAggerStrategy(RolloutStrategy):
 
                         else: # defaults to AUTONOMOUS ... TODO: should be explicit???
 
-
                             # stop the teleop at the same place TODO: return to home?
                             # this is done to prevent the teleoperator just dropping onto the table and breaking hardware
                             if teleop_supports_feedback(teleop):
                                 teleop.enable_torque()
-
 
                             # arrow key functioning enabled during this phase
                             # break out of recording loop via right arrow key
@@ -570,8 +591,6 @@ class DAggerStrategy(RolloutStrategy):
                                     dataset.add_frame(frame)
                                 record_tick += 1
 
-                        # in _run_continuous, episode rotation would go here but we will change it
-
                         timer.wait()  
 
                     # end of recording loop
@@ -579,19 +598,14 @@ class DAggerStrategy(RolloutStrategy):
                     timer.log_episode_summary(f"episode {recorded_episodes}")
 
                     # unconditionally home the follower
-                    self._return_to_initial_position(hw=ctx.hardware, duration_s=3)
+                    self.return_to_initial_position(hw=ctx.hardware, duration_s=3)
 
                     # unconditionally home teleop too if possible by sending it to the returned teleop position
-                    # TODO: just send teleop to previously tracked home position??
-                    # NOTE: i dont quite understand the point of this logic, shouldnt we always try to home the teleop just in case?
                     if teleop_supports_feedback(teleop):
                         obs = robot.get_observation()
                         home_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
                         teleop_smooth_move_to(teleop, home_pos, duration_s=3)
                         teleop.disable_torque()
-
-
-
 
                     # must unconditionally run reset_loop(), inner logic affects other parts of the code so we capture results in its bool return
                     rerecord_occurred_during_reset = self._reset_loop(
@@ -606,8 +620,6 @@ class DAggerStrategy(RolloutStrategy):
                         display_compressed=display_compressed,
                     )
 
-
-
                     if rerecord_occurred_during_main_loop or rerecord_occurred_during_reset:
                         logger.info("Rerecord has been triggered, resetting buffer and flags")
                         events.rerecord_episode.clear()
@@ -616,7 +628,7 @@ class DAggerStrategy(RolloutStrategy):
 
                         # returns to its initial joint positions captured at startup
                         if not teleop and self.config.reset_to_initial_position:
-                            self._return_to_initial_position(hw=ctx.hardware, duration_s=1)
+                            self.return_to_initial_position(hw=ctx.hardware, duration_s=1)
                         
                     else:
                         dataset.save_episode()
@@ -655,12 +667,10 @@ class DAggerStrategy(RolloutStrategy):
             logger.info(f"Starting reset loop, running for {control_time_s} seconds...")
 
             processors = ctx.processors
-            control_interval = 1.0 / fps
 
             if timer is None:
                 timer = CycleTimer(fps, 1)
 
-            timer.reset()
             timestamp = 0.0
             start_t = time.perf_counter()
 

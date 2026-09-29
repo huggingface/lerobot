@@ -210,8 +210,6 @@ class EpisodicStrategyConfig(RolloutStrategyConfig):
 
 @RolloutStrategyConfig.register_subclass("dagger")
 @dataclass
-@RolloutStrategyConfig.register_subclass("dagger")
-@dataclass
 class DAggerStrategyConfig(RolloutStrategyConfig):
     """Human-in-the-loop data collection (DAgger / RaC).
 
