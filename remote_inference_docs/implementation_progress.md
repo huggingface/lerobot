@@ -1,24 +1,42 @@
 # Async remote inference implementation progress
 
-Authoritative requirements: [async_proposal.md](async_proposal.md), 2026-09-28.
+Authoritative requirements: [async_proposal.md](async_proposal.md), originally 2026-09-28, revised 2026-09-29 with approved post-LAN learnings and follow-up scope.
 Baseline: `e595b7902`. Existing proposal and other untracked documentation are user work.
+
+Current handoff: the first physical LAN action-test round is complete. The proposal now includes a bounded follow-up for 30-second absent-client cleanup, configurable plain alignment **and** blending, actionable diagnostics, and lightweight build reporting. **Those changes are design-only and not implemented yet.** No further physical testing is requested now; sensor-stall expansion is deferred.
 
 ## Milestones and gates
 
 - [x] Stage 1 implementation and automated gate: policy contract/runner, atomic queue snapshots, shared `ChunkRuntime`, worker-owned local RTC reset, task provenance and planned local language hold. Relevant rollout/RTC and shared-component regressions pass.
 - [x] Stage 2 implementation and automated gate: bounded codec/Zenoh channels, exclusive ordered worker, descriptor-based startup without client model loading, remote engine and dispatch/hold gate. Fake-robot, real processor, direct TCP and authenticated router scenarios pass.
 - [x] Stage 3 implementation and automated lifecycle coverage: live task versions, language topics, hold acknowledgment, query-intent generations, serialized controls and fresh action resumption. **Acceptance gate remains open: VQA/autosteering have not run with a real text-capable checkpoint.**
-- [ ] Stage 4 hardware/performance validation and legacy replacement. New user documentation, examples, extra and script registration are implemented. **Removal gate requires the complete real action/language workflow first.**
+- [ ] Stage 4 hardware/performance validation and legacy replacement. First physical LAN action-test round concluded by the user on 2026-09-29, covering SmolVLA, XVLA, LaWAM and two ACT checkpoints across both host directions; results are recorded below. New user documentation, examples, extra and script registration are implemented. **Removal gate requires the complete real action/language workflow first.**
+- [ ] Approved post-LAN follow-up: implement the scope/criteria below. Existing completed stage checks do not cover the new alignment/blending behavior.
+
+## Approved next implementation steps — 2026-09-29
+
+| Order | Deliverable and decision | Completion criteria / validation |
+| --- | --- | --- |
+| 1 | Use **30 seconds** for absent-client cleanup in deployment presets; expose session ownership, remaining grace and pending worker cleanup. Base config is already 30 s, but physical-test presets still use 300 s. | A clean close releases promptly; abrupt disconnect permits a fresh session after grace and worker completion without restarting a healthy server. Test rejection during grace, close behind in-flight work, and no reuse of a hung model. Keep manual restart/new-session semantics; do not resume old motion. |
+| 2 | Deliver **both alignment and configurable blending**, separately selectable: retain append default, add aligned replacement, and allow bounded weighted blending over aligned future steps. Put behavior in shared execution, with explicit negotiation. | Test observation/cursor anchoring, committed-prefix removal, execution-slice limits, no usable suffix, interpolation commitments, startup/holds, relative canonical actions, gripper/component handling, task/reset/session isolation, and conservative provenance for every blend contributor. Preserve existing append/RTC regressions. Validate loopback separate-process operation; compare all three behaviors physically when testing resumes. |
+| 3 | Add focused timing/merge logs and debugging guidance; explain the **freshness/continuity tradeoff** and existing nested CLI overrides. | Show configured/effective refill, playback at submission, full turnaround/margin, source age at first dispatch, trim/overlap counts and transition discontinuity. Guidance distinguishes bumps from starvation, stale data, stalled requests and admission failures. Describe the rolling-max refill floor and avoid universal tuning prescriptions. |
+| 4 | Keep compatibility simple: protocol and capability checks remain authoritative; log package version and available loaded-build revision. | Unsupported new execution contracts fail before motion; test old-peer rejection and compatible negotiation. Build information reflects the running process and makes differences visible. No required Git/package-version equality, new build-management framework or claim that artifact identity hashes implementation code. |
+
+Resolve exact public option names, overlap/weight defaults and blendable-component representation during the shared-runtime implementation. Record them before exposing the CLI. Alignment and blending are distinct stages for review and testing, but both are in the approved delivery scope. The legacy `0.3 * old + 0.7 * new` heuristic is a reference, not an automatically selected new default.
+
+Same-host server/client processes are an explicit target: users with a local GPU may want sustained bounded background replanning and smoother plain-policy motion without RTC. This uses the same executor/contract as LAN; no new in-process backend or unbounded inference scheduling is required. In aligned mode, permit fresh replanning as the worker becomes available with one request in flight and bounded future storage, rather than append mode's successor-slot restriction.
+
+Deferred by the user: expanded sensor-stall detection, per-camera timestamp propagation, independent hardware watchdogs and acquisition-error teardown redesign. Preserve current age and fault checks and record their limits; these deferred findings must not silently expand this batch. Also keep automatic motion recovery, automatic refill optimization and XVLA RTC out of scope. Legacy removal still waits for the existing real action/language acceptance gate.
 
 ## Inspection and decisions
 
 - Scope comes only from `async_proposal.md`; older documents and draft branch are not requirements.
 - Keep synchronous `select_action()` execution intact.
 - Inspection found independently locked continuation getters and policy/processor reset on the control thread. These now use atomic snapshots and worker-owned resets.
-- Plain chunks must honor execution length independently of predicted horizon; RTC needs both canonical and model-space continuation.
+- Plain chunks must honor execution length independently of predicted horizon; RTC needs both canonical and model-space continuation. Current plain mode appends without trimming/blending; the approved aligned mode is a pending extension, not a description of current behavior.
 - Fail closed for unsupported robot stop semantics, policy history/preparation, feature semantics, and explicitly requested modes.
 - Do not remove legacy async/gRPC service before the proposal's real workflow validation gate passes; unrelated RL protobuf definitions and dependencies remain.
-- Explicit semantic profile plus named feature conventions are required on the deployment/client; wire camera resolution is exact. SmolVLA and XVLA declare their existing internal resize/optional-camera behavior through policy-owned validation hooks; other policies retain exact checkpoint shapes. Rename mapping happens once client-side.
+- Explicit semantic profile plus named feature conventions are required on the deployment/client; wire camera resolution is exact. SmolVLA and XVLA declare their existing internal resize/optional-camera behavior, and LaWAM declares processor resizing/unused-state behavior, through policy-owned validation hooks; policies without overrides retain exact checkpoint shapes. Rename mapping happens once client-side.
 - Position hold is implemented for `SOFollower` and `OmxFollower` robots with only `.pos` actions. Unsupported/mixed control modes are rejected for async rollout. Physical hold validation is outstanding.
 - Timing defaults are provisional lab starting points, not measured profiles. Local RTC gains additive age/action/startup/language bounds; synchronous action execution is unchanged.
 - Server content identity hashes checkpoint/processor files, optional resolved adapter/base contents and effective settings. Warmup is server-only and is followed by a full reset before readiness.
@@ -55,11 +73,13 @@ Baseline: `e595b7902`. Existing proposal and other untracked documentation are u
 
 ## Remaining work / handoff
 
-1. Run a supported action checkpoint and a real text-capable checkpoint (including VQA and autosteering) on an actual position-controlled robot. Validate cold startup, task changes, intervention, pause/reset, long text generation, starvation and fault teardown without homing. Verify the physical hold behavior before relying on the supported robot declaration.
-2. Measure GPU/model turnaround tails, edge encoding/decoding cost, playback coverage, task-change latency and JPEG policy impact over wired LAN and representative private remote conditions. Replace provisional deadline/refill profiles with measured settings. Wire camera schemas require exact resolution; checkpoint shape exceptions require a policy-owned input validation contract.
-3. Once the real action/language gate passes, remove the legacy async package/tests/docs and dedicated configuration. Remove only its protobuf service/messages, regenerate bindings and run transport/RL checks; retain unrelated gRPC services/dependencies. Finish stale-reference cleanup then.
+1. Implement the approved post-LAN sequence above, using the revised proposal as the requirement. This documentation turn implements none of it. Do not infer new runtime behavior or changed preset timeouts from the design update.
+2. When physical testing resumes, compare append, aligned replacement and aligned blending on supported plain policies, measuring discontinuities and task/gripper outcomes across a practical timing range. Do not claim that guided RTC results validate the new merge mode.
+3. Physical LAN action runs have now been reported for five checkpoints (see the round summary below). Real text-capable checkpoint validation (including VQA and autosteering) remains open. Complete the existing physical lifecycle/fault/hold acceptance checks; the newly identified sensor-stall expansion is deferred, not added to this batch.
+4. Measure GPU/model turnaround tails, edge encoding/decoding cost, playback coverage, task-change latency and JPEG policy impact over wired LAN and representative private remote conditions. Keep empirical refill settings separate from guaranteed budgets. Wire camera schemas require exact resolution; checkpoint shape exceptions require a policy-owned input validation contract.
+5. Once the real action/language gate passes, remove the legacy async package/tests/docs and dedicated configuration. Remove only its protobuf service/messages, regenerate bindings and run transport/RL checks; retain unrelated gRPC services/dependencies. Finish stale-reference cleanup then.
 
-Implementation and automated checks are complete to the available environment. No robot, real language weights, CUDA server or representative private-network deployment was available. No commits were created. User-staged proposal and other pre-existing documentation were preserved.
+Initial implementation and automated checks were completed without direct robot/CUDA access; subsequent user-operated physical LAN runs are recorded below. Real language-model and representative remote-network validation remain open. No commits were created by the assistant. User-staged proposal and other pre-existing documentation were preserved.
 
 Entry points for continuation: [user guide](../docs/source/remote_inference.mdx),
 [server example](../examples/remote_inference/server.yaml),
@@ -139,3 +159,36 @@ Entry points for continuation: [user guide](../docs/source/remote_inference.mdx)
 - Next checkpoint `maximellerbach/omx_multicubes_act`, same GPU server `172.18.131.152` and robot client `172.18.133.214`. Inspected public checkpoint config and preprocessor: ACT, one current observation, six state/action coordinates, wrist/top RGB inputs at 480×640, no rename map, mean/std normalization and no temporal ensembling. Both `chunk_size` and `n_action_steps` are already saved as **30**, so the user's local `--policy.n_action_steps=30` behavior requires no remote override.
 - Added `examples/remote_inference/omx_act_lan.yaml`, deployment `omx-act`, CUDA, plain chunks, same TCP listener. No policy or transport changes. Client preserves ACM1, wrist index 0, top index 2, normalized OMX joints, 30 Hz and interpolation ×1. Initial refill 0.2 is provisional for ACT; 30 actions provide one second of playback. Stop LaWAM before starting ACT on port 7447; copy the new preset to the server.
 - Validation: parsed the preset and checked the ACT feature/horizon declaration against the inspected checkpoint metadata without model construction/download; complete client/server command configs parse and agree. `git diff --check` passes. No regression suite rerun for this preset/documentation-only change. Actual checkpoint loading, GPU/LAN timing, task execution and physical fault/hold behavior remain manual checks.
+
+## Pick-and-place ACT follow-up — 2026-09-29
+
+- User reports multicubes ACT was very bumpy at refill 0.3, exhausted at 0.2, and worked fine at 0.1 and 0.15. No logs for these runs were supplied. The isolated failure at the larger setting does not establish a causal refill relationship; latency variation remains possible. The runtime's measured-turnaround floor also means smaller configured refill values need not produce proportionally later requests.
+- Next requested model: `maximellerbach/omx_pickandplace_act`, same reversed LAN topology and hardware. Reuse the existing `omx_act_lan.yaml` with `--model.repo_or_path=maximellerbach/omx_pickandplace_act`, keeping deployment `omx-act`, and start client refill at 0.15. Stop the prior server before switching. No new code or preset is required.
+- Public config and preprocessor requests timed out; web fallback could not retrieve them either. Repository `examples/omx/README.md` references this ACT model and its single-cube/blue-square task, but does not prove the uploaded checkpoint's schema or horizon. Camera compatibility with the existing wrist/top contract and saved prediction/execution lengths remain **unverified**. The command uses the new checkpoint's saved action settings; do not claim they are 30. Server contract validation and warmup must succeed before the client run.
+- Validation: server checkpoint override parsed successfully without model download or hardware/network startup. `git diff --check` passes; documentation-only update, no regression tests rerun. Next evidence: server readiness/capabilities, actual action horizons and observed playback/timing on the new checkpoint.
+
+## Physical LAN action-test round concluded — 2026-09-29
+
+The user reports pick-and-place ACT worked fine with `refill_seconds=0.1` and has ended physical LAN testing for now. No further hardware runs are being requested or performed. This completes this testing round, not the full Stage 4 acceptance/removal gate.
+
+| Checkpoint | Mode | Tested refill (seconds) | User-reported outcome |
+| --- | --- | --- | --- |
+| `imstevenpmwork/super_chatton_smolvla` | Guided RTC | 0.5 prescribed | Worked great over LAN |
+| `imstevenpmwork/xvla_super_chatton_2` | Plain chunk | 0.35 / 0.4 | Runs with residual hiccups; 0.3 exhausted |
+| `maximellerbach/omx_multicubes_lawam` | Plain chunk | 0.2 | Improved motion |
+| `maximellerbach/omx_multicubes_act` | Plain chunk | 0.1 / 0.15 | Worked fine; 0.3 bumpy, 0.2 exhausted in one reported run |
+| `maximellerbach/omx_pickandplace_act` | Plain chunk | 0.1 | Worked fine |
+
+- SmolVLA/XVLA used robot client `.131.152` and server `.133.214`; LaWAM/ACT reversed those roles. The latest successful pick-and-place run provides user-reported physical compatibility evidence for that deployment, superseding the preflight uncertainty about whether it would start; exact saved checkpoint horizons remain uninspected because metadata retrieval failed and no final startup log was supplied.
+- Refill values are empirical settings for these runs, not guaranteed deployment defaults or latency-tail bounds. Latest successful retests were qualitative reports without new logs/video. No claim of quantified task success, comprehensive fault/hold validation, or proof that shorter refill prevents starvation follows from them.
+- Remaining acceptance work: real language/VQA/autosteering, explicit physical lifecycle/fault/hold checks, sustained timing-tail measurements and representative remote conditions. Keep legacy async/gRPC until the proposal's complete workflow gate passes. XVLA RTC remains intentionally unimplemented at the user's request.
+- This closeout changes only the progress document; `git diff --check` passes. No code changes or automated test reruns.
+
+## Post-test analysis and design revision — 2026-09-29
+
+- User approved documenting the freshness/continuity tradeoff, reducing preset cleanup grace to 30 s, and delivering configurable alignment and blending for plain policies, including loopback use. User explicitly deferred expanded observation-stall work and requested lightweight compatibility handling rather than an exact-version framework. Updated the authoritative proposal and the next-step checklist above; historical experiments remain unchanged.
+- Current reconnect behavior: clean close is worker-ordered; absent clients in the test presets retain ownership through a 300 s grace, plus any unfinished call. Discovery is not admission. A genuinely new admitted session failing later is not explained by the grace alone; no failure logs were supplied to establish that cause. Runtime timeouts do not interrupt a hung model call. The planned 30 s value changes the cleanup grace, not that ownership invariant.
+- Current timing and merge behavior: client monotonic ages/deadlines coexist with request sequences and action commitment cursors; no synchronized server clock is needed. Append preserves the whole returned execution slice; RTC trims/replaces with continuation conditioning. Legacy async code aligns logical timesteps and defaults to weighted averaging. New plain alignment/blending requires its own explicit semantics and tests rather than silently changing append or copying legacy assumptions.
+- Current sensing limitations are recorded without creating new work: the inference timestamp bounds the robot read, while OMX/OpenCV checks cached-frame age separately (500 ms). Exposure times are not propagated, repeated frames with refreshed driver timestamps may evade detection, blocking hardware reads can stall dispatch checks, and acquisition exceptions do not necessarily enter the latched inference-fault path. Do not claim those cases were fixed or validated by the LAN action runs.
+- Current compatibility already checks protocol major, schemas, mode, cadence, semantic profile and artifact/context identity. It does not compare source builds. The planned diagnostic addition should expose the loaded versions/revision when available; protocol/capability evolution remains responsible for rejecting incompatible semantics before motion.
+- Validation for this revision: reviewed proposal/progress consistency, existing evidence and pending-vs-implemented labels, local document links, and `git diff --check`. Only these two Markdown documents changed in this turn. No code, preset values, dependencies or runtime options changed; no regression suite or physical tests rerun.
