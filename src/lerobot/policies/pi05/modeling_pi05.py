@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Any, Literal, Unpack, cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
-from safetensors.torch import load_file
 from torch import Tensor, nn
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
@@ -32,7 +31,6 @@ from lerobot.utils.import_utils import _transformers_available, require_package
 if TYPE_CHECKING or _transformers_available:
     from transformers.models.auto import CONFIG_MAPPING
     from transformers.models.gemma import modeling_gemma
-    from transformers.utils import cached_file
 
     from ..pi_gemma import (
         PaliGemmaForConditionalGenerationWithPiGemma,
@@ -49,14 +47,12 @@ else:
     layernorm_forward = None
     sdpa_attention_forward = None
     PaliGemmaForConditionalGenerationWithPiGemma = None
-    cached_file = None
 from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
     OBS_STATE,
-    OPENPI_ATTENTION_MASK_VALUE,
 )
 
 from ..common.flow_matching import euler_integrate, sample_noise, sample_time_beta
@@ -65,6 +61,7 @@ from ..common.vla_utils import (
     create_sinusoidal_pos_embedding,
     make_att_2d_masks,
     pad_vector,
+    prepare_attention_masks_4d,
     resize_with_pad_torch,
 )
 from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs, T
@@ -174,11 +171,10 @@ def _reduce_training_rtc_loss(
     return (losses * postfix_mask).sum() / postfix_mask.sum().clamp(min=1)
 
 
-_SAFETENSORS_FILE = "model.safetensors"
-
-
 # Define the complete layer computation function for gradient checkpointing
-def compute_layer_complete(inputs_embeds, attention_mask, position_ids, adarms_cond, layers, rotary_emb):
+def compute_layer_complete(
+    inputs_embeds, attention_mask, position_ids, adarms_cond, layers, rotary_emb, fp32_attention=False
+):
     query_states = []
     key_states = []
     value_states = []
@@ -213,22 +209,31 @@ def compute_layer_complete(inputs_embeds, attention_mask, position_ids, adarms_c
     batch_size = query_states.shape[0]
     paligemma_layer = layers[0]
     scaling = paligemma_layer.self_attn.scaling
-    # Large Q/K activations at low flow timesteps destabilize BF16 eager scores
-    # and can amplify reduced-precision SDPA backward as well. Keep attention in
-    # FP32 with the math backend (fused kernels still show low-timestep gradient
-    # amplification), then restore the model dtype. Parameters, masks and
-    # KI-off paths stay unchanged; casts retain gradients into both experts.
-    attention_dtype = query_states.dtype
-    with sdpa_kernel(SDPBackend.MATH):
-        att_output, _ = sdpa_attention_forward(
+    if fp32_attention:
+        # Large Q/K activations at low flow timesteps destabilize BF16 eager scores
+        # and can amplify reduced-precision SDPA backward as well. Run attention in
+        # FP32 with the math backend, then restore the model dtype. Opt-in so that
+        # stock PI0.5 keeps its original eager numerics.
+        attention_dtype = query_states.dtype
+        with sdpa_kernel(SDPBackend.MATH):
+            att_output, _ = sdpa_attention_forward(
+                paligemma_layer.self_attn,
+                query_states.float(),
+                key_states.float(),
+                value_states.float(),
+                attention_mask.float() if attention_mask is not None else None,
+                scaling,
+            )
+        att_output = att_output.to(attention_dtype)
+    else:
+        att_output, _ = modeling_gemma.eager_attention_forward(
             paligemma_layer.self_attn,
-            query_states.float(),
-            key_states.float(),
-            value_states.float(),
-            attention_mask.float() if attention_mask is not None else None,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
             scaling,
         )
-    att_output = att_output.to(attention_dtype)
     # Get head_dim from the current layer, not from the model
     head_dim = paligemma_layer.self_attn.head_dim
     att_output = att_output.reshape(batch_size, -1, 1 * 8 * head_dim)
@@ -296,6 +301,9 @@ class PaliGemmaWithExpertModel(
     nn.Module
 ):  # see openpi `gemma_pytorch.py: PaliGemmaWithExpertModel` this class is almost a exact copy of PaliGemmaWithExpertModel in openpi
     """PaliGemma model with action expert for PI05."""
+
+    # Run the joint-layer attention in FP32 (math backend). Off for stock PI0.5.
+    fp32_joint_attention = False
 
     def __init__(
         self,
@@ -498,6 +506,7 @@ class PaliGemmaWithExpertModel(
                         preserve_rng_state=False,
                         layers=layers,
                         rotary_emb=rotary_emb,
+                        fp32_attention=self.fp32_joint_attention,
                     )
                 else:
                     inputs_embeds = compute_layer_complete(
@@ -507,6 +516,7 @@ class PaliGemmaWithExpertModel(
                         adarms_cond,
                         layers=layers,
                         rotary_emb=rotary_emb,
+                        fp32_attention=self.fp32_joint_attention,
                     )
 
             # final norm
@@ -546,6 +556,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
     use_hf_vision_checkpointing_api = False
     checkpoint_vision_embeddings = True
+    fp32_joint_attention = False
     use_typed_attention_masks = False
     use_on_device_suffix_mask = False
     precompute_denoise_times = False
@@ -572,6 +583,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             freeze_vision_encoder=config.freeze_vision_encoder,
             train_expert_only=config.train_expert_only,
         )
+        self.paligemma_with_expert.fp32_joint_attention = self.fp32_joint_attention
 
         self.action_in_proj = nn.Linear(config.max_action_dim, action_expert_config.width)
         self.action_out_proj = nn.Linear(action_expert_config.width, config.max_action_dim)
@@ -630,12 +642,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         return func(*args, **kwargs)
 
     def _prepare_attention_masks_4d(self, att_2d_masks, dtype=None):
-        """Helper method to prepare 4D attention masks for transformer."""
-        att_2d_masks_4d = att_2d_masks[:, None, :, :]
-        result = torch.where(att_2d_masks_4d, 0.0, OPENPI_ATTENTION_MASK_VALUE)
-        if dtype is not None:
-            result = result.to(dtype=dtype)
-        return result
+        """Overridable hook around the shared 4D mask helper."""
+        return prepare_attention_masks_4d(att_2d_masks, dtype=dtype)
 
     def sample_noise(self, shape, device):
         return sample_noise(shape, device)
@@ -1048,6 +1056,7 @@ class PI05Policy(PreTrainedPolicy):
         if pretrained_name_or_path is None:
             raise ValueError("pretrained_name_or_path is required")
 
+        # Use provided config if available, otherwise create default config
         if config is None:
             config = PreTrainedConfig.from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
@@ -1061,42 +1070,99 @@ class PI05Policy(PreTrainedPolicy):
                 **kwargs,
             )
 
+        # Initialize model without loading weights
+        # Check if dataset_stats were provided in kwargs
         model = cls(config, **kwargs)
-        model_id = str(pretrained_name_or_path)
-        resolved_file = cached_file(
-            model_id,
-            _SAFETENSORS_FILE,
-            _raise_exceptions_for_missing_entries=False,
-            force_download=force_download,
-            resume_download=resume_download,
-            proxies=proxies,
-            token=token,
-            cache_dir=cache_dir,
-            local_files_only=local_files_only,
-            revision=revision,
-        )
-        if resolved_file is None:
-            raise FileNotFoundError(f"No {_SAFETENSORS_FILE} found in {model_id!r}.")
 
-        fixed_state_dict = model._fix_pytorch_state_dict_keys(load_file(resolved_file), model.config)
-        remapped_state_dict = {
-            key if key.startswith("model.") else f"model.{key}": value
-            for key, value in fixed_state_dict.items()
-        }
-        remapped_state_dict = model._prepare_pretrained_state_dict(remapped_state_dict)
-        missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
-        if missing_keys:
-            logging.warning("Missing %s checkpoint keys: %s", cls.name, missing_keys)
-        if unexpected_keys:
-            logging.warning("Unexpected %s checkpoint keys: %s", cls.name, unexpected_keys)
+        # Load state dict (expects keys with "model." prefix)
+        try:
+            print(f"Loading model from: {pretrained_name_or_path}")
+            try:
+                from transformers.utils import cached_file
+
+                resolved_file = cached_file(
+                    pretrained_name_or_path,
+                    "model.safetensors",
+                    cache_dir=kwargs.get("cache_dir"),
+                    force_download=kwargs.get("force_download", False),
+                    resume_download=kwargs.get("resume_download"),
+                    proxies=kwargs.get("proxies"),
+                    token=kwargs.get("token"),
+                    revision=kwargs.get("revision"),
+                    local_files_only=kwargs.get("local_files_only", False),
+                )
+                from safetensors.torch import load_file
+
+                original_state_dict = load_file(resolved_file)
+                print("✓ Loaded state dict from model.safetensors")
+            except Exception as e:
+                print(f"Could not load state dict from remote files: {e}")
+                print("Returning model without loading pretrained weights")
+                return model
+
+            # First, fix any key differences (see openpi model.py, _fix_pytorch_state_dict_keys)
+            fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
+
+            # Then add "model." prefix for all keys that don't already have it
+            remapped_state_dict = {}
+            remap_count = 0
+
+            for key, value in fixed_state_dict.items():
+                if not key.startswith("model."):
+                    new_key = f"model.{key}"
+                    remapped_state_dict[new_key] = value
+                    remap_count += 1
+                else:
+                    remapped_state_dict[key] = value
+
+            if remap_count > 0:
+                print(f"Remapped {remap_count} state dict keys")
+
+            remapped_state_dict = model._prepare_pretrained_state_dict(remapped_state_dict)
+
+            # Load the remapped state dict into the model
+            missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
+
+            if missing_keys:
+                print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
+                if len(missing_keys) <= 5:
+                    for key in missing_keys:
+                        print(f"  - {key}")
+                else:
+                    for key in missing_keys[:5]:
+                        print(f"  - {key}")
+                    print(f"  ... and {len(missing_keys) - 5} more")
+
+            if unexpected_keys:
+                print(f"Unexpected keys when loading state dict: {len(unexpected_keys)} keys")
+                if len(unexpected_keys) <= 5:
+                    for key in unexpected_keys:
+                        print(f"  - {key}")
+                else:
+                    for key in unexpected_keys[:5]:
+                        print(f"  - {key}")
+                    print(f"  ... and {len(unexpected_keys) - 5} more")
+
+            if not missing_keys and not unexpected_keys:
+                print("All keys loaded successfully!")
+
+        except Exception as e:
+            print(f"Warning: Could not load state dict: {e}")
+
         if model.eval_after_pretrained_load:
             model.eval()
         return model
 
     def _prepare_pretrained_state_dict(self, state_dict: dict[str, Tensor]) -> dict[str, Tensor]:
+        # MEM's continuous proprioceptive projection is new relative to
+        # lerobot/pi05_base. Preserve its fresh initialization on first load,
+        # while loading learned values from subsequent MEM checkpoints.
         if getattr(self.config, "use_proprioceptive_memory", False):
             current = self.state_dict()
-            for key in ("model.proprio_history_proj.weight", "model.proprio_history_proj.bias"):
+            for key in (
+                "model.proprio_history_proj.weight",
+                "model.proprio_history_proj.bias",
+            ):
                 state_dict.setdefault(key, current[key])
         return state_dict
 
