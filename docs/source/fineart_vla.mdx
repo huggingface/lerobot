@@ -104,18 +104,15 @@ recipe resolver.
 
 ## Train FineART-VLA
 
-This example initializes FineART-VLA from `lerobot/pi052_base`, the existing
-Hub initialization checkpoint, and trains the embedded 70/30 subtask recipe.
-That checkpoint contains π0.5 base weights converted to the native policy layout;
-it does not contain additional FineART language training. Its repository name is
-retained for compatibility. Legacy `pi052` configuration and tokenizer identifiers
-remain loadable; newly saved configurations use `fineart_vla`.
+This example initializes FineART-VLA from `lerobot/fineart_vla_base`, the
+checkpoint mid-trained on FineART to predict its own next subtask, and trains the
+embedded 70/30 subtask recipe.
 
 ```bash
 lerobot-train \
     --dataset.repo_id=${HF_USER}/my_language_annotated_dataset \
     --policy.type=fineart_vla \
-    --policy.pretrained_path=lerobot/pi052_base \
+    --policy.pretrained_path=lerobot/fineart_vla_base \
     --policy.tokenizer_max_length=256 \
     --policy.dtype=bfloat16 \
     --policy.device=cuda \

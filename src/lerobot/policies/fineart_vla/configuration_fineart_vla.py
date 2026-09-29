@@ -56,7 +56,6 @@ def _fineart_vla_default_recipe() -> dict:
     }
 
 
-@PreTrainedConfig.register_subclass("pi052")  # Legacy checkpoint/config alias.
 @PreTrainedConfig.register_subclass("fineart_vla")
 @dataclass
 class FineARTVLAConfig(PI05Config):

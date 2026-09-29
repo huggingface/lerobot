@@ -291,7 +291,6 @@ def encode_prompt_with_targets(
 
 @dataclass
 @ProcessorStepRegistry.register(name="fineart_vla_text_tokenizer")
-@ProcessorStepRegistry.register(name="pi052_text_tokenizer")  # Read legacy processor artifacts.
 class FineARTVLATextTokenizerStep(ProcessorStep):
     """Convert flat role-delimited messages into tokens and supervision masks."""
 
