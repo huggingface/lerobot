@@ -16,6 +16,7 @@ from .grad_scaler import (
     load_scaler_state,
     save_scaler_state,
 )
+from .lingbot import LingbotAdamWConfig as LingbotAdamWConfig
 from .optimizers import (
     AdamConfig as AdamConfig,
     AdamWConfig as AdamWConfig,
@@ -43,6 +44,7 @@ __all__ = [
     # Optimizer configs
     "AdamConfig",
     "AdamWConfig",
+    "LingbotAdamWConfig",
     "MultiAdamConfig",
     "OptimizerConfig",
     "SGDConfig",
