@@ -1,0 +1,44 @@
+# Reversed LAN: GPU server .131.152, robot client .133.214.
+# Camera image is the primary view; image2 is the wrist view.
+# LaWAM resizes both views and executes 24 actions at 30 Hz.
+deployment: omx-lawam
+model:
+  repo_or_path: maximellerbach/omx_multicubes_lawam
+  device: cuda
+execution:
+  supported_modes: [chunk]
+  rtc:
+    enabled: false
+  action_fps: 30.0
+  action_deadline_s: 5.0
+  idle_timeout_s: 300.0
+  warmup_calls: 2
+language:
+  enabled: false
+zenoh:
+  mode: peer
+  listen_endpoints: [tcp/172.18.131.152:7447]
+semantics: omx-normalized-joints-gripper-percent-v1
+robot_type: omx_follower
+features:
+  - name: observation.state
+    shape: [6]
+    dtype: float32
+    names: [shoulder_pan.pos, shoulder_lift.pos, elbow_flex.pos, wrist_flex.pos, wrist_roll.pos, gripper.pos]
+    semantics: omx-normalized-joints-gripper-percent-v1
+  - name: observation.images.image
+    shape: [480, 640, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: rgb-front-v1
+  - name: observation.images.image2
+    shape: [480, 640, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: rgb-wrist-v1
+action_feature:
+  name: action
+  shape: [6]
+  dtype: float32
+  names: [shoulder_pan.pos, shoulder_lift.pos, elbow_flex.pos, wrist_flex.pos, wrist_roll.pos, gripper.pos]
+  semantics: omx-normalized-joints-gripper-percent-v1

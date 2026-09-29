@@ -72,6 +72,17 @@ example. Use `chunk` mode; XVLA does not declare RTC support. Both examples bind
 port 7447, so stop the previous server before switching. The model device is set
 in server YAML; omit local `--device` and `--policy.path` from the remote client.
 
+For `maximellerbach/omx_multicubes_lawam`, use
+`examples/remote_inference/omx_lawam_lan.yaml`, deployment `omx-lawam`, and the same
+OMX semantic profile. This preset listens on `tcp/172.18.131.152:7447` for a robot
+client on the other LAN machine. Cameras already named `image` (primary) and
+`image2` (wrist) need no rename map. LaWAM's canonical processors resize the
+640×480 images to 256×256; this vision-only checkpoint ignores measured state.
+Its inference wrapper returns 24 actions, despite the internal 50-step chunk
+size. At 30 Hz that gives 0.8 seconds of playback. Use plain `chunk` mode and
+measure turnaround on the new GPU before tuning the initial 0.5-second refill.
+LaWAM's future-frame dataset indices are training targets, not inference inputs.
+
 This direct TCP example assumes a trusted laboratory network. Configure the hardware port, camera, checkpoint profile and budgets for your setup:
 
 ```bash
