@@ -444,6 +444,8 @@ def make_fineart_vla_pre_post_processors(
     Falls through to π0.5's stock pipeline when ``recipe_path`` is unset. ``dataset_meta``
     (forwarded by the policy factory) supplies the dataset source for FAST tokenizer fitting.
     """
+    # ``make_policy`` attaches the training dataset's metadata to the config.
+    dataset_meta = dataset_meta or getattr(config, "_runtime_dataset_meta", None)
     if dataset_meta is not None:
         dataset_repo_id = dataset_repo_id or getattr(dataset_meta, "repo_id", None)
         dataset_root = dataset_root or getattr(dataset_meta, "root", None)

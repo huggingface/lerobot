@@ -152,14 +152,13 @@ than selecting a checkpoint from total loss alone.
 
 ### Dataset-specific FAST tokenizer
 
-The universal FAST tokenizer works out of the box. Dataset-specific fitting is
-an explicit preparation step, not a hook in the shared training loop.
-Call `lerobot.policies.fineart_vla.fit_fast_tokenizer.fit_fast_tokenizer` with the
-dataset source, split, action normalization statistics and relative-action
-settings used by training. Then pass the returned directory with
-`--policy.action_tokenizer_name=/path/to/fitted/tokenizer` and leave
-`--policy.auto_fit_fast_tokenizer=false`. Saved processor artifacts remain
-self-contained.
+By default (`--policy.auto_fit_fast_tokenizer=true`), training fits a FAST
+tokenizer on the training dataset, starting from `--policy.action_tokenizer_name`,
+and caches it in `--policy.fast_tokenizer_cache_dir`. This also applies when
+fine-tuning from a checkpoint such as `lerobot/fineart_vla_base`, so the FAST
+targets match the new robot's action distribution. The fitted tokenizer is saved
+inside the checkpoint's processor artifacts, so inference reuses it. Set
+`--policy.auto_fit_fast_tokenizer=false` to use `action_tokenizer_name` unchanged.
 
 ## Training performance
 

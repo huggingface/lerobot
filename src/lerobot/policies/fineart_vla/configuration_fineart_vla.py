@@ -97,8 +97,8 @@ class FineARTVLAConfig(PI05Config):
     fast_action_loss_weight: float = 1.0
     """FAST action-token loss weight."""
 
-    auto_fit_fast_tokenizer: bool = False
-    """Fit and cache a dataset-specific FAST tokenizer."""
+    auto_fit_fast_tokenizer: bool = True
+    """Fit (and cache) a FAST tokenizer on the training dataset, starting from ``action_tokenizer_name``."""
 
     fast_tokenizer_cache_dir: str = "~/.cache/lerobot/fast_tokenizers"
     """Cache directory for fitted FAST tokenizers."""

@@ -480,11 +480,12 @@ def resolve_fast_tokenizer(
     if not getattr(config, "auto_fit_fast_tokenizer", False):
         return config.action_tokenizer_name
     if dataset_repo_id is None:
-        raise ValueError(
-            "FAST tokenizer fitting requires an explicit dataset source. Fit the tokenizer with "
-            "fit_fast_tokenizer before training, then set action_tokenizer_name to the saved path "
-            "and auto_fit_fast_tokenizer=False."
+        logger.warning(
+            "FAST tokenizer auto-fit is enabled but no dataset source was provided; using %s "
+            "unchanged. Training through lerobot-train fits it on the training dataset.",
+            config.action_tokenizer_name,
         )
+        return config.action_tokenizer_name
 
     relative_action_mask = None
     if getattr(config, "use_relative_actions", False):
