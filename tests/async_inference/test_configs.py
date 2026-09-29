@@ -14,7 +14,9 @@
 
 import pytest
 
-from lerobot.async_inference.configs import PolicyServerConfig
+pytest.importorskip("grpc")
+
+from lerobot.async_inference.configs import PolicyServerConfig  # noqa: E402
 
 
 @pytest.mark.parametrize("timeout", [0.0, 7.5])
