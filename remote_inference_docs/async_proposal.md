@@ -33,6 +33,8 @@ The design uses Zenoh as its only remote-inference communication stack. Reusable
 | Fault recovery | Bounded buffered execution, then a conservative local stop; no automatic session recovery required |
 | Replacement | Remove the existing `async_inference` implementation; no compatibility layer or migration guide |
 
+The replacement does not need backward compatibility with the legacy `src/lerobot/async_inference/` module, its CLI, configuration, wire protocol or execution heuristics. That module will be deleted when the replacement lands after the existing acceptance gate. Compatibility checks elsewhere in this proposal concern the new client/server contract and supported policy/robot semantics, not interoperability or behavioral parity with the legacy service.
+
 ### 1.2 Explicit non-goals for the first release
 
 - Multi-client scheduling, GPU batching, load balancing, or automatic replica selection.
@@ -167,6 +169,16 @@ The following are validation targets, not a declaration that all configurations 
 | Other conforming policies | Generic runner/conformance suite; no transport changes |
 
 At least one real language-capable policy must pass end-to-end validation before release. A mock text head alone does not satisfy the language requirement. WALL-X and additional policies can join the support matrix when their configuration-specific contracts are validated.
+
+### 5.4 Physical-test learnings and lower-priority integration improvements
+
+The test branch exposed an overly strict assumption in the original validator: raw robot inputs need not exactly match the model's internal feature shapes when existing preparation legitimately resizes, masks or pads them. SmolVLA and XVLA needed declarations of their existing preparation behavior, not changes to trained weights. LaWAM additionally needed its actual returned action horizon and inference-only observation requirements declared. Both tested ACT checkpoints worked without ACT implementation changes. These findings do not imply that every checkpoint, policy or robot needs an adapter.
+
+Keep the wire schema exact while validating policy compatibility against the actual preprocessing and policy preparation behavior. As a **lower-priority follow-up**, investigate reuse of processor `transform_features()` metadata and small shared validation helpers for supported resizing, optional cameras and padding. Keep explicit policy/runner hooks for behavior those mechanisms cannot express. Do not add implicit resizing/padding, accept mismatched units, or use successful warmup as the sole proof of compatibility.
+
+The robot hold requirement follows from the chosen fault behavior, not from remote inference itself. A later integration improvement may provide a small explicitly selected position-hold strategy or equivalent reusable capability so suitable third-party robots do not need a source fork. Retain a defined stop/hold response; `.pos` names alone are not sufficient evidence, and mixed/velocity/torque robots must not inherit position-hold assumptions. This investigation does not reopen the deferred sensor-stall work.
+
+These improvements should reduce repeated integration code, not introduce a general capability framework or a repository-wide policy/robot rewrite. A small conformance guide and representative checks should establish which existing preparation paths work unchanged, when a declaration is enough, and when an adapter is genuinely needed. Preserve synchronous rollout behavior; validate supported behavior in the new shared runtime without requiring legacy async API or execution parity.
 
 ## 6. Shared chunk execution
 
@@ -521,6 +533,15 @@ Gate: the complete action and language workflow passes before replacement lands.
 4. Add lightweight loaded-build logging and verify that unsupported protocol/execution contracts fail before motion. Reuse existing negotiation instead of adding an exact-version framework.
 
 The first LAN action-test round is complete and physical testing is paused at the user's request. These engineering follow-ups do not mark real language, full fault/hold validation or the legacy-removal gate complete. Expanded sensor-stall handling is explicitly deferred and is not an additional deliverable in this sequence.
+
+### Lower-priority integration follow-ups (not prerequisites for the sequence above)
+
+- When continuing development on `feat/remote_inference`, carry over the reviewed correctness fixes and evidence from `test/remote_inference_super_chatton`: guided-RTC autograd handling, tested policy input/horizon declarations, OMX hold support and their tests. Preserve proposal/progress updates; keep machine-specific endpoints, hardware commands and checkpoint selections as examples rather than defaults. Branch integration has not been performed by this document update.
+- Simplify demonstrated repetition in input validation while retaining exact wire contracts and existing canonical preparation; investigate processor metadata before adding more per-policy exceptions.
+- Evaluate a small reusable, explicitly configured stop/hold integration for suitable robots; do not enable hold universally or add a general recovery framework.
+- Document minimum policy/robot conformance and exercise a representative set, including a small third-party-style integration. The target is configuration-only use for ordinary conforming checkpoints and focused declarations/adapters for unusual behavior, not universal support.
+
+Do not put a broad backward-compatibility audit ahead of cleanup, alignment/blending or diagnostics. No legacy `async_inference` compatibility tests, shims or migration machinery are required. Its deletion remains subject to the existing real action/language acceptance gate, which is separate from backward compatibility.
 
 ### Required validation scenarios
 

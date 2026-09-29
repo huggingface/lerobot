@@ -5,6 +5,8 @@ Baseline: `e595b7902`. Existing proposal and other untracked documentation are u
 
 Current handoff: the first physical LAN action-test round is complete. The proposal now includes a bounded follow-up for 30-second absent-client cleanup, configurable plain alignment **and** blending, actionable diagnostics, and lightweight build reporting. **Those changes are design-only and not implemented yet.** No further physical testing is requested now; sensor-stall expansion is deferred.
 
+Priority clarification: policy/robot integration simplification is a lower-priority follow-up, **not a prerequisite** for the sequence below. Backward compatibility with the legacy `src/lerobot/async_inference/` module is not required; it will be deleted when the replacement lands after the existing acceptance gate.
+
 ## Milestones and gates
 
 - [x] Stage 1 implementation and automated gate: policy contract/runner, atomic queue snapshots, shared `ChunkRuntime`, worker-owned local RTC reset, task provenance and planned local language hold. Relevant rollout/RTC and shared-component regressions pass.
@@ -27,6 +29,19 @@ Resolve exact public option names, overlap/weight defaults and blendable-compone
 Same-host server/client processes are an explicit target: users with a local GPU may want sustained bounded background replanning and smoother plain-policy motion without RTC. This uses the same executor/contract as LAN; no new in-process backend or unbounded inference scheduling is required. In aligned mode, permit fresh replanning as the worker becomes available with one request in flight and bounded future storage, rather than append mode's successor-slot restriction.
 
 Deferred by the user: expanded sensor-stall detection, per-camera timestamp propagation, independent hardware watchdogs and acquisition-error teardown redesign. Preserve current age and fault checks and record their limits; these deferred findings must not silently expand this batch. Also keep automatic motion recovery, automatic refill optimization and XVLA RTC out of scope. Legacy removal still waits for the existing real action/language acceptance gate.
+
+## Lower-priority policy/robot integration follow-ups
+
+These items capture the branch-review learnings and do not move ahead of cleanup, configurable alignment/blending, timing diagnostics or lightweight build reporting.
+
+| Follow-up | Scope and intended outcome |
+| --- | --- |
+| Carry tested work into the feature branch | When resuming `feat/remote_inference`, preserve reviewed RTC autograd fixes, SmolVLA/XVLA/LaWAM declarations, OMX hold support, tests and design/test records from `test/remote_inference_super_chatton`. Keep IP addresses, device paths and model selections in example profiles. No merge/cherry-pick has been performed here. |
+| Simplify input compatibility | Separate exact negotiated wire schemas from accepted inputs to existing policy preparation. Investigate `transform_features()` and small common helpers for resizing, optional cameras and padding; retain hooks for true exceptions. Avoid silently changing preprocessing or requiring per-checkpoint code patches. |
+| Reduce robot integration friction | Evaluate an explicitly selected reusable position-hold strategy/capability for suitable robots. Keep a validated stop response and reject unsupported action semantics; do not infer support just from `.pos` names or opt all robots in. No new sensor-stall work. |
+| Focused conformance checks and guide | Cover representative policies/robots and a third-party-style integration against the new contract. Explain configuration-only use, declarations and adapters. Preserve synchronous behavior; no repository-wide rewrite, generic capability framework or legacy async compatibility matrix. |
+
+The compatibility concern is about accurately representing existing preparation and supported robot semantics. It is not a requirement to preserve the old async module's API, CLI, configuration, wire format or scheduling. Existing acceptance tests and the legacy-removal gate remain; do not add migration shims or parity tests for the module being replaced.
 
 ## Inspection and decisions
 
@@ -78,6 +93,8 @@ Deferred by the user: expanded sensor-stall detection, per-camera timestamp prop
 3. Physical LAN action runs have now been reported for five checkpoints (see the round summary below). Real text-capable checkpoint validation (including VQA and autosteering) remains open. Complete the existing physical lifecycle/fault/hold acceptance checks; the newly identified sensor-stall expansion is deferred, not added to this batch.
 4. Measure GPU/model turnaround tails, edge encoding/decoding cost, playback coverage, task-change latency and JPEG policy impact over wired LAN and representative private remote conditions. Keep empirical refill settings separate from guaranteed budgets. Wire camera schemas require exact resolution; checkpoint shape exceptions require a policy-owned input validation contract.
 5. Once the real action/language gate passes, remove the legacy async package/tests/docs and dedicated configuration. Remove only its protobuf service/messages, regenerate bindings and run transport/RL checks; retain unrelated gRPC services/dependencies. Finish stale-reference cleanup then.
+
+The lower-priority integration follow-ups above may be addressed after the primary engineering sequence; they do not establish a new prerequisite compatibility pass. Preserve the tested branch fixes when assembling the feature branch, without starting a broad abstraction refactor as a condition of that integration.
 
 Initial implementation and automated checks were completed without direct robot/CUDA access; subsequent user-operated physical LAN runs are recorded below. Real language-model and representative remote-network validation remain open. No commits were created by the assistant. User-staged proposal and other pre-existing documentation were preserved.
 
@@ -192,3 +209,11 @@ The user reports pick-and-place ACT worked fine with `refill_seconds=0.1` and ha
 - Current sensing limitations are recorded without creating new work: the inference timestamp bounds the robot read, while OMX/OpenCV checks cached-frame age separately (500 ms). Exposure times are not propagated, repeated frames with refreshed driver timestamps may evade detection, blocking hardware reads can stall dispatch checks, and acquisition exceptions do not necessarily enter the latched inference-fault path. Do not claim those cases were fixed or validated by the LAN action runs.
 - Current compatibility already checks protocol major, schemas, mode, cadence, semantic profile and artifact/context identity. It does not compare source builds. The planned diagnostic addition should expose the loaded versions/revision when available; protocol/capability evolution remains responsible for rejecting incompatible semantics before motion.
 - Validation for this revision: reviewed proposal/progress consistency, existing evidence and pending-vs-implemented labels, local document links, and `git diff --check`. Only these two Markdown documents changed in this turn. No code, preset values, dependencies or runtime options changed; no regression suite or physical tests rerun.
+
+## Branch integration review and priority clarification — 2026-09-29
+
+- Read-only comparison of `feat/remote_inference` and `test/remote_inference_super_chatton` identified five test-branch commits spanning runtime fixes, three policy families' input/horizon declarations, OMX hold opt-in, tests, example commands and documentation. The guided-RTC autograd fix is a general correctness fix, not a hardware-specific workaround. Test-branch changes did not rewrite checkpoint weights; both ACT checkpoints needed no ACT code adjustment.
+- The original raw-schema-equals-checkpoint-schema validation was too restrictive for existing resize/mask/pad paths. Policy-owned validation corrected that boundary, but repeated logic suggests a later shared-helper/processor-metadata improvement. LaWAM's distinct returned horizon remains a genuine inference-contract declaration. These findings do not justify adapters for every policy or checkpoint.
+- The new robot hold requirement can restrict both remote and shared local async integration; this follows from the fault contract. A reusable explicit stop/hold integration is worth investigating later. Physical task success still does not establish full fault/hold validation.
+- User has lowered the priority of these integration improvements and explicitly waived backward compatibility with the legacy `async_inference` module because it will be removed. This supersedes the earlier conversational suggestion to make a broad compatibility pass precede alignment/blending. New client/server protocol/capability checks and preservation of synchronous rollout remain relevant.
+- Updated only the proposal and progress document with these learnings, lower-priority next steps and scope boundaries. Reviewed consistency and local links; `git diff --check` passes. No branch integration, runtime/config changes, new tests or physical runs were performed.
