@@ -95,7 +95,7 @@ def test_processor_save_load_roundtrip_embeds_action_tokenizer(tmp_path, monkeyp
     from lerobot.datasets.recipe import MessageTurn, TrainingRecipe
     from lerobot.processor import ActionTokenizerProcessorStep, DataProcessorPipeline, NormalizerProcessorStep
     from lerobot.processor.converters import identity_transition
-    from lerobot.processor.render_messages_processor import RenderMessagesStep
+    from lerobot.processor.render_messages_processor import RenderTrainingMessagesStep
 
     monkeypatch.setattr(
         "lerobot.processor.tokenizer_processor.AutoProcessor.from_pretrained",
@@ -123,7 +123,7 @@ def test_processor_save_load_roundtrip_embeds_action_tokenizer(tmp_path, monkeyp
         action_tokenizer_name=str(source_tokenizer), max_action_tokens=16, fast_skip_tokens=128
     )
     pipeline = DataProcessorPipeline(
-        [normalizer, RenderMessagesStep(recipe), action_tokenizer],
+        [normalizer, RenderTrainingMessagesStep(recipe), action_tokenizer],
         name="policy_preprocessor",
         to_transition=identity_transition,
         to_output=identity_transition,
