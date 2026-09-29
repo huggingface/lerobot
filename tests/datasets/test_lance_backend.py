@@ -360,6 +360,118 @@ def test_force_cache_sync_refreshes_remote_meta(video_dataset_roots):
     assert refreshed.meta.fps != 999  # re-materialized from the meta table
 
 
+@pytest.mark.parametrize("endpoint_key", ["endpoint", "aws_endpoint", "aws_endpoint_url"])
+def test_remote_metadata_cache_separates_endpoints(
+    tmp_path, monkeypatch, lerobot_dataset_factory, tasks_factory, endpoint_key
+):
+    remote_root = "s3://shared-bucket/dataset"
+    roots = {}
+    for label in ("endpoint-a", "endpoint-b"):
+        tasks = tasks_factory(total_tasks=1)
+        tasks.index = [label]
+        src_root = tmp_path / label / "src"
+        lerobot_dataset_factory(
+            root=src_root,
+            total_episodes=3,
+            total_frames=90,
+            use_videos=False,
+            camera_features={},
+            tasks=tasks,
+        )
+        lance_root = tmp_path / label / "lance"
+        convert(lance_root, root=src_root)
+        roots[f"https://{label}.example.com"] = lance_root
+
+    connect = lancedb.connect
+
+    def connect_endpoint(uri, *, storage_options):
+        if uri != remote_root:
+            assert Path(uri) in roots.values()
+            return connect(uri, storage_options=storage_options)
+        assert uri == remote_root
+        return connect(str(roots[storage_options[endpoint_key]]))
+
+    monkeypatch.setattr(lancedb, "connect", connect_endpoint)
+    monkeypatch.setattr(lance_utils, "HF_LEROBOT_HOME", tmp_path / "cache")
+    datasets = []
+    try:
+        for label in ("endpoint-a", "endpoint-b", "endpoint-a"):
+            dataset = LeRobotDataset(
+                DUMMY_REPO_ID,
+                root=remote_root,
+                storage_options={endpoint_key: f"https://{label}.example.com"},
+            )
+            datasets.append(dataset)
+            # Equal row counts must not hide metadata from the wrong endpoint.
+            assert len(dataset) == 90
+            assert dataset.meta.tasks.index.tolist() == [label]
+            assert dataset[0]["task"] == label
+        assert datasets[0].root != datasets[1].root
+        assert datasets[0].root == datasets[2].root
+
+        # Refreshing B must not remove or replace A's cached metadata.
+        refreshed = LeRobotDataset(
+            DUMMY_REPO_ID,
+            root=remote_root,
+            storage_options={endpoint_key: "https://endpoint-b.example.com"},
+            force_cache_sync=True,
+        )
+        datasets.append(refreshed)
+        assert refreshed[0]["task"] == "endpoint-b"
+        assert LeRobotDatasetMetadata(DUMMY_REPO_ID, root=datasets[0].root).tasks.index.tolist() == [
+            "endpoint-a"
+        ]
+    finally:
+        for dataset in datasets:
+            dataset.reader.close()
+
+
+def test_remote_metadata_cache_reuses_connection_identity(dataset_roots, tmp_path, monkeypatch):
+    _, lance_root = dataset_roots
+    remote_root = "s3://shared-bucket/dataset"
+    connect = lancedb.connect
+    connections = []
+
+    def connect_endpoint(uri, **kwargs):
+        assert uri == remote_root
+        connections.append(kwargs)
+        return connect(str(lance_root))
+
+    monkeypatch.setattr(lancedb, "connect", connect_endpoint)
+    monkeypatch.setattr(lance_utils, "HF_LEROBOT_HOME", tmp_path / "cache")
+    options = {"aws_endpoint": "https://endpoint.example.com", "aws_region": "us-east-1"}
+    original = options.copy()
+    root = localize_remote_root(DUMMY_REPO_ID, remote_root, storage_options=options)
+    assert options == original
+    rotated_options = {
+        **dict(reversed(options.items())),
+        "aws_access_key_id": "rotated-id",
+        "aws_secret_access_key": "rotated-secret",
+        "aws_session_token": "rotated-session",
+        "token": "rotated-hub-token",
+        "timeout": "60s",
+    }
+    assert localize_remote_root(DUMMY_REPO_ID, remote_root, storage_options=rotated_options) == root
+    assert len(connections) == 1
+    assert "rotated" not in str(root)
+    assert "endpoint.example.com" not in str(root)
+
+    region_root = localize_remote_root(
+        DUMMY_REPO_ID, remote_root, storage_options={**options, "aws_region": "us-west-2"}
+    )
+    style_root = localize_remote_root(
+        DUMMY_REPO_ID, remote_root, storage_options={**options, "aws_virtual_hosted_style_request": "true"}
+    )
+    assert len({root, region_root, style_root}) == 3
+    assert len(connections) == 3
+
+    default_root = localize_remote_root(DUMMY_REPO_ID, remote_root)
+    assert default_root == tmp_path / "cache" / "remote" / "s3_shared-bucket_dataset"
+    for credentials in ({}, {"access_key_id": "new-id", "secret_access_key": "new-secret"}):
+        assert localize_remote_root(DUMMY_REPO_ID, remote_root, storage_options=credentials) == default_root
+    assert len(connections) == 4
+
+
 @pytest.mark.parametrize("entry_point", ["dataset", "factory", "train_eval"])
 def test_storage_options_remote_reads(dataset_roots, tmp_path, monkeypatch, entry_point):
     src_root, lance_root = dataset_roots

@@ -404,4 +404,6 @@ lerobot-train \
 
 Keys and values must be strings. Options are forwarded to `lancedb.connect` for both metadata loading and data reads, including train/eval splits and DataLoader workers. `storage_options` defaults to `None`; non-empty options are currently supported only by the Lance backend and cannot be used with `dataset.streaming=true`. Training configurations are logged and saved, so supply credentials through environment variables or your storage provider's credential mechanism instead of placing secrets in the configuration.
 
+Explicit endpoint, region, and addressing options in `storage_options` are included in the local metadata cache identity, so the same URI on different endpoints uses separate caches. Credentials and request tuning options do not affect that identity. The first read with routing options creates a new metadata cache; existing caches are left intact.
+
 Visualization works with both viewers. `lerobot-dataset-viz --repo-id lance-format/pusht-lance --episode-index 0` opens an episode in Rerun as usual, and `--display-mode foxglove` serves it to [Foxglove](https://foxglove.dev) over WebSocket. Either way only the frames on screen are fetched, with no MCAP export or download.
