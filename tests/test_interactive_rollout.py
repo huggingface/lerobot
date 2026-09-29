@@ -1672,6 +1672,24 @@ def test_vlm_planner_in_progress_verdict_holds_current_instruction():
     assert out == "pick up the cup"
 
 
+def test_vlm_planner_matches_allowed_instruction_loosely():
+    client = MagicMock()
+    client.generate_json.side_effect = [
+        [{"previous_command": "completed", "instruction": "  Open the  drawer."}],
+        [{"previous_command": "completed", "instruction": "open the fridge"}],
+    ]
+    planner = VlmPlanner(
+        PlannerConfig(model_id="test", instructions=["pick up the cup", "open the drawer"]),
+        "test_robot",
+        client=client,
+    )
+    obs = {"front": np.zeros((8, 8, 3), dtype=np.uint8)}
+    query = PolicyQuery(QueryKind.NEXT_SUBTASK, "goal")
+    assert planner(obs, query, "pick up the cup") == "open the drawer"
+    with pytest.raises(ValueError, match="outside the allowed list"):
+        planner(obs, query, "pick up the cup")
+
+
 def test_vlm_planner_logs_each_exchange(tmp_path):
     import json
 
