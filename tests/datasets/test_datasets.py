@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+import queue
 import re
 from itertools import chain
 from pathlib import Path
@@ -24,6 +25,7 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import av
 import datasets
 from huggingface_hub import HfApi
 from PIL import Image
@@ -34,6 +36,7 @@ from lerobot.configs import VALID_VIDEO_CODECS, VideoEncoderConfig
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import make_dataset
+from lerobot.datasets.dataset_writer import DatasetWriter
 from lerobot.datasets.feature_utils import get_hf_features_from_features
 from lerobot.datasets.image_writer import image_array_to_pil_image
 from lerobot.datasets.io_utils import hf_transform_to_torch
@@ -43,6 +46,7 @@ from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_FILE_SIZE_IN_MB,
+    EpisodeDroppedError,
     create_branch,
 )
 from lerobot.envs.factory import make_env_config
@@ -344,36 +348,112 @@ def test_add_frame_image_wrong_range(image_dataset):
         dataset.add_frame({"image": np.random.rand(*DUMMY_CHW) * 255, "task": "Dummy task"})
 
 
-def test_save_episode_discards_on_missing_png_frames(image_dataset, caplog):
-    """Non-streaming guard: fewer PNG on disk than recorded frames discards the episode."""
-    dataset = image_dataset
-    dataset.add_frame({"image": np.random.rand(*DUMMY_CHW), "task": "Dummy task"})
-    for png in dataset.writer._get_image_file_dir(0, "image").glob("*.png"):
-        png.unlink()  # simulate a dropped image write
+@pytest.mark.parametrize(
+    "scenario, saved", [("sparse", True), ("all_missing", False), ("excessive_consecutive", False)]
+)
+def test_save_episode_missing_camera_frames(tmp_path, empty_lerobot_dataset_factory, caplog, scenario, saved):
+    """Non-streaming: sparse failed writes are repaired by repeating the previous frame (episode kept,
+    video stays aligned with one frame per row); the episode is discarded when a camera has no frame to
+    repeat or exceeds ~1s (fps) of consecutive missing frames."""
+    fps = 4
+    vid_key = "video"
+    features = {vid_key: {"dtype": "video", "shape": DUMMY_HWC, "names": ["height", "width", "channels"]}}
+    dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / f"missing_{scenario}", features=features, use_videos=True, fps=fps
+    )
+    num_frames = fps + 2
+    for _ in range(num_frames):
+        dataset.add_frame({vid_key: np.random.rand(*DUMMY_HWC), "task": "Dummy task"})
+
+    if scenario == "sparse":  # non-consecutive gaps, each shorter than fps
+        for idx in (2, 4):
+            dataset.writer._get_image_file_path(0, vid_key, idx).unlink()
+    elif scenario == "all_missing":
+        for png in dataset.writer._get_image_file_dir(0, vid_key).glob("*.png"):
+            png.unlink()
+    else:  # fps consecutive missing -> too degraded to repeat
+        for idx in range(1, 1 + fps):
+            dataset.writer._get_image_file_path(0, vid_key, idx).unlink()
 
     with caplog.at_level(logging.WARNING):
-        assert dataset.save_episode() is False
+        assert dataset.save_episode() is saved
 
-    assert "number of stored frames does not match" in caplog.text
+    if saved:
+        assert "repeated frame(s)" in caplog.text
+        assert dataset.meta.total_episodes == 1
+        assert dataset.meta.total_frames == num_frames
+        dataset.finalize()
+        with av.open(str(dataset.root / dataset.meta.get_video_file_path(0, vid_key))) as container:
+            assert sum(1 for _ in container.decode(video=0)) == num_frames
+    else:
+        assert "Discarding this episode" in caplog.text
+        assert dataset.meta.total_episodes == 0
+
+
+def test_drop_repeated_paths_excludes_repeated_indices():
+    """Repeated camera-frame paths are removed from the stats input; other keys are untouched."""
+    buffer = {"cam": ["f0", "f1", "f2", "f3"], "state": np.arange(4)}
+    out = DatasetWriter._drop_repeated_paths(buffer, {"cam": {1, 3}})
+    assert out["cam"] == ["f0", "f2"]
+    assert out["state"] is buffer["state"]
+    assert DatasetWriter._drop_repeated_paths(buffer, {}) is buffer  # no-op when nothing repeated
+
+
+def test_add_frame_fails_fast_on_persistent_write_failures(
+    tmp_path, empty_lerobot_dataset_factory, monkeypatch
+):
+    """Non-streaming: ~1s (fps) of consecutive failed writes raises EpisodeDroppedError from add_frame
+    (parity with the streaming encoder), interrupting the recording loop instead of limping to the
+    save_episode verdict. The caller catches it, discards the episode, and continues."""
+    fps = 4
+    vid_key = "video"
+    features = {vid_key: {"dtype": "video", "shape": DUMMY_HWC, "names": ["height", "width", "channels"]}}
+    dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "failfast", features=features, use_videos=True, fps=fps
+    )
+    if dataset.writer.image_writer is not None:  # force the deterministic synchronous write path
+        dataset.writer.stop_image_writer()
+    monkeypatch.setattr("lerobot.datasets.dataset_writer.write_image", lambda *a, **k: False)
+
+    with pytest.raises(EpisodeDroppedError, match="failed to write"):
+        for _ in range(fps):
+            dataset.add_frame({vid_key: np.random.rand(*DUMMY_HWC), "task": "Dummy task"})
+
+    # The caller discards the interrupted episode; nothing is committed.
+    dataset.clear_episode_buffer()
     assert dataset.meta.total_episodes == 0
 
 
-def test_save_episode_discards_on_dropped_streaming_frames(tmp_path, empty_lerobot_dataset_factory, caplog):
-    """Streaming guard: frames dropped by encoder back-pressure discard the episode."""
+def test_save_episode_streaming_full_queue_keeps_episode(tmp_path, empty_lerobot_dataset_factory, caplog):
+    """Streaming: a frame rejected by a full encoder queue is repeated, and the episode is saved intact."""
     vid_key = "video"
     features = {vid_key: {"dtype": "video", "shape": DUMMY_HWC, "names": ["height", "width", "channels"]}}
     dataset = empty_lerobot_dataset_factory(
         root=tmp_path / "streaming", features=features, streaming_encoding=True
     )
-    for _ in range(2):
-        dataset.add_frame({vid_key: np.random.rand(*DUMMY_HWC), "task": "Dummy task"})
-    dataset.writer._streaming_encoder._dropped_frames[vid_key] = 1  # simulate a dropped frame (full queue)
+    num_frames = 6
 
+    dataset.add_frame({vid_key: np.random.rand(*DUMMY_HWC), "task": "Dummy task"})  # starts the encoder
+    frame_queue = dataset.writer._streaming_encoder._frame_queues[vid_key]
+    real_put = frame_queue.put
+
+    def reject_once(item, *args, **kwargs):
+        frame_queue.put = real_put
+        raise queue.Full
+
+    frame_queue.put = reject_once  # simulate encoder back-pressure on the next frame
     with caplog.at_level(logging.WARNING):
-        assert dataset.save_episode() is False
+        for _ in range(num_frames - 1):
+            dataset.add_frame({vid_key: np.random.rand(*DUMMY_HWC), "task": "Dummy task"})
+        assert dataset.save_episode() is True
 
-    assert "number of stored frames does not match" in caplog.text
-    assert dataset.meta.total_episodes == 0
+    assert "repeated the previous frame" in caplog.text
+    assert dataset.meta.total_episodes == 1
+    assert dataset.meta.total_frames == num_frames
+    dataset.finalize()
+    with av.open(str(dataset.root / dataset.meta.get_video_file_path(0, vid_key))) as container:
+        total_frames = sum(1 for _ in container.decode(video=0))
+    assert total_frames == num_frames
 
 
 def test_add_frame_image(image_dataset):

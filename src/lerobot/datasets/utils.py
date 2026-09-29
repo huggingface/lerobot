@@ -63,6 +63,12 @@ hub_api.create_tag("{repo_id}", tag="_version_", repo_type="dataset")
 """
 
 
+class EpisodeDroppedError(RuntimeError):
+    """Raised mid-episode when recording degraded past recovery (e.g. more than ~1s of consecutive
+    repeated or failed camera frames). The current episode should be discarded and recording
+    continue. Subclasses ``RuntimeError`` so existing broad handlers still catch it."""
+
+
 class CompatibilityError(Exception): ...
 
 
