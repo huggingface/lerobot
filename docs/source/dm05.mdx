@@ -79,12 +79,7 @@ own camera names: map a dataset with different names onto them with `--rename_ma
 
 ### Normalization statistics
 
-Training uses the standard LeRobot state/action statistics in `meta/stats.json`.
-
-Relative-action training changes the arm targets to `action - state`, while excluded dimensions such as the
-gripper remain absolute. The statistics are still the dataset's own, so the normalization scale is fitted to
-absolute actions rather than to deltas. This costs some signal but trains; it is a general LeRobot issue with
-`RelativeActionsProcessorStep`, shared with the other policies that use it, not a DM05-specific one.
+Training uses the dataset's state/action statistics in `meta/stats.json`. Action statistics must match the representation used for training. With `policy.use_relative_actions=true`, compute them after the relative-action transform, using the same chunk size and excluded dimensions. See the [relative-action guide](./action_representations#using-relative-actions-in-lerobot).
 
 ## Evaluation
 
