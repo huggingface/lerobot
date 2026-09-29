@@ -32,8 +32,9 @@ import os
 import re
 import shutil
 from collections import OrderedDict
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import av
 import huggingface_hub
@@ -112,13 +113,20 @@ def build_video_byte_index(path: str | Path) -> dict:
     }
 
 
+class _RangeReader(Protocol):
+    """Byte-range reader that serves buffer misses (a ``lance.BlobFile`` at runtime)."""
+
+    def read_range(self, offset: int, length: int) -> bytes: ...
+
+
 class _SparseBlobSource(io.RawIOBase):
     """Adapter between range fetches and the decoders' file API."""
 
-    def __init__(self, size: int, fallback):
+    def __init__(self, size: int, fallback: Callable[[], _RangeReader]) -> None:
         super().__init__()
         self._size = size
         self._fallback = fallback
+        self._handle: _RangeReader | None = None
         self._starts: list[int] = []
         self._chunks: list[bytes] = []
         self._pos = 0
@@ -188,7 +196,9 @@ class _SparseBlobSource(io.RawIOBase):
         next_index = bisect.bisect_right(self._starts, self._pos)
         if next_index < len(self._starts):
             want = min(want, self._starts[next_index] - self._pos)
-        data = self._fallback.read_range(self._pos, want)
+        if self._handle is None:
+            self._handle = self._fallback()
+        data = self._handle.read_range(self._pos, want)
         self.fallback_bytes += len(data)
         buffer[: len(data)] = data
         self._pos += len(data)
@@ -343,7 +353,12 @@ def resolve_lance_root(
         if not (local_root / "meta").exists():
             _materialize_meta(_connect(db_uri, storage_options, revision, token), local_root)
         return db_uri, local_root
-    root_path = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
+    if root is not None:
+        root_path = Path(root)
+    elif repo_id is not None:
+        root_path = HF_LEROBOT_HOME / repo_id
+    else:
+        raise ValueError("Either repo_id or root must be provided to locate a lance dataset.")
     if (root_path / f"{FRAMES_TABLE}.lance").exists():
         return str(root_path), root_path
     if repo_id is not None:
