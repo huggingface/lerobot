@@ -215,12 +215,8 @@ class LeKiwi(Robot):
         steps_per_deg = 4096.0 / 360.0
         speed_in_steps = degps * steps_per_deg
         speed_int = int(round(speed_in_steps))
-        # Cap the value to fit within signed 16-bit range (-32768 to 32767)
-        if speed_int > 0x7FFF:
-            speed_int = 0x7FFF  # 32767 -> maximum positive value
-        elif speed_int < -0x8000:
-            speed_int = -0x8000  # -32768 -> minimum negative value
-        return speed_int
+        # Goal_Velocity is sign-magnitude with the sign on bit 15: at most 32767 either way.
+        return max(-0x7FFF, min(0x7FFF, speed_int))
 
     @staticmethod
     def _raw_to_degps(raw_speed: int) -> float:

@@ -14,26 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import re
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-pytest.importorskip("serial", reason="pyserial is required (install lerobot[hardware])")
-
-from lerobot.motors.motors_bus import (
-    Motor,
-    MotorNormMode,
-    assert_same_address,
-    get_address,
-    get_ctrl_table,
-)
-from tests.mocks.mock_motors_bus import (
-    DUMMY_CTRL_TABLE_1,
-    DUMMY_CTRL_TABLE_2,
-    DUMMY_MODEL_CTRL_TABLE,
-    MockMotorsBus,
-)
+from lerobot.motors.motors_bus import Motor, MotorNormMode
+from tests.mocks.mock_motors_bus import DUMMY_SERVO_1, DUMMY_SERVO_2, MockBus, MockMotorsBus
 
 
 @pytest.fixture
@@ -45,70 +31,39 @@ def dummy_motors() -> dict[str, Motor]:
     }
 
 
-def test_get_ctrl_table():
-    model = "model_1"
-    ctrl_table = get_ctrl_table(DUMMY_MODEL_CTRL_TABLE, model)
-    assert ctrl_table == DUMMY_CTRL_TABLE_1
+@pytest.fixture
+def mixed_motors() -> dict[str, Motor]:
+    """Two servo definitions on one bus."""
+    return {
+        "dummy_1": Motor(1, "model_1", MotorNormMode.RANGE_M100_100),
+        "dummy_2": Motor(2, "model_2", MotorNormMode.RANGE_M100_100),
+    }
 
 
-def test_get_ctrl_table_error():
-    model = "model_99"
-    with pytest.raises(KeyError, match=f"Control table for {model=} not found."):
-        get_ctrl_table(DUMMY_MODEL_CTRL_TABLE, model)
+def test_register_names_resolve_without_case():
+    bus = MockMotorsBus("/dev/dummy-port", {"dummy": Motor(1, "model_1", MotorNormMode.RANGE_M100_100)})
+
+    assert bus._has_register("dummy", "Firmware_Version")
+    assert bus._has_register("dummy", "firmware_version")
+    assert not bus._has_register("dummy", "Lock")
 
 
-def test_get_address():
-    addr, n_bytes = get_address(DUMMY_MODEL_CTRL_TABLE, "model_1", "Firmware_Version")
-    assert addr == 0
-    assert n_bytes == 1
+def test_unknown_model_is_refused():
+    with pytest.raises(ValueError, match="Unknown motor model 'model_99'"):
+        MockMotorsBus("/dev/dummy-port", {"dummy": Motor(1, "model_99", MotorNormMode.RANGE_M100_100)})
 
 
-def test_get_address_error():
-    model = "model_1"
-    data_name = "Lock"
-    with pytest.raises(KeyError, match=f"Address for '{data_name}' not found in {model} control table."):
-        get_address(DUMMY_MODEL_CTRL_TABLE, "model_1", data_name)
+def test_connect_opens_a_bus_with_each_motor_definition(mixed_motors):
+    bus = MockMotorsBus("/dev/dummy-port", mixed_motors)
+    bus.connect(handshake=False)
 
-
-def test_assert_same_address():
-    models = ["model_1", "model_2"]
-    assert_same_address(DUMMY_MODEL_CTRL_TABLE, models, "Present_Position")
-
-
-def test_assert_same_length_different_addresses():
-    models = ["model_1", "model_2"]
-    with pytest.raises(
-        NotImplementedError,
-        match=re.escape("At least two motor models use a different address"),
-    ):
-        assert_same_address(DUMMY_MODEL_CTRL_TABLE, models, "Model_Number")
-
-
-def test_assert_same_address_different_length():
-    models = ["model_1", "model_2"]
-    with pytest.raises(
-        NotImplementedError,
-        match=re.escape("At least two motor models use a different bytes representation"),
-    ):
-        assert_same_address(DUMMY_MODEL_CTRL_TABLE, models, "Goal_Position")
-
-
-def test__serialize_data_invalid_length():
-    bus = MockMotorsBus("", {})
-    with pytest.raises(NotImplementedError):
-        bus._serialize_data(100, 3)
-
-
-def test__serialize_data_negative_numbers():
-    bus = MockMotorsBus("", {})
-    with pytest.raises(ValueError):
-        bus._serialize_data(-1, 1)
-
-
-def test__serialize_data_large_number():
-    bus = MockMotorsBus("", {})
-    with pytest.raises(ValueError):
-        bus._serialize_data(2**32, 4)  # 4-byte max is 0xFFFFFFFF
+    # rustypot counts the timeout in seconds, LeRobot in milliseconds.
+    assert (bus._bus.serial_port, bus._bus.baudrate, bus._bus.timeout) == (
+        "/dev/dummy-port",
+        bus.default_baudrate,
+        bus.default_timeout / 1000,
+    )
+    assert bus._bus.motors == {1: DUMMY_SERVO_1, 2: DUMMY_SERVO_2}
 
 
 @pytest.mark.parametrize(
@@ -123,25 +78,21 @@ def test__serialize_data_large_number():
 def test_read(data_name, id_, value, dummy_motors):
     bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
     bus.connect(handshake=False)
-    addr, length = DUMMY_CTRL_TABLE_2[data_name]
 
     with (
-        patch.object(MockMotorsBus, "_read", return_value=(value, 0, 0)) as mock__read,
-        patch.object(MockMotorsBus, "_decode_sign", return_value={id_: value}) as mock__decode_sign,
+        patch.object(MockMotorsBus, "_read", return_value=value) as mock__read,
         patch.object(MockMotorsBus, "_normalize", return_value={id_: value}) as mock__normalize,
     ):
         returned_value = bus.read(data_name, f"dummy_{id_}")
 
     assert returned_value == value
     mock__read.assert_called_once_with(
-        addr,
-        length,
+        data_name,
         id_,
         num_retry=0,
         raise_on_error=True,
         err_msg=f"Failed to read '{data_name}' on {id_=} after 1 tries.",
     )
-    mock__decode_sign.assert_called_once_with(data_name, {id_: value})
     if data_name in bus.normalized_data:
         mock__normalize.assert_called_once_with({id_: value})
 
@@ -157,25 +108,20 @@ def test_read(data_name, id_, value, dummy_motors):
 def test_write(data_name, id_, value, dummy_motors):
     bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
     bus.connect(handshake=False)
-    addr, length = DUMMY_CTRL_TABLE_2[data_name]
 
     with (
-        patch.object(MockMotorsBus, "_write", return_value=(0, 0)) as mock__write,
-        patch.object(MockMotorsBus, "_encode_sign", return_value={id_: value}) as mock__encode_sign,
+        patch.object(MockMotorsBus, "_write", return_value=None) as mock__write,
         patch.object(MockMotorsBus, "_unnormalize", return_value={id_: value}) as mock__unnormalize,
     ):
         bus.write(data_name, f"dummy_{id_}", value)
 
     mock__write.assert_called_once_with(
-        addr,
-        length,
+        data_name,
         id_,
         value,
         num_retry=0,
-        raise_on_error=True,
         err_msg=f"Failed to write '{data_name}' on {id_=} with '{value}' after 1 tries.",
     )
-    mock__encode_sign.assert_called_once_with(data_name, {id_: value})
     if data_name in bus.normalized_data:
         mock__unnormalize.assert_called_once_with({id_: value})
 
@@ -192,27 +138,22 @@ def test_write(data_name, id_, value, dummy_motors):
 def test_sync_read_by_str(data_name, id_, value, dummy_motors):
     bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
     bus.connect(handshake=False)
-    addr, length = DUMMY_CTRL_TABLE_2[data_name]
     ids = [id_]
     expected_value = {f"dummy_{id_}": value}
 
     with (
-        patch.object(MockMotorsBus, "_sync_read", return_value=({id_: value}, 0)) as mock__sync_read,
-        patch.object(MockMotorsBus, "_decode_sign", return_value={id_: value}) as mock__decode_sign,
+        patch.object(MockMotorsBus, "_sync_read", return_value={id_: value}) as mock__sync_read,
         patch.object(MockMotorsBus, "_normalize", return_value={id_: value}) as mock__normalize,
     ):
         returned_dict = bus.sync_read(data_name, f"dummy_{id_}")
 
     assert returned_dict == expected_value
     mock__sync_read.assert_called_once_with(
-        addr,
-        length,
+        data_name,
         ids,
         num_retry=0,
-        raise_on_error=True,
         err_msg=f"Failed to sync read '{data_name}' on {ids=} after 1 tries.",
     )
-    mock__decode_sign.assert_called_once_with(data_name, {id_: value})
     if data_name in bus.normalized_data:
         mock__normalize.assert_called_once_with({id_: value})
 
@@ -229,27 +170,22 @@ def test_sync_read_by_str(data_name, id_, value, dummy_motors):
 def test_sync_read_by_list(data_name, ids_values, dummy_motors):
     bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
     bus.connect(handshake=False)
-    addr, length = DUMMY_CTRL_TABLE_2[data_name]
     ids = list(ids_values)
     expected_values = {f"dummy_{id_}": val for id_, val in ids_values.items()}
 
     with (
-        patch.object(MockMotorsBus, "_sync_read", return_value=(ids_values, 0)) as mock__sync_read,
-        patch.object(MockMotorsBus, "_decode_sign", return_value=ids_values) as mock__decode_sign,
+        patch.object(MockMotorsBus, "_sync_read", return_value=ids_values) as mock__sync_read,
         patch.object(MockMotorsBus, "_normalize", return_value=ids_values) as mock__normalize,
     ):
         returned_dict = bus.sync_read(data_name, [f"dummy_{id_}" for id_ in ids])
 
     assert returned_dict == expected_values
     mock__sync_read.assert_called_once_with(
-        addr,
-        length,
+        data_name,
         ids,
         num_retry=0,
-        raise_on_error=True,
         err_msg=f"Failed to sync read '{data_name}' on {ids=} after 1 tries.",
     )
-    mock__decode_sign.assert_called_once_with(data_name, ids_values)
     if data_name in bus.normalized_data:
         mock__normalize.assert_called_once_with(ids_values)
 
@@ -266,27 +202,22 @@ def test_sync_read_by_list(data_name, ids_values, dummy_motors):
 def test_sync_read_by_none(data_name, ids_values, dummy_motors):
     bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
     bus.connect(handshake=False)
-    addr, length = DUMMY_CTRL_TABLE_2[data_name]
     ids = list(ids_values)
     expected_values = {f"dummy_{id_}": val for id_, val in ids_values.items()}
 
     with (
-        patch.object(MockMotorsBus, "_sync_read", return_value=(ids_values, 0)) as mock__sync_read,
-        patch.object(MockMotorsBus, "_decode_sign", return_value=ids_values) as mock__decode_sign,
+        patch.object(MockMotorsBus, "_sync_read", return_value=ids_values) as mock__sync_read,
         patch.object(MockMotorsBus, "_normalize", return_value=ids_values) as mock__normalize,
     ):
         returned_dict = bus.sync_read(data_name)
 
     assert returned_dict == expected_values
     mock__sync_read.assert_called_once_with(
-        addr,
-        length,
+        data_name,
         ids,
         num_retry=0,
-        raise_on_error=True,
         err_msg=f"Failed to sync read '{data_name}' on {ids=} after 1 tries.",
     )
-    mock__decode_sign.assert_called_once_with(data_name, ids_values)
     if data_name in bus.normalized_data:
         mock__normalize.assert_called_once_with(ids_values)
 
@@ -302,25 +233,20 @@ def test_sync_read_by_none(data_name, ids_values, dummy_motors):
 def test_sync_write_by_single_value(data_name, value, dummy_motors):
     bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
     bus.connect(handshake=False)
-    addr, length = DUMMY_CTRL_TABLE_2[data_name]
     ids_values = {m.id: value for m in dummy_motors.values()}
 
     with (
-        patch.object(MockMotorsBus, "_sync_write", return_value=(ids_values, 0)) as mock__sync_write,
-        patch.object(MockMotorsBus, "_encode_sign", return_value=ids_values) as mock__encode_sign,
+        patch.object(MockMotorsBus, "_sync_write", return_value=None) as mock__sync_write,
         patch.object(MockMotorsBus, "_unnormalize", return_value=ids_values) as mock__unnormalize,
     ):
         bus.sync_write(data_name, value)
 
     mock__sync_write.assert_called_once_with(
-        addr,
-        length,
+        data_name,
         ids_values,
         num_retry=0,
-        raise_on_error=True,
         err_msg=f"Failed to sync write '{data_name}' with {ids_values=} after 1 tries.",
     )
-    mock__encode_sign.assert_called_once_with(data_name, ids_values)
     if data_name in bus.normalized_data:
         mock__unnormalize.assert_called_once_with(ids_values)
 
@@ -337,24 +263,211 @@ def test_sync_write_by_single_value(data_name, value, dummy_motors):
 def test_sync_write_by_value_dict(data_name, ids_values, dummy_motors):
     bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
     bus.connect(handshake=False)
-    addr, length = DUMMY_CTRL_TABLE_2[data_name]
     values = {f"dummy_{id_}": val for id_, val in ids_values.items()}
 
     with (
-        patch.object(MockMotorsBus, "_sync_write", return_value=(ids_values, 0)) as mock__sync_write,
-        patch.object(MockMotorsBus, "_encode_sign", return_value=ids_values) as mock__encode_sign,
+        patch.object(MockMotorsBus, "_sync_write", return_value=None) as mock__sync_write,
         patch.object(MockMotorsBus, "_unnormalize", return_value=ids_values) as mock__unnormalize,
     ):
         bus.sync_write(data_name, values)
 
     mock__sync_write.assert_called_once_with(
-        addr,
-        length,
+        data_name,
         ids_values,
         num_retry=0,
-        raise_on_error=True,
         err_msg=f"Failed to sync write '{data_name}' with {ids_values=} after 1 tries.",
     )
-    mock__encode_sign.assert_called_once_with(data_name, ids_values)
     if data_name in bus.normalized_data:
         mock__unnormalize.assert_called_once_with(ids_values)
+
+
+@pytest.fixture
+def bus(dummy_motors):
+    bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
+    bus.connect(handshake=False)
+    return bus
+
+
+@pytest.mark.parametrize(
+    "register, id_, value",
+    [("Lock", 1, 2), ("Goal_Position", 2, 999), ("Present_Velocity", 3, -1337)],
+)
+def test__read(register, id_, value, bus):
+    bus._bus.seed(id_, register.lower(), value)
+
+    assert bus._read(register, id_) == value
+    assert bus._bus.reads == [(id_, register.lower())]
+
+
+@pytest.mark.parametrize("raise_on_error", (True, False))
+def test__read_motor_error(raise_on_error, bus):
+    bus._bus.status[1] = 0x20
+
+    if raise_on_error:
+        with pytest.raises(RuntimeError, match="error status 0x20"):
+            bus._read("Present_Position", 1, raise_on_error=True)
+    else:
+        assert bus._read("Present_Position", 1, raise_on_error=False) is None
+
+
+@pytest.mark.parametrize("raise_on_error", (True, False))
+def test__read_no_answer(raise_on_error, bus):
+    bus._bus.absent.add(1)
+
+    if raise_on_error:
+        with pytest.raises(ConnectionError, match="Timeout"):
+            bus._read("Present_Position", 1, raise_on_error=True)
+    else:
+        assert bus._read("Present_Position", 1, raise_on_error=False) is None
+
+
+@pytest.mark.parametrize(
+    "register, id_, value",
+    [("Lock", 1, 2), ("Goal_Position", 2, 999), ("Goal_Velocity", 3, -1337)],
+)
+def test__write(register, id_, value, bus):
+    bus._write(register, id_, value)
+
+    assert bus._bus.writes == [(id_, register.lower(), value)]
+
+
+def test__write_no_answer(bus):
+    bus._bus.absent.add(1)
+
+    with pytest.raises(ConnectionError, match="Timeout"):
+        bus._write("Goal_Position", 1, 1337)
+
+
+@pytest.mark.parametrize(
+    "register, ids_values",
+    [("Lock", {1: 4}), ("Goal_Position", {1: 1337, 2: 42}), ("Present_Velocity", {1: 1337, 2: -42, 3: 4016})],
+)
+def test__sync_read(register, ids_values, bus):
+    for id_, value in ids_values.items():
+        bus._bus.seed(id_, register.lower(), value)
+
+    assert bus._sync_read(register, list(ids_values)) == ids_values
+
+
+def test_retries_are_left_to_rustypot(bus):
+    bus._read("Present_Position", 1, num_retry=1)
+    bus._write("Goal_Position", 1, 1337, num_retry=2)
+    bus._sync_read("Present_Position", [1], num_retry=3)
+    bus._sync_write("Goal_Position", {1: 1337}, num_retry=4)
+
+    assert bus._bus.retries == [1, 2, 3, 4]
+
+
+def test__sync_read_no_answer(bus):
+    bus._bus.absent.add(1)
+
+    with pytest.raises(ConnectionError, match="Timeout"):
+        bus._sync_read("Present_Position", [1])
+
+
+@pytest.mark.parametrize(
+    "register, ids_values",
+    [("Lock", {1: 4}), ("Goal_Position", {1: 1337, 2: 42}), ("Goal_Velocity", {1: 1337, 2: -42, 3: 4016})],
+)
+def test__sync_write(register, ids_values, bus):
+    bus._sync_write(register, ids_values)
+
+    assert bus._bus.sync_writes == [(list(ids_values), register.lower(), list(ids_values.values()))]
+
+
+def test_ping(bus):
+    bus._bus.seed(2, "model_number", 5678)
+
+    assert bus.ping(2) == 5678
+
+    bus._bus.absent.add(3)
+    assert bus.ping(3) is None
+
+
+def test_scan_port():
+    """Every baud rate a motor of the family can be set to is swept, and the port released."""
+    with patch.object(MockBus, "scan", autospec=True, return_value={2: 5678}) as scan:
+        assert MockMotorsBus.scan_port("/dev/dummy-port") == {1_000_000: [2], 500_000: [2], 250_000: [2]}
+
+    rustypot_bus = scan.call_args.args[0]
+    assert rustypot_bus.closed
+    # The family's first definition says where the model number is.
+    assert [call.args[1] for call in scan.call_args_list] == [DUMMY_SERVO_1] * 3
+
+
+def test_a_motor_is_found_through_its_own_definition(bus):
+    bus._bus.seed(9, "model_number", 5678)
+
+    assert bus._find_single_motor("dummy_3") == (1_000_000, 9)
+    assert bus._bus.scans == [DUMMY_SERVO_2]
+
+
+def test_setup_motor_addresses_the_motor_where_it_answers(dummy_motors):
+    """A new motor answers at an id the bus does not have (9 here). The setup reaches it
+    there through its own definition, then gives it its id and the default baud rate."""
+    bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
+
+    bus.setup_motor("dummy_3", initial_baudrate=500_000, initial_id=9)
+
+    connect, setup, reconnect = bus.opened
+    assert setup.motors == {**connect.motors, 9: DUMMY_SERVO_2}
+    assert setup.writes == [(9, "torque_enable", 0), (9, "id", 3), (3, "baud_rate", 0)]
+    assert connect.closed and setup.closed
+    assert bus._bus is reconnect and reconnect.motors == connect.motors
+
+
+def test_constructing_does_not_open_the_port(dummy_motors):
+    bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
+
+    assert not bus.is_connected
+
+
+def test_connect_reports_a_missing_port(dummy_motors):
+    bus = MockMotorsBus("/dev/nope", dummy_motors)
+
+    with (
+        patch.object(
+            MockMotorsBus, "_bus_class", return_value=MagicMock(side_effect=OSError("no such device"))
+        ),
+        pytest.raises(ConnectionError, match="lerobot-find-port"),
+    ):
+        bus.connect(handshake=False)
+
+    assert not bus.is_connected
+
+
+def test_a_failed_handshake_closes_the_port(dummy_motors):
+    bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
+
+    with (
+        patch.object(MockMotorsBus, "_handshake", side_effect=RuntimeError("motor check failed")),
+        pytest.raises(RuntimeError, match="motor check failed"),
+    ):
+        bus.connect()
+
+    assert not bus.is_connected
+
+
+def test_disconnect_closes_the_port(bus):
+    rustypot_bus = bus._bus
+
+    bus.disconnect(disable_torque=False)
+    bus.disconnect(disable_torque=False)
+
+    assert rustypot_bus.closed
+    assert not bus.is_connected
+
+
+def test_changing_the_baudrate_keeps_the_port_open(bus):
+    bus.set_baudrate(57_600)
+
+    assert bus._bus.baudrate == 57_600
+    assert bus.is_connected
+
+
+def test_the_port_reopens_at_the_default_baudrate(bus):
+    bus.set_baudrate(57_600)
+    bus.disconnect(disable_torque=False)
+    bus.connect(handshake=False)
+
+    assert bus._bus.baudrate == bus.default_baudrate

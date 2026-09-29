@@ -12,42 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# TODO(aliberts): Should we implement FastSyncRead/Write?
-# https://github.com/ROBOTIS-GIT/DynamixelSDK/pull/643
-# https://github.com/ROBOTIS-GIT/DynamixelSDK/releases/tag/3.8.2
-# https://emanual.robotis.com/docs/en/dxl/protocol2/#fast-sync-read-0x8a
-# -> Need to check compatibility across models
-
-import logging
-from copy import deepcopy
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from lerobot.utils.import_utils import _dynamixel_sdk_available, require_package
+from lerobot.utils.import_utils import _rustypot_available, require_package
 
-from ..encoding_utils import decode_twos_complement, encode_twos_complement
-from ..motors_bus import Motor, MotorCalibration, NameOrID, SerialMotorsBus, Value, get_address
-from .tables import (
-    AVAILABLE_BAUDRATES,
-    MODEL_BAUDRATE_TABLE,
-    MODEL_CONTROL_TABLE,
-    MODEL_ENCODING_TABLE,
-    MODEL_NUMBER_TABLE,
-    MODEL_RESOLUTION,
-)
+from ..motors_bus import MotorCalibration, NameOrID, SerialMotorsBus, Value
 
-if TYPE_CHECKING or _dynamixel_sdk_available:
-    import dynamixel_sdk as dxl
+if TYPE_CHECKING or _rustypot_available:
+    import rustypot
 else:
-    dxl = None
-
-PROTOCOL_VERSION = 2.0
-DEFAULT_BAUDRATE = 1_000_000
-DEFAULT_TIMEOUT_MS = 1000
-
-NORMALIZED_DATA = ["Goal_Position", "Present_Position"]
-
-logger = logging.getLogger(__name__)
+    rustypot = None
 
 
 class OperatingMode(Enum):
@@ -91,65 +66,18 @@ class TorqueMode(Enum):
 
 
 class DynamixelMotorsBus(SerialMotorsBus):
-    """
-    The Dynamixel implementation for a MotorsBus. It relies on the python dynamixel sdk to communicate with
-    the motors. For more info, see the Dynamixel SDK Documentation:
-    https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20
+    """`SerialMotorsBus` for Dynamixel servos, which speak protocol v2.
+
+    Control table reference:
+    https://emanual.robotis.com/docs/en/dxl/protocol2/
     """
 
     apply_drive_mode = False
-    available_baudrates = deepcopy(AVAILABLE_BAUDRATES)
-    default_baudrate = DEFAULT_BAUDRATE
-    default_timeout = DEFAULT_TIMEOUT_MS
-    model_baudrate_table = deepcopy(MODEL_BAUDRATE_TABLE)
-    model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
-    model_encoding_table = deepcopy(MODEL_ENCODING_TABLE)
-    model_number_table = deepcopy(MODEL_NUMBER_TABLE)
-    model_resolution_table = deepcopy(MODEL_RESOLUTION)
-    normalized_data = deepcopy(NORMALIZED_DATA)
 
-    def __init__(
-        self,
-        port: str,
-        motors: dict[str, Motor],
-        calibration: dict[str, MotorCalibration] | None = None,
-    ):
-        require_package("dynamixel-sdk", extra="dynamixel", import_name="dynamixel_sdk")
-        super().__init__(port, motors, calibration)
-        self.port_handler = dxl.PortHandler(self.port)
-        self.packet_handler = dxl.PacketHandler(PROTOCOL_VERSION)
-        self.sync_reader = dxl.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
-        self.sync_writer = dxl.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
-        self._comm_success = dxl.COMM_SUCCESS
-        self._no_error = 0x00
-
-    def _assert_protocol_is_compatible(self, instruction_name: str) -> None:
-        pass
-
-    def _handshake(self) -> None:
-        self._assert_motors_exist()
-
-    def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
-        model = self.motors[motor].model
-        search_baudrates = (
-            [initial_baudrate] if initial_baudrate is not None else self.model_baudrate_table[model]
-        )
-
-        for baudrate in search_baudrates:
-            self.set_baudrate(baudrate)
-            id_model = self.broadcast_ping()
-            if id_model:
-                found_id, found_model = next(iter(id_model.items()))
-                expected_model_nb = self.model_number_table[model]
-                if found_model != expected_model_nb:
-                    raise RuntimeError(
-                        f"Found one motor on {baudrate=} with id={found_id} but it has a "
-                        f"model number '{found_model}' different than the one expected: '{expected_model_nb}'. "
-                        f"Make sure you are connected only connected to the '{motor}' motor (model '{model}')."
-                    )
-                return baudrate, found_id
-
-        raise RuntimeError(f"Motor '{motor}' (model '{model}') was not found. Make sure it is connected.")
+    @staticmethod
+    def _servos() -> tuple[Any, ...]:
+        require_package("rustypot", extra="rustypot-dep")
+        return (rustypot.Xl330PyController, rustypot.Xl430PyController)
 
     def configure_motors(self, return_delay_time=0) -> None:
         # By default, Dynamixel motors have a 500µs delay response time (corresponding to a value of 250 on
@@ -192,33 +120,12 @@ class DynamixelMotorsBus(SerialMotorsBus):
         for motor in self._get_motors_list(motors):
             self.write("Torque_Enable", motor, TorqueMode.DISABLED.value, num_retry=num_retry)
 
-    def _disable_torque(self, motor: int, model: str, num_retry: int = 0) -> None:
-        addr, length = get_address(self.model_ctrl_table, model, "Torque_Enable")
-        self._write(addr, length, motor, TorqueMode.DISABLED.value, num_retry=num_retry)
+    def _disable_torque(self, motor: int, num_retry: int = 0) -> None:
+        self._write("Torque_Enable", motor, TorqueMode.DISABLED.value, num_retry=num_retry)
 
     def enable_torque(self, motors: int | str | list[str] | None = None, num_retry: int = 0) -> None:
         for motor in self._get_motors_list(motors):
             self.write("Torque_Enable", motor, TorqueMode.ENABLED.value, num_retry=num_retry)
-
-    def _encode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
-        for id_ in ids_values:
-            model = self._id_to_model(id_)
-            encoding_table = self.model_encoding_table.get(model)
-            if encoding_table and data_name in encoding_table:
-                n_bytes = encoding_table[data_name]
-                ids_values[id_] = encode_twos_complement(ids_values[id_], n_bytes)
-
-        return ids_values
-
-    def _decode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
-        for id_ in ids_values:
-            model = self._id_to_model(id_)
-            encoding_table = self.model_encoding_table.get(model)
-            if encoding_table and data_name in encoding_table:
-                n_bytes = encoding_table[data_name]
-                ids_values[id_] = decode_twos_complement(ids_values[id_], n_bytes)
-
-        return ids_values
 
     def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
         """
@@ -227,38 +134,7 @@ class DynamixelMotorsBus(SerialMotorsBus):
         """
         half_turn_homings: dict[NameOrID, Value] = {}
         for motor, pos in positions.items():
-            model = self._get_motor_model(motor)
-            max_res = self.model_resolution_table[model] - 1
+            max_res = self.resolution(self._get_motor_model(motor)) - 1
             half_turn_homings[motor] = int(max_res / 2) - pos
 
         return half_turn_homings
-
-    def _split_into_byte_chunks(self, value: int, length: int) -> list[int]:
-        if length == 1:
-            data = [value]
-        elif length == 2:
-            data = [dxl.DXL_LOBYTE(value), dxl.DXL_HIBYTE(value)]
-        elif length == 4:
-            data = [
-                dxl.DXL_LOBYTE(dxl.DXL_LOWORD(value)),
-                dxl.DXL_HIBYTE(dxl.DXL_LOWORD(value)),
-                dxl.DXL_LOBYTE(dxl.DXL_HIWORD(value)),
-                dxl.DXL_HIBYTE(dxl.DXL_HIWORD(value)),
-            ]
-        return data
-
-    def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
-        for n_try in range(1 + num_retry):
-            data_list, comm = self.packet_handler.broadcastPing(self.port_handler)
-            if self._is_comm_success(comm):
-                break
-            logger.debug(f"Broadcast ping failed on port '{self.port}' ({n_try=})")
-            logger.debug(self.packet_handler.getTxRxResult(comm))
-
-        if not self._is_comm_success(comm):
-            if raise_on_error:
-                raise ConnectionError(self.packet_handler.getTxRxResult(comm))
-
-            return None
-
-        return {id_: data[0] for id_, data in data_list.items()}

@@ -12,153 +12,170 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ruff: noqa: N802
+from functools import cached_property
 
-from lerobot.motors.motors_bus import (
-    Motor,
-    MotorsBus,
-    MotorsBusBase,
-)
-
-DUMMY_CTRL_TABLE_1 = {
-    "Firmware_Version": (0, 1),
-    "Model_Number": (1, 2),
-    "Present_Position": (3, 4),
-    "Goal_Position": (11, 2),
-}
-
-DUMMY_CTRL_TABLE_2 = {
-    "Model_Number": (0, 2),
-    "Firmware_Version": (2, 1),
-    "Present_Position": (3, 4),
-    "Present_Velocity": (7, 4),
-    "Goal_Position": (11, 4),
-    "Goal_Velocity": (15, 4),
-    "Lock": (19, 1),
-}
-
-DUMMY_MODEL_CTRL_TABLE = {
-    "model_1": DUMMY_CTRL_TABLE_1,
-    "model_2": DUMMY_CTRL_TABLE_2,
-    "model_3": DUMMY_CTRL_TABLE_2,
-}
-
-DUMMY_BAUDRATE_TABLE = {
-    0: 1_000_000,
-    1: 500_000,
-    2: 250_000,
-}
-
-DUMMY_MODEL_BAUDRATE_TABLE = {
-    "model_1": DUMMY_BAUDRATE_TABLE,
-    "model_2": DUMMY_BAUDRATE_TABLE,
-    "model_3": DUMMY_BAUDRATE_TABLE,
-}
-
-DUMMY_ENCODING_TABLE = {
-    "Present_Position": 8,
-    "Goal_Position": 10,
-}
-
-DUMMY_MODEL_ENCODING_TABLE = {
-    "model_1": DUMMY_ENCODING_TABLE,
-    "model_2": DUMMY_ENCODING_TABLE,
-    "model_3": DUMMY_ENCODING_TABLE,
-}
-
-DUMMY_MODEL_NUMBER_TABLE = {
-    "model_1": 1234,
-    "model_2": 5678,
-    "model_3": 5799,
-}
-
-DUMMY_MODEL_RESOLUTION_TABLE = {
-    "model_1": 4096,
-    "model_2": 1024,
-    "model_3": 4096,
-}
+from lerobot.motors.motors_bus import SerialMotorsBus
 
 
-class MockPortHandler:
-    def __init__(self, port_name):
-        self.is_open: bool = False
-        self.baudrate: int
-        self.packet_start_time: float
-        self.packet_timeout: float
-        self.tx_time_per_byte: float
-        self.is_using: bool = False
-        self.port_name: str = port_name
-        self.ser = None
-
-    def openPort(self):
-        self.is_open = True
-        return self.is_open
-
-    def closePort(self):
-        self.is_open = False
-
-    def clearPort(self): ...
-    def setPortName(self, port_name):
-        self.port_name = port_name
-
-    def getPortName(self):
-        return self.port_name
-
-    def setBaudRate(self, baudrate):
-        self.baudrate: baudrate
-
-    def getBaudRate(self):
-        return self.baudrate
-
-    def getBytesAvailable(self): ...
-    def readPort(self, length): ...
-    def writePort(self, packet): ...
-    def setPacketTimeout(self, packet_length): ...
-    def setPacketTimeoutMillis(self, msec): ...
-    def isPacketTimeout(self): ...
-    def getCurrentTime(self): ...
-    def getTimeSinceStart(self): ...
-    def setupPort(self, cflag_baud): ...
-    def getCFlagBaud(self, baudrate): ...
-
-
-class MockMotorsBus(MotorsBus):
-    """Mock motor bus that bypasses hardware dependency checks.
-
-    Inherits from MotorsBus (alias for SerialMotorsBus) for type compatibility,
-    but calls MotorsBusBase.__init__ directly to skip the pyserial/deepdiff guards.
+class DummyServo:
+    """Stands in for a rustypot controller class: the models it covers, the registers it
+    has, its resolution and baud rates. It also stands in for its own definition, which
+    is what a `MockBus` is given, so the tests need no rustypot.
     """
 
-    available_baudrates = [500_000, 1_000_000]
-    default_timeout = 1000
-    model_baudrate_table = DUMMY_MODEL_BAUDRATE_TABLE
-    model_ctrl_table = DUMMY_MODEL_CTRL_TABLE
-    model_encoding_table = DUMMY_MODEL_ENCODING_TABLE
-    model_number_table = DUMMY_MODEL_NUMBER_TABLE
-    model_resolution_table = DUMMY_MODEL_RESOLUTION_TABLE
-    normalized_data = ["Present_Position", "Goal_Position"]
+    def __init__(self, models: dict[str, int], registers: tuple[str, ...]):
+        self._models = models
+        self._registers = {name.lower() for name in registers}
 
-    def __init__(self, port: str, motors: dict[str, Motor]):
-        # Skip SerialMotorsBus.__init__ (which guards pyserial/deepdiff)
-        # and call the base class directly — this mock never touches real serial.
-        MotorsBusBase.__init__(self, port, motors)
-        self.port_handler = MockPortHandler(port)
-        self._id_to_model_dict = {m.id: m.model for m in self.motors.values()}
-        self._id_to_name_dict = {m.id: name for name, m in self.motors.items()}
-        self._model_nb_to_model_dict = {v: k for k, v in self.model_number_table.items()}
+    def definition(self) -> "DummyServo":
+        return self
 
-    def _assert_protocol_is_compatible(self, instruction_name): ...
-    def _handshake(self): ...
-    def _find_single_motor(self, motor, initial_baudrate): ...
+    def models(self) -> dict[str, int]:
+        return dict(self._models)
+
+    def register(self, name: str) -> str | None:
+        return name if name in self._registers else None
+
+    def resolution(self) -> int:
+        return 4096
+
+    def baudrates(self) -> dict[int, int]:
+        return {1_000_000: 0, 500_000: 1, 250_000: 2}
+
+
+DUMMY_SERVO_1 = DummyServo(
+    {"model_1": 1234}, ("Model_Number", "Firmware_Version", "Present_Position", "Goal_Position")
+)
+DUMMY_SERVO_2 = DummyServo(
+    {"model_2": 5678, "model_3": 5799},
+    (
+        "Model_Number",
+        "Firmware_Version",
+        "Present_Position",
+        "Present_Velocity",
+        "Goal_Position",
+        "Goal_Velocity",
+        "Lock",
+    ),
+)
+
+
+class MockBus:
+    """In-memory stand-in for an open `rustypot.Bus`.
+
+    Holds one integer per (motor id, register name), so a test seeds a value or
+    reads back what the bus wrote without ever building a packet. Framing, byte
+    order and sign encoding are rustypot's business and are tested there. Like
+    rustypot, it refuses an id it was not opened with.
+    """
+
+    def __init__(
+        self,
+        serial_port: str = "/dev/dummy-port",
+        baudrate: int = 1_000_000,
+        timeout: float = 1.0,
+        motors: dict | None = None,
+    ):
+        self.serial_port = serial_port
+        self.baudrate = baudrate
+        self.timeout = timeout
+        self.motors = dict(motors or {})  # id -> definition
+        self.closed = False
+
+        self.registers: dict[tuple[int, str], int] = {}
+        self.status: dict[int, int] = {}  # id -> status error byte
+        self.absent: set[int] = set()  # ids that never answer
+        self.retries: list[int] = []  # the retries each access was given
+
+        self.reads: list[tuple[int, str]] = []
+        self.writes: list[tuple[int, str, int]] = []
+        self.sync_reads: list[tuple[list[int], str]] = []
+        self.sync_writes: list[tuple[list[int], str, list[int]]] = []
+        self.scans: list = []  # the definition each scan read model numbers with
+
+    # -- test-side helpers -------------------------------------------------
+
+    def seed(self, motor_id: int, register: str, value: int) -> None:
+        self.registers[(motor_id, register)] = value
+
+    def stored(self, motor_id: int, register: str) -> int:
+        return self.registers.get((motor_id, register), 0)
+
+    # -- rustypot.Bus ------------------------------------------------------
+
+    def close(self) -> None:
+        self.closed = True
+
+    def set_baudrate(self, baudrate: int) -> None:
+        self.baudrate = baudrate
+
+    def _answer(self, motor_ids: list[int], retries: int) -> None:
+        if unknown := [motor_id for motor_id in motor_ids if motor_id not in self.motors]:
+            raise ValueError(f"no motor with id {unknown[0]} on this bus")
+        self.retries.append(retries)
+        if any(motor_id in self.absent for motor_id in motor_ids):
+            raise RuntimeError("Timeout error")
+
+    def read_register_with_error(self, motor_id: int, register: str, retries: int = 0) -> tuple[int, int]:
+        self._answer([motor_id], retries)
+        self.reads.append((motor_id, register))
+        return self.stored(motor_id, register), self.status.get(motor_id, 0)
+
+    def write_register_with_error(self, motor_id: int, register: str, value: int, retries: int = 0) -> int:
+        self._answer([motor_id], retries)
+        self.writes.append((motor_id, register, value))
+        self.seed(motor_id, register, value)
+        return self.status.get(motor_id, 0)
+
+    def sync_read_register(self, motor_ids: list[int], register: str, retries: int = 0) -> list[int]:
+        self._answer(motor_ids, retries)
+        self.sync_reads.append((list(motor_ids), register))
+        return [self.stored(motor_id, register) for motor_id in motor_ids]
+
+    def sync_write_register(
+        self, motor_ids: list[int], register: str, values: list[int], retries: int = 0
+    ) -> None:
+        self._answer(motor_ids, retries)
+        self.sync_writes.append((list(motor_ids), register, list(values)))
+        for motor_id, value in zip(motor_ids, values, strict=True):
+            self.seed(motor_id, register, value)
+
+    def scan(self, definition) -> dict[int, int]:
+        """Every id holding a model number, as a sweep of the whole protocol range finds them."""
+        self.scans.append(definition)
+        return {
+            motor_id: value
+            for (motor_id, register), value in self.registers.items()
+            if register == "model_number" and motor_id not in self.absent
+        }
+
+
+class MockMotorsBus(SerialMotorsBus):
+    """Bus over dummy servo definitions. It opens a `MockBus` where the real one opens a
+    `rustypot.Bus`, and keeps every one it opened in `opened`, oldest first."""
+
+    @staticmethod
+    def _servos() -> tuple[DummyServo, ...]:
+        return (DUMMY_SERVO_1, DUMMY_SERVO_2)
+
+    @cached_property
+    def opened(self) -> list[MockBus]:
+        return []
+
+    def _bus_class(self):
+        def open_bus(*args) -> MockBus:
+            self.opened.append(MockBus(*args))
+            return self.opened[-1]
+
+        return open_bus
+
     def configure_motors(self): ...
     def is_calibrated(self): ...
     def read_calibration(self): ...
     def write_calibration(self, calibration_dict): ...
     def disable_torque(self, motors, num_retry): ...
-    def _disable_torque(self, motor, model, num_retry): ...
+    def _disable_torque(self, motor, num_retry=0):
+        self._write("Torque_Enable", motor, 0, num_retry=num_retry)
+
     def enable_torque(self, motors, num_retry): ...
     def _get_half_turn_homings(self, positions): ...
-    def _encode_sign(self, data_name, ids_values): ...
-    def _decode_sign(self, data_name, ids_values): ...
-    def _split_into_byte_chunks(self, value, length): ...
-    def broadcast_ping(self, num_retry, raise_on_error): ...
