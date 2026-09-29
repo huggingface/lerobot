@@ -26,30 +26,52 @@ _DEFAULT_BBOX_BINDING = re.compile(r"emitted_at\(t, style=vqa, role=assistant, c
 
 
 def _g05_default_recipe(bbox_camera: str = "observation.images.exterior") -> dict:
-    """G0.5's native BBox/Subtask chain-of-thought supervision.
+    """G0.5's native training mix: chain-of-thought, subtask-as-task, and plain samples.
+
+    Mirrors the upstream ``MixedSamplesBuilder``. ``cot`` covers ``SubtaskCoTBuilder`` (x2),
+    ``BBoxCoTBuilder`` and ``BBoxSubtaskCoTBuilder``: the task, then the BBox and/or Subtask
+    chain of thought, then actions. ``atomic_task`` is ``AtomicTaskBaseSamplesBuilder``: the
+    active subtask as the task, straight to actions, which is what the policy sees once a
+    subtask is steered in (``/subtask``, ``/autosteer``). ``base`` is ``BaseSamplesBuilder``:
+    the task straight to actions, the System 1 prompt.
 
     Serialized like EO-1's default recipe so policy config discovery stays
     independent of the dataset extras that `lerobot.datasets.recipe` needs.
     """
     return {
-        "bindings": {"bbox": _bbox_binding(bbox_camera)},
-        "messages": [
-            {"role": "user", "content": "${task}", "stream": "low_level"},
-            {
-                "role": "assistant",
-                "content": "BBoxJSON: ${bbox}",
-                "stream": "low_level",
-                "target": True,
-                "if_present": "bbox",
+        "blend": {
+            "cot": {
+                "weight": 4.0,
+                "bindings": {"bbox": _bbox_binding(bbox_camera)},
+                "messages": [
+                    {"role": "user", "content": "${task}", "stream": "low_level"},
+                    {
+                        "role": "assistant",
+                        "content": "BBoxJSON: ${bbox}",
+                        "stream": "low_level",
+                        "target": True,
+                        "if_present": "bbox",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "Subtask: ${subtask}",
+                        "stream": "low_level",
+                        "target": True,
+                        "if_present": "subtask",
+                    },
+                ],
             },
-            {
-                "role": "assistant",
-                "content": "Subtask: ${subtask}",
-                "stream": "low_level",
-                "target": True,
-                "if_present": "subtask",
+            "atomic_task": {
+                "weight": 1.0,
+                "messages": [
+                    {"role": "user", "content": "${subtask}", "stream": "low_level", "if_present": "subtask"}
+                ],
             },
-        ],
+            "base": {
+                "weight": 1.0,
+                "messages": [{"role": "user", "content": "${task}", "stream": "low_level"}],
+            },
+        }
     }
 
 
@@ -358,10 +380,11 @@ class G05Config(PreTrainedConfig):
                 for index, key in enumerate(self.camera_keys)
             }
         if self.recipe is not None and self.recipe_path is None:
-            bindings = self.recipe.get("bindings") or {}
-            if _DEFAULT_BBOX_BINDING.fullmatch(bindings.get("bbox", "")):
-                # The built-in recipe reads the boxes annotated on the bbox camera.
-                self.recipe["bindings"] = {**bindings, "bbox": _bbox_binding(self.bbox_camera)}
+            for component in [self.recipe, *(self.recipe.get("blend") or {}).values()]:
+                bindings = component.get("bindings") or {}
+                if _DEFAULT_BBOX_BINDING.fullmatch(bindings.get("bbox", "")):
+                    # The built-in recipe reads the boxes annotated on the bbox camera.
+                    component["bindings"] = {**bindings, "bbox": _bbox_binding(self.bbox_camera)}
         # Both follow from the camera slots and the history length; a saved value would go
         # stale when a fine-tune changes either (e.g. `n_obs_steps=1` on the 6-step base).
         self.num_input_images = len(self.camera_order) * self.n_obs_steps

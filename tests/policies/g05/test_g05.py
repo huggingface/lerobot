@@ -68,6 +68,8 @@ from lerobot.utils.constants import (
     MESSAGES_RENDERED,
     OBS_STATE,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
+    QUERY_KIND,
+    QUERY_TEXT,
 )
 
 
@@ -327,7 +329,8 @@ def test_text_generation_uses_base_policy_contract():
     assert G05Policy.generate_text is not PreTrainedPolicy.generate_text
     assert G05Policy.supports_text_generation is not PreTrainedPolicy.supports_text_generation
     assert policy.supports_text_generation()
-    assert policy.generate_text(batch) == "Subtask: move carefully"
+    # The reply is the subtask alone: a `next_subtask` answer is fed back as the task.
+    assert policy.generate_text(batch) == "move carefully"
     assert backend.last_samples[0]["command"] == "what do you see?"
 
 
@@ -1694,7 +1697,7 @@ def test_new_robot_takes_its_layout_from_the_dataset(tmp_path: Path):
     assert (config.raw_state_dim, config.raw_action_dim) == (6, 6)
     assert config.camera_order[1] in config.optional_camera_keys
     assert set(config.camera_sizes) == set(config.camera_order)
-    assert "camera=observation.images.top)" in config.recipe["bindings"]["bbox"]
+    assert "camera=observation.images.top)" in config.recipe["blend"]["cot"]["bindings"]["bbox"]
 
     preprocessor, postprocessor = make_pre_post_processors(config, dataset_stats=_raw_stats(6))
     projection = next(step for step in preprocessor.steps if isinstance(step, G05EmbodimentProjectionStep))
@@ -1765,6 +1768,64 @@ def test_first_cot_text_picks_the_first_non_empty_row():
     # System 1 emits no CoT, so the panel shows no reasoning line.
     assert _first_cot_text({}) is None
     assert _first_cot_text({"cot_text": ["   "]}) is None
+
+
+def test_cot_text_is_cut_before_the_action_segment():
+    from lerobot.policies.g05.modeling_g05 import _clean_cot_text, _cot_subtask
+
+    # Decoding stops at <EOV>, after the template's literal "|Action: ".
+    assert _clean_cot_text("Subtask: pick up the yellow cube|Action: ") == "Subtask: pick up the yellow cube"
+    both = _clean_cot_text("BBox: cube <loc0102><loc0102><loc0512><loc0512>|Subtask: grasp it|Action:")
+    assert both == "BBox: cube <loc0102><loc0102><loc0512><loc0512>|Subtask: grasp it"
+    assert _cot_subtask(both) == "grasp it"
+    assert _cot_subtask("BBox: cube <loc0102><loc0102><loc0512><loc0512>") is None
+    assert _cot_subtask("Subtask: ") is None
+
+
+def test_default_recipe_mixes_cot_subtask_as_task_and_plain_samples():
+    pytest.importorskip("datasets", reason="recipe rendering requires lerobot[dataset]")
+    from lerobot.datasets.language_render import render_sample
+    from lerobot.datasets.recipe import TrainingRecipe
+
+    recipe = TrainingRecipe.from_dict(_config(predict_cot=True, use_language_recipe=True).recipe)
+    subtask = {
+        "role": "assistant",
+        "content": "grasp the cup",
+        "style": "subtask",
+        "timestamp": 0.0,
+        "camera": None,
+        "tool_calls": None,
+    }
+    rendered = [
+        render_sample(
+            recipe=recipe, persistent=[subtask], events=[], t=0.5, sample_idx=index, default_task="tidy up"
+        )
+        for index in range(300)
+    ]
+    conversations = {
+        tuple(message["content"] for message in sample[MESSAGES_RENDERED]) for sample in rendered
+    }
+
+    # Upstream's CoT builders, AtomicTaskBaseSamplesBuilder and BaseSamplesBuilder.
+    assert conversations == {("tidy up", "Subtask: grasp the cup"), ("grasp the cup",), ("tidy up",)}
+    # A `next_subtask` query still plans from the goal, with the CoT branch's prompt.
+    query = RenderRuntimeMessagesStep(recipe).complementary_data(
+        {QUERY_KIND: "next_subtask", QUERY_TEXT: "tidy up"}
+    )
+    assert query[MESSAGES_RENDERED] == [{"role": "user", "content": "tidy up"}]
+
+
+def test_subtask_as_task_sample_trains_the_action_only_template():
+    policy = G05Policy(_config(predict_cot=True, runtime_system="system2"), backend=TinyG05Backend())
+    batch = _policy_batch("tidy up")
+    batch[MESSAGES_RENDERED] = [[{"role": "user", "content": "grasp the cup"}]]
+    batch["target_message_indices"] = [[]]
+
+    sample = policy._prepare_author_batch(batch)["samples"][0]
+
+    assert sample["command"] == "grasp the cup"
+    assert "atomic_task" not in sample
+    assert "<chat_assistant_prefix>Action: <EOV><EOC><action_action>|<eos>" in sample["template"]
 
 
 def test_with_text_pairs_same_pass_cot_with_its_chunk():

@@ -120,7 +120,7 @@ System 2 is available only when the packaged checkpoint metadata has
 
 ```python
 action, text = policy.predict_action_chunk(batch, with_text=True)
-print(text)  # "Subtask: grasp the cup ..."
+print(text)  # "Subtask: grasp the cup"
 ```
 
 System 1 generates none and reports `text=None`.
@@ -213,9 +213,15 @@ lerobot-train \
   --save_freq=1000
 ```
 
-The built-in recipe resolves the `subtask` and grounded `vqa` annotations at
-each sample timestamp, and emits each BBox or Subtask target when that
-annotation is present. Samples without them are skipped.
+The built-in recipe mixes three kinds of samples, like the upstream training mix:
+
+- 4/6 chain of thought: the task, then a BBox and/or Subtask target for the
+  `subtask` and grounded `vqa` annotations active at that timestamp, then the actions.
+- 1/6 subtask as task: the active subtask is the instruction, straight to actions.
+  This is what the policy sees once `/subtask` or `/autosteer` sets a subtask.
+- 1/6 plain: the task straight to actions, the System 1 prompt.
+
+A chain-of-thought sample with no annotation at its timestamp trains the plain prompt.
 
 Generate the required `subtask` and grounded `vqa` language columns with
 `lerobot-annotate` as described in the

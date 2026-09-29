@@ -1534,17 +1534,19 @@ class G05NativeBackend(nn.Module):
             sequence.token_types = token_types
             result["generated_ids"] = cot_generation.token_ids
             result["cot_text"] = [
-                self.processor.decode(
-                    ids[
-                        : next(
-                            (
-                                index
-                                for index, token_id in enumerate(ids.tolist())
-                                if token_id in {self.processor.eov_token_id, self.processor.eos_token_id}
-                            ),
-                            len(ids),
-                        )
-                    ]
+                _clean_cot_text(
+                    self.processor.decode(
+                        ids[
+                            : next(
+                                (
+                                    index
+                                    for index, token_id in enumerate(ids.tolist())
+                                    if token_id in {self.processor.eov_token_id, self.processor.eos_token_id}
+                                ),
+                                len(ids),
+                            )
+                        ]
+                    )
                 )
                 for ids in cot_generation.token_ids
             ]
@@ -1699,6 +1701,24 @@ def _native_backend(config: G05Config, checkpoint_dir: str | Path | None) -> nn.
     return G05NativeBackend.from_config(model_config, checkpoint_dir)
 
 
+def _clean_cot_text(text: str) -> str:
+    """The chain of thought alone: the text before ``Action:``, without ``|`` separators.
+
+    The target is ``BBox: ...|Subtask: ...|Action: <EOV>``, so decoding up to ``<EOV>`` still
+    holds the literal ``|Action:``; upstream cuts it the same way.
+    """
+    return text.split("Action:", 1)[0].strip().strip("|").strip()
+
+
+def _cot_subtask(text: str) -> str | None:
+    """The ``Subtask:`` field of a cleaned chain of thought, or None when it has none."""
+    for segment in text.split("|"):
+        segment = segment.strip()
+        if segment.startswith("Subtask:"):
+            return segment.removeprefix("Subtask:").strip() or None
+    return None
+
+
 def _first_cot_text(metadata: Mapping[str, Any]) -> str | None:
     """First non-empty chain-of-thought string in a batched inference result."""
     texts = metadata.get("cot_text")
@@ -1747,7 +1767,9 @@ class G05Policy(PreTrainedPolicy):
         text = _first_cot_text(metadata)
         if text is None:
             raise ValueError("G0.5 text generation returned no text.")
-        return text
+        # A `next_subtask` reply becomes the next task, so it must be the subtask alone. The
+        # runtime renderer drops the query kind, and G0.5 answers every query with its CoT.
+        return _cot_subtask(text) or text
 
     @classmethod
     def _load_as_safetensor(
