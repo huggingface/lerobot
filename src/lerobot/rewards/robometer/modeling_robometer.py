@@ -226,7 +226,7 @@ class RobometerRewardModel(PreTrainedRewardModel):
 
         The processor-prepared input mapping is not mutated. Frame selection,
         thresholding, and conversion into a downstream reward belong to the
-        caller.
+        caller, which also controls model mode and gradient context.
         """
         inputs = {
             key: batch[f"{ROBOMETER_FEATURE_PREFIX}{key}"]
@@ -240,12 +240,7 @@ class RobometerRewardModel(PreTrainedRewardModel):
                 "RobometerEncoderProcessorStep ran before `predict_progress`."
             )
 
-        device = next(self.model.parameters()).device
-        inputs = {key: value.to(device) if hasattr(value, "to") else value for key, value in inputs.items()}
-
-        self.eval()
-        with torch.no_grad():
-            progress_logits, success_logits = self._compute_rbm_logits(inputs)
+        progress_logits, success_logits = self._compute_rbm_logits(inputs)
 
         progress_pred = (
             convert_bins_to_continuous(progress_logits.float())

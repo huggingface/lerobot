@@ -114,7 +114,10 @@ class TOPRewardModel(PreTrainedRewardModel):
         self.model = Qwen3VLForConditionalGeneration.from_pretrained(config.vlm_name, **model_kwargs)
 
     def compute_log_probability(self, batch: Mapping[str, Any]) -> Tensor:
-        """Return ``log P(target token | video, prompt)`` for each sample."""
+        """Return ``log P(target token | video, prompt)`` for each sample.
+
+        The caller controls model mode and gradient context.
+        """
         inputs: dict[str, Any] = {}
         for key in TOPREWARD_INPUT_KEYS:
             batch_key = f"{TOPREWARD_FEATURE_PREFIX}{key}"
@@ -125,14 +128,10 @@ class TOPRewardModel(PreTrainedRewardModel):
                 )
             inputs[key] = batch[batch_key]
 
-        device = next(self.model.parameters()).device
-        inputs = {key: value.to(device) if hasattr(value, "to") else value for key, value in inputs.items()}
         labels = inputs.pop("labels")
         inputs["logits_to_keep"] = 2
 
-        self.eval()
-        with torch.no_grad():
-            outputs = self.model(**inputs)
+        outputs = self.model(**inputs)
         logits = outputs.logits
         return -cross_entropy(logits[:, -2, :].float(), labels[:, -1], reduction="none")
 

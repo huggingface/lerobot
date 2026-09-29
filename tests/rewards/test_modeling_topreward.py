@@ -60,6 +60,7 @@ class _FakeQwenModel(torch.nn.Module):
         for i in range(batch_size):
             target_idx = int(input_ids[i, -1].item())
             logits[i, -2, target_idx] = self._reward_value * -10  # high logit -> high log-prob
+        logits = logits + self._param * 0
         if logits_to_keep:
             logits = logits[:, -logits_to_keep:, :]
         return SimpleNamespace(logits=logits)
@@ -158,6 +159,7 @@ def test_topreward_compute_log_probability_returns_one_scalar_per_sample(monkeyp
     _patch_build(monkeypatch)
     cfg = TOPRewardConfig(device="cpu")
     model = TOPRewardModel(cfg)
+    model.train()
 
     input_ids = torch.randint(0, 100, (2, 10))
     attention_mask = torch.ones(2, 10, dtype=torch.long)
@@ -168,6 +170,11 @@ def test_topreward_compute_log_probability_returns_one_scalar_per_sample(monkeyp
 
     assert rewards.shape == (2,)
     assert rewards.dtype == torch.float32
+    assert rewards.requires_grad is True
+    assert model.training is True
+
+    rewards.sum().backward()
+    assert model.model._param.grad is not None
 
 
 @skip_if_package_missing("transformers")

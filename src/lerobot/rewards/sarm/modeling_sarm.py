@@ -359,7 +359,7 @@ def gen_stage_emb(num_classes: int, targets: torch.Tensor) -> torch.Tensor:
 
 @dataclass(frozen=True)
 class SARMPrediction(ProgressPrediction):
-    """SARM frame signals on the model device.
+    """SARM frame signals on the encoded input device.
 
     ``progress``, ``stage_confidence``, and ``valid_mask`` have shape
     ``(batch, time)``.
@@ -493,7 +493,6 @@ class SARMRewardModel(PreTrainedRewardModel):
         self.subtask_model.to(device)
         return self
 
-    @torch.no_grad()
     def predict_progress(
         self,
         batch: Mapping[str, Any],
@@ -508,8 +507,10 @@ class SARMRewardModel(PreTrainedRewardModel):
                 ``lengths``.
             head_mode: Annotation head to evaluate.
 
+        The caller controls model mode and gradient context.
+
         Returns:
-            Batched float32 tensors on the model device, plus a boolean
+            Batched float32 tensors on the encoded input device, plus a boolean
             ``valid_mask`` derived from ``lengths``. Consumers select a valid
             frame that corresponds to their sampling strategy.
         """
@@ -525,7 +526,6 @@ class SARMRewardModel(PreTrainedRewardModel):
                 f"got {self.config.annotation_mode!r}"
             )
 
-        device = next(self.stage_model.parameters()).device
         text_embeddings = batch["text_features"]
         video_embeddings = batch["video_features"]
         state_features = batch.get("state_features")
@@ -546,14 +546,15 @@ class SARMRewardModel(PreTrainedRewardModel):
                 state_features = state_features.unsqueeze(0)
 
         batch_size, seq_len = video_embeddings.shape[:2]
+        device = video_embeddings.device
 
         scheme = head_mode
 
         # Default lengths if not provided
         if lengths is None:
-            lengths = torch.full((batch_size,), seq_len, dtype=torch.int32)
+            lengths = torch.full((batch_size,), seq_len, dtype=torch.int32, device=device)
         elif not isinstance(lengths, Tensor):
-            lengths = torch.as_tensor(lengths, dtype=torch.int32)
+            lengths = torch.as_tensor(lengths, dtype=torch.int32, device=device)
 
         if lengths.ndim != 1 or lengths.shape[0] != batch_size:
             raise ValueError(f"SARM `lengths` must have shape ({batch_size},), got {tuple(lengths.shape)}")
@@ -562,14 +563,20 @@ class SARMRewardModel(PreTrainedRewardModel):
 
         # Reshape video to (B, N, T, D) for multi-camera format
         # Currently single camera: (B, T, D) -> (B, 1, T, D)
-        img_seq = video_embeddings.unsqueeze(1).to(device)
-        lang_emb = text_embeddings.to(device)
+        img_seq = video_embeddings.unsqueeze(1)
+        lang_emb = text_embeddings
         state = (
-            state_features.to(device)
+            state_features
             if state_features is not None
-            else torch.zeros(batch_size, seq_len, self.config.max_state_dim, device=device)
+            else torch.zeros(
+                batch_size,
+                seq_len,
+                self.config.max_state_dim,
+                device=device,
+                dtype=video_embeddings.dtype,
+            )
         )
-        lens = lengths.to(device)
+        lens = lengths
 
         # Pad state to max_state_dim
         state = pad_state_to_max_dim(state, self.config.max_state_dim)
@@ -630,7 +637,7 @@ class SARMRewardModel(PreTrainedRewardModel):
         return_all_frames: bool = False,
         return_stages: bool = False,
         return_confidence: bool = False,
-        head_mode: str | None = "sparse",
+        head_mode: Literal["sparse", "dense"] | None = "sparse",
         frame_index: int | None = None,
     ) -> np.ndarray | tuple:
         """
@@ -662,13 +669,21 @@ class SARMRewardModel(PreTrainedRewardModel):
             raise ValueError(f"head_mode must be 'sparse' or 'dense', got {head_mode!r}")
 
         single_sample = text_embeddings.ndim == 1
+        device = next(self.stage_model.parameters()).device
+        prepared_batch = {
+            "text_features": torch.as_tensor(text_embeddings, dtype=torch.float32, device=device),
+            "video_features": torch.as_tensor(video_embeddings, dtype=torch.float32, device=device),
+            "state_features": (
+                torch.as_tensor(state_features, dtype=torch.float32, device=device)
+                if state_features is not None
+                else None
+            ),
+            "lengths": (
+                torch.as_tensor(lengths, dtype=torch.int32, device=device) if lengths is not None else None
+            ),
+        }
         prediction = self.predict_progress(
-            {
-                "text_features": text_embeddings,
-                "video_features": video_embeddings,
-                "state_features": state_features,
-                "lengths": lengths,
-            },
+            prepared_batch,
             head_mode=head_mode,
         )
 

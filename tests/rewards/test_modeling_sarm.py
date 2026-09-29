@@ -33,7 +33,7 @@ class _FakeStageModel(torch.nn.Module):
         num_classes = 2 if scheme == "sparse" else 3
         logits = torch.zeros(batch_size, seq_len, num_classes, device=img_seq.device)
         logits[..., 0] = 2.0
-        return logits
+        return logits + self.anchor
 
 
 class _FakeSubtaskModel(torch.nn.Module):
@@ -43,7 +43,8 @@ class _FakeSubtaskModel(torch.nn.Module):
 
     def forward(self, img_seq, lang_emb, state, lengths, stage_prior, *, scheme):  # noqa: ARG002
         batch_size, _, seq_len, _ = img_seq.shape
-        return torch.linspace(0.1, 0.9, seq_len, device=img_seq.device).expand(batch_size, -1)
+        progress = torch.linspace(0.1, 0.9, seq_len, device=img_seq.device).expand(batch_size, -1)
+        return progress + self.anchor
 
 
 def _make_model(*, annotation_mode: str = "dual") -> SARMRewardModel:
@@ -136,7 +137,9 @@ def test_sarm_predict_progress_rejects_invalid_lengths(lengths: torch.Tensor):
 def test_sarm_calculate_rewards_preserves_numpy_compatibility():
     model = _make_model()
     batch = _make_batch()
-    prediction = model.predict_progress(batch, head_mode="sparse")
+    model.eval()
+    with torch.inference_mode():
+        prediction = model.predict_progress(batch, head_mode="sparse")
 
     progress, stage_probabilities, confidence = model.calculate_rewards(
         text_embeddings=batch["text_features"],
@@ -176,7 +179,7 @@ def test_sarm_calculate_rewards_preserves_unbatched_default_frame_behavior():
     assert progress == pytest.approx(prediction.progress[0, model.config.n_obs_steps].item())
 
 
-def test_sarm_predict_progress_uses_parameter_device_without_changing_mode():
+def test_sarm_predict_progress_preserves_mode_and_input_device():
     model = _make_model()
     model.train()
     model.device = torch.device("meta")
@@ -198,7 +201,8 @@ def test_sarm_prediction_can_feed_a_differentiable_consumer():
     loss = consumer(prediction.progress).sum()
     loss.backward()
 
-    assert prediction.progress.requires_grad is False
+    assert prediction.progress.requires_grad is True
+    assert model.subtask_model.anchor.grad is not None
     assert consumer.weight.grad is not None
     assert consumer.bias.grad is not None
 
