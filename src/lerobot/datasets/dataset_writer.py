@@ -432,7 +432,7 @@ class DatasetWriter:
         ep_metadata = self._save_episode_data(episode_buffer)
 
         if use_streaming:
-            streaming_results = self._streaming_encoder.finish_episode(episode_index=episode_index)
+            streaming_results = self._streaming_encoder.finish_episode()
             for video_key in self._meta.video_keys:
                 normalization_factor = 255.0 if video_key not in self._meta.depth_keys else 1.0
                 temp_path, video_stats = streaming_results[video_key]
