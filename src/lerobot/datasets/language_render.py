@@ -302,7 +302,8 @@ def _resolve_bindings(
         if name not in needed:
             continue
         value = _resolve_spec(spec, persistent=persistent, events=events, t=t, sample_idx=sample_idx)
-        if value is None and _RESOLVER_RE.match(spec.strip()).group("name") == "sample_task":
+        resolver = _RESOLVER_RE.match(spec.strip())
+        if value is None and resolver is not None and resolver.group("name") == "sample_task":
             # No ``task_aug`` rows for this episode: fall back to the canonical task.
             value = _resolve_task(None, dataset_ctx, sample_idx=sample_idx) or bindings["task"]
         bindings[name] = value

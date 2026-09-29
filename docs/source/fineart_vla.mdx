@@ -27,20 +27,22 @@ labels are not silently replaced by the Pi05 processor stack.
 
 ## Install
 
-Install LeRobot with the PI dependencies:
+Install LeRobot with the FineART-VLA dependencies:
 
 ```bash
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 python -m venv .venv
 source .venv/bin/activate
-pip install -e ".[pi]"
+pip install -e ".[fineart_vla]"
 ```
 
-The `pi` extra includes the PaliGemma/FAST dependencies. Install
-`liger-kernel` for the supported fused training kernels; optional FlashRT
-backends also require the Hugging Face `kernels` package and a supported CUDA
-GPU.
+The `fineart_vla` extra includes the PaliGemma/FAST dependencies. For the optional
+fused training kernels on Linux with a CUDA GPU, install `".[fineart_vla_kernels]"`
+instead. It adds `liger-kernel` and the Hugging Face `kernels` package used by the
+FlashRT backends. When Liger is installed, FineART-VLA patches transformers'
+PaliGemma RoPE/GeGLU for the whole process; set `--policy.use_liger_kernels=false`
+if you run other PaliGemma-based policies in the same process.
 
 ## Prepare language-annotated data
 
@@ -263,9 +265,9 @@ safety behavior, and recording controls. The former `--sim`, `--mode`, and
 
 ## Troubleshooting
 
-- **Large flow-loss gradients:** KI-off joint prefix/action attention uses PyTorch
-  SDPA's math backend with FP32 attention arithmetic by default, casting its output back to the
-  model dtype. This avoids reduced-precision attention, which can destabilize gradients at
+- **Large flow-loss gradients:** FineART-VLA runs KI-off joint prefix/action attention
+  on PyTorch SDPA's math backend with FP32 attention arithmetic, casting its output back to the
+  model dtype (stock PI0.5 keeps its eager attention). This avoids reduced-precision attention, which can destabilize gradients at
   low flow timesteps with large query/key activations. Existing checkpoints and
   normalization layers are unchanged; KI-off still trains through VLM keys and
   values. Monitor the separate `flow_loss`, `text_loss`, and pre-clipping gradient
@@ -282,5 +284,25 @@ safety behavior, and recording controls. The former `--sim`, `--mode`, and
   checkpointing. Do not enable compiled or alternative attention backends
   without profiling their memory on your camera count.
 - **Slow rollout:** separate action latency from language latency, then tune
-  `--subtask_chunks_per_gen`, `--high_level_hz`, and the number of flow
-  inference steps.
+  `--autosteer_interval_s` (how often a new subtask is generated) and
+  `--policy.num_inference_steps` (flow denoising steps).
+
+## Citation
+
+If you use FineART-VLA or the FineART dataset, please cite:
+
+```bibtex
+@misc{choghari2026fineart,
+  title  = {FineART: Fine-Grained Annotated Robotic Trajectory Dataset and Vision-Language-Action Model for Bimanual Manipulation},
+  author = {Choghari, Jade and Kooijmans, Pepijn and Agarwal, Mansi and Ciftci, Yusuf Umut and Doriwala, Aseem and Weaver, Catherine and Sivapurapu, Mouli and Yang, Kai and Lee, Jackson and Wolf, Thomas and Mannam, Pragna},
+  year   = {2026},
+}
+```
+
+FineART-VLA builds on [π₀.₅](https://arxiv.org/abs/2504.16054) and
+[knowledge insulation](https://arxiv.org/abs/2505.23705) from Physical Intelligence.
+
+## License
+
+This model follows the **Apache 2.0 License**, consistent with the original
+[OpenPI repository](https://github.com/Physical-Intelligence/openpi) that the PI0.5 backbone is adapted from.
