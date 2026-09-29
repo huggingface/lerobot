@@ -513,7 +513,7 @@ class GR00TN17ActionHead(nn.Module):
         self.state_dropout_prob = config.state_dropout_prob
         self._noise_beta_alpha = config.noise_beta_alpha
         self._noise_beta_beta = config.noise_beta_beta
-        self._beta_dist = None
+        self._beta_dist: Beta | None = None
         self.num_timestep_buckets = config.num_timestep_buckets
         self.set_trainable_parameters(config.tune_projector, config.tune_diffusion_model, config.tune_vlln)
 

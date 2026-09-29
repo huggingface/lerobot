@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -88,11 +89,20 @@ def make_wall_x_pre_post_processors(
         A tuple containing the configured pre-processor and post-processor pipelines
     """
 
+    if config.output_features is None:
+        raise ValueError("WALL-X needs `output_features` to build its processor pipelines.")
+
     steps = make_default_policy_processor_steps(config, dataset_stats)
 
+    recipe = None
+    if config.recipe is not None:
+        from lerobot.datasets.recipe import TrainingRecipe  # recipes need the dataset extras
+
+        recipe = TrainingRecipe.from_dict(config.recipe)
+
     input_steps = [
-        RenderRuntimeMessagesStep(config.recipe),
-        RenderTrainingMessagesStep(config.recipe),
+        RenderRuntimeMessagesStep(recipe),
+        RenderTrainingMessagesStep(recipe),
         steps.rename_observations,
         WallXTaskProcessor(),  # Process task description
         steps.add_batch_dim,
@@ -180,7 +190,7 @@ class WallXPromptProcessorStep(ComplementaryDataProcessorStep):
         raise ValueError(f"Expected {name} for exactly {batch_size} samples.")
 
     @staticmethod
-    def _message_content(message: dict[str, Any]) -> str:
+    def _message_content(message: Mapping[str, Any]) -> str:
         text = semantic_message_content_text(message.get("content"))
         say_texts = []
         for call in message.get("tool_calls") or []:
@@ -207,7 +217,7 @@ class WallXPromptProcessorStep(ComplementaryDataProcessorStep):
 
     def _recipe_segments(
         self,
-        messages: list[dict[str, Any]],
+        messages: list[Mapping[str, Any]],
         streams: list[str | None],
         targets: list[int],
         task: str,
@@ -258,7 +268,7 @@ class WallXPromptProcessorStep(ComplementaryDataProcessorStep):
         return segments, predicts_action
 
     def _generation_segments(
-        self, messages: list[dict[str, Any]], image_labels: list[str]
+        self, messages: list[Mapping[str, Any]], image_labels: list[str]
     ) -> list[dict[str, str | bool]]:
         segments, _ = self._recipe_segments(messages, [None] * len(messages), [], "", image_labels)
         segments.append({"text": "<|im_start|>assistant\n", "target": False})
@@ -428,6 +438,8 @@ class WallXTokenizerStep(ProcessorStep):
         batch = {**observation, **complementary}
         action = transition.get(TransitionKey.ACTION)
         if action is not None:
+            if not isinstance(action, torch.Tensor):
+                raise ValueError("WALL-X requires a tensor action before tokenization.")
             batch[ACTION] = action
         state = batch.get(OBS_STATE)
         if not isinstance(state, torch.Tensor):

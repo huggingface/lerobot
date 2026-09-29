@@ -1,0 +1,22 @@
+{
+  "dataset": {"repo_id": "YOUR_ORG/YOUR_DATASET", "eval_split": 0.2},
+  "policy": {
+    "path": "PATH_TO_PRETRAINED_POLICY", "device": "cuda", "push_to_hub": false,
+    "caption_dropout": 0.1, "augment": false, "gradient_checkpointing": true,
+    "optimizer_lr": 0.0001, "optimizer_lr_heads_multiplier": 5,
+    "optimizer_betas": [0.9, 0.999], "optimizer_weight_decay": 0,
+    "optimizer_eps": 1e-8, "optimizer_grad_clip_norm": 1,
+    "scheduler_freeze_backbone_steps": 0, "scheduler_warmup_steps": 0,
+    "scheduler_warmup_steps_heads": 0, "scheduler_decay_steps": 0,
+    "scheduler_cooldown_steps": 0
+  },
+  "peft": {"method_type": "LORA", "r": 32, "lora_alpha": 32},
+  "ema": {"enable": true, "decay": 0.999},
+  "accelerator": {"mixed_precision": "bf16", "gradient_accumulation": {"steps": 4}},
+  "batch_size": 2, "steps": 10000, "save_freq": 500,
+  "seed": 42, "num_workers": 4, "prefetch_factor": 2,
+  "persistent_workers": true, "dataloader_multiprocessing_context": "spawn",
+  "log_freq": 20,
+  "env_eval_freq": 0, "eval_steps": 500,
+  "output_dir": "outputs/flux3_lora"
+}
