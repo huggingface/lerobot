@@ -152,7 +152,7 @@ class VlmPlanner:
         if not self.config.log_path:
             return
         record = {
-            "t": datetime.now(UTC).isoformat(timespec="milliseconds"),
+            "timestamp": datetime.now(UTC).isoformat(timespec="milliseconds"),
             "kind": query.kind.value,
             "task": task,
             "history_pairs": len(query.history),
@@ -250,16 +250,15 @@ class VlmPlanner:
             and reply.get("previous_command") == "in progress"
         ):
             return task
-        if (
-            query.kind is QueryKind.NEXT_SUBTASK
-            and self.config.instructions
-            and text not in self.config.instructions
-        ):
-            raise ValueError(f"Planner instruction is outside the allowed list: {text!r}")
+        if query.kind is QueryKind.NEXT_SUBTASK and self.config.instructions:
+            allowed = {
+                normalize_instruction(instruction): instruction for instruction in self.config.instructions
+            }
+            matched = allowed.get(normalize_instruction(text))
+            if matched is None:
+                raise ValueError(f"Planner instruction is outside the allowed list: {text!r}")
+            return matched
         return text
-
-
-VOCABULARY_CAP = 50
 
 
 def training_vocabulary(pretrained_path: str) -> list[str]:
@@ -281,7 +280,7 @@ def training_vocabulary(pretrained_path: str) -> list[str]:
         raise ValueError(f"{config_file} names no training dataset")
     tasks = pd.read_parquet(hf_hub_download(repo_id, DEFAULT_TASKS_PATH, repo_type="dataset"))
     column = tasks["task"] if "task" in tasks.columns else tasks.index
-    return sorted({str(task) for task in column})[:VOCABULARY_CAP]
+    return sorted({str(task) for task in column})
 
 
 def format_assessment(assessment: dict) -> str:
@@ -291,6 +290,10 @@ def format_assessment(assessment: dict) -> str:
     if assessment.get("verdict"):
         parts.append(f"previous command: {assessment['verdict']}")
     return "; ".join(parts)
+
+
+def normalize_instruction(text: str) -> str:
+    return " ".join(text.lower().rstrip(".").split())
 
 
 def text_block(text: str) -> dict:
