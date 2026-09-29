@@ -316,7 +316,13 @@ def make_policy(
     if ds_meta is not None:
         set_dataset_feature_metadata = getattr(cfg, "set_dataset_feature_metadata", None)
         if callable(set_dataset_feature_metadata):
-            set_dataset_feature_metadata(ds_meta.features)
+            ds_feature = ds_meta.features
+            if rename_map:  # use the policy-side (renamed) keys
+                ds_feature = {
+                    rename_map.get(dataset_key, dataset_key): feature
+                    for dataset_key, feature in ds_meta.features.items()
+                }
+            set_dataset_feature_metadata(ds_feature)
         cfg._runtime_dataset_meta = ds_meta
 
     kwargs["config"] = cfg
