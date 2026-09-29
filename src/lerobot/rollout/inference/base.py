@@ -140,7 +140,7 @@ class InferenceEngine(abc.ABC):
         # Answers awaiting delivery; a queue so an undelivered one is never overwritten.
         self._ready_answers: deque[QueryAnswer] = deque()
         self._answer_observer: Callable[[QueryAnswer], None] | None = None
-        self.external_text: Callable[[dict, PolicyQuery, str], str] | None = None
+        self.external_text: Callable[..., str] | None = None
         # this engine fills the pairs, planner.history only sets how many it keeps
         self.external_history: deque[tuple[dict, str]] = deque(maxlen=EXTERNAL_HISTORY_DEFAULT)
 
@@ -399,16 +399,17 @@ class InferenceEngine(abc.ABC):
                 self._query_in_flight = False
                 return
             if query.kind is QueryKind.NEXT_SUBTASK:
-                if answer.ok:
-                    changed = self._apply_subtask(query, answer.answer)
+                subtask = answer.answer
+                if subtask is not None:
+                    changed = self._apply_subtask(query, subtask)
                     if changed is None:
                         return
                     if not changed:
                         answer = replace(answer, held=True)
+                    if epoch is not None:
+                        self.external_history.append((obs_processed, subtask))
                 elif not self._fail_subtask(query):
                     return
-                if epoch is not None and answer.ok:
-                    self.external_history.append((obs_processed, answer.answer))
             self._publish_answer(answer)
 
     def _fail_subtask(self, query: PolicyQuery) -> bool:

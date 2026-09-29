@@ -606,7 +606,7 @@ def build_rollout_context(
         )
         if not cfg.planner.instructions:
             try:
-                cfg.planner.instructions = training_vocabulary(str(cfg.policy.pretrained_path))
+                cfg.planner.instructions = training_vocabulary(str(policy_config.pretrained_path))
                 logger.info(
                     "Planner vocabulary: %d instructions inferred from the checkpoint's training dataset",
                     len(cfg.planner.instructions),

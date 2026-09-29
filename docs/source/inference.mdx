@@ -319,15 +319,15 @@ lerobot-rollout \
     --interactive=true
 ```
 
-| Command             | Action                                                                                                                                                                             |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/start`            | Start (or restart) the policy control loop                                                                                                                                         |
+| Command             | Action                                                                                                                                                                                                                                                                                           |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/start`            | Start (or restart) the policy control loop                                                                                                                                                                                                                                                       |
 | `/subtask <text>`   | Change the instruction the policy follows, without stopping. No argument prints the current task. Only affects policies that condition on language (SmolVLA, π0/π0.5, and similar). With an [external planner](#external-planner) the text is first restated in the checkpoint's trained wording |
-| `/vqa <text>`       | Ask a question about what the robot currently sees. Only while a run is in progress, and only with a text head or an external planner                                                    |
-| `/autosteer <goal>` | Hand over a high-level goal and let the policy's text head or the external planner choose the subtasks. `/autosteer off` hands control back; no argument reports the current goal                                    |
-| `/reset`            | Stop movement, return the robot to its startup position, and restore the `--task` instruction                                                                                      |
-| `/stop`             | End the session and run the normal shutdown routines                                                                                                                               |
-| `/help`             | List the commands                                                                                                                                                                  |
+| `/vqa <text>`       | Ask a question about what the robot currently sees. Only while a run is in progress, and only with a text head or an external planner                                                                                                                                                            |
+| `/autosteer <goal>` | Hand over a high-level goal and let the policy's text head or the external planner choose the subtasks. `/autosteer off` hands control back; no argument reports the current goal                                                                                                                |
+| `/reset`            | Stop movement, return the robot to its startup position, and restore the `--task` instruction                                                                                                                                                                                                    |
+| `/stop`             | End the session and run the normal shutdown routines                                                                                                                                                                                                                                             |
+| `/help`             | List the commands                                                                                                                                                                                                                                                                                |
 
 ```text
 > /start

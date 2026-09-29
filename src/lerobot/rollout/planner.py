@@ -182,7 +182,7 @@ class VlmPlanner:
         return [format_assessment(a) for a in self._assessments]
 
     def build_messages(self, obs_processed: dict, query: PolicyQuery, task: str) -> list[dict]:
-        messages = [{"role": "system", "content": self.config.system_prompt}]
+        messages: list[dict] = [{"role": "system", "content": self.config.system_prompt}]
         if query.kind is QueryKind.NEXT_SUBTASK:
             messages += self.recipe_turns(query)
         messages.append({"role": "user", "content": self.build_user_content(obs_processed, query, task)})

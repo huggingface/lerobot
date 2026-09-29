@@ -89,7 +89,7 @@ class SyncInferenceEngine(InferenceEngine):
             return None
         if self.hold_for_planner():
             # do nothing while external planner says to hold
-            # becaus current action is not done
+            # because current action is not done
             return None
         # Shallow copy is intentional: the caller (`send_next_action`) builds
         # ``obs_frame`` fresh per tick via ``build_dataset_frame``, so the
