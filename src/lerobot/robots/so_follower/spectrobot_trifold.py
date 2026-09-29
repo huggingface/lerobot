@@ -129,18 +129,19 @@ class SpectrobotTrifold(SOFollower):
             raise ValueError(
                 f"sensor_rotation_axes must be a 3x3 matrix, got shape {self._sensor_rotation_axes.shape}."
             )
-        # Inverse of the moment at the sensors created by a force F applied at the lever arm r: M = r x F.
-        # [r]x is singular (the force component along r creates no moment), so its pseudo-inverse gives the
-        # force perpendicular to r: F = (M x r) / |r|^2.
         self._lever_arm = np.asarray(config.force_lever_arm_m, dtype=np.float64)
-        if self._lever_arm.shape != (3,) or not np.linalg.norm(self._lever_arm) > 0:
-            raise ValueError(f"force_lever_arm_m must be a non-zero 3D vector, got {config.force_lever_arm_m}.")
-        rx, ry, rz = self._lever_arm
-        skew_r = np.array([[0.0, -rz, ry], [rz, 0.0, -rx], [-ry, rx, 0.0]])
-        moment_to_force = np.linalg.pinv(skew_r)
-        # Column i = force produced by one unit of signal on sensor i. Each sensor pushes along a fixed
-        # direction (its rotation axis x lever arm) and the resulting force is the sum of the 3 sensor forces.
-        self._sensor_force_matrix = moment_to_force @ (config.rotation_stiffness * self._sensor_rotation_axes.T)
+        # Force from the 3 sensor signals (s1, s2, s3 = dragonfly_1, dragonfly_2, dragonfly_3), F = matrix @ s:
+        #   Fx = s3 + s2
+        #   Fy = s2 - s3
+        #   Fz = 2*s1 - s2 + s3
+        # Applied in `_compute_force`.
+        self._sensor_force_matrix = np.array(
+            [
+                [1.0, -3.0, -2.0],
+                [0.0, -1.0, 1.0],
+                [-12.0/5, 1.0, 1.0],
+            ]
+        )
         # Slow moving baseline (EMA) removed from each signal: cancels the IEPE settling / drift so that only
         # the strain produced by a contact remains. No output until the baseline has settled (warm-up).
         self._force_baseline_alpha = 1.0 / max(config.force_baseline_tau_s * force_rate_hz, 1.0)
@@ -362,12 +363,13 @@ class SpectrobotTrifold(SOFollower):
         return new_counts, samples
 
     def _compute_force(self) -> dict[str, float]:
-        """Rotation vector from the 3 sensors, then force at the lever arm by inverting M = r x F."""
+        """Rotation vector and force (Fx, Fy, Fz) from the 3 sensor signals."""
         signals = np.array([buf.mean(dtype=np.float64) for buf in self._force_buffers])
         if (self._force_sample_counts < self._force_warmup_samples).any():
             signals[:] = 0.0  # baseline still settling
         rotation = self._sensor_rotation_axes.T @ signals
-        force = self._sensor_force_matrix @ signals  # = sum_i signal_i * force of sensor i
+        # Fx = s3 + s2, Fy = s2 - s3, Fz = 2*s1 - s2 + s3 (see `_sensor_force_matrix`)
+        force = self._sensor_force_matrix @ signals
 
         values = dict(zip(self._rotation_axis_keys, rotation.tolist(), strict=True))
         values.update(zip(self._force_axis_keys, force.tolist(), strict=True))
