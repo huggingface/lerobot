@@ -215,16 +215,16 @@ def compute_robometer_progress(
             transition = create_transition(
                 observation={image_key: frames_batch}, complementary_data={"task": task}
             )
-            encoded = encoder(transition)
-            obs = encoded[TransitionKey.OBSERVATION]
-            if obs is None:
-                raise ValueError("RobometerEncoderProcessorStep returned a transition without an observation")
-            batch = {
-                key: value.to(device) if isinstance(value, torch.Tensor) else value
-                for key, value in obs.items()
-            }
-
-            prediction = model.predict_progress(batch)
+            with torch.inference_mode():
+                encoded = encoder(transition)
+                obs = encoded[TransitionKey.OBSERVATION]
+                if obs is None:
+                    raise ValueError("RobometerEncoderProcessorStep returned no observation")
+                batch = {
+                    key: value.to(device) if isinstance(value, torch.Tensor) else value
+                    for key, value in obs.items()
+                }
+                prediction = model.predict_progress(batch)
             progress_per_frame[start:end] = _select_last_frame_progress(prediction).cpu().numpy()
 
         for local in range(num_frames):

@@ -155,8 +155,10 @@ def compute_instruction_rewards_for_prefixes(
             key: value.to(device) if isinstance(value, torch.Tensor) else value for key, value in obs.items()
         }
 
+        with torch.inference_mode():
+            log_probability = model.compute_log_probability(batch)
         log_probability = _apply_legacy_success_threshold(
-            model.compute_log_probability(batch),
+            log_probability,
             model.config.success_threshold,
         )
         rewards.append(float(log_probability.item()))

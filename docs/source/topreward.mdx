@@ -106,8 +106,12 @@ preprocessor, postprocessor = make_reward_pre_post_processors(cfg)
 The preprocessor tokenises the full prompt (video + prefix + instruction suffix), writes Qwen-VL tensors and terminal-token labels under `observation.topreward.*`, and masks every label except the terminal answer token. The model reads those tensors and extracts its log-probability:
 
 ```python
-encoded_batch = preprocessor(batch)
-log_probability = reward_model.compute_log_probability(encoded_batch)
+import torch
+
+reward_model.eval()
+with torch.inference_mode():
+    encoded_batch = preprocessor(batch)
+    log_probability = reward_model.compute_log_probability(encoded_batch)
 ```
 
 The serialized `success_threshold` field remains for compatibility with existing configs, but it does not modify the raw output. Apply any task-specific threshold explicitly in the caller.

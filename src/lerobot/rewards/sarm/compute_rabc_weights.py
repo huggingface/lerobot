@@ -50,7 +50,7 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
@@ -246,7 +246,7 @@ def visualize_sarm_predictions(
     reward_model: SARMRewardModel,
     preprocess: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     episode_indices: list[int],
-    head_mode: str,
+    head_mode: Literal["sparse", "dense", "both"],
     output_dir: Path,
     num_display_frames: int = 5,
     stride: int = 1,
@@ -279,7 +279,7 @@ def visualize_sarm_predictions(
     target_idx = reward_model.config.n_obs_steps // 2
 
     # Determine which heads to visualize
-    schemes_to_viz = []
+    schemes_to_viz: list[Literal["sparse", "dense"]] = []
     if head_mode in ("sparse", "both") or not dual_mode:
         schemes_to_viz.append("sparse")
     if head_mode in ("dense", "both") and dual_mode:
@@ -487,7 +487,7 @@ def compute_sarm_progress(
     dataset_repo_id: str,
     reward_model_path: str,
     output_path: str | None = None,
-    head_mode: str = "sparse",
+    head_mode: Literal["sparse", "dense", "both"] = "sparse",
     device: str = "cuda",
     num_visualizations: int = 5,
     output_dir: str = "./sarm_viz",

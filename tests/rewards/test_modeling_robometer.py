@@ -221,8 +221,16 @@ def test_robometer_predict_progress_returns_typed_frame_signals(monkeypatch):
         progress_loss_type="l2",
     )
     model = RobometerRewardModel(cfg)
-    # Bypass the Qwen3-VL forward + head extraction with deterministic logits.
-    monkeypatch.setattr(model, "_compute_rbm_logits", lambda _inputs: (progress, success_logits))
+    model.train()
+    call_state = {}
+
+    def fake_compute(_inputs):
+        call_state["training"] = model.training
+        call_state["grad_enabled"] = torch.is_grad_enabled()
+        anchor = next(model.progress_head.parameters()).sum() * 0
+        return progress + anchor, success_logits + anchor
+
+    monkeypatch.setattr(model, "_compute_rbm_logits", fake_compute)
 
     batch = _make_batch({"input_ids": torch.zeros(2, 2, dtype=torch.long)})
     prediction = model.predict_progress(batch)
@@ -233,6 +241,9 @@ def test_robometer_predict_progress_returns_typed_frame_signals(monkeypatch):
     assert prediction.progress.dtype == torch.float32
     assert prediction.success_probability.dtype == torch.float32
     assert prediction.progress.device == next(model.model.parameters()).device
+    assert prediction.progress.requires_grad is True
+    assert model.training is True
+    assert call_state == {"training": True, "grad_enabled": True}
     assert torch.allclose(
         prediction.progress,
         torch.tensor([[0.0, 1.0], [0.4, 0.6]]),
@@ -400,7 +411,10 @@ def test_robometer_save_pretrained_roundtrips(monkeypatch, tmp_path):
             "prog_token_id": torch.tensor(99),
         }
     )
-    expected = model.predict_progress(batch)
-    actual = reloaded.predict_progress(batch)
+    model.eval()
+    reloaded.eval()
+    with torch.inference_mode():
+        expected = model.predict_progress(batch)
+        actual = reloaded.predict_progress(batch)
     assert torch.equal(actual.progress, expected.progress)
     assert torch.equal(actual.success_probability, expected.success_probability)
