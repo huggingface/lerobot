@@ -35,11 +35,12 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_CAUSAL_MARKS,
     OBS_LANGUAGE_TOKENS,
 )
+from lerobot.utils.import_utils import _liger_kernel_available, require_package
 
 from ..common.vla_utils import make_att_2d_masks
 from ..pi05.modeling_pi05 import (
     PI05Policy,
-    PI05Pytorch as PI05PytorchBase,
+    PI05Pytorch,
 )
 from ..pretrained import RTCActionSelectKwargs
 from .configuration_fineart_vla import FineARTVLAConfig
@@ -55,18 +56,44 @@ def _last_valid_prefix_hidden(hidden: Tensor, mask: Tensor) -> Tensor:
     return hidden.gather(1, indices[:, None, None].expand(-1, 1, hidden.shape[-1]))
 
 
-class PI05Pytorch(PI05PytorchBase):  # see openpi `PI0Pytorch`
-    """Core PI05 PyTorch model."""
+class FineARTVLAPytorch(PI05Pytorch):  # see openpi `PI0Pytorch`
+    """FineART-VLA core model: PI0.5 with KI-aware joint layers and text supervision."""
 
     use_hf_vision_checkpointing_api = True
     checkpoint_vision_embeddings = False
+    fp32_joint_attention = True
     use_typed_attention_masks = True
     use_on_device_suffix_mask = True
     precompute_denoise_times = True
 
-    # This flow-only override does not implement the base policy's RTC/MEM training inputs.
-    def forward(self, images, img_masks, tokens, masks, actions, noise, time) -> Tensor:  # type: ignore[override]
+    def forward(
+        self,
+        images,
+        img_masks,
+        tokens,
+        masks,
+        actions,
+        noise,
+        time,
+        prefix_mask: Tensor | None = None,
+        states=None,
+        state_masks=None,
+    ) -> Tensor:
         """Do a full training forward pass and compute the loss."""
+        if prefix_mask is not None or states is not None or state_masks is not None:
+            # Training-time RTC / proprioceptive memory inputs are handled by the PI05 path.
+            return super().forward(
+                images,
+                img_masks,
+                tokens,
+                masks,
+                actions,
+                noise,
+                time,
+                prefix_mask=prefix_mask,
+                states=states,
+                state_masks=state_masks,
+            )
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
@@ -204,14 +231,14 @@ def _enable_hf_kernels() -> None:
     global _HF_KERNELS_ENABLED
     if _HF_KERNELS_ENABLED:
         return
-    try:
-        from liger_kernel.transformers import apply_liger_kernel_to_paligemma  # noqa: PLC0415
-    except ImportError:
+    if not _liger_kernel_available:
         logger.warning(
             "FineART-VLA: liger-kernel is not installed; skipping fused Triton "
-            "kernels. Install with ``pip install liger-kernel``."
+            "kernels. Install with ``pip install 'lerobot[fineart_vla_kernels]'``."
         )
         return
+    from liger_kernel.transformers import apply_liger_kernel_to_paligemma  # noqa: PLC0415
+
     apply_liger_kernel_to_paligemma(
         rope=True,
         geglu=True,
@@ -320,6 +347,7 @@ def _lin_ce_flat(
         return fn(flat_hidden, lm_head_weight, flat_labels, z_loss_weight)
 
     # Keep Liger optional for inference-only installations.
+    require_package("liger-kernel", extra="fineart_vla_kernels", import_name="liger_kernel")
     from liger_kernel.transformers.fused_linear_cross_entropy import (  # noqa: PLC0415
         LigerFusedLinearCrossEntropyLoss,
     )
@@ -540,6 +568,7 @@ def _get_adarms_backend():
     global _flashrt_adarms_cache
     if _flashrt_adarms_cache is None:
         try:
+            require_package("kernels", extra="fineart_vla_kernels")
             from kernels import get_kernel  # noqa: PLC0415
 
             _flashrt_adarms_cache = get_kernel("flashrt/flashrt-adarms-train", revision="v1")
@@ -594,10 +623,11 @@ def _get_manual_attention():
     if _manual_attention is None:
         part = _manual_attention_part
         try:
+            require_package("kernels", extra="fineart_vla_kernels")
             from kernels import get_kernel  # noqa: PLC0415
 
             _hub = getattr(
-                get_kernel("flashrt/flashrt-flex-attention-train"),
+                get_kernel("flashrt/flashrt-flex-attention-train", revision="v1"),
                 "manual_attention_part",
                 None,
             )
@@ -889,14 +919,15 @@ class FineARTVLAPolicy(PI05Policy):
 
     config_class = FineARTVLAConfig
     name = "fineart_vla"
-    model_class = PI05Pytorch
+    model_class = FineARTVLAPytorch
     eval_after_pretrained_load = True
     show_openpi_disclaimer = False
     use_native_pretrained_loader = True
 
     def __init__(self, config: FineARTVLAConfig, **kwargs: Any) -> None:
         # Patch before constructing Gemma/SigLIP layers; the operation is optional and idempotent.
-        _enable_hf_kernels()
+        if config.use_liger_kernels:
+            _enable_hf_kernels()
         super().__init__(config, **kwargs)
 
         # Re-enable layers PI0.5 freezes when text supervision is requested.

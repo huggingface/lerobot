@@ -126,6 +126,9 @@ class FineARTVLAConfig(PI05Config):
     """Detach VLM keys and values from action-loss gradients."""
 
     # Optional training backends. Defaults preserve the eager/SDPA path.
+    use_liger_kernels: bool = True
+    """Fuse PaliGemma RoPE/GeGLU with Liger when installed. Patches transformers process-wide."""
+
     use_flashrt_adarms: bool = False
     """Use FlashRT adaptive RMSNorm kernels."""
 

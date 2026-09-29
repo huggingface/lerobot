@@ -22,6 +22,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 
+from lerobot.utils.import_utils import require_package
+
 logger = logging.getLogger(__name__)
 
 _FP8_MAX = 448.0
@@ -40,7 +42,8 @@ _GEMM_REPO = "flashrt/flashrt-gemm-epilogues"
 
 def _get_kernel(repo: str):
     """Load a cached FlashRT Hub package."""
-    from kernels import get_kernel
+    require_package("kernels", extra="fineart_vla_kernels")
+    from kernels import get_kernel  # noqa: PLC0415
 
     return get_kernel(repo, version=1)
 

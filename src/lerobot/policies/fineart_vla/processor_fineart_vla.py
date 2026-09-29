@@ -59,14 +59,20 @@ def make_fineart_vla_pre_post_processors(
     dataset_revision: str | None = None,
     episodes: list[int] | None = None,
     exclude_episodes: list[int] | None = None,
+    dataset_meta: Any | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
     """Build FineART-VLA's pre/post-processor pipelines.
 
-    Falls through to π0.5's stock pipeline when ``recipe_path`` is unset.
+    Falls through to π0.5's stock pipeline when ``recipe_path`` is unset. ``dataset_meta``
+    (forwarded by the policy factory) supplies the dataset source for FAST tokenizer fitting.
     """
+    if dataset_meta is not None:
+        dataset_repo_id = dataset_repo_id or getattr(dataset_meta, "repo_id", None)
+        dataset_root = dataset_root or getattr(dataset_meta, "root", None)
+        dataset_revision = dataset_revision or getattr(dataset_meta, "revision", None)
     if config.recipe is None:
         if getattr(config, "enable_fast_action_loss", False):
             raise ValueError("FineART-VLA FAST action loss requires recipe_path to build action supervision.")
@@ -123,7 +129,7 @@ def make_fineart_vla_pre_post_processors(
                 max_action_tokens=config.max_action_tokens,
                 fast_skip_tokens=config.fast_skip_tokens,
                 paligemma_tokenizer_name="google/paligemma-3b-pt-224",
-                allow_truncation=False,
+                allow_truncation=True,
             )
         )
 
