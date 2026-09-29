@@ -211,27 +211,6 @@ exclusive, and attention/AdaRMS alternatives require knowledge insulation.
 The benchmark-best configuration used compiled text CE and FlashRT AdaRMS,
 with Flex/manual attention and compiled vision disabled.
 
-### Reported training benchmarks
-
-These benchmarks measure complete optimizer steps with three real camera
-inputs, BF16 transformer/action execution, FP32 vision, fused AdamW, and no
-video decoding or network I/O. Results vary with GPU, batch shape, annotation
-mixture, and checkpointing:
-
-| Workload                   |     RTX PRO 6000 Blackwell |                 A100 80 GB |
-| -------------------------- | -------------------------: | -------------------------: |
-| Full flow + text, batch 1  | 4.75× vs checkpointing off | 3.33× vs checkpointing off |
-| Full flow + text, batch 8  | 2.16× vs checkpointing off | 1.66× vs checkpointing off |
-| Full flow + text, batch 64 |  1.24× vs checkpointing on |  1.15× vs checkpointing on |
-| Flow-only, batch 1         | 3.70× vs checkpointing off | 3.58× vs checkpointing off |
-| Flow-only, batch 64        |  3.76× vs checkpointing on |  3.61× vs checkpointing on |
-
-On those 80 GB GPUs, full training was fastest without gradient checkpointing
-through batch 8, then required checkpointing at batch 16 and above. Treat that
-as a tuning rule to test on your hardware, not a universal threshold. Flow-only
-means both text and FAST supervision are disabled; it is useful for action-only
-ablation or post-training but does not learn the language runtime.
-
 ## Inference performance
 
 FineART-VLA has two inference loops, and both avoid repeatedly encoding the expensive
