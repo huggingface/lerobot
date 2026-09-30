@@ -1654,14 +1654,18 @@ class FastWAM(torch.nn.Module):
         context_mask = context_mask.to(device=self.device, dtype=torch.bool, non_blocking=True)
         return context, context_mask
 
-    def _make_action_latents(self, action_horizon: int, seed: int | None, rand_device: str):
-        generator = None if seed is None else torch.Generator(device=rand_device).manual_seed(seed)
-        return torch.randn(
-            (1, action_horizon, self.action_expert.action_dim),
-            generator=generator,
-            device=rand_device,
-            dtype=torch.float32,
-        ).to(device=self.device, dtype=self.torch_dtype)
+    def _make_action_latents(
+        self, action_horizon: int, seed: int | None, rand_device: str, *, noise: torch.Tensor | None = None
+    ):
+        if noise is None:
+            generator = None if seed is None else torch.Generator(device=rand_device).manual_seed(seed)
+            noise = torch.randn(
+                (1, action_horizon, self.action_expert.action_dim),
+                generator=generator,
+                device=rand_device,
+                dtype=torch.float32,
+            )
+        return noise.to(device=self.device, dtype=self.torch_dtype)
 
     def _make_video_latents(self, num_video_frames: int, height: int, width: int, seed, rand_device):
         latent_t = (num_video_frames - 1) // self.vae.temporal_downsample_factor + 1
@@ -1802,6 +1806,8 @@ class FastWAM(torch.nn.Module):
         rand_device: str = "cpu",
         tiled: bool = False,
         compile_action_infer: bool = False,
+        *,
+        noise: torch.Tensor | None = None,
     ) -> dict[str, Any]:
         self.eval()
         if str(getattr(self.video_expert, "video_attention_mask_mode", "")) != "first_frame_causal":
@@ -1809,7 +1815,7 @@ class FastWAM(torch.nn.Module):
 
         input_image, _, _ = self._normalize_infer_input_image(input_image)
         proprio = self._normalize_infer_proprio(proprio)
-        latents_action = self._make_action_latents(action_horizon, seed, rand_device)
+        latents_action = self._make_action_latents(action_horizon, seed, rand_device, noise=noise)
 
         input_image = input_image.to(device=self.device, dtype=self.torch_dtype)
         first_frame_latents = self._encode_input_image_latents_tensor(input_image=input_image, tiled=tiled)
