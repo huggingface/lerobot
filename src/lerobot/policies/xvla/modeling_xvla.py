@@ -235,6 +235,8 @@ class XVLAModel(nn.Module):
         domain_id: torch.LongTensor,
         proprio: torch.Tensor,
         steps: int,
+        *,
+        noise: torch.Tensor | None = None,
     ) -> torch.Tensor:
         self.eval()
 
@@ -247,7 +249,11 @@ class XVLAModel(nn.Module):
         batch_size = input_ids.shape[0]
         action_dim = self.dim_action
 
-        x1 = torch.randn(batch_size, self.chunk_size, action_dim, device=proprio.device, dtype=target_dtype)
+        if noise is None:
+            noise = torch.randn(
+                batch_size, self.chunk_size, action_dim, device=proprio.device, dtype=target_dtype
+            )
+        x1 = noise
         action = torch.zeros_like(x1)
 
         steps = max(1, int(steps))
@@ -392,24 +398,29 @@ class XVLAPolicy(PreTrainedPolicy):
         log_dict["loss"] = total_loss.detach().item()
         return total_loss, log_dict
 
-    def _get_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+    def _get_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         inputs = self._build_model_inputs(batch)
-        actions = self.model.generate_actions(**inputs, steps=self.config.num_denoising_steps)
+        actions = self.model.generate_actions(**inputs, steps=self.config.num_denoising_steps, noise=noise)
         return actions
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:  # noqa: ARG002
+    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+        """Predict a chunk of actions.
+
+        `noise` is the starting sample of the flow, shaped `(batch_size, chunk_size, model.dim_action)`.
+        When it is None, it is drawn with `torch.randn`.
+        """
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
-        return self._get_action_chunk(batch)
+        return self._get_action_chunk(batch, noise=noise)
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:  # noqa: ARG002
+    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
         if len(self._queues[ACTION]) == 0:
-            actions = self._get_action_chunk(batch)
+            actions = self._get_action_chunk(batch, noise=noise)
             self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
 
         return self._queues[ACTION].popleft()
