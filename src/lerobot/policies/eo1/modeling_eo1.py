@@ -32,7 +32,12 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 from lerobot.utils.language import require_single_text_output
 
-from ..common.flow_matching import euler_integrate, sample_noise, sample_time_beta
+from ..common.flow_matching import (
+    euler_integrate,
+    make_flow_matching_inputs,
+    sample_noise,
+    sample_time_beta,
+)
 from ..common.vla_utils import create_sinusoidal_pos_embedding, pad_vector
 from ..pretrained import PreTrainedPolicy
 from .configuration_eo1 import EO1Config
@@ -463,9 +468,7 @@ class EO1VisionFlowMatchingModel(nn.Module):
             active_action = action[action_rows]
             time = self.sample_time(active_action.shape[0], inputs_embeds.device)
             noise = self.sample_noise(active_action.shape, inputs_embeds.device)
-            time_expanded = time[:, None, None]
-            x_t = time_expanded * noise + (1 - time_expanded) * active_action
-            u_t = noise - active_action
+            x_t, u_t, _ = make_flow_matching_inputs(active_action, noise, time)
             action_time_embs = self.embed_suffix(time, x_t)
             expected_tokens = int(action_token_mask.sum().item())
             if expected_tokens != action_time_embs.shape[0] * action_time_embs.shape[1]:
