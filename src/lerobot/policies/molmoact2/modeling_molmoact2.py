@@ -1795,6 +1795,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         inference_delay: int | None,
         prev_chunk_left_over: Tensor | None,
         execution_horizon: int | None,
+        noise: Tensor | None = None,
     ) -> Tensor:
         backbone = self._backbone()
         action_expert = self._action_expert()
@@ -1826,14 +1827,16 @@ class MolmoAct2Policy(PreTrainedPolicy):
         source_tensor = encoder_kv_states[0][0]
         batch_size = int(source_tensor.shape[0])
         device = source_tensor.device
-        trajectory = torch.randn(
-            batch_size,
-            self._generation_action_horizon(),
-            int(backbone.config.max_action_dim),
-            device=device,
-            dtype=torch.float32,
-            generator=generator,
-        )
+        if noise is None:
+            noise = torch.randn(
+                batch_size,
+                self._generation_action_horizon(),
+                int(backbone.config.max_action_dim),
+                device=device,
+                dtype=torch.float32,
+                generator=generator,
+            )
+        trajectory = noise
         if self.config.mask_action_dim_padding:
             trajectory = _mask_action_dim_tensor(trajectory, action_dim_is_pad)
 
@@ -1972,8 +1975,15 @@ class MolmoAct2Policy(PreTrainedPolicy):
         return loss, metrics
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
-        """Generate an action chunk via continuous flow matching or discrete AR decoding."""
+    def predict_action_chunk(
+        self, batch: dict[str, Tensor], *, noise: Tensor | None = None, **kwargs
+    ) -> Tensor:
+        """Generate an action chunk via continuous flow matching or discrete AR decoding.
+
+        ``noise`` is the optional starting sample of continuous flow matching, shaped
+        ``(batch_size, chunk_size, max_action_dim)`` with ``max_action_dim`` from the model
+        config. When None, the policy draws it as usual. Discrete decoding ignores it.
+        """
         if "action_mode" in kwargs:
             raise TypeError(
                 "MolmoAct2 predict_action_chunk got unexpected keyword argument 'action_mode'; "
@@ -2009,6 +2019,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     inference_delay=kwargs.get("inference_delay"),
                     prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
                     execution_horizon=kwargs.get("execution_horizon"),
+                    noise=noise,
                 )
             else:
                 generation_kwargs: dict[str, Tensor] = {}
@@ -2031,6 +2042,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     action_horizon=self._generation_action_horizon(),
                     num_steps=num_steps,
                     generator=generator,
+                    noise=noise,
                     **generation_kwargs,
                 )
         return actions[:, : self.config.n_action_steps, :action_dim].to(dtype=torch.float32)
