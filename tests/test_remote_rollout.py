@@ -6,6 +6,7 @@
 """Control-thread boundaries shared by asynchronous inference backends."""
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import torch
@@ -121,15 +122,200 @@ def test_permission_revoked_during_pull_cannot_dispatch_returned_action():
     assert robot.sent == [{"joint.pos": 7.0}]
 
 
-def test_terminal_fault_teardown_holds_and_does_not_home():
+@pytest.mark.parametrize("return_home", [True, False])
+def test_terminal_fault_teardown_honors_configured_return(return_home, monkeypatch):
     engine = GateEngine()
     engine.failed = True
     ctx, robot = make_dispatch_context(engine)
     strategy = BaseStrategy(BaseStrategyConfig())
     strategy._engine = engine
-    strategy._teardown_hardware(ctx.hardware, return_to_initial_position=True)
-    assert robot.sent == [{"joint.pos": 7.0}]
+    monkeypatch.setattr("lerobot.rollout.strategies.core.precise_sleep", lambda _: None)
+    strategy._teardown_hardware(ctx.hardware, return_to_initial_position=return_home)
+    assert robot.sent[0] == {"joint.pos": 7.0}
+    if return_home:
+        positions = [action["joint.pos"] for action in robot.sent]
+        assert positions[-1] == 0.0
+        assert positions == sorted(positions, reverse=True)
+        assert robot.reads == 2
+    else:
+        assert robot.sent == [{"joint.pos": 7.0}]
+        assert robot.reads == 1
     assert not robot.is_connected
+
+
+@pytest.mark.parametrize("operation", ["get_observation", "send_action", "hold"])
+def test_hardware_io_failure_prevents_teardown_motion(operation, monkeypatch, caplog):
+    engine = GateEngine()
+    engine.failed = True
+    engine.stop = Mock()
+    ctx, robot = make_dispatch_context(engine)
+    wrapper = ctx.hardware.robot_wrapper
+    failing_method = "get_observation" if operation == "get_observation" else "send_action"
+    method = Mock(side_effect=OSError("device unavailable"))
+    monkeypatch.setattr(robot, failing_method, method)
+    with pytest.raises(OSError, match="device unavailable"):
+        if operation == "send_action":
+            wrapper.send_action({"joint.pos": 4.0})
+        else:
+            getattr(wrapper, operation)()
+    assert wrapper.hardware_failure is not None
+    assert "device unavailable" in wrapper.hardware_failure
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._engine = engine
+    strategy.hold_control_state(ctx.hardware)
+    strategy._teardown_hardware(ctx.hardware, return_to_initial_position=True)
+    assert method.call_count == 1, "A failed hardware interface must not be retried for hold or homing"
+    assert robot.sent == []
+    assert not robot.is_connected
+    engine.stop.assert_called_once()
+    assert "robot I/O failed" in caplog.text
+
+
+def test_hardware_failure_is_latched_and_does_not_treat_interrupt_as_io_failure(monkeypatch):
+    wrapper = ThreadSafeRobot(PositionRobot())
+    original_read = wrapper.inner.get_observation
+    monkeypatch.setattr(wrapper.inner, "get_observation", Mock(side_effect=KeyboardInterrupt))
+    with pytest.raises(KeyboardInterrupt):
+        wrapper.get_observation()
+    assert wrapper.hardware_failure is None
+    monkeypatch.setattr(wrapper.inner, "get_observation", Mock(side_effect=OSError("first read failed")))
+    with pytest.raises(OSError):
+        wrapper.get_observation()
+    failure = wrapper.hardware_failure
+    monkeypatch.setattr(wrapper.inner, "get_observation", original_read)
+    wrapper.get_observation()
+    assert wrapper.hardware_failure == failure
+    monkeypatch.setattr(wrapper.inner, "send_action", Mock(side_effect=OSError("later write failed")))
+    with pytest.raises(OSError):
+        wrapper.send_action({"joint.pos": 1.0})
+    assert wrapper.hardware_failure == failure
+
+
+def test_teardown_hold_failure_still_stops_engine_and_disconnects(monkeypatch, caplog):
+    engine = GateEngine()
+    engine.failed = True
+    engine.stop = Mock()
+    ctx, robot = make_dispatch_context(engine)
+    failed_write = Mock(side_effect=OSError("hold write failed"))
+    monkeypatch.setattr(robot, "send_action", failed_write)
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._engine = engine
+    strategy._teardown_hardware(ctx.hardware)
+    engine.stop.assert_called_once()
+    failed_write.assert_called_once()
+    assert not robot.is_connected
+    assert "hold write failed" in caplog.text
+
+
+def test_engine_stop_failure_still_runs_local_shutdown(monkeypatch):
+    engine = GateEngine()
+    engine.failed = True
+    engine.stop = Mock(side_effect=RuntimeError("remote close failed"))
+    ctx, robot = make_dispatch_context(engine)
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._engine = engine
+    monkeypatch.setattr("lerobot.rollout.strategies.core.precise_sleep", lambda _: None)
+    with pytest.raises(RuntimeError, match="remote close failed"):
+        strategy._teardown_hardware(ctx.hardware)
+    assert robot.sent[0] == {"joint.pos": 7.0}
+    assert robot.sent[-1] == {"joint.pos": 0.0}
+    assert not robot.is_connected
+
+
+@pytest.mark.parametrize("operation", ["read", "write"])
+def test_return_move_io_failure_aborts_and_disconnects(operation, monkeypatch, caplog):
+    engine = GateEngine()
+    ctx, robot = make_dispatch_context(engine)
+    # A normal shutdown enters the return move directly, without a fault hold.
+    method = "get_observation" if operation == "read" else "send_action"
+    failed_io = Mock(side_effect=OSError("return move failed"))
+    monkeypatch.setattr(robot, method, failed_io)
+    monkeypatch.setattr("lerobot.rollout.strategies.core.precise_sleep", lambda _: None)
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._engine = engine
+    strategy._teardown_hardware(ctx.hardware)
+    failed_io.assert_called_once()
+    assert ctx.hardware.robot_wrapper.hardware_failure is not None
+    assert not robot.is_connected
+    assert "return move failed" in caplog.text
+
+
+def test_robot_disconnect_failure_does_not_skip_teleoperator_cleanup(monkeypatch):
+    ctx, robot = make_dispatch_context(GateEngine())
+    teleop = SimpleNamespace(is_connected=True, disconnect=Mock())
+    ctx.hardware.teleop = teleop
+    monkeypatch.setattr(robot, "disconnect", Mock(side_effect=OSError("disconnect failed")))
+    strategy = BaseStrategy(BaseStrategyConfig())
+    with pytest.raises(OSError, match="disconnect failed"):
+        strategy._teardown_hardware(ctx.hardware, return_to_initial_position=False)
+    teleop.disconnect.assert_called_once()
+
+
+@pytest.mark.parametrize("disable_torque", [True, False])
+def test_disconnect_logs_torque_configuration_without_claiming_pose_retention(disable_torque, caplog):
+    ctx, robot = make_dispatch_context(GateEngine())
+    robot.config = SimpleNamespace(disable_torque_on_disconnect=disable_torque)
+    strategy = BaseStrategy(BaseStrategyConfig())
+    with caplog.at_level("INFO"):
+        strategy._teardown_hardware(ctx.hardware, return_to_initial_position=False)
+    assert f"disable_torque_on_disconnect={disable_torque}" in caplog.text
+    assert "config" in caplog.text.lower()
+    assert "leaving robot in final pose" not in caplog.text
+
+
+def test_teardown_without_initial_position_reports_missing_capture(caplog):
+    ctx, robot = make_dispatch_context(GateEngine())
+    ctx.hardware.initial_position = None
+    strategy = BaseStrategy(BaseStrategyConfig())
+    with caplog.at_level("INFO"):
+        strategy._teardown_hardware(ctx.hardware, return_to_initial_position=True)
+    assert "captur" in caplog.text.lower()
+    assert "disabled by config" not in caplog.text
+    assert robot.sent == []
+    assert not robot.is_connected
+
+
+@pytest.mark.parametrize("bad_position", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("source", ["observed", "initial"])
+def test_return_move_rejects_nonfinite_positions_before_sending(bad_position, source, caplog):
+    ctx, robot = make_dispatch_context(GateEngine())
+    if source == "observed":
+        robot.position = bad_position
+    else:
+        ctx.hardware.initial_position["joint.pos"] = bad_position
+    assert not BaseStrategy.return_to_initial_position(ctx.hardware)
+    assert robot.sent == []
+    assert "finite" in caplog.text
+
+
+def test_return_move_requires_all_target_joints(monkeypatch):
+    ctx, robot = make_dispatch_context(GateEngine())
+    monkeypatch.setattr(robot, "get_observation", lambda: {})
+    assert not BaseStrategy.return_to_initial_position(ctx.hardware)
+    assert robot.sent == []
+
+
+def test_terminal_fault_shutdown_orders_hold_stop_home_disconnect(monkeypatch):
+    engine = GateEngine()
+    engine.failed = True
+    ctx, robot = make_dispatch_context(engine)
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._engine = engine
+    strategy._interpolator = ActionInterpolator()
+    strategy._interpolator.add(torch.tensor([123.0]))
+    strategy._cached_obs_processed = {"joint.pos": 123.0}
+    events = []
+    monkeypatch.setattr(robot, "send_action", lambda action: events.append(("action", action.copy())))
+    monkeypatch.setattr(engine, "stop", lambda: events.append(("engine_stop", None)))
+    monkeypatch.setattr(robot, "disconnect", lambda: events.append(("disconnect", None)))
+    monkeypatch.setattr("lerobot.rollout.strategies.core.precise_sleep", lambda _: None)
+    strategy._teardown_hardware(ctx.hardware)
+    assert events[0] == ("action", {"joint.pos": 7.0})
+    assert events[1] == ("engine_stop", None)
+    assert events[-2] == ("action", {"joint.pos": 0.0})
+    assert events[-1] == ("disconnect", None)
+    assert strategy._interpolator.get() is None
+    assert strategy._cached_obs_processed is None
 
 
 def test_hold_freezes_first_measured_pose_and_rejects_velocity_modes():
@@ -144,6 +330,33 @@ def test_hold_freezes_first_measured_pose_and_rejects_velocity_modes():
     wrapper.inner.action_features = {"joint.pos": float, "base.vel": float}
     with pytest.raises(ValueError, match="position-hold"):
         wrapper.configure_position_hold()
+
+
+def test_omx_hold_uses_position_driver_without_an_extra_sensor_read():
+    from lerobot.robots.omx_follower import OmxFollower, OmxFollowerConfig
+
+    names = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")
+    measured = {name: float(index) for index, name in enumerate(names)}
+    writes = []
+    reads = []
+    robot = OmxFollower.__new__(OmxFollower)
+    robot.id = "test_omx"
+    robot.config = OmxFollowerConfig(port="unused")
+    robot.cameras = {}
+    robot.bus = SimpleNamespace(
+        motors=dict.fromkeys(names),
+        is_connected=True,
+        sync_read=lambda register: reads.append(register) or measured.copy(),
+        sync_write=lambda register, values: writes.append((register, values.copy())),
+    )
+    wrapper = ThreadSafeRobot(robot)
+    wrapper.configure_position_hold()
+    wrapper.get_observation()
+    wrapper.hold()
+    wrapper.hold()
+    assert reads == ["Present_Position"]
+    assert writes == [("Goal_Position", measured), ("Goal_Position", measured)]
+    assert not robot.config.use_degrees
 
 
 def test_same_text_autosteer_restart_discards_previous_intent():

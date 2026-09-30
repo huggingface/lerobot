@@ -2,7 +2,13 @@
 
 Date: 2026-09-28
 
-Status: Design proposal; implementation has not started.
+Updated: 2026-09-30, after lifecycle acceptance and the approved feature-branch integration/legacy retirement.
+
+Status: Core implementation, configurable absent-client cleanup, plain alignment/blending and timing/session/build diagnostics are implemented with automated coverage. Physical LAN action tests have covered five checkpoints across both host directions. The initial pick-and-place ACT comparison regressed with aggressive aligned replanning. After the refill-gated timing correction, the operator reports successful task completion for alignment and blending, reduced bumps for alignment and no noticeable bumps with blending (2026-09-30). Focused motion and lifecycle checks are complete; real-language and representative remote-network validation remain deferred. See [implementation progress](implementation_progress.md) for evidence and remaining work.
+
+Lifecycle update (2026-09-30): stationary test 4 passed. The four follow-ups are implemented: initial-presence logging, a 10-second cleanup grace, concise admission denials, and honoring configured return-to-initial-position after terminal inference faults. Sections 9.2 and 10 describe the revised behavior. Revised physical test 5 subsequently passed by operator report: server loss caused action exhaustion, a smooth return to the initial position, and clean client exit. The client exited before server restart; no live-client restart race is claimed or required for this focused acceptance.
+
+Test 5 result (2026-09-30, before the lifecycle correction): the supplied logs confirm active-buffer exhaustion and shutdown after server interruption, skipping homing and disconnecting; the operator reports torque loss and a fall into the environment. That original physical controlled-stop check failed. The revised shutdown subsequently passed by operator report as noted above. Preserve this pre-fix failure as historical evidence; the original logs do not establish the revised result.
 
 Code baseline: `e595b7902` (2026-09-25).
 
@@ -23,11 +29,15 @@ The design uses Zenoh as its only remote-inference communication stack. Reusable
 | Network | LAN and private remote connections; direct connection or an optional Zenoh router |
 | Client | No weights or GPU required; PyTorch and existing rollout dependencies are acceptable |
 | Integration | A remote `InferenceEngine` backend, with chunk execution shared with local asynchronous inference |
+| Same-host use | Separate server/client processes on one host are a supported use case for background inference, including plain policies without RTC |
+| Plain execution | Keep append playback; add explicit aligned playback with optional configurable blending |
 | Policy support | A general contract and default runner, with explicit exceptions for incompatible configurations |
 | Language | Live instructions, VQA, and autosteering supported when the policy has the corresponding capability |
 | Model loading | Operator-configured, preloaded deployment; clients cannot request arbitrary downloads |
 | Fault recovery | Bounded buffered execution, then a conservative local stop; no automatic session recovery required |
 | Replacement | Remove the existing `async_inference` implementation; no compatibility layer or migration guide |
+
+The replacement does not need backward compatibility with the legacy `src/lerobot/async_inference/` module, its CLI, configuration, wire protocol or execution heuristics. That module is retired in the feature-branch integration authorized on 2026-09-30. The user explicitly waived waiting for real-language acceptance before removal; language validation remains deferred, not passed. Compatibility checks elsewhere in this proposal concern the new client/server contract and supported policy/robot semantics, not interoperability or behavioral parity with the legacy service.
 
 ### 1.2 Explicit non-goals for the first release
 
@@ -38,6 +48,9 @@ The design uses Zenoh as its only remote-inference communication stack. Reusable
 - Support for every policy configuration, observation-history model, or robot control mode.
 - A PyTorch-free edge package, a new robot-control CLI, or a general-purpose message-bus framework.
 - Hard real-time guarantees. The local loop avoids network and model waits, but Python and hardware I/O remain subject to scheduling and device latency.
+- The post-LAN follow-up does not expand sensor-stall handling, propagate per-sensor exposure timestamps, add independent hardware watchdogs, or redesign acquisition-failure teardown. Those findings are deferred; existing freshness/fault checks must remain intact.
+- Automatic refill optimization and an exact-build compatibility framework are not part of the post-LAN follow-up.
+- MPC and a new local trajectory-control layer are out of scope; the user explicitly dropped that exploration on 2026-09-30.
 
 ## 2. Architecture and ownership
 
@@ -63,6 +76,8 @@ flowchart LR
 
 The shared chunk runtime can also call a local executor, bypassing serialization and Zenoh. Local and remote execution must use the same scheduling, prefix preparation, result-acceptance, and provenance rules where they claim the same execution mode.
 
+Asynchronous execution is useful even when GPU and robot are on the same machine. A loopback server/client pair uses the same negotiated modes and bounded worker as a LAN pair. Alignment/blending belongs in shared execution, not in Zenoh, and does not require adding RTC to a policy. A new in-process CLI backend is not required for this follow-up.
+
 | Component | Owns | Does not own |
 | --- | --- | --- |
 | Rollout strategy/controller | Robot lifecycle, operator intent, recording, intervention, run segments | Network retries or policy computation |
@@ -85,7 +100,7 @@ Server operations are serialized by one policy worker. Zenoh callbacks validate 
 5. The operator can change instructions, ask supported questions, and use autosteering through the existing rollout interfaces.
 6. On a terminal inference fault, the client stops policy motion locally. Restarting the rollout establishes a new session. Transparent recovery is unnecessary in this release.
 
-Examples below describe the intended interface; they are not runnable commands until implemented. Hardware arguments follow the existing rollout CLI.
+The example below sketches the workflow; use the [user guide](../docs/source/remote_inference.mdx) and deployment presets for complete current commands and alignment/blending options. Hardware arguments follow the existing rollout CLI.
 
 ```bash
 # GPU machine: load and advertise one deployment.
@@ -160,17 +175,30 @@ The following are validation targets, not a declaration that all configurations 
 
 At least one real language-capable policy must pass end-to-end validation before release. A mock text head alone does not satisfy the language requirement. WALL-X and additional policies can join the support matrix when their configuration-specific contracts are validated.
 
+### 5.4 Physical-test learnings and lower-priority integration improvements
+
+The test branch exposed an overly strict assumption in the original validator: raw robot inputs need not exactly match the model's internal feature shapes when existing preparation legitimately resizes, masks or pads them. SmolVLA and XVLA needed declarations of their existing preparation behavior, not changes to trained weights. LaWAM additionally needed its actual returned action horizon and inference-only observation requirements declared. Both tested ACT checkpoints worked without ACT implementation changes. These findings do not imply that every checkpoint, policy or robot needs an adapter.
+
+Keep the wire schema exact while validating policy compatibility against the actual preprocessing and policy preparation behavior. As a **lower-priority follow-up**, investigate reuse of processor `transform_features()` metadata and small shared validation helpers for supported resizing, optional cameras and padding. Keep explicit policy/runner hooks for behavior those mechanisms cannot express. Do not add implicit resizing/padding, accept mismatched units, or use successful warmup as the sole proof of compatibility.
+
+The robot hold requirement follows from the chosen fault behavior, not from remote inference itself. A later integration improvement may provide a small explicitly selected position-hold strategy or equivalent reusable capability so suitable third-party robots do not need a source fork. Retain a defined stop/hold response; `.pos` names alone are not sufficient evidence, and mixed/velocity/torque robots must not inherit position-hold assumptions. This investigation does not reopen the deferred sensor-stall work.
+
+These improvements should reduce repeated integration code, not introduce a general capability framework or a repository-wide policy/robot rewrite. A small conformance guide and representative checks should establish which existing preparation paths work unchanged, when a declaration is enough, and when an adapter is genuinely needed. Preserve synchronous rollout behavior; validate supported behavior in the new shared runtime without requiring legacy async API or execution parity.
+
 ## 6. Shared chunk execution
 
 ### 6.1 Execution modes
 
 | Mode | Behavior |
 | --- | --- |
-| Plain chunks | Execute the configured slice; append a prefetched chunk only under the negotiated age and timing budget |
+| Plain append (`chunk`, implemented) | Execute the configured slice; append a prefetched chunk only under the negotiated age and timing budget; no incoming-prefix trimming or blending |
+| Plain aligned (`chunk` with `chunk_merge=aligned`) | Align the configured execution slice to client action steps, discard its consumed prefix, and replace the uncommitted future; optional blending combines aligned overlapping targets |
 | Guided RTC | Construct and re-anchor continuation context, invoke supported guidance, and merge a compatible result |
 | Trained RTC | Additionally enforce checkpoint training-delay limits and the actual conditioned overlap |
 
-Plain prefetch does not reproduce synchronous inference exactly: observations can age while earlier actions finish. Initially permit at most one pending inference or one accepted successor chunk beyond the chunk being executed; do not request another successor until that slot is free. Validate freshness at dispatch, and document the latency/reactivity tradeoff. A policy or task needing tighter feedback may be unsuitable for this mode.
+Plain append prefetch does not reproduce synchronous inference exactly: observations can age while earlier actions finish. Permit at most one pending inference or one accepted successor chunk beyond the chunk being executed; do not request another successor until that slot is free. Validate freshness at dispatch. This successor-slot rule is specific to append playback; aligned playback replaces the future rather than accumulating successor chunks.
+
+This is a **freshness/continuity tradeoff**. Earlier requests provide more latency headroom for uninterrupted execution, but append playback may start a new trajectory from an observation taken well before its first action is dispatched. That can cause a backward jump even when every result is accepted and no deadline expires. Later requests reduce this lag but leave less protection against latency spikes. Alignment removes predictions assigned to already-committed steps; blending can soften the remaining transition while retaining some older prediction influence. Neither guarantees smooth motion or task success. Documentation must explain these distinct effects rather than present one refill value as universally optimal.
 
 An explicitly requested unsupported mode is an error. Do not silently downgrade RTC to plain playback. A default mode may be negotiated only if its resolved value is reported before motion starts.
 
@@ -201,15 +229,47 @@ An initial estimate is `ceil(turnaround / policy_action_interval)`. It predicts 
 
 Retain the local RTC consumption-aware merge semantics during extraction. Trained RTC must reject chunks whose measured overlap exceeds the conditioned or checkpoint-supported overlap. Future changes to these semantics require shared local/remote tests.
 
+Request sequence numbers protect ordering and duplicate detection; they are not action timestep indices. Action alignment uses the client commitment cursor. Neither ordering nor cursor progress replaces monotonic age/deadline checks: an ordered result can still be too old, and a stationary cursor does not prove fresh sensing.
+
 ### 6.4 Refill and acceptance
 
 Use a refill threshold in seconds of remaining policy playback. A practical budget requires remaining playback to exceed measured turnaround plus headroom, within the policy's usable horizon. Warmup latency, steady-state latency, and language-generation duration must not be mixed into one action-latency estimate.
+
+The shared effective threshold is `max(refill_seconds, recent_max_turnaround + policy_action_interval)`, using up to 100 completed steady-state requests and excluding startup. Report both the configured and effective values: settings such as 0.1 and 0.15 seconds may trigger identically when the measured floor dominates. With `N` executed actions at policy rate `f`, a chunk covers `N / f` seconds; interpolation does not increase that coverage. Consistently slower inference cannot be repaired by extending a request timeout. A latency spike is not evidence that a larger refill caused exhaustion, and lowering refill is a freshness experiment, not a general starvation remedy.
+
+The 2026-09-30 correction extends this existing playback trigger to aligned plain chunks: in steady state, request when `remaining_actions * policy_action_interval <= effective_refill`. It changes aligned scheduling only; preserve append's successor-slot restrictions and existing RTC/synchronous behavior. Do not impose append's successor-slot restrictions on aligned replacement. Reuse `inference.refill_seconds`, its current default and the measured turnaround floor; do not introduce another cadence setting, scheduler framework or automatic tuning algorithm.
+
+For aligned replacement, increasing refill generally requests while more of the old plan remains; decreasing it permits more execution before requesting, subject to the latency floor. This is a buffer-coverage trigger, not a fixed request period or guaranteed minimum number of executed actions. If the effective threshold is near or above the usable post-trim horizon, requests can again occur on almost every eligible observation. Report that limitation and warn on a threshold covering the entire negotiated execution horizon; do not silently clamp the threshold, expand the execution slice, or weaken existing deadlines to create artificial continuity.
 
 Initially allow one outstanding action request per session. The client publishes only when ready for a new request; it keeps the latest observation locally between requests. The server has one bounded pending action slot and rejects additional requests as busy. It does not silently supersede accepted stateful work.
 
 Accept a result only if its server instance, session, generation, request ID, artifact identity, shape, and execution context match; its values are valid; its observation is fresh enough; and its mode-specific continuation constraints hold. Request timeout or generation invalidation makes a later reply ineligible.
 
 Each accepted chunk retains source observation time, request ID, task/version, and generation. Freshness follows each chunk/action; merging a fresh result must not make older appended actions appear fresh.
+
+### 6.5 Plain alignment and blending
+
+Implement alignment and blending as separate decisions in one bounded plain-execution feature. Preserve append as the existing default. Users can select **append**, **aligned replacement without blending**, or **aligned replacement with weighted blending**. Blending requires alignment; never average unrelated array offsets. Resolve and report the selected behavior before motion. These are execution semantics, not RTC or ACT's native temporal ensembling.
+
+1. Bind each observation to a client policy-action cursor in the same execution generation. Define action zero as the next uncommitted policy endpoint at that observation's anchor. Account for any progress between observation sampling and request submission; a submission-only snapshot must not make an older observation appear current.
+2. At acceptance, remove incoming actions whose assigned steps have already been committed. Use actual client action progress, not a comparison of clocks across hosts. Never revise an endpoint already popped into interpolation.
+3. For aligned replacement, replace the uncommitted future with the remaining eligible incoming slice. Respect the policy's configured execution length rather than silently expanding to its full predicted horizon. Reject a result with no usable suffix; existing buffer/deadline/age fault handling still applies.
+4. For blending, combine only eligible old/new canonical targets for matching future steps in a bounded overlap window. Expose the overlap length and weight on the incoming prediction; use `target = (1 - weight) * old + weight * new` for supported continuous coordinates. Outside the window, use incoming targets. With no overlap, replacement applies and diagnostics report that no blending occurred.
+5. Define the blendable action components explicitly. Gripper/contact-sensitive or discrete commands must not be averaged indiscriminately; non-blended components follow the incoming eligible target. Reject unsupported representations rather than infer compatibility from tensor shape alone. Account for both contributing sources in blended-action provenance and freshness; use the oldest contributing capture time for its age bound. Keep contributor bookkeeping bounded through repeated merges. Do not blend across task versions, execution generations or sessions, or revive expired targets.
+
+Aligned mode should permit sustained asynchronous replanning from the latest eligible observation, gated by remaining playback as specified in section 6.4. Worker availability alone is insufficient to schedule another steady-state request. Retain at most one inference request in flight, bound the action horizon, and require a fresh observation/advanced policy step before repeating a request. Select the latest eligible capture when the gate opens; do not reserve an observation and age it while waiting for playback to drain. Do not queue historical observations or launch parallel model calls. The control and fault gates remain authoritative in both LAN and loopback deployments. This supersedes the first aligned implementation's unconditional fresh/advanced-observation scheduling; asynchronous execution does not require inference at the maximum possible rate.
+
+Resolved configuration (2026-09-29): keep `inference.mode=chunk`; select `inference.chunk_merge=append|aligned` (append default). Blending uses `inference.blend_steps=0` by default (disabled), incoming `inference.blend_weight=0.5` in `(0, 1]`, and explicit `inference.blend_components`. The server declares permitted continuous canonical coordinates with `execution.blendable_components=[]` by default. Client components must be a subset of that declaration; the window cannot exceed `execution_steps`. No implicit gripper selection, coordinate inference or policy changes are introduced. Weight 1 gives replacement. These defaults are configuration choices, not measured hardware optima.
+
+The control thread anchors observations before its next endpoint pop; a background worker can replace the future but cannot advance the cursor. Requests retain that original anchor through submission. Aligned scheduling requires a fresh capture and advanced action step; a new task version may request from a fresh capture at the same step so a discarded startup result cannot strand a task change. The steady-state playback gate must not delay that task-version change or add an artificial waiting period to initial startup, reset/resume or planned-language-hold resumption. Existing activity/hold permission, generation, one-in-flight and fresh-capture requirements still apply; these exceptions never permit automatic fault recovery. Captures preceding reset/resume are ineligible. Empty incoming suffixes are rejected without replacing an otherwise eligible buffer; normal starvation/age/deadline checks remain authoritative.
+
+Blended provenance uses constant storage per target: incoming request identity, oldest contributor identity/time, contributor count and an accumulated digest, without a recursive source list. Every old contributor remains covered by the oldest-time bound until the target is consumed or replaced without that contributor. Expired or cross-context old targets are excluded from the blend rather than refreshed.
+
+Both alignment-only and blending are implemented in shared execution, with deterministic tests and separate-process loopback coverage. The first physical comparison did not establish a benefit: pick-and-place ACT append/refill 0.1 completed the task with bumps, while aligned modes performed significantly worse. Median request intervals changed from 1.009 s to 0.036 s and median actions between chunk first dispatches from 30 to 1. No recorded exhaustion or freshness fault explains the regression. Frequent replacement disrupting trajectory follow-through is a leading hypothesis, not a confirmed root cause; smaller target discontinuities alone do not establish task success. The observed benefits of guided RTC do not validate plain alignment or blending.
+
+Keep request timing, temporal alignment, blending and RTC conditioning conceptually separate. Alignment determines eligible future indices; it cannot prove the physical robot reached a predicted state. Repeatedly blending a five-step overlap at near-control frequency also differs from a brief transition between longer-lived plans. Retain the existing blend formula, bounds, component selection and conservative provenance for the first timing correction; leave blending disabled in its first hardware comparison. Revisit blend behavior only if slower aligned replacement restores useful task progress.
+
+The legacy `async_inference` buffer-ratio threshold and the draft branch's `buffer_time_s` are useful scheduling references, not replacement requirements or proven hardware solutions. Reuse the buffer-driven principle through the current shared runtime. Do not copy legacy observation-similarity filters, cross-host clock assumptions, queue mutation patterns, unrestricted component averaging or recovery semantics. This is a client-local scheduling correction: existing alignment/blending wire meanings stay unchanged, so no new capability or protocol version is required solely for this trigger. Report the actual scheduling policy and loaded client build so old/new clients are distinguishable in logs.
 
 ## 7. Interactive language
 
@@ -295,7 +355,7 @@ Use a versioned typed envelope rather than adding a custom packed binary header 
 
 | Message | Principal contents |
 | --- | --- |
-| Serving descriptor | Artifact identity, feature schemas, execution modes, language capabilities, readiness, server instance |
+| Serving descriptor | Artifact identity, feature schemas, execution modes, language capabilities, readiness, server instance; lightweight software/build diagnostics |
 | Session open | Unique open-operation ID, expected artifact identity, robot/feature mapping, action interval, requested mode and encoding |
 | Session accepted | Session ID, resolved contract, effective limits and execution configuration |
 | Observation request | Observation ID/time, typed features, task/version, cursor snapshot, RTC delay and continuation if used |
@@ -318,6 +378,12 @@ Policy action interval and interpolated motor-update frequency are distinct. Rej
 
 Build the remote rollout context from the negotiated descriptor without instantiating a local policy. Hardware connection may be required to inspect capabilities, but no policy motion begins before admission. Do not couple remote readiness gating to `use_torch_compile`.
 
+Keep compatibility enforcement centered on protocol version and the resolved capability/feature/execution contract. New alignment/blending semantics must be negotiated explicitly; an older peer must reject an unsupported required behavior rather than silently run append mode. Breaking wire or semantic changes require the corresponding protocol change and rejection tests. A matching protocol number only provides the promised guarantee when incompatible changes are actually versioned.
+
+For troubleshooting, log the client and running server's package versions and an available build revision, captured from the loaded build at startup. Do not add exact Git/package-version equality as a mandatory gate or build a new version-management framework. Package versions can be shared by different development commits; checkpoint content identity does not identify implementation code. Report unavailable revision information honestly. This small diagnostic addition must make an outdated running process identifiable without preventing compatible builds from interoperating.
+
+Implementation uses additive `execution_contracts` advertisement and required capabilities `chunk_alignment_v1` / `chunk_blending_v1`, with exact `chunk_settings` acknowledgment and echoed observation/submission cursors. Protocol major remains 1: prior servers already reject unknown required capabilities, and the new client rejects an absent advertisement before opening. Optional `software` metadata snapshots package version and available source revision/dirty status once at process startup, never at each descriptor query. Build equality is not required.
+
 ### 9.2 Exclusive admission and ownership
 
 The server accepts exactly one active session. A second client receives `BUSY`; it cannot replace the first session merely by reusing a client label. Client labels are diagnostic metadata, not identity or authorization.
@@ -325,6 +391,16 @@ The server accepts exactly one active session. A second client receives `BUSY`; 
 Session open is idempotent for a bounded open-operation ID so retrying an unanswered open cannot create a second session. Keep bounded request-ID bookkeeping for the session. Duplicate data requests must not execute a stateful policy twice; return a retained terminal outcome or a duplicate/stale error. The client does not automatically replay timed-out inference calls.
 
 Close, client-liveliness loss, or bounded idle-without-presence cleanup releases the session. Never release and reuse the loaded policy while an old session's model call is still executing. If that call hangs, the process stays unavailable until the operator restarts it. This is acceptable for the initial scope.
+
+Use a **10-second absent-client cleanup grace period** (`execution.idle_timeout_s`) in the base configuration and shipped presets (implemented 2026-09-30). The previous 30-second setting passed stationary hardware-setup test 4. Ten seconds is a configurable starting choice to shorten manual recovery, not a measured optimum. Measure grace from observed absence; rejected admission attempts must not restart or extend it. Presence detection precedes cleanup, and any active model call must still finish before worker-applied close/reset releases ownership, so the grace is not a promise to interrupt a hung call or admit a replacement by a fixed deadline. A healthy present client may remain paused; this is not a timeout on all idle sessions.
+
+Clean close should release ownership promptly through the worker. A crashed client must be replaceable after absence cleanup and worker completion without restarting a healthy server. Log whether admission is blocked by an active session, absence grace, queued cleanup, or unfinished inference, including remaining grace where known. Distinguish endpoint discovery from successful session admission. A restarted client always obtains a new session and fresh reset; no old inference is replayed and no automatic motion resumption is introduced.
+
+Distinguish awaiting the first client presence announcement from losing an already observed client. The server allocates a session before the client receives its ID and declares its presence token. Log `awaiting initial presence` followed by `initial presence established`, without implying a disconnect/recovery. A client that never completes the handshake receives bounded worker cleanup with reason `initial_presence_timeout`; established clients retain the actual absence/restoration diagnostics.
+
+The absence grace protects server session ownership, not a motion-recovery window. The same healthy running client's presence may return after a transient interruption and cancel pending absence cleanup. A restarted process cannot reclaim that session. Once the client observes server-presence loss, it latches the loss; action deadlines, source-age bounds or exhaustion can also terminate the run before the server grace expires. Do not add automatic session or motion recovery.
+
+Expected admission denials should produce a concise CLI diagnostic rather than a full traceback: identify the blocker and approximate remaining grace where known. If cleanup is waiting for a model call/worker, say so without promising a precise retry time. Preserve structured server diagnostics and traceback visibility for unexpected failures. Do not add automatic retries or a new retry framework.
 
 ### 9.3 Reset and generations
 
@@ -354,7 +430,13 @@ The fault gate is checked on every motor tick, including ticks that only drain i
 
 Stop/hold behavior belongs to the robot integration. Position targets, velocities, grippers, and mixed actions cannot use one universal zero vector. Support only robot configurations with a defined, tested local stop/hold path; reject others at setup. Apply stop commands through the appropriate local hardware interface. A software hold is not a certified safety system.
 
-Fault teardown must not automatically command a return-to-initial-pose movement. Normal operator-requested reset may retain that workflow. Keep the implementation limited to a stop reason/dispatch gate and the required teardown distinction; do not build an extensive recovery framework.
+**Terminal inference-fault shutdown (implemented and physically checked by operator report, 2026-09-30):** invalidate policy actions and interpolation, command a temporary local hold, then honor the existing `return_to_initial_position` setting before disconnecting. This applies to inference exhaustion, deadlines, stale/invalid active results and terminal server/connection loss when the local hardware interface remains usable. Returning to the captured initial pose is a local shutdown movement, independent of the server; it never resumes policy execution. With the setting false, skip that movement and disconnect. Normal Ctrl+C and operator stop continue to honor the same setting. The existing robot wrapper latches its first failed observation, action write or hold; skip further hold/homing through that failed interface, including failed camera reads inside robot observation. Validate a complete finite current/initial joint set before returning, and do not retry an aborted return. This is a focused failure/teardown distinction, not a general recovery framework.
+
+Recoverable planned holds remain connected for fresh action resumption. A terminal shutdown does not promise an indefinite powered hold: torque release is independently governed by the robot's disconnect configuration. OMX currently defaults to `disable_torque_on_disconnect=True`, so a hold command followed by disconnect can release torque and allow the arm to sag. A forcibly killed client or powered-off host cannot guarantee software hold, homing or disconnect cleanup.
+
+Test 5 confirms the practical consequence: the operator observed the arm falling after server-loss/exhaustion shutdown. A commanded hold is not evidence of a physically achieved or retained pose. Teardown diagnostics must state the actual reason for returning/skipping and known torque-disconnect behavior; do not attribute a fault override to user configuration or promise that disconnect leaves the robot in its final pose. Validate the changed physical shutdown, not just the presence of a hold call.
+
+This decision supersedes the earlier blanket no-homing-after-fault requirement. The original test 5 recorded no homing and a fall on disconnect. The focused follow-up passed by operator report: configured return was smooth and the client exited cleanly before the server could restart. This does not exercise restarting the server during a still-live faulted client; no artificial timing experiment is required. Preserve the original failed physical result and distinguish software invariants from the observed hardware sequence.
 
 ## 11. Configuration and deployment
 
@@ -369,6 +451,7 @@ model:
 execution:
   supported_modes: [chunk, rtc_guided]  # validated against this checkpoint
   action_fps: 30
+  idle_timeout_s: 10                  # cleanup grace; does not cancel model execution
 language:
   enabled: true                       # requires a text-capable checkpoint
   motion_during_query: hold
@@ -381,6 +464,8 @@ This shows configuration shape, not a claim that a particular checkpoint support
 
 Client configuration covers endpoint, deployment/optional instance, optional expected artifact identity, execution mode, refill playback threshold, maximum source-observation age, encoding, and handshake/action/language deadlines. Report effective negotiated settings at startup. Select numerical defaults from measured hardware/model profiles; transport success alone does not establish a usable latency budget.
 
+Existing server YAML fields already accept nested CLI overrides, for example `--execution.idle_timeout_s=30`, `--model.device=cuda` and `--zenoh.listen_endpoints='[tcp/127.0.0.1:7447]'`. Document CLI-over-YAML precedence and structured-value quoting; no second configuration parser is needed. This does not imply arbitrary `--policy.*` checkpoint overrides are supported by the server. New alignment/blending settings belong to the explicit execution contract and must be validated and reported consistently for loopback and LAN use.
+
 Support authenticated encrypted Zenoh connections for private remote deployments, with a documented mTLS/router ACL example. TCP without authentication is an explicit trusted-lab configuration, not the private-remote recommendation. A session ID or key prefix is not authentication. Router policy must restrict which participants can publish action/control traffic and access observations. Zenoh ACL enforcement depends on topology and configured subjects, so validate the actual example end to end. [Zenoh access control](https://zenoh.io/docs/manual/access-control/).
 
 Provide a new `remote` extra for the Zenoh binding and codec dependencies. Model extras are installed server-side as required; the client is permitted to retain normal LeRobot/PyTorch dependencies. Use existing optional-dependency flags and `require_package(...)` conventions.
@@ -388,6 +473,21 @@ Provide a new `remote` extra for the Zenoh binding and codec dependencies. Model
 ## 12. Observability and recording
 
 Use structured logs sharing deployment, instance, session, generation, and request/query IDs. Report action turnaround, source age at dispatch, queue playback, server stage durations, dropped/stale results, query duration, planned holds, and faults. Keep basic status/readiness visible through the Zenoh control surface. A metrics service and dashboard are optional follow-ups.
+
+Add focused diagnostics from the physical-test findings: configured/effective refill, playback remaining at submission, recent turnaround estimate, result timing margin, predicted/actual source age at first dispatch, cursor advancement, trimmed action count, actual overlap/blend window, and transition discontinuity in declared action units. Include session cleanup status and loaded software identity. Keep logging bounded and outside blocking control-thread work; label estimates as estimates.
+
+User documentation should provide this tuning path:
+
+| Observation | Inspect | Next step |
+| --- | --- | --- |
+| Bumps with accepted plain-append results | Source age at first dispatch and old playback remaining on acceptance | Reduce early prefetch within measured headroom, or compare alignment/blending when available |
+| Aligned motion is smoother or fresher but task performance worsens | Request spacing, cursor advance between replacements, configured/effective refill, usable horizon and blend overlap/contributors | Check for excessive replacement; compare buffer-driven alignment without blending before changing blend weights. Keep a working append reference |
+| Active motion buffer exhausted | Playback at submission, turnaround tail, pending request/server completion, usable suffix after trimming | Add headroom where applicable or diagnose delayed/lost/stalled work; do not prescribe lower refill as a general fix |
+| Request timeout or stale result | Server completion, acquisition/request age, processing and queue delay | Identify the delay; a longer timeout cannot replenish an empty buffer |
+| Restart returns `BUSY` | Session ownership, presence grace, worker/cleanup state | Wait for bounded cleanup or diagnose the unfinished call; do not suggest routine server restarts |
+| Unsupported contract/version | Advertised and requested modes, schemas, protocol and loaded build | Resolve the mismatch before motion |
+
+Explain the freshness/continuity tradeoff with measured examples, distinguishing inference latency from waiting behind queued actions and allowing enough of a predicted trajectory to execute. Keep interpolation smoothing, aligned blending and RTC conditioning distinct. Reuse existing request times, submission/observation cursors and first-dispatch events to expose cadence; add only missing bounded scalar diagnostics, not a new tracing system. Label blended source age as oldest-contributor age, not latest-observation age or network latency. Record empirical model-specific settings as test outcomes rather than universal defaults.
 
 Recording stays with rollout. Preserve existing dataset semantics and use the task associated with the dispatched action. Add a bounded/asynchronously written inference-event sidecar keyed to dataset episode/frame or control-tick IDs, so requests, task changes, holds, and faults can be correlated without forcing dataset schema changes.
 
@@ -447,7 +547,7 @@ Gate: a fake robot and real processor pipelines execute the same controlled acti
 - Implement planned holds, text results, autosteering intent generations, and fresh action resumption.
 - Validate intervention, reset, pause, fault, and stop races without automatic reconnection.
 
-Gate: VQA and autosteering work with a real text-capable checkpoint; slow language generation never causes concurrent model calls or stale motion resumption.
+Language acceptance (deferred pending a suitable checkpoint): VQA and autosteering work with a real text-capable checkpoint; slow language generation never causes concurrent model calls or stale motion resumption. This remains a validation requirement for language claims, not a blocker for the authorized legacy retirement.
 
 ### Stage 4: Hardware validation and replacement
 
@@ -457,7 +557,38 @@ Gate: VQA and autosteering work with a real text-capable checkpoint; slow langua
 - Remove only the obsolete `AsyncInference` service/messages from shared protobuf definitions. Preserve `LearnerService`, shared messages, and dependencies still used by RL or other integrations; regenerate bindings and run relevant transport/RL checks.
 - Update extras, script registration, documentation navigation, and stale repository references. No compatibility shim or migration guide is required.
 
-Gate: the complete action and language workflow passes before replacement lands. Removing the old async path does not imply deleting gRPC from unrelated existing features.
+Revised replacement decision (2026-09-30): the completed action/lifecycle hardware checks justify integration and legacy retirement now. The user waived the earlier complete-action-and-language gate because the retired module did not support language. Preserve explicit pending language acceptance and queued deployment experiments. Removing the old async path does not imply deleting gRPC from unrelated existing features.
+
+### First post-LAN follow-up sequence (implemented; physical acceptance remains open)
+
+1. Apply the 30-second cleanup grace to deployment presets and improve ownership/cleanup diagnostics. Validate clean close, abrupt disconnect, reconnect during grace, close behind a running call, and no takeover of a hung worker.
+2. Implement plain alignment and configurable blending in small shared-runtime stages, delivering both with an explicit negotiated contract. Preserve append and RTC behavior. Cover cursor/age/provenance invariants and same-host separate-process operation before a later physical comparison. Section 6.5 records the resolved settings and semantics.
+3. Add actionable timing/merge diagnostics and a tuning guide. Explain the measured refill floor and the freshness/continuity tradeoff; document existing CLI overrides.
+4. Add lightweight loaded-build logging and verify that unsupported protocol/execution contracts fail before motion. Reuse existing negotiation instead of adding an exact-version framework.
+
+This first post-LAN sequence is historical; subsequent motion/lifecycle acceptance and the revised replacement decision are recorded above. It does not establish real-language validation. Expanded sensor-stall handling is explicitly deferred and is not an additional deliverable in this sequence.
+
+### Test 4 learnings and approved lifecycle follow-ups — 2026-09-30
+
+Test 4 passed on the same-host SmolVLA hardware setup: clean Ctrl+C released ownership promptly; an abruptly disappeared stationary client was cleaned up after 30 seconds; two replacement attempts during that grace were correctly denied without extending the timer; a later client was admitted on the unchanged server instance and closed cleanly. The rejected clients disconnected their hardware. No inference was pending, so these logs do not establish physical fault behavior during motion or in-flight model-call cleanup.
+
+The following batch is implemented after reviewing test 5; the revised physical shutdown check subsequently passed by operator report:
+
+1. Clarify initial-presence logging while retaining cleanup for incomplete handshakes (section 9.2).
+2. Reduce configurable absence grace from 30 to 10 seconds; retain worker ownership and non-extending retry guarantees (section 9.2).
+3. Present expected admission denials concisely, distinguishing known remaining grace from unknown worker-cleanup duration (section 9.2).
+4. Honor configured return-to-initial-position after terminal inference faults, distinguish hardware failures, and document temporary hold versus torque release on disconnect (section 10).
+
+These changes do not invalidate test 4 or require another stationary hardware matrix. Test 5 on the previous implementation exposed torque release/falling; the changed teardown passed focused regressions and the subsequent physical check by operator report. Do not implement automatic recovery, weaken freshness/deadline gates, or expand deferred sensor-stall handling.
+
+### Lower-priority integration follow-ups (not prerequisites for the sequence above)
+
+- When continuing development on `feat/remote_inference`, carry over the reviewed correctness fixes and evidence from `test/remote_inference_super_chatton`: guided-RTC autograd handling, tested policy input/horizon declarations, OMX hold support and their tests. Preserve proposal/progress updates; keep machine-specific endpoints, hardware commands and checkpoint selections as examples rather than defaults. The subsequent integration carries these changes conservatively into the feature checkout; see the progress record.
+- Simplify demonstrated repetition in input validation while retaining exact wire contracts and existing canonical preparation; investigate processor metadata before adding more per-policy exceptions.
+- Evaluate a small reusable, explicitly configured stop/hold integration for suitable robots; do not enable hold universally or add a general recovery framework.
+- Document minimum policy/robot conformance and exercise a representative set, including a small third-party-style integration. The target is configuration-only use for ordinary conforming checkpoints and focused declarations/adapters for unusual behavior, not universal support.
+
+Do not put a broad backward-compatibility audit ahead of cleanup, alignment/blending or diagnostics. No legacy `async_inference` compatibility tests, shims or migration machinery are required. Deletion is authorized independently of deferred real-language validation by the revised replacement decision above.
 
 ### Required validation scenarios
 
@@ -465,11 +596,11 @@ Gate: the complete action and language workflow passes before replacement lands.
 | --- | --- |
 | Contract | Feature order, execution slice, incompatible units/configuration, processor identity, unsupported RTC/text |
 | Codec | Raw tensor exactness, RGB order, malformed shape/dtype, oversized images, NaN actions, protocol mismatch |
-| Scheduling | Empty startup, refill, variable delay, no consumption during a hold, interpolation, trained-delay rejection |
-| Isolation over time | New session after close, reset during inference, duplicate requests, stale server/session/generation replies |
+| Scheduling | Empty startup, refill, variable delay, no consumption during a hold, interpolation, trained-delay rejection; aligned trimming, configurable blending, exhausted suffix, gripper and contributor-provenance cases |
+| Isolation over time | New session after close or configured absent-client grace (10-second default; historical 30-second hardware evidence), initial-presence establishment/incomplete handshake, denied retries do not extend grace, close behind a running call, reset during inference, duplicate requests, stale server/session/generation replies |
 | Language | Slow VQA, next-subtask application, manual retargeting, same-text reuse, cancelled autosteering, query failure |
 | Faults | Server death, router loss, dropped messages, hung model call, buffer starvation, fault during interpolation |
-| Robot boundary | Position and mixed-mode stop behavior where supported, no automatic homing after fault |
+| Robot boundary | Position and mixed-mode stop behavior where supported; terminal inference faults honor return-to-initial-position true/false; hardware failures do not blindly home; recoverable hold versus terminal disconnect/torque behavior; no automatic policy restart |
 | Recording | Correct task labels and request/frame provenance across task changes, language holds, and reset |
 
 Use deterministic fake clocks and executors for timing/race tests, direct/router loopback integration for transport behavior, and a small real-policy/real-robot matrix for release validation. Do not make universal performance or safety claims from mock tests.
@@ -494,13 +625,37 @@ Temporal-history requests with explicit sampling, concurrent language execution,
 
 ## 16. Remaining implementation investigations
 
-Product scope and architectural direction are settled by this proposal. These bounded investigations determine implementation details:
+Core transport, policy contracts, shared execution and the approved post-LAN engineering changes are implemented; validation status is maintained in the progress document. Remaining investigations and release checks are:
 
-- Select the tested zenoh-python/router versions and validate callback/reply lifetimes and QoS under congestion.
-- Audit initial policy configurations against the default runner and identify small required adapters.
+- Retain the tested zenoh-python/router 1.9.0 baseline and bounded transport behavior while changing shared execution.
+- The focused ACT motion retest passed by operator report after the request-timing correction in sections 6.4–6.5. Preserve deployment-specific refill/blend/interpolation tuning; no universal optimum or new quantitative timing result follows from that report. No further ACT parameter sweep is required now.
+- Test 4 stationary cleanup/re-admission and revised test 5 configured return/clean exit are accepted on the tested setup. The client exited before server restart in the revised test; no live-client restart race or quantitative response latency is claimed. No further focused lifecycle rerun is required; broader hardware/network/intervention cases remain distinct from these results.
 - Choose and validate the first real language-capable checkpoint and its processor isolation requirements.
-- Specify exact cursor/interpolator commitment semantics and prove them with shared-runtime tests.
 - Establish supported robot stop/hold implementations and measured deadline/refill profiles.
 - Validate metadata completeness for feature semantics and define explicit configuration where checkpoint metadata is insufficient.
 
 If an investigation finds a policy or robot configuration incompatible, report the restriction and reject that configuration. Do not hide the mismatch through implicit preprocessing, execution-mode changes, or weaker fault handling.
+
+### Focused correction after the ACT comparison
+
+Completion update (2026-09-30): engineering and the two focused physical task checks below are complete. The operator reran the baseline and reports successful tasks, smaller bumps with alignment and no noticeable bumps with blending. The sequence remains here as the design/validation record; no further ACT sweep is required. New timing telemetry was not supplied. Lifecycle acceptance subsequently passed; real-language validation remains deferred.
+
+Subsequent operator experimentation, including LaWAM, also validated the motion/task behavior for the tested setups. The resulting tuning guidance is to establish useful trajectory follow-through with latency headroom first, then compare blending at a fixed cadence, and increase replanning frequency only when task responsiveness benefits. Treat reported request intervals separately from the remaining-playback refill setting; full-turnaround tails, actual overlap at acceptance and incoming blend weight determine the practical tradeoff. This does not change the append default, establish universal performance guarantees or authorize a new gain/controller framework. See the user guide for the timing example and progress record for the qualitative evidence.
+
+1. **Shared execution (implemented):** replace aligned mode's worker-availability trigger with the existing effective-refill playback gate. Preserve observation anchors, actual-cursor trimming, acceptance-time replacement, blend semantics, task/control exceptions and all fault checks. Scope is aligned mode with or without blending; append, RTC and synchronous behavior remain unchanged.
+2. **Focused regression checks and guidance (implemented; results in progress record):** cover waiting above the threshold, requesting at/below it, the measured latency floor, fresh capture selection after waiting, progress before/during inference, startup/task/reset/language resumption, and near/full-horizon thresholds. Retain existing blend/provenance/fault tests and append/RTC regressions. Exercise the changed scheduling through the remote engine using existing integration coverage; no new all-hardware simulation framework. Update startup/event labels, CLI help, user guide and workbook so they no longer say aligned mode ignores refill.
+3. **One alignment comparison:** use the same pick-and-place ACT checkpoint/setup, blending disabled, initially refill 0.5 s for its logged 30-step/30-Hz horizon. This is an illustrative half-horizon starting point, not a new default or established optimum. Compare task completion/progress and bumps against the recorded append/refill 0.1 reference; repeat the baseline only if setup changes make it unsuitable. Verify that request spacing and actions executed between replacements actually increase, without exhaustion. This tests the timing hypothesis; it does not isolate every merge difference from append. If performance remains poor, inspect anchoring and predicted-versus-executed trajectories from targeted evidence before adding parameters or scheduling another sweep.
+4. **One conditional blend comparison:** only if alignment recovers useful task performance, repeat at the same refill with the existing five-step/0.5 arm-only blend. Judge task progress and grasp/release as well as visible smoothness. Accept blending's usefulness only if it adds benefit without materially degrading the task; otherwise leave it disabled for this checkpoint and investigate separately.
+
+No broad checkpoint matrix, blend-function collection, minimum-step knob, sensor-stall expansion or automatic cadence optimizer is part of this correction. The subsequent focused lifecycle checks passed; real-language validation remains deferred, and the revised replacement decision authorizes legacy removal. The progress document tracks implementation and actual validation separately from this revised design.
+
+### Deferred deployment experiments and excluded hardening
+
+Use one known working model/setup for follow-up experiments, not another tuning matrix:
+
+1. Capture complete client turnaround, tail latency and remaining-playback margin during a representative run. Server compute time alone does not measure the inference budget; a LAN run can supply this baseline.
+2. Place a Zenoh router between client and server and check operation plus disconnect behavior. Retain existing automated router/security coverage and report any skipped rerun honestly.
+3. Compare JPEG with raw images on the same task, recording encoding cost, payload/turnaround change and task behavior.
+4. Exercise a private remote link, or an explicitly secured public-network path when available. Public-network experiments do not authorize exposing an unauthenticated server or adding multi-tenant hosting.
+
+Real-language validation is deferred until a suitable checkpoint is available. Additional hardware-cleanup hardening (partial connections/recording teardown) belongs to another PR and is excluded from this integration. Historical proposals and the dated learning deck are retained as references, not competing requirements; the user guide documents current usage, this proposal records decisions, the workbook retains experiments, and the progress record records evidence/remaining work.

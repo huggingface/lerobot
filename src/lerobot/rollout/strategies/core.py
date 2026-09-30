@@ -19,6 +19,7 @@ from __future__ import annotations
 import abc
 import contextlib
 import logging
+import math
 from typing import TYPE_CHECKING
 
 from lerobot.configs.dataset import DatasetRecordConfig
@@ -159,8 +160,12 @@ class RolloutStrategy(abc.ABC):
         if self._interpolator is not None:
             self._interpolator.reset()
         self._cached_obs_processed = None
-        if hw.robot_wrapper.supports_hold:
-            hw.robot_wrapper.hold()
+        if hw.robot_wrapper.supports_hold and hw.robot_wrapper.hardware_failure is None:
+            try:
+                hw.robot_wrapper.hold()
+            except Exception:
+                logger.exception("Segment-end hold failed; skipping further shutdown movement")
+                raise
             self._require_engine().acknowledge_hold()
 
     def _process_observation_and_notify(
@@ -220,29 +225,57 @@ class RolloutStrategy(abc.ABC):
         return False
 
     def _teardown_hardware(self, hw: HardwareContext, return_to_initial_position: bool = True) -> None:
-        """Stop the inference engine, optionally return robot to initial position, and disconnect hardware."""
-        if self._engine is not None:
-            logger.info("Stopping inference engine...")
-            if self._engine.failed:
-                return_to_initial_position = False
-                if hw.robot_wrapper.supports_hold:
-                    hw.robot_wrapper.hold()
-            self._engine.stop()
-        robot = hw.robot_wrapper.inner
-        if robot.is_connected:
-            if return_to_initial_position and hw.initial_position:
-                logger.info("Returning robot to initial position before shutdown...")
-                self.return_to_initial_position(hw)
-            elif not return_to_initial_position:
-                logger.info(
-                    "Skipping return-to-initial-position (disabled by config); leaving robot in final pose."
-                )
-            logger.info("Disconnecting robot...")
-            robot.disconnect()
-        teleop = hw.teleop
-        if teleop is not None and teleop.is_connected:
-            logger.info("Disconnecting teleoperator...")
-            teleop.disconnect()
+        """End policy execution, perform configured local shutdown movement, and disconnect.
+
+        A terminal inference fault does not imply failed local hardware. Honor
+        the return setting in that case; never home through a known I/O failure.
+        Disconnect torque behavior belongs to the robot driver, not the hold.
+        """
+        wrapper = hw.robot_wrapper
+        if self._interpolator is not None:
+            self._interpolator.reset()
+        self._cached_obs_processed = None
+        try:
+            if self._engine is not None:
+                logger.info("Stopping inference engine...")
+                if self._engine.failed and wrapper.supports_hold and wrapper.hardware_failure is None:
+                    try:
+                        wrapper.hold()
+                    except Exception:
+                        logger.exception("Fault hold failed; skipping further shutdown movement")
+                self._engine.stop()
+        finally:
+            robot = wrapper.inner
+            try:
+                if robot.is_connected:
+                    try:
+                        if wrapper.hardware_failure is not None:
+                            logger.warning(
+                                "Skipping return-to-initial-position: robot I/O failed: %s",
+                                wrapper.hardware_failure,
+                            )
+                        elif not return_to_initial_position:
+                            logger.info("Skipping return-to-initial-position: disabled by config")
+                        elif not hw.initial_position:
+                            logger.info("Skipping return-to-initial-position: no initial position captured")
+                        else:
+                            logger.info("Returning robot to initial position before shutdown...")
+                            self.return_to_initial_position(hw)
+                    finally:
+                        torque_setting = getattr(
+                            getattr(robot, "config", None), "disable_torque_on_disconnect", "unspecified"
+                        )
+                        logger.info(
+                            "Disconnecting robot: disable_torque_on_disconnect=%s; "
+                            "a prior hold command does not guarantee pose retention after disconnect",
+                            torque_setting,
+                        )
+                        robot.disconnect()
+            finally:
+                teleop = hw.teleop
+                if teleop is not None and teleop.is_connected:
+                    logger.info("Disconnecting teleoperator...")
+                    teleop.disconnect()
 
     @staticmethod
     def return_to_initial_position(hw: HardwareContext, duration_s: float = 3.0, fps: int = 50) -> bool:
@@ -253,13 +286,20 @@ class RolloutStrategy(abc.ABC):
         a completed reset on ``False``.
         """
         robot = hw.robot_wrapper
+        if robot.hardware_failure is not None:
+            logger.warning(
+                "Cannot return to initial position after robot I/O failure: %s", robot.hardware_failure
+            )
+            return False
         target = hw.initial_position
         if target is None:
             logger.warning("Could not return to initial position: none was captured at connect time")
             return False
         try:
             current_obs = robot.get_observation()
-            current_pos = {k: v for k, v in current_obs.items() if k in target}
+            current_pos = {k: float(current_obs[k]) for k in target}
+            if not all(math.isfinite(current_pos[k]) and math.isfinite(target[k]) for k in target):
+                raise ValueError("Return movement requires finite current and initial positions")
             steps = max(int(duration_s * fps), 1)
             for step in range(1, steps + 1):
                 t = step / steps

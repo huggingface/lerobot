@@ -414,7 +414,14 @@ class RolloutController:
                 logger.exception("Rollout strategy failed mid-segment")
             finally:
                 engine.pause()
-                self._strategy.hold_control_state(self._ctx.hardware)
+                try:
+                    self._strategy.hold_control_state(self._ctx.hardware)
+                except Exception:
+                    # A failed final hold must end the session, but must not hide
+                    # the original strategy/I/O failure that prompted teardown.
+                    if self._strategy_failure_traceback is None:
+                        self._strategy_failure_traceback = traceback.format_exc()
+                    logger.exception("Could not apply segment-end hold")
         finally:
             # Clear and drop together under the control lock: ask() gates on _running under the same
             # lock, so a question either lands before this and is dropped, or is rejected outright.

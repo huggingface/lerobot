@@ -87,7 +87,7 @@ def build_remote_rollout_context(
             teleop = make_teleoperator_from_config(cfg.teleop)
             teleop.connect()
 
-        observation_hw = {
+        observation_hw: dict[str, type | tuple] = {
             key: value
             for key, value in robot.observation_features.items()
             if isinstance(value, tuple) or value is float

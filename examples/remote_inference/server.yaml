@@ -7,7 +7,10 @@ execution:
   supported_modes: [chunk]
   action_fps: 30.0
   action_deadline_s: 5.0
-  idle_timeout_s: 30.0
+  idle_timeout_s: 10.0
+  # Explicit continuous canonical coordinates permitted for optional client blending.
+  # Leave empty for append/alignment-only. Do not include gripper/discrete controls by default.
+  blendable_components: []
   warmup_calls: 2
 language:
   enabled: false

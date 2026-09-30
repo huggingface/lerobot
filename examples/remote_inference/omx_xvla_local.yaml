@@ -1,0 +1,44 @@
+# Same-machine XVLA test, preserving the existing OMX normalized joint units.
+# Front -> image, wrist -> image2. XVLA handles resize, masked views and state padding.
+# Physical hold and inference timing remain hardware validation requirements.
+deployment: omx-xvla
+model:
+  repo_or_path: imstevenpmwork/xvla_super_chatton_2
+  device: cuda
+execution:
+  supported_modes: [chunk]
+  rtc:
+    enabled: false
+  action_fps: 30.0
+  action_deadline_s: 5.0
+  idle_timeout_s: 10.0
+  warmup_calls: 2
+language:
+  enabled: false
+zenoh:
+  mode: peer
+  listen_endpoints: [tcp/127.0.0.1:7447]
+semantics: omx-normalized-joints-gripper-percent-v1
+robot_type: omx_follower
+features:
+  - name: observation.state
+    shape: [6]
+    dtype: float32
+    names: [shoulder_pan.pos, shoulder_lift.pos, elbow_flex.pos, wrist_flex.pos, wrist_roll.pos, gripper.pos]
+    semantics: omx-normalized-joints-gripper-percent-v1
+  - name: observation.images.image
+    shape: [480, 640, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: rgb-front-v1
+  - name: observation.images.image2
+    shape: [480, 640, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: rgb-wrist-v1
+action_feature:
+  name: action
+  shape: [6]
+  dtype: float32
+  names: [shoulder_pan.pos, shoulder_lift.pos, elbow_flex.pos, wrist_flex.pos, wrist_roll.pos, gripper.pos]
+  semantics: omx-normalized-joints-gripper-percent-v1

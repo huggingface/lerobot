@@ -187,7 +187,7 @@ lerobot-rollout \
 
 ## How It Differs from the Async Inference in LeRobot
 
-Both RTC and [async inference](./async) improve real-time robot control, but they solve different problems.
+Both RTC and [asynchronous remote inference](./remote_inference) improve real-time robot control, but they solve different problems.
 
 | Aspect        | Async Inference                                                            | RTC                                                 |
 | ------------- | -------------------------------------------------------------------------- | --------------------------------------------------- |
@@ -196,7 +196,7 @@ Both RTC and [async inference](./async) improve real-time robot control, but the
 | **Benefit**   | No waiting, continuous action                                              | Smooth transitions, natural motion                  |
 | **Best Used** | Async inference is best used with large models with high inference latency | Flow-matching based policies                        |
 
-**Use both together** for maximum smoothness and reactivity!
+Remote inference can use RTC when the checkpoint supports the negotiated RTC mode. Plain chunks also support optional cursor alignment and blending; see the [remote inference guide](./remote_inference) for modes, compatibility and tuning.
 
 ## Advanced: Debug Tracking
 

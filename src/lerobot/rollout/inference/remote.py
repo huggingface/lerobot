@@ -59,6 +59,12 @@ class RemoteInferenceEngine(InferenceEngine):
             action_timeout_s=config.action_timeout_s,
             startup_timeout_s=config.startup_timeout_s,
             training_max_delay=client.capabilities.training_max_delay,
+            chunk_merge=config.chunk_merge,
+            blend_steps=config.blend_steps,
+            blend_weight=config.blend_weight,
+            blend_indices=tuple(
+                client.capabilities.action_feature.names.index(name) for name in config.blend_components
+            ),
         )
         self._lock = RLock()
         self._observation: ObservationSnapshot | None = None
@@ -74,6 +80,9 @@ class RemoteInferenceEngine(InferenceEngine):
         self._event_writer: EventWriter | None = None
         self._tick = 0
         self._fault_reported = False
+        self._refill_horizon_warned = False
+        # Bounded scalar history for cadence diagnostics; do not retain captures.
+        self._last_request: tuple[int, float, int, int] | None = None
 
     def configure_event_log(self, path: Path) -> None:
         self._event_writer = EventWriter(path)
@@ -126,8 +135,41 @@ class RemoteInferenceEngine(InferenceEngine):
     def start(self) -> None:
         if self._thread is not None:
             raise RuntimeError("Remote inference engine has already started")
+        self._event(
+            "scheduling",
+            scheduling="playback_threshold",
+            mode=self.config.mode,
+            chunk_merge=self.config.chunk_merge,
+            blend_steps=self.config.blend_steps,
+            configured_refill_s=self.runtime.refill_seconds,
+            effective_refill_s=self.runtime.effective_refill,
+            execution_horizon_s=self.client.capabilities.execution_steps * self.runtime.interval,
+            aligned_task_change_bypasses_refill=self.config.chunk_merge == "aligned",
+        )
+        self._warn_refill_horizon()
         self._thread = Thread(target=self._loop, daemon=True, name="RemoteInference")
         self._thread.start()
+
+    def _warn_refill_horizon(self) -> None:
+        """Report saturation once, including when the measured latency floor grows."""
+        horizon = self.client.capabilities.execution_steps * self.runtime.interval
+        if (
+            self.config.chunk_merge == "aligned"
+            and not self._refill_horizon_warned
+            and self.runtime.effective_refill + 1e-9 >= horizon
+        ):
+            self._refill_horizon_warned = True
+            logger.warning(
+                "Aligned effective refill %.3fs (configured %.3fs, recent turnaround %.3fs) "
+                "covers the full execution horizon %.3fs; requests may follow every fresh advanced "
+                "observation. Inspect request_spacing_s and committed_actions_since_request; "
+                "lower configured refill only within measured latency headroom, or use a supported "
+                "longer execution horizon. No setting was changed.",
+                self.runtime.effective_refill,
+                self.runtime.refill_seconds,
+                self.runtime.turnaround,
+                horizon,
+            )
 
     def stop(self) -> None:
         self.pause()
@@ -214,6 +256,11 @@ class RemoteInferenceEngine(InferenceEngine):
             task, version = self._task, self._task_version
         snapshot = ObservationSnapshot(mapped, sampled, task, version, uuid4().hex)
         with self._lock:
+            # Sampling and endpoint commits both belong to this control thread;
+            # no pop occurs between the hardware read and this anchor. Workers
+            # may replace the future, but never advance the commitment cursor.
+            if self.config.chunk_merge == "aligned":
+                snapshot = self.runtime.anchor_observation(snapshot)
             self._observation = snapshot
 
     def dispatch_allowed(self) -> bool:
@@ -255,7 +302,7 @@ class RemoteInferenceEngine(InferenceEngine):
             self._global_shutdown.set()
 
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
-        item = self.runtime.pop()
+        item = self.runtime.pop(control_tick=self._tick)
         if item is None:
             return None
         action, provenance = item
@@ -327,6 +374,13 @@ class RemoteInferenceEngine(InferenceEngine):
     def _loop(self) -> None:
         try:
             while not self._stop_event.is_set() and not self.failed:
+                # Control-thread dispatch only queues bounded diagnostics. Log
+                # from this worker so first-dispatch reporting adds no motor I/O.
+                with self.runtime.lock:
+                    dispatch_events = list(self.runtime.dispatch_events)
+                    self.runtime.dispatch_events.clear()
+                for event in dispatch_events:
+                    self._event("first_dispatch", **event)
                 with self._lock:
                     control = self._control
                     observation = self._observation
@@ -395,12 +449,37 @@ class RemoteInferenceEngine(InferenceEngine):
                 if request is None:
                     self._stop_event.wait(0.002)
                     continue
+                previous = self._last_request
+                request_spacing = committed_since_request = None
+                task_changed = False
+                if previous is not None and previous[0] == request.generation:
+                    request_spacing = request.submitted_at - previous[1]
+                    committed_since_request = request.continuation.cursor - previous[2]
+                    task_changed = observation.task_version != previous[3]
                 self._event(
                     "request",
                     request_id=request.request_id,
                     capture_time=observation.capture_time,
                     task_version=observation.task_version,
                     delay=request.delay,
+                    chunk_merge=self.config.chunk_merge,
+                    configured_refill_s=self.runtime.refill_seconds,
+                    effective_refill_s=self.runtime.effective_refill,
+                    scheduling="playback_threshold",
+                    request_spacing_s=request_spacing,
+                    committed_actions_since_request=committed_since_request,
+                    task_changed_since_request=task_changed,
+                    recent_turnaround_s=self.runtime.turnaround,
+                    playback_at_submission_s=request.playback_at_submission,
+                    observation_age_at_submission_s=request.submitted_at - observation.capture_time,
+                    observation_cursor=observation.action_cursor,
+                    submission_cursor=request.continuation.cursor,
+                )
+                self._last_request = (
+                    request.generation,
+                    request.submitted_at,
+                    request.continuation.cursor,
+                    observation.task_version,
                 )
                 try:
                     request_generation = request.generation
@@ -414,7 +493,11 @@ class RemoteInferenceEngine(InferenceEngine):
                     )
                 except RequestCancelled:
                     continue
-                accepted = self.runtime.accept(request, result, task_version=self.task_version)
+                # Acceptance and an operator retarget must have one order: an
+                # old in-flight result cannot pass using a previously read version.
+                with self._task_lock:
+                    accepted = self.runtime.accept(request, result, task_version=self._task_version)
+                self._warn_refill_horizon()
                 self._event(
                     "result",
                     request_id=request.request_id,
@@ -423,6 +506,7 @@ class RemoteInferenceEngine(InferenceEngine):
                     source_age_s=time.monotonic() - observation.capture_time,
                     queue_playback_s=self.runtime.queue.qsize() * self.runtime.interval,
                     server_durations=result.server_durations,
+                    merge=self.runtime.last_accept.copy(),
                 )
         except Exception as exc:
             self._traceback = traceback.format_exc()

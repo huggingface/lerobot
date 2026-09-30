@@ -1,0 +1,44 @@
+# Same-machine, separate-process test matching the existing OMX rollout setup.
+# Body joints use calibrated [-100, 100], gripper [0, 100] (use_degrees=false).
+# Physical hold and inference timing must still be validated on the actual robot.
+deployment: omx-smolvla
+model:
+  repo_or_path: imstevenpmwork/super_chatton_smolvla
+  device: cuda
+execution:
+  supported_modes: [chunk]
+  rtc:
+    enabled: false
+  action_fps: 30.0
+  action_deadline_s: 5.0
+  idle_timeout_s: 10.0
+  warmup_calls: 2
+language:
+  enabled: false
+zenoh:
+  mode: peer
+  listen_endpoints: [tcp/127.0.0.1:7447]
+semantics: omx-normalized-joints-gripper-percent-v1
+robot_type: omx_follower
+features:
+  - name: observation.state
+    shape: [6]
+    dtype: float32
+    names: [shoulder_pan.pos, shoulder_lift.pos, elbow_flex.pos, wrist_flex.pos, wrist_roll.pos, gripper.pos]
+    semantics: omx-normalized-joints-gripper-percent-v1
+  - name: observation.images.camera1
+    shape: [480, 640, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: rgb-wrist-v1
+  - name: observation.images.camera2
+    shape: [480, 640, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: rgb-front-v1
+action_feature:
+  name: action
+  shape: [6]
+  dtype: float32
+  names: [shoulder_pan.pos, shoulder_lift.pos, elbow_flex.pos, wrist_flex.pos, wrist_roll.pos, gripper.pos]
+  semantics: omx-normalized-joints-gripper-percent-v1

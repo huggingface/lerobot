@@ -20,7 +20,6 @@ from typing import Any
 import numpy as np
 import torch
 
-from lerobot.configs.types import FeatureType
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.relative import reanchor_relative_rtc_prefix
 from lerobot.processor import (
@@ -185,22 +184,7 @@ class PolicyRunner:
                 raise ValueError("Relative action postprocessor must be paired with its preprocessor.")
 
     def _validate_feature_contract(self) -> None:
-        expected = self.policy.config.input_features or {}
-        supplied = {feature.name: feature for feature in self.capabilities.features}
-        if supplied.keys() != expected.keys():
-            raise ValueError("Canonical feature names must exactly match policy input_features.")
-        for name, policy_feature in expected.items():
-            feature = supplied[name]
-            if policy_feature.type == FeatureType.VISUAL:
-                shape = policy_feature.shape
-                if (
-                    len(shape) != 3
-                    or feature.kind != "rgb"
-                    or feature.shape != (shape[1], shape[2], shape[0])
-                ):
-                    raise ValueError(f"RGB feature shape differs from checkpoint: {name}.")
-            elif feature.kind != "tensor" or feature.shape != tuple(policy_feature.shape):
-                raise ValueError(f"Tensor feature shape differs from checkpoint: {name}.")
+        self.policy.validate_chunk_input_features(self.capabilities.features)
         output = self.policy.config.action_feature
         action = self.capabilities.action_feature
         if output is None or action.name != "action" or action.shape != tuple(output.shape):
@@ -245,7 +229,9 @@ class PolicyRunner:
         if mode not in self.capabilities.modes:
             raise ValueError(f"Execution mode {mode.value!r} was not enabled by this deployment.")
         started = time.perf_counter()
-        with torch.inference_mode():
+        # Guided RTC locally enables autograd for its prefix correction. no_grad
+        # permits that override; inference_mode would suppress its gradient graph.
+        with torch.inference_mode(mode is not ExecutionMode.RTC_GUIDED), torch.no_grad():
             prepared = self.preprocessor(self._batch(observation))
             preprocessed_at = time.perf_counter()
             kwargs: dict[str, Any] = {}

@@ -3212,12 +3212,6 @@ annotations = [
     { name = "torchcodec", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'AMD64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
     { name = "transformers" },
 ]
-async = [
-    { name = "contourpy" },
-    { name = "grpcio" },
-    { name = "matplotlib" },
-    { name = "protobuf" },
-]
 av-dep = [
     { name = "av" },
 ]
@@ -3628,7 +3622,6 @@ requires-dist = [
     { name = "lerobot", extras = ["accelerate-dep"], marker = "extra == 'smolvla'" },
     { name = "lerobot", extras = ["accelerate-dep"], marker = "extra == 'training'" },
     { name = "lerobot", extras = ["aloha"], marker = "extra == 'all'" },
-    { name = "lerobot", extras = ["async"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["av-dep"], marker = "extra == 'dataset'" },
     { name = "lerobot", extras = ["av-dep"], marker = "extra == 'evaluation'" },
     { name = "lerobot", extras = ["can-dep"], marker = "extra == 'damiao'" },
@@ -3668,7 +3661,6 @@ requires-dist = [
     { name = "lerobot", extras = ["flux3"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["gamepad"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["groot"], marker = "extra == 'all'" },
-    { name = "lerobot", extras = ["grpcio-dep"], marker = "extra == 'async'" },
     { name = "lerobot", extras = ["grpcio-dep"], marker = "extra == 'dev'" },
     { name = "lerobot", extras = ["grpcio-dep"], marker = "extra == 'hilserl'" },
     { name = "lerobot", extras = ["hardware"], marker = "extra == 'all'" },
@@ -3683,7 +3675,6 @@ requires-dist = [
     { name = "lerobot", extras = ["lekiwi"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["libero"], marker = "sys_platform == 'linux' and extra == 'all'" },
     { name = "lerobot", extras = ["lingbot-va"], marker = "extra == 'all'" },
-    { name = "lerobot", extras = ["matplotlib-dep"], marker = "extra == 'async'" },
     { name = "lerobot", extras = ["matplotlib-dep"], marker = "extra == 'sarm'" },
     { name = "lerobot", extras = ["matplotlib-dep"], marker = "extra == 'unitree-g1'" },
     { name = "lerobot", extras = ["metaworld"], marker = "extra == 'all'" },
@@ -3827,7 +3818,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'transformers-dep'", specifier = ">=5.4.0,<5.6.0" },
     { name = "wandb", marker = "extra == 'training'", specifier = ">=0.24.0,<0.28.0" },
 ]
-provides-extras = ["lancedb", "lancedb-convert", "dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "timm-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "fastwam", "flux3", "evo1", "hilserl", "vla-jepa", "lingbot-va", "lawam", "async", "remote", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
+provides-extras = ["lancedb", "lancedb-convert", "dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "timm-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "fastwam", "flux3", "evo1", "hilserl", "vla-jepa", "lingbot-va", "lawam", "remote", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
 
 [[package]]
 name = "lerobot-lancedb"

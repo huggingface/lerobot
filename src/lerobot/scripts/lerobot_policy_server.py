@@ -22,7 +22,9 @@ from lerobot.inference.contracts import ExecutionMode, ObservationSnapshot
 from lerobot.inference.policy_runner import PolicyRunner
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.remote_inference.build_info import SOFTWARE_BUILD
 from lerobot.remote_inference.configs import ServerConfig
+from lerobot.remote_inference.protocol import PROTOCOL_VERSION
 from lerobot.remote_inference.server import PolicyServer, SessionWorker
 from lerobot.transport.zenoh import ZenohTransport
 from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
@@ -138,6 +140,7 @@ def load_deployment(cfg: ServerConfig) -> tuple[PolicyRunner, str]:
 def serve(cfg: ServerConfig) -> None:
     """Serve the configured deployment until an operator terminates the process."""
     init_logging()
+    logger.info("Policy server software=%s protocol=%s", asdict(SOFTWARE_BUILD), PROTOCOL_VERSION)
     runner, identity = load_deployment(cfg)
     worker = SessionWorker(
         runner,
@@ -149,6 +152,7 @@ def serve(cfg: ServerConfig) -> None:
         idle_timeout_s=cfg.execution.idle_timeout_s,
         max_input_chars=cfg.language.max_input_chars,
         max_output_chars=cfg.language.max_output_chars,
+        blendable_components=tuple(cfg.execution.blendable_components),
     )
     server = PolicyServer(worker, ZenohTransport(cfg.zenoh))
     signal.signal(signal.SIGTERM, lambda *_: server.stop())

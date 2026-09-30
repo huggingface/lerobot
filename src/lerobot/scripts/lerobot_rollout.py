@@ -164,12 +164,16 @@ Usage examples
 """
 
 import logging
+import math
 import threading
+from collections.abc import Callable
+from typing import cast
 
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.configs import parser
+from lerobot.remote_inference.protocol import AdmissionDeniedError
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -272,10 +276,50 @@ def rollout(cfg: RolloutConfig):
     logger.info("Rollout finished")
 
 
-def main():
+def _admission_denial_message(error: AdmissionDeniedError) -> str:
+    """Explain expected ownership contention without promising worker completion."""
+    details = error.details or {}
+    blocker = details.get("admission_blocker")
+    if not isinstance(blocker, str):
+        blocker = None
+    remaining = details.get("absence_grace_remaining_s")
+    if blocker in {"absence_grace", "awaiting_initial_presence"}:
+        reason = (
+            "the previous client is absent"
+            if blocker == "absence_grace"
+            else "the previous client is still establishing its presence"
+        )
+        if (
+            isinstance(remaining, (float, int))
+            and not isinstance(remaining, bool)
+            and math.isfinite(remaining)
+            and remaining >= 0
+        ):
+            reason += f"; about {remaining:.1f} s of cleanup grace remain (worker cleanup may take longer)"
+        else:
+            reason += "; waiting for its cleanup grace and worker cleanup"
+    elif blocker == "active_session":
+        reason = "another client owns the deployment; stop that client before retrying"
+    elif blocker == "unfinished_inference":
+        reason = "waiting for an unfinished model call and session cleanup; completion time is unknown"
+    elif blocker in {"worker_cleanup_pending", "cleanup_queue_full"}:
+        reason = "waiting for worker session cleanup; completion time is unknown"
+    else:
+        reason = "the deployment is busy; see server logs for the session owner or pending cleanup"
+    return f"Remote admission denied for deployment {error.deployment!r}: {reason}."
+
+
+def main() -> None:
     """CLI entry point for ``lerobot-rollout``."""
     register_third_party_plugins()
-    rollout()
+    try:
+        cast(Callable[[], None], rollout)()
+    except AdmissionDeniedError as exc:
+        # Context construction releases connected hardware before propagating this.
+        # Other protocol/runtime errors retain their traceback and failure status.
+        logger.error("%s", _admission_denial_message(exc))
+        logger.debug("Remote admission server diagnostic: %s", exc)
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

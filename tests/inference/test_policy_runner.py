@@ -22,6 +22,7 @@ from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.act.processor_act import make_act_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.processor import AbsoluteActionsProcessorStep, RelativeActionsProcessorStep
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE, QUERY_KIND, QUERY_TEXT
 
@@ -147,6 +148,90 @@ def test_real_act_matches_canonical_processor_pipeline_and_execution_slice():
     assert actual.provenance.task == source.task
     assert actual.provenance.capture_time == 10.0
     assert set(actual.server_durations) == {"preprocessing", "policy", "postprocessing"}
+
+
+class GuidedConformingPolicy(ConformingPolicy):
+    """Exercise the real autograd guidance rather than only RTC keyword forwarding."""
+
+    name = "guided_conformance"
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.guided_calls = 0
+        self.rtc = RTCProcessor(config.rtc_config)
+
+    @torch.no_grad()
+    def predict_action_chunk(self, batch, **kwargs):
+        prefix = kwargs.get("prev_chunk_left_over")
+        result = self.rtc.denoise_step(
+            x_t=torch.ones(1, 8, 3),
+            prev_chunk_left_over=prefix,
+            inference_delay=kwargs.get("inference_delay", 0),
+            time=0.5,
+            original_denoise_step_partial=lambda x: x * 0.25,
+        )
+        if prefix is not None:
+            self.guided_calls += 1
+        return result
+
+
+def test_runner_guided_rtc_allows_real_autograd_on_successor_chunk():
+    config = tiny_config()
+    config.rtc_config = RTCConfig(execution_horizon=4)
+    policy = GuidedConformingPolicy(config)
+    runner = runner_for(policy, modes=(ExecutionMode.RTC_GUIDED,))
+    first = runner.predict(observation(), mode=ExecutionMode.RTC_GUIDED)
+    second = runner.predict(
+        observation(),
+        mode=ExecutionMode.RTC_GUIDED,
+        inference_delay=1,
+        model_continuation=first.model_actions,
+        canonical_continuation=first.canonical_actions,
+    )
+    assert policy.guided_calls == 1
+    assert torch.isfinite(second.canonical_actions).all()
+    assert not second.canonical_actions.requires_grad
+    assert not torch.equal(first.canonical_actions, second.canonical_actions)
+
+
+def test_local_guided_rtc_allows_real_autograd_on_successor_chunk():
+    from lerobot.rollout.inference.rtc import RTCInferenceEngine
+
+    config = tiny_config()
+    config.rtc_config = RTCConfig(execution_horizon=4)
+    policy = GuidedConformingPolicy(config)
+    state_names = ("a.pos", "b.pos", "c.pos")
+    env_names = ("env_a", "env_b", "env_c")
+    engine = RTCInferenceEngine(
+        policy,
+        *processors(config),
+        robot_wrapper=SimpleNamespace(robot_type="test", action_features=dict.fromkeys(state_names, float)),
+        rtc_config=config.rtc_config,
+        dataset_features={
+            OBS_STATE: {"dtype": "float32", "shape": (3,), "names": state_names},
+            OBS_ENV_STATE: {"dtype": "float32", "shape": (3,), "names": env_names},
+        },
+        task="pick up the cube",
+        fps=30,
+        device="cpu",
+        rtc_queue_threshold=4,
+    )
+    engine.start()
+    try:
+        engine.resume()
+        engine.notify_observation({**dict.fromkeys(state_names, 1.0), **dict.fromkeys(env_names, 0.0)})
+        deadline = time.monotonic() + 2
+        while engine.action_queue.empty() and not engine.failed and time.monotonic() < deadline:
+            time.sleep(0.002)
+        assert engine.action_queue.qsize() == 8, engine.failure_traceback
+        for _ in range(4):
+            assert engine.get_action(None) is not None
+        while not policy.guided_calls and not engine.failed and time.monotonic() < deadline:
+            time.sleep(0.002)
+        assert not engine.failed, engine.failure_traceback
+        assert policy.guided_calls == 1
+    finally:
+        engine.stop()
 
 
 def test_generic_family_uses_real_canonical_processors_and_honors_n_action_steps():

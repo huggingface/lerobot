@@ -3,9 +3,10 @@
 # you may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
 """Worker/control-thread boundaries independent of network and model latency."""
 
+import logging
 import time
 from contextlib import contextmanager
-from threading import Event, Lock
+from threading import Event, Lock, Thread
 from types import SimpleNamespace
 
 import pytest
@@ -100,11 +101,18 @@ class ControlledClient:
         self.closed.set()
 
 
-@pytest.fixture
-def session():
+@pytest.fixture(params=[("append", 0), ("aligned", 0), ("aligned", 2)], ids=["append", "aligned", "blended"])
+def session(request):
     client = ControlledClient()
     config = RemoteInferenceConfig(
-        deployment="test", semantics="radians", hold_mode="position", max_observation_age_s=5
+        deployment="test",
+        semantics="radians",
+        hold_mode="position",
+        max_observation_age_s=5,
+        refill_seconds=0.2,
+        chunk_merge=request.param[0],
+        blend_steps=request.param[1],
+        blend_components=["a.pos"] if request.param[1] else [],
     )
     wrapper = SimpleNamespace(observation_time=None)
     engine = RemoteInferenceEngine(
@@ -300,3 +308,117 @@ def test_request_binds_latest_task_without_refreshing_capture_time(session):
     assert client.requests[0].observation.task == "updated task"
     assert client.requests[0].observation.task_version == 1
     assert client.requests[0].observation.capture_time == original_capture
+
+
+def test_retarget_and_result_acceptance_have_one_order(session, monkeypatch):
+    """A task change cannot slip between reading its version and merging a result."""
+    engine, client = session
+    accepting, release, changed = Event(), Event(), Event()
+    original_accept = engine.runtime.accept
+
+    def gated_accept(*args, **kwargs):
+        accepting.set()
+        assert release.wait(2)
+        return original_accept(*args, **kwargs)
+
+    monkeypatch.setattr(engine.runtime, "accept", gated_accept)
+    engine.resume()
+    capture(engine)
+    engine.start()
+    assert accepting.wait(2)
+
+    def retarget():
+        engine.set_task("new task")
+        changed.set()
+
+    thread = Thread(target=retarget)
+    thread.start()
+    try:
+        assert not changed.wait(0.03), "retarget interleaved with result acceptance"
+    finally:
+        release.set()
+        thread.join(2)
+    assert changed.is_set()
+    assert not engine.failed
+    # The result was accepted before the task change. Its original label remains
+    # valid for buffered continuity; subsequent requests use the new instruction.
+    assert engine.runtime.queue.snapshot().provenance[0].task == "initial task"
+
+
+def test_refill_wait_selects_latest_capture_and_reports_request_progress(session, caplog):
+    engine, client = session
+    caplog.set_level(logging.INFO, logger="lerobot.rollout.inference.remote")
+    engine.resume()
+    capture(engine)
+    engine.start()
+    assert wait_for(lambda: engine.runtime.queue.qsize() == 4)
+    assert engine.runtime.pop() is not None
+    capture(engine)
+    waiting_source = engine._observation
+    client.action_started.clear()
+    assert not client.action_started.wait(0.03), "a fresh advanced sample cannot bypass playback need"
+    # Publish another observation while gated; selecting a request must use this
+    # newer capture, with its original anchor even if consumption follows capture.
+    capture(engine)
+    latest = engine._observation
+    assert latest.capture_time > waiting_source.capture_time
+    client.action_release.clear()
+    assert engine.runtime.pop() is not None  # two endpoints left, exactly at refill
+    assert client.action_started.wait(2)
+    request = client.requests[1]
+    assert request.observation.capture_time == latest.capture_time
+    assert request.observation.observation_id == latest.observation_id
+    assert request.playback_at_submission == pytest.approx(0.2)
+    assert request.continuation.cursor == 2
+    if engine.config.chunk_merge == "aligned":
+        assert request.observation.action_cursor == 1
+    events = [record.args for record in caplog.records if record.msg == "Remote inference %s"]
+    assert events[0]["event"] == "scheduling"
+    requests = [event for event in events if event["event"] == "request"]
+    assert requests[-1]["scheduling"] == "playback_threshold"
+    assert requests[-1]["committed_actions_since_request"] == 2
+    assert requests[-1]["request_spacing_s"] > 0
+    assert not requests[-1]["task_changed_since_request"]
+
+
+def test_only_aligned_retarget_bypasses_refill_without_reusing_capture(session):
+    engine, client = session
+    engine.resume()
+    capture(engine)
+    engine.start()
+    assert wait_for(lambda: engine.runtime.queue.qsize() == 4)
+    client.action_started.clear()
+    engine.set_task("new goal")
+    assert not client.action_started.wait(0.03), "retarget must still wait for a fresh capture"
+    assert engine.runtime.queue.qsize() * engine.runtime.interval > engine.runtime.effective_refill
+    capture(engine)
+    if engine.config.chunk_merge == "append":
+        assert not client.action_started.wait(0.03), "append retarget retains the playback gate"
+        return
+    assert client.action_started.wait(2)
+    request = client.requests[1]
+    assert request.observation.task_version == 1
+    assert request.observation.action_cursor == 0
+    assert request.playback_at_submission == pytest.approx(0.4)
+    assert wait_for(lambda: engine.runtime.pending is None)
+    assert engine.runtime.queue.snapshot().provenance[0].task == "new goal"
+
+
+@pytest.mark.parametrize("measured", [False, True], ids=["configured", "latency-floor"])
+def test_aligned_full_horizon_warning_is_bounded_and_does_not_change_settings(session, caplog, measured):
+    engine, _ = session
+    caplog.set_level(logging.WARNING, logger="lerobot.rollout.inference.remote")
+    if measured:
+        engine.start()
+        assert not caplog.records
+        engine.runtime.turnarounds.append(0.3)
+    else:
+        engine.runtime.refill_seconds = 0.4
+        engine.start()
+    before = engine.runtime.refill_seconds
+    engine._warn_refill_horizon()
+    engine._warn_refill_horizon()
+    warnings = [record for record in caplog.records if "full execution horizon" in record.message]
+    assert len(warnings) == (1 if engine.config.chunk_merge == "aligned" else 0)
+    assert engine.runtime.refill_seconds == before
+    assert engine.runtime.effective_refill == pytest.approx(0.4)

@@ -619,7 +619,8 @@ class RTCInferenceEngine(InferenceEngine):
                     self._robot.robot_type,
                 )
                 batch["task"] = [task]
-                with torch.inference_mode():
+                # Match the remote runner: guidance needs a local autograd graph.
+                with torch.inference_mode(request.mode is not ExecutionMode.RTC_GUIDED), torch.no_grad():
                     preprocessed = self._preprocessor(batch)
                     if has_previous and self._relative_step is not None:
                         raw_state = self._relative_step.get_cached_state()
@@ -679,7 +680,8 @@ class RTCInferenceEngine(InferenceEngine):
                     execution_steps=len(processed),
                     provenance=ActionProvenance(capture_time, task, task_version),
                 )
-                accepted = self._runtime.accept(request, chunk, task_version=self.task_version)
+                with self._task_lock:
+                    accepted = self._runtime.accept(request, chunk, task_version=self._task_version)
                 if accepted:
                     consecutive_discards = 0
                 elif request.generation != self._runtime.generation:

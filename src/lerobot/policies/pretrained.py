@@ -28,8 +28,8 @@ from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_model as load_model_as_safetensor
 from torch import Tensor, nn
 
-from lerobot.configs import PreTrainedConfig
-from lerobot.inference.contracts import ChunkPolicySpec, ExecutionMode
+from lerobot.configs import FeatureType, PreTrainedConfig
+from lerobot.inference.contracts import ChunkPolicySpec, ExecutionMode, FeatureSpec
 from lerobot.optim.optimizers import OptimizerParams
 from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import resolve_safetensors_device
@@ -279,6 +279,30 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     def supports_rtc(self) -> bool:
         """Whether this policy implements Real-Time Chunking inference semantics."""
         return False
+
+    def validate_chunk_input_features(self, features: tuple[FeatureSpec, ...]) -> None:
+        """Validate canonical inputs before serving, with exact shapes by default.
+
+        Policies that explicitly resize or mask missing inputs may override this
+        contract. Such exceptions belong with the policy, never the transport.
+        The negotiated wire schema still fixes every supplied feature's shape.
+        """
+        expected = self.config.input_features or {}
+        supplied = {feature.name: feature for feature in features}
+        if supplied.keys() != expected.keys():
+            raise ValueError("Canonical feature names must exactly match policy input_features.")
+        for name, policy_feature in expected.items():
+            feature = supplied[name]
+            if policy_feature.type == FeatureType.VISUAL:
+                shape = policy_feature.shape
+                if (
+                    len(shape) != 3
+                    or feature.kind != "rgb"
+                    or feature.shape != (shape[1], shape[2], shape[0])
+                ):
+                    raise ValueError(f"RGB feature shape differs from checkpoint: {name}.")
+            elif feature.kind != "tensor" or feature.shape != tuple(policy_feature.shape):
+                raise ValueError(f"Tensor feature shape differs from checkpoint: {name}.")
 
     def chunk_inference_spec(self) -> ChunkPolicySpec:
         """Declare the default current-observation chunk-serving author contract.
