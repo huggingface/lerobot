@@ -97,6 +97,8 @@
     title: ROBOMETER
   - local: topreward
     title: TOPReward
+  - local: rynnvalue
+    title: RynnValue
   title: "Reward Models"
 - sections:
   - local: inference

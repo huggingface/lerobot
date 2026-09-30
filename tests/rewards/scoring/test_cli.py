@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
+from lerobot.rewards.rynnvalue.configuration_rynnvalue import RynnValueConfig
 from lerobot.scripts import lerobot_score
 from lerobot.scripts.lerobot_score import ScoreConfig
 
@@ -107,3 +108,63 @@ def test_run_score_uses_dataset_score_api(monkeypatch, tmp_path):
         },
     )
     assert captured["push_score_to_hub"] == "robometer-4b"
+
+
+def test_run_score_passes_rynnvalue_options(monkeypatch):
+    pytest.importorskip("datasets")
+    pytest.importorskip("av")
+    import lerobot.datasets
+
+    reward_config = RynnValueConfig(pretrained_path="old/model", device="cpu", use_meta=False)
+    fake_model = object()
+    fake_scorer = SimpleNamespace(name="rynnvalue")
+    captured: dict[str, object] = {}
+
+    class FakeDataset:
+        fps = 10
+
+        def add_score(self, scorer, **kwargs) -> None:
+            captured["add_score"] = (scorer, kwargs)
+
+    monkeypatch.setattr(
+        lerobot_score.RewardModelConfig,
+        "from_pretrained",
+        lambda path, *, revision: reward_config,
+    )
+    monkeypatch.setattr(lerobot.datasets, "LeRobotDataset", lambda *args, **kwargs: FakeDataset())
+    monkeypatch.setattr(lerobot_score, "make_reward_model", lambda config: fake_model)
+    monkeypatch.setattr(
+        lerobot_score,
+        "make_frame_scorer",
+        lambda model, **kwargs: captured.update(make_scorer=(model, kwargs)) or fake_scorer,
+    )
+
+    cfg = ScoreConfig(
+        dataset_repo_id="user/dataset",
+        reward_model_path="user/rynnvalue",
+        reward_model_revision="model-revision",
+        image_key="observation.images.wrist",
+        default_task="pick up the cube",
+        inference_fps=2.0,
+        max_frames=6,
+        horizon_s=12.0,
+        robot_description="a single-arm robot",
+        camera_description="a third-person camera",
+        use_meta=True,
+    )
+
+    lerobot_score.run_score(cfg)
+
+    assert reward_config.image_key == "observation.images.wrist"
+    assert reward_config.default_task == "pick up the cube"
+    assert reward_config.robot_description == "a single-arm robot"
+    assert reward_config.camera_description == "a third-person camera"
+    assert reward_config.use_meta is True
+    assert captured["make_scorer"] == (
+        fake_model,
+        {"dataset_fps": 10.0, "batch_size": 2, "inference_fps": 2.0, "max_frames": 6, "horizon_s": 12.0},
+    )
+    assert captured["add_score"] == (
+        fake_scorer,
+        {"name": "rynnvalue", "episodes": None, "resume": True, "overwrite": False},
+    )
