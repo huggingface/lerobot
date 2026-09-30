@@ -167,6 +167,7 @@ class _Arm:
         self.command = np.zeros(7)
         self.updated_at = 0.0
         self.commanded_at = 0.0
+        self.command_timed_out = False
         self.gravity: _Gravity | None = None
         self.thread: threading.Thread | None = None
         self.ready = threading.Event()
@@ -271,6 +272,7 @@ class BiYamFollower(Robot):
             arm.target = position.copy()
             arm.command = position.copy()
             arm.commanded_at = time.monotonic()
+            arm.command_timed_out = False
         # Seed zero gains at the current measured pose, never an old startup target.
         arm.bus.sync_write_mit(
             {
@@ -523,11 +525,15 @@ class BiYamFollower(Robot):
                     arm.position = position
                     arm.updated_at = time.monotonic()
                     arm.ready.set()
-                    if started - arm.commanded_at > self.config.command_timeout_s:
-                        # Freeze at fresh feedback after policy silence; do not
-                        # keep progressing toward an old distant target.
+                    if (
+                        started - arm.commanded_at > self.config.command_timeout_s
+                        and not arm.command_timed_out
+                    ):
+                        # Capture once on expiry. Repeatedly following measured
+                        # sag removes position stiffness while the policy is idle.
                         arm.target = position.copy()
                         arm.command = position.copy()
+                        arm.command_timed_out = True
                     packet = (
                         arm.command_packet(position, min(started - previous, 0.05)) if arm.enabled else None
                     )
@@ -608,6 +614,7 @@ class BiYamFollower(Robot):
             for side, arm in self.arms.items():
                 arm.target = targets[side]
                 arm.commanded_at = now
+                arm.command_timed_out = False
         return dict(action)
 
     def _recover_feedback_for_return(self) -> None:

@@ -739,3 +739,40 @@ def test_initial_pose_null_config_decode():
     for invalid in ([0.0] * 5, [float("nan")] * 6):
         with pytest.raises(ValueError):
             YamArmConfig(port="can0", initial_position_rad=invalid)
+
+
+def test_expired_commands_latch_hold_pose_until_next_command(monkeypatch, tmp_path):
+    bot, buses = robot(monkeypatch, tmp_path, read_only=False)
+    bot._connected = True
+    arm = bot.arms["left"]
+    arm.enabled = True
+    arm.target[0] = 0.5  # An old target must be abandoned on expiry.
+    clock = [2.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    packets = []
+
+    def write(packet):
+        packets.append(packet)
+
+    def wait(_):
+        if len(packets) == 4:
+            bot._stop.set()
+            return
+        clock[0] += 0.005
+        buses["left"].raw[0] = [0.0, 0.1, 0.12, 0.14][len(packets)]
+        if len(packets) == 2:
+            # A new command re-arms the timeout, so its later expiry captures
+            # the new pose once instead of retaining the previous hold target.
+            for other in bot.arms.values():
+                other.updated_at = clock[0]
+            action = dict.fromkeys(YAM_FEATURE_NAMES, 0.0)
+            action["left_joint_0.pos"] = 0.2
+            bot.send_action(action)
+            clock[0] += 2.0
+
+    monkeypatch.setattr(arm.bus, "sync_write_mit", write)
+    monkeypatch.setattr(bot._stop, "wait", wait)
+    bot._run(arm)
+    assert bot._failure is None
+    goals = [math.radians(p["joint_0"][2]) for p in packets]
+    assert goals == pytest.approx([0.0, 0.0, 0.12, 0.12])

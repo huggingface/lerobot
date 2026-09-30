@@ -88,7 +88,7 @@ A separate servo loop per arm (default 200 Hz) supplies gravity compensation and
 
 The gripper speed setting limits target motion, not achieved speed. With zero commanded motor velocity, its damping opposes motion: at the default `gripper_kd=0.5`, the 0.5 Nm proportional cap balances damping at roughly 1 motor rad/s, before friction or load. Increasing target speed alone does not remove that bottleneck. A lower `gripper_kd`, such as 0.1, reduces this damping without increasing the proportional torque cap, but also changes braking and settling behavior. Validate it on the installation before relying on faster motion.
 
-After one second without a fresh policy target, each servo holds fresh measured position instead of progressing toward an old target. Missing, malformed, or faulted motor feedback stops both workers. Disconnect disables torque. Keep the arms supported and the hardware e-stop accessible; communication or power failure can prevent software stopping from working.
+After one second without a fresh policy target, each servo captures the fresh measured position once and holds that fixed target instead of progressing toward an old target. Missing, malformed, or faulted motor feedback stops both workers. Disconnect disables torque. Keep the arms supported and the hardware e-stop accessible; communication or power failure can prevent software stopping from working.
 
 This is an experimental adapter. Gravity compensation uses the standard arm/gripper inertias and excludes added camera/payload mass. There is no collision avoidance. Validate control, loading, stopping behavior, and task performance on the installation before normal use. For initial rollout testing, set `return_to_initial_position=false` to avoid an unvalidated automatic return motion.
 
@@ -103,7 +103,8 @@ Gravity compensation is independent of the policy. Each arm's `gravity_factors` 
 - `/start`: run the current instruction. `--duration` limits each run, not the session.
 - `/subtask <text>`: change the instruction; with RTC it takes effect through the next generated chunk.
 - `/reset`: stop policy execution, return to the startup pose, restore the original task, and wait for another `/start`.
-- `/stop`: return to the startup pose, then disconnect and disable torque.
+- `/stop`: by default, return to the startup pose, then disconnect and disable torque. Set `--interactive_stop_returns_home=true` to make `/stop` behave like `/reset`: return and keep powered holding while waiting for `/start`.
+- `/quit`: end the session, return if configured, then disconnect and disable torque. Support the arms before quitting; powered holding cannot continue after disconnect.
 - `/help`: list available commands.
 
 YAM returns directly through its rate-limited servo targets using motor feedback, independently of camera availability. It refreshes the return target until both arms remain within 0.03 radians and both grippers within 0.05 of their targets for 0.2 seconds. Settling allows up to `robot.return_timeout_s` (default 30 seconds); use `--robot.return_timeout_s=120` to allow up to two minutes. It finishes early when measured arrival is confirmed, and feedback faults still stop it immediately. A timeout or feedback fault reports failure instead of claiming a completed return; normal shutdown still disconnects. Clear the return path before resetting or stopping: the return is joint-space motion without obstacle avoidance, and returning the grippers to their startup opening can release a held object.

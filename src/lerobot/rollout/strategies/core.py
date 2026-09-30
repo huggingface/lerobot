@@ -255,7 +255,7 @@ class RolloutStrategy(abc.ABC):
                 precise_sleep(1 / fps)
             robot.inner.wait_until_reached(target)
         except Exception as e:
-            logger.warning("Could not return to initial position: %s", e)
+            logger.error("Could not return to initial position: %s", e)
             return False
         return True
 

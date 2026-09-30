@@ -192,6 +192,7 @@ def _loop_ctx(engine, robot=None, stop_event=None, **cfg_overrides):
         "interpolation_multiplier": 1,
         "display_data": False,
         "autosteer_interval_s": 0.0,
+        "interactive_stop_returns_home": False,
     }
     cfg.update(cfg_overrides)
     return SimpleNamespace(
@@ -1537,3 +1538,28 @@ def test_shutdown_attempts_adapter_return_after_control_fault(error):
     strategy._teardown_hardware(hw)
     bot.return_to_position.assert_called_once_with(hw.initial_position)
     bot.disconnect.assert_called_once()
+
+
+def test_stop_can_return_home_without_disconnecting_then_restart():
+    with _pipe_stream() as (reader, _writer):
+        ctx, strategy, engine, _parent, run_started = _make_ctx()
+        ctx.runtime.cfg.interactive_stop_returns_home = True
+        session = InteractiveSession(strategy, ctx, input_stream=reader)
+        thread = _start_session_thread(session)
+        try:
+            session._handle_line("/start")
+            assert _wait_for(run_started.is_set)
+            session._handle_line("/stop")
+            assert _wait_for(lambda: strategy.return_to_initial_position.call_count == 1)
+            assert _wait_for(lambda: not session.controller.running)
+            assert thread.is_alive()
+            assert not session.controller.stopped
+            ctx.hardware.robot_wrapper.inner.disconnect.assert_not_called()
+            run_started.clear()
+            session._handle_line("/start")
+            assert _wait_for(run_started.is_set)
+            assert strategy.run.call_count == 2
+        finally:
+            session._handle_line("/quit")
+            _join_session(thread)
+        assert session.controller.stopped
