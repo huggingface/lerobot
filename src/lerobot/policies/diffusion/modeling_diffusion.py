@@ -107,6 +107,9 @@ class DiffusionPolicy(PreTrainedPolicy):
         Supports two modes:
         - Online (queues populated via select_action): stacks observations from internal queues.
         - Offline (empty queues, e.g. dataloader batch): uses the batch directly.
+
+        `noise` is the optional starting sample of shape `(B, horizon, action_dim)`. The DDPM scheduler still
+        adds fresh noise at every step, so only DDIM is fully driven by `noise`.
         """
         queues_populated = any(len(q) > 0 for q in self._queues.values())
         if queues_populated:
