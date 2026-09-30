@@ -679,7 +679,14 @@ class MolmoAct2Policy(PreTrainedPolicy):
             force_download=bool(self.config.checkpoint_force_download),
         )
         storage_dtype = _torch_dtype(self.config.dtype)
-        if HFMolmoAct2Config is None or MolmoAct2ForConditionalGeneration is None:
+        # HFMolmoAct2Config/MolmoAct2ForConditionalGeneration are the real local classes under
+        # TYPE_CHECKING/when transformers is installed, or None at runtime otherwise (see the
+        # guarded import above) -- mypy only sees the TYPE_CHECKING branch's concrete type, so
+        # it can't see the real runtime-None case.
+        if (
+            HFMolmoAct2Config is None  # type: ignore[comparison-overlap]
+            or MolmoAct2ForConditionalGeneration is None  # type: ignore[comparison-overlap]
+        ):
             raise RuntimeError("transformers is required to load MolmoAct2 checkpoints.")
         hf_config = HFMolmoAct2Config.from_pretrained(
             checkpoint_location,
@@ -1127,7 +1134,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
             require_package("transformers", extra="molmoact2")
             require_package("scipy", extra="molmoact2")
 
-            if UniversalActionProcessor is None:
+            # UniversalActionProcessor is the real local class under TYPE_CHECKING/when its deps
+            # are installed, or None at runtime otherwise (see the guarded import above) -- mypy
+            # only sees the TYPE_CHECKING branch's concrete type, so it can't see the real
+            # runtime-None case.
+            if UniversalActionProcessor is None:  # type: ignore[comparison-overlap]
                 raise RuntimeError("transformers and scipy are required to load MolmoAct2 action tokenizer.")
             self.action_tokenizer = UniversalActionProcessor.from_pretrained_local(
                 self.config.discrete_action_tokenizer,

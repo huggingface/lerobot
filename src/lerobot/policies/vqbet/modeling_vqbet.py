@@ -424,6 +424,7 @@ class VQBeTHead(nn.Module):
         """
 
         super().__init__()
+        assert config.gpt_output_dim is not None
         self.config = config
         # init vqvae
         self.vqvae_model = VqVae(config)
