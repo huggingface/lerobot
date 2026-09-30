@@ -18,6 +18,7 @@ Provides configurable Nx control rate by interpolating between consecutive actio
 Useful with RTC and action-chunking policies to reduce jerkiness.
 """
 
+import numpy as np
 from torch import Tensor
 
 
@@ -38,11 +39,11 @@ class ActionInterpolator:
         # In control loop:
         if interpolator.needs_new_action():
             new_action = queue.get()
-            if new_action:
-                interpolator.add(new_action.cpu())
+            if new_action is not None:
+                interpolator.add(new_action.cpu())  # a NumPy action goes in without .cpu()
 
         action = interpolator.get()
-        if action:
+        if action is not None:
             robot.send_action(action)
 
         # Recording stays at the base FPS: only the tick that emits the
@@ -60,8 +61,8 @@ class ActionInterpolator:
         if multiplier < 1:
             raise ValueError(f"multiplier must be >= 1, got {multiplier}")
         self.multiplier = multiplier
-        self._prev: Tensor | None = None
-        self._buffer: list[Tensor] = []
+        self._prev: Tensor | np.ndarray | None = None
+        self._buffer: list[Tensor | np.ndarray] = []
         self._idx = 0
         self._emitted_policy_action = False
 
@@ -98,12 +99,21 @@ class ActionInterpolator:
         """Check if a new action is needed from the queue."""
         return self._idx >= len(self._buffer)
 
-    def add(self, action: Tensor) -> None:
+    def add(self, action: Tensor | np.ndarray) -> None:
         """Add a new action and compute interpolated sequence.
 
         Args:
-            action: New action tensor from policy/queue (already on CPU).
+            action: New action tensor (already on CPU) or NumPy array from policy/queue.
+
+        Raises:
+            TypeError: If the action is a NumPy array and the previous one a tensor, or the other way round.
         """
+        if self._prev is not None and isinstance(action, np.ndarray) != isinstance(self._prev, np.ndarray):
+            raise TypeError(
+                f"Got a {type(action).__name__} action after a {type(self._prev).__name__} one. Use one action "
+                "type, or call reset() before switching."
+            )
+        clone = action.copy if isinstance(action, np.ndarray) else action.clone
         if self.multiplier > 1 and self._prev is not None:
             self._buffer = []
             for i in range(1, self.multiplier):
@@ -114,18 +124,18 @@ class ActionInterpolator:
             # than computed as ``prev + 1.0 * (action - prev)``, which can land an ULP
             # away.  ``emitted_policy_action`` promises the recorded frame carries the
             # policy's own output, so make that exact.
-            self._buffer.append(action.clone())
+            self._buffer.append(clone())
         else:
             # First step: no previous action yet, so run at base FPS without interpolation.
-            self._buffer = [action.clone()]
-        self._prev = action.clone()
+            self._buffer = [clone()]
+        self._prev = clone()
         self._idx = 0
 
-    def get(self) -> Tensor | None:
+    def get(self) -> Tensor | np.ndarray | None:
         """Get the next interpolated action.
 
         Returns:
-            Next action tensor, or None if buffer is exhausted.
+            Next action, of the type passed to :meth:`add`, or None if buffer is exhausted.
         """
         if self._idx >= len(self._buffer):
             self._emitted_policy_action = False

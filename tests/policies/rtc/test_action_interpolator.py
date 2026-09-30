@@ -14,6 +14,7 @@
 
 """Tests for ActionInterpolator and its interaction with ActionQueue (RTC)."""
 
+import numpy as np
 import pytest
 import torch
 
@@ -70,6 +71,40 @@ def test_interpolator_default_multiplier_is_1():
     interp = ActionInterpolator()
     assert interp.multiplier == 1
     assert not interp.enabled
+
+
+def test_numpy_actions_match_tensor_actions():
+    """NumPy actions stay NumPy, interpolate to exactly the values tensors give, and are copied on add."""
+    actions = [[0.1, -2.5, 3.0], [1.7, 0.3, -0.9], [-4.2, 5.5, 0.25]]
+
+    def run(convert, overwrite_after_add):
+        interp = ActionInterpolator(multiplier=2)
+        rows = []
+        for a in actions:
+            action = convert(a)
+            interp.add(action)
+            if overwrite_after_add:
+                action[0] = 100.0
+            while (out := interp.get()) is not None:
+                assert isinstance(out, type(action))
+                rows.append(out.tolist())
+        return rows
+
+    expected = run(torch.tensor, overwrite_after_add=False)
+    assert run(torch.tensor, overwrite_after_add=True) == expected
+    assert run(lambda a: np.array(a, dtype=np.float32), overwrite_after_add=True) == expected
+
+
+@pytest.mark.parametrize("multiplier", [1, 2])
+@pytest.mark.parametrize("first, second", [(torch.zeros(2), np.zeros(2)), (np.zeros(2), torch.zeros(2))])
+def test_changing_the_action_type_raises_a_clear_error(first, second, multiplier):
+    interp = ActionInterpolator(multiplier)
+    interp.add(first)
+    with pytest.raises(TypeError, match="Use one action type"):
+        interp.add(second)
+    interp.reset()
+    interp.add(second)
+    assert isinstance(interp.get(), type(second))
 
 
 # ====================== needs_new_action Tests ======================

@@ -27,6 +27,7 @@ from functools import partial
 from threading import Lock, Thread
 from typing import Any, Protocol
 
+import numpy as np
 import torch
 
 from lerobot.lerobot_types import EnvTransition
@@ -834,14 +835,15 @@ class InferenceEngine(abc.ABC):
         """Clear episode state; async backends invalidate motion before queuing worker resets."""
 
     @abc.abstractmethod
-    def get_action(self, obs_frame: dict | None) -> torch.Tensor | EnvTransition | None:
-        """Return a canonical action on the control thread, or ``None`` when unavailable.
+    def get_action(self, obs_frame: dict | None) -> torch.Tensor | np.ndarray | EnvTransition | None:
+        """Return a canonical tensor or NumPy action on the control thread, or ``None`` when unavailable.
 
         Sync may block on inference; async only consumes buffered work. Check
         ``dispatch_allowed`` again before sending, including interpolation ticks.
         Like the policy itself: when the policy returned a prediction besides the action,
         the action comes back with it as an ``EnvTransition`` (see
-        ``PreTrainedPolicy.select_action``).
+        ``PreTrainedPolicy.select_action``). A NumPy action is returned bare. An engine returns
+        one action type, NumPy or tensor, for its whole lifetime.
         """
 
     def notify_observation(self, obs: dict) -> None:  # noqa: B027

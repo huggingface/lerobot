@@ -170,7 +170,7 @@ def _align_to_checkpoint_order(
 def _assert_state_matches_action_order(dataset_features: dict, ordered_action_keys: list[str]) -> None:
     """Reject a state layout that is a permutation of the action dispatch order.
 
-    ``send_next_action`` labels the action tensor positionally with ``ordered_action_keys``,
+    ``send_next_action`` labels the action positionally with ``ordered_action_keys``,
     so a permuted ``observation.state`` commands every joint with another joint's value.
     Differing *sets* are legitimate (extra ``.vel`` channels, an uncommanded base) and pass.
     """
