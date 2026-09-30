@@ -161,6 +161,7 @@ from lerobot.utils.utils import (
     log_say,
 )
 from lerobot.utils.visualization_utils import TactileForce3DLogger, init_rerun, log_rerun_data
+from sympy import false
 
 
 @dataclass
@@ -460,7 +461,9 @@ def record(
         with VideoEncodingManager(dataset):
             recorded_episodes = 0
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
-                log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
+                log_say(f"Recording episode {dataset.num_episodes}", false)
+                if (dataset.num_episodes+1) %15 == 0 :
+                    log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
                 record_loop(
                     robot=robot,
                     events=events,
@@ -481,7 +484,9 @@ def record(
                 if not events["stop_recording"] and (
                     (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
                 ):
-                    log_say("Reset the environment", cfg.play_sounds)
+                    log_say("Reset the environment ", false)
+                    if (dataset.num_episodes+1) %15 == 0 :
+                        log_say("Reset the environment", cfg.play_sounds)
 
                     record_loop(
                         robot=robot,

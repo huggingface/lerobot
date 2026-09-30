@@ -135,11 +135,19 @@ class SpectrobotTrifold(SOFollower):
         #   Fy = s2 - s3
         #   Fz = 2*s1 - s2 + s3
         # Applied in `_compute_force`.
+        # self._sensor_force_matrix = np.array(
+        #     [
+        #         [1.0, -3.0, -2.0],
+        #         [0.0, -1.0, 1.0],
+        #         [-12.0/5, 1.0, 1.0],
+        #     ]
+        # )
+
         self._sensor_force_matrix = np.array(
             [
-                [1.0, -3.0, -2.0],
-                [0.0, -1.0, 1.0],
-                [-12.0/5, 1.0, 1.0],
+                [-0.0721,  0.0087,  0.0007],
+                [ 0.0279, -0.0088, -0.0589],
+                [ 0.0268, -0.0086,  0.0598],
             ]
         )
         # Slow moving baseline (EMA) removed from each signal: cancels the IEPE settling / drift so that only

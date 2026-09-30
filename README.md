@@ -141,6 +141,12 @@ lerobot-teleoperate \
   --display_data=true
 ```
 
+You can also choose different frequency range from the same sensor :
+```bash
+--robot.tactile_sensors="{ \
+    dgf_10kHz: {channel: 0, observation_key: tactile_spectrogram_dgf_10kHz_nfft_512, sample_rate_hz: 20000, nfft: 512, min_db: -70.0, max_db: 40.0, measurement: IEPE, range_choice: 10000, hpf_choice: 0.1, excitation_choice: 4}, \
+    dgf_100kHz: {channel: 0, observation_key: tactile_spectrogram_dragonfly1_100kHz_nfft_4096, sample_rate_hz: 200000, nfft: 4096, min_db: -70.0, max_db: 40.0, measurement: IEPE, range_choice: 10000, hpf_choice: 0.1, excitation_choice: 4}, \
+```
 ---
 
 ## 3. IEPE vs. Voltage

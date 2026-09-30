@@ -46,6 +46,7 @@ MAGIC = b"A868"
 HEADER = struct.Struct("<4sIHI")
 MAX_PACKET_SAMPLES = 4096
 TEENSY_NUM_CHANNELS = 8  # the firmware always streams all 8 ADS8688 inputs, interleaved
+TEENSY_SAMPLE_RATE_HZ = 20_000  # fixed per-channel rate of the firmware
 
 
 def raw_to_volts(raw: np.ndarray, v_min: float = -10.24, v_max: float = 10.24) -> np.ndarray:
@@ -163,6 +164,23 @@ def _make_opendaq_default_sensors() -> dict[str, TactileSensorConfig]:
     }
 
 
+class _StreamingDecimator:
+    """Anti-aliased integer decimation that keeps filter state across chunks (no edge artifacts)."""
+
+    def __init__(self, factor: int):
+        self.factor = factor
+        # Same FIR design as scipy.signal.decimate(ftype="fir").
+        self._taps = scipy.signal.firwin(20 * factor + 1, 1.0 / factor, window="hamming")
+        self._zi = np.zeros(self._taps.size - 1)
+        self._phase = 0  # index of the next sample to keep in the upcoming chunk
+
+    def process(self, chunk: np.ndarray) -> np.ndarray:
+        filtered, self._zi = scipy.signal.lfilter(self._taps, 1.0, chunk, zi=self._zi)
+        out = filtered[self._phase :: self.factor]
+        self._phase = (self._phase - chunk.size) % self.factor
+        return out.astype(np.float32, copy=False)
+
+
 @dataclass
 class _SensorState:
     key: str
@@ -170,12 +188,16 @@ class _SensorState:
     observation_key: str
     buffer: np.ndarray
     frame: np.ndarray
+    decimator: _StreamingDecimator | None = None
 
 
 class _TactileBackend(abc.ABC):
     def __init__(self, sensors: OrderedDict[str, TactileSensorConfig]):
         self.sensors = sensors
         self.available_keys = tuple(sensors.keys())
+        # Rate at which the hardware actually delivers samples; sensors declaring a lower
+        # sample_rate_hz are decimated from it.
+        self.acquisition_rate_hz: int = max(spec.sample_rate_hz for spec in sensors.values())
 
     @abc.abstractmethod
     def drain(self) -> dict[str, np.ndarray]:
@@ -293,6 +315,7 @@ class _TeensyBackend(_TactileBackend):
         if any(not 0 <= spec.channel < TEENSY_NUM_CHANNELS for spec in sensors.values()):
             raise ValueError(f"Teensy tactile channels must be in [0, {TEENSY_NUM_CHANNELS - 1}].")
         self._channel_count = TEENSY_NUM_CHANNELS
+        self.acquisition_rate_hz = TEENSY_SAMPLE_RATE_HZ
         self._stop_event = threading.Event()
         self._queue: queue.Queue[tuple[int, int, np.ndarray]] = queue.Queue(maxsize=100)
         self._reader = _TeensySerialReader(port, baudrate, self._queue, self._stop_event, mode_command)
@@ -340,7 +363,10 @@ class _OpenDaqBackend(_TactileBackend):
 
         target = next((device for device in available_devices if "IOLITE-X" in device.name), available_devices[0])
         self._device = self._instance.add_device(target.connection_string)
-        self._readers: dict[str, object] = {}
+        # One reader per physical channel, fanned out to every sensor key bound to it, so the
+        # same channel can be exposed several times (e.g. full band + low-frequency zoom).
+        self._readers: dict[int, object] = {}
+        self._channel_keys: dict[int, list[str]] = {}
 
         max_channel_required = max(spec.channel for spec in sensors.values())
         if len(self._device.channels) <= max_channel_required:
@@ -350,30 +376,67 @@ class _OpenDaqBackend(_TactileBackend):
                 len(self._device.channels),
             )
 
-        sample_rates = {spec.sample_rate_hz for spec in sensors.values()}
-        if len(sample_rates) == 1:
-            try:
-                self._device.set_property_value("SampleRate", sample_rates.pop())
-            except Exception:
-                logger.warning("Could not set SampleRate on tactile device.")
-        else:
-            logger.warning("Mixed tactile sample rates detected; using each sensor's declared rate for rendering.")
+        # Acquire at the highest requested rate; lower-rate sensors are decimated in software.
+        try:
+            self._device.set_property_value("SampleRate", self.acquisition_rate_hz)
+            self.acquisition_rate_hz = int(self._device.get_property_value("SampleRate"))
+        except Exception:
+            logger.warning("Could not set SampleRate=%s on tactile device.", self.acquisition_rate_hz)
 
         for key, spec in sensors.items():
             if spec.channel >= len(self._device.channels):
                 logger.warning("Skipping tactile sensor '%s' because channel %s is unavailable.", key, spec.channel)
                 continue
+            self._channel_keys.setdefault(spec.channel, []).append(key)
 
-            channel = self._device.channels[spec.channel]
+        for channel_index, keys in self._channel_keys.items():
+            spec = sensors[keys[0]]
+            analog = (spec.measurement, spec.range_choice, spec.hpf_choice, spec.excitation_choice)
+            for other in keys[1:]:
+                o = sensors[other]
+                if (o.measurement, o.range_choice, o.hpf_choice, o.excitation_choice) != analog:
+                    logger.warning(
+                        "Sensors %s share openDAQ channel %s but have different amplifier settings; using '%s'.",
+                        keys,
+                        channel_index,
+                        keys[0],
+                    )
+                    break
+
+            channel = self._device.channels[channel_index]
             channel.active = True
             amplifier = channel.get_function_blocks()[0]
             self._configure_amplifier(amplifier, spec)
-            self._readers[key] = opendaq.StreamReader(channel.signals[0])
-            logger.info("Bound tactile sensor '%s' to openDAQ channel %s", key, spec.channel)
+            self._readers[channel_index] = opendaq.StreamReader(channel.signals[0])
+            logger.info("Bound tactile sensors %s to openDAQ channel %s", keys, channel_index)
 
-        self.available_keys = tuple(self._readers.keys())
+            # The SampleRate property may be ignored or rounded by the device; the signal's
+            # time domain is the ground truth for the rate the samples actually arrive at.
+            signal_rate = self._signal_rate_hz(channel.signals[0])
+            if signal_rate is not None and signal_rate != self.acquisition_rate_hz:
+                logger.warning(
+                    "openDAQ channel %s delivers %d Hz (requested %d Hz); decimating from %d Hz.",
+                    channel_index,
+                    signal_rate,
+                    self.acquisition_rate_hz,
+                    signal_rate,
+                )
+                self.acquisition_rate_hz = signal_rate
+
+        self.available_keys = tuple(key for keys in self._channel_keys.values() for key in keys)
 
         logger.info("Connected tactile stream from %s.", target.name)
+
+    @staticmethod
+    def _signal_rate_hz(signal) -> int | None:
+        try:
+            descriptor = signal.domain_signal.descriptor
+            resolution = descriptor.tick_resolution
+            delta = descriptor.rule.parameters["delta"]
+            return round(resolution.denominator / (resolution.numerator * delta))
+        except Exception:
+            logger.warning("Could not read the sample rate from the openDAQ signal domain.")
+            return None
 
     @staticmethod
     def _configure_amplifier(amplifier, spec: TactileSensorConfig) -> None:
@@ -390,14 +453,15 @@ class _OpenDaqBackend(_TactileBackend):
 
     def drain(self) -> dict[str, np.ndarray]:
         chunks: dict[str, np.ndarray] = {}
-        for key, reader in self._readers.items():
+        for channel_index, reader in self._readers.items():
             available = reader.available_count
             if available <= 0:
                 continue
 
             chunk = np.asarray(reader.read(available), dtype=np.float32)
             if chunk.size:
-                chunks[key] = chunk
+                for key in self._channel_keys[channel_index]:
+                    chunks[key] = chunk
         return chunks
 
 
@@ -466,6 +530,7 @@ class SpectRoFollower(SOFollower):
             self._sensor_states = OrderedDict(
                 (key, state) for key, state in self._sensor_states.items() if key in available_keys
             )
+            self._setup_decimators(self._backend.acquisition_rate_hz)
 
         self._worker_thread = threading.Thread(target=self._spectrogram_worker, daemon=True)
         self._worker_thread.start()
@@ -476,6 +541,18 @@ class SpectRoFollower(SOFollower):
         for state in self._sensor_states.values():
             features[state.observation_key] = (self._target_size[1], self._target_size[0], 3)
         return features
+
+    def _setup_decimators(self, acquisition_rate_hz: int) -> None:
+        for state in self._sensor_states.values():
+            target_hz = state.spec.sample_rate_hz
+            factor, remainder = divmod(acquisition_rate_hz, target_hz)
+            if factor < 1 or remainder:
+                raise ValueError(
+                    f"Tactile sensor '{state.key}': sample_rate_hz={target_hz} must divide the acquisition "
+                    f"rate {acquisition_rate_hz} Hz by an integer factor."
+                )
+            if factor > 1:
+                state.decimator = _StreamingDecimator(factor)
 
     @staticmethod
     def _push_to_ring_buffer(buffer: np.ndarray, chunk: np.ndarray) -> None:
@@ -515,18 +592,74 @@ class SpectRoFollower(SOFollower):
         spectro_bgr = cv2.resize(spectro_bgr, self._target_size, interpolation=cv2.INTER_LINEAR)
         return cv2.cvtColor(spectro_bgr, cv2.COLOR_BGR2RGB)
 
+    def _log_spectrogram_setup(self) -> None:
+        acquisition_hz = self._backend.acquisition_rate_hz if self._backend is not None else None
+        for state in self._sensor_states.values():
+            fs = state.spec.sample_rate_hz
+            nfft = state.spec.nfft
+            factor = state.decimator.factor if state.decimator is not None else 1
+            logger.info(
+                "[tactile] %s: acquisition=%s Hz, decimation=x%d -> fs=%d Hz, band=0-%.0f Hz, nfft=%d "
+                "(window %.1f ms, df=%.2f Hz), image spans %.2f s",
+                state.observation_key,
+                acquisition_hz,
+                factor,
+                fs,
+                fs / 2,
+                nfft,
+                1000.0 * nfft / fs,
+                fs / nfft,
+                state.buffer.size / fs,
+            )
+
+    def _log_measured_rates(self, raw_counts: dict[str, int], out_counts: dict[str, int], elapsed: float) -> None:
+        for state in self._sensor_states.values():
+            raw_hz = raw_counts.get(state.key, 0) / elapsed
+            out_hz = out_counts.get(state.key, 0) / elapsed
+            expected = state.spec.sample_rate_hz
+            if abs(out_hz - expected) > 0.1 * expected:
+                logger.warning(
+                    "[tactile] %s: measured input=%.0f Hz, output fs=%.0f Hz but configured fs=%d Hz",
+                    state.observation_key,
+                    raw_hz,
+                    out_hz,
+                    expected,
+                )
+
     def _spectrogram_worker(self) -> None:
         interval = 1.0 / max(self._target_fps, 1e-6)
         last_compute_time = time.perf_counter()
+        # Measure the real per-spectrogram sample rates once, a few seconds after start.
+        self._log_spectrogram_setup()
+        rate_check_start: float | None = None
+        raw_counts: dict[str, int] = {}
+        out_counts: dict[str, int] = {}
+        rate_check_done = False
 
         while self._running:
             now = time.perf_counter()
 
             if self._backend is not None:
-                for key, chunk in self._backend.drain().items():
+                drained = self._backend.drain()
+                # The first batch holds the backlog since connect, so measuring starts after it.
+                measuring = not rate_check_done and rate_check_start is not None
+                if drained and rate_check_start is None:
+                    rate_check_start = now
+                for key, chunk in drained.items():
                     state = self._sensor_states.get(key)
-                    if state is not None and chunk.size:
+                    if state is None or not chunk.size:
+                        continue
+                    if measuring:
+                        raw_counts[key] = raw_counts.get(key, 0) + chunk.size
+                    if state.decimator is not None:
+                        chunk = state.decimator.process(chunk)
+                    if measuring:
+                        out_counts[key] = out_counts.get(key, 0) + chunk.size
+                    if chunk.size:
                         self._push_to_ring_buffer(state.buffer, chunk)
+                if measuring and now - rate_check_start >= 3.0:
+                    self._log_measured_rates(raw_counts, out_counts, now - rate_check_start)
+                    rate_check_done = True
 
             if now - last_compute_time >= interval:
                 new_frames: dict[str, np.ndarray] = {}
