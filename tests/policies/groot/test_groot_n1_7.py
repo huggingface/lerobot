@@ -344,14 +344,16 @@ class _DummyGrootModel(nn.Module):
         self.compute_dtype = "float32"
         self.forward_inputs = None
         self.get_action_options = None
+        self.get_action_noise = None
 
     def forward(self, inputs):
         self.forward_inputs = dict(inputs)
         return {"loss": self.weight + 1.0}
 
-    def get_action(self, inputs, options=None):
+    def get_action(self, inputs, options=None, *, noise=None):
         self.forward_inputs = dict(inputs)
         self.get_action_options = options
+        self.get_action_noise = noise
         batch_size = inputs["state"].shape[0]
         return {"action_pred": torch.zeros(batch_size, 40, 132, device=self.weight.device)}
 
@@ -452,6 +454,27 @@ def test_groot_predict_action_chunk_forwards_n1_7_rtc_prefix(monkeypatch):
     torch.testing.assert_close(dummy_model.forward_inputs["action"][0, :, 7:], torch.zeros(8, 125))
 
 
+@pytest.mark.parametrize("prev_chunk_left_over", [None, torch.ones(8, 7)], ids=["plain", "rtc"])
+def test_groot_predict_action_chunk_forwards_noise(monkeypatch, prev_chunk_left_over):
+    pytest.importorskip("transformers")
+
+    from lerobot.policies.groot.groot_n1_7 import GR00TN17
+
+    dummy_model = _DummyGrootModel()
+    monkeypatch.setattr(GR00TN17, "from_pretrained", classmethod(lambda cls, **kwargs: dummy_model))
+    policy = GrootPolicy(_groot_config())
+    noise = torch.randn(1, 40, 132)
+
+    policy.predict_action_chunk(
+        {"state": torch.zeros(1, 1, 132)},
+        noise=noise,
+        inference_delay=3,
+        prev_chunk_left_over=prev_chunk_left_over,
+    )
+
+    assert dummy_model.get_action_noise is noise
+
+
 def test_groot_predict_action_chunk_strips_padded_n1_7_rtc_prefix(monkeypatch):
     pytest.importorskip("transformers")
 
@@ -496,8 +519,8 @@ def test_groot_n1_7_predict_action_chunk_truncates_to_checkpoint_valid_horizon(t
     _write_raw_n1_7_libero_checkpoint(model_path)
 
     class HorizonModel(_DummyGrootModel):
-        def get_action(self, inputs, options=None):
-            del options
+        def get_action(self, inputs, options=None, *, noise=None):
+            del options, noise
             batch_size = inputs["state"].shape[0]
             steps = torch.arange(40, dtype=torch.float32).view(1, 40, 1).expand(batch_size, 40, 132)
             return {"action_pred": steps}
@@ -2680,7 +2703,7 @@ def test_groot_n1_7_select_action_uses_checkpoint_valid_horizon(tmp_path, monkey
     _write_raw_n1_7_libero_checkpoint(model_path)
 
     class HorizonModel(_DummyGrootModel):
-        def get_action(self, inputs):
+        def get_action(self, inputs, *, noise=None):
             assert inputs["action_mask"].shape == (1, 40)
             assert inputs["action_mask"][0, :16].sum().item() == 16
             assert inputs["action_mask"][0, 16:].sum().item() == 0
@@ -3030,3 +3053,108 @@ def test_gr00t_n1_7_model_forward_with_mocked_backbone():
     inference_inputs = {key: value for key, value in inputs.items() if key != "action"}
     action_output = model.get_action(inference_inputs)
     assert action_output["action_pred"].shape == (2, config.action_horizon, config.max_action_dim)
+
+
+def _tiny_n1_7_model_and_inputs():
+    pytest.importorskip("diffusers")
+    pytest.importorskip("transformers")
+
+    from transformers.feature_extraction_utils import BatchFeature
+
+    from lerobot.policies.groot.groot_n1_7 import GR00TN17, GR00TN17Config
+
+    config = GR00TN17Config(
+        backbone_embedding_dim=32,
+        hidden_size=32,
+        input_embedding_dim=32,
+        max_state_dim=7,
+        max_action_dim=5,
+        action_horizon=4,
+        state_history_length=1,
+        num_inference_timesteps=2,
+        max_num_embodiments=4,
+        use_alternate_vl_dit=False,
+        use_vlln=True,
+        vl_self_attention_cfg={"num_layers": 0},
+        state_dropout_prob=0.0,
+        diffusion_model_cfg={
+            "positional_embeddings": None,
+            "num_layers": 1,
+            "num_attention_heads": 2,
+            "attention_head_dim": 16,
+            "norm_type": "ada_norm",
+            "dropout": 0.0,
+            "final_dropout": False,
+            "output_dim": 32,
+            "interleave_self_attention": False,
+        },
+    )
+    # Fixed features, so the starting noise is the only random draw in get_action.
+    backbone_features = torch.randn(2, 3, config.backbone_embedding_dim)
+
+    class FixedBackbone(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = nn.Parameter(torch.zeros(()))
+
+        def prepare_input(self, inputs):
+            return BatchFeature(data=inputs)
+
+        def forward(self, inputs):
+            return BatchFeature(
+                data={
+                    "backbone_features": backbone_features,
+                    "backbone_attention_mask": torch.ones(2, 3, dtype=torch.bool),
+                    "image_mask": torch.zeros(2, 3, dtype=torch.bool),
+                }
+            )
+
+        def set_trainable_parameters(self, *args, **kwargs):
+            return None
+
+    with patch(
+        "lerobot.policies.groot.groot_n1_7.get_backbone_cls",
+        return_value=lambda **kwargs: FixedBackbone(),
+    ):
+        model = GR00TN17(config).eval()
+
+    inputs = {
+        "state": torch.randn(2, config.state_history_length, config.max_state_dim),
+        "embodiment_id": torch.zeros(2, dtype=torch.long),
+    }
+    return model, inputs
+
+
+def test_gr00t_n1_7_get_action_uses_given_noise():
+    model, inputs = _tiny_n1_7_model_and_inputs()
+    noise = torch.randn(2, 4, 5)
+
+    first = model.get_action(inputs, noise=noise)["action_pred"]
+    second = model.get_action(inputs, noise=noise)["action_pred"]
+    other = model.get_action(inputs, noise=torch.randn(2, 4, 5))["action_pred"]
+
+    assert torch.equal(first, second)
+    assert not torch.equal(first, other)
+
+
+def test_gr00t_n1_7_get_action_without_noise_matches_seeded_draw():
+    model, inputs = _tiny_n1_7_model_and_inputs()
+
+    torch.manual_seed(0)
+    drawn = model.get_action(inputs)["action_pred"]
+    torch.manual_seed(0)
+    noise = torch.randn(size=(2, 4, 5), dtype=torch.float32, device="cpu")
+    given = model.get_action(inputs, noise=noise)["action_pred"]
+
+    assert torch.equal(drawn, given)
+
+
+def test_gr00t_n1_7_rtc_prefix_does_not_write_into_given_noise():
+    model, inputs = _tiny_n1_7_model_and_inputs()
+    noise = torch.randn(2, 4, 5)
+    noise_before = noise.clone()
+    options = {"action_horizon": 4, "rtc_overlap_steps": 2, "rtc_frozen_steps": 1, "rtc_ramp_rate": 6.0}
+
+    model.get_action({**inputs, "action": torch.ones(2, 4, 5)}, options=options, noise=noise)
+
+    assert torch.equal(noise, noise_before)
