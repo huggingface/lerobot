@@ -247,7 +247,6 @@ VIDEO_BLOB_COLUMN = "video_bytes"
 # Only connection routing belongs in the metadata cache identity. Credentials and
 # request tuning must not change cache paths or become part of the digest.
 _METADATA_ROUTING_OPTIONS = {
-    "revision",
     "endpoint",
     "endpoint_url",
     "region",
@@ -279,6 +278,8 @@ def _storage_options(
     db_uri: str, storage_options: dict[str, str] | None, revision: str | None, token: str | bool | None = None
 ) -> dict[str, str]:
     options = dict(storage_options or {})
+    if any(key.lower() == "revision" for key in options):
+        raise ValueError("storage_options must not contain 'revision'; use the revision argument instead.")
     if db_uri.startswith("hf://"):
         if "token" not in options:
             if isinstance(token, str):

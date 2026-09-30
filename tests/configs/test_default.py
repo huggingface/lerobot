@@ -81,8 +81,16 @@ def test_dataset_config_storage_options_cli_roundtrip(storage_options):
     assert draccus.decode(DatasetConfig, draccus.encode(cfg)).storage_options == storage_options
 
 
-def test_dataset_config_streaming_rejects_storage_options():
-    with pytest.raises(ValueError, match="storage_options.*streaming"):
-        DatasetConfig(repo_id="user/repo", streaming=True, storage_options={"aws_region": "us-east-1"})
+def test_dataset_config_streaming_accepts_storage_options():
+    options = {"aws_region": "us-east-1"}
+    cfg = DatasetConfig(repo_id="user/repo", streaming=True, storage_options=options)
 
-    DatasetConfig(repo_id="user/repo", streaming=True, storage_options={})
+    assert cfg.storage_options == options
+
+
+@pytest.mark.parametrize("revision_key", ["revision", "REVISION"])
+def test_dataset_config_storage_options_rejects_revision(revision_key):
+    with pytest.raises(ValueError, match="storage_options.*revision"):
+        DatasetConfig(repo_id="user/repo", storage_options={revision_key: "main"})
+
+    DatasetConfig(repo_id="user/repo", revision="main", storage_options={})

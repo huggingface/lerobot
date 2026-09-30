@@ -264,6 +264,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         *,
         repo_type: Literal["dataset", "bucket"] = "dataset",
         token: str | bool | None = None,
+        storage_options: dict[str, str] | None = None,
     ):
         """Initialize a StreamingLeRobotDataset.
 
@@ -293,10 +294,18 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 stored token, ``False`` to disable authentication, or ``None``
                 to use the Hugging Face Hub default. The token is not retained
                 on the dataset instance after initialization.
+            storage_options: Storage connection options forwarded to
+                :func:`datasets.load_dataset`. ``revision`` must be passed through
+                the dedicated ``revision`` argument instead.
         """
         super().__init__()
         if repo_type not in ("dataset", "bucket"):
             raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {repo_type!r}")
+        options = dict(storage_options or {})
+        if any(key.lower() == "revision" for key in options):
+            raise ValueError(
+                "storage_options must not contain 'revision'; use the revision argument instead."
+            )
 
         self.repo_id = repo_id
         self.repo_type = repo_type
@@ -359,6 +368,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             self.delta_indices = get_delta_indices(self.delta_timestamps, self.fps)
 
         token_kwargs = {} if token is None else {"token": token}
+        storage_kwargs = {"storage_options": options} if options else {}
         self.hf_dataset: datasets.IterableDataset
         if self.repo_type == "bucket":
             self.hf_dataset = load_dataset(
@@ -367,6 +377,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 split="train",
                 streaming=self.streaming,
                 **token_kwargs,
+                **storage_kwargs,
             )
         else:
             if self.streaming_from_local:
@@ -378,6 +389,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 data_files="data/*/*.parquet",
                 revision=self.revision,
                 **token_kwargs,
+                **storage_kwargs,
             )
 
         self.num_shards = min(self.hf_dataset.num_shards, max_num_shards)

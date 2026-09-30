@@ -472,6 +472,29 @@ def test_remote_metadata_cache_reuses_connection_identity(dataset_roots, tmp_pat
     assert len(connections) == 4
 
 
+def test_remote_metadata_cache_separates_revisions(dataset_roots, tmp_path, monkeypatch):
+    _, lance_root = dataset_roots
+    uri = f"file://{lance_root}"
+    monkeypatch.setattr(lance_utils, "HF_LEROBOT_HOME", tmp_path / "cache")
+
+    main_root = localize_remote_root(DUMMY_REPO_ID, uri, revision="main")
+    release_root = localize_remote_root(DUMMY_REPO_ID, uri, revision="v3.0")
+
+    assert main_root != release_root
+    assert (main_root / "meta").is_dir()
+    assert (release_root / "meta").is_dir()
+
+
+@pytest.mark.parametrize("revision_key", ["revision", "REVISION"])
+def test_storage_options_rejects_revision(revision_key):
+    with pytest.raises(ValueError, match="storage_options.*revision"):
+        lance_utils._storage_options(
+            "hf://datasets/user/repo", {revision_key: "branch-in-options"}, revision="main"
+        )
+
+    assert lance_utils._storage_options("hf://datasets/user/repo", {}, revision="main")["revision"] == "main"
+
+
 @pytest.mark.parametrize("entry_point", ["dataset", "factory", "train_eval"])
 def test_storage_options_remote_reads(dataset_roots, tmp_path, monkeypatch, entry_point):
     src_root, lance_root = dataset_roots

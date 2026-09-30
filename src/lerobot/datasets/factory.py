@@ -175,6 +175,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 tolerance_s=cfg.tolerance_s,
                 return_uint8=True,
                 repo_type=repo_type,
+                storage_options=cfg.dataset.storage_options,
             )
     else:
         raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")
