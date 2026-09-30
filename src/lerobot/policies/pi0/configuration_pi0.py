@@ -123,6 +123,10 @@ class PI0Config(PreTrainedConfig):
 
     def validate_features(self) -> None:
         """Validate and set up input/output features."""
+        if self.input_features is None or self.output_features is None:
+            raise ValueError(
+                "PI0 requires `input_features` and `output_features` to be resolved before validation."
+            )
         for i in range(self.empty_cameras):
             key = f"{OBS_IMAGES}.empty_camera_{i}"
             empty_camera = PolicyFeature(

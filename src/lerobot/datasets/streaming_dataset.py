@@ -16,7 +16,7 @@
 from collections import deque
 from collections.abc import Callable, Generator, Iterable, Iterator
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import datasets
 import numpy as np
@@ -249,7 +249,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         root: str | Path | None = None,
         episodes: list[int] | None = None,
         image_transforms: Callable | None = None,
-        delta_timestamps: dict[list[float]] | None = None,
+        delta_timestamps: dict[str, list[float]] | None = None,
         tolerance_s: float = 1e-4,
         revision: str | None = None,
         force_cache_sync: bool = False,
@@ -307,7 +307,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.image_transforms = image_transforms
         self.episodes = episodes
         self.tolerance_s = tolerance_s
-        self.revision = revision if revision else CODEBASE_VERSION
+        self.revision: str | None = revision if revision else CODEBASE_VERSION
         self.seed = seed
         self.rng = rng if rng is not None else np.random.default_rng(seed)
         self.shuffle = shuffle
@@ -318,7 +318,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self._depth_output_unit = depth_output_unit
 
         # We cache the video decoders to avoid re-initializing them at each frame (avoiding a ~10x slowdown)
-        self.video_decoder_cache = None
+        self.video_decoder_cache: VideoDecoderCache | None = None
 
         if self._requested_root is not None:
             self.root.mkdir(exist_ok=True, parents=True)
@@ -359,8 +359,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             self.delta_indices = get_delta_indices(self.delta_timestamps, self.fps)
 
         token_kwargs = {} if token is None else {"token": token}
+        self.hf_dataset: datasets.IterableDataset
         if self.repo_type == "bucket":
-            self.hf_dataset: datasets.IterableDataset = load_dataset(
+            self.hf_dataset = load_dataset(
                 "parquet",
                 data_files=f"hf://buckets/{self.repo_id}/data/*/*.parquet",
                 split="train",
@@ -370,7 +371,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         else:
             if self.streaming_from_local:
                 token_kwargs = {}
-            self.hf_dataset: datasets.IterableDataset = load_dataset(
+            self.hf_dataset = load_dataset(
                 self.repo_id if not self.streaming_from_local else str(self.root),
                 split="train",
                 streaming=self.streaming,
@@ -414,7 +415,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
     # The current sequential iteration is a bottleneck. A producer-consumer pattern
     # could be used with a ThreadPoolExecutor to run `make_frame` (especially video decoding)
     # in parallel, feeding a queue from which this iterator will yield processed items.
-    def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
+    def __iter__(self) -> Iterator[dict[str, Any]]:
         if self.video_decoder_cache is None:
             self.video_decoder_cache = VideoDecoderCache()
 
@@ -432,7 +433,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         # the logic is to add 2 levels of randomness:
         # (1) sample one shard at random from the ones available, and
         # (2) sample one frame from the shard sampled at (1)
-        frames_buffer = []
+        frames_buffer: list[dict[str, Any]] = []
         while available_shards := list(idx_to_backtrack_dataset.keys()):
             shard_key = next(self._infinite_generator_over_elements(rng, available_shards))
             backtrack_dataset = idx_to_backtrack_dataset[shard_key]  # selects which shard to iterate on
@@ -486,7 +487,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 key: (
                     start_ts + torch.tensor(indices[key]) / self.fps
                 ).tolist()  # NOTE: why not delta_timestamps directly?
-                for key in self.delta_timestamps
+                for key in indices
             }
         else:
             return dict.fromkeys(self.meta.video_keys, [start_ts])
@@ -597,8 +598,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
     def _get_query_timestamps(
         self,
         current_ts: float,
-        query_indices: dict[str, list[int]] | None = None,
-        episode_boundaries_ts: dict[str, tuple[float, float]] | None = None,
+        query_indices: dict[str, list[int]] | None,
+        episode_boundaries_ts: dict[str, tuple[float, float]],
     ) -> dict[str, list[float]]:
         query_timestamps = {}
         keys_to_timestamps = self._make_timestamps_from_indices(current_ts, query_indices)
@@ -659,7 +660,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         return item
 
-    def _get_delta_frames(self, dataset_iterator: Backtrackable, current_item: dict):
+    def _get_delta_frames(
+        self, dataset_iterator: Backtrackable, current_item: dict
+    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         # TODO(fracapuano): Modularize this function, refactor the code
         """Get frames with delta offsets using the backtrackable iterator.
 
@@ -671,10 +674,12 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             tuple: (query_result, padding) - frames at delta offsets and padding info.
         """
         current_episode_idx = current_item["episode_index"]
+        if self.delta_indices is None:
+            raise RuntimeError("Delta frames were requested but no delta_timestamps are configured.")
 
         # Prepare results
-        query_result = {}
-        padding = {}
+        query_result: dict[str, torch.Tensor] = {}
+        padding: dict[str, torch.Tensor] = {}
 
         for key, delta_indices in self.delta_indices.items():
             if key in self.meta.video_keys:
@@ -769,7 +774,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         return query_result, padding
 
-    def _validate_delta_timestamp_keys(self, delta_timestamps: dict[list[float]]) -> None:
+    def _validate_delta_timestamp_keys(self, delta_timestamps: dict[str, list[float]] | None) -> None:
         """
         Validate that all keys in delta_timestamps correspond to actual features in the dataset.
 

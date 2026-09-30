@@ -18,7 +18,7 @@ import builtins
 import logging
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
+from typing import TYPE_CHECKING, Any, Literal, Unpack, cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -63,15 +63,9 @@ from ..common.vla_utils import (
     prepare_attention_masks_4d,
     resize_with_pad_torch,
 )
-from ..pretrained import PreTrainedPolicy, T
+from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs, T
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi0 import DEFAULT_IMAGE_SIZE, PI0Config
-
-
-class ActionSelectKwargs(TypedDict, total=False):
-    inference_delay: int | None
-    prev_chunk_left_over: Tensor | None
-    execution_horizon: int | None
 
 
 # Define the complete layer computation function for gradient checkpointing
@@ -241,6 +235,7 @@ class PaliGemmaWithExpertModel(
         self.gemma_expert = PiGemmaForCausalLM(config=action_expert_config_hf)
         self.gemma_expert.model.embed_tokens = None
 
+        self.precision = precision
         self.to_bfloat16_for_selected_params(precision)
         self._set_requires_grad()
 
@@ -289,11 +284,20 @@ class PaliGemmaWithExpertModel(
         out_dtype = image.dtype
         if image.dtype != torch.float32:
             image = image.to(torch.float32)
-        image_outputs = self.paligemma.model.get_image_features(image)
+        # That float32 pin exists so training never toggles a parameter dtype. Inference has no
+        # optimizer state to protect, so run the matmuls on tensor cores while the stored weights
+        # stay float32. Autocast accumulates in float32, which lands closer to the float32 result
+        # than casting the weights would.
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=self._vision_autocast(image)):
+            image_outputs = self.paligemma.model.get_image_features(image)
         features = image_outputs.pooler_output
         if features.dtype != out_dtype:
             features = features.to(out_dtype)
         return features
+
+    def _vision_autocast(self, image: torch.Tensor) -> bool:
+        """Whether to run the vision tower in bfloat16 for this call."""
+        return not self.training and self.precision == "bfloat16" and image.device.type == "cuda"
 
     def embed_language_tokens(self, tokens: torch.Tensor):
         return self.paligemma.model.language_model.get_input_embeddings()(tokens)
@@ -303,12 +307,14 @@ class PaliGemmaWithExpertModel(
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         past_key_values: list[torch.FloatTensor] | None = None,
-        inputs_embeds: list[torch.FloatTensor] | None = None,
+        inputs_embeds: list[torch.Tensor | None] | None = None,
         use_cache: bool | None = None,
-        adarms_cond: list[torch.Tensor] | None = None,
+        adarms_cond: list[torch.Tensor | None] | None = None,
     ):
         if adarms_cond is None:
             adarms_cond = [None, None]
+        if inputs_embeds is None:
+            raise ValueError("inputs_embeds must be a [prefix, suffix] pair (either entry may be None)")
         if inputs_embeds[1] is None:
             prefix_output = self.paligemma.model.language_model.forward(
                 inputs_embeds=inputs_embeds[0],
@@ -421,7 +427,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             paligemma_config,
             action_expert_config,
             use_adarms=[False, False],
-            precision=config.dtype,
+            precision=cast(Literal["bfloat16", "float32"], config.dtype),
             image_size=config.image_resolution[0],
             freeze_vision_encoder=config.freeze_vision_encoder,
             train_expert_only=config.train_expert_only,
@@ -442,7 +448,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             torch.set_float32_matmul_precision("high")
             self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)
             # Also compile the main forward pass used during training
-            self.forward = torch.compile(self.forward, mode=config.compile_mode)
+            self.forward = torch.compile(self.forward, mode=config.compile_mode)  # type: ignore[method-assign]
 
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
@@ -484,6 +490,20 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             offset=self.config.time_sampling_offset,
         )
 
+    def _embed_images(self, images: list[torch.Tensor]) -> list[torch.Tensor]:
+        """Embed every camera, as a single batched vision-tower call where that is safe.
+
+        One 224x224 image underfills the GPU, so the tower spends most of a per-camera call on
+        launch and memory latency rather than arithmetic. Training keeps one call per camera:
+        ``_apply_checkpoint`` recomputes each camera separately during the backward pass, and
+        fusing them would multiply peak activation memory by the number of cameras.
+        """
+        batchable = not self.training and len(images) >= 2 and len({tuple(img.shape) for img in images}) == 1
+        if not batchable:
+            return [self._apply_checkpoint(self.paligemma_with_expert.embed_image, img) for img in images]
+        batched = self.paligemma_with_expert.embed_image(torch.cat(images, dim=0))
+        return list(torch.chunk(batched, len(images), dim=0))
+
     def embed_prefix(
         self, images, img_masks, lang_tokens, lang_masks
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -493,12 +513,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         att_masks = []
 
         # Process images
-        for img, img_mask in zip(images, img_masks, strict=True):
-
-            def image_embed_func(img):
-                return self.paligemma_with_expert.embed_image(img)
-
-            img_emb = self._apply_checkpoint(image_embed_func, img)
+        for img_emb, img_mask in zip(self._embed_images(images), img_masks, strict=True):
             bsize, num_img_embs = img_emb.shape[:2]
 
             embs.append(img_emb)
@@ -650,7 +665,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         state,
         noise=None,
         num_steps=None,
-        **kwargs: Unpack[ActionSelectKwargs],
+        **kwargs: Unpack[RTCActionSelectKwargs],
     ) -> Tensor:
         """Do a full inference forward and compute the action."""
         if num_steps is None:
@@ -1073,7 +1088,9 @@ class PI0Policy(PreTrainedPolicy):
         return self._action_queue.popleft()
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+    def predict_action_chunk(
+        self, batch: dict[str, Tensor], **kwargs: Unpack[RTCActionSelectKwargs]
+    ) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         self.eval()
 
@@ -1086,6 +1103,8 @@ class PI0Policy(PreTrainedPolicy):
         actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, **kwargs)
 
         # Unpad actions to actual action dimension
+        if self.config.output_features is None:
+            raise ValueError("output_features must be set (validate_features) before predicting actions")
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]
 
@@ -1113,6 +1132,8 @@ class PI0Policy(PreTrainedPolicy):
         losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
 
         # Truncate losses to actual action dimensions
+        if self.config.output_features is None:
+            raise ValueError("output_features must be set (validate_features) before computing the loss")
         original_action_dim = self.config.output_features[ACTION].shape[0]
         losses = losses[:, :, :original_action_dim]
 
@@ -1131,7 +1152,7 @@ class PI0Policy(PreTrainedPolicy):
             loss_dict["loss"] = loss.item()
             return loss, loss_dict
 
-    def _get_default_peft_targets(self) -> dict[str, any]:
+    def _get_default_peft_targets(self) -> dict[str, Any]:
         """Return default PEFT target modules for PI0 fine-tuning."""
         common_projections = (
             "state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out"

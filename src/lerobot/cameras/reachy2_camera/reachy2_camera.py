@@ -24,13 +24,13 @@ import platform
 import time
 from typing import TYPE_CHECKING, Any
 
-from numpy.typing import NDArray  # type: ignore  # TODO: add type stubs for numpy.typing
+from numpy.typing import NDArray
 
 # Fix MSMF hardware transform compatibility for Windows before importing cv2
 if platform.system() == "Windows" and "OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS" not in os.environ:
     os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
-import cv2  # type: ignore  # TODO: add type stubs for OpenCV
-import numpy as np  # type: ignore  # TODO: add type stubs for numpy
+import cv2
+import numpy as np
 
 from lerobot.utils.decorators import check_if_not_connected
 from lerobot.utils.import_utils import _reachy2_sdk_available, require_package

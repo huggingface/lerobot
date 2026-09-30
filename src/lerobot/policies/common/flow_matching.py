@@ -97,6 +97,10 @@ def euler_integrate(
     bsize = noise.shape[0]
     device = noise.device
 
+    guidance = rtc_processor if rtc_enabled else None
+    if rtc_enabled and guidance is None:
+        raise ValueError("rtc_processor is required when rtc_enabled is True")
+
     dt = -1.0 / num_steps
     x_t = noise
     for step in range(num_steps):
@@ -110,11 +114,11 @@ def euler_integrate(
             time_tensor = time_tensor[:, None].expand(bsize, x_t.shape[1]).clone()
             time_tensor[hard_prefix_mask[..., 0]] = 0.0
 
-        def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
+        def denoise_step_partial_call(input_x_t: Tensor, current_timestep: Tensor = time_tensor) -> Tensor:
             return denoise_fn(input_x_t, current_timestep)
 
-        if rtc_enabled:
-            v_t = rtc_processor.denoise_step(
+        if guidance is not None:
+            v_t = guidance.denoise_step(
                 x_t=x_t,
                 prev_chunk_left_over=prev_chunk_left_over,
                 inference_delay=inference_delay,
