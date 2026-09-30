@@ -117,12 +117,14 @@ class BiYamFollowerConfig(RobotConfig):
     control_frequency: float = 200.0
     feedback_timeout_s: float = 0.1
     command_timeout_s: float = 1.0
+    # Maximum settling time after a return-to-start trajectory.
+    return_timeout_s: float = 30.0
 
     def __post_init__(self) -> None:
         super().__post_init__()
         if self.left_arm.port == self.right_arm.port:
             raise ValueError("YAM arms use duplicate motor IDs and require distinct CAN interfaces")
-        for name in ("control_frequency", "feedback_timeout_s", "command_timeout_s"):
+        for name in ("control_frequency", "feedback_timeout_s", "command_timeout_s", "return_timeout_s"):
             if not math.isfinite(getattr(self, name)) or getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be finite and positive")
         if not 20 <= self.control_frequency <= 250:

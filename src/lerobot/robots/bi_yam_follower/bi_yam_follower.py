@@ -507,17 +507,7 @@ class BiYamFollower(Robot):
         remain active throughout this phase.
         """
         self.send_action(position)
-        with self._lock:
-            self._check_feedback()
-            travel_s = max(
-                max(
-                    float(np.max(np.abs(arm.target[:6] - arm.position[:6])))
-                    / arm.config.max_joint_speed_rad_s,
-                    abs(float(arm.target[6] - arm.position[6])) / arm.config.max_gripper_speed_s,
-                )
-                for arm in self.arms.values()
-            )
-        deadline = time.monotonic() + min(30.0, 2 * travel_s + 5.0)
+        deadline = time.monotonic() + self.config.return_timeout_s
         settled_since = None
         try:
             while True:

@@ -90,7 +90,7 @@ Add `--interactive=true --return_to_initial_position=true` to keep the policy an
 - `/stop`: return to the startup pose, then disconnect and disable torque.
 - `/help`: list available commands.
 
-YAM retains its servo limits during the return. After the interpolated trajectory, it refreshes the final target until both arms remain within 0.03 radians and both grippers within 0.05 of their targets for 0.2 seconds. Settling has a distance-dependent timeout, capped at 30 seconds. A timeout or feedback fault reports failure instead of claiming a completed return; normal shutdown still disconnects. Clear the return path before resetting or stopping: the return is joint-space motion without obstacle avoidance, and returning the grippers to their startup opening can release a held object.
+YAM retains its servo limits during the return. After the interpolated trajectory, it refreshes the final target until both arms remain within 0.03 radians and both grippers within 0.05 of their targets for 0.2 seconds. Settling allows up to `robot.return_timeout_s` (default 30 seconds); use `--robot.return_timeout_s=60` to allow a full minute after the interpolated trajectory. It finishes early when measured arrival is confirmed, and feedback faults still stop it immediately. A timeout or feedback fault reports failure instead of claiming a completed return; normal shutdown still disconnects. Clear the return path before resetting or stopping: the return is joint-space motion without obstacle avoidance, and returning the grippers to their startup opening can release a held object.
 
 ## Communication faults
 

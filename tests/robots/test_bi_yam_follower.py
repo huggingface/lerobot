@@ -118,9 +118,20 @@ def robot(monkeypatch, tmp_path, *, read_only=True, buses=None):
     return BiYamFollower(cfg), buses
 
 
-@pytest.mark.parametrize("outcome", ["arrive", "stuck", "fault", "stale"])
-def test_return_waits_for_measured_arrival(monkeypatch, tmp_path, outcome):
+@pytest.mark.parametrize(
+    "outcome,timeout_s",
+    [
+        ("arrive", 7.0),
+        ("arrive_slowly", 60.0),
+        ("stuck", 7.0),
+        ("stuck", 60.0),
+        ("fault", 7.0),
+        ("stale", 7.0),
+    ],
+)
+def test_return_waits_for_measured_arrival(monkeypatch, tmp_path, outcome, timeout_s):
     bot, buses = robot(monkeypatch, tmp_path, read_only=False)
+    bot.config.return_timeout_s = timeout_s
     bot._connected = True
     clock = [0.0]
     monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
@@ -137,11 +148,13 @@ def test_return_waits_for_measured_arrival(monkeypatch, tmp_path, outcome):
             assert clock[0] - arm.commanded_at < bot.config.command_timeout_s
             if outcome != "stale":
                 arm.updated_at = clock[0]
-            if outcome == "arrive":
+            if outcome in ("arrive", "arrive_slowly"):
+                # Slow measured progress can take longer than distance / target speed.
+                joint_speed = arm.config.max_joint_speed_rad_s * (0.1 if outcome == "arrive_slowly" else 1)
                 arm.position[:6] += np.clip(
                     arm.target[:6] - arm.position[:6],
-                    -arm.config.max_joint_speed_rad_s * dt,
-                    arm.config.max_joint_speed_rad_s * dt,
+                    -joint_speed * dt,
+                    joint_speed * dt,
                 )
                 arm.position[6] += np.clip(
                     arm.target[6] - arm.position[6],
@@ -153,16 +166,19 @@ def test_return_waits_for_measured_arrival(monkeypatch, tmp_path, outcome):
 
     monkeypatch.setattr(bot._stop, "wait", tick)
     try:
-        if outcome == "arrive":
+        if outcome in ("arrive", "arrive_slowly"):
             bot.wait_until_reached(target)
-            assert clock[0] > 5.0
+            assert (45.0 if outcome == "arrive_slowly" else 5.0) < clock[0] < timeout_s
             for arm in bot.arms.values():
                 np.testing.assert_allclose(arm.position, [0, 0, 0, 0, 0, 0, 1], atol=0.03)
         else:
             error = TimeoutError if outcome == "stuck" else ConnectionError
             with pytest.raises(error):
                 bot.wait_until_reached(target)
-            assert clock[0] <= 15.1
+            if outcome == "stuck":
+                assert timeout_s <= clock[0] < timeout_s + 0.1
+            else:
+                assert clock[0] < 0.2  # Fault handling is not delayed by the return timeout.
             for arm in bot.arms.values():
                 np.testing.assert_array_equal(arm.target, arm.position)
                 np.testing.assert_array_equal(arm.command, arm.position)
@@ -170,6 +186,12 @@ def test_return_waits_for_measured_arrival(monkeypatch, tmp_path, outcome):
         assert all(not bus.calls for bus in buses.values())
     finally:
         bot._connected = False
+
+
+@pytest.mark.parametrize("timeout_s", [0.0, -1.0, float("nan"), float("inf")])
+def test_return_timeout_must_be_finite_and_positive(timeout_s):
+    with pytest.raises(ValueError, match="return_timeout_s"):
+        BiYamFollowerConfig(return_timeout_s=timeout_s)
 
 
 def test_return_read_only_forbids_target_updates(monkeypatch, tmp_path):
