@@ -21,6 +21,8 @@ import contextlib
 import logging
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
@@ -389,7 +391,7 @@ def send_next_action(
 ) -> dict | None:
     """Dispatch the next action to the robot.
 
-    Pulls the next action tensor from the inference engine, feeds the
+    Pulls the next action from the inference engine, feeds the
     interpolator, and sends the interpolated action through the
     ``robot_action_processor`` to the robot.  Works identically for
     sync and async backends — the rollout strategy never needs to branch.
@@ -415,7 +417,7 @@ def send_next_action(
             obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
             action_tensor = engine.get_action(obs_frame)
         if action_tensor is not None:
-            interpolator.add(action_tensor.cpu())
+            interpolator.add(action_tensor if isinstance(action_tensor, np.ndarray) else action_tensor.cpu())
 
     interp = interpolator.get()
     if interp is None:

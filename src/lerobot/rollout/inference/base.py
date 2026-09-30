@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT
 
 if TYPE_CHECKING:
+    import numpy as np
     import torch
 
 logger = logging.getLogger(__name__)
@@ -92,7 +93,7 @@ class InferenceEngine(abc.ABC):
 
     Action production
     -----------------
-    ``get_action(obs_frame)`` — return the next action tensor, or
+    ``get_action(obs_frame)`` — return the next action (a tensor or a NumPy array), or
     ``None`` if none is available (e.g. async queue empty).  Sync
     backends always compute from ``obs_frame``; async backends ignore
     it (they receive observations via ``notify_observation``).
@@ -470,8 +471,8 @@ class InferenceEngine(abc.ABC):
         """Clear episode-scoped state."""
 
     @abc.abstractmethod
-    def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
-        """Return the next action tensor, or ``None`` if unavailable."""
+    def get_action(self, obs_frame: dict | None) -> torch.Tensor | np.ndarray | None:
+        """Return the next action (a tensor or a NumPy array), or ``None`` if unavailable."""
 
     def notify_observation(self, obs: dict) -> None:  # noqa: B027
         """Publish the latest processed observation.  Default: no-op."""
