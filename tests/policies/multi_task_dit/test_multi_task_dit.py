@@ -41,6 +41,7 @@ from lerobot.policies.multi_task_dit.modeling_multi_task_dit import MultiTaskDiT
 from lerobot.policies.multi_task_dit.processor_multi_task_dit import (
     make_multi_task_dit_pre_post_processors,
 )
+from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import (
     ACTION,
     OBS_IMAGES,
@@ -619,3 +620,64 @@ def test_multi_task_dit_policy_get_optim_params():
     assert "lr" in param_groups[1]
     expected_lr = config.optimizer_lr * config.vision_encoder_lr_multiplier
     assert param_groups[1]["lr"] == expected_lr
+
+
+def _make_inference_policy_and_batch(**overrides) -> tuple[MultiTaskDiTPolicy, dict[str, Tensor]]:
+    config = create_config()
+    config.device = "cpu"
+    config.num_inference_steps = 10
+    config.num_integration_steps = 10
+    for key, value in overrides.items():
+        setattr(config, key, value)
+    config.normalization_mapping = {
+        "VISUAL": NormalizationMode.IDENTITY,
+        "STATE": NormalizationMode.IDENTITY,
+        "ACTION": NormalizationMode.IDENTITY,
+    }
+    policy = MultiTaskDiTPolicy(config=config)
+    policy.eval()
+    policy.reset()
+    preprocessor, _ = make_multi_task_dit_pre_post_processors(config=config, dataset_stats=None)
+    observation = preprocessor(create_observation_batch(batch_size=2))
+    observation.pop(ACTION, None)
+    batch = policy._prepare_batch(observation)
+    policy._queues = populate_queues(policy._queues, batch)
+    return policy, batch
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"objective": "diffusion", "noise_scheduler_type": "DDIM"}, {"objective": "flow_matching"}],
+)
+def test_multi_task_dit_predict_action_chunk_uses_given_noise(overrides):
+    policy, batch = _make_inference_policy_and_batch(**overrides)
+    noise = torch.randn(2, policy.config.horizon, 10)
+    noise_before = noise.clone()
+
+    actions = policy.predict_action_chunk(dict(batch), noise=noise)
+    actions_again = policy.predict_action_chunk(dict(batch), noise=noise)
+    other_actions = policy.predict_action_chunk(dict(batch), noise=torch.randn_like(noise))
+
+    assert torch.equal(actions, actions_again)
+    assert torch.equal(noise, noise_before)
+    assert not torch.equal(actions, other_actions)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"objective": "diffusion", "noise_scheduler_type": "DDPM"},
+        {"objective": "diffusion", "noise_scheduler_type": "DDIM"},
+        {"objective": "flow_matching"},
+    ],
+)
+def test_multi_task_dit_predict_action_chunk_default_noise_matches_seeded_draw(overrides):
+    policy, batch = _make_inference_policy_and_batch(**overrides)
+
+    with seeded_context(0):
+        actions = policy.predict_action_chunk(dict(batch))
+    with seeded_context(0):
+        noise = torch.randn(size=(2, policy.config.horizon, 10), dtype=torch.float32, device="cpu")
+        actions_with_noise = policy.predict_action_chunk(dict(batch), noise=noise)
+
+    assert torch.equal(actions, actions_with_noise)
