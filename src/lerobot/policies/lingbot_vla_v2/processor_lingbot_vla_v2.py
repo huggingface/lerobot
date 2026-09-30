@@ -584,7 +584,9 @@ class LingbotVLAV2InverseSlotMappingProcessorStep(PolicyActionProcessorStep):
                 "cannot map canonical actions back to raw action dims."
             )
         raw_dim = max(end for _, _, slot_spans in spans for _, _, end in slot_spans)
-        raw = action.new_zeros(*action.shape[:-1], raw_dim)
+        # Emit fp32 raw actions regardless of the model's prediction dtype (bf16):
+        # downstream envs and numpy expect float32 actions.
+        raw = action.new_zeros(*action.shape[:-1], raw_dim, dtype=torch.float32)
         offset = 0
         for _joint, dim, slot_spans in spans:
             real = sum(end - start for _, start, end in slot_spans)
