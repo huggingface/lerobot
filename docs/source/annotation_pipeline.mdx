@@ -199,6 +199,7 @@ Every module is on by default and can be toggled independently (set to
 | `--plan.enabled`          | `true`  | subtasks + plan + memory + task_aug |
 | `--interjections.enabled` | `true`  | interjections + speech atoms        |
 | `--vqa.enabled`           | `true`  | the VQA pairs                       |
+| `--human_video.enabled`   | `false` | human demonstration videos (opt-in) |
 
 ### The VLM (`--vlm.*`)
 
@@ -238,6 +239,57 @@ Every module is on by default and can be toggled independently (set to
 | `--vqa.vqa_emission_hz`                         | `1.0`   | How often VQA pairs are emitted.                           |
 | `--vqa.restrict_to_default_camera`              | `false` | Ground VQA only on `--vlm.camera_key` (else every camera). |
 | `--executor.episode_parallelism`                | `16`    | Episodes processed concurrently within each phase.         |
+
+## Human demonstration videos (`--human_video.*`)
+
+The optional `human_video` module turns every subtask into a short video of a person doing it, the
+"HumanGen" data of [Zero-WAM](https://robbyant-research.github.io/Zero-WAM/): policies such as
+Zero-WAM take such videos as in-context task prompts. For each subtask segment:
+
+1. the VLM reads frames of the robot segment and writes the human task and an image-edit prompt;
+2. an image-editing model turns the segment's first frame into a first-person view with the robot
+   removed and two human hands at rest;
+3. the VLM writes a step-by-step video prompt from the edited frame and the robot frames;
+4. an image-to-video model animates the edited frame.
+
+Steps 2 and 4 run on [Inference Providers](https://huggingface.co/docs/inference-providers) and are
+billed to the account of your Hugging Face token. The defaults are
+[Qwen-Image-Edit-2509](https://huggingface.co/Qwen/Qwen-Image-Edit-2509) and
+[MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3) at 480p on fal. The module reads the
+subtasks from the `plan` module, or from the dataset's `language_persistent` column when `plan` is
+off, so an already annotated dataset only needs:
+
+```bash
+lerobot-annotate \
+    --repo_id=user/my_annotated_dataset \
+    --plan.enabled=false --interjections.enabled=false --vqa.enabled=false \
+    --human_video.enabled=true \
+    --vlm.api_base=https://router.huggingface.co/v1 --vlm.auto_serve=false \
+    --vlm.model_id=Qwen/Qwen3.8-27B:novita --vlm.api_key=$HF_TOKEN \
+    --vlm.chat_template_kwargs='{"enable_thinking": false}'
+```
+
+Videos are written to `human_videos/episode_XXXXXX/segment_XXX.mp4` (with the edited first frame
+next to each) and indexed in `meta/human_videos.jsonl`: one line per segment with the subtask, its
+start and end time, the human task, the prompts, the models and the file paths. They are not
+written to the language columns. A failed request is recorded with `"status": "failed"` and does not
+stop the run.
+
+| Flag                                     | Default                     | What it does                                                   |
+| ---------------------------------------- | --------------------------- | -------------------------------------------------------------- |
+| `--human_video.provider`                 | `fal-ai`                    | Inference provider for editing and video generation.           |
+| `--human_video.edit_model`               | `Qwen/Qwen-Image-Edit-2509` | Image-editing model; `null` animates the unedited robot frame. |
+| `--human_video.edit_guidance_scale`      | `1.5`                       | Edit guidance; higher values oversaturate on fal.              |
+| `--human_video.video_model`              | `MiniMaxAI/MiniMax-H3`      | Image-to-video model.                                          |
+| `--human_video.resolution`               | `480P`                      | Provider resolution (`480P`, `768P`, `1080P` for MiniMax H3).  |
+| `--human_video.duration_s`               | `5`                         | Video length in seconds.                                       |
+| `--human_video.camera_key`               | `--vlm.camera_key`          | Camera to edit and animate.                                    |
+| `--human_video.frame_offset_s`           | `0.0`                       | Take the first frame this long after the subtask starts.       |
+| `--human_video.max_segments_per_episode` | all                         | Cap on videos per episode.                                     |
+| `--human_video.max_concurrency`          | `4`                         | Concurrent provider requests per episode.                      |
+
+Generated videos can drop, duplicate or change objects. Review them before training on them, for
+example by filtering with a VLM as Zero-WAM does.
 
 ## Contributing new modules
 
@@ -332,6 +384,11 @@ Per episode, the pipeline makes about `max_steps` plan calls,
 `vqa_emission_hz × episode_seconds` VQA calls. With the defaults (8
 subtasks, 1 interjection, 1 Hz × 3 pairs) on a 30-second episode, that's
 ~50 VLM calls.
+
+With `--human_video.enabled=true`, every subtask adds two VLM calls, one image edit and one video
+(5 s at 480p by default), billed by the provider; see the pricing on the
+[fal model page](https://fal.ai/models/minimax/h3-max/image-to-video) for MiniMax H3. Video
+requests take a few minutes each, so raise `--human_video.max_concurrency` for long datasets.
 
 Storage stays small: `language_persistent` is at most tens of KB per
 episode (parquet dictionary-encodes the one entry that repeats across

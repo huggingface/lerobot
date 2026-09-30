@@ -25,6 +25,9 @@ The executor runs **six phases** in dependency order:
     phase 5: validator
     phase 6: writer
 
+When ``human_video`` is enabled, it runs after ``vqa`` and its videos are indexed in
+``meta/human_videos.jsonl`` after the writer; it does not touch the language columns.
+
 Phase 3 is why the ``plan`` module must be re-entered after the
 ``interjections`` module — to refresh ``plan`` rows at interjection
 timestamps.
@@ -38,6 +41,7 @@ Episode-level concurrency is controlled by
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -88,6 +92,7 @@ class Executor:
     vqa: Any  # GeneralVqaModule
     writer: LanguageColumnsWriter
     validator: StagingValidator
+    human_video: Any = None  # HumanVideoModule; optional, off by default
 
     def run(self, root: Path) -> PipelineRunSummary:
         records = list(iter_episodes(root, only_episodes=self.config.only_episodes))
@@ -112,6 +117,8 @@ class Executor:
         phases.append(self._run_plan_update_phase(records, staging_dir))
         # Phase 4: ``vqa`` module (VQA)
         phases.append(self._run_module_phase("vqa", records, staging_dir, self.vqa))
+        if self.human_video is not None:
+            phases.append(self._run_module_phase("human_video", records, staging_dir, self.human_video))
 
         print("[annotate] running validator...", flush=True)
         report = self.validator.validate(records, staging_dir)
@@ -126,8 +133,26 @@ class Executor:
         # Keep meta/info.json aligned with the parquet schema we just wrote.
         # Idempotent and additive: existing user metadata is preserved.
         self._ensure_annotation_metadata_in_info(root)
+        if self.human_video is not None and self.human_video.enabled:
+            self._write_human_video_manifest(records, staging_dir, root)
 
         return PipelineRunSummary(phases=phases, written_paths=written, validation_report=report)
+
+    @staticmethod
+    def _write_human_video_manifest(records: list[EpisodeRecord], staging_dir: Path, root: Path) -> None:
+        """Merge the per-episode ``human_video.json`` staging files into ``meta/human_videos.jsonl``."""
+        from .modules.human_video import MANIFEST_FILENAME  # noqa: PLC0415
+
+        entries = []
+        for record in records:
+            path = EpisodeStaging(staging_dir, record.episode_index).episode_dir / MANIFEST_FILENAME
+            if path.exists():
+                entries.extend(json.loads(path.read_text()))
+        manifest = root / "meta" / "human_videos.jsonl"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
+        ok = sum(entry.get("status") == "ok" for entry in entries)
+        print(f"[annotate] human_video: {ok}/{len(entries)} videos, index at {manifest}", flush=True)
 
     @staticmethod
     def _ensure_annotation_metadata_in_info(root: Path) -> None:

@@ -47,6 +47,8 @@ from lerobot.annotations.steerable_pipeline.executor import Executor
 from lerobot.annotations.steerable_pipeline.frames import make_frame_provider
 from lerobot.annotations.steerable_pipeline.modules import (
     GeneralVqaModule,
+    HumanVideoModule,
+    InferenceProvidersGenerator,
     InterjectionsAndSpeechModule,
     PlanSubtasksMemoryModule,
 )
@@ -110,6 +112,18 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
         vlm=vlm, config=cfg.interjections, seed=cfg.seed, frame_provider=frame_provider
     )
     vqa = GeneralVqaModule(vlm=vlm, config=cfg.vqa, seed=cfg.seed, frame_provider=frame_provider)
+    human_video = None
+    if cfg.human_video.enabled:
+        human_video_cfg = cfg.human_video
+        if human_video_cfg.camera_key is None:
+            human_video_cfg.camera_key = getattr(frame_provider, "camera_key", None)
+        human_video = HumanVideoModule(
+            vlm=vlm,
+            config=human_video_cfg,
+            root=root,
+            generator=InferenceProvidersGenerator(config=human_video_cfg),
+            frame_provider=frame_provider,
+        )
     writer = LanguageColumnsWriter()
     validator = StagingValidator(
         dataset_camera_keys=tuple(getattr(frame_provider, "camera_keys", []) or []) or None,
@@ -122,6 +136,7 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
         vqa=vqa,
         writer=writer,
         validator=validator,
+        human_video=human_video,
     )
     summary = executor.run(root)
     logger.info("annotate: wrote %d shard(s)", len(summary.written_paths))

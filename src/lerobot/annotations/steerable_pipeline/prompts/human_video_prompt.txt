@@ -1,0 +1,14 @@
+Image 1 is the first frame of a new first-person video of a person doing a task; an image-to-video model will animate it.
+Images 2 onwards show how a robot did the same task; use them only for the order of events and object motion. No robot may appear in the new video.
+
+Task: "{human_task}"
+Object: {object}
+Target: {target}
+Steps: {steps}
+Final state: {final_state}
+
+Write "video_prompt": one paragraph of 100 to 170 words for the image-to-video model. Start with "From a fixed first-person camera perspective, based strictly on the initial image, the viewer's two human hands are resting on the near edge of the table." Describe the object and the target with their colours and positions as in image 1. Include verbatim: "Generate only these two human arms, with no extra limbs and no robotic arms. Every object stays still unless the hand holds it." Then describe with "First, ... Next, ... Finally, ..." how the {hand} hand reaches the object, grasps it, moves it and releases it at the target while the other hand stays still, then returns to rest without touching anything. The camera never moves. End with "The final frame shows {final_state}, with both hands resting at the near edge." The motion is realistic and smooth and completes within about {duration_s} seconds.
+
+Also write "caption": two sentences describing the human video.
+
+Return one JSON object with keys "video_prompt" and "caption".

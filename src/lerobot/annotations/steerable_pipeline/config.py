@@ -156,6 +156,42 @@ class VqaConfig:
 
 
 @dataclass
+class HumanVideoConfig:
+    """``human_video`` module: a human-hands demonstration video for every subtask segment.
+
+    Off by default. For each subtask, the shared VLM writes an image-edit prompt and a video
+    prompt; ``edit_model`` turns the segment's first frame into a first-person human view (robot
+    removed, two hands at rest), and ``video_model`` animates it (image-to-video). Both run through
+    Hugging Face Inference Providers and are billed to the account behind the Hugging Face token.
+    Videos go to ``<root>/<output_dir>/`` and are indexed in ``meta/human_videos.jsonl``; they are
+    not written to the language columns.
+    """
+
+    enabled: bool = False
+    provider: str = "fal-ai"
+    # Image-to-image model that removes the robot; None animates the unedited robot frame.
+    edit_model: str | None = "Qwen/Qwen-Image-Edit-2509"
+    # Lower guidance keeps the scene's colours (Qwen-Image-Edit on fal oversaturates at its default).
+    edit_guidance_scale: float | None = 1.5
+    video_model: str = "MiniMaxAI/MiniMax-H3"
+    # Provider-specific video settings (MiniMax H3 on fal: "480P" | "768P" | "1080P", 5-10 s).
+    resolution: str = "480P"
+    duration_s: int = 5
+    # Camera to edit and animate; None → ``--vlm.camera_key`` (first camera if unset).
+    camera_key: str | None = None
+    # Seconds after the subtask start to take the first frame from.
+    frame_offset_s: float = 0.0
+    # Robot frames per segment shown to the VLM when it writes the prompts.
+    context_frames: int = 6
+    # Cap on generated videos per episode (None = every subtask).
+    max_segments_per_episode: int | None = None
+    # Concurrent provider requests per episode (videos take minutes each).
+    max_concurrency: int = 4
+    output_dir: str = "human_videos"
+    seed: int | None = None
+
+
+@dataclass
 class VlmConfig:
     """Shared Qwen-VL client configuration."""
 
@@ -226,6 +262,7 @@ class AnnotationPipelineConfig:
     plan: PlanConfig = field(default_factory=PlanConfig)
     interjections: InterjectionsConfig = field(default_factory=InterjectionsConfig)
     vqa: VqaConfig = field(default_factory=VqaConfig)
+    human_video: HumanVideoConfig = field(default_factory=HumanVideoConfig)
 
     vlm: VlmConfig = field(default_factory=VlmConfig)
     executor: ExecutorConfig = field(default_factory=ExecutorConfig)
