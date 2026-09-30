@@ -41,10 +41,10 @@ class BaseStrategy(RolloutStrategy):
 
     def run(self, ctx: RolloutContext) -> None:
         """Run the autonomous control loop until shutdown or duration expires."""
-        engine = self._engine
+        engine = self._require_engine()
         cfg = ctx.runtime.cfg
         robot = ctx.hardware.robot_wrapper
-        interpolator = self._interpolator
+        interpolator = self._require_interpolator()
 
         timer = CycleTimer(
             cfg.fps,

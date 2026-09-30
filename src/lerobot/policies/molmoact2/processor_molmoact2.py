@@ -47,9 +47,8 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
-    batch_to_transition,
+    load_pretrained_policy_processors,
     policy_action_to_transition,
-    transition_to_batch,
     transition_to_policy_action,
 )
 from lerobot.utils.constants import (
@@ -67,6 +66,11 @@ from .utils_molmoact2 import (
     position_ids_from_attention_mask as _position_ids_from_attention_mask,
     resolve_checkpoint_location as _resolve_checkpoint_location,
 )
+
+if TYPE_CHECKING:
+    from lerobot.processor.normalize_processor import _NormalizationMixin as _MaskedNormalizationBase
+else:
+    _MaskedNormalizationBase = object
 
 logger = logging.getLogger(__name__)
 
@@ -582,7 +586,7 @@ def _add_gripper_masks_to_stats(
             continue
 
         existing_mask = feature_stats.get("mask")
-        if torch.is_tensor(existing_mask):
+        if isinstance(existing_mask, Tensor):
             existing_mask = existing_mask.detach().cpu().tolist()
         if (
             isinstance(existing_mask, list)
@@ -626,7 +630,9 @@ def _normalization_masks_from_stats(
     return masks
 
 
-class _MolmoAct2MaskedNormalizationMixin:
+class _MolmoAct2MaskedNormalizationMixin(_MaskedNormalizationBase):
+    """Masks normalization to a per-feature subset; mixed into the Normalizer/Unnormalizer steps below."""
+
     @staticmethod
     def _broadcast_feature_mask(mask: Tensor, tensor: Tensor) -> Tensor | None:
         mask = mask.to(device=tensor.device, dtype=torch.bool)
@@ -648,7 +654,7 @@ class _MolmoAct2MaskedNormalizationMixin:
             )
 
     def _apply_transform(
-        self, tensor: Tensor, key: str, feature_type: Any, *, inverse: bool = False
+        self, tensor: Tensor, key: str, feature_type: FeatureType, *, inverse: bool = False
     ) -> Tensor:
         transformed = super()._apply_transform(tensor, key, feature_type, inverse=inverse)
         stats = getattr(self, "_tensor_stats", {}).get(key, {})
@@ -820,11 +826,11 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         if action is not None:
             return int(action.shape[0])
         state = observation.get(OBS_STATE)
-        if torch.is_tensor(state) or isinstance(state, np.ndarray):
+        if isinstance(state, (Tensor, np.ndarray)):
             return int(state.shape[0]) if getattr(state, "ndim", 0) > 1 else 1
         for key in self._resolve_image_keys(observation):
             value = observation[key]
-            if torch.is_tensor(value) or isinstance(value, np.ndarray):
+            if isinstance(value, (Tensor, np.ndarray)):
                 return int(value.shape[0]) if getattr(value, "ndim", 0) == 4 else 1
         return 1
 
@@ -983,7 +989,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 num_images=len(images),
             )
             prompt_texts.append(prompt)
-            if build_action_labels:
+            if build_action_labels and action is not None:
                 if self.action_processor is None:
                     raise ValueError("Discrete MolmoAct2 training requires an action tokenizer.")
                 answer = _build_discrete_action_string(
@@ -1226,6 +1232,8 @@ def make_molmoact2_pre_post_processors_from_pretrained(
     pretrained_path: str,
     *,
     revision: str | None = None,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    dataset_meta: Any | None = None,
     preprocessor_overrides: dict[str, dict[str, Any]] | None = None,
     postprocessor_overrides: dict[str, dict[str, Any]] | None = None,
     preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
@@ -1243,6 +1251,8 @@ def make_molmoact2_pre_post_processors_from_pretrained(
     When no stats are supplied (checkpoint resume), the serialized processor
     stats and clamp masks remain authoritative.
     """
+    # Fine-tuning stats reach MolmoAct2 through the normalizer overrides, not these two.
+    del dataset_stats, dataset_meta
     prepared_preprocessor_overrides, prepared_postprocessor_overrides = (
         _prepare_pretrained_processor_overrides(
             config,
@@ -1250,23 +1260,14 @@ def make_molmoact2_pre_post_processors_from_pretrained(
             postprocessor_overrides,
         )
     )
-    preprocessor = PolicyProcessorPipeline.from_pretrained(
-        pretrained_model_name_or_path=pretrained_path,
-        config_filename=preprocessor_config_filename,
-        overrides=prepared_preprocessor_overrides,
-        to_transition=batch_to_transition,
-        to_output=transition_to_batch,
+    return load_pretrained_policy_processors(
+        pretrained_path,
         revision=revision,
+        preprocessor_overrides=prepared_preprocessor_overrides,
+        postprocessor_overrides=prepared_postprocessor_overrides,
+        preprocessor_config_filename=preprocessor_config_filename,
+        postprocessor_config_filename=postprocessor_config_filename,
     )
-    postprocessor = PolicyProcessorPipeline.from_pretrained(
-        pretrained_model_name_or_path=pretrained_path,
-        config_filename=postprocessor_config_filename,
-        overrides=prepared_postprocessor_overrides,
-        to_transition=policy_action_to_transition,
-        to_output=transition_to_policy_action,
-        revision=revision,
-    )
-    return preprocessor, postprocessor
 
 
 def make_molmoact2_pre_post_processors(
@@ -1312,6 +1313,10 @@ def make_molmoact2_pre_post_processors(
         dataset_feature_names=config.dataset_feature_names,
     )
     normalization_masks = _normalization_masks_from_stats(masked_dataset_stats)
+    if config.device is None:
+        raise ValueError(
+            "MolmoAct2 processors require `config.device`; `PreTrainedConfig.__post_init__` resolves it."
+        )
 
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),
