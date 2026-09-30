@@ -42,7 +42,7 @@ Usage:
         --visualize-only \\
         --num-visualizations 5
 
-The output is saved to the dataset's local cache directory as 'sarm_progress.parquet'.
+The output is saved as the dataset score 'sarm_progress'.
 """
 
 from __future__ import annotations
@@ -75,6 +75,7 @@ else:
 
 if TYPE_CHECKING or (_datasets_available and _av_available):
     from lerobot.datasets import LeRobotDataset
+    from lerobot.datasets.utils import SCORES_DIR
 else:
     LeRobotDataset = None  # type: ignore[assignment, misc]
 
@@ -685,7 +686,11 @@ def compute_sarm_progress(
     final_table = final_table.replace_schema_metadata(metadata)
 
     # Determine output path
-    save_path = Path(dataset.root) / "sarm_progress.parquet" if output_path is None else Path(output_path)
+    save_path = (
+        Path(dataset.root) / SCORES_DIR / "sarm_progress.parquet"
+        if output_path is None
+        else Path(output_path)
+    )
 
     # Save
     save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -819,7 +824,7 @@ Examples:
         if LeRobotDataset is None:
             raise ImportError("SARM dataset scoring requires LeRobotDataset")
         temp_dataset = LeRobotDataset(args.dataset_repo_id, download_videos=False)
-        parquet_path = Path(temp_dataset.root) / "sarm_progress.parquet"
+        parquet_path = Path(temp_dataset.root) / SCORES_DIR / "sarm_progress.parquet"
         reward_model_path = get_reward_model_path_from_parquet(parquet_path)
         if reward_model_path:
             logging.info(f"Using reward model from parquet metadata: {reward_model_path}")
@@ -866,7 +871,7 @@ Examples:
         from huggingface_hub import HfApi
 
         api = HfApi()
-        hub_path = "sarm_progress.parquet"
+        hub_path = f"{SCORES_DIR}/sarm_progress.parquet"
 
         print(f"\nUploading to Hub: {args.dataset_repo_id}/{hub_path}")
         api.upload_file(
@@ -879,15 +884,12 @@ Examples:
             f"Successfully uploaded to: https://huggingface.co/datasets/{args.dataset_repo_id}/blob/main/{hub_path}"
         )
 
-        print("\nTo use in training, add to your config:")
-        print("  use_rabc: true")
-        print(f"  rabc_progress_path: hf://datasets/{args.dataset_repo_id}/{hub_path}")
-        print("  rabc_head_mode: sparse  # or dense")
-    else:
-        print("\nTo use in training, add to your config:")
-        print("  use_rabc: true")
-        print(f"  rabc_progress_path: {output_path}")
-        print("  rabc_head_mode: sparse  # or dense")
+    signal_name = "progress_dense" if args.head_mode == "dense" else "progress_sparse"
+    print("\nTo use in training, add to your config:")
+    print("  sample_weighting:")
+    print("    type: rabc")
+    print("    score_name: sarm_progress")
+    print(f"    signal_name: {signal_name}")
 
 
 if __name__ == "__main__":

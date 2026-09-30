@@ -455,7 +455,7 @@ python -m lerobot.rewards.sarm.compute_rabc_weights \
 This script:
 
 - Processes all frames and computes progress values
-- Saves progress values to a parquet file next to the dataset on disk (defaults to `<dataset_root>/sarm_progress.parquet`)
+- Saves progress values as the dataset score `<dataset_root>/reward_signals/sarm_progress.parquet`
 - Generates visualizations of the first N episodes (default: 5)
 
 **Arguments:**
@@ -478,16 +478,20 @@ This script:
 | `progress_sparse` | Sparse head progress value [0, 1]              |
 | `progress_dense`  | Dense head progress value [0, 1] (if computed) |
 
+> [!NOTE]
+> Older versions of this script wrote `sarm_progress.parquet` at the dataset root. Move that file into `reward_signals/` (locally and on the Hub) so RA-BC can read it as the `sarm_progress` score.
+
 ### Step 5b: Train Policy with RA-BC
 
-Once you have the progress file, train your policy with RA-BC weighting. The progress file is auto-detected from the dataset path (`sarm_progress.parquet`) if not explicitly provided. Currently PI0, PI0.5 and SmolVLA are supported with RA-BC:
+Once the dataset contains the `sarm_progress` score, train your policy with RA-BC weighting. Currently PI0, PI0.5 and SmolVLA are supported with RA-BC:
 
 ```bash
 lerobot-train \
   --dataset.repo_id=your-username/your-dataset \
   --policy.type=pi0 \
   --sample_weighting.type=rabc \
-  --sample_weighting.head_mode=sparse \
+  --sample_weighting.score_name=sarm_progress \
+  --sample_weighting.signal_name=progress_sparse \
   --sample_weighting.kappa=0.01 \
   --output_dir=outputs/train/policy_rabc \
   --batch_size=32 \
@@ -496,20 +500,20 @@ lerobot-train \
 
 The training script automatically:
 
-- Loads the precomputed progress values from the parquet file
+- Loads the precomputed progress values through the dataset score API
 - Uses the policy's `chunk_size` to compute progress deltas (Δ)
 - Computes sample weights based on progress improvement
 - Applies weighted loss during training
 
 **RA-BC Arguments:**
 
-| Argument                           | Description                                            | Default                 |
-| ---------------------------------- | ------------------------------------------------------ | ----------------------- |
-| `--sample_weighting.type`          | Weighting strategy type (`rabc` or `uniform`)          | `rabc`                  |
-| `--sample_weighting.progress_path` | Path to progress parquet file                          | `sarm_progress.parquet` |
-| `--sample_weighting.head_mode`     | Which SARM head's progress to use: `sparse` or `dense` | `sparse`                |
-| `--sample_weighting.kappa`         | Threshold κ for high-quality samples                   | `0.01`                  |
-| `--sample_weighting.epsilon`       | Small constant for numerical stability                 | `1e-6`                  |
+| Argument                         | Description                                       | Default |
+| -------------------------------- | ------------------------------------------------- | ------- |
+| `--sample_weighting.type`        | Weighting strategy type (`rabc` or `uniform`)     | `rabc`  |
+| `--sample_weighting.score_name`  | Dataset score containing progress signals         | —       |
+| `--sample_weighting.signal_name` | Progress signal to use, such as `progress_sparse` | —       |
+| `--sample_weighting.kappa`       | Threshold κ for high-quality samples              | `0.01`  |
+| `--sample_weighting.epsilon`     | Small constant for numerical stability            | `1e-6`  |
 
 ### Tuning RA-BC Kappa
 

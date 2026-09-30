@@ -19,8 +19,8 @@ Create MP4 (or GIF) videos with per-frame progress overlay for specified episode
 
 Downloads datasets from HuggingFace, seeks directly into the episode segment
 of the source video, draws a progress line on each frame, and writes the result.
-The progress data is read from a parquet file that lives alongside the dataset
-(configurable via ``--progress-file``).
+The progress data is read from a dataset score, by default
+``reward_signals/sarm_progress.parquet`` (configurable via ``--progress-file``).
 
 Usage:
     python examples/dataset/create_progress_videos.py \
@@ -55,12 +55,11 @@ SHADOW_THICKNESS = 6
 REF_ALPHA = 0.45
 FILL_ALPHA = 0.55
 SCORE_FONT_SCALE = 0.8
+DEFAULT_PROGRESS_FILE = "reward_signals/sarm_progress.parquet"
 TASK_FONT_SCALE = 0.55
 
 
-def download_episode_metadata(
-    repo_id: str, episode: int, progress_file: str = "sarm_progress.parquet"
-) -> Path:
+def download_episode_metadata(repo_id: str, episode: int, progress_file: str = DEFAULT_PROGRESS_FILE) -> Path:
     """Download only the metadata and per-frame progress file for a dataset.
 
     Args:
@@ -222,7 +221,7 @@ def download_video_file(repo_id: str, local_path: Path, video_rel: str) -> Path:
 
 
 def load_progress_data(
-    local_path: Path, episode: int, progress_file: str = "sarm_progress.parquet"
+    local_path: Path, episode: int, progress_file: str = DEFAULT_PROGRESS_FILE
 ) -> np.ndarray | None:
     """Load per-frame progress values for an episode.
 
@@ -585,7 +584,7 @@ def process_dataset(
     camera_key: str | None,
     output_dir: Path,
     create_gif: bool = False,
-    progress_file: str = "sarm_progress.parquet",
+    progress_file: str = DEFAULT_PROGRESS_FILE,
 ) -> Path | None:
     """Full pipeline: download, extract metadata, composite progress, write output.
 
@@ -673,10 +672,10 @@ def main() -> None:
     parser.add_argument(
         "--progress-file",
         type=str,
-        default="sarm_progress.parquet",
+        default=DEFAULT_PROGRESS_FILE,
         help=(
-            "Filename of the per-frame progress parquet inside the dataset repo "
-            "(default: 'sarm_progress.parquet')."
+            "Path of the per-frame progress parquet inside the dataset repo "
+            f"(default: '{DEFAULT_PROGRESS_FILE}')."
         ),
     )
     args = parser.parse_args()

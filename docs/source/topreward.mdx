@@ -118,7 +118,7 @@ The serialized `success_threshold` field remains for compatibility with existing
 
 ### Offline dataset labeling
 
-Write a `topreward_progress.parquet` for RA-BC training and overlay videos:
+Write the dataset score `reward_signals/topreward_progress.parquet` for RA-BC training and overlay videos:
 
 The legacy labeling script preserves existing artifact behavior: if a loaded config has a finite `success_threshold`, it applies that threshold before per-episode normalization. New Python consumers always receive the raw value from `compute_log_probability()`.
 
@@ -136,7 +136,7 @@ Then render the progress overlay for any episode:
 uv run examples/dataset/create_progress_videos.py \
     --repo-id lerobot/libero_10_image \
     --episode 0 \
-    --progress-file topreward_progress.parquet \
+    --progress-file reward_signals/topreward_progress.parquet \
     --gif
 ```
 

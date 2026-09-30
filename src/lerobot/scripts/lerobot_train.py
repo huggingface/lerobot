@@ -670,8 +670,7 @@ def train(cfg: TrainPipelineConfig) -> None:
             cfg.sample_weighting,
             policy,
             device,
-            dataset_root=cfg.dataset.root,
-            dataset_repo_id=cfg.dataset.repo_id,
+            dataset=dataset,
         )
 
     # --- banner (main process only; numel() reads metadata — on DTensors it is the GLOBAL shape,

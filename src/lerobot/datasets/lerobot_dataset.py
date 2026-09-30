@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import contextlib
 import logging
 from collections.abc import Callable
@@ -32,6 +33,8 @@ from lerobot.utils.import_utils import get_safe_default_video_backend
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .dataset_reader import BaseDatasetReader, DatasetReader
 from .dataset_writer import DatasetWriter
+from .scores import FrameScorer, SignalDescriptor
+from .scores.storage import DatasetScoreStorage
 from .storage import (
     DEFAULT_STORAGE_FORMAT,
     is_remote_uri,
@@ -39,6 +42,7 @@ from .storage import (
     make_dataset_reader,
 )
 from .utils import (
+    SCORES_DIR,
     create_lerobot_dataset_card,
     get_safe_version,
     is_valid_version,
@@ -641,6 +645,85 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.reader.set_image_transforms(None)
         self.image_transforms = None
 
+    # ── Score-delegated methods ───────────────────────────────────────
+
+    @property
+    def score_storage(self) -> DatasetScoreStorage:
+        """Storage for score sidecars derived from this dataset."""
+        return DatasetScoreStorage(self)
+
+    def add_score(
+        self,
+        scorer: FrameScorer,
+        *,
+        name: str | None = None,
+        episodes: list[int] | None = None,
+        resume: bool = True,
+        overwrite: bool = False,
+    ) -> None:
+        """Score episodes and publish the signals as a named score.
+
+        Delegates to :meth:`DatasetScoreStorage.add`. Source data files are
+        not modified.
+
+        Args:
+            scorer: Model-specific scorer that returns signals for one episode.
+            name: Score name. Defaults to ``scorer.name``.
+            episodes: Global episode indices to score. Defaults to every episode
+                in this dataset view.
+            resume: If ``True``, skip episodes completed by an interrupted run
+                with the same dataset, scorer, and episode selection.
+            overwrite: If ``True``, replace an existing score once the new one
+                is complete.
+
+        Raises:
+            RuntimeError: If the dataset is being recorded and not finalized.
+            FileExistsError: If the score exists and ``overwrite`` is ``False``.
+        """
+        self._ensure_reader()
+        self.score_storage.add(
+            scorer,
+            name=name,
+            episodes=episodes,
+            resume=resume,
+            overwrite=overwrite,
+        )
+
+    def read_score(self, name: str) -> datasets.Dataset:
+        """Read a named score as a Hugging Face dataset.
+
+        Delegates to :meth:`DatasetScoreStorage.read`.
+        """
+        return self.score_storage.read(name)
+
+    def get_score_descriptors(self, name: str) -> dict[str, SignalDescriptor]:
+        """Return how each signal in a named score should be interpreted.
+
+        Delegates to :meth:`DatasetScoreStorage.descriptors`.
+        """
+        return self.score_storage.descriptors(name)
+
+    def get_score_provenance(self, name: str) -> dict[str, Any]:
+        """Return the dataset, model, and scorer settings that produced a named score.
+
+        Delegates to :meth:`DatasetScoreStorage.provenance`.
+        """
+        return self.score_storage.provenance(name)
+
+    def list_scores(self) -> list[str]:
+        """List the names of scores published for this dataset.
+
+        Delegates to :meth:`DatasetScoreStorage.list`.
+        """
+        return self.score_storage.list()
+
+    def push_score_to_hub(self, name: str) -> None:
+        """Upload one named score to the dataset repository on the Hub.
+
+        Delegates to :meth:`DatasetScoreStorage.push_to_hub`.
+        """
+        self.score_storage.push_to_hub(name)
+
     # ── Hub methods (stay on facade) ──────────────────────────────────
 
     def push_to_hub(
@@ -734,6 +817,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         reader = cast(DatasetReader, self.reader)
         if self.episodes is not None:
             files = reader.get_episodes_file_paths()
+            files.append(f"{SCORES_DIR}/")
 
         if self._requested_root is None:
             self.meta.root = Path(

@@ -117,6 +117,8 @@ class PreTrainedRewardModel(nn.Module, HubMixin):
                 **kwargs,
             )
         model_id = str(pretrained_name_or_path)
+        config.pretrained_path = model_id
+        config.pretrained_revision = revision
         instance = cls(config, **kwargs)
         if os.path.isdir(model_id):
             print("Loading weights from local directory")

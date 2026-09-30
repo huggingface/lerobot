@@ -33,11 +33,15 @@ import pytest
 import torch
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import TransitionKey
+from lerobot.processor import DeviceProcessorStep
 from lerobot.rewards.robometer.processor_robometer import (
     PROGRESS_PROMPT,
+    RobometerEncoderProcessorStep,
     _expand_tasks,
     _frames_to_pil,
     _video_to_numpy,
+    make_robometer_pre_post_processors,
 )
 from tests.utils import skip_if_package_missing
 
@@ -294,6 +298,56 @@ def test_encoder_step_transform_features_is_identity(monkeypatch):
         }
     }
     assert step.transform_features(features) == features
+
+
+@_skip_if_robometer_extras_missing
+def test_canonical_processor_preserves_temporal_batch(monkeypatch):
+    from types import SimpleNamespace
+
+    from lerobot.rewards.robometer import processor_robometer
+
+    monkeypatch.setattr(processor_robometer, "AutoProcessor", _FakeAutoProcessor)
+    config = SimpleNamespace(
+        base_model_id="fake/backbone",
+        image_key="observation.images.top",
+        task_key="task",
+        default_task="do the task",
+        max_frames=2,
+        use_multi_image=True,
+        use_per_frame_progress_token=True,
+        device="cpu",
+    )
+
+    preprocessor, _ = make_robometer_pre_post_processors(config)
+
+    assert len(preprocessor.steps) == 2
+    assert isinstance(preprocessor.steps[0], RobometerEncoderProcessorStep)
+    assert preprocessor.steps[0].max_frames is None
+    assert isinstance(preprocessor.steps[1], DeviceProcessorStep)
+
+
+@_skip_if_robometer_extras_missing
+@pytest.mark.parametrize(
+    ("shape", "tasks", "expected_batch"), [((5, 3, 4, 4), "task", 1), ((2, 5, 3, 4, 4), ["a", "b"], 2)]
+)
+def test_encoder_accepts_single_or_batched_trajectories(monkeypatch, shape, tasks, expected_batch):
+    step = _build_step(monkeypatch, max_frames=None)
+    captured: list[tuple[np.ndarray, str]] = []
+
+    def encode_samples(samples):
+        captured.extend(samples)
+        return {"input_ids": torch.ones((len(samples), 1), dtype=torch.long)}
+
+    monkeypatch.setattr(step, "encode_samples", encode_samples)
+    transition = {
+        TransitionKey.OBSERVATION: {step.image_key: torch.zeros(shape)},
+        TransitionKey.COMPLEMENTARY_DATA: {step.task_key: tasks},
+    }
+
+    step(transition)
+
+    assert len(captured) == expected_batch
+    assert all(frames.shape[0] == 5 for frames, _ in captured)
 
 
 @_skip_if_robometer_extras_missing
