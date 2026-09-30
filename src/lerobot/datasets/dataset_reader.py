@@ -439,39 +439,20 @@ class DatasetReader(BaseDatasetReader):
             for rel in rel_per_item
         ]
 
-    def _query_videos(
-        self, query_timestamps_per_item: list[dict[str, list[float]]], ep_idxs: list[int]
-    ) -> list[dict[str, torch.Tensor]]:
-        """Decode video frames for a batch, grouped by physical MP4 file.
-
-        All (file, timestamp) requests across the batch are grouped so each file
-        is opened/seeked once (amortizing decode when consecutive samples share
-        files. ``query_timestamps`` are within-episode, so the episode's ``from_timestamp``
-        offset is applied here.
-
-        Note: When using data workers (e.g. DataLoader with num_workers>0), do not
-        call this in the main process. It will result in a Segmentation Fault.
+    def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict[str, torch.Tensor]:
+        """Note: When using data workers (e.g. DataLoader with num_workers>0), do not call this function
+        in the main process (e.g. by using a second Dataloader with num_workers=0). It will result in a
+        Segmentation Fault.
         """
-        # Group the queried timestamps by physical MP4 files.
-        group_ts: dict[str, list[float]] = {}
-        group_meta: dict[str, str] = {}  # path -> vid_key
-        segments: list[tuple[int, str, int, int]] = []  # (item, path, start, length)
-        for i, (query_ts_per_key, ep_idx) in enumerate(zip(query_timestamps_per_item, ep_idxs, strict=True)):
-            ep = self._meta.episodes[ep_idx]
-            for vid_key, query_ts in query_ts_per_key.items():
-                from_timestamp = ep[f"videos/{vid_key}/from_timestamp"]
-                path = str(self.root / self._meta.get_video_file_path(ep_idx, vid_key))
-                buf = group_ts.setdefault(path, [])
-                start = len(buf)
-                buf.extend(from_timestamp + ts for ts in query_ts)
-                segments.append((i, path, start, len(query_ts)))
-                group_meta[path] = vid_key
+        ep = self._meta.episodes[ep_idx]
 
-        def _decode(path: str) -> tuple[str, torch.Tensor]:
-            vid_key = group_meta[path]
+        def _decode_single(vid_key: str, query_ts: list[float]) -> tuple[str, torch.Tensor]:
+            from_timestamp = ep[f"videos/{vid_key}/from_timestamp"]
+            shifted_query_ts = [from_timestamp + ts for ts in query_ts]
+            video_path = self.root / self._meta.get_video_file_path(ep_idx, vid_key)
             frames = decode_video_frames(
-                path,
-                group_ts[path],
+                video_path,
+                shifted_query_ts,
                 self._tolerance_s,
                 self._video_backend,
                 return_uint8=self._return_uint8,
@@ -487,20 +468,18 @@ class DatasetReader(BaseDatasetReader):
                     use_log=depth_encoder.use_log,
                     output_unit=self._depth_output_unit,
                 )
-            return path, frames
+            return vid_key, frames.squeeze(0)
 
-        # Decode each physical MP4 file in parallel.
-        paths = list(group_ts)
-        if len(paths) <= 1:
-            decoded = dict(_decode(p) for p in paths)
-        else:
-            with ThreadPoolExecutor(max_workers=min(len(paths), 8)) as pool:
-                decoded = dict(pool.map(_decode, paths))
+        items = list(query_timestamps.items())
 
-        result: list[dict[str, torch.Tensor]] = [{} for _ in query_timestamps_per_item]
-        for i, path, start, length in segments:
-            result[i][group_meta[path]] = decoded[path][start : start + length].squeeze(0)
-        return result
+        # Single camera: no threading overhead
+        if len(items) <= 1:
+            return {vid_key: _decode_single(vid_key, query_ts)[1] for vid_key, query_ts in items}
+
+        # Multi-camera: decode in parallel (video decoding releases the GIL)
+        with ThreadPoolExecutor(max_workers=len(items)) as pool:
+            futures = [pool.submit(_decode_single, k, ts) for k, ts in items]
+            return dict(f.result() for f in futures)
 
     def get_item(self, idx: int) -> dict:
         """Return one fully assembled frame dict for a single *relative* index.
@@ -525,9 +504,7 @@ class DatasetReader(BaseDatasetReader):
         not the dataset-wide absolute indices (see :attr:`absolute_to_relative_idx`).
 
         Tabular rows are gathered from the Arrow-backed HF dataset in one shot,
-        and all requested video frames are grouped by physical MP4 file so each
-        file is opened/seeked once per batch (amortizing decode across the
-        batch; effective when consecutive samples share files).
+        while video frames are decoded one item at a time to avoid competing with the multiple workers of the DataLoader.
 
         Args:
             indices: Relative row positions in the loaded ``hf_dataset``.
@@ -558,12 +535,13 @@ class DatasetReader(BaseDatasetReader):
             for i, tabular in enumerate(self._query_hf_dataset(query_indices_per_item)):
                 items[i].update(tabular)
 
-        # Video frames: batched decode, grouped by physical MP4 across the batch.
+        # Video frames: decoded one item at a time. We do not group decoding by physical 
+        # MP4 across the batch as it competes with the multiple workers of the DataLoader.
         if len(self._meta.video_keys) > 0:
             current_ts = [float(items[i]["timestamp"]) for i in range(n)]
             query_timestamps = self._get_query_timestamps(current_ts, query_indices_per_item)
-            for i, video in enumerate(self._query_videos(query_timestamps, ep_idxs)):
-                items[i].update(video)
+            for item, query_ts, ep_idx in zip(items, query_timestamps, ep_idxs, strict=True):
+                item.update(self._query_videos(query_ts, ep_idx))
 
         for i in range(n):
             item = items[i]

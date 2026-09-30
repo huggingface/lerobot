@@ -173,43 +173,6 @@ def test_image_transforms_are_applied(tmp_path, lerobot_dataset_factory):
         assert transform_called["count"] >= 1
 
 
-# ── Batched get_items ────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize("use_delta", [False, True])
-def test_get_items_batched_matches_single(tmp_path, lerobot_dataset_factory, use_delta):
-    """Batched get_items (cross-batch video grouping) must match per-index results."""
-    dataset = lerobot_dataset_factory(
-        root=tmp_path / "ds", total_episodes=2, total_frames=20, use_videos=True
-    )
-    fps = dataset.meta.fps
-    delta = {dataset.meta.video_keys[0]: [-1 / fps, 0.0], "action": [0.0, 1 / fps]} if use_delta else None
-    reader = DatasetReader(
-        meta=dataset.meta,
-        root=dataset.root,
-        episodes=None,
-        tolerance_s=1e-4,
-        video_backend=get_safe_default_video_backend(),
-        delta_timestamps=delta,
-        image_transforms=None,
-    )
-    reader.load_and_activate()
-
-    # Order mixes episodes and repeats an index to exercise same-file grouping.
-    order = [0, 10, 1, 11, 0, 19]
-    batched = reader.get_items(order)
-    singles = [reader.get_item(i) for i in order]
-
-    assert len(batched) == len(singles)
-    for got, want in zip(batched, singles, strict=True):
-        assert set(got) == set(want)
-        for key in want:
-            if isinstance(want[key], torch.Tensor):
-                assert torch.equal(got[key], want[key]), key
-            else:
-                assert got[key] == want[key], key
-
-
 # ── File paths ───────────────────────────────────────────────────────
 
 
