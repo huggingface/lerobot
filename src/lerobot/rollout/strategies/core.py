@@ -210,7 +210,7 @@ class RolloutStrategy(abc.ABC):
             self._engine.stop()
         robot = hw.robot_wrapper.inner
         if robot.is_connected:
-            if return_to_initial_position and hw.initial_position:
+            if return_to_initial_position and hw.initial_position and robot.is_control_enabled:
                 logger.info("Returning robot to initial position before shutdown...")
                 if not self.return_to_initial_position(hw):
                     logger.error(

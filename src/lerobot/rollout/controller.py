@@ -103,7 +103,7 @@ class RolloutEvent(Enum):
     """The robot is back at its initial position, holding."""
 
     RESET_SKIPPED = "reset_skipped"
-    """No initial position was captured; the robot holds its current pose."""
+    """No initial position was captured, or motor control has not been enabled."""
 
     RESET_FAILED = "reset_failed"
     """The return move errored partway: the robot may be holding an arbitrary pose, *not* the
@@ -402,8 +402,9 @@ class RolloutController:
             ):
                 return
             self._strategy.reset_control_state()
-            self._emit(RolloutEvent.SEGMENT_STARTED)
             try:
+                self._ctx.hardware.robot_wrapper.inner.start_control()
+                self._emit(RolloutEvent.SEGMENT_STARTED)
                 self._strategy.run(self._ctx)
             except Exception:
                 # Route to the same public failure surface as an engine failure, instead of
@@ -439,8 +440,11 @@ class RolloutController:
         """Pause inference and return the robot home (the task was restored by :meth:`reset`)."""
         self._emit(RolloutEvent.RESET_STARTED)
         self._ctx.policy.inference.pause()
-        if not self._ctx.hardware.initial_position:
-            logger.warning("No initial position captured — skipping the return move")
+        if (
+            not self._ctx.hardware.initial_position
+            or not self._ctx.hardware.robot_wrapper.inner.is_control_enabled
+        ):
+            logger.info("Skipping return: no initial position or motor control has not been enabled")
             self._emit(RolloutEvent.RESET_SKIPPED)
         elif self._strategy.return_to_initial_position(self._ctx.hardware):
             self._emit(RolloutEvent.RESET_DONE)

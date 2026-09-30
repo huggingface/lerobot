@@ -113,6 +113,8 @@ class BiYamFollowerConfig(RobotConfig):
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
     # Opt in only after verifying CAN side assignment, encoder frame, and gripper calibration.
     read_only: bool = True
+    # Interactive rollout calls start_control() on /start. Support the arms while waiting.
+    defer_torque_enable: bool = False
     # Leave classic CAN bandwidth for both refresh and MIT command feedback.
     control_frequency: float = 200.0
     feedback_timeout_s: float = 0.1

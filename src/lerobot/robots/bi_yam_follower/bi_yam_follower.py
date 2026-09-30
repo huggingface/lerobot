@@ -134,6 +134,7 @@ class _Arm:
         self.gravity: _Gravity | None = None
         self.thread: threading.Thread | None = None
         self.ready = threading.Event()
+        self.control_ready = threading.Event()
         self.enabled = False
 
     def command_packet(
@@ -182,6 +183,7 @@ class BiYamFollower(Robot):
         self.cameras = make_cameras_from_configs(config.cameras)
         self._lock = threading.Lock()
         self._stop = threading.Event()
+        self._enable_requested = threading.Event()
         self._failure: Exception | None = None
         self._connected = False
         self._calibration_session = False
@@ -200,6 +202,69 @@ class BiYamFollower(Robot):
     @property
     def is_connected(self) -> bool:
         return self._connected
+
+    @property
+    def is_control_enabled(self) -> bool:
+        return all(arm.enabled for arm in self.arms.values())
+
+    def _validate_initial_pose(self, side: str, arm: _Arm) -> None:
+        if np.any(
+            np.abs(arm.position[:6] - arm.config.initial_position_rad) > arm.config.initial_tolerance_rad
+        ):
+            raise ValueError(
+                f"{side} arm is not in the configured initial pose; no automatic homing performed"
+            )
+        if (
+            arm.config.initial_gripper_position is not None
+            and abs(arm.position[6] - arm.config.initial_gripper_position)
+            > arm.config.initial_gripper_tolerance
+        ):
+            raise ValueError(f"{side} gripper is not in the configured initial position")
+
+    def _enable_arm(self, arm: _Arm, position: np.ndarray) -> None:
+        """Called by the bus-owning worker, or at connect before workers exist."""
+        if self._stop.is_set():
+            raise ConnectionError("YAM feedback failed before torque enable") from self._failure
+        with self._lock:
+            arm.target = position.copy()
+            arm.command = position.copy()
+            arm.commanded_at = time.monotonic()
+        # Seed zero gains at the current measured pose, never an old startup target.
+        arm.bus.sync_write_mit(
+            {
+                name: (0.0, 0.0, float(p), 0.0, 0.0)
+                for name, p in zip(MOTOR_NAMES, encode_positions(arm.config, position), strict=True)
+            }
+        )
+        arm.enabled = True  # Ensure failure cleanup also attempts to disable this arm.
+        arm.bus.enable_torque()
+        arm.control_ready.set()
+
+    @check_if_not_connected
+    def start_control(self) -> None:
+        if self.config.read_only or self._calibration_session:
+            raise RuntimeError("YAM read-only/calibration connection forbids torque enable")
+        with self._lock:
+            self._check_feedback()
+            if self.is_control_enabled:
+                return
+            # The operator may have moved an unpowered arm since connect.
+            for side, arm in self.arms.items():
+                self._validate_initial_pose(side, arm)
+        self._enable_requested.set()
+        deadline = time.monotonic() + 2.0
+        try:
+            while not all(arm.control_ready.is_set() for arm in self.arms.values()):
+                if self._stop.is_set() or self._failure is not None:
+                    raise ConnectionError("YAM activation failed") from self._failure
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("YAM motors did not enable before the activation deadline")
+                self._stop.wait(0.005)
+            with self._lock:
+                self._check_feedback()
+        except Exception:
+            self._stop.set()
+            raise
 
     @property
     def is_calibrated(self) -> bool:
@@ -333,6 +398,7 @@ class BiYamFollower(Robot):
             )
         self._calibration_session = False
         self._stop.clear()
+        self._enable_requested.clear()
         self._failure = None
         try:
             for arm in self.arms.values():
@@ -344,20 +410,8 @@ class BiYamFollower(Robot):
                 arm.bus.connect(handshake=False)
                 arm.position = decode_positions(arm.config, arm.bus.sync_read_all_states(strict=True))
                 validate_target(arm.position, feedback=True)
-                if not self.config.read_only and np.any(
-                    np.abs(arm.position[:6] - arm.config.initial_position_rad)
-                    > arm.config.initial_tolerance_rad
-                ):
-                    raise ValueError(
-                        f"{side} arm is not in the configured initial pose; no automatic homing performed"
-                    )
-                if (
-                    not self.config.read_only
-                    and arm.config.initial_gripper_position is not None
-                    and abs(arm.position[6] - arm.config.initial_gripper_position)
-                    > arm.config.initial_gripper_tolerance
-                ):
-                    raise ValueError(f"{side} gripper is not in the configured initial position")
+                if not self.config.read_only:
+                    self._validate_initial_pose(side, arm)
                 arm.target = arm.position.copy()
                 arm.command = arm.position.copy()
                 arm.updated_at = arm.commanded_at = time.monotonic()
@@ -368,19 +422,9 @@ class BiYamFollower(Robot):
                 if self._stop.is_set():
                     raise ConnectionError("YAM feedback failed during startup") from self._failure
                 arm.ready.clear()
-                if not self.config.read_only:
-                    # Seed a zero-gain packet at the measured pose before enable;
-                    # never let a zero-initialized position target reach the motors.
-                    arm.bus.sync_write_mit(
-                        {
-                            n: (0.0, 0.0, float(p), 0.0, 0.0)
-                            for n, p in zip(
-                                MOTOR_NAMES, encode_positions(arm.config, arm.position), strict=True
-                            )
-                        }
-                    )
-                    arm.enabled = True
-                    arm.bus.enable_torque()
+                arm.control_ready.clear()
+                if not self.config.read_only and not self.config.defer_torque_enable:
+                    self._enable_arm(arm, arm.position)
                 arm.thread = threading.Thread(target=self._run, args=(arm,), name=f"yam-{side}", daemon=True)
                 arm.thread.start()
                 if not arm.ready.wait(timeout=self.config.feedback_timeout_s) or self._failure is not None:
@@ -422,6 +466,8 @@ class BiYamFollower(Robot):
                     raise ConnectionError(f"{arm.config.port}: YAM feedback exceeded freshness deadline")
                 position = decode_positions(arm.config, states)
                 validate_target(position, feedback=True)
+                if self._enable_requested.is_set() and not arm.enabled:
+                    self._enable_arm(arm, position)
                 with self._lock:
                     arm.position = position
                     arm.updated_at = time.monotonic()
@@ -480,6 +526,8 @@ class BiYamFollower(Robot):
             raise RuntimeError("Motor commands are forbidden during calibration")
         if self.config.read_only:
             raise RuntimeError("YAM read_only=true forbids motor commands")
+        if self.config.defer_torque_enable and not self.is_control_enabled:
+            raise RuntimeError("YAM torque is disabled; use /start before sending motor commands")
         if set(action) != set(YAM_FEATURE_NAMES):
             raise ValueError(
                 "YAM requires the complete 14 absolute-joint/gripper action; Cartesian actions need IK"

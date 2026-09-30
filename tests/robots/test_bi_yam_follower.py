@@ -212,10 +212,69 @@ def test_read_only_never_enables_or_commands(monkeypatch, tmp_path):
         assert list(bot.get_observation()) == list(YAM_FEATURE_NAMES)
         with pytest.raises(RuntimeError, match="read_only"):
             bot.send_action(dict.fromkeys(YAM_FEATURE_NAMES, 0.0))
+        with pytest.raises(RuntimeError, match="forbids torque enable"):
+            bot.start_control()
     finally:
         bot.disconnect()
     for bus in buses.values():
         assert bus.calls == [("connect", False), ("disconnect", False)]
+
+
+def test_deferred_control_never_energizes_until_start(monkeypatch, tmp_path):
+    bot, buses = robot(monkeypatch, tmp_path, read_only=False)
+    bot.config.defer_torque_enable = True
+    bot.connect()
+    try:
+        module.time.sleep(0.03)
+        assert not bot.is_control_enabled
+        assert all(bus.calls == [("connect", False)] for bus in buses.values())
+        with pytest.raises(RuntimeError, match="use /start"):
+            bot.send_action(dict.fromkeys(YAM_FEATURE_NAMES, 0.0))
+        bot.start_control()
+        assert bot.is_control_enabled
+        for bus in buses.values():
+            assert bus.calls[1][0] == "write"
+            assert all(packet[:2] == (0.0, 0.0) for packet in bus.calls[1][1].values())
+            assert bus.calls[2] == ("enable",)
+        bot.start_control()
+        assert all(bus.calls.count(("enable",)) == 1 for bus in buses.values())
+    finally:
+        bot.disconnect()
+
+
+def test_deferred_start_rechecks_both_poses(monkeypatch, tmp_path):
+    bot, buses = robot(monkeypatch, tmp_path, read_only=False)
+    bot.config.defer_torque_enable = True
+    bot.connect()
+    try:
+        buses["right"].raw[0] = 1.0
+        deadline = module.time.monotonic() + 1.0
+        while bot.get_observation()["right_joint_0.pos"] < 0.9:
+            assert module.time.monotonic() < deadline
+            module.time.sleep(0.005)
+        with pytest.raises(ValueError, match="initial pose"):
+            bot.start_control()
+        assert all(bus.calls == [("connect", False)] for bus in buses.values())
+    finally:
+        bot.disconnect()
+
+
+def test_deferred_enable_failure_disables_both_arms(monkeypatch, tmp_path):
+    bot, buses = robot(monkeypatch, tmp_path, read_only=False)
+    bot.config.defer_torque_enable = True
+
+    def fail_enable():
+        raise ConnectionError("enable failed")
+
+    monkeypatch.setattr(buses["right"], "enable_torque", fail_enable)
+    bot.connect()
+    try:
+        with pytest.raises(ConnectionError):
+            bot.start_control()
+    finally:
+        bot.disconnect()
+    assert all(not arm.enabled for arm in bot.arms.values())
+    assert ("disable",) in buses["right"].calls
 
 
 def test_second_arm_failure_never_energizes_first(monkeypatch, tmp_path):

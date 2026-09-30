@@ -76,6 +76,15 @@ class Robot(abc.ABC):
         """
         return None
 
+    @property
+    def is_control_enabled(self) -> bool:
+        """Whether motion is enabled; adapters with deferred activation override this."""
+        return True
+
+    def start_control(self) -> None:
+        """Activate deferred motor control before an interactive run, if supported."""
+        return None
+
     def __enter__(self):
         """
         Context manager entry.

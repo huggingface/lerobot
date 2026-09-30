@@ -286,12 +286,14 @@ def test_controller_start_reset_stop_flow_and_events():
     time.sleep(0.05)
     strategy.run.assert_not_called()
     assert not controller.running
+    controller._ctx.hardware.robot_wrapper.inner.start_control.assert_not_called()
 
     assert controller.start() is True
     assert _wait_for(run_started.is_set)
     assert controller.running
     assert strategy.reset_control_state.call_count == 1
     assert RolloutEvent.SEGMENT_STARTED in events
+    controller._ctx.hardware.robot_wrapper.inner.start_control.assert_called_once()
 
     # A start() while a segment runs is refused, not queued.
     assert controller.start() is False
@@ -319,6 +321,36 @@ def test_controller_start_reset_stop_flow_and_events():
     controller.stop()
     _join_session(thread)
     strategy.teardown.assert_not_called()
+
+
+def test_controller_activation_failure_does_not_start_policy():
+    controller, events, strategy, _engine, _parent, _run_started = _make_controller()
+    controller._ctx.hardware.robot_wrapper.inner.start_control.side_effect = RuntimeError("unsafe pose")
+    thread = _serve_thread(controller)
+    controller.start()
+    _join_session(thread)
+    strategy.run.assert_not_called()
+    assert RolloutEvent.SEGMENT_STARTED not in events
+    assert RolloutEvent.STRATEGY_FAILED in events
+
+
+def test_reset_and_shutdown_before_start_do_not_command_motors():
+    from lerobot.rollout.strategies.base import BaseStrategy
+
+    controller, events, strategy, _engine, _parent, _run_started = _make_controller()
+    hw = controller._ctx.hardware
+    hw.robot_wrapper.inner.is_control_enabled = False
+    thread = _serve_thread(controller)
+    controller.reset()
+    assert _wait_for(lambda: RolloutEvent.RESET_SKIPPED in events)
+    controller.stop()
+    _join_session(thread)
+    strategy.return_to_initial_position.assert_not_called()
+    hw.robot_wrapper.inner.start_control.assert_not_called()
+    real_strategy = BaseStrategy(BaseStrategyConfig())
+    real_strategy._teardown_hardware(hw, return_to_initial_position=True)
+    hw.robot_wrapper.send_action.assert_not_called()
+    hw.robot_wrapper.inner.disconnect.assert_called_once()
     assert events[-1] is RolloutEvent.STOPPED
 
 
