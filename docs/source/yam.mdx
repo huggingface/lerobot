@@ -1,16 +1,16 @@
 # Bimanual YAM
 
-`bi_yam_follower` supports two standard YAM v1 arms with linear DM4310 grippers. All CAN communication uses LeRobot's `DamiaoMotorsBus`. The adapter does not require an I2RT controller or Portal server. MuJoCo computes gravity compensation from the bundled inertial model; its source attribution and MIT notice are embedded in the XML.
+`bi_yam_follower` controls two standard YAM v1 arms with linear DM4310 grippers through LeRobot's `DamiaoMotorsBus`. No external controller or Portal server is required. Each arm has an independent servo thread; MuJoCo supplies gravity compensation from the bundled inertial model.
 
-## Installation and CAN interfaces
+## Installation
 
 ```bash
 uv sync --locked --extra yam
 ```
 
-Each arm needs a separate classic SocketCAN channel at **1 Mbit/s**. Both arms reuse motor IDs 1–7 and feedback IDs 17–23: motors 1–3 are DM4340, and 4–7 are DM4310. Do not select CAN FD or attach both arms to the same channel.
+Each arm needs its own **classic SocketCAN channel at 1 Mbit/s**. Both arms use motor IDs 1–7 and feedback IDs 17–23. Motors 1–3 are DM4340; motors 4–7 are DM4310. Do not put both arms on one channel or enable CAN FD.
 
-Bring up the verified interfaces, substituting the names on your computer:
+After identifying the adapters, bring up their interfaces:
 
 ```bash
 sudo ip link set can0 type can bitrate 1000000
@@ -19,11 +19,11 @@ sudo ip link set can1 type can bitrate 1000000
 sudo ip link set can1 up
 ```
 
-Confirm which channel belongs to each physical arm. The optional `expected_adapter_serial` field binds each arm to its USB adapter and rejects swapped Linux interface assignments. Camera names and ports are installation-specific; do not infer them from enumeration order.
+USB reconnects can recreate these interfaces in the down state. Check their configuration again before rollout. Set each arm's optional `expected_adapter_serial` to reject swapped adapter assignments; interface numbering alone does not identify the physical arm.
 
-## Gripper calibration
+## Calibrate the grippers
 
-Support both arms, then use the standard calibration command with a unique robot ID:
+Support both arms and choose a persistent robot ID:
 
 ```bash
 lerobot-calibrate \
@@ -33,98 +33,59 @@ lerobot-calibrate \
   --robot.right_arm.port=can1
 ```
 
-The command prompts for both grippers fully closed, then fully open. Move them gently **by hand**, release them before confirming each measurement, and stop if a mechanism resists. Calibration only requests feedback: it does not enable torque, open cameras, reset encoders, or write motor settings. Both endpoints must be stable and each stroke plausible before a new file replaces the previous calibration.
+The prompts ask for both grippers fully closed, then fully open. Move them gently by hand, release them before confirming, and stop if they resist. Calibration requests feedback only: no torque enable, cameras, encoder reset, or persistent motor writes. Stable, plausible endpoints are saved atomically in the standard robot calibration directory. Factory joint zeros remain unchanged.
 
-Measurements are saved in the standard robot calibration directory under the robot ID. The two gripper records store the native 16-bit MIT position counts and opening polarity. Rollout automatically loads these records when given the same `robot.id` and calibration directory. Explicit `gripper_closed_rad` / `gripper_open_rad` configuration values override saved measurements.
-
-Policy grippers are continuous **0 = closed, 1 = open**, independently mapped for either motor polarity:
-
-```text
-policy_gripper = (motor_rad - closed_rad) / (open_rad - closed_rad)
-```
-
-Do not interpret gripper actions as percentages, binary flags, motor radians, or finger separation in meters. Recalibrate after changing a gripper or its encoder frame. Missing calibration prevents normal connection and instructs the operator to run `lerobot-calibrate`.
+Use the same `robot.id` for rollout. Explicit `gripper_closed_rad` and `gripper_open_rad` override saved endpoints. Missing calibration prevents connection. Recalibrate after changing the gripper or encoder frame.
 
 ## Observations and actions
 
-The exact 14-value order is:
+The 14 features are ordered as follows:
 
 ```text
 left_joint_0.pos ... left_joint_5.pos, left_gripper.pos,
 right_joint_0.pos ... right_joint_5.pos, right_gripper.pos
 ```
 
-Joints are **absolute radians** in the factory encoder frame. Conversion to the bus's internal degrees happens at the robot boundary. Factory joint zeros are retained; only use `joint_signs` / `joint_offsets_rad` for an explicitly verified frame conversion. End-effector actions require a separate IK pipeline. The rollout compatibility check rejects an incompatible MolmoAct2 control mode, state/action ordering, or camera configuration before connecting.
+Joints use **absolute radians** in the factory encoder frame; the adapter converts to the bus's degrees. Grippers use continuous **0 = closed, 1 = open**, for either encoder polarity:
 
-Configure cameras using ordinary LeRobot camera configs, preferably persistent `/dev/v4l/by-path/...` paths. Select RGB nodes, confirm physical camera roles, and check all streams simultaneously. For MolmoAct2 BimanualYAM, the roles are `top`, `left`, and `right`; use the checkpoint's saved processors and normalization statistics. Policy preparation and inference are covered by the [MolmoAct2 guide](molmoact2).
-
-For continuous MolmoAct2 inference, synchronous chunk generation can delay policy updates even while the independent arm servos keep running. The existing RTC backend performs inference in a background thread and conditions new chunks on queued actions. The following rollout options sustained approximately 30 action updates per second in a read-only RTX 5090 test with three live cameras:
-
-```bash
---inference.type=rtc \
---inference.rtc.mode=guided \
---inference.rtc.execution_horizon=20 \
---inference.queue_threshold=20 \
---fps=30
+```text
+policy_gripper = (motor_rad - closed_rad) / (open_rad - closed_rad)
 ```
 
-These are options to add to a complete `lerobot-rollout` command. Measure action availability as well as loop cadence on your installation; this timing test does not validate physical task performance. Keep the checkpoint's action representation and saved normalization. Lowering `fps` changes how quickly its action sequence is played and is not a substitute for resolving inference delays.
+Use `joint_signs` and `joint_offsets_rad` only for verified frame conversions. End-effector actions need a separate validated IK pipeline. The rollout compatibility check rejects unsupported MolmoAct2 action/state layouts, control modes and camera keys before connecting hardware.
 
-## Startup and control
+Configure ordinary LeRobot cameras with verified RGB device paths and physical roles. Prefer persistent `/dev/v4l/by-path/` paths. Test all streams together; on cameras affected by USB autosuspend, configure power management for those specific devices. Observations use the latest frame with a 200 ms freshness limit, allowing interpolated commands between camera exposures while rejecting stalled streams.
 
-The adapter defaults to `read_only=true`. Explicitly set `robot.read_only=false` to enable control after validating the installation. At startup, cameras must deliver frames and both arms must pass feedback, calibration, and pose checks before either is enabled. A camera first-frame timeout is retried once using a fresh connection, before opening either motor bus. A second timeout aborts startup; camera failures during control are not automatically retried. Each joint must be within `initial_tolerance_rad` (default 0.2 radians) of `initial_position_rad` (default six zeros). Grippers may start anywhere within their calibrated stroke by default. Optionally set each arm's `initial_gripper_position=1.0` to require open grippers. These are assertions, not automatic homing commands.
+For [MolmoAct2 BimanualYAM](molmoact2), provide `top`, `left` and `right` views and retain the checkpoint's saved processors and normalization. The existing guided RTC backend supports background inference. See [rollout configuration](inference) for policy, camera, recording and interpolation options; changing playback FPS also changes action timing.
 
-To start from the current joint pose, set both
-`--robot.left_arm.initial_position_rad=null` and
-`--robot.right_arm.initial_position_rad=null`. This disables only the fixed
-startup-pose assertion. Fresh feedback, calibrated gripper range and joint limits
-are still checked. With deferred activation, `/start` seeds control from the
-current measured pose without a move toward zero. The rollout home target remains
-the pose captured at connection, including gripper openings. An arbitrary valid
-start is not necessarily a pose the policy performs well from; keep the physical
-starting layout consistent for comparisons.
+## Control and startup
 
-A separate servo loop per arm (default 200 Hz) supplies gravity compensation and bounded targets. Defaults are 0.3 rad/s joint target speed, 0.5 gripper strokes/s, and a 0.15 rad tracking-error bound. The gripper's proportional torque contribution is limited to 0.5 Nm; damping adds torque, so this is not a contact-force guarantee. `send_action` returns the accepted target; observations contain measured positions.
+The adapter defaults to `read_only=true`. After verifying the installation, set `--robot.read_only=false` to allow control. Before either arm is enabled, the adapter checks both arms' fresh feedback, calibration and initial poses. Cameras must produce initial frames; a first-frame timeout is retried once before opening the motor buses.
 
-The gripper speed setting limits target motion, not achieved speed. With zero commanded motor velocity, its damping opposes motion: at the default `gripper_kd=0.5`, the 0.5 Nm proportional cap balances damping at roughly 1 motor rad/s, before friction or load. Increasing target speed alone does not remove that bottleneck. A lower `gripper_kd`, such as 0.1, reduces this damping without increasing the proportional torque cap, but also changes braking and settling behavior. Validate it on the installation before relying on faster motion.
+By default, each joint must be within 0.2 radians of the six-zero folded reference pose. Grippers may start anywhere within their calibrated stroke. These are assertions, not homing commands. Set an arm's `initial_position_rad=null` to accept its current valid pose, or set `initial_gripper_position` to require a particular opening. Joint limits and feedback checks always apply.
 
-After one second without a fresh policy target, each servo captures the fresh measured position once and holds that fixed target instead of progressing toward an old target. Missing, malformed, or faulted motor feedback stops both workers. Disconnect disables torque. Keep the arms supported and the hardware e-stop accessible; communication or power failure can prevent software stopping from working.
+For interactive rollout, `--robot.defer_torque_enable=true` leaves torque off until `/start`. Support the arms while idle. Starting control rechecks both poses and seeds targets from fresh measured positions. Without this option, control starts at connection.
 
-This is an experimental adapter. Gravity compensation uses the standard arm/gripper inertias and excludes added camera/payload mass. There is no collision avoidance. Validate control, loading, stopping behavior, and task performance on the installation before normal use. For initial rollout testing, set `return_to_initial_position=false` to avoid an unvalidated automatic return motion.
+| Setting                  | Default | Meaning                                            |
+| ------------------------ | ------- | -------------------------------------------------- |
+| `control_frequency`      | 200 Hz  | Per-arm servo rate                                 |
+| `max_joint_speed_rad_s`  | 0.3     | Joint target speed limit                           |
+| `max_gripper_speed_s`    | 0.5     | Gripper target strokes per second                  |
+| `max_tracking_error_rad` | 0.15    | Command offset from measured joint position        |
+| `gripper_torque_limit`   | 0.5 Nm  | Proportional gripper torque cap                    |
+| `feedback_timeout_s`     | 0.1 s   | Maximum motor feedback age                         |
+| `command_timeout_s`      | 1 s     | Time before capturing a fixed measured hold target |
 
-## Interactive rollout and return to startup pose
+Per-arm gains and `gravity_factors` are configurable. Target speed is not measured speed: gripper damping opposes motion, and changing it affects braking and settling. The proportional torque cap does not bound total contact force. The gravity model excludes added camera/payload mass and provides no collision avoidance. Its source attribution and required MIT notice are embedded in the XML.
 
-Add `--interactive=true --return_to_initial_position=true` to keep the policy and hardware connected between attempts and return before normal shutdown. The captured startup pose, including grippers, is the return target; this does not perform encoder homing. Small joint-boundary deviations within the existing feedback tolerance are clamped to the legal command boundary for return, so encoder noise near zero cannot invalidate home. Larger deviations are rejected; policy command limits are unchanged. By default, motors hold their measured pose after connection, even before policy actions begin with `/start`.
+## Returns and faults
 
-To keep YAM torque disabled during the initial interactive wait, also set `--robot.defer_torque_enable=true`. Support the arms in their starting pose: this mode reads feedback but provides no powered hold or gravity compensation until `/start`. Both starting poses are rechecked on `/start`; each bus worker seeds its controller from fresh measured positions before enabling torque. `/reset` and `/stop` before the first `/start` do not command a return. After activation, `/reset` returns home and leaves holding torque on for the next run.
+`/reset` returns to the pose captured at connection, including gripper openings. `--return_to_initial_position=true` also requests this return on shutdown. Before first activation, a deferred session does not command a return. Disconnect disables torque, so support the arms before ending a session.
 
-Gravity compensation is independent of the policy. Each arm's `gravity_factors` scales the modeled torque per joint. For example, `[0.9,0.99,0.99,1.08,0.9,0.9]` applies 90% of the default compensation profile `[1.0,1.1,1.1,1.2,1.0,1.0]`; position gains and gripper torque limits are separate settings. Reduced compensation does not guarantee a motionless arm and must be checked on the physical installation.
+YAM returns through its bounded servo targets and motor feedback, independently of cameras. Success requires both arms within 0.03 radians and grippers within 0.05 of the target for 0.2 seconds. `return_timeout_s` defaults to 30 seconds and can be increased. Small encoder deviations at joint boundaries are clamped within the existing feedback tolerance; larger violations reject the return. A failed return reports failure and normal shutdown still disconnects. Clear the joint-space return path; returning a gripper to its starting opening can release an object.
 
-- `/start`: run the current instruction. `--duration` limits each run, not the session.
-- `/subtask <text>`: change the instruction; with RTC it takes effect through the next generated chunk.
-- `/reset`: stop policy execution, return to the startup pose, restore the original task, and wait for another `/start`.
-- `/stop`: by default, return to the startup pose, then disconnect and disable torque. Set `--interactive_stop_returns_home=true` to make `/stop` behave like `/reset`: return and keep powered holding while waiting for `/start`.
-- `/quit`: end the session, return if configured, then disconnect and disable torque. Support the arms before quitting; powered holding cannot continue after disconnect.
-- `/help`: list available commands.
+Missing, malformed, stale or faulted feedback stops both workers. The adapter never automatically clears motor faults or restarts the policy. A motor reporting `0xD` has latched a communication-loss fault; support the arms and resolve the interruption before resetting motor power. Keep the firmware communication watchdog enabled.
 
-YAM returns directly through its rate-limited servo targets using motor feedback, independently of camera availability. It refreshes the return target until both arms remain within 0.03 radians and both grippers within 0.05 of their targets for 0.2 seconds. Settling allows up to `robot.return_timeout_s` (default 30 seconds); use `--robot.return_timeout_s=120` to allow up to two minutes. It finishes early when measured arrival is confirmed, and feedback faults still stop it immediately. A timeout or feedback fault reports failure instead of claiming a completed return; normal shutdown still disconnects. Clear the return path before resetting or stopping: the return is joint-space motion without obstacle avoidance, and returning the grippers to their startup opening can release a held object.
+`recover_on_feedback_timeout=true` optionally permits a return after a transient freshness timeout. It requires prior control activation, stopped workers and 0.5 seconds of healthy feedback from all 14 motors with torque disabled. Missing feedback, motor faults or disable failures prohibit reactivation. A second fault aborts the return; software cannot guarantee home after communication or power loss.
 
-## Communication faults
-
-Feedback errors include the CAN interface and motor name. A motor reporting `0xD` has latched a communication-loss fault. Stop rollout, support the arms, and address the transport/control interruption before resetting motor power. The adapter never automatically clears a motor fault or resumes policy execution. Saved gripper calibration is retained across power cycles.
-
-The bus collects queued replies even if Python was briefly descheduled past the receive timeout. This does not permit cached feedback: strict reads still reject missing, malformed, or faulted replies, and a servo read exceeding `feedback_timeout_s` stops control before another command is sent. Keep the motor firmware communication watchdog enabled.
-
-Large cyclic garbage-collection scans can also pause all Python servo threads beyond the feedback deadline. Before opening hardware, YAM collects unused objects and freezes the preloaded heap out of later cyclic scans; collection of newly allocated objects remains enabled. The freeze is process-wide, shared across connected YAM instances, and undone after the last disconnect if YAM created the freeze. An existing caller-owned freeze is extended to include the loaded model and left frozen after disconnect; those cycles remain retained until the owner unfreezes them or the process exits. Disabled collection is left unchanged. This reduces a measured source of scheduling pauses without extending the feedback deadline; it does not make Python a hard real-time controller. Stale-feedback errors report the affected interfaces and snapshot ages.
-
-To attempt home after a transient freshness timeout, opt in with
-`--robot.recover_on_feedback_timeout=true` and enable rollout returns. Once policy
-control has stopped, YAM joins both servo workers and requires 0.5 seconds of fresh,
-valid feedback from all 14 motors with torque disabled. Each worker then seeds its
-command from a new measured pose before enabling the bounded return. Recovery is
-attempted only if control was previously activated; it cannot activate a session
-waiting for its first `/start`. Missing packets, motor faults, invalid positions,
-or failure to stop/disable a worker prohibit reactivation. A second feedback fault
-during the return aborts it; persistent communication failures cannot guarantee
-home. This option does not widen the feedback deadline or automatically restart
-the policy. The hardware watchdog remains enabled.
+To reduce Python scheduling pauses, connected YAM instances share a process-wide freeze of the preloaded heap. New objects remain collectable. If YAM created the freeze, it releases it after the last disconnect; a pre-existing freeze is extended and left for its original owner to release. Disabled GC remains untouched. This does not make Python a hard real-time controller or relax the feedback deadline.

@@ -12,9 +12,15 @@ from lerobot.robots.bi_yam_follower import (
     BiYamFollowerConfig,
     YamArmConfig,
     bi_yam_follower as module,
+    yam_arm,
 )
-from lerobot.robots.bi_yam_follower.bi_yam_follower import _Arm, _Gravity, decode_positions, encode_positions
 from lerobot.robots.bi_yam_follower.config_bi_yam_follower import MOTOR_NAMES, YAM_FEATURE_NAMES
+from lerobot.robots.bi_yam_follower.yam_arm import (
+    GravityCompensation,
+    YamArm,
+    decode_positions,
+    encode_positions,
+)
 
 pytest.importorskip("can")
 
@@ -148,7 +154,7 @@ class Bus:
 
 def robot(monkeypatch, tmp_path, *, read_only=True, buses=None):
     buses = buses or {"left": Bus(), "right": Bus()}
-    monkeypatch.setattr(module, "make_yam_bus", lambda cfg: buses[cfg.port])
+    monkeypatch.setattr(yam_arm, "make_yam_bus", lambda cfg: buses[cfg.port])
     cfg = BiYamFollowerConfig(
         left_arm=arm_config("left"),
         right_arm=arm_config("right"),
@@ -371,7 +377,7 @@ def test_feedback_fault_stops_both_workers(monkeypatch, tmp_path):
 
 
 def test_joint_slew_and_gripper_proportional_torque_bound():
-    arm = _Arm(arm_config())
+    arm = YamArm(arm_config())
     arm.position = np.zeros(7)
     arm.command = np.zeros(7)
     arm.target = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
@@ -401,7 +407,7 @@ def test_cartesian_policy_rejected_before_connect(monkeypatch, tmp_path):
 
 def test_gravity_matches_potential_energy_gradient():
     pytest.importorskip("mujoco")
-    model = _Gravity()
+    model = GravityCompensation()
     pose = np.array([0.2, 1.0, 1.1, -0.5, 0.3, -0.2, 0.5])
     torque = model.torque(pose)
     expected = []
@@ -818,3 +824,32 @@ def test_invalid_home_target_cannot_trigger_feedback_recovery(monkeypatch, tmp_p
     with pytest.raises(ValueError):
         bot.return_to_position(target)
     recover.assert_not_called()
+
+
+def test_observation_reuses_recent_camera_frame_and_rejects_stale(monkeypatch, tmp_path):
+    import threading
+    import time
+
+    from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+
+    bot, _ = robot(monkeypatch, tmp_path)
+    bot.connect()
+    camera = OpenCVCamera(OpenCVCameraConfig(index_or_path=0))
+    import cv2
+
+    camera.videocapture = MagicMock(spec=cv2.VideoCapture)
+    camera.thread = MagicMock()
+    camera.thread.is_alive.return_value = True
+    camera.latest_frame = np.zeros((2, 2, 3), dtype=np.uint8)
+    camera.latest_timestamp = time.perf_counter()
+    camera.new_frame_event = threading.Event()  # No new frame to consume.
+    bot.cameras["top"] = camera
+    try:
+        assert bot.get_observation()["top"] is camera.latest_frame
+        assert bot.get_observation()["top"] is camera.latest_frame
+        camera.latest_timestamp = time.perf_counter() - 0.3
+        with pytest.raises(TimeoutError, match="too old"):
+            bot.get_observation()
+    finally:
+        bot.cameras.clear()
+        bot.disconnect()

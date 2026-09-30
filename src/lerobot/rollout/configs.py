@@ -304,8 +304,6 @@ class RolloutConfig:
     # robot does not move until /start, and logs below ERROR are muted for the
     # session's duration.
     interactive: bool = False
-    # Make /stop return home and stay connected like /reset; /quit still shuts down.
-    interactive_stop_returns_home: bool = False
     # /autosteer: seconds of robot motion between two "what is the next subtask?"
     # queries, measured from the moment a subtask is applied.  Lower values
     # re-plan sooner but spend more of the loop generating text instead of acting.
