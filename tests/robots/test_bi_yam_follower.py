@@ -691,3 +691,51 @@ def test_return_does_not_enable_before_first_start(monkeypatch, tmp_path):
         assert bot.has_started_control
     finally:
         bot.disconnect()
+
+
+def test_optional_initial_pose_seeds_current_joints_and_grippers(monkeypatch, tmp_path):
+    import time
+
+    bot, buses = robot(monkeypatch, tmp_path, read_only=False)
+    bot.config.defer_torque_enable = True
+    for side, arm in bot.arms.items():
+        arm.config.initial_position_rad = None
+        buses[side].raw = np.array([0.4, 0.8, 0.7, -0.3, 0.2, 0.1, 3.35])
+    bot.connect()
+    try:
+        assert not any(c[0] in ("enable", "write") for b in buses.values() for c in b.calls)
+        # Supported arms can change pose during the initial torque-off wait.
+        for bus in buses.values():
+            bus.raw[0] = 0.6
+        deadline = time.monotonic() + 1
+        while any(abs(a.position[0] - 0.6) > 1e-6 for a in bot.arms.values()):
+            assert time.monotonic() < deadline
+            time.sleep(0.005)
+        bot.start_control()
+        for bus in buses.values():
+            packet = next(c[1] for c in bus.calls if c[0] == "write")
+            assert packet["joint_0"][2] == pytest.approx(math.degrees(0.6))
+            assert packet["gripper"][2] == pytest.approx(math.degrees(3.35))
+    finally:
+        bot.disconnect()
+
+
+@pytest.mark.parametrize("bad_index,bad_value", [(0, 8.0), (6, 9.0), (2, float("nan"))])
+def test_optional_initial_pose_keeps_feedback_limits(monkeypatch, tmp_path, bad_index, bad_value):
+    bot, buses = robot(monkeypatch, tmp_path, read_only=False)
+    for arm in bot.arms.values():
+        arm.config.initial_position_rad = None
+    buses["right"].raw[bad_index] = bad_value
+    with pytest.raises(ConnectionError if math.isnan(bad_value) else ValueError):
+        bot.connect()
+    assert not any(c[0] in ("enable", "write") for b in buses.values() for c in b.calls)
+
+
+def test_initial_pose_null_config_decode():
+    import draccus
+
+    cfg = draccus.decode(YamArmConfig, {"port": "can0", "initial_position_rad": None})
+    assert cfg.initial_position_rad is None
+    for invalid in ([0.0] * 5, [float("nan")] * 6):
+        with pytest.raises(ValueError):
+            YamArmConfig(port="can0", initial_position_rad=invalid)

@@ -74,6 +74,16 @@ These are options to add to a complete `lerobot-rollout` command. Measure action
 
 The adapter defaults to `read_only=true`. Explicitly set `robot.read_only=false` to enable control after validating the installation. At startup, cameras must deliver frames and both arms must pass feedback, calibration, and pose checks before either is enabled. A camera first-frame timeout is retried once using a fresh connection, before opening either motor bus. A second timeout aborts startup; camera failures during control are not automatically retried. Each joint must be within `initial_tolerance_rad` (default 0.2 radians) of `initial_position_rad` (default six zeros). Grippers may start anywhere within their calibrated stroke by default. Optionally set each arm's `initial_gripper_position=1.0` to require open grippers. These are assertions, not automatic homing commands.
 
+To start from the current joint pose, set both
+`--robot.left_arm.initial_position_rad=null` and
+`--robot.right_arm.initial_position_rad=null`. This disables only the fixed
+startup-pose assertion. Fresh feedback, calibrated gripper range and joint limits
+are still checked. With deferred activation, `/start` seeds control from the
+current measured pose without a move toward zero. The rollout home target remains
+the pose captured at connection, including gripper openings. An arbitrary valid
+start is not necessarily a pose the policy performs well from; keep the physical
+starting layout consistent for comparisons.
+
 A separate servo loop per arm (default 200 Hz) supplies gravity compensation and bounded targets. Defaults are 0.3 rad/s joint target speed, 0.5 gripper strokes/s, and a 0.15 rad tracking-error bound. The gripper's proportional torque contribution is limited to 0.5 Nm; damping adds torque, so this is not a contact-force guarantee. `send_action` returns the accepted target; observations contain measured positions.
 
 The gripper speed setting limits target motion, not achieved speed. With zero commanded motor velocity, its damping opposes motion: at the default `gripper_kd=0.5`, the 0.5 Nm proportional cap balances damping at roughly 1 motor rad/s, before friction or load. Increasing target speed alone does not remove that bottleneck. A lower `gripper_kd`, such as 0.1, reduces this damping without increasing the proportional torque cap, but also changes braking and settling behavior. Validate it on the installation before relying on faster motion.

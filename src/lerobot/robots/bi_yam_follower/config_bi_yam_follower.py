@@ -39,7 +39,8 @@ class YamArmConfig:
     joint_offsets_rad: list[float] = field(default_factory=lambda: [0.0] * 6)
     # An assertion, NOT a motion command. Place the supported arms in this pose
     # before enabling control. Zero is the manufacturer's folded reference pose.
-    initial_position_rad: list[float] = field(default_factory=lambda: [0.0] * 6)
+    # None accepts the current valid measured pose instead of a fixed startup pose.
+    initial_position_rad: list[float] | None = field(default_factory=lambda: [0.0] * 6)
     initial_tolerance_rad: float = 0.2
     initial_gripper_position: float | None = None
     initial_gripper_tolerance: float = 0.1
@@ -62,7 +63,6 @@ class YamArmConfig:
         for name in (
             "joint_signs",
             "joint_offsets_rad",
-            "initial_position_rad",
             "kp",
             "kd",
             "gravity_factors",
@@ -92,9 +92,14 @@ class YamArmConfig:
             raise ValueError("Gripper gains/torque exceed supported limits (maximum 1 Nm)")
         if self.initial_gripper_position is not None and not 0 <= self.initial_gripper_position <= 1:
             raise ValueError("initial_gripper_position must be between 0 closed and 1 open")
-        for value, limits in zip(self.initial_position_rad, JOINT_LIMITS, strict=True):
-            if not limits[0] <= value <= limits[1]:
-                raise ValueError("initial_position_rad is outside YAM joint limits")
+        if self.initial_position_rad is not None:
+            if len(self.initial_position_rad) != 6 or not all(
+                math.isfinite(v) for v in self.initial_position_rad
+            ):
+                raise ValueError("initial_position_rad must contain six finite values or be null")
+            for value, limits in zip(self.initial_position_rad, JOINT_LIMITS, strict=True):
+                if not limits[0] <= value <= limits[1]:
+                    raise ValueError("initial_position_rad is outside YAM joint limits")
         ends = (self.gripper_closed_rad, self.gripper_open_rad)
         if any(x is not None for x in ends):
             if any(x is None or not math.isfinite(x) or abs(x) > 12.5 for x in ends):

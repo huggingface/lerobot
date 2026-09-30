@@ -250,7 +250,7 @@ class BiYamFollower(Robot):
         return self._control_started
 
     def _validate_initial_pose(self, side: str, arm: _Arm) -> None:
-        if np.any(
+        if arm.config.initial_position_rad is not None and np.any(
             np.abs(arm.position[:6] - arm.config.initial_position_rad) > arm.config.initial_tolerance_rad
         ):
             raise ValueError(
