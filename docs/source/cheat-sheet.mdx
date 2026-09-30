@@ -10,7 +10,6 @@ All of the LeRobot commands in one place. If you forgot how to use a specific co
 
 ### Setup and installation
 
-For installation please look at [LeRobot Installation](https://huggingface.co/docs/lerobot/main/en/installation).
 
 ### Useful tools
 
@@ -24,7 +23,7 @@ lerobot-find-port
 
 ###### Find cameras
 
-Quickly find camera indices and verify their output. This command prints camera information to the terminal and saves test frames from each detected camera to `lerobot/outputs/captured_images`
+Quickly find camera indices and verify their output. This command prints camera information to the terminal and saves test frames from each detected camera to `outputs/captured_images`
 
 ```bash
 lerobot-find-cameras
@@ -61,10 +60,8 @@ lerobot-teleoperate \
 
 ### Recording a dataset
 
-The dataset is automatically uploaded to the server and saved under repo_id, make sure you are logged in to your HF account with CLI:
-`hf auth login`
+The dataset is automatically uploaded to the Hugging Face Hub under `repo_id`. Make sure you are logged in to your HF account with the CLI (you can get a token from [https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)), and store your username in `HF_USER`, which the commands below use:
 
-You can get the token from: [https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
 
 ```bash
 lerobot-record \
@@ -83,11 +80,13 @@ lerobot-record \
 ```
 
 While collecting the dataset you can control the process with your keyboard:
-Control the data recording flow using keyboard shortcuts:
 
-- Press **Right Arrow (`→`)**: Save episode and move to the next.
-- Press **Left Arrow (`←`)**: Delete current episode and retry.
-- Press **Escape (`ESC`)**: Stop, encode videos, and upload.
+- Press **Right Arrow (`→`)** or **`n`**: Save episode and move to the next.
+- Press **Left Arrow (`←`)** or **`r`**: Delete current episode and retry.
+- Press **Escape (`ESC`)** or **`q`**: Stop, encode videos, and upload.
+
+> [!WARNING]
+> `lerobot-record` adds the date and time of the session to the end of `--dataset.repo_id`, so `${HF_USER}/so101_dataset_test` is saved as `${HF_USER}/so101_dataset_test_YYYYMMDD_HHMMSS`. Find the full name on your Hugging Face profile or with `ls ~/.cache/huggingface/lerobot/${HF_USER}`, and use it in the training commands below. Add `--dataset.no_stamp=true` to keep the exact name.
 
 ### Recording depth
 
@@ -125,7 +124,7 @@ Depending on your hardware training the policy might take a few hours. That's ho
 
 ```bash
 lerobot-train \
-    --dataset.repo_id=${HF_USER}/so101_dataset_test \
+    --dataset.repo_id=${HF_USER}/so101_dataset_test_YYYYMMDD_HHMMSS \
     --policy.type=act \
     --output_dir=outputs/train/act_so101_test \
     --job_name=act_so101_test \
@@ -135,18 +134,18 @@ lerobot-train \
     --steps=20000
 ```
 
-- Policy Types: `act`, `diffusion`, `smolvla`, `pi05`
+- Common policy types: `act`, `diffusion`, `multi_task_dit`, `smolvla`, `pi0`, `pi05`, `pi0_fast`, `groot`, `xvla`. Each policy has its own page under **Policies** in the sidebar, and the [Compute & Hardware Guide](./hardware_guide) shows which ones fit your GPU.
 - Devices: `cuda` (NVIDIA), `mps` (Apple Silicon), `cpu`
 
-If you want to fine-tune a specific model you can provide the path to the model. In this case path is enough and type can be skipped.
+`--policy.type` creates a new policy of that type and trains it from scratch on your dataset (some policies still start from pretrained vision or language backbones, as set in their config). To fine-tune an existing model instead, pass `--policy.path` with a local checkpoint or a Hub repo id: the policy type and config are read from it, so `--policy.type` is not needed.
 
 ```bash
 lerobot-train \
-    --dataset.repo_id=${HF_USER}/so101_dataset_test \
+    --dataset.repo_id=${HF_USER}/so101_dataset_test_YYYYMMDD_HHMMSS \
     --policy.path=username/the_policy_to_finetune \
     --policy.device=cuda \
-    --policy.repo_id=${HF_USER}/policy_test \
-    --output_dir=outputs/train/act_so101_test \
+    --policy.repo_id=${HF_USER}/policy_finetuned_test \
+    --output_dir=outputs/train/finetuned_so101_test \
     --steps=20000
 ```
 
@@ -160,18 +159,19 @@ lerobot-train --config_path=${HF_USER}/policy_test --resume=true --job.target=a1
 
 ### Inference
 
-Inference means running the trained policy/model on a robot. For that we use `lerobot-rollout`. You will need to provide a path to your policy. It can be a local path or a path to Hugging Face for example "lerobot/folding_latest". Your cameras configuration needs to match what was used when collecting the dataset. Duration is in seconds if unspecified, it will run forever.
+Inference means running the trained policy/model on a robot. For that we use `lerobot-rollout`. You will need to provide a path to your policy. It can be a local path or a Hugging Face repo id, for example `${HF_USER}/policy_test` from the training command above. Use the same port, `--robot.id`, camera configuration and task description as when collecting the dataset. `--duration` is in seconds; if unspecified, the policy runs until you stop it.
 
 > [!TIP]
-> If you are using the previous release V0.5.1 instead of `lerobot-rollout` you need to use `lerobot-record`. More information [here](https://huggingface.co/docs/lerobot/v0.5.1/en/il_robots#run-inference-and-evaluate-your-policy).
+> On v0.5.x and earlier, `lerobot-rollout` does not exist and you need to use `lerobot-record` instead. More information [here](https://huggingface.co/docs/lerobot/v0.5.1/en/il_robots#run-inference-and-evaluate-your-policy).
 
 ```bash
 lerobot-rollout \
     --strategy.type=base \
-    --policy.path=${HF_USER}/my_policy \
+    --policy.path=${HF_USER}/policy_test \
     --robot.type=so101_follower \
-    --robot.port=/dev/ttyACM1 \
-    --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video1, width: 640, height: 480, fps: 30}, side: {type: opencv, index_or_path: /dev/video5, width: 640, height: 480, fps: 30}}" \
-    --task="Put lego brick into the transparent box" \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower_arm \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30} }" \
+    --task="put the red brick in a bowl" \
     --duration=60
 ```
