@@ -183,6 +183,10 @@ class HumanVideoConfig:
     frame_offset_s: float = 0.0
     # Robot frames per segment shown to the VLM when it writes the prompts.
     context_frames: int = 6
+    # Also edit the segment's last frame (robot removed, hands at rest) and pass it as the video's
+    # end frame, so the human video ends in the robot's final object state (one more edit per video;
+    # needs a video model that takes an end image, e.g. MiniMax-H3 on fal: ``end_image_url``).
+    end_frame: bool = True
     # Cap on generated videos per episode (None = every subtask).
     max_segments_per_episode: int | None = None
     # Concurrent provider requests per episode (videos take minutes each).

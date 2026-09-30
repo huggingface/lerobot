@@ -32,6 +32,7 @@ executor merges into ``meta/human_videos.jsonl``.
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import logging
@@ -60,13 +61,35 @@ class HumanVideoGenerator(Protocol):
 
     def edit_image(self, image: PIL.Image.Image, prompt: str) -> PIL.Image.Image: ...
 
-    def image_to_video(self, image: PIL.Image.Image, prompt: str) -> bytes: ...
+    def image_to_video(
+        self, image: PIL.Image.Image, prompt: str, end_image: PIL.Image.Image | None = None
+    ) -> bytes: ...
 
 
 def _png_bytes(image: PIL.Image.Image) -> bytes:
     buffer = io.BytesIO()
     image.convert("RGB").save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def _png_data_url(image: PIL.Image.Image) -> str:
+    return "data:image/png;base64," + base64.b64encode(_png_bytes(image)).decode()
+
+
+def motion_instruction(hand: str) -> str:
+    """How the video prompt describes the acting hand(s); a single acting hand keeps the other still."""
+    if hand == "both":
+        return (
+            "how both hands work together: say what the left hand and what the right hand does as they reach the "
+            "objects, grasp, move and release them at the target, then both return to rest without touching "
+            "anything."
+        )
+    other = "left" if hand == "right" else "right"
+    return (
+        f"how the {hand} hand reaches the object, grasps it, moves it and releases it at the target, then returns "
+        f"to rest without touching anything. The {other} hand stays completely still, resting on the near edge of "
+        "the table for the whole video."
+    )
 
 
 @dataclass
@@ -95,15 +118,19 @@ class InferenceProvidersGenerator:
         # Editors may return a different (often square) size; keep the camera's aspect ratio.
         return edited.convert("RGB").resize(image.size, PIL.Image.LANCZOS)
 
-    def _video_parameters(self, prompt: str) -> dict[str, Any]:
+    def _video_parameters(self, prompt: str, end_image: PIL.Image.Image | None = None) -> dict[str, Any]:
         params: dict[str, Any] = {"prompt": prompt, "resolution": self.config.resolution}
         params["duration"] = self.config.duration_s
         if self.config.seed is not None:
             params["seed"] = self.config.seed
+        if end_image is not None:
+            params["end_image_url"] = _png_data_url(end_image)
         return params
 
-    def image_to_video(self, image: PIL.Image.Image, prompt: str) -> bytes:
-        params = self._video_parameters(prompt)
+    def image_to_video(
+        self, image: PIL.Image.Image, prompt: str, end_image: PIL.Image.Image | None = None
+    ) -> bytes:
+        params = self._video_parameters(prompt, end_image)
         try:
             return self._client.image_to_video(_png_bytes(image), model=self.config.video_model, **params)
         except ValueError as err:
@@ -238,7 +265,7 @@ class HumanVideoModule:
             target=plan.get("target", ""),
             steps="; ".join(map(str, plan.get("steps") or [])),
             final_state=plan.get("final_state", "the task completed"),
-            hand=plan.get("hand", "right"),
+            motion=motion_instruction(plan.get("hand", "right")),
             duration_s=self.config.duration_s,
         )
         images = [{"type": "image", "image": edited}, *to_image_blocks(frames[1:])]
@@ -271,26 +298,44 @@ class HumanVideoModule:
             if not frames or not isinstance(plan, dict):
                 raise ValueError("missing frames or VLM plan")
             first = _to_pil(frames[0])
-            entry.update({"human_task": plan.get("human_task"), "edit_prompt": plan.get("edit_prompt")})
+            entry.update(
+                {
+                    "human_task": plan.get("human_task"),
+                    "edit_prompt": plan.get("edit_prompt"),
+                    "end_edit_prompt": plan.get("end_edit_prompt"),
+                }
+            )
             edited = first
             if self.config.edit_model and self.generator is not None:
                 edited = self.generator.edit_image(first, str(plan.get("edit_prompt") or ""))
             edited.save(out_dir / f"{stem}_first_frame.png")
+            end = None
+            if (
+                self.config.end_frame
+                and self.config.edit_model
+                and self.generator is not None
+                and len(frames) > 1
+            ):
+                end = self.generator.edit_image(_to_pil(frames[-1]), str(plan.get("end_edit_prompt") or ""))
+                end.save(out_dir / f"{stem}_last_frame.png")
             video_plan = self.vlm.generate_json([self._video_messages(edited, frames, plan)])[0]
             if not isinstance(video_plan, dict) or not video_plan.get("video_prompt"):
                 raise ValueError(f"VLM returned no video prompt: {video_plan!r}")
             entry.update({"video_prompt": video_plan["video_prompt"], "caption": video_plan.get("caption")})
             if self.generator is None:
                 raise RuntimeError("no generator configured")
-            video = self.generator.image_to_video(edited, str(video_plan["video_prompt"]))
+            video = self.generator.image_to_video(edited, str(video_plan["video_prompt"]), end_image=end)
             (out_dir / f"{stem}.mp4").write_bytes(video)
             entry.update(
                 {
                     "status": "ok",
                     "video_path": str((out_dir / f"{stem}.mp4").relative_to(self.root)),
                     "first_frame_path": str((out_dir / f"{stem}_first_frame.png").relative_to(self.root)),
+                    "hand": plan.get("hand"),
                 }
             )
+            if end is not None:
+                entry["last_frame_path"] = str((out_dir / f"{stem}_last_frame.png").relative_to(self.root))
         except Exception as err:  # noqa: BLE001  - one failed segment must not stop the episode
             logger.warning("human_video: episode %d segment %d failed: %s", record.episode_index, k, err)
             entry.update({"status": "failed", "error": str(err)[:500]})

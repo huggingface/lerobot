@@ -269,9 +269,10 @@ lerobot-annotate \
     --vlm.chat_template_kwargs='{"enable_thinking": false}'
 ```
 
-Videos are written to `human_videos/episode_XXXXXX/segment_XXX.mp4` (with the edited first frame
-next to each) and indexed in `meta/human_videos.jsonl`: one line per segment with the subtask, its
-start and end time, the human task, the prompts, the models and the file paths. They are not
+Videos are written to `human_videos/episode_XXXXXX/segment_XXX.mp4` (with the edited first and last
+frame next to each) and indexed in `meta/human_videos.jsonl`: one line per segment with the subtask,
+its start and end time, the human task, the acting hand(s), the prompts, the models and the file
+paths. They are not
 written to the language columns. A failed request is recorded with `"status": "failed"` and does not
 stop the run.
 
@@ -281,12 +282,19 @@ stop the run.
 | `--human_video.edit_model`               | `Qwen/Qwen-Image-Edit-2509` | Image-editing model; `null` animates the unedited robot frame. |
 | `--human_video.edit_guidance_scale`      | `1.5`                       | Edit guidance; higher values oversaturate on fal.              |
 | `--human_video.video_model`              | `MiniMaxAI/MiniMax-H3`      | Image-to-video model.                                          |
-| `--human_video.resolution`               | `480P`                      | Provider resolution (`480P`, `768P`, `1080P` for MiniMax H3).  |
+| `--human_video.resolution`               | `480P`                      | Provider resolution (`480P`, `768P`, `2K`, `4K` for MiniMax H3). |
 | `--human_video.duration_s`               | `5`                         | Video length in seconds.                                       |
 | `--human_video.camera_key`               | `--vlm.camera_key`          | Camera to edit and animate.                                    |
 | `--human_video.frame_offset_s`           | `0.0`                       | Take the first frame this long after the subtask starts.       |
+| `--human_video.end_frame`                | `true`                      | Also edit the segment's last frame and use it as the video's end frame. |
 | `--human_video.max_segments_per_episode` | all                         | Cap on videos per episode.                                     |
 | `--human_video.max_concurrency`          | `4`                         | Concurrent provider requests per episode.                      |
+
+The VLM names the acting hand for each segment: with one hand acting, the other stays still at the
+near edge of the table; `both` is used only when both robot arms manipulate objects. With
+`--human_video.end_frame` (default), the segment's last frame is edited too and passed as the video's
+end frame (`end_image_url` for MiniMax H3 on fal), so the human video ends in the robot's final
+object state; this adds one edit per video.
 
 Generated videos can drop, duplicate or change objects. Review them before training on them, for
 example by filtering with a VLM as Zero-WAM does.

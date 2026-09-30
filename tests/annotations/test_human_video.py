@@ -62,6 +62,7 @@ PLAN = {
     "steps": ["grasp the bottle", "tilt it over the cup"],
     "final_state": "water in the cup",
     "edit_prompt": "Remove the robot arms and add two human hands at the bottom edge.",
+    "end_edit_prompt": "Remove the robot; the bottle stands next to the cup; hands rest at the near edge.",
 }
 VIDEO = {
     "video_prompt": "From a fixed first-person camera perspective, ...",
@@ -97,13 +98,15 @@ class _Generator:
     fail_on: set[str] = field(default_factory=set)
     edits: list[str] = field(default_factory=list)
     videos: list[str] = field(default_factory=list)
+    end_images: list = field(default_factory=list)
 
     def edit_image(self, image, prompt):
         self.edits.append(prompt)
         return image.transpose(PIL.Image.FLIP_LEFT_RIGHT)
 
-    def image_to_video(self, image, prompt):
+    def image_to_video(self, image, prompt, end_image=None):
         self.videos.append(prompt)
+        self.end_images.append(end_image)
         if any(s in prompt for s in self.fail_on):
             raise RuntimeError("provider error")
         return b"\x00\x00\x00\x18ftypmp42fake-video"
@@ -143,8 +146,13 @@ def test_generates_one_video_per_subtask(single_episode_root: Path, tmp_path: Pa
         assert (single_episode_root / e["video_path"]).read_bytes().startswith(b"\x00\x00\x00\x18ftyp")
         assert (single_episode_root / e["first_frame_path"]).exists()
         assert e["video_model"] == "MiniMaxAI/MiniMax-H3" and e["resolution"] == "480P"
-    assert generator.edits == [PLAN["edit_prompt"]] * 3
+    # First and last frame of every segment are edited; the last one becomes the video's end frame.
+    assert sorted(generator.edits) == sorted([PLAN["edit_prompt"], PLAN["end_edit_prompt"]] * 3)
     assert generator.videos == [VIDEO["video_prompt"]] * 3
+    assert all(end is not None for end in generator.end_images)
+    for e in entries:
+        assert (single_episode_root / e["last_frame_path"]).exists()
+        assert e["end_edit_prompt"] == PLAN["end_edit_prompt"]
     # The first frame is taken at the subtask start, followed by the context frames.
     first_call = module.frame_provider.calls[0]
     assert first_call[1][0] == 0.0 and len(first_call[1]) == 1 + module.config.context_frames
@@ -158,7 +166,7 @@ def test_failed_segment_is_recorded_and_others_continue(single_episode_root: Pat
     calls = {"n": 0}
 
     class _FlakyGenerator(_Generator):
-        def image_to_video(self, image, prompt):
+        def image_to_video(self, image, prompt, end_image=None):
             calls["n"] += 1
             if calls["n"] == 1:
                 raise RuntimeError("provider error")
@@ -179,6 +187,31 @@ def test_max_segments_and_frame_offset(single_episode_root: Path, tmp_path: Path
     entries = json.loads((staging.episode_dir / "human_video.json").read_text())
     assert len(entries) == 2
     assert module.frame_provider.calls[1][1][0] == pytest.approx(1.5)
+
+
+def test_end_frame_can_be_disabled(single_episode_root: Path, tmp_path: Path) -> None:
+    record = next(iter_episodes(single_episode_root))
+    staging = EpisodeStaging(tmp_path / "stage", record.episode_index)
+    _stage_subtasks(staging, [("grasp the bottle", 0.0)])
+    generator = _Generator()
+    _module(single_episode_root, generator, end_frame=False).run_episode(record, staging)
+    entries = json.loads((staging.episode_dir / "human_video.json").read_text())
+    assert generator.edits == [PLAN["edit_prompt"]] and generator.end_images == [None]
+    assert "last_frame_path" not in entries[0]
+
+
+def test_one_acting_hand_keeps_the_other_still_and_both_hands_work_together() -> None:
+    from lerobot.annotations.steerable_pipeline.modules.human_video import motion_instruction
+    from lerobot.annotations.steerable_pipeline.prompts import load as load_prompt
+
+    right = motion_instruction("right")
+    assert "the right hand reaches" in right and "The left hand stays completely still" in right
+    left = motion_instruction("left")
+    assert "the left hand reaches" in left and "The right hand stays completely still" in left
+    both = motion_instruction("both")
+    assert "both hands work together" in both and "stays completely still" not in both
+    plan_prompt = load_prompt("human_video_plan")
+    assert '"both" only when both robot arms' in plan_prompt and '"end_edit_prompt"' in plan_prompt
 
 
 def test_spans_fall_back_to_existing_dataset_subtasks(
@@ -280,3 +313,5 @@ def test_generator_routes_image_text_to_video_models_through_fal(monkeypatch) ->
     monkeypatch.setattr(generator, "_fal_image_text_to_video", fake_fal)
     assert generator.image_to_video(PIL.Image.new("RGB", (8, 8)), "a prompt") == b"video"
     assert seen == {"prompt": "a prompt", "resolution": "480P", "duration": 5, "seed": 3}
+    generator.image_to_video(PIL.Image.new("RGB", (8, 8)), "a prompt", end_image=PIL.Image.new("RGB", (8, 8)))
+    assert seen["end_image_url"].startswith("data:image/png;base64,")
