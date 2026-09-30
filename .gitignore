@@ -176,3 +176,5 @@ outputs/
 *.urdf
 *.xml
 *.part
+
+checkpoints/
