@@ -1511,9 +1511,17 @@ class PI05Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(
-        self, batch: dict[str, Tensor], **kwargs: Unpack[RTCActionSelectKwargs]
+        self,
+        batch: dict[str, Tensor],
+        *,
+        noise: Tensor | None = None,
+        **kwargs: Unpack[RTCActionSelectKwargs],
     ) -> Tensor:
-        """Predict a chunk of actions given environment observations."""
+        """Predict a chunk of actions given environment observations.
+
+        `noise` is the starting sample of the denoising loop, shaped
+        (batch_size, chunk_size, max_action_dim). When it is None, fresh noise is drawn.
+        """
         self.eval()
 
         # Direct chunk callers provide single observations. ``select_action``
@@ -1533,7 +1541,7 @@ class PI05Policy(PreTrainedPolicy):
 
         # Sample actions using the model (pass through RTC kwargs, no separate state needed for PI05)
         actions = self.model.sample_actions(
-            images, img_masks, tokens, masks, states=states, state_masks=state_masks, **kwargs
+            images, img_masks, tokens, masks, states=states, state_masks=state_masks, noise=noise, **kwargs
         )
 
         # Unpad actions to actual action dimension

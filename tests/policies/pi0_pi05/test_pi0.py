@@ -125,3 +125,13 @@ def test_config_creation():
     except Exception as e:
         print(f"Config creation failed: {e}")
         raise
+
+
+def test_predict_action_chunk_takes_noise_as_keyword():
+    import inspect
+
+    signature = inspect.signature(PI0Policy.predict_action_chunk)
+
+    assert signature.parameters["noise"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert signature.parameters["noise"].default is None
+    signature.bind(object(), {}, noise=torch.zeros(1), inference_delay=2, prev_chunk_left_over=None)
