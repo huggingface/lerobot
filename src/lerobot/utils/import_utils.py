@@ -137,6 +137,9 @@ _diffusers_available = is_package_available("diffusers")
 _natten_available = is_package_available("natten")
 _torchdiffeq_available = is_package_available("torchdiffeq")
 
+# Optional kinematics
+_mujoco_available = is_package_available("mujoco")
+
 # Hardware SDKs
 _serial_available = is_package_available("pyserial", import_name="serial")
 _deepdiff_available = is_package_available("deepdiff")

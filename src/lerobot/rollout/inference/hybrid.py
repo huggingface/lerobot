@@ -24,6 +24,7 @@ import torch
 
 from lerobot.utils.action_interpolator import ActionInterpolator
 
+from ..end_effector import EndEffectorKinematics
 from ..hybrid import HybridConfig, PlannerDecision
 from .base import InferenceEngine, QueryAnswer, QueryKind
 
@@ -45,6 +46,7 @@ class HybridInferenceEngine(InferenceEngine):
         self.delegate = delegate
         self.config = config
         self.keys = keys
+        self.kinematics = {name: EndEffectorKinematics(ee) for name, ee in config.end_effectors.items()}
         self.control_interpolator = ActionInterpolator(multiplier=multiplier)
         self._mode = "idle"
         self._obs: dict | None = None
@@ -58,6 +60,7 @@ class HybridInferenceEngine(InferenceEngine):
         self._motion_started = 0.0
         self._motion_duration = 0.0
         self._consecutive = 0
+        self._ee_targets: dict[str, dict[str, list[float]]] = {}
         self.terminal = False
 
     @property
@@ -109,6 +112,7 @@ class HybridInferenceEngine(InferenceEngine):
         self._obs = None
         self._manual_task = None
         self._consecutive = 0
+        self._ee_targets = {}
         self.terminal = False
 
     def start_autosteer(self, goal, interval_s):
@@ -225,10 +229,16 @@ class HybridInferenceEngine(InferenceEngine):
             raise ValueError("Planner review deadline exceeded; proposal discarded")
         if decision.mode == "policy":
             self._start_policy(decision.instruction)
-        elif decision.mode == "intervention":
+        elif decision.mode in {"intervention", "end_effector"}:
             if self._consecutive >= self.config.max_consecutive_interventions:
                 raise ValueError("Consecutive intervention limit reached")
-            self._target = decision.validate_motion(self.config, self._hold)
+            target = decision.resolve_motion(self.config, self._hold, self.kinematics)
+            # IK is bounded CPU work; reject if feedback aged or a deadline elapsed meanwhile.
+            self._check_hold()
+            if time.perf_counter() - self._review_started > self.config.review_timeout_s:
+                raise ValueError("Planner/IK deadline exceeded")
+            self._target = target
+            self._ee_targets = decision.ee_targets
             self.control_interpolator.reset()
             self._motion_started = time.perf_counter()
             self._motion_duration = decision.duration_s
@@ -283,6 +293,10 @@ class HybridInferenceEngine(InferenceEngine):
                         reached = all(
                             abs(pose[k] - self._target[k]) <= self.config.limits[k].tolerance
                             for k in self.keys
+                        )
+                        reached = reached and all(
+                            self.kinematics[name].reached(goal, pose)
+                            for name, goal in self._ee_targets.items()
                         )
                         if reached:
                             self._begin_review()

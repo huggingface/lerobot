@@ -529,7 +529,7 @@ See `examples/so100_to_so100_EE/rollout.py` and `examples/phone_to_so100/rollout
 
 ### Hybrid external planner (experimental)
 
-An opt-in hybrid supervisor lets the external VLM choose a policy subtask or a bounded absolute-position correction. It works with sync/RTC inference and the `base` or `sentry` strategy. It does not execute model-generated Python, end-effector commands, or inverse kinematics.
+An opt-in hybrid supervisor lets the external VLM choose a policy subtask or a bounded absolute-position correction. It works with sync/RTC inference and the `base` or `sentry` strategy. It does not execute model-generated Python. Optional end-effector corrections use a local MuJoCo FK/IK solver.
 
 Set `hybrid.limits` explicitly for **every** action key. The observation must expose those same keys as measured absolute positions, in the same physical units as robot actions after policy unnormalization. The action processor must preserve those units; relative/delta or torque action interfaces are unsuitable. Joint limits alone do not establish collision-free motion. Keep the hardware driver's existing interlocks enabled.
 
@@ -578,3 +578,15 @@ The VLM returns one JSON object:
 The supervisor validates all targets before dispatch, limits each correction's range/delta/speed/duration, checks drift during review, and observes again after each correction. It discards queued and in-flight RTC actions at each handover. Reset, manual takeover, and a new goal invalidate pending replies, including `done`. A review timeout, invalid proposal, or missed target stops the segment; it never silently resumes the previous policy instruction. `/subtask` gives the operator control and cancels automatic reviews; `/autosteer <goal>` restores them.
 
 Raw replies and latency are written to `planner.log_path`. Accepted decisions appear in the interactive prompt. With `sentry`, hold, intervention, and policy actions are recorded at the base FPS, preserving configured command interpolation. No scoring or robot-specific calibration is included in this supervisor.
+
+#### End-effector corrections
+
+Install `lerobot[hybrid-ik]` and configure `hybrid.end_effectors` with one `EndEffectorConfig` per arm: a local MJCF `model_path`, a tool-centre `site`, ordered `joint_names`, matching absolute-radian `action_keys`, and an explicit `frame_description`. Each chain must have a fixed base, bounded hinge joints and all joints contributing to that site. The model must use the same signs/zeros as measured robot positions. The planner receives current FK poses alongside the images and state; it does not receive a preview of future policy action chunks.
+
+`mode=end_effector` supplies `ee_targets` for exactly one configured arm, with `position_m: [x,y,z]` and a unit `quaternion_wxyz: [w,x,y,z]`. Poses are absolute in that arm's **model world/base frame**. Neither the solver nor the planner infers camera extrinsics, the table frame, or the transform between two independently mounted arms. For example, a 1 cm upward correction in a verified z-up model frame adds `0.01` to the current FK position's z component and copies its quaternion. `instruction` is empty and `duration_s` is positive. Other modes may omit `ee_targets` or supply `{}`.
+
+`targets` can additionally command a gripper. Raw joint targets for configured end-effector chains are rejected, including in ordinary intervention mode. Unmentioned joints and grippers hold. Native `hybrid.limits` still bound the IK solution: set a nonzero joint `max_delta` and an appropriate `max_speed` to permit corrections.
+
+The local damped least-squares solver seeds from the held measured pose, checks convergence, and validates the joint-interpolated path against Cartesian distance, rotation and speed bounds before accepting any command. Defaults allow at most 3 cm translation, 0.15 rad rotation, 3 cm/s and 0.15 rad/s; native joint limits can restrict these further. The executor checks measured FK arrival as well as joint arrival before reviewing again. Invalid, unreachable, late, or missed targets stop the segment without falling back to a stale policy action.
+
+This is a bounded correction interface, **not collision-aware motion planning**. Joint interpolation need not follow a straight Cartesian path, and a geometry-free kinematic model cannot detect table, object, self or inter-arm collisions. Verify the model/tool frame and clearance on the actual setup before physical trials. Do not present model-frame x/y directions as image directions without camera-to-base calibration.
