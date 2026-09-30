@@ -334,3 +334,22 @@ def test_failed_calibration_preserves_previous_file_and_endpoints(monkeypatch, t
     finally:
         bot.disconnect()
     assert not any(call[0] in ("write", "enable", "disable") for bus in buses.values() for call in bus.calls)
+
+
+def test_delayed_feedback_never_produces_motor_command(monkeypatch, tmp_path):
+    bot, buses = robot(monkeypatch, tmp_path, read_only=False)
+    arm = bot.arms["left"]
+    arm.enabled = True
+    now = [0.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: now[0])
+
+    def delayed_read(strict=False):
+        now[0] = bot.config.feedback_timeout_s + 0.01
+        return states(buses["left"].raw)
+
+    monkeypatch.setattr(arm.bus, "sync_read_all_states", delayed_read)
+    bot._run(arm)
+    assert bot._stop.is_set()
+    assert "freshness deadline" in str(bot._failure)
+    assert not any(call[0] == "write" for call in arm.bus.calls)
+    assert ("disable",) in arm.bus.calls

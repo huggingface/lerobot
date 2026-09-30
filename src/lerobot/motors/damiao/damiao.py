@@ -288,7 +288,7 @@ class DamiaoMotorsBus(MotorsBusBase):
             raise RuntimeError("CAN bus is not initialized.")
 
         self.canbus.send(msg)
-        if msg := self._recv_motor_response(expected_recv_id=recv_id):
+        if msg := self._recv_motor_response(expected_recv_id=recv_id, timeout=MEDIUM_TIMEOUT_SEC):
             self._process_response(motor_name, msg)
         else:
             logger.debug(f"No response from {motor_name} after command 0x{command_byte:02X}")
@@ -368,6 +368,9 @@ class DamiaoMotorsBus(MotorsBusBase):
         if self.canbus is None:
             raise RuntimeError("CAN bus is not initialized.")
 
+        if expected_recv_id is not None:
+            return self._recv_all_responses([expected_recv_id], timeout=timeout).get(expected_recv_id)
+
         try:
             start_time = time.time()
             messages_seen = []
@@ -408,19 +411,24 @@ class DamiaoMotorsBus(MotorsBusBase):
         """
         responses: dict[int, can.Message] = {}
         expected_set = set(expected_recv_ids)
-        start_time = time.time()
+        deadline = time.monotonic() + timeout
 
         if self.canbus is None:
             raise RuntimeError("CAN bus is not initialized.")
 
         try:
-            while len(responses) < len(expected_recv_ids) and (time.time() - start_time) < timeout:
-                # 100us poll timeout
-                msg = self.canbus.recv(timeout=PRECISE_TIMEOUT_SEC)
+            # A scheduler/GIL pause can consume the deadline while replies are
+            # already queued in the socket. Read those without waiting before
+            # declaring a packet missing. Bound draining on a busy shared bus.
+            for _ in range(1024):
+                if len(responses) == len(expected_set):
+                    break
+                remaining = deadline - time.monotonic()
+                msg = self.canbus.recv(timeout=max(0.0, min(PRECISE_TIMEOUT_SEC, remaining)))
+                if msg is None and remaining <= 0:
+                    break
                 if msg and msg.arbitration_id in expected_set:
                     responses[msg.arbitration_id] = msg
-                    if len(responses) == len(expected_recv_ids):
-                        break
         except Exception as e:
             logger.debug(f"Error receiving responses: {e}")
 
@@ -522,7 +530,9 @@ class DamiaoMotorsBus(MotorsBusBase):
             recv_id_to_motor[self._get_motor_recv_id(motor)] = motor_name
 
         # Step 2: Collect responses and update state cache
-        responses = self._recv_all_responses(list(recv_id_to_motor.keys()), timeout=SHORT_TIMEOUT_SEC)
+        # Classic CAN plus USB transport can take longer than 1 ms for a full
+        # seven-motor exchange. Finish collecting before the next refresh.
+        responses = self._recv_all_responses(list(recv_id_to_motor.keys()), timeout=MEDIUM_TIMEOUT_SEC)
         for recv_id, motor_name in recv_id_to_motor.items():
             if msg := responses.get(recv_id):
                 self._process_response(motor_name, msg)
@@ -734,11 +744,16 @@ class DamiaoMotorsBus(MotorsBusBase):
             msg = responses.get(recv_id)
             if strict:
                 if msg is None:
-                    raise ConnectionError(f"Missing fresh feedback from {motor} (0x{recv_id:02X})")
+                    raise ConnectionError(
+                        f"{self.port}: Missing fresh feedback from {motor} (0x{recv_id:02X})"
+                    )
                 if len(msg.data) != 8 or (msg.data[0] & 0x0F) != self._get_motor_id(motor):
-                    raise ConnectionError(f"Malformed motor feedback from {motor}")
+                    raise ConnectionError(f"{self.port}: Malformed motor feedback from {motor}")
                 if (status := msg.data[0] >> 4) not in (0, 1):
-                    raise ConnectionError(f"Motor {motor} reports fault status 0x{status:X}")
+                    detail = " (communication lost)" if status == 0xD else ""
+                    raise ConnectionError(
+                        f"{self.port}: Motor {motor} reports fault status 0x{status:X}{detail}"
+                    )
             if msg:
                 self._process_response(motor, msg)
             else:

@@ -67,3 +67,9 @@ A separate servo loop per arm (default 200 Hz) supplies gravity compensation and
 After one second without a fresh policy target, each servo holds fresh measured position instead of progressing toward an old target. Missing, malformed, or faulted motor feedback stops both workers. Disconnect disables torque. Keep the arms supported and the hardware e-stop accessible; communication or power failure can prevent software stopping from working.
 
 This is an experimental adapter. Gravity compensation uses the standard arm/gripper inertias and excludes added camera/payload mass. There is no collision avoidance. Validate control, loading, stopping behavior, and task performance on the installation before normal use. For initial rollout testing, set `return_to_initial_position=false` to avoid an unvalidated automatic return motion.
+
+## Communication faults
+
+Feedback errors include the CAN interface and motor name. A motor reporting `0xD` has latched a communication-loss fault. Stop rollout, support the arms, and address the transport/control interruption before resetting motor power. The adapter never automatically clears a fault or resumes motion. Saved gripper calibration is retained across power cycles.
+
+The bus collects queued replies even if Python was briefly descheduled past the receive timeout. This does not permit cached feedback: strict reads still reject missing, malformed, or faulted replies, and a servo read exceeding `feedback_timeout_s` stops control before another command is sent. Keep the motor firmware communication watchdog enabled.

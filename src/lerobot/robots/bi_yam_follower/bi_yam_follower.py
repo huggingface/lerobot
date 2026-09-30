@@ -398,6 +398,8 @@ class BiYamFollower(Robot):
             while not self._stop.is_set():
                 started = time.monotonic()
                 states = arm.bus.sync_read_all_states(strict=True)
+                if time.monotonic() - started > self.config.feedback_timeout_s:
+                    raise ConnectionError(f"{arm.config.port}: YAM feedback exceeded freshness deadline")
                 position = decode_positions(arm.config, states)
                 validate_target(position, feedback=True)
                 with self._lock:
