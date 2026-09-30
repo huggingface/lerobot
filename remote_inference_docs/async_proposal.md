@@ -613,6 +613,28 @@ Keep session identity and session-owned mutable context from the beginning, whil
 
 Policies with inseparable mutable model state can remain exclusive. Batchability is a separate capability from safe sharing. Language calls require their own admission/scheduling policy before they can occupy a worker serving several robots.
 
+Future experiment recorded on 2026-09-30: start with two trusted robot clients sharing one verified shareable policy, using serialized model calls and conservative admission. Establish independent processor/policy/planner state and bounded per-session work before admitting both. Check that reset/close/task changes for one client cannot affect the other and that neither misses its playback/freshness budget under simultaneous demand. Average GPU utilization alone is not evidence of sufficient capacity. Long language operations need an explicit scheduling policy before inclusion.
+
+Sequential clients are already supported after ownership cleanup. Concurrent shared-weight clients require the work above. Public multi-tenant hosting additionally requires authentication/authorization, resource limits and operational isolation; it remains a separate non-goal. No scheduler, batching or shared-state refactor is implemented by recording this experiment.
+
+### Single-client GPU Space after the router experiment
+
+Prioritize this deployment experiment over concurrent-client serving. Candidate topology:
+
+```text
+Robot client --outbound authenticated Zenoh--> router <--outbound authenticated Zenoh-- GPU Space server
+```
+
+Run the existing policy server in a dedicated GPU Docker Space, with one loaded, previously tested checkpoint and one active client. The existing router mode and TLS configuration are the intended reuse points; no inference/execution redesign is assumed. The router is a separately hosted reachable endpoint, not a service Spaces automatically supplies.
+
+First perform a transport-only feasibility check from the actual Space: confirm permitted outbound connectivity, authenticated encrypted Zenoh traffic and persistent session/liveliness behavior. Spaces documents outbound ports 80/443/8080; choosing port 443 does not prove raw Zenoh TLS is permitted through its network. A Space's web `app_port` is not automatically a public raw-TCP Zenoh listener. If the direct outbound route is unavailable, assess a supported tunnel/gateway or another host before committing to deployment work. Do not silently introduce a second transport or expose an unauthenticated endpoint.
+
+After connectivity succeeds, package model startup/warmup/readiness and secrets, then run one known-good robot task. Capture full turnaround/tail latency and playback margin, assess JPEG if bandwidth warrants it, and verify terminal disconnect/restart behavior. Acceptance means useful task execution within the existing freshness/deadline bounds; neither cloud reachability nor average inference time alone suffices. All motor dispatch and configured fault shutdown remain local. A server restart requires a new client session; no automatic motion recovery is added.
+
+Use a dedicated GPU Space for this proposal. Upgraded Spaces run indefinitely by default unless configured to sleep and incur cost while running. Sleeping introduces startup/model-warmup delay; “connect at any time” requires readiness and ownership to be available. “Anywhere” remains conditional on network quality, robot/checkpoint compatibility and authentication, not a latency or availability guarantee. This is a queued experiment, not a verified Spaces recipe or support promise.
+
+Platform references reviewed for this proposal: [Docker Spaces](https://huggingface.co/docs/hub/spaces-sdks-docker), [Spaces networking](https://huggingface.co/docs/hub/spaces-overview#networking), [GPU Spaces lifecycle](https://huggingface.co/docs/hub/spaces-gpus). Recheck platform restrictions when executing the experiment.
+
 ### Task/state-based model selection
 
 A future selector accepts task/state metadata and returns a compatible deployment and instance. It may be implemented as an application service or a Zenoh router plugin. Zenoh routes messages by configured keys; interpreting robot state and choosing a policy is application behavior, not an automatic consequence of installing a router.
@@ -633,6 +655,8 @@ Core transport, policy contracts, shared execution and the approved post-LAN eng
 - Choose and validate the first real language-capable checkpoint and its processor isolation requirements.
 - Establish supported robot stop/hold implementations and measured deadline/refill profiles.
 - Validate metadata completeness for feature semantics and define explicit configuration where checkpoint metadata is insufficient.
+
+The dated [policy support audit](policy_support_audit.md) inventories all 21 built-in families, separating physical evidence, conditional candidates, targeted contract/preparation adaptations and larger history/execution extensions. A family name or inherited declaration alone is not proof of support. Future training-frame indices must not be confused with actual inference-history requirements, and the runner currently requires equal declared model/canonical action shapes. The audit authorizes no blanket policy relaxation or adapter framework.
 
 If an investigation finds a policy or robot configuration incompatible, report the restriction and reject that configuration. Do not hide the mismatch through implicit preprocessing, execution-mode changes, or weaker fault handling.
 
@@ -657,5 +681,6 @@ Use one known working model/setup for follow-up experiments, not another tuning 
 2. Place a Zenoh router between client and server and check operation plus disconnect behavior. Retain existing automated router/security coverage and report any skipped rerun honestly.
 3. Compare JPEG with raw images on the same task, recording encoding cost, payload/turnaround change and task behavior.
 4. Exercise a private remote link, or an explicitly secured public-network path when available. Public-network experiments do not authorize exposing an unauthenticated server or adding multi-tenant hosting.
+5. Follow the router check with the single-client dedicated GPU Space feasibility/deployment experiment in section 15. Prove connectivity before scheduling a physical run. Concurrent shared-model serving is a separate later experiment, not a dependency of this one.
 
 Real-language validation is deferred until a suitable checkpoint is available. Additional hardware-cleanup hardening (partial connections/recording teardown) belongs to another PR and is excluded from this integration. Historical proposals and the dated learning deck are retained as references, not competing requirements; the user guide documents current usage, this proposal records decisions, the workbook retains experiments, and the progress record records evidence/remaining work.

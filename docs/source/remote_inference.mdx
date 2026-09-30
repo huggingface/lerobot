@@ -4,6 +4,8 @@ Remote inference keeps observation capture, robot commands, operator interaction
 
 This implementation is under validation. Physical LAN action tests have run with SmolVLA, XVLA, LaWAM and ACT. The first ACT alignment/blending comparison performed worse than append; after the request-timing correction below, the operator reported successful tasks with reduced bumps for alignment and no noticeable bumps with blending. The focused client-cleanup and revised server-loss shutdown checks also passed. Real-language validation awaits a suitable checkpoint; JPEG, routed Zenoh and representative remote-network experiments remain follow-ups. This implementation replaces the retired gRPC async module; unrelated RL gRPC transport is retained.
 
+Policy support depends on the checkpoint configuration and its processors. ACT uses the default current-observation contract; SmolVLA, XVLA and LaWAM already include targeted declarations matching their existing preparation. Other current-observation policies may fit without changes, but history-dependent policies and some cropped/padded output layouts need adaptations. The repository's [policy support audit](https://github.com/huggingface/lerobot/blob/main/remote_inference_docs/policy_support_audit.md) distinguishes physical evidence, conditional candidates and known blockers for all built-in families. It is not a blanket support list or a claim that every checkpoint has been tested.
+
 ## Install and configure a deployment
 
 Both computers need the `remote` extra. The robot computer also needs its ordinary rollout and hardware dependencies; the server needs the selected policy's dependencies.

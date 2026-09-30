@@ -9,7 +9,7 @@ Earlier post-LAN baseline (2026-09-29): implemented on `test/remote_inference_su
 
 Priority clarification: policy/robot integration simplification is a lower-priority follow-up, **not a prerequisite** for the sequence below. Backward compatibility with legacy `src/lerobot/async_inference/` is not required. The user explicitly authorized retirement now, waiving the earlier language-before-removal gate. Older gate statements in this chronological record are superseded; language acceptance remains pending, not passed.
 
-**Current handoff (2026-09-30):** code, tests, deployment examples and documentation have been conservatively transferred into a managed checkout on `feat/remote_inference`; the legacy async package/tests/tutorial/page/extra and dedicated protobuf service/messages are removed. Original test-branch logs/videos remain there. Real VQA/autosteering is deferred until a suitable checkpoint is available, and no longer blocks retirement by explicit user decision. JPEG, routed Zenoh and private/secured-public remote experiments are queued. Hardware-cleanup hardening is out of scope (another PR). Integration validation/final audit are recorded in the last section; no new hardware experiments are claimed.
+**Current handoff (2026-09-30):** integration and legacy retirement are committed as `9d4b931d5` on `feat/remote_inference`; work now continues in the original checkout on that branch. Original test-branch logs/videos remain in its history. Real VQA/autosteering is deferred until a suitable checkpoint is available, and no longer blocks retirement by explicit user decision. JPEG, routed Zenoh and private/secured-public remote experiments are queued, with a single-client GPU Space as the preferred router follow-up. Concurrent shared-model serving is a separate future extension. The [21-family policy audit](policy_support_audit.md) records current restrictions and evidence. Hardware-cleanup hardening is out of scope (another PR). Integration validation and the subsequent documentation/audit results are recorded in the final sections; no new hardware experiments are claimed.
 
 ## Milestones and gates
 
@@ -511,6 +511,26 @@ Removed only legacy package/tests/tutorial/page/extra and its dedicated protobuf
 
 ### Handoff and remaining work
 
-Changes are **uncommitted** on `feat/remote_inference` in `/Users/steven.palma/.codex/worktrees/remote-inference-integration/lerobot`. The original checkout stays on `test/remote_inference_super_chatton` with its four pre-existing documentation edits and all experiment evidence intact. Continue implementation/review in the feature checkout; no merge, commit or push was performed.
+Integration was subsequently committed unsigned as `9d4b931d5`; the integration worktree was detached so the user could switch the original checkout to `feat/remote_inference`. Current work continues in `/Users/steven.palma/Documents/HF/projects/lerobot` on that feature branch. Test-branch evidence remains in its history; no push was performed by this integration.
 
 Real VQA/autosteering remains the most important deferred acceptance check once a suitable checkpoint exists. Queue a small representative deployment check (turnaround/tail latency and uninterrupted playback), JPEG, an intermediate Zenoh router, and private or explicitly secured public connectivity. These are deployment follow-ups, not a request for another broad motion sweep. Hardware-cleanup hardening belongs to the separate PR and remains out of scope. No additional controller, recovery framework, compatibility shim or MPC work was introduced.
+
+## Future deployment experiments and policy inventory — 2026-09-30
+
+Documentation/audit only; no serving behavior, policy implementation or hardware changes.
+
+- Recorded a single-client dedicated GPU Docker Space as the preferred follow-up to the existing Zenoh-router experiment. Reuse authenticated router mode with outbound connections from client and Space. First verify actual platform connectivity, then package startup/readiness and run one known-good checkpoint/task. Spaces egress/proxy behavior remains unverified; an allowed port is not proof of transport compatibility. Sleep, warmup, ownership and internet latency bound the “anytime/anywhere” expectation. No cloud resources, credentials or public listeners were created.
+- Recorded concurrent shared-weight serving separately: two trusted robots, one verified shareable policy, isolated mutable context, bounded per-session work, serialized scheduling and latency-based admission. Sequential ownership transfer already works; concurrent clients, batching and public multi-tenant service are not implemented or enabled by this documentation.
+- Added [policy_support_audit.md](policy_support_audit.md) covering all 21 built-in registered policy families. ACT/SmolVLA/XVLA/LaWAM retain physical evidence for specific checkpoints. Other entries distinguish exact-schema candidates, output-horizon/model-width mismatches, training-target declaration mismatches, and history/executed-action feedback requirements. SmolVLA/XVLA/LaWAM adaptations are already integrated, not outstanding work. LingBot needs a larger extension; FastWAM and world-model VLA-JEPA should not be classified as history-dependent solely because their training configs request future frames.
+- Important bounded findings for future conformance work: π0-FAST, MolmoAct2 and GR00T can return an already-shortened horizon; EVO1 can return padded model width before canonical postprocessing. The current runner checks identical declared shapes before and after postprocessing. No guard was relaxed or checkpoint configuration changed to bypass these mismatches.
+
+Validation actually run: source inspection of configuration, direct prediction/select-action, relevant processor paths and runner/loader contracts for the inventory; lightweight inherited-contract probes using default configs, without constructing models or loading weights; **28 passed in 1.26 s** on CPU for the existing runner and SmolVLA/XVLA/LaWAM conformance tests:
+
+```bash
+HF_HUB_OFFLINE=1 UV_CACHE_DIR=/private/tmp/lerobot-uv-cache uv run --no-sync pytest \
+  tests/inference/test_policy_runner.py tests/inference/test_smolvla_contract.py \
+  tests/inference/test_xvla_contract.py tests/inference/test_lawam_contract.py \
+  -q --disable-warnings --maxfail=3
+```
+
+Documentation checks: `git diff --check` passed; an AST-based inventory confirmed all 21 registered built-in config families appear in the audit; all local links in the audit resolve. The audit does not claim fresh checkpoint warmups, new physical evidence, RTC compatibility for every declared family, or real language validation. Broad integration results remain historical. Next actions are the existing router check, then Spaces connectivity feasibility; obtain a suitable language checkpoint; select targeted policy conformance work only when a concrete checkpoint motivates it. Hardware hardening, automatic recovery and broad policy rewrites remain outside scope.
