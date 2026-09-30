@@ -242,7 +242,7 @@ Gripper commands are excluded from blending. If A fails or behaves unexpectedly,
 
 **Results (operator report, 2026-09-30):** After experimenting with models, tasks and settings, the user reports generally expected behavior and considers the motion/task check validated. For LaWAM, a reported request interval around 0.6 s with server inference around 0.1 s gave task performance similar to sync without its pauses; an interval around 0.7 s left too little latency headroom. These are qualitative/operator timing estimates, not log-verified distributions or literal `refill_seconds` settings. Exact run configurations were not supplied. No further parameter sweep is needed now; proceed to the remaining lifecycle/language checks.
 
-## Lifecycle checks — test 4 passed; test 5 exposed a shutdown problem
+## Lifecycle checks — test 4 and revised test 5 passed
 
 These are retained acceptance checks, not additions to the next A/B motion comparison. Schedule them separately after reviewing that comparison.
 
@@ -344,7 +344,7 @@ The robot may finish eligible buffered actions, then should fault and hold. Chec
 
 **Result (2026-09-30): Terminal policy shutdown confirmed; physical controlled-stop acceptance failed.** On same-host SmolVLA, using append/refill 0.1 and interpolation ×2, the operator interrupted the server during motion. The client reported `Active motion buffer exhausted` at 18:15:44, skipped homing and began disconnect at 18:15:46, and completed teardown at 18:15:47. The operator reports that the robot lost torque and fell into the environment rather than visibly holding. This matches the current fault teardown/OMX torque-release path; a software hold call does not establish a sustained physical hold. Server Ctrl+C is not timestamped, so no precise stop latency is claimed. Server restart/no-resumption was not evidenced. Source: server log pasted in the conversation and client attachment `d477d5b9-c57c-4d25-8c00-645436cbedb4/Pasted text.txt`. Implement the agreed configured-homing/teardown change and verify the physical outcome afterward; do not repeat the unchanged failing run. Instructions above describe the original pre-change experiment, not the approved future shutdown behavior.
 
-### Test 5 follow-up — Configured shutdown return (pending hardware check)
+### Test 5 follow-up — Configured shutdown return (passed by operator report)
 
 **Question:** With the server unavailable, does the client stop policy execution, perform the configured local return movement, and then disconnect without resuming policy motion?
 
@@ -357,11 +357,11 @@ Use updated server/client code and restart the server with the same local SmolVL
 
 Type `/start`, allow a few seconds of motion, then Ctrl+C **only the server**. Expect terminal policy shutdown, a local return movement while torque is still enabled, then disconnect with the logged torque setting. A robot I/O failure should instead skip further homing and explain why. Report the actual motion/torque outcome, not just the hold log. Restart the server afterward and confirm policy motion does not resume automatically. Retain both logs; approximate stop/return timing is sufficient. Do not test `return_to_initial_position=false` with an unsupported elevated arm expecting it to stay powered: that option deliberately skips return and still disconnects. Its conditional behavior is covered in software tests.
 
-**Result:** _Pending. Earlier Test 5 remains a physical shutdown failure; the new implementation has not yet been accepted on hardware._
+**Result (operator report, 2026-09-30): Passed.** The server was killed during robot motion. When actions exhausted, the robot returned smoothly to its initial position and the client exited cleanly. The client finished shutdown before the server could be restarted; a server restart cannot resume an exited rollout process. Restart during a still-live faulted client was not exercised; the user accepts this limitation, with no artificial timing/repeat experiment needed. No new logs/video or quantitative timing supplied. Retain the earlier failed Test 5 as evidence of the previous implementation, distinct from this successful revised run.
 
 ## What we are leaving for later
 
-Other checkpoints, blend tuning, JPEG, long runs, same-host motion comparisons, network fault variants and detailed task-race tests are deferred. Real language-model validation and test 5 (server-loss hold) remain open; the completed motion comparison and test 4 are not a claim of full release coverage.
+Other checkpoints, blend tuning, JPEG, long runs, same-host motion comparisons, network fault variants and detailed task-race tests are deferred. Real language-model validation remains open; the completed motion comparison and focused lifecycle checks are not a claim of full release coverage.
 
 For now, send results as simply as:
 
