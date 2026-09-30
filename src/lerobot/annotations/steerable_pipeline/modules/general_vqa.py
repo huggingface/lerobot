@@ -48,7 +48,7 @@ from ..frames import FrameProvider, null_provider, to_image_blocks
 from ..prompts import load as load_prompt
 from ..reader import EpisodeRecord
 from ..staging import EpisodeStaging
-from ..validator import classify_vqa_answer
+from ..validator import VQA_ANSWER_SHAPES, classify_vqa_answer
 from ..vlm_client import VlmClient
 
 
@@ -229,11 +229,25 @@ class GeneralVqaModule:
             return None
         if not isinstance(answer, dict):
             return None
+        answer = _unnest_answer(answer)
         # The validator will enforce shape; here we just sanity-check that the
         # answer matches *some* known shape so we can drop garbage early.
         if classify_vqa_answer(answer) is None:
             return None
         return question.strip(), answer
+
+
+def _unnest_answer(answer: dict[str, Any]) -> dict[str, Any]:
+    """Unwrap an answer nested under its question type, e.g. ``{"bbox": {"detections": [...]}}``.
+
+    Models often echo the prompt's schema list this way. Answers that already have a
+    known shape are returned unchanged.
+    """
+    if classify_vqa_answer(answer) is None and len(answer) == 1:
+        ((key, inner),) = answer.items()
+        if key in VQA_ANSWER_SHAPES and classify_vqa_answer(inner) is not None:
+            return inner
+    return answer
 
 
 def _has_image_block(messages: list[dict[str, Any]]) -> bool:

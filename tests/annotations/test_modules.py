@@ -368,6 +368,46 @@ def test_module3_attaches_frame_image_block_to_prompt(single_episode_root: Path,
         assert camera in provider.cameras
 
 
+@pytest.mark.parametrize(
+    ("answer", "stored"),
+    [
+        # Nested under the question type: unwrapped.
+        (
+            {"bbox": {"detections": [{"label": "cup", "bbox_format": "xyxy", "bbox": [10, 20, 50, 80]}]}},
+            {"detections": [{"label": "cup", "bbox_format": "xyxy", "bbox": [10, 20, 50, 80]}]},
+        ),
+        (
+            {"keypoint": {"label": "handle", "point_format": "xy", "point": [5, 6]}},
+            {"label": "handle", "point_format": "xy", "point": [5, 6]},
+        ),
+        # Already in the documented shape: unchanged.
+        (
+            {"detections": [{"label": "cup", "bbox_format": "xyxy", "bbox": [10, 20, 50, 80]}]},
+            {"detections": [{"label": "cup", "bbox_format": "xyxy", "bbox": [10, 20, 50, 80]}]},
+        ),
+        ({"label": "cup", "count": 2}, {"label": "cup", "count": 2}),
+        # Nested garbage is still dropped.
+        ({"bbox": {"box": [1, 2, 3, 4]}}, None),
+    ],
+)
+def test_module3_unnests_answers(single_episode_root: Path, tmp_path: Path, answer, stored) -> None:
+    module = GeneralVqaModule(
+        vlm=_spy_responder([], {"question": "Where is it?", "answer": answer}),
+        config=VqaConfig(vqa_emission_hz=1.0),
+        seed=0,
+        frame_provider=_StubFrameProvider(),
+    )
+    record = next(iter_episodes(single_episode_root))
+    staging = EpisodeStaging(tmp_path / "stage", record.episode_index)
+    module.run_episode(record, staging)
+
+    answers = [json.loads(r["content"]) for r in staging.read("vqa") if r["role"] == "assistant"]
+    if stored is None:
+        assert answers == []
+    else:
+        assert answers and all(a == stored for a in answers)
+
+
 def test_module3_assistant_content_is_valid_json(single_episode_root: Path, tmp_path: Path) -> None:
     payload = {
         "question": "Where is the cup?",
