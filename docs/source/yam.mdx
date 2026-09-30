@@ -58,6 +58,18 @@ Joints are **absolute radians** in the factory encoder frame. Conversion to the 
 
 Configure cameras using ordinary LeRobot camera configs, preferably persistent `/dev/v4l/by-path/...` paths. Select RGB nodes, confirm physical camera roles, and check all streams simultaneously. For MolmoAct2 BimanualYAM, the roles are `top`, `left`, and `right`; use the checkpoint's saved processors and normalization statistics. Policy preparation and inference are covered by the [MolmoAct2 guide](molmoact2).
 
+For continuous MolmoAct2 inference, synchronous chunk generation can delay policy updates even while the independent arm servos keep running. The existing RTC backend performs inference in a background thread and conditions new chunks on queued actions. The following rollout options sustained approximately 30 action updates per second in a read-only RTX 5090 test with three live cameras:
+
+```bash
+--inference.type=rtc \
+--inference.rtc.mode=guided \
+--inference.rtc.execution_horizon=20 \
+--inference.queue_threshold=20 \
+--fps=30
+```
+
+These are options to add to a complete `lerobot-rollout` command. Measure action availability as well as loop cadence on your installation; this timing test does not validate physical task performance. Keep the checkpoint's action representation and saved normalization. Lowering `fps` changes how quickly its action sequence is played and is not a substitute for resolving inference delays.
+
 ## Startup and control
 
 The adapter defaults to `read_only=true`. Explicitly set `robot.read_only=false` to enable control after validating the installation. At startup, cameras must deliver frames and both arms must pass feedback, calibration, and pose checks before either is enabled. A camera first-frame timeout is retried once using a fresh connection, before opening either motor bus. A second timeout aborts startup; camera failures during control are not automatically retried. Each joint must be within `initial_tolerance_rad` (default 0.2 radians) of `initial_position_rad` (default six zeros). Optionally set each arm's `initial_gripper_position=1.0` to require open grippers. These are assertions, not automatic homing commands.
