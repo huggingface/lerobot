@@ -442,7 +442,7 @@ class RolloutController:
         self._ctx.policy.inference.pause()
         if (
             not self._ctx.hardware.initial_position
-            or not self._ctx.hardware.robot_wrapper.inner.is_control_enabled
+            or not self._ctx.hardware.robot_wrapper.inner.has_started_control
         ):
             logger.info("Skipping return: no initial position or motor control has not been enabled")
             self._emit(RolloutEvent.RESET_SKIPPED)

@@ -210,7 +210,7 @@ class RolloutStrategy(abc.ABC):
             self._engine.stop()
         robot = hw.robot_wrapper.inner
         if robot.is_connected:
-            if return_to_initial_position and hw.initial_position and robot.is_control_enabled:
+            if return_to_initial_position and hw.initial_position and robot.has_started_control:
                 logger.info("Returning robot to initial position before shutdown...")
                 if not self.return_to_initial_position(hw):
                     logger.error(
@@ -241,6 +241,8 @@ class RolloutStrategy(abc.ABC):
             logger.warning("Could not return to initial position: none was captured at connect time")
             return False
         try:
+            if robot.inner.return_to_position(target):
+                return True
             current_obs = robot.get_observation()
             current_pos = {k: v for k, v in current_obs.items() if k in target}
             steps = max(int(duration_s * fps), 1)

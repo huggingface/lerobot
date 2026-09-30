@@ -121,6 +121,9 @@ class BiYamFollowerConfig(RobotConfig):
     command_timeout_s: float = 1.0
     # Maximum settling time after a return-to-start trajectory.
     return_timeout_s: float = 30.0
+    # Opt in to one return-only recovery after a freshness timeout. Hardware
+    # faults are never cleared; all motors must first supply healthy feedback.
+    recover_on_feedback_timeout: bool = False
 
     def __post_init__(self) -> None:
         super().__post_init__()

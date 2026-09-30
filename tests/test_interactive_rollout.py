@@ -339,7 +339,7 @@ def test_reset_and_shutdown_before_start_do_not_command_motors():
 
     controller, events, strategy, _engine, _parent, _run_started = _make_controller()
     hw = controller._ctx.hardware
-    hw.robot_wrapper.inner.is_control_enabled = False
+    hw.robot_wrapper.inner.has_started_control = False
     thread = _serve_thread(controller)
     controller.reset()
     assert _wait_for(lambda: RolloutEvent.RESET_SKIPPED in events)
@@ -441,6 +441,7 @@ def test_return_move_waits_for_robot_settling(monkeypatch, settle_error):
     robot = MagicMock()
     robot.get_observation.return_value = {"joint.pos": 1.0}
     target = {"joint.pos": 0.0}
+    robot.inner.return_to_position.return_value = False
     robot.inner.wait_until_reached.side_effect = settle_error
     hw = SimpleNamespace(robot_wrapper=robot, initial_position=target)
     monkeypatch.setattr(core, "precise_sleep", lambda _: None)
@@ -1517,3 +1518,22 @@ def test_autosteer_interval_bounds():
         autosteer_interval_s=0.0,
     )
     assert cfg.autosteer_interval_s == 0.0
+
+
+@pytest.mark.parametrize("error", [None, ConnectionError("feedback unavailable")])
+def test_shutdown_attempts_adapter_return_after_control_fault(error):
+    from lerobot.rollout.strategies.base import BaseStrategy
+
+    bot = MagicMock()
+    bot.is_connected = True
+    bot.is_control_enabled = False
+    bot.has_started_control = True
+    bot.return_to_position.return_value = True
+    bot.return_to_position.side_effect = error
+    hw = SimpleNamespace(
+        robot_wrapper=SimpleNamespace(inner=bot), initial_position={"joint.pos": 0.0}, teleop=None
+    )
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._teardown_hardware(hw)
+    bot.return_to_position.assert_called_once_with(hw.initial_position)
+    bot.disconnect.assert_called_once()

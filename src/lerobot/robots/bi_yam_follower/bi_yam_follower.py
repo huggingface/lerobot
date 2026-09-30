@@ -41,6 +41,10 @@ if TYPE_CHECKING or _mujoco_available:
 logger = logging.getLogger(__name__)
 
 
+class _FeedbackTimeoutError(ConnectionError):
+    """A freshness deadline, distinct from missing packets or hardware faults."""
+
+
 class _ControlGC:
     """Keep the preloaded model heap out of cyclic scans while servo threads run.
 
@@ -220,6 +224,7 @@ class BiYamFollower(Robot):
         self._connected = False
         self._calibration_session = False
         self._gc_acquired = False
+        self._control_started = False
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -239,6 +244,10 @@ class BiYamFollower(Robot):
     @property
     def is_control_enabled(self) -> bool:
         return all(arm.enabled for arm in self.arms.values())
+
+    @property
+    def has_started_control(self) -> bool:
+        return self._control_started
 
     def _validate_initial_pose(self, side: str, arm: _Arm) -> None:
         if np.any(
@@ -295,6 +304,7 @@ class BiYamFollower(Robot):
                 self._stop.wait(0.005)
             with self._lock:
                 self._check_feedback()
+            self._control_started = True
         except Exception:
             self._stop.set()
             raise
@@ -433,6 +443,7 @@ class BiYamFollower(Robot):
         self._stop.clear()
         self._enable_requested.clear()
         self._failure = None
+        self._control_started = False
         try:
             # Full collections of a loaded VLM can hold the GIL past the motor
             # feedback deadline. Prepare GC before any hardware or worker starts.
@@ -468,6 +479,7 @@ class BiYamFollower(Robot):
                     raise ConnectionError(f"{side} YAM servo failed to start") from self._failure
             self._connected = True
             self._check_feedback()
+            self._control_started = self.is_control_enabled
         except Exception:
             self._close()
             raise
@@ -500,7 +512,9 @@ class BiYamFollower(Robot):
                 started = time.monotonic()
                 states = arm.bus.sync_read_all_states(strict=True)
                 if time.monotonic() - started > self.config.feedback_timeout_s:
-                    raise ConnectionError(f"{arm.config.port}: YAM feedback exceeded freshness deadline")
+                    raise _FeedbackTimeoutError(
+                        f"{arm.config.port}: YAM feedback exceeded freshness deadline"
+                    )
                 position = decode_positions(arm.config, states)
                 validate_target(position, feedback=True)
                 if self._enable_requested.is_set() and not arm.enabled:
@@ -523,13 +537,18 @@ class BiYamFollower(Robot):
                 self._stop.wait(max(0, 1 / self.config.control_frequency - (time.monotonic() - started)))
         except Exception as exc:
             with self._lock:
-                self._failure = exc
+                # Never replace a motor/disable fault with a recoverable timeout
+                # from the other arm as the workers stop concurrently.
+                if self._failure is None or isinstance(self._failure, _FeedbackTimeoutError):
+                    self._failure = exc
             self._stop.set()
         finally:
             if arm.enabled:
                 try:
                     arm.bus.disable_torque()
-                except Exception:
+                except Exception as exc:
+                    with self._lock:
+                        self._failure = exc
                     logger.exception("Could not disable YAM torque; use the hardware e-stop")
                 arm.enabled = False
 
@@ -544,10 +563,11 @@ class BiYamFollower(Robot):
         ]
         if stale:
             self._stop.set()
-            raise ConnectionError(
+            self._failure = _FeedbackTimeoutError(
                 f"YAM feedback is stale ({', '.join(stale)}; "
                 f"deadline {self.config.feedback_timeout_s * 1000:.1f} ms)"
             )
+            raise self._failure
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
@@ -589,6 +609,77 @@ class BiYamFollower(Robot):
                 arm.target = targets[side]
                 arm.commanded_at = now
         return dict(action)
+
+    def _recover_feedback_for_return(self) -> None:
+        """One attempt, with torque off until both buses have 0.5 s of healthy reads."""
+        self._stop.set()
+        self._enable_requested.clear()
+        for arm in self.arms.values():
+            if arm.thread is not None:
+                arm.thread.join(timeout=2)
+                if arm.thread.is_alive():
+                    raise RuntimeError("YAM worker did not stop; cannot recover for home")
+        # Check after joins: disable failures or late bus faults prohibit recovery.
+        if not isinstance(self._failure, _FeedbackTimeoutError):
+            raise ConnectionError(
+                "YAM return recovery requires a freshness timeout, not a motor fault"
+            ) from self._failure
+        if any(arm.enabled for arm in self.arms.values()):
+            raise RuntimeError("YAM torque is still enabled; cannot recover for home")
+        logger.warning("YAM return-only recovery: checking both buses with torque disabled")
+        self._failure = None
+        self._stop.clear()
+        try:
+            for side, arm in self.arms.items():
+                arm.ready.clear()
+                arm.control_ready.clear()
+                arm.thread = threading.Thread(target=self._run, args=(arm,), name=f"yam-{side}", daemon=True)
+                arm.thread.start()
+            for arm in self.arms.values():
+                if not arm.ready.wait(timeout=self.config.feedback_timeout_s):
+                    raise ConnectionError(
+                        "YAM return recovery did not receive fresh feedback"
+                    ) from self._failure
+            deadline = time.monotonic() + 0.5
+            while True:
+                with self._lock:
+                    self._check_feedback()
+                if self._stop.is_set():
+                    raise ConnectionError("YAM return recovery stopped") from self._failure
+                if time.monotonic() >= deadline:
+                    break
+                self._stop.wait(0.005)
+            # Each bus owner seeds its command from a new strict read before enabling.
+            # Do not apply startup-pose assertions: this is a return from the current pose.
+            self._enable_requested.set()
+            for arm in self.arms.values():
+                if not arm.control_ready.wait(timeout=2):
+                    raise ConnectionError("YAM return recovery could not enable control") from self._failure
+            with self._lock:
+                self._check_feedback()
+        except Exception:
+            self._stop.set()
+            raise
+
+    @check_if_not_connected
+    def return_to_position(self, position: RobotAction) -> bool:
+        """Return using fresh motor feedback, independently of cameras or inference."""
+        if self.config.read_only or self._calibration_session or not self.has_started_control:
+            raise RuntimeError("YAM return requires previously activated motor control")
+        # Validate the complete target before any possible reactivation.
+        if set(position) != set(YAM_FEATURE_NAMES):
+            raise ValueError("YAM return requires all 14 joint/gripper positions")
+        for side in self.arms:
+            validate_target(np.asarray([position[f"{side}_{name}.pos"] for name in MOTOR_NAMES]))
+        try:
+            with self._lock:
+                self._check_feedback()
+        except ConnectionError:
+            if not self.config.recover_on_feedback_timeout:
+                raise
+            self._recover_feedback_for_return()
+        self.wait_until_reached(position)
+        return True
 
     @check_if_not_connected
     def wait_until_reached(self, position: RobotAction) -> None:

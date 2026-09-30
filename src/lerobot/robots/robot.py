@@ -81,6 +81,19 @@ class Robot(abc.ABC):
         """Whether motion is enabled; adapters with deferred activation override this."""
         return True
 
+    @property
+    def has_started_control(self) -> bool:
+        """Whether this connection has activated motion, including before a fault."""
+        return self.is_control_enabled
+
+    def return_to_position(self, position: RobotAction) -> bool:
+        """Optionally perform and verify an adapter-specific return.
+
+        Return True only on measured completion, False to use rollout's generic
+        interpolation. Raise on failure. Called after policy control has stopped.
+        """
+        return False
+
     def start_control(self) -> None:
         """Activate deferred motor control before an interactive run, if supported."""
         return None

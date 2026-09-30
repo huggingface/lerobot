@@ -72,7 +72,7 @@ These are options to add to a complete `lerobot-rollout` command. Measure action
 
 ## Startup and control
 
-The adapter defaults to `read_only=true`. Explicitly set `robot.read_only=false` to enable control after validating the installation. At startup, cameras must deliver frames and both arms must pass feedback, calibration, and pose checks before either is enabled. A camera first-frame timeout is retried once using a fresh connection, before opening either motor bus. A second timeout aborts startup; camera failures during control are not automatically retried. Each joint must be within `initial_tolerance_rad` (default 0.2 radians) of `initial_position_rad` (default six zeros). Optionally set each arm's `initial_gripper_position=1.0` to require open grippers. These are assertions, not automatic homing commands.
+The adapter defaults to `read_only=true`. Explicitly set `robot.read_only=false` to enable control after validating the installation. At startup, cameras must deliver frames and both arms must pass feedback, calibration, and pose checks before either is enabled. A camera first-frame timeout is retried once using a fresh connection, before opening either motor bus. A second timeout aborts startup; camera failures during control are not automatically retried. Each joint must be within `initial_tolerance_rad` (default 0.2 radians) of `initial_position_rad` (default six zeros). Grippers may start anywhere within their calibrated stroke by default. Optionally set each arm's `initial_gripper_position=1.0` to require open grippers. These are assertions, not automatic homing commands.
 
 A separate servo loop per arm (default 200 Hz) supplies gravity compensation and bounded targets. Defaults are 0.3 rad/s joint target speed, 0.5 gripper strokes/s, and a 0.15 rad tracking-error bound. The gripper's proportional torque contribution is limited to 0.5 Nm; damping adds torque, so this is not a contact-force guarantee. `send_action` returns the accepted target; observations contain measured positions.
 
@@ -96,12 +96,24 @@ Gravity compensation is independent of the policy. Each arm's `gravity_factors` 
 - `/stop`: return to the startup pose, then disconnect and disable torque.
 - `/help`: list available commands.
 
-YAM retains its servo limits during the return. After the interpolated trajectory, it refreshes the final target until both arms remain within 0.03 radians and both grippers within 0.05 of their targets for 0.2 seconds. Settling allows up to `robot.return_timeout_s` (default 30 seconds); use `--robot.return_timeout_s=60` to allow a full minute after the interpolated trajectory. It finishes early when measured arrival is confirmed, and feedback faults still stop it immediately. A timeout or feedback fault reports failure instead of claiming a completed return; normal shutdown still disconnects. Clear the return path before resetting or stopping: the return is joint-space motion without obstacle avoidance, and returning the grippers to their startup opening can release a held object.
+YAM returns directly through its rate-limited servo targets using motor feedback, independently of camera availability. It refreshes the return target until both arms remain within 0.03 radians and both grippers within 0.05 of their targets for 0.2 seconds. Settling allows up to `robot.return_timeout_s` (default 30 seconds); use `--robot.return_timeout_s=120` to allow up to two minutes. It finishes early when measured arrival is confirmed, and feedback faults still stop it immediately. A timeout or feedback fault reports failure instead of claiming a completed return; normal shutdown still disconnects. Clear the return path before resetting or stopping: the return is joint-space motion without obstacle avoidance, and returning the grippers to their startup opening can release a held object.
 
 ## Communication faults
 
-Feedback errors include the CAN interface and motor name. A motor reporting `0xD` has latched a communication-loss fault. Stop rollout, support the arms, and address the transport/control interruption before resetting motor power. The adapter never automatically clears a fault or resumes motion. Saved gripper calibration is retained across power cycles.
+Feedback errors include the CAN interface and motor name. A motor reporting `0xD` has latched a communication-loss fault. Stop rollout, support the arms, and address the transport/control interruption before resetting motor power. The adapter never automatically clears a motor fault or resumes policy execution. Saved gripper calibration is retained across power cycles.
 
 The bus collects queued replies even if Python was briefly descheduled past the receive timeout. This does not permit cached feedback: strict reads still reject missing, malformed, or faulted replies, and a servo read exceeding `feedback_timeout_s` stops control before another command is sent. Keep the motor firmware communication watchdog enabled.
 
 Large cyclic garbage-collection scans can also pause all Python servo threads beyond the feedback deadline. Before opening hardware, YAM collects unused objects and freezes the preloaded heap out of later cyclic scans; collection of newly allocated objects remains enabled. The freeze is process-wide, shared across connected YAM instances, and undone after the last disconnect if YAM created the freeze. An existing caller-owned freeze is extended to include the loaded model and left frozen after disconnect; those cycles remain retained until the owner unfreezes them or the process exits. Disabled collection is left unchanged. This reduces a measured source of scheduling pauses without extending the feedback deadline; it does not make Python a hard real-time controller. Stale-feedback errors report the affected interfaces and snapshot ages.
+
+To attempt home after a transient freshness timeout, opt in with
+`--robot.recover_on_feedback_timeout=true` and enable rollout returns. Once policy
+control has stopped, YAM joins both servo workers and requires 0.5 seconds of fresh,
+valid feedback from all 14 motors with torque disabled. Each worker then seeds its
+command from a new measured pose before enabling the bounded return. Recovery is
+attempted only if control was previously activated; it cannot activate a session
+waiting for its first `/start`. Missing packets, motor faults, invalid positions,
+or failure to stop/disable a worker prohibit reactivation. A second feedback fault
+during the return aborts it; persistent communication failures cannot guarantee
+home. This option does not widen the feedback deadline or automatically restart
+the policy. The hardware watchdog remains enabled.

@@ -612,3 +612,82 @@ def test_camera_configuration_error_is_not_retried(monkeypatch, tmp_path):
     with pytest.raises(ValueError, match="unsupported resolution"):
         bot.connect()
     assert not any(bus.calls for bus in buses.values())
+
+
+def stop_with_timeout(bot):
+    bot._stop.set()
+    for arm in bot.arms.values():
+        arm.thread.join(timeout=2)
+        assert not arm.thread.is_alive()
+    bot._failure = module._FeedbackTimeoutError("injected scheduling stall")
+
+
+def test_return_recovers_timeout_with_fresh_feedback_without_cameras(monkeypatch, tmp_path):
+    bot, buses = robot(monkeypatch, tmp_path, read_only=False)
+    bot.config.recover_on_feedback_timeout = True
+    bot.connect()
+    try:
+        target = bot.get_observation()
+        stop_with_timeout(bot)
+        assert bot.has_started_control and not bot.is_control_enabled
+        # Motor feedback changes while torque is off. Reactivation must seed the
+        # newly measured pose, never the old policy target or stale snapshot.
+        for bus in buses.values():
+            bus.raw[0] = 0.1
+            bus.calls.clear()
+        bot.cameras["failed"] = MagicMock()
+        bot.cameras["failed"].async_read.side_effect = TimeoutError("camera unavailable")
+        monkeypatch.setattr(bot, "wait_until_reached", MagicMock())
+        assert bot.return_to_position(target)
+        assert bot.is_control_enabled
+        bot.wait_until_reached.assert_called_once_with(target)
+        bot.cameras["failed"].async_read.assert_not_called()
+        for bus in buses.values():
+            assert bus.calls[0][0] == "write"
+            assert bus.calls[0][1]["joint_0"][2] == pytest.approx(math.degrees(0.1))
+            assert bus.calls[1] == ("enable",)
+    finally:
+        bot.disconnect()
+
+
+@pytest.mark.parametrize("failure", ["missing", "fault", "invalid", "disabled", "disable_failed"])
+def test_return_recovery_never_enables_on_unhealthy_feedback(monkeypatch, tmp_path, failure):
+    bot, buses = robot(monkeypatch, tmp_path, read_only=False)
+    bot.config.recover_on_feedback_timeout = failure != "disabled"
+    bot.connect()
+    try:
+        target = bot.get_observation()
+        stop_with_timeout(bot)
+        for bus in buses.values():
+            bus.calls.clear()
+        if failure == "missing":
+            buses["right"].fail = True
+        elif failure == "fault":
+            bot._failure = ConnectionError("motor fault status 0xD")
+        elif failure == "invalid":
+            buses["right"].raw[0] = float("nan")
+        elif failure == "disable_failed":
+            bot._failure = RuntimeError("disable failed")
+        with pytest.raises((ConnectionError, ValueError)):
+            bot.return_to_position(target)
+        assert all(not any(c[0] == "enable" for c in b.calls) for b in buses.values())
+    finally:
+        bot.disconnect()
+
+
+def test_return_does_not_enable_before_first_start(monkeypatch, tmp_path):
+    bot, buses = robot(monkeypatch, tmp_path, read_only=False)
+    bot.config.defer_torque_enable = True
+    bot.config.recover_on_feedback_timeout = True
+    bot.connect()
+    try:
+        target = bot.get_observation()
+        assert not bot.has_started_control
+        with pytest.raises(RuntimeError, match="previously activated"):
+            bot.return_to_position(target)
+        assert all(not any(c[0] == "enable" for c in b.calls) for b in buses.values())
+        # Default initial_gripper_position=None accepts closed or partly open.
+        bot.start_control()
+        assert bot.has_started_control
+    finally:
+        bot.disconnect()
