@@ -2,6 +2,7 @@
 
 import math
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -16,6 +17,40 @@ from lerobot.robots.bi_yam_follower.bi_yam_follower import _Arm, _Gravity, decod
 from lerobot.robots.bi_yam_follower.config_bi_yam_follower import MOTOR_NAMES, YAM_FEATURE_NAMES
 
 pytest.importorskip("can")
+
+
+@pytest.fixture(autouse=True)
+def control_gc(monkeypatch):
+    """Exercise ownership without changing the test runner's global GC state."""
+    fake = MagicMock()
+    fake.isenabled.return_value = True
+    fake.get_freeze_count.return_value = 0
+    monkeypatch.setattr(module, "gc", fake)
+    yield fake
+    assert module._ControlGC._users == 0
+    assert not module._ControlGC._owns_freeze
+
+
+def test_control_gc_shared_ownership(control_gc):
+    module._ControlGC.acquire()
+    module._ControlGC.acquire()
+    control_gc.collect.assert_called_once()
+    control_gc.freeze.assert_called_once()
+    module._ControlGC.release()
+    control_gc.unfreeze.assert_not_called()
+    module._ControlGC.release()
+    control_gc.unfreeze.assert_called_once()
+
+
+@pytest.mark.parametrize("enabled,frozen", [(False, 0), (True, 10)])
+def test_control_gc_preserves_caller_state(control_gc, enabled, frozen):
+    control_gc.isenabled.return_value = enabled
+    control_gc.get_freeze_count.return_value = frozen
+    module._ControlGC.acquire()
+    module._ControlGC.release()
+    control_gc.collect.assert_not_called()
+    control_gc.freeze.assert_not_called()
+    control_gc.unfreeze.assert_not_called()
 
 
 def arm_config(port="can0", **kwargs):
@@ -283,6 +318,16 @@ def test_second_arm_failure_never_energizes_first(monkeypatch, tmp_path):
         bot.connect()
     assert all(not b.is_connected for b in buses.values())
     assert all(all(c[0] not in ("enable", "write") for c in b.calls) for b in buses.values())
+    assert not bot._gc_acquired
+    module.gc.unfreeze.assert_called_once()
+
+
+def test_stale_feedback_reports_channel_and_age(monkeypatch, tmp_path):
+    bot, _ = robot(monkeypatch, tmp_path)
+    monkeypatch.setattr(module.time, "monotonic", lambda: 0.121)
+    with pytest.raises(ConnectionError, match=r"left: 121.0 ms.*right: 121.0 ms.*deadline 100.0 ms"):
+        bot._check_feedback()
+    assert bot._stop.is_set()
 
 
 def test_initial_pose_is_checked_without_homing(monkeypatch, tmp_path):

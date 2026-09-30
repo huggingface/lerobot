@@ -5,6 +5,7 @@
 
 """Bimanual YAM: native MotorsBus transport and a policy-independent servo loop."""
 
+import gc
 import logging
 import math
 import threading
@@ -38,6 +39,36 @@ if TYPE_CHECKING or _mujoco_available:
     import mujoco
 
 logger = logging.getLogger(__name__)
+
+
+class _ControlGC:
+    """Keep the preloaded model heap out of cyclic scans while servo threads run.
+
+    New objects still participate in normal collection. The process-wide freeze
+    is shared by connected YAM instances and restored only after the last one
+    disconnects. An existing caller-owned freeze or disabled GC is left alone.
+    """
+
+    _lock = threading.Lock()
+    _users = 0
+    _owns_freeze = False
+
+    @classmethod
+    def acquire(cls) -> None:
+        with cls._lock:
+            if cls._users == 0 and gc.isenabled() and gc.get_freeze_count() == 0:
+                gc.collect()
+                gc.freeze()
+                cls._owns_freeze = True
+            cls._users += 1
+
+    @classmethod
+    def release(cls) -> None:
+        with cls._lock:
+            cls._users -= 1
+            if cls._users == 0 and cls._owns_freeze:
+                gc.unfreeze()
+                cls._owns_freeze = False
 
 
 def verify_adapter(config: YamArmConfig) -> None:
@@ -187,6 +218,7 @@ class BiYamFollower(Robot):
         self._failure: Exception | None = None
         self._connected = False
         self._calibration_session = False
+        self._gc_acquired = False
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -401,6 +433,10 @@ class BiYamFollower(Robot):
         self._enable_requested.clear()
         self._failure = None
         try:
+            # Full collections of a loaded VLM can hold the GIL past the motor
+            # feedback deadline. Prepare GC before any hardware or worker starts.
+            _ControlGC.acquire()
+            self._gc_acquired = True
             for arm in self.arms.values():
                 verify_adapter(arm.config)
             self._connect_cameras()
@@ -499,11 +535,18 @@ class BiYamFollower(Robot):
     def _check_feedback(self) -> None:
         if self._failure is not None:
             raise ConnectionError("YAM servo loop stopped after a motor/feedback error") from self._failure
-        if any(
-            time.monotonic() - arm.updated_at > self.config.feedback_timeout_s for arm in self.arms.values()
-        ):
+        now = time.monotonic()
+        stale = [
+            f"{arm.config.port}: {(now - arm.updated_at) * 1000:.1f} ms"
+            for arm in self.arms.values()
+            if now - arm.updated_at > self.config.feedback_timeout_s
+        ]
+        if stale:
             self._stop.set()
-            raise ConnectionError("YAM feedback is stale")
+            raise ConnectionError(
+                f"YAM feedback is stale ({', '.join(stale)}; "
+                f"deadline {self.config.feedback_timeout_s * 1000:.1f} ms)"
+            )
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
@@ -604,6 +647,9 @@ class BiYamFollower(Robot):
                 camera.disconnect()
         self._connected = False
         self._calibration_session = False
+        if self._gc_acquired:
+            _ControlGC.release()
+            self._gc_acquired = False
 
     @check_if_not_connected
     def disconnect(self) -> None:
