@@ -922,6 +922,49 @@ def test_unsupported_relative_execution_and_rtc_arguments_fail_early(fake_vae):
             method({}, inference_delay=1, prev_chunk_left_over=None)
 
 
+def test_predict_action_chunk_uses_the_given_noise_of_each_sample(fake_vae):
+    policy = Flux3Policy(single_config()).eval()
+    cfg = policy.config
+    gen = torch.Generator().manual_seed(2)
+    obs = {
+        "observation.images.top": torch.rand(2, 3, 64, 96, generator=gen),
+        OBS_STATE: torch.rand(2, 6, generator=gen),
+        "task": ["stack the cubes", "open the drawer"],
+    }
+    noise = torch.randn(2, cfg.action_dim, cfg.chunk_size, generator=gen)
+    video_noise = torch.randn(
+        2, packing.LATENT_CHANNELS, policy.packer.predicted_latent_frames(cfg), *cfg.latent_hw, generator=gen
+    )
+    given = noise.clone(), video_noise.clone()
+    chunk = policy.predict_action_chunk(obs, noise=noise, video_noise=video_noise)
+    assert torch.equal(chunk, policy.predict_action_chunk(obs, noise=noise, video_noise=video_noise))
+    assert torch.equal(noise, given[0]) and torch.equal(video_noise, given[1])
+    # changing the second sample's noise changes only the second sample's actions
+    for key, value in (("noise", noise), ("video_noise", video_noise)):
+        kwargs = {"noise": noise, "video_noise": video_noise, key: torch.cat([value[:1], -value[1:]])}
+        changed = policy.predict_action_chunk(obs, **kwargs)
+        assert torch.equal(changed[0], chunk[0]) and not torch.equal(changed[1], chunk[1])
+
+
+def test_predict_action_chunk_without_noise_matches_the_seeded_draw(fake_vae):
+    policy = Flux3Policy(single_config()).eval()
+    cfg = policy.config
+    gen = torch.Generator().manual_seed(2)
+    obs = {
+        "observation.images.top": torch.rand(1, 3, 64, 96, generator=gen),
+        OBS_STATE: torch.rand(1, 6, generator=gen),
+        "task": ["stack the cubes"],
+    }
+    rng = torch.Generator().manual_seed(cfg.inference_seed)  # the policy draws the video sample first
+    video_noise = torch.randn(
+        1, packing.LATENT_CHANNELS, policy.packer.predicted_latent_frames(cfg), *cfg.latent_hw, generator=rng
+    )
+    noise = torch.randn(1, cfg.action_dim, cfg.chunk_size, generator=rng)
+    chunk = policy.predict_action_chunk(obs)
+    assert torch.equal(chunk, policy.predict_action_chunk(obs, noise=noise, video_noise=video_noise))
+    assert torch.equal(chunk, policy.predict_action_chunk(obs, noise=noise))
+
+
 def test_lora_update_ema_resume_and_reload(tmp_path, fake_vae):
     for package in ("peft", "diffusers", "datasets"):
         pytest.importorskip(package)
