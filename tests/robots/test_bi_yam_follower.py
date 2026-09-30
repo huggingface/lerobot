@@ -274,3 +274,63 @@ def test_adapter_serial_mismatch_never_opens_can(monkeypatch, tmp_path):
     with pytest.raises(ValueError, match="adapter serial"):
         bot.connect()
     assert all(not bus.calls for bus in buses.values())
+
+
+def test_standard_calibration_cli_never_enables_and_reloads_endpoints(monkeypatch, tmp_path):
+    from lerobot.scripts import lerobot_calibrate
+
+    bot, buses = robot(monkeypatch, tmp_path, read_only=False)
+    for arm in bot.arms.values():
+        arm.config.gripper_closed_rad = arm.config.gripper_open_rad = None
+    monkeypatch.setattr(lerobot_calibrate, "make_robot_from_config", lambda _: bot)
+    monkeypatch.setattr(module.time, "sleep", lambda _: None)
+    ends = iter(((0.1, -0.02), (-5.1, 5.8)))
+
+    def position_grippers(_):
+        left, right = next(ends)
+        buses["left"].raw[-1], buses["right"].raw[-1] = left, right
+        return ""
+
+    monkeypatch.setattr("builtins.input", position_grippers)
+    lerobot_calibrate.calibrate.__wrapped__(lerobot_calibrate.CalibrateConfig(robot=bot.config))
+    assert bot.is_calibrated and not bot.is_connected
+    assert bot.calibration_fpath.is_file()
+    assert not any(call[0] in ("write", "enable", "disable") for bus in buses.values() for call in bus.calls)
+    for arm in bot.arms.values():
+        arm.config.gripper_closed_rad = arm.config.gripper_open_rad = None
+    reloaded = BiYamFollower(bot.config)
+    for side, expected in (("left", (0.1, -5.1)), ("right", (-0.02, 5.8))):
+        cfg = reloaded.arms[side].config
+        assert (cfg.gripper_closed_rad, cfg.gripper_open_rad) == pytest.approx(expected, abs=0.0002)
+        assert decode_positions(cfg, states(buses[side].raw))[-1] == pytest.approx(1, abs=0.0001)
+
+
+def test_calibration_session_rejects_actions_even_if_previously_calibrated(monkeypatch, tmp_path):
+    bot, buses = robot(monkeypatch, tmp_path, read_only=False)
+    bot.connect(calibrate=False)
+    try:
+        with pytest.raises(RuntimeError, match="calibration"):
+            bot.send_action(dict.fromkeys(YAM_FEATURE_NAMES, 0.0))
+        with pytest.raises(RuntimeError, match="Reconnect"):
+            bot.get_observation()
+    finally:
+        bot.disconnect()
+    assert not any(call[0] in ("write", "enable", "disable") for bus in buses.values() for call in bus.calls)
+
+
+def test_failed_calibration_preserves_previous_file_and_endpoints(monkeypatch, tmp_path):
+    bot, buses = robot(monkeypatch, tmp_path)
+    bot.calibration_fpath.write_text("previous calibration")
+    monkeypatch.setattr(module.time, "sleep", lambda _: None)
+    # No actual travel on either gripper: a cancelled/incorrect manual procedure.
+    monkeypatch.setattr("builtins.input", lambda _: "")
+    bot.connect(calibrate=False)
+    try:
+        with pytest.raises(ValueError, match="stroke"):
+            bot.calibrate()
+        assert bot.calibration_fpath.read_text() == "previous calibration"
+        assert bot.config.left_arm.gripper_closed_rad == 0.1
+        assert bot.config.left_arm.gripper_open_rad == 6.6
+    finally:
+        bot.disconnect()
+    assert not any(call[0] in ("write", "enable", "disable") for bus in buses.values() for call in bus.calls)

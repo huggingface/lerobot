@@ -10,6 +10,7 @@ import math
 import threading
 import time
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -17,7 +18,7 @@ import numpy as np
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.motors import Motor, MotorNormMode
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
 from lerobot.motors.damiao.damiao import MotorState
 from lerobot.utils.constants import ACTION, OBS_STATE
@@ -177,11 +178,13 @@ class BiYamFollower(Robot):
         super().__init__(config)
         self.config = config
         self.arms = {"left": _Arm(config.left_arm), "right": _Arm(config.right_arm)}
+        self._apply_gripper_calibration()
         self.cameras = make_cameras_from_configs(config.cameras)
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._failure: Exception | None = None
         self._connected = False
+        self._calibration_session = False
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -205,10 +208,78 @@ class BiYamFollower(Robot):
             for a in self.arms.values()
         )
 
+    def _apply_gripper_calibration(self, *, overwrite: bool = False) -> None:
+        """Load endpoints from standard MotorCalibration records in native MIT encoder counts."""
+        for side, arm in self.arms.items():
+            calibration = self.calibration.get(f"{side}_gripper")
+            if calibration is None:
+                continue
+            if not (
+                calibration.id == 7
+                and calibration.drive_mode in (0, 1)
+                and calibration.homing_offset == 0
+                and 0 <= calibration.range_min < calibration.range_max <= 65535
+            ):
+                raise ValueError(f"Invalid saved {side} gripper calibration")
+            # DM4310 reports position as unsigned 16-bit counts spanning +/-12.5 rad.
+            endpoints = np.asarray([calibration.range_min, calibration.range_max]) * (25.0 / 65535) - 12.5
+            if calibration.drive_mode:
+                endpoints = endpoints[::-1]
+            if overwrite or arm.config.gripper_closed_rad is None:
+                arm.config.gripper_closed_rad, arm.config.gripper_open_rad = map(float, endpoints)
+                arm.config.__post_init__()
+
+    def _save_calibration(self, fpath: Path | None = None) -> None:
+        """Atomically save the standard calibration file without writing motor settings."""
+        path = fpath if fpath is not None else self.calibration_fpath
+        with NamedTemporaryFile(dir=path.parent, suffix=".tmp", delete=False) as temporary:
+            temporary_path = Path(temporary.name)
+        try:
+            super()._save_calibration(temporary_path)
+            temporary_path.replace(path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+
+    @check_if_not_connected
     def calibrate(self) -> None:
-        raise NotImplementedError(
-            "Use the YAM setup guide to measure gripper endpoints; never reset joint zeros"
-        )
+        """Measure both gripper stops by hand through lerobot-calibrate; never enable torque or reset zeros."""
+        if not self._calibration_session:
+            raise RuntimeError("Reconnect with calibrate=False before measuring gripper endpoints")
+        measurements: dict[str, dict[str, float]] = {}
+        print("Support both arms. Move only the grippers gently by hand; stop if either resists.")
+        for endpoint in ("closed", "open"):
+            input(f"Place BOTH grippers fully {endpoint}, release them, then press Enter: ")
+            samples: dict[str, list[float]] = {side: [] for side in self.arms}
+            for _ in range(10):
+                for side, arm in self.arms.items():
+                    state = arm.bus.sync_read_all_states(strict=True)["gripper"]
+                    samples[side].append(math.radians(state["position"]))
+                time.sleep(0.02)
+            if any(not np.isfinite(values).all() or np.ptp(values) > 0.03 for values in samples.values()):
+                raise ValueError("Grippers moved or returned invalid feedback; calibration was not saved")
+            measurements[endpoint] = {side: float(np.median(values)) for side, values in samples.items()}
+        calibration = {}
+        for side in self.arms:
+            closed, opened = measurements["closed"][side], measurements["open"][side]
+            if not (abs(closed) <= 12.5 and abs(opened) <= 12.5 and 0.5 < abs(opened - closed) < 10):
+                raise ValueError(f"Implausible {side} gripper stroke; calibration was not saved")
+            counts = [round((value + 12.5) * 65535 / 25.0) for value in (closed, opened)]
+            calibration[f"{side}_gripper"] = MotorCalibration(
+                id=7,
+                drive_mode=int(opened < closed),
+                homing_offset=0,
+                range_min=min(counts),
+                range_max=max(counts),
+            )
+        previous = self.calibration
+        self.calibration = calibration
+        try:
+            self._save_calibration()
+        except Exception:
+            self.calibration = previous
+            raise
+        self._apply_gripper_calibration(overwrite=True)
+        print(f"Saved gripper endpoints to {self.calibration_fpath}. Joint zeros were not changed.")
 
     def configure(self) -> None:
         """No persistent motor writes: factory MIT mode, IDs, and zero positions are retained."""
@@ -241,10 +312,26 @@ class BiYamFollower(Robot):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        if not calibrate:
+            # lerobot-calibrate connects first with calibrate=False. Open only
+            # raw feedback here, even if read_only=False or a prior file exists.
+            try:
+                for arm in self.arms.values():
+                    verify_adapter(arm.config)
+                for arm in self.arms.values():
+                    arm.bus.connect(handshake=False)
+                    arm.bus.sync_read_all_states(strict=True)
+                self._calibration_session = True
+                self._connected = True
+                return
+            except Exception:
+                self._close()
+                raise
         if not self.is_calibrated:
             raise ValueError(
-                "Both YAM grippers require measured closed/open motor radians; see docs/source/yam.mdx"
+                "Run lerobot-calibrate with the same robot.id and CAN ports to measure both YAM grippers"
             )
+        self._calibration_session = False
         self._stop.clear()
         self._failure = None
         try:
@@ -352,6 +439,8 @@ class BiYamFollower(Robot):
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
+        if self._calibration_session:
+            raise RuntimeError("Reconnect after calibration before reading policy observations")
         with self._lock:
             self._check_feedback()
             result = {
@@ -365,6 +454,8 @@ class BiYamFollower(Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
+        if self._calibration_session:
+            raise RuntimeError("Motor commands are forbidden during calibration")
         if self.config.read_only:
             raise RuntimeError("YAM read_only=true forbids motor commands")
         if set(action) != set(YAM_FEATURE_NAMES):
@@ -402,6 +493,7 @@ class BiYamFollower(Robot):
             if camera.is_connected:
                 camera.disconnect()
         self._connected = False
+        self._calibration_session = False
 
     @check_if_not_connected
     def disconnect(self) -> None:

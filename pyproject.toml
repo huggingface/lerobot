@@ -398,7 +398,7 @@ torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 
 [tool.setuptools.package-data]
-lerobot = ["envs/*.json", "annotations/steerable_pipeline/prompts/*.txt", "robots/bi_yam_follower/assets/*"]
+lerobot = ["envs/*.json", "annotations/steerable_pipeline/prompts/*.txt", "robots/bi_yam_follower/assets/*.xml"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
