@@ -73,6 +73,7 @@ if attempts:
         "lerobot.configs",
         "lerobot.policies",
         "lerobot.processor",
+        "lerobot.utils.action_interpolator",
         pytest.param(
             "lerobot.scripts.lerobot_rollout",
             marks=pytest.mark.skipif(not _datasets_available, reason="datasets not installed"),
