@@ -475,7 +475,11 @@ class GrootPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(
-        self, batch: dict[str, Tensor], **kwargs: Unpack[RTCActionSelectKwargs]
+        self,
+        batch: dict[str, Tensor],
+        *,
+        noise: Tensor | None = None,
+        **kwargs: Unpack[RTCActionSelectKwargs],
     ) -> Tensor:
         """Predict a chunk of actions for inference by delegating to Isaac-GR00T.
 
@@ -483,6 +487,9 @@ class GrootPolicy(PreTrainedPolicy):
 
         For N1.7, LeRobot's RTC leftovers are converted into the native GR00T
         action-overlap options before calling the underlying model.
+
+        `noise` is the starting sample of the flow-matching loop, shaped as the underlying
+        model's (B, action_horizon, max_action_dim). When it is None, fresh noise is drawn.
         """
         self.eval()
 
@@ -502,9 +509,9 @@ class GrootPolicy(PreTrainedPolicy):
         # Use bf16 autocast for inference to keep memory low and match backbone dtype
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=self.config.use_bf16):
             if groot_options is not None:
-                outputs = self._groot_model.get_action(groot_inputs, options=groot_options)
+                outputs = self._groot_model.get_action(groot_inputs, options=groot_options, noise=noise)
             else:
-                outputs = self._groot_model.get_action(groot_inputs)
+                outputs = self._groot_model.get_action(groot_inputs, noise=noise)
 
         actions = outputs.get("action_pred")
 
