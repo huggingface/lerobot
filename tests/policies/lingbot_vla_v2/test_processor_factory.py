@@ -89,7 +89,9 @@ def test_saved_checkpoint_forwards_standard_and_config_overrides(monkeypatch):
 
     image_overrides = pre_overrides[IMAGE_STEP]
     assert image_overrides["tokenizer_path"] == cfg.tokenizer_path
-    assert image_overrides["cameras"] == cfg.canonical_cameras
+    # Cameras come from input_features (none on a bare config), so no cameras override
+    # is forwarded — the checkpoint's saved camera names win.
+    assert "cameras" not in image_overrides
 
     tokenizer_name = cfg.tokenizer_path
     assert pre_overrides["tokenizer_processor"]["tokenizer_name"] == tokenizer_name

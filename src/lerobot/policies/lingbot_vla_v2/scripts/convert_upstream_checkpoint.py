@@ -426,7 +426,10 @@ def main():
         logger.info("Converted to raw-feature stats (%d features)", len(raw_stats) if raw_stats else 0)
 
     config = LingbotVLAV2Config(
-        tokenizer_path=args.tokenizer_path or LingbotVLAV2Config().tokenizer_path,
+        # Keep the portable Hub id in the saved config. ``--tokenizer-path`` is only a
+        # local source for offline conversion; it must NOT leak into config.json or the
+        # checkpoint fails to load on any other machine.
+        tokenizer_path=LingbotVLAV2Config().tokenizer_path,
         state_slots=state_slots or None,
         action_slots=action_slots or None,
         # Robot features (raw dims), not the canonical 55-D space.
@@ -461,8 +464,8 @@ def main():
         config.future_frame_offset = 49
     elif args.profile == "real":
         config.loss_type = "fm"
-    if args.tokenizer_path:
-        config.tokenizer_path = args.tokenizer_path
+    # NOTE: ``--tokenizer-path`` is intentionally NOT written into config.tokenizer_path
+    # (see the config construction above) so the checkpoint stays machine-portable.
     # ``use_depth`` above stays False deliberately: it is a dead compatibility
     # field the model never reads — the distillation branch keys on
     # ``align_params`` alone.
