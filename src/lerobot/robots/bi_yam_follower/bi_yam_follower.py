@@ -46,7 +46,8 @@ class _ControlGC:
 
     New objects still participate in normal collection. The process-wide freeze
     is shared by connected YAM instances and restored only after the last one
-    disconnects. An existing caller-owned freeze or disabled GC is left alone.
+    disconnects. An existing caller-owned freeze is extended and left frozen;
+    its owner must unfreeze it. Disabled collection is left alone.
     """
 
     _lock = threading.Lock()
@@ -56,10 +57,10 @@ class _ControlGC:
     @classmethod
     def acquire(cls) -> None:
         with cls._lock:
-            if cls._users == 0 and gc.isenabled() and gc.get_freeze_count() == 0:
+            if cls._users == 0 and gc.isenabled():
+                cls._owns_freeze = gc.get_freeze_count() == 0
                 gc.collect()
                 gc.freeze()
-                cls._owns_freeze = True
             cls._users += 1
 
     @classmethod

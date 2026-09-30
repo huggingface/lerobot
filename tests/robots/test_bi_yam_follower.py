@@ -48,8 +48,13 @@ def test_control_gc_preserves_caller_state(control_gc, enabled, frozen):
     control_gc.get_freeze_count.return_value = frozen
     module._ControlGC.acquire()
     module._ControlGC.release()
-    control_gc.collect.assert_not_called()
-    control_gc.freeze.assert_not_called()
+    if enabled:
+        # A small preexisting startup freeze does not cover the loaded model.
+        control_gc.collect.assert_called_once()
+        control_gc.freeze.assert_called_once()
+    else:
+        control_gc.collect.assert_not_called()
+        control_gc.freeze.assert_not_called()
     control_gc.unfreeze.assert_not_called()
 
 
