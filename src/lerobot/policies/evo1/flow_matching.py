@@ -410,6 +410,8 @@ class FlowmatchingActionHead(nn.Module):
         prev_chunk_left_over: torch.Tensor | None = None,
         execution_horizon: int | None = None,
         rtc_processor=None,
+        *,
+        noise: torch.Tensor | None = None,
     ):
         batch_size = fused_tokens.size(0)
         device = fused_tokens.device
@@ -420,10 +422,15 @@ class FlowmatchingActionHead(nn.Module):
         action_dim_total = self.action_dim
         per_action_dim = self.per_action_dim
 
-        action = sample_noise(
-            (batch_size, action_dim_total), device, dtype=context_tokens.dtype, distribution="uniform"
-        )
-        action_seq = action.view(batch_size, self.horizon, per_action_dim)
+        if noise is None:
+            noise = sample_noise(
+                (batch_size, action_dim_total), device, dtype=context_tokens.dtype, distribution="uniform"
+            )
+        elif noise.shape != (batch_size, self.horizon, per_action_dim):
+            raise ValueError(
+                f"noise must have shape {(batch_size, self.horizon, per_action_dim)}, got {tuple(noise.shape)}."
+            )
+        action_seq = noise.reshape(batch_size, self.horizon, per_action_dim)
         action_mask = self._expand_action_mask(
             action_mask,
             batch_size=batch_size,
