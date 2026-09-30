@@ -18,6 +18,7 @@ items as over the default parquet/mp4 layout, through the same public class."""
 
 import json
 import pickle
+import weakref
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -297,6 +298,40 @@ def test_rgb_batch_decode_limits_frames_per_call():
     assert decoder.calls == [list(range(max_frames)), list(range(max_frames, max_frames + 5))]
     assert decoded[0][file_key[0]][:, 0, 0, 0].tolist() == list(range(max_frames))
     assert decoded[1][file_key[0]][:, 0, 0, 0].tolist() == list(range(max_frames, max_frames + 5))
+
+
+def test_rgb_batch_decode_releases_chunk_before_next_decode(monkeypatch):
+    file_key = ("observation.images.camera", 0, 0)
+    file_requests = [(index, [index / 10]) for index in range(3)]
+    monkeypatch.setattr(lance_backend, "_RGB_DECODE_MAX_FRAMES", 1)
+
+    class Decoder:
+        metadata = SimpleNamespace(average_fps=10.0)
+
+        def __init__(self):
+            self.previous_data = None
+
+        def get_frames_at(self, indices):
+            if self.previous_data is not None:
+                assert self.previous_data() is None
+            data = torch.full((1, 3, 2, 2), indices[0], dtype=torch.uint8)
+            self.previous_data = weakref.ref(data)
+            return SimpleNamespace(
+                data=data,
+                pts_seconds=torch.tensor(indices, dtype=torch.float64) / self.metadata.average_fps,
+            )
+
+    decoder = Decoder()
+    reader = LanceDatasetReader.__new__(LanceDatasetReader)
+    reader.meta = SimpleNamespace(depth_keys=[], features={file_key[0]: {"shape": (2, 2, 3)}})
+    reader.return_uint8 = True
+    reader.tolerance_s = 1e-4
+    reader._build_video_requests = lambda *args: {file_key: file_requests}
+
+    with ThreadPoolExecutor(max_workers=1) as reader._decode_pool:
+        decoded = reader._decode_videos([{}, {}, {}], {"timestamp": []}, {}, {file_key: (decoder, None)})
+
+    assert [frames[file_key[0]][0, 0, 0].item() for frames in decoded] == [0, 1, 2]
 
 
 def test_rgb_batch_decode_rejects_bad_pts_after_chunk_scatter():

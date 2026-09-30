@@ -578,6 +578,7 @@ class LanceDatasetReader(BaseDatasetReader):
                 if not self.return_uint8:
                     frames = (frames / 255.0).type(torch.float32)
                 _scatter_batch(indices, frames, batch.pts_seconds)
+                del batch, frames
 
             for (sample_idx, shifted_ts), frames, loaded_pts in zip(
                 file_requests, sample_frames, sample_pts, strict=True
