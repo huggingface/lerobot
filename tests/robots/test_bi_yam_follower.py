@@ -353,3 +353,67 @@ def test_delayed_feedback_never_produces_motor_command(monkeypatch, tmp_path):
     assert "freshness deadline" in str(bot._failure)
     assert not any(call[0] == "write" for call in arm.bus.calls)
     assert ("disable",) in arm.bus.calls
+
+
+@pytest.mark.parametrize("second_error", [None, TimeoutError("second timeout")])
+def test_camera_timeout_reopens_once_before_any_motor_connection(monkeypatch, tmp_path, second_error):
+    bot, buses = robot(monkeypatch, tmp_path, read_only=False)
+    calls = []
+
+    class Camera:
+        def __init__(self, error=None):
+            self.error = error
+            self.is_connected = False
+
+        def connect(self):
+            assert not any(bus.calls for bus in buses.values())
+            calls.append(("connect", self))
+            self.is_connected = True
+            if self.error:
+                raise self.error
+
+        def disconnect(self):
+            calls.append(("disconnect", self))
+            self.is_connected = False
+
+    first = Camera(TimeoutError("no first frame"))
+    replacement = Camera(second_error)
+    bot.cameras = {"left": first}
+    bot.config.cameras = {"left": SimpleNamespace()}
+    monkeypatch.setattr(module, "make_cameras_from_configs", lambda cfg: {"left": replacement})
+    monkeypatch.setattr(module.time, "sleep", lambda _: None)
+    if second_error:
+        with pytest.raises(TimeoutError, match="second timeout"):
+            bot.connect()
+        assert not any(bus.calls for bus in buses.values())
+        assert calls == [
+            ("connect", first),
+            ("disconnect", first),
+            ("connect", replacement),
+            ("disconnect", replacement),
+        ]
+    else:
+        bot.connect()
+        try:
+            assert bot.cameras["left"] is replacement
+            assert calls == [("connect", first), ("disconnect", first), ("connect", replacement)]
+        finally:
+            bot.disconnect()
+        assert not replacement.is_connected
+
+
+def test_camera_configuration_error_is_not_retried(monkeypatch, tmp_path):
+    bot, buses = robot(monkeypatch, tmp_path, read_only=False)
+
+    def fail():
+        raise ValueError("unsupported resolution")
+
+    bot.cameras = {"left": SimpleNamespace(connect=fail, is_connected=False)}
+
+    def unexpected_retry(config):
+        pytest.fail("Configuration failures must not retry")
+
+    monkeypatch.setattr(module, "make_cameras_from_configs", unexpected_retry)
+    with pytest.raises(ValueError, match="unsupported resolution"):
+        bot.connect()
+    assert not any(bus.calls for bus in buses.values())

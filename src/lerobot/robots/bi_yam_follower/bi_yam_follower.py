@@ -337,8 +337,7 @@ class BiYamFollower(Robot):
         try:
             for arm in self.arms.values():
                 verify_adapter(arm.config)
-            for camera in self.cameras.values():
-                camera.connect()
+            self._connect_cameras()
             # Validate BOTH arms before enabling either. handshake=True enables
             # torque in DamiaoMotorsBus, so use the strictly read-only refresh.
             for side, arm in self.arms.items():
@@ -391,6 +390,27 @@ class BiYamFollower(Robot):
         except Exception:
             self._close()
             raise
+
+    def _connect_cameras(self) -> None:
+        """Retry a first-frame timeout once, before opening either motor bus."""
+        for name in self.cameras:
+            for attempt in range(2):
+                camera = self.cameras[name]
+                try:
+                    camera.connect()
+                    break
+                except TimeoutError:
+                    if camera.is_connected:
+                        camera.disconnect()
+                    if attempt:
+                        raise
+                    logger.warning(
+                        "Camera %s produced no initial frame; reopening once before motor startup", name
+                    )
+                    # Use a fresh object so a delayed reader from the failed
+                    # connection cannot publish into the replacement's buffer.
+                    self.cameras[name] = make_cameras_from_configs({name: self.config.cameras[name]})[name]
+                    time.sleep(0.5)
 
     def _run(self, arm: _Arm) -> None:
         previous = time.monotonic()

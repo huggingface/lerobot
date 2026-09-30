@@ -60,7 +60,7 @@ Configure cameras using ordinary LeRobot camera configs, preferably persistent `
 
 ## Startup and control
 
-The adapter defaults to `read_only=true`. Explicitly set `robot.read_only=false` to enable control after validating the installation. At startup, both arms must pass feedback, calibration, and pose checks before either is enabled. Each joint must be within `initial_tolerance_rad` (default 0.2 radians) of `initial_position_rad` (default six zeros). Optionally set each arm's `initial_gripper_position=1.0` to require open grippers. These are assertions, not automatic homing commands.
+The adapter defaults to `read_only=true`. Explicitly set `robot.read_only=false` to enable control after validating the installation. At startup, cameras must deliver frames and both arms must pass feedback, calibration, and pose checks before either is enabled. A camera first-frame timeout is retried once using a fresh connection, before opening either motor bus. A second timeout aborts startup; camera failures during control are not automatically retried. Each joint must be within `initial_tolerance_rad` (default 0.2 radians) of `initial_position_rad` (default six zeros). Optionally set each arm's `initial_gripper_position=1.0` to require open grippers. These are assertions, not automatic homing commands.
 
 A separate servo loop per arm (default 200 Hz) supplies gravity compensation and bounded targets. Defaults are 0.3 rad/s joint target speed, 0.5 gripper strokes/s, and a 0.15 rad tracking-error bound. The gripper's proportional torque contribution is limited to 0.5 Nm; damping adds torque, so this is not a contact-force guarantee. `send_action` returns the accepted target; observations contain measured positions.
 
