@@ -198,6 +198,9 @@ class HybridInferenceEngine(InferenceEngine):
         self._autosteer_goal = None
         self._query_epoch += 1
         self._pending_decision = None
+        # A timed-out HTTP worker may still be running. Keep the single-request
+        # slot occupied until it returns, including across a subsequent /start.
+        in_flight = self._query_in_flight
         self._publish_answer(
             QueryAnswer(
                 question=goal,
@@ -207,6 +210,7 @@ class HybridInferenceEngine(InferenceEngine):
                 completed=completed,
             )
         )
+        self._query_in_flight = in_flight
 
     def _accept_decision(self):
         decision, observation, epoch, error = self._pending_decision

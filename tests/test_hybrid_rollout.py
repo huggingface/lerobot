@@ -295,3 +295,29 @@ def test_unreached_intervention_stops_instead_of_resuming(rig):
     assert engine.get_action({}) is None
     assert engine.terminal
     delegate.resume.assert_not_called()
+
+
+def test_timeout_does_not_release_a_still_running_http_request(rig):
+    engine, _, clock = rig
+    entered, release = Event(), Event()
+
+    def generate(*args, **kwargs):
+        entered.set()
+        assert release.wait(2)
+        return decision("done")
+
+    engine.external_text = generate
+    clock.now += engine.config.settle_s
+    engine.notify_observation({"joint.pos": 0, "gripper.pos": 0.5})
+    engine.pump_query(engine._obs)
+    assert entered.wait(2)
+    try:
+        clock.now += engine.config.review_timeout_s + 1
+        engine.notify_observation({"joint.pos": 0, "gripper.pos": 0.5})
+        engine.get_action({})
+        assert engine.terminal and engine._query_in_flight
+        engine.reset()
+        engine.resume()
+        assert engine._query_in_flight  # cannot overlap requests after restarting
+    finally:
+        release.set()
