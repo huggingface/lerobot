@@ -22,6 +22,15 @@ DEFAULT_INFERENCE_LATENCY = 1 / DEFAULT_FPS
 """Server side: Timeout for observation queue in seconds"""
 DEFAULT_OBS_QUEUE_TIMEOUT = 2
 
+IMAGE_COMPRESSION_NONE = "none"
+IMAGE_COMPRESSION_JPEG = "jpeg"
+IMAGE_COMPRESSION_PNG = "png"
+SUPPORTED_IMAGE_COMPRESSIONS = (
+    IMAGE_COMPRESSION_NONE,
+    IMAGE_COMPRESSION_JPEG,
+    IMAGE_COMPRESSION_PNG,
+)
+
 # All action chunking policies
 SUPPORTED_POLICIES = ["act", "smolvla", "diffusion", "tdmpc", "vqbet", "pi0", "pi05", "groot"]
 

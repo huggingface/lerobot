@@ -51,6 +51,8 @@ python -m lerobot.async_inference.robot_client \
     --policy_device=mps \ # POLICY: the device to run the policy on, on the server (cuda, mps, xpu, cpu)
     --actions_per_chunk=50 \ # POLICY: the number of actions to output at once
     --chunk_size_threshold=0.5 \ # CLIENT: the threshold for the chunk size before sending a new observation to the server
+    --observation_image_compression=jpeg \ # CLIENT: optional image compression for observations sent over the network
+    --observation_image_compression_quality=90 \ # CLIENT: image compression quality in [1, 100]
     --aggregate_fn_name=weighted_average \ # CLIENT: the function to aggregate actions on overlapping portions
     --debug_visualize_queue_size=True # CLIENT: whether to visualize the queue size at runtime
 ```
@@ -160,6 +162,8 @@ python -m lerobot.async_inference.robot_client \
     --policy_device=mps \ # POLICY: the device to run the policy on, on the server
     --actions_per_chunk=50 \ # POLICY: the number of actions to output at once
     --chunk_size_threshold=0.5 \ # CLIENT: the threshold for the chunk size before sending a new observation to the server
+    --observation_image_compression=jpeg \ # CLIENT: optional image compression for observations sent over the network
+    --observation_image_compression_quality=90 \ # CLIENT: image compression quality in [1, 100]
     --aggregate_fn_name=weighted_average \ # CLIENT: the function to aggregate actions on overlapping portions
     --debug_visualize_queue_size=True # CLIENT: whether to visualize the queue size at runtime
 ```
@@ -200,6 +204,8 @@ client_cfg = RobotClientConfig(
     pretrained_name_or_path="<user>/smolvla_async",
     chunk_size_threshold=0.5,
     actions_per_chunk=50,  # make sure this is less than the max actions of the policy
+    observation_image_compression="jpeg",
+    observation_image_compression_quality=90,
 )
 
 # 4. Create and start client
@@ -280,6 +286,7 @@ We found the default values of `actions_per_chunk` and `chunk_size_threshold` to
 3. **Adjust `chunk_size_threshold`**.
    - Values closer to `0.0` result in almost sequential behavior. Values closer to `1.0` → send observation every step (more bandwidth, relies on good world-model).
    - We found values around 0.5-0.6 to work well. If you want to tweak this, spin up a `RobotClient` setting the `--debug_visualize_queue_size` to `True`. This will plot the action queue size evolution at runtime, and you can use it to find the value of `chunk_size_threshold` that works best for your setup.
+4. **Compress camera observations when bandwidth is the bottleneck.** If the robot and policy server communicate over a bandwidth-limited network, enable `--observation_image_compression=jpeg` to send compressed camera images instead of raw image arrays. `--observation_image_compression_quality=90` is a good starting point; lower values reduce bandwidth further but add more visual loss. Use `png` when you need lossless image transport for debugging, but expect larger payloads and more CPU work than JPEG. This is per-observation image compression, not an inter-frame video codec.
 
 <p align="center">
   <img

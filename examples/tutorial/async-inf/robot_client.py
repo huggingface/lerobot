@@ -35,6 +35,8 @@ def main():
         pretrained_name_or_path="<user>/robot_learning_tutorial_act",
         chunk_size_threshold=0.5,  # g
         actions_per_chunk=50,  # make sure this is less than the max actions of the policy
+        observation_image_compression="jpeg",
+        observation_image_compression_quality=90,
     )
 
     # 4. Create and start client
