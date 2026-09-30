@@ -540,6 +540,26 @@ def test_merge_skips_validation_when_action_index_none(action_queue_rtc_enabled,
     assert "Indexes diff is not equal to real delay" not in caplog.text
 
 
+def test_merge_never_discards_more_than_was_consumed(action_queue_rtc_enabled, sample_actions):
+    """A starved queue must not have the estimated delay discarded from it.
+
+    Discarding `real_delay` when nothing was consumed splices the queue ahead of the
+    physical pose, which the arm executes as a jump.
+    """
+    action_queue_rtc_enabled.merge(sample_actions["longer"], sample_actions["longer"], real_delay=0)
+    action_index_before = action_queue_rtc_enabled.get_action_index()
+
+    # Nothing consumed since the index was captured, so indexes_diff == 0.
+    action_queue_rtc_enabled.merge(
+        sample_actions["original"],
+        sample_actions["processed"],
+        real_delay=5,
+        action_index_before_inference=action_index_before,
+    )
+
+    assert action_queue_rtc_enabled.qsize() == len(sample_actions["processed"])
+
+
 # Thread safety tests
 
 
@@ -821,8 +841,11 @@ def test_typical_rtc_workflow(action_queue_rtc_enabled, sample_actions):
 
     assert action_queue_rtc_enabled.qsize() == 40
 
-    # Second inference with delay
+    # Second inference with delay. Consume `real_delay` actions after capturing the index so
+    # the measured `indexes_diff` matches and the discard clamp is a no-op.
     action_index_before = action_queue_rtc_enabled.get_action_index()
+    for _ in range(5):
+        action_queue_rtc_enabled.get()
 
     action_queue_rtc_enabled.merge(
         sample_actions["original"],

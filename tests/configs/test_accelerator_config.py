@@ -27,6 +27,7 @@ from lerobot.configs.accelerator import (
     DDPConfig,
     FSDPConfig,
     GradientAccumulationConfig,
+    GradScalerConfig,
 )
 from lerobot.configs.parallelism import ParallelismConfig
 
@@ -48,6 +49,20 @@ class TestFieldValidation:
         with pytest.raises(ValueError, match="gradient_accumulation.steps"):
             GradientAccumulationConfig(steps=0)
 
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("init_scale", 0.0),
+            ("growth_factor", 1.0),  # a scale that can never recover after a backoff
+            ("backoff_factor", 1.0),  # an overflow that can never be escaped
+            ("backoff_factor", 0.0),
+            ("growth_interval", 0),
+        ],
+    )
+    def test_grad_scaler_invariants(self, field, value):
+        with pytest.raises(ValueError, match=f"grad_scaler.{field}"):
+            GradScalerConfig(**{field: value})
+
 
 class TestDraccusRoundTrip:
     @pytest.mark.parametrize(
@@ -64,6 +79,7 @@ class TestDraccusRoundTrip:
                     ignored_modules=r".*pos_embed.*",
                 ),
                 ddp=DDPConfig(find_unused_parameters=False, static_graph=True),
+                grad_scaler=GradScalerConfig(init_scale=1024.0, growth_interval=500),
                 compile=CompileConfig(enabled=True, mode="max-autotune", regional=False),
                 activation_checkpointing=ActivationCheckpointingConfig(mode=ActivationCheckpointingMode.FULL),
             ),
@@ -112,6 +128,55 @@ class TestRuntimeBuilders:
         plugin = GradientAccumulationConfig(steps=4).build_plugin()
         assert plugin.num_steps == 4
         assert plugin.sync_with_dataloader is False
+
+    def test_grad_scaler_kwargs_translation(self):
+        handler = GradScalerConfig(
+            init_scale=1024.0, growth_factor=4.0, backoff_factor=0.25, growth_interval=500
+        ).build_kwargs_handler()
+        assert handler.init_scale == 1024.0
+        assert handler.growth_factor == 4.0
+        assert handler.backoff_factor == 0.25
+        assert handler.growth_interval == 500
+        # `enabled` is not mirrored: fp16 without loss scaling is never a valid configuration.
+        assert handler.enabled is True
+
+    @pytest.mark.parametrize(
+        ("topology", "world_size", "expects_ddp_handler"),
+        [
+            ({}, 1, False),  # single process
+            ({"dp_replicate": 4}, 4, True),  # DDP
+            ({"dp_shard": 4}, 4, False),  # FSDP2
+            ({"dp_replicate": 2, "dp_shard": 2}, 4, False),  # HSDP
+        ],
+    )
+    @pytest.mark.parametrize("mixed_precision", ["no", "bf16", "fp16"])
+    def test_scaler_handler_is_passed_for_fp16_on_every_topology(
+        self, monkeypatch, topology, world_size, expects_ddp_handler, mixed_precision
+    ):
+        """The scaler handler is orthogonal to the topology matrix.
+
+        accelerate reads it only on the branch that builds the fp16 `GradScaler`, so appending
+        it anywhere else would be inert — but it is still left out, to keep a "no"/bf16
+        `Accelerator` byte-identical to one built without any scaler support.
+        """
+        from accelerate.utils import DistributedDataParallelKwargs, GradScalerKwargs
+
+        captured = {}
+
+        class FakeAccelerator:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        monkeypatch.setattr("accelerate.Accelerator", FakeAccelerator)
+        parallelism = ParallelismConfig(**topology)
+        parallelism.resolve(world_size)
+        AcceleratorConfig(mixed_precision=mixed_precision).build(parallelism, cpu=True)
+
+        handlers = captured.get("kwargs_handlers", [])
+        scalers = [h for h in handlers if isinstance(h, GradScalerKwargs)]
+        ddps = [h for h in handlers if isinstance(h, DistributedDataParallelKwargs)]
+        assert len(scalers) == (1 if mixed_precision == "fp16" else 0)
+        assert len(ddps) == (1 if expects_ddp_handler else 0)
 
     def test_gradient_accumulation_never_syncs_with_dataloader(self, monkeypatch):
         """The loop cycles a finite dataloader, so accelerate's default

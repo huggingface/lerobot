@@ -91,17 +91,21 @@ def supports_rtc_inference(policy: PreTrainedPolicy) -> bool:
 
 
 def _normalize_prev_actions_length(prev_actions: torch.Tensor, target_steps: int) -> torch.Tensor:
-    """Pad or truncate RTC prefix actions to a fixed length for stable compiled inference."""
+    """Pad (holding the last action) or truncate RTC prefix actions to a fixed length.
+
+    Zero-padding would decode to the dataset mean inside the RTC guided region.
+    """
     if prev_actions.ndim != 2:
         raise ValueError(f"Expected 2D [T, A] tensor, got shape={tuple(prev_actions.shape)}")
-    steps, action_dim = prev_actions.shape
+    steps, _ = prev_actions.shape
     if steps == target_steps:
         return prev_actions
     if steps > target_steps:
         return prev_actions[:target_steps]
-    padded = torch.zeros((target_steps, action_dim), dtype=prev_actions.dtype, device=prev_actions.device)
-    padded[:steps] = prev_actions
-    return padded
+    if steps == 0:
+        raise ValueError("Cannot pad an empty prefix: no last action to hold.")
+    hold = prev_actions[-1:].expand(target_steps - steps, -1)
+    return torch.cat([prev_actions, hold], dim=0)
 
 
 def _trained_rtc_chunk_can_merge(
@@ -145,10 +149,10 @@ def _clamp_trained_rtc_delay(*, conditioned_delay: int, available_steps: int, tr
     """Clamp the hard prefix to what both the checkpoint and the queue can back.
 
     Past ``training_max_delay`` the model has never seen a prefix that long, and past
-    ``available_steps`` ``_normalize_prev_actions_length`` zero-pads the tail, so the extra
-    steps would be inpainted as if zeros were committed actions. Clamping keeps the chunk
-    usable; ``_trained_rtc_chunk_can_merge`` still discards it if the delay that actually
-    elapsed outran this prefix.
+    ``available_steps`` ``_normalize_prev_actions_length`` pads the tail by holding the last
+    action, so the extra steps would be inpainted as if a frozen hold had been committed.
+    Clamping keeps the chunk usable; ``_trained_rtc_chunk_can_merge`` still discards it if the
+    delay that actually elapsed outran this prefix.
     """
     clamped = min(conditioned_delay, training_max_delay, available_steps)
     if clamped < conditioned_delay:
@@ -186,7 +190,7 @@ class RTCInferenceEngine(InferenceEngine):
         postprocessor: PolicyProcessorPipeline,
         robot_wrapper: ThreadSafeRobot,
         rtc_config: RTCConfig,
-        hw_features: dict,
+        dataset_features: dict,
         task: str,
         fps: float,
         device: str | None,
@@ -201,7 +205,8 @@ class RTCInferenceEngine(InferenceEngine):
         self._postprocessor = postprocessor
         self._robot = robot_wrapper
         self._rtc_config = rtc_config
-        self._hw_features = hw_features
+        # Same feature spec sync uses, so both engines order observation.state identically.
+        self._obs_features = dataset_features
         self._fps = fps
         self._device = device or "cpu"
         self._use_torch_compile = use_torch_compile
@@ -382,7 +387,7 @@ class RTCInferenceEngine(InferenceEngine):
 
     def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
         """Run the policy's text head.  Called on the RTC thread (see ``_rtc_loop``)."""
-        obs_batch = build_dataset_frame(self._hw_features, obs_processed, prefix="observation")
+        obs_batch = build_dataset_frame(self._obs_features, obs_processed, prefix="observation")
         # Live task, read without consuming the task-changed edge: that belongs to the
         # chunk path.
         task = self.task
@@ -407,6 +412,8 @@ class RTCInferenceEngine(InferenceEngine):
             policy_device = torch.device(self._device)
 
             warmup_required = max(1, self._compile_warmup_inferences) if self._use_torch_compile else 0
+            # Excluded from the latency tracker: cold starts spike it.
+            latency_warmup_required = max(1, warmup_required)
             inference_count = 0
             consecutive_errors = 0
             consecutive_discards = 0
@@ -472,7 +479,7 @@ class RTCInferenceEngine(InferenceEngine):
                             # inference; with blending off the queue drains first.
                             logger.info("Task changed to '%s' — applied from the next merged chunk", task)
 
-                        obs_batch = build_dataset_frame(self._hw_features, obs, prefix="observation")
+                        obs_batch = build_dataset_frame(self._obs_features, obs, prefix="observation")
                         obs_batch = prepare_observation_for_inference(
                             obs_batch, policy_device, task, self._robot.robot_type
                         )
@@ -495,10 +502,15 @@ class RTCInferenceEngine(InferenceEngine):
                                         policy_device=policy_device,
                                     )
 
-                        if prev_actions is not None:
+                        if has_previous_actions:
                             prev_actions = _normalize_prev_actions_length(
                                 prev_actions, target_steps=self._rtc_config.execution_horizon
                             )
+                        else:
+                            # A fully drained queue hands back an empty tensor rather than None.
+                            # There is no last action to hold, so take the no-prefix path, which
+                            # is what the delay estimate above already assumed.
+                            prev_actions = None
 
                         actions = self._policy.predict_action_chunk(
                             preprocessed, inference_delay=delay, prev_chunk_left_over=prev_actions
@@ -515,7 +527,7 @@ class RTCInferenceEngine(InferenceEngine):
                         is_initial_trained_chunk = (
                             self._rtc_config.mode == "trained" and not has_previous_actions
                         )
-                        if is_warmup or is_initial_trained_chunk:
+                        if inference_count <= latency_warmup_required or is_initial_trained_chunk:
                             latency_tracker.reset()
                         else:
                             latency_tracker.add(new_latency)

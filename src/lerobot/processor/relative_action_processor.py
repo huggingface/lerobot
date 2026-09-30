@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch import Tensor
@@ -24,7 +24,10 @@ from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.utils.constants import OBS_STATE
 
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
-from .pipeline import ProcessorStep, ProcessorStepRegistry
+from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry
+
+if TYPE_CHECKING:  # a runtime import would be circular: ``pretrained`` imports from this package
+    from lerobot.policies.pretrained import PreTrainedPolicy
 
 # Re-export for backward compatibility
 __all__ = [
@@ -32,6 +35,7 @@ __all__ = [
     "MapTensorToDeltaActionDictStep",
     "RelativeActionsProcessorStep",
     "AbsoluteActionsProcessorStep",
+    "bind_relative_anchor",
     "to_relative_actions",
     "to_absolute_actions",
 ]
@@ -42,7 +46,8 @@ def to_relative_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
 
     Args:
         actions: (B, T, action_dim) or (B, action_dim).
-        state: (B, state_dim). Broadcast across time dimension.
+        state: (B, state_dim), or (B, T_obs, state_dim) for a temporally stacked
+            observation (collapsed to the current frame). Broadcast across time dimension.
         mask: Which dims to convert. Can be shorter than action_dim.
     """
     mask_t = torch.tensor(mask, dtype=actions.dtype, device=actions.device)
@@ -51,6 +56,12 @@ def to_relative_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     # DeviceProcessorStep moves the transition, so it can be on CPU while actions are on CUDA.
     if state.device != actions.device or state.dtype != actions.dtype:
         state = state.to(device=actions.device, dtype=actions.dtype)
+    # A temporally stacked observation (a policy whose ``observation_delta_indices`` spans several
+    # frames, e.g. VLA-JEPA or LingBot-VA) hands over a (B, T_obs, state_dim) state. The reference
+    # is the CURRENT frame -- delta 0, i.e. index 0 -- so collapse to it and let the offset
+    # broadcast over the action horizon. pi0/pi05 pass a 2D (B, state_dim) state and are unaffected.
+    if state.ndim == 3:
+        state = state[:, 0]
     state_offset = state[..., :dims] * mask_t
     if actions.ndim == 3:
         state_offset = state_offset.unsqueeze(-2)
@@ -64,7 +75,8 @@ def to_absolute_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
 
     Args:
         actions: (B, T, action_dim) or (B, action_dim).
-        state: (B, state_dim). Broadcast across time dimension.
+        state: (B, state_dim), or (B, T_obs, state_dim) for a temporally stacked
+            observation (collapsed to the current frame). Broadcast across time dimension.
         mask: Which dims to convert. Can be shorter than action_dim.
     """
     mask_t = torch.tensor(mask, dtype=actions.dtype, device=actions.device)
@@ -73,6 +85,12 @@ def to_absolute_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     # DeviceProcessorStep moves the transition, so it can be on CPU while actions are on CUDA.
     if state.device != actions.device or state.dtype != actions.dtype:
         state = state.to(device=actions.device, dtype=actions.dtype)
+    # A temporally stacked observation (a policy whose ``observation_delta_indices`` spans several
+    # frames, e.g. VLA-JEPA or LingBot-VA) hands over a (B, T_obs, state_dim) state. The reference
+    # is the CURRENT frame -- delta 0, i.e. index 0 -- so collapse to it and let the offset
+    # broadcast over the action horizon. pi0/pi05 pass a 2D (B, state_dim) state and are unaffected.
+    if state.ndim == 3:
+        state = state[:, 0]
     state_offset = state[..., :dims] * mask_t
     if actions.ndim == 3:
         state_offset = state_offset.unsqueeze(-2)
@@ -102,6 +120,7 @@ class RelativeActionsProcessorStep(ProcessorStep):
     exclude_joints: list[str] = field(default_factory=list)
     action_names: list[str] | None = None
     _last_state: torch.Tensor | None = field(default=None, init=False, repr=False)
+    _count_queued_actions: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
     def _build_mask(self, action_dim: int) -> list[bool]:
         if not self.exclude_joints or self.action_names is None:
@@ -126,8 +145,10 @@ class RelativeActionsProcessorStep(ProcessorStep):
         observation = transition.get(TransitionKey.OBSERVATION, {})
         state = observation.get(OBS_STATE) if observation else None
 
-        # Always cache state for the paired AbsoluteActionsProcessorStep
-        if state is not None:
+        # Cache state for the paired AbsoluteActionsProcessorStep -- but hold it for as long
+        # as the policy is still serving the chunk that was generated against it. A fresh
+        # chunk re-anchors on the tick the queue runs dry.
+        if state is not None and not self._chunk_in_flight():
             self._last_state = state
 
         if not self.enabled:
@@ -141,6 +162,16 @@ class RelativeActionsProcessorStep(ProcessorStep):
         mask = self._build_mask(action.shape[-1])
         new_transition[TransitionKey.ACTION] = to_relative_actions(action, state, mask)
         return new_transition
+
+    def reset(self) -> None:
+        self._last_state = None
+
+    def _chunk_in_flight(self) -> bool:
+        """Whether the policy still holds actions generated against the cached anchor."""
+        return self._count_queued_actions is not None and self._count_queued_actions() > 0
+
+    def bind_action_queue(self, count_queued_actions: Callable[[], int] | None) -> None:
+        self._count_queued_actions = count_queued_actions
 
     def get_cached_state(self) -> torch.Tensor | None:
         """Return the cached ``observation.state`` used as the reference point for relative/absolute action conversions."""
@@ -209,3 +240,24 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
+
+
+def bind_relative_anchor(
+    policy: "PreTrainedPolicy", pipeline: PolicyProcessorPipeline[Any, Any]
+) -> RelativeActionsProcessorStep | None:
+    """Let ``pipeline``'s relative-action step hold a chunk's anchor until the chunk drains.
+
+    Call once wherever a policy and its preprocessor are built together; a disabled step counts
+    as absent. Returns the step that was bound, or ``None`` if the pipeline has no enabled one.
+    """
+    step = next(
+        (
+            s
+            for s in getattr(pipeline, "steps", ())
+            if isinstance(s, RelativeActionsProcessorStep) and s.enabled
+        ),
+        None,
+    )
+    if step is not None:
+        step.bind_action_queue(policy.count_queued_actions)
+    return step

@@ -99,10 +99,17 @@ from .lerobot_eval import eval_policy_all
 EMA_STATE_FILENAME = "ema_state.pt"
 
 
+def _ema_parameters(policy: PreTrainedPolicy) -> list[torch.nn.Parameter]:
+    """PEFT shadows only adapters and fully trained modules, never the frozen base."""
+    if hasattr(policy, "peft_config"):
+        return [p for p in policy.parameters() if p.requires_grad]
+    return list(policy.parameters())
+
+
 @contextmanager
 def _ema_weights(ema: Any, policy: PreTrainedPolicy) -> Iterator[None]:
     """Temporarily swap the EMA shadow weights into `policy`, restoring the live ones on exit."""
-    params = list(policy.parameters())
+    params = _ema_parameters(policy)
     ema.store(params)
     ema.copy_to(params)
     try:
@@ -157,8 +164,14 @@ def update_policy(
     learning rate scheduler. Accelerator handles mixed-precision training automatically, and — under
     gradient accumulation — suppresses gradient sync on non-final micro-batches and rescales the loss.
 
+    Under `mixed_precision=fp16` accelerate owns a `GradScaler`: it scales the loss in `backward()`,
+    unscales before clipping, and skips the optimizer step whenever a gradient overflowed. State that
+    tracks applied updates (the policy's `update()`, and the EMA shadow in the caller) is gated on the
+    step having actually landed; the scheduler is not, because it advances per micro-batch by design.
+
     Args:
         train_metrics (MetricsTracker): A MetricsTracker instance to record training statistics.
+            callers that do not want one simply omit its meter.
         policy (PreTrainedPolicy): The policy model to be trained (as returned by `accelerator.prepare`).
         batch (Any): A batch of training data.
         optimizer (Optimizer): The optimizer used to update the policy's parameters.
@@ -227,28 +240,45 @@ def update_policy(
         if accelerator.sync_gradients and grad_clip_norm > 0:
             grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
 
-        # Optimizer step (a no-op on non-final micro-batches under gradient accumulation)
+        # Optimizer step (a no-op on non-final micro-batches under gradient accumulation).
+        # Under fp16 the scaler runs it and skips it whenever a gradient overflowed.
         with lock if lock is not None else nullcontext():
             optimizer.step()
         optimizer.zero_grad()
 
-        # Step through pytorch scheduler at every batch instead of epoch
+        # `optimizer_step_was_skipped` is only refreshed on sync micro-batches, so elsewhere it
+        # is a stale value from the previous update and must be read together with
+        # `sync_gradients`. It is always False without a scaler ("no"/bf16 runs).
+        update_was_skipped = accelerator.sync_gradients and accelerator.optimizer_step_was_skipped
+
+        # Step through pytorch scheduler at every batch instead of epoch. Deliberately not
+        # gated on the scaler: the schedule is a function of micro-batches consumed, and under
+        # gradient accumulation it already advances on micro-batches that apply no update.
         if lr_scheduler is not None:
             lr_scheduler.step()
 
     # Update internal buffers if policy has update method. These track optimizer updates
-    # (EMA, target networks), not micro-batches: gate on the sync step under accumulation.
-    if accelerator.sync_gradients and has_method(
-        accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"
+    # (EMA, target networks), not micro-batches: gate on the sync step under accumulation, and
+    # on the update having actually landed — a skipped fp16 step left the weights untouched.
+    if (
+        accelerator.sync_gradients
+        and not update_was_skipped
+        and has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update")
     ):
         accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
 
     train_metrics.loss = loss.item()
-    if grad_norm is not None:
+    # A skipped step's norm is inf/nan by construction (that is what the scaler detected);
+    # recording it would poison the whole logging window's average.
+    if grad_norm is not None and not update_was_skipped:
         train_metrics.grad_norm = grad_norm.item()
+    # Only when the caller declared the meter: `MetricsTracker` raises on an undeclared name,
+    # and the loss scale is diagnostic, not something a caller must opt into to train in fp16.
+    if accelerator.scaler is not None and "grad_scale" in train_metrics.metrics:
+        train_metrics.grad_scale = accelerator.scaler.get_scale()
     train_metrics.lr = optimizer.param_groups[0]["lr"]
     train_metrics.update_s = time.perf_counter() - start_time
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and "gpu_mem_gb" in train_metrics.metrics:
         train_metrics.gpu_mem_gb = torch.cuda.max_memory_allocated() / (1024**3)
     # Aggregate the policy's scalar outputs for logging and rank-reduction across the log window.
     if output_dict:
@@ -294,6 +324,7 @@ def make_dataloaders(
             dataset.meta.episodes["dataset_from_index"],
             dataset.meta.episodes["dataset_to_index"],
             episode_indices_to_use=dataset.episodes,
+            drop_n_first_frames=getattr(active_cfg, "drop_n_first_frames", 0),
             drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
             shuffle=True,
             seed=cfg.seed if cfg.seed is not None else 0,
@@ -343,6 +374,9 @@ def make_dataloaders(
         batch_size=cfg.batch_size,
         shuffle=shuffle and not cfg.dataset.streaming,
         sampler=sampler,
+        # Worker/iterator seeds must not consume the policy's diffusion-noise RNG
+        # when an iterator is recreated after checkpoint resume.
+        generator=torch.Generator().manual_seed(cfg.seed) if cfg.seed is not None else None,
         pin_memory=device_type == "cuda",
         drop_last=False,
         collate_fn=collate_fn,
@@ -355,15 +389,32 @@ def make_dataloaders(
     eval_dataloader = None
     if eval_dataset is not None:
         eval_ds = eval_dataset
+        valid_frames = None
+        if not cfg.dataset.streaming and (
+            getattr(active_cfg, "drop_n_first_frames", 0) or getattr(active_cfg, "drop_n_last_frames", 0)
+        ):
+            valid_frames = list(
+                EpisodeAwareSampler(
+                    eval_dataset.meta.episodes["dataset_from_index"],
+                    eval_dataset.meta.episodes["dataset_to_index"],
+                    episode_indices_to_use=eval_dataset.episodes,
+                    drop_n_first_frames=getattr(active_cfg, "drop_n_first_frames", 0),
+                    drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
+                    absolute_to_relative_idx=eval_dataset.absolute_to_relative_idx,
+                )
+            )
+            eval_ds = torch.utils.data.Subset(eval_dataset, valid_frames)
         if cfg.max_eval_samples > 0 and hasattr(eval_dataset, "hf_dataset"):
             task_arr = eval_dataset.hf_dataset.data.column("task_index").to_numpy()
+            if valid_frames is not None:
+                task_arr = task_arr[valid_frames]
             unique_tasks = sorted(set(task_arr.tolist()))
             per_task = max(1, cfg.max_eval_samples // len(unique_tasks))
             selected: list[int] = []
             for t in unique_tasks:
                 frames = (task_arr == t).nonzero()[0][:per_task]
                 selected.extend(frames.tolist())
-            eval_ds = torch.utils.data.Subset(eval_dataset, selected)
+            eval_ds = torch.utils.data.Subset(eval_ds, selected)
 
         eval_collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
         eval_dataloader = torch.utils.data.DataLoader(
@@ -371,6 +422,7 @@ def make_dataloaders(
             batch_size=cfg.batch_size,
             shuffle=False,
             num_workers=cfg.num_workers,
+            generator=torch.Generator().manual_seed(cfg.seed) if cfg.seed is not None else None,
             pin_memory=device_type == "cuda",
             drop_last=False,
             collate_fn=eval_collate_fn,
@@ -642,8 +694,6 @@ def train(cfg: TrainPipelineConfig):
                 "--ema.enable=true is not supported with sharded training (FSDP2/HSDP/CP): the "
                 "parameters are sharded across ranks. Use a replicated (DDP) or single-GPU run."
             )
-        if cfg.peft is not None:
-            raise NotImplementedError("--ema.enable=true is not supported together with PEFT adapters.")
         require_package("diffusers", extra="diffusion")
         if is_main_process():
             from diffusers.training_utils import EMAModel  # noqa: PLC0415
@@ -653,7 +703,7 @@ def train(cfg: TrainPipelineConfig):
             min_decay = cfg.ema.min_decay if cfg.ema.decay is None else cfg.ema.decay
             max_decay = cfg.ema.max_decay if cfg.ema.decay is None else cfg.ema.decay
             ema = EMAModel(
-                accelerator.unwrap_model(policy).parameters(),
+                _ema_parameters(accelerator.unwrap_model(policy)),
                 decay=max_decay,
                 min_decay=min_decay,
                 update_after_step=cfg.ema.update_after_step,
@@ -661,7 +711,6 @@ def train(cfg: TrainPipelineConfig):
                 inv_gamma=cfg.ema.inv_gamma,
                 power=cfg.ema.power,
             )
-            ema.to(device)
             if cfg.ema.decay is not None:
                 logging.info(
                     "EMA enabled: decay=%g (constant), update_after_step=%d, use_for_eval=%s",
@@ -684,11 +733,16 @@ def train(cfg: TrainPipelineConfig):
                     ema.load_state_dict(torch.load(ema_path, map_location=device, weights_only=True))
                     logging.info("Resumed EMA shadow from %s", ema_path)
                 else:
+                    if cfg.peft is not None:
+                        raise FileNotFoundError(f"Cannot resume PEFT EMA without its shadow: {ema_path}")
                     logging.warning(
                         "Resuming with --ema.enable=true but %s is missing; "
                         "restarting the shadow from the current weights.",
                         ema_path,
                     )
+            # Small EMA updates can round away in BF16/FP16, with or without PEFT.
+            # Cast after loading: load_state_dict replaces the shadow tensors.
+            ema.to(device, dtype=torch.float32)
 
     train_metrics = {
         # Per-rank loss reflects only one shard of the global batch; mean recovers the loss the
@@ -706,6 +760,11 @@ def train(cfg: TrainPipelineConfig):
         "step_s": AverageMeter("step_s", ":.3f", reduction="max"),
         "samples_per_s": AverageMeter("smp/s", ":.0f"),
     }
+    if accelerator.scaler is not None:
+        # fp16 only. Identical on every rank (the overflow flag is reduced before the scaler
+        # updates), so it needs no reduction — same as grad_norm and lr above. A falling scale
+        # is the visible signature of skipped updates.
+        train_metrics["grad_scale"] = AverageMeter("scale", ":.0f")
     if torch.cuda.is_available():
         # max() because headroom is gated by the worst-case rank.
         train_metrics["gpu_mem_gb"] = AverageMeter("mem_gb", ":.2f", reduction="max")
@@ -754,9 +813,10 @@ def train(cfg: TrainPipelineConfig):
 
         # Pull one optimizer step of the live weights into the EMA shadow (main process only).
         # The shadow tracks optimizer updates, not micro-batches: gate on the sync step under
-        # gradient accumulation.
-        if ema is not None and accelerator.sync_gradients:
-            ema.step(accelerator.unwrap_model(policy).parameters())
+        # gradient accumulation, and skip the fp16 steps the scaler discarded (the weights are
+        # unchanged there, so stepping the shadow would decay it against a stale target).
+        if ema is not None and accelerator.sync_gradients and not accelerator.optimizer_step_was_skipped:
+            ema.step(_ema_parameters(accelerator.unwrap_model(policy)))
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
@@ -839,6 +899,7 @@ def train(cfg: TrainPipelineConfig):
                     ema_dir = checkpoint_dir / f"{PRETRAINED_MODEL_DIR}_ema"
                     with _ema_weights(ema, unwrapped_policy):
                         unwrapped_policy.save_pretrained(ema_dir)
+                        unwrapped_policy.config.save_pretrained(ema_dir)
                         cfg.save_pretrained(ema_dir)
                         preprocessor.save_pretrained(ema_dir)
                         postprocessor.save_pretrained(ema_dir)

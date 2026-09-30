@@ -340,7 +340,7 @@ class TrainPipelineConfig(HubMixin):
             ValueError: If the config requests anything outside the verified scope: context
                 parallelism or CFG parallelism (reserved placeholders), the compile or
                 activation-checkpointing placeholders, a DCP checkpoint format on a
-                non-sharded run, or — under sharded training — fp16 mixed precision, PEFT,
+                non-sharded run, fp16 on a CPU device, or — under sharded training — PEFT,
                 reward-model training, in-training environment evaluation, or multi-optimizer
                 configs.
         """
@@ -363,12 +363,20 @@ class TrainPipelineConfig(HubMixin):
                 f"checkpoint_format={self.checkpoint_format.value} requires a sharded run "
                 "(--parallelism.dp_shard != 1); non-sharded checkpoints are always safetensors."
             )
+        # `getattr`, not attribute access: `validate()` guarantees a trainable config before
+        # calling this, but the fail-fasts are also exercised on bare configs in isolation.
+        if self.accelerator.mixed_precision == "fp16" and (
+            getattr(self.trainable_config, "device", None) == "cpu"
+        ):
+            # accelerate skips the whole fp16 branch on CPU (no autocast, no GradScaler), so
+            # the run would silently execute in fp32. Say so instead of quietly downgrading.
+            raise ValueError(
+                "mixed_precision=fp16 requires an accelerator device; on CPU accelerate "
+                "builds no GradScaler and the run silently falls back to full precision. "
+                "Use --policy.device=cuda, or --accelerator.mixed_precision=bf16 "
+                "(which does autocast on CPU) or =no."
+            )
         if self.parallelism.is_sharded:
-            if self.accelerator.mixed_precision == "fp16":
-                raise ValueError(
-                    "fp16 is not supported under sharded training (GradScaler over DTensor "
-                    "gradients is unverified); use bf16 or full precision."
-                )
             if self.peft is not None:
                 raise ValueError("PEFT is not supported under sharded training yet.")
             if self.is_reward_model_training:

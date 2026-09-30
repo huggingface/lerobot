@@ -25,7 +25,7 @@ This module provides utilities for:
 
 import logging
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from pathlib import Path
@@ -202,11 +202,16 @@ def split_dataset(
     if not splits:
         raise ValueError("No splits provided")
 
-    if all(isinstance(v, float) for v in splits.values()):
-        splits = _fractions_to_episode_indices(dataset.meta.total_episodes, splits)
+    fractions = {name: value for name, value in splits.items() if isinstance(value, float)}
+    if len(fractions) == len(splits):
+        episode_splits = _fractions_to_episode_indices(dataset.meta.total_episodes, fractions)
+    elif fractions:
+        raise ValueError("splits must map every name to a fraction, or every name to episode indices")
+    else:
+        episode_splits = {name: value for name, value in splits.items() if not isinstance(value, float)}
 
-    all_episodes = set()
-    for split_name, episodes in splits.items():
+    all_episodes: set[int] = set()
+    for split_name, episodes in episode_splits.items():
         if not episodes:
             raise ValueError(f"Split '{split_name}' has no episodes")
         episode_set = set(episodes)
@@ -224,7 +229,7 @@ def split_dataset(
 
     result_datasets = {}
 
-    for split_name, episodes in splits.items():
+    for split_name, episodes in episode_splits.items():
         logging.info(f"Creating split '{split_name}' with {len(episodes)} episodes")
 
         split_repo_id = f"{dataset.repo_id}_{split_name}"
@@ -912,7 +917,7 @@ def _copy_and_reindex_episodes_metadata(
         #   array([array([array([0.])]), array([array([0.])]), array([array([0.])])])
         # This happens particularly with image/video statistics. We need to detect and flatten
         # these nested structures back to proper (C, 1, 1) arrays so aggregate_stats can process them.
-        episode_stats = {}
+        episode_stats: dict[str, dict[str, np.ndarray]] = {}
         for key in src_episode_full:
             if key.startswith("stats/"):
                 stat_key = key.replace("stats/", "")
@@ -1271,7 +1276,7 @@ def _iter_episode_batches(
     video_file_size_limit: float,
     max_episodes: int | None,
     max_frames: int | None,
-):
+) -> Iterator[list[int]]:
     """Generator that yields batches of episode indices for video encoding.
 
     Groups episodes into batches that respect size and memory constraints:
@@ -1290,7 +1295,7 @@ def _iter_episode_batches(
     Yields:
         List of episode indices for each batch
     """
-    batch_episodes = []
+    batch_episodes: list[int] = []
     estimated_size = 0.0
     total_frames = 0
 
@@ -1808,6 +1813,9 @@ def convert_image_to_video_dataset(
         data_files_size_in_mb=dataset.meta.data_files_size_in_mb,
         video_files_size_in_mb=dataset.meta.video_files_size_in_mb,
     )
+    video_path_template = new_meta.video_path
+    if video_path_template is None:
+        raise ValueError("Destination metadata has no video_path defined")
 
     # Create temporary directory for image extraction
     temp_dir = output_dir / "temp_images"
@@ -1887,7 +1895,7 @@ def convert_image_to_video_dataset(
                 )
 
                 # Encode all batched episodes into single video
-                video_path = new_meta.root / new_meta.video_path.format(
+                video_path = new_meta.root / video_path_template.format(
                     video_key=img_key, chunk_index=chunk_idx, file_index=file_idx
                 )
                 video_path.parent.mkdir(parents=True, exist_ok=True)

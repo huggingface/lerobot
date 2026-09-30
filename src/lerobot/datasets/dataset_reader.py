@@ -191,10 +191,14 @@ class DatasetReader(BaseDatasetReader):
         self._build_index_mapping()
         return True
 
-    def load_and_activate(self) -> None:
-        """Load HF dataset from disk and build index mapping. Call after data is on disk."""
+    def load_and_activate(self) -> datasets.Dataset:
+        """Load HF dataset from disk and build index mapping. Call after data is on disk.
+
+        Returns the loaded dataset (also stored in :attr:`hf_dataset`).
+        """
         self.hf_dataset = self._load_hf_dataset()
         self._build_index_mapping()
+        return self.hf_dataset
 
     def _build_index_mapping(self) -> None:
         """Build absolute-to-relative index mapping from loaded hf_dataset."""
@@ -280,8 +284,8 @@ class DatasetReader(BaseDatasetReader):
 
         return True
 
-    def get_episodes_file_paths(self) -> list[Path]:
-        """Return deduplicated file paths (data + video) for selected episodes.
+    def get_episodes_file_paths(self) -> list[str]:
+        """Return deduplicated relative file paths (data + video) for selected episodes.
 
         Used to build the ``allow_patterns`` list for ``snapshot_download``.
         """
@@ -302,6 +306,8 @@ class DatasetReader(BaseDatasetReader):
         self, abs_idx: int, ep_idx: int
     ) -> tuple[dict[str, list[int]], dict[str, torch.Tensor]]:
         """Compute query indices for delta timestamps."""
+        if self.delta_indices is None:
+            raise RuntimeError("Query indices require delta_timestamps, but the reader has none.")
         ep = self._meta.episodes[ep_idx]
         ep_start = ep["dataset_from_index"]
         ep_end = ep["dataset_to_index"]
@@ -349,14 +355,17 @@ class DatasetReader(BaseDatasetReader):
         transform, which is column-wise, so outputs are identical to a plain
         row query.
         """
-        transform = self.hf_dataset.format["format_kwargs"].get("transform")
-        if self._column_views_source is not self.hf_dataset or self._column_views_transform is not transform:
+        hf_dataset = self.hf_dataset
+        if hf_dataset is None:
+            raise RuntimeError("hf_dataset is not loaded; call load_and_activate() first.")
+        transform = hf_dataset.format["format_kwargs"].get("transform")
+        if self._column_views_source is not hf_dataset or self._column_views_transform is not transform:
             # hf_dataset was (re)loaded or its transform changed: drop stale views
             self._column_views = {}
-            self._column_views_source = self.hf_dataset
+            self._column_views_source = hf_dataset
             self._column_views_transform = transform
         if key not in self._column_views:
-            self._column_views[key] = self.hf_dataset.select_columns(key)
+            self._column_views[key] = hf_dataset.select_columns(key)
         return self._column_views[key]
 
     def _query_hf_dataset(self, query_indices: dict[str, list[int]]) -> dict:
@@ -415,17 +424,16 @@ class DatasetReader(BaseDatasetReader):
             futures = [pool.submit(_decode_single, k, ts) for k, ts in items]
             return dict(f.result() for f in futures)
 
-    def get_item(self, idx) -> dict:
+    def get_item(self, idx: int) -> dict:
         """Core __getitem__ logic. Loads hf_dataset on first access.
 
         ``idx`` is a *relative* index into the (possibly episode-filtered)
         HF dataset, **not** the absolute frame index stored in the ``index``
         column.  The absolute index is retrieved from the row itself.
         """
-        if self.hf_dataset is None:
-            # One-shot load after finalize()
-            self.load_and_activate()
-        item = self.hf_dataset[idx]
+        # One-shot load after finalize()
+        hf_dataset = self.hf_dataset if self.hf_dataset is not None else self.load_and_activate()
+        item = hf_dataset[idx]
         ep_idx = item["episode_index"].item()
         abs_idx = item["index"].item()
 
