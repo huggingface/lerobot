@@ -116,7 +116,7 @@ with torch.inference_mode():
 
 ### Offline dataset labeling
 
-Write a `topreward_progress.parquet` for RA-BC training and overlay videos:
+Write the dataset score `reward_signals/topreward_progress.parquet` for RA-BC training and overlay videos:
 
 ```bash
 # Sparse-dense (15 anchors per episode, matches upstream)
@@ -132,7 +132,7 @@ Then render the progress overlay for any episode:
 uv run examples/dataset/create_progress_videos.py \
     --repo-id lerobot/libero_10_image \
     --episode 0 \
-    --progress-file topreward_progress.parquet \
+    --progress-file reward_signals/topreward_progress.parquet \
     --gif
 ```
 

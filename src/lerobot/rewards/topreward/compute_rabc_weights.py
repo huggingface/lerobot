@@ -63,6 +63,7 @@ if TYPE_CHECKING or _pyarrow_available:
 
 if TYPE_CHECKING or (_datasets_available and _av_available):
     from lerobot.datasets import LeRobotDataset
+    from lerobot.datasets.utils import SCORES_DIR
 
 DEFAULT_OUTPUT_FILENAME = "topreward_progress.parquet"
 
@@ -258,7 +259,11 @@ def compute_topreward_progress(
         schema_metadata[b"reward_model_path"] = reward_model_path.encode()
     table = table.replace_schema_metadata(schema_metadata)
 
-    out = Path(dataset.root) / DEFAULT_OUTPUT_FILENAME if output_path is None else Path(output_path)
+    out = (
+        Path(dataset.root) / SCORES_DIR / DEFAULT_OUTPUT_FILENAME
+        if output_path is None
+        else Path(output_path)
+    )
     out.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, out)
     logging.info(f"Saved {len(table)} frame values to {out}")
@@ -339,7 +344,7 @@ Examples:
         from huggingface_hub import HfApi
 
         api = HfApi()
-        hub_path = DEFAULT_OUTPUT_FILENAME
+        hub_path = f"{SCORES_DIR}/{DEFAULT_OUTPUT_FILENAME}"
 
         print(f"\nUploading to Hub: {args.dataset_repo_id}/{hub_path}")
         api.upload_file(
@@ -353,15 +358,11 @@ Examples:
             f"https://huggingface.co/datasets/{args.dataset_repo_id}/blob/main/{hub_path}"
         )
 
-        print("\nTo use in training, add to your config:")
-        print("  use_rabc: true")
-        print(f"  rabc_progress_path: hf://datasets/{args.dataset_repo_id}/{hub_path}")
-        print("  rabc_head_mode: sparse")
-    else:
-        print("\nTo use in training, add to your config:")
-        print("  use_rabc: true")
-        print(f"  rabc_progress_path: {output_path}")
-        print("  rabc_head_mode: sparse")
+    print("\nTo use in training, add to your config:")
+    print("  sample_weighting:")
+    print("    type: rabc")
+    print("    score_name: topreward_progress")
+    print("    signal_name: progress_sparse")
 
 
 if __name__ == "__main__":

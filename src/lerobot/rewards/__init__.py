@@ -15,6 +15,7 @@
 from .classifier.configuration_classifier import RewardClassifierConfig as RewardClassifierConfig
 from .factory import (
     get_reward_model_class as get_reward_model_class,
+    make_frame_scorer as make_frame_scorer,
     make_reward_model as make_reward_model,
     make_reward_model_config as make_reward_model_config,
     make_reward_pre_post_processors as make_reward_pre_post_processors,
@@ -37,6 +38,7 @@ __all__ = [
     "ProgressPrediction",
     # Factory functions
     "get_reward_model_class",
+    "make_frame_scorer",
     "make_reward_model",
     "make_reward_model_config",
     "make_reward_pre_post_processors",

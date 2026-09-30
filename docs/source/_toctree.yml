@@ -105,6 +105,8 @@
     title: Cosmos3
   title: "Policies"
 - sections:
+  - local: reward_scoring
+    title: Offline Scoring
   - local: sarm
     title: SARM
   - local: robometer

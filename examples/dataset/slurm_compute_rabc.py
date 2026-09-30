@@ -18,7 +18,8 @@
 SLURM-distributed SARM RA-BC annotation pipeline.
 
 Computes SARM progress values for all frames in a dataset, distributed across
-SLURM workers, then merges the shards into a single sarm_progress.parquet.
+SLURM workers, then merges the shards into the dataset score
+reward_signals/sarm_progress.parquet, which RA-BC reads with score_name=sarm_progress.
 
 Two subcommands, each a separate SLURM submission:
 
@@ -234,6 +235,7 @@ class AggregateProgress(PipelineStep):
         import pyarrow.parquet as pq
 
         from lerobot.datasets import LeRobotDataset
+        from lerobot.datasets.utils import SCORES_DIR
         from lerobot.utils.utils import init_logging
 
         init_logging()
@@ -258,7 +260,7 @@ class AggregateProgress(PipelineStep):
         table = table.replace_schema_metadata({b"reward_model_path": self.reward_model_path.encode()})
 
         temp_ds = LeRobotDataset(self.repo_id, download_videos=False)
-        out_path = Path(temp_ds.root) / "sarm_progress.parquet"
+        out_path = Path(temp_ds.root) / SCORES_DIR / "sarm_progress.parquet"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         pq.write_table(table, out_path)
         logging.info(f"Saved {len(df)} rows to {out_path}")
@@ -274,7 +276,7 @@ class AggregateProgress(PipelineStep):
             from huggingface_hub import HfApi
 
             api = HfApi()
-            hub_path = "sarm_progress.parquet"
+            hub_path = f"{SCORES_DIR}/sarm_progress.parquet"
             logging.info(f"Uploading to {self.repo_id}/{hub_path}")
             api.upload_file(
                 path_or_fileobj=str(out_path),
