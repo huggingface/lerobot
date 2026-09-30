@@ -33,6 +33,7 @@ from .chunk_contract import chunk_settings, required_chunk_capabilities, validat
 from .codec import RGBImage, decode_message, encode_message, peek_envelope
 from .protocol import (
     PROTOCOL_VERSION,
+    AdmissionDeniedError,
     Envelope,
     ErrorCode,
     MessageType,
@@ -162,9 +163,15 @@ class RemoteClient:
         if response.message_type is MessageType.ERROR:
             try:
                 code = ErrorCode(response.body["code"])
-            except (KeyError, ValueError) as exc:
+            except (KeyError, ValueError, TypeError) as exc:
                 raise ProtocolError(ErrorCode.MALFORMED, "Invalid error code") from exc
-            raise ProtocolError(code, response.body.get("message", "Remote inference error"))
+            details = response.body.get("details")
+            if details is not None and not isinstance(details, dict):
+                raise ProtocolError(ErrorCode.MALFORMED, "Invalid error details")
+            message = response.body.get("message", "Remote inference error")
+            if not isinstance(message, str):
+                raise ProtocolError(ErrorCode.MALFORMED, "Invalid error message")
+            raise ProtocolError(code, message, details=details)
 
     @staticmethod
     def _correlate(response: Envelope, request: Envelope, *, session: bool = True) -> None:
@@ -230,9 +237,14 @@ class RemoteClient:
                 ),
             },
         )
-        accepted = self._query(
-            self._instance_key + "/open", request, self.config.handshake_timeout_s, MessageType.ACCEPTED
-        )
+        try:
+            accepted = self._query(
+                self._instance_key + "/open", request, self.config.handshake_timeout_s, MessageType.ACCEPTED
+            )
+        except ProtocolError as exc:
+            if exc.code is not ErrorCode.BUSY:
+                raise
+            raise AdmissionDeniedError(self.config.deployment, str(exc), details=exc.details) from exc
         if required:
             try:
                 accepted_settings = accepted.body.get("chunk_settings")

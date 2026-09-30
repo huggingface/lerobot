@@ -11,7 +11,7 @@ execution:
     enabled: false
   action_fps: 30.0
   action_deadline_s: 5.0
-  idle_timeout_s: 30.0
+  idle_timeout_s: 10.0
   warmup_calls: 2
 language:
   enabled: false

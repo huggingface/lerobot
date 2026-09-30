@@ -4,7 +4,11 @@ Date: 2026-09-28
 
 Updated: 2026-09-30, after implementing the request-timing correction from the ACT alignment/blending comparison.
 
-Status: Core implementation, 30-second absent-client cleanup, configurable plain alignment/blending and timing/session/build diagnostics are implemented with automated coverage. Physical LAN action tests have covered five checkpoints across both host directions. The subsequent pick-and-place ACT comparison found worse task performance with aggressive aligned replanning, with or without blending. The focused request-timing correction is now implemented: aligned requests use the existing refill playback threshold. Its physical retest, real language and full lifecycle acceptance remain open. See [implementation progress](implementation_progress.md) for evidence and remaining work.
+Status: Core implementation, configurable absent-client cleanup, plain alignment/blending and timing/session/build diagnostics are implemented with automated coverage. Physical LAN action tests have covered five checkpoints across both host directions. The initial pick-and-place ACT comparison regressed with aggressive aligned replanning. After the refill-gated timing correction, the operator reports successful task completion for alignment and blending, reduced bumps for alignment and no noticeable bumps with blending (2026-09-30). This focused motion check is complete; real language and full lifecycle acceptance remain open. See [implementation progress](implementation_progress.md) for evidence and remaining work.
+
+Lifecycle update (2026-09-30): stationary test 4 passed. The four follow-ups are implemented: initial-presence logging, a 10-second cleanup grace, concise admission denials, and honoring configured return-to-initial-position after terminal inference faults. Sections 9.2 and 10 describe the revised behavior; the progress document records automated results and pending physical verification.
+
+Test 5 result (2026-09-30, before the lifecycle correction): the supplied logs confirm active-buffer exhaustion and shutdown after server interruption, skipping homing and disconnecting; the operator reports torque loss and a fall into the environment. Physical controlled-stop acceptance is **not passed**. A focused physical recheck of the revised shutdown remains required. Server-restart/no-resumption was not demonstrated in this evidence.
 
 Code baseline: `e595b7902` (2026-09-25).
 
@@ -46,6 +50,7 @@ The replacement does not need backward compatibility with the legacy `src/lerobo
 - Hard real-time guarantees. The local loop avoids network and model waits, but Python and hardware I/O remain subject to scheduling and device latency.
 - The post-LAN follow-up does not expand sensor-stall handling, propagate per-sensor exposure timestamps, add independent hardware watchdogs, or redesign acquisition-failure teardown. Those findings are deferred; existing freshness/fault checks must remain intact.
 - Automatic refill optimization and an exact-build compatibility framework are not part of the post-LAN follow-up.
+- MPC and a new local trajectory-control layer are out of scope; the user explicitly dropped that exploration on 2026-09-30.
 
 ## 2. Architecture and ownership
 
@@ -387,9 +392,15 @@ Session open is idempotent for a bounded open-operation ID so retrying an unansw
 
 Close, client-liveliness loss, or bounded idle-without-presence cleanup releases the session. Never release and reuse the loaded policy while an old session's model call is still executing. If that call hangs, the process stays unavailable until the operator restarts it. This is acceptable for the initial scope.
 
-Use a **30-second absent-client cleanup grace period** (`execution.idle_timeout_s`) in the shipped presets, replacing the five-minute values used during the first physical tests. The base configuration and presets now use 30 seconds, measured from observed absence. Presence detection precedes cleanup, and any active model call must still finish before worker-applied close/reset releases ownership, so 30 seconds is not a promise to interrupt a hung call. A healthy present client may remain paused; this is not a timeout on all idle sessions.
+Use a **10-second absent-client cleanup grace period** (`execution.idle_timeout_s`) in the base configuration and shipped presets (implemented 2026-09-30). The previous 30-second setting passed stationary hardware-setup test 4. Ten seconds is a configurable starting choice to shorten manual recovery, not a measured optimum. Measure grace from observed absence; rejected admission attempts must not restart or extend it. Presence detection precedes cleanup, and any active model call must still finish before worker-applied close/reset releases ownership, so the grace is not a promise to interrupt a hung call or admit a replacement by a fixed deadline. A healthy present client may remain paused; this is not a timeout on all idle sessions.
 
 Clean close should release ownership promptly through the worker. A crashed client must be replaceable after absence cleanup and worker completion without restarting a healthy server. Log whether admission is blocked by an active session, absence grace, queued cleanup, or unfinished inference, including remaining grace where known. Distinguish endpoint discovery from successful session admission. A restarted client always obtains a new session and fresh reset; no old inference is replayed and no automatic motion resumption is introduced.
+
+Distinguish awaiting the first client presence announcement from losing an already observed client. The server allocates a session before the client receives its ID and declares its presence token. Log `awaiting initial presence` followed by `initial presence established`, without implying a disconnect/recovery. A client that never completes the handshake receives bounded worker cleanup with reason `initial_presence_timeout`; established clients retain the actual absence/restoration diagnostics.
+
+The absence grace protects server session ownership, not a motion-recovery window. The same healthy running client's presence may return after a transient interruption and cancel pending absence cleanup. A restarted process cannot reclaim that session. Once the client observes server-presence loss, it latches the loss; action deadlines, source-age bounds or exhaustion can also terminate the run before the server grace expires. Do not add automatic session or motion recovery.
+
+Expected admission denials should produce a concise CLI diagnostic rather than a full traceback: identify the blocker and approximate remaining grace where known. If cleanup is waiting for a model call/worker, say so without promising a precise retry time. Preserve structured server diagnostics and traceback visibility for unexpected failures. Do not add automatic retries or a new retry framework.
 
 ### 9.3 Reset and generations
 
@@ -419,7 +430,13 @@ The fault gate is checked on every motor tick, including ticks that only drain i
 
 Stop/hold behavior belongs to the robot integration. Position targets, velocities, grippers, and mixed actions cannot use one universal zero vector. Support only robot configurations with a defined, tested local stop/hold path; reject others at setup. Apply stop commands through the appropriate local hardware interface. A software hold is not a certified safety system.
 
-Fault teardown must not automatically command a return-to-initial-pose movement. Normal operator-requested reset may retain that workflow. Keep the implementation limited to a stop reason/dispatch gate and the required teardown distinction; do not build an extensive recovery framework.
+**Terminal inference-fault shutdown (implemented 2026-09-30; physical verification pending):** invalidate policy actions and interpolation, command a temporary local hold, then honor the existing `return_to_initial_position` setting before disconnecting. This applies to inference exhaustion, deadlines, stale/invalid active results and terminal server/connection loss when the local hardware interface remains usable. Returning to the captured initial pose is a local shutdown movement, independent of the server; it never resumes policy execution. With the setting false, skip that movement and disconnect. Normal Ctrl+C and operator stop continue to honor the same setting. The existing robot wrapper latches its first failed observation, action write or hold; skip further hold/homing through that failed interface, including failed camera reads inside robot observation. Validate a complete finite current/initial joint set before returning, and do not retry an aborted return. This is a focused failure/teardown distinction, not a general recovery framework.
+
+Recoverable planned holds remain connected for fresh action resumption. A terminal shutdown does not promise an indefinite powered hold: torque release is independently governed by the robot's disconnect configuration. OMX currently defaults to `disable_torque_on_disconnect=True`, so a hold command followed by disconnect can release torque and allow the arm to sag. A forcibly killed client or powered-off host cannot guarantee software hold, homing or disconnect cleanup.
+
+Test 5 confirms the practical consequence: the operator observed the arm falling after server-loss/exhaustion shutdown. A commanded hold is not evidence of a physically achieved or retained pose. Teardown diagnostics must state the actual reason for returning/skipping and known torque-disconnect behavior; do not attribute a fault override to user configuration or promise that disconnect leaves the robot in its final pose. Validate the changed physical shutdown, not just the presence of a hold call.
+
+This decision supersedes the earlier blanket no-homing-after-fault requirement. The original test 5 recorded no homing and a fall on disconnect. The focused follow-up must verify the configured local return before disconnect and no automatic policy resumption when the server restarts. Preserve the original failed physical result as historical evidence; successful software tests do not replace this check.
 
 ## 11. Configuration and deployment
 
@@ -434,7 +451,7 @@ model:
 execution:
   supported_modes: [chunk, rtc_guided]  # validated against this checkpoint
   action_fps: 30
-  idle_timeout_s: 30                  # absent-client cleanup grace; not model cancellation
+  idle_timeout_s: 10                  # cleanup grace; does not cancel model execution
 language:
   enabled: true                       # requires a text-capable checkpoint
   motion_during_query: hold
@@ -551,6 +568,19 @@ Gate: the complete action and language workflow passes before replacement lands.
 
 The first LAN action-test round is complete and physical testing is paused at the user's request. These engineering follow-ups do not mark real language, full fault/hold validation or the legacy-removal gate complete. Expanded sensor-stall handling is explicitly deferred and is not an additional deliverable in this sequence.
 
+### Test 4 learnings and approved lifecycle follow-ups — 2026-09-30
+
+Test 4 passed on the same-host SmolVLA hardware setup: clean Ctrl+C released ownership promptly; an abruptly disappeared stationary client was cleaned up after 30 seconds; two replacement attempts during that grace were correctly denied without extending the timer; a later client was admitted on the unchanged server instance and closed cleanly. The rejected clients disconnected their hardware. No inference was pending, so these logs do not establish physical fault behavior during motion or in-flight model-call cleanup.
+
+The following batch is implemented after reviewing test 5; focused physical verification remains pending:
+
+1. Clarify initial-presence logging while retaining cleanup for incomplete handshakes (section 9.2).
+2. Reduce configurable absence grace from 30 to 10 seconds; retain worker ownership and non-extending retry guarantees (section 9.2).
+3. Present expected admission denials concisely, distinguishing known remaining grace from unknown worker-cleanup duration (section 9.2).
+4. Honor configured return-to-initial-position after terminal inference faults, distinguish hardware failures, and document temporary hold versus torque release on disconnect (section 10).
+
+These changes do not invalidate test 4 or require another stationary hardware matrix. Test 5 on the previous implementation exposed torque release/falling; perform focused regression and physical validation of changed teardown behavior. Do not implement automatic recovery, weaken freshness/deadline gates, or expand deferred sensor-stall handling.
+
 ### Lower-priority integration follow-ups (not prerequisites for the sequence above)
 
 - When continuing development on `feat/remote_inference`, carry over the reviewed correctness fixes and evidence from `test/remote_inference_super_chatton`: guided-RTC autograd handling, tested policy input/horizon declarations, OMX hold support and their tests. Preserve proposal/progress updates; keep machine-specific endpoints, hardware commands and checkpoint selections as examples rather than defaults. Branch integration has not been performed by this document update.
@@ -567,10 +597,10 @@ Do not put a broad backward-compatibility audit ahead of cleanup, alignment/blen
 | Contract | Feature order, execution slice, incompatible units/configuration, processor identity, unsupported RTC/text |
 | Codec | Raw tensor exactness, RGB order, malformed shape/dtype, oversized images, NaN actions, protocol mismatch |
 | Scheduling | Empty startup, refill, variable delay, no consumption during a hold, interpolation, trained-delay rejection; aligned trimming, configurable blending, exhausted suffix, gripper and contributor-provenance cases |
-| Isolation over time | New session after close or 30-second absent-client grace, close behind a running call, reset during inference, duplicate requests, stale server/session/generation replies |
+| Isolation over time | New session after close or configured absent-client grace (10-second default; historical 30-second hardware evidence), initial-presence establishment/incomplete handshake, denied retries do not extend grace, close behind a running call, reset during inference, duplicate requests, stale server/session/generation replies |
 | Language | Slow VQA, next-subtask application, manual retargeting, same-text reuse, cancelled autosteering, query failure |
 | Faults | Server death, router loss, dropped messages, hung model call, buffer starvation, fault during interpolation |
-| Robot boundary | Position and mixed-mode stop behavior where supported, no automatic homing after fault |
+| Robot boundary | Position and mixed-mode stop behavior where supported; terminal inference faults honor return-to-initial-position true/false; hardware failures do not blindly home; recoverable hold versus terminal disconnect/torque behavior; no automatic policy restart |
 | Recording | Correct task labels and request/frame provenance across task changes, language holds, and reset |
 
 Use deterministic fake clocks and executors for timing/race tests, direct/router loopback integration for transport behavior, and a small real-policy/real-robot matrix for release validation. Do not make universal performance or safety claims from mock tests.
@@ -598,8 +628,8 @@ Temporal-history requests with explicit sampling, concurrent language execution,
 Core transport, policy contracts, shared execution and the approved post-LAN engineering changes are implemented; validation status is maintained in the progress document. Remaining investigations and release checks are:
 
 - Retain the tested zenoh-python/router 1.9.0 baseline and bounded transport behavior while changing shared execution.
-- Physically validate the implemented aligned request-timing correction in sections 6.4–6.5 using the focused sequence below. The first aggressive aligned/blended comparison failed on task performance; automated coverage does not establish a hardware tuning profile.
-- Validate the existing physical fault/hold workflow and 30-second absence cleanup under real deployment conditions. Automated disconnect/re-admission and unfinished-worker ownership checks pass.
+- The focused ACT motion retest passed by operator report after the request-timing correction in sections 6.4–6.5. Preserve deployment-specific refill/blend/interpolation tuning; no universal optimum or new quantitative timing result follows from that report. No further ACT parameter sweep is required now.
+- Test 4 stationary cleanup and clean-close/re-admission passed with the previous 30-second grace. The four lifecycle follow-ups are implemented after test 5 exposed a fall during shutdown. Validate configured return-to-initial-position and physical disconnect behavior on the robot, including server-restart/no-policy-resumption. Automated cleanup/ownership and rollout boundary tests do not close the physical gate.
 - Choose and validate the first real language-capable checkpoint and its processor isolation requirements.
 - Establish supported robot stop/hold implementations and measured deadline/refill profiles.
 - Validate metadata completeness for feature semantics and define explicit configuration where checkpoint metadata is insufficient.
@@ -607,6 +637,10 @@ Core transport, policy contracts, shared execution and the approved post-LAN eng
 If an investigation finds a policy or robot configuration incompatible, report the restriction and reject that configuration. Do not hide the mismatch through implicit preprocessing, execution-mode changes, or weaker fault handling.
 
 ### Focused correction after the ACT comparison
+
+Completion update (2026-09-30): engineering and the two focused physical task checks below are complete. The operator reran the baseline and reports successful tasks, smaller bumps with alignment and no noticeable bumps with blending. The sequence remains here as the design/validation record; no further ACT sweep is required. New timing telemetry was not supplied, and lifecycle/language release gates remain open.
+
+Subsequent operator experimentation, including LaWAM, also validated the motion/task behavior for the tested setups. The resulting tuning guidance is to establish useful trajectory follow-through with latency headroom first, then compare blending at a fixed cadence, and increase replanning frequency only when task responsiveness benefits. Treat reported request intervals separately from the remaining-playback refill setting; full-turnaround tails, actual overlap at acceptance and incoming blend weight determine the practical tradeoff. This does not change the append default, establish universal performance guarantees or authorize a new gain/controller framework. See the user guide for the timing example and progress record for the qualitative evidence.
 
 1. **Shared execution (implemented):** replace aligned mode's worker-availability trigger with the existing effective-refill playback gate. Preserve observation anchors, actual-cursor trimming, acceptance-time replacement, blend semantics, task/control exceptions and all fault checks. Scope is aligned mode with or without blending; append, RTC and synchronous behavior remain unchanged.
 2. **Focused regression checks and guidance (implemented; results in progress record):** cover waiting above the threshold, requesting at/below it, the measured latency floor, fresh capture selection after waiting, progress before/during inference, startup/task/reset/language resumption, and near/full-horizon thresholds. Retain existing blend/provenance/fault tests and append/RTC regressions. Exercise the changed scheduling through the remote engine using existing integration coverage; no new all-hardware simulation framework. Update startup/event labels, CLI help, user guide and workbook so they no longer say aligned mode ignores refill.

@@ -30,7 +30,7 @@ class ExecutionConfig:
     action_fps: float = 30.0
     rtc: RTCConfig = field(default_factory=RTCConfig)
     action_deadline_s: float = 5.0
-    idle_timeout_s: float = 30.0
+    idle_timeout_s: float = 10.0
     warmup_calls: int = 2
     # Explicit continuous canonical coordinates; never infer gripper suitability.
     blendable_components: list[str] = field(default_factory=list)

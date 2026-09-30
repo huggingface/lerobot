@@ -248,14 +248,59 @@ def cleanup_clock(monkeypatch):
     return clock
 
 
+@pytest.mark.parametrize("initially_present", [False, True])
+def test_first_presence_never_logs_a_disconnect_or_recovery(worker, cleanup_clock, caplog, initially_present):
+    caplog.set_level("INFO", logger="lerobot.remote_inference.server")
+    session = admit(worker)
+    if not initially_present:
+        worker.expire(present=False)
+        cleanup_clock[0] += 1
+        worker.expire(present=False)
+        assert caplog.text.count("Session awaiting initial presence") == 1
+        assert worker.descriptor["session"]["admission_blocker"] == "awaiting_initial_presence"
+    worker.expire(present=True)
+    worker.expire(present=True)
+    assert worker.session_id == session
+    assert worker.descriptor["session"]["client_present"] is True
+    assert worker.descriptor["session"]["absence_grace_remaining_s"] is None
+    assert caplog.text.count("Session initial presence established") == 1
+    assert "Session client absent" not in caplog.text
+    assert "Session presence restored" not in caplog.text
+
+
+def test_incomplete_handshake_expires_without_retries_extending_grace(worker, cleanup_clock, caplog):
+    caplog.set_level("INFO", logger="lerobot.remote_inference.server")
+    session = admit(worker)
+    worker.expire(present=False)
+    for advance, remaining in [(4, 6.0), (5, 1.0)]:
+        cleanup_clock[0] += advance
+        worker.expire(present=False)
+        rejected = worker.submit(open_request(worker)).result(2)
+        assert_error(rejected, ErrorCode.BUSY)
+        assert rejected.body["details"] == {
+            "admission_blocker": "awaiting_initial_presence",
+            "absence_grace_remaining_s": remaining,
+        }
+        assert worker.session_id == session
+    cleanup_clock[0] += 1
+    worker.expire(present=False)
+    assert_error(worker.submit(control_request(worker, session, 0, "status")).result(2), ErrorCode.STALE)
+    assert worker.descriptor["available"]
+    assert admit(worker) != session
+    assert "reason=initial_presence_timeout" in caplog.text
+    assert "Session client absent" not in caplog.text
+    assert "Session presence restored" not in caplog.text
+
+
 def test_absent_client_retains_ownership_during_grace_then_allows_fresh_session(
     worker, cleanup_clock, caplog
 ):
     caplog.set_level("INFO", logger="lerobot.remote_inference.server")
     session = admit(worker)
-    assert worker.descriptor["limits"]["idle_timeout_s"] == 30.0
+    assert worker.descriptor["limits"]["idle_timeout_s"] == 10.0
+    worker.expire(present=True)
     worker.expire(present=False)
-    cleanup_clock[0] += 29
+    cleanup_clock[0] += 9
     worker.expire(present=False)
     state = worker.descriptor["session"]
     assert state["owner"] == session
@@ -266,6 +311,10 @@ def test_absent_client_retains_ownership_during_grace_then_allows_fresh_session(
     assert_error(rejected, ErrorCode.BUSY)
     assert "admission_blocker=absence_grace" in rejected.body["message"]
     assert "absence_grace_remaining_s=1.0" in rejected.body["message"]
+    assert rejected.body["details"] == {
+        "admission_blocker": "absence_grace",
+        "absence_grace_remaining_s": 1.0,
+    }
     cleanup_clock[0] += 1
     worker.expire(present=False)
     # This control either queues after the worker close or observes its completion.
@@ -279,7 +328,10 @@ def test_absent_client_retains_ownership_during_grace_then_allows_fresh_session(
     assert "Session released" in caplog.text
 
 
-def test_present_paused_client_never_expires_and_restored_presence_restarts_grace(worker, cleanup_clock):
+def test_present_paused_client_never_expires_and_restored_presence_restarts_grace(
+    worker, cleanup_clock, caplog
+):
+    caplog.set_level("INFO", logger="lerobot.remote_inference.server")
     session = admit(worker)
     worker.expire(present=True)
     cleanup_clock[0] += 300
@@ -287,7 +339,7 @@ def test_present_paused_client_never_expires_and_restored_presence_restarts_grac
     assert worker.session_id == session
     assert worker.descriptor["session"]["absence_grace_remaining_s"] is None
     worker.expire(present=False)
-    cleanup_clock[0] += 29
+    cleanup_clock[0] += 9
     worker.expire(present=True)
     state = worker.descriptor["session"]
     assert state["client_present"]
@@ -295,18 +347,20 @@ def test_present_paused_client_never_expires_and_restored_presence_restarts_grac
     assert state["absence_grace_remaining_s"] is None
     cleanup_clock[0] += 100
     worker.expire(present=False)
-    assert worker.descriptor["session"]["absence_grace_remaining_s"] == 30.0
+    assert worker.descriptor["session"]["absence_grace_remaining_s"] == 10.0
     assert worker.session_id == session
+    assert caplog.text.count("Session presence restored") == 1
 
 
 def test_absence_cleanup_never_reuses_a_blocked_model_after_grace(worker, cleanup_clock):
     session = admit(worker)
+    worker.expire(present=True)
     entered, release = block_predict(worker)
     try:
         action = worker.submit(action_request(worker, session))
         assert entered.wait(2)
         worker.expire(present=False)
-        cleanup_clock[0] += 30
+        cleanup_clock[0] += 10
         worker.expire(present=False)
         state = worker.descriptor["session"]
         assert state["owner"] == session
@@ -331,13 +385,14 @@ def test_absence_cleanup_never_reuses_a_blocked_model_after_grace(worker, cleanu
 
 def test_absence_cleanup_retries_a_full_worker_queue_without_extending_grace(worker, cleanup_clock):
     session = admit(worker)
+    worker.expire(present=True)
     entered, release = block_predict(worker)
     try:
         action = worker.submit(action_request(worker, session))
         assert entered.wait(2)
         queued = [worker.submit(control_request(worker, session, 0, "status")) for _ in range(8)]
         worker.expire(present=False)
-        cleanup_clock[0] += 30
+        cleanup_clock[0] += 10
         worker.expire(present=False)
         state = worker.descriptor["session"]
         assert state["admission_blocker"] == "cleanup_queue_full"

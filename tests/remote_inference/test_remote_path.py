@@ -265,6 +265,55 @@ def test_direct_remote_exclusive_admission_and_new_session_after_close(remote_se
         second.close()
 
 
+@pytest.mark.parametrize("remote_server", ["robot"], indirect=True)
+def test_busy_cli_releases_connected_hardware_before_exiting(remote_server, monkeypatch, caplog):
+    from lerobot.scripts import lerobot_rollout
+
+    worker, config = remote_server
+    first = RemoteClient.connect(config)
+    rejected = RemoteClient.connect(config)
+    features = {f"joint_{index}.pos": float for index in range(3)}
+    robot = SimpleNamespace(
+        supports_position_hold=True,
+        action_features=features,
+        observation_features=features,
+        robot_type="test_position_robot",
+        is_connected=False,
+        connect=lambda: setattr(robot, "is_connected", True),
+        disconnect=lambda: setattr(robot, "is_connected", False),
+        get_observation=lambda: dict.fromkeys(features, 1.0),
+        send_action=lambda *_: pytest.fail("admission rejection must not move the robot"),
+    )
+    teleop = SimpleNamespace(
+        is_connected=False,
+        connect=lambda: setattr(teleop, "is_connected", True),
+        disconnect=lambda: setattr(teleop, "is_connected", False),
+    )
+    monkeypatch.setattr("lerobot.rollout.remote_context.RemoteClient.connect", lambda _: rejected)
+    monkeypatch.setattr("lerobot.rollout.remote_context.make_robot_from_config", lambda _: robot)
+    monkeypatch.setattr("lerobot.rollout.remote_context.make_teleoperator_from_config", lambda _: teleop)
+    monkeypatch.setattr("lerobot.rollout.configs.parser.get_path_arg", lambda _: None)
+    cfg = RolloutConfig(
+        robot=SimpleNamespace(), teleop=SimpleNamespace(), inference=config, task="pick up the cube"
+    )
+    monkeypatch.setattr(lerobot_rollout, "register_third_party_plugins", lambda: None)
+    monkeypatch.setattr(lerobot_rollout, "rollout", lambda: build_rollout_context(cfg, Event()))
+    try:
+        admit(first)
+        with pytest.raises(SystemExit) as stopped:
+            lerobot_rollout.main()
+        assert stopped.value.code == 1
+        assert not robot.is_connected
+        assert not teleop.is_connected
+        assert rejected._closed
+        assert worker.session_id == first.session_id
+        assert "Remote admission denied for deployment 'loopback'" in caplog.text
+        assert not any(record.exc_info for record in caplog.records)
+    finally:
+        first.close()
+        rejected.close()
+
+
 def test_direct_remote_language_roundtrip_preserves_context(remote_server):
     _, config = remote_server
     client = RemoteClient.connect(config)

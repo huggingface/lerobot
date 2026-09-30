@@ -389,6 +389,44 @@ def test_controller_strategy_failure_reaches_the_failure_surface():
     assert "robot io broke" in controller.failure_traceback
 
 
+def test_controller_segment_end_hold_failure_is_terminal():
+    controller, events, strategy, engine, _parent, _run_started = _make_controller(lambda ctx: None)
+    strategy.hold_control_state.side_effect = OSError("final hold failed")
+    thread = _serve_thread(controller)
+    assert controller.start()
+    _join_session(thread)
+
+    engine.pause.assert_called_once()
+    strategy.hold_control_state.assert_called_once()
+    assert RolloutEvent.STRATEGY_FAILED in events
+    assert RolloutEvent.SEGMENT_ENDED not in events
+    assert events[-1] is RolloutEvent.STOPPED
+    assert controller.failed
+    assert controller.stopped
+    assert not controller.running
+    assert "final hold failed" in controller.failure_traceback
+    assert controller.start() is False
+
+
+def test_controller_hold_failure_preserves_original_strategy_failure(caplog):
+    def failing_run(ctx):
+        raise OSError("original observation failure")
+
+    controller, events, strategy, _engine, _parent, _run_started = _make_controller(failing_run)
+    strategy.hold_control_state.side_effect = OSError("subsequent hold failure")
+    thread = _serve_thread(controller)
+    assert controller.start()
+    _join_session(thread)
+
+    assert RolloutEvent.STRATEGY_FAILED in events
+    assert RolloutEvent.SEGMENT_ENDED not in events
+    assert events[-1] is RolloutEvent.STOPPED
+    assert controller.failed
+    assert "original observation failure" in controller.failure_traceback
+    assert "subsequent hold failure" not in controller.failure_traceback
+    assert "subsequent hold failure" in caplog.text
+
+
 def test_controller_failed_return_move_emits_reset_failed():
     """RESET_DONE promises the robot is home; a failed move must not claim it."""
     controller, events, strategy, _engine, _parent, _run_started = _make_controller()

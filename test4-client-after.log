@@ -1,0 +1,41 @@
+(lerobot) steven-palma@lerobot-linux-server:~/Documents/lerobot$ cat test4-client-after.log
+INFO 2026-09-30 16:02:07 _rollout.py:245 Building rollout context...
+INFO 2026-09-30 16:02:07 ce/client.py:94 Remote client software={'lerobot_version': '0.6.2', 'revision': '6386e5e4573f7c385c9056c1ab52feea06127a11', 'dirty': True} protocol=1
+INFO 2026-09-30 16:02:07 e/client.py:133 Remote server deployment=omx-smolvla instance=e2bfb87734624c3d9dbc6f16e552de59 software={'lerobot_version': '0.6.2', 'revision': '6386e5e4573f7c385c9056c1ab52feea06127a11', 'dirty': True} protocol=1
+INFO 2026-09-30 16:02:08 a_opencv.py:195 OpenCVCamera(/dev/video2) connected.
+INFO 2026-09-30 16:02:10 a_opencv.py:195 OpenCVCamera(/dev/video0) connected.
+INFO 2026-09-30 16:02:10 follower.py:114 omx_follower OmxFollower connected.
+INFO 2026-09-30 16:02:10 e/client.py:267 Remote admission deployment=omx-smolvla instance=e2bfb87734624c3d9dbc6f16e552de59 session=eaa9355c7eb541b5a860285b5c2442b4 artifact=sha256:57e95905d79a4b74031d63743a198d78c7cc1b3ce82ac1c75a0f3b2b40a19aba mode=chunk interval=0.03333333333333333 limits={'action_deadline_s': 5.0, 'language_deadline_s': 60.0, 'idle_timeout_s': 30.0, 'max_input_chars': 4096, 'max_output_chars': 8192, 'codec': {'max_payload_bytes': 33554432, 'max_decoded_bytes': 67108864, 'max_tensor_bytes': 33554432, 'max_image_pixels': 16777216, 'max_dimension': 16384, 'max_rank': 8, 'max_string_bytes': 16384, 'max_container_items': 4096, 'max_nodes': 32768, 'max_depth': 16}, 'inflight_inference': 1}
+INFO 2026-09-30 16:02:10 e/client.py:277 Remote chunk execution settings={'chunk_merge': 'append', 'blend_steps': 0, 'blend_weight': 0.5, 'blend_components': []} blend_indices=()
+INFO 2026-09-30 16:02:10 _context.py:150 Remote rollout admitted: deployment=omx-smolvla instance=e2bfb87734624c3d9dbc6f16e552de59 mode=chunk
+INFO 2026-09-30 16:02:10 _rollout.py:249 Rollout strategy: base
+INFO 2026-09-30 16:02:10 _rollout.py:250 Robot: omx_follower | FPS: 30 | Duration: 30.0s
+INFO 2026-09-30 16:02:10 gies/core.py:96 Starting inference engine...
+INFO 2026-09-30 16:02:10 e/remote.py:104 Remote inference {'event': 'reset', 'time': 1035300.295347638, 'deployment': 'omx-smolvla', 'instance': 'e2bfb87734624c3d9dbc6f16e552de59', 'session': 'eaa9355c7eb541b5a860285b5c2442b4', 'generation': 1, 'control_tick': 0}
+INFO 2026-09-30 16:02:10 e/remote.py:104 Remote inference {'event': 'scheduling', 'time': 1035300.295370196, 'deployment': 'omx-smolvla', 'instance': 'e2bfb87734624c3d9dbc6f16e552de59', 'session': 'eaa9355c7eb541b5a860285b5c2442b4', 'generation': 1, 'control_tick': 0, 'scheduling': 'playback_threshold', 'mode': 'chunk', 'chunk_merge': 'append', 'blend_steps': 0, 'configured_refill_s': 0.1, 'effective_refill_s': 0.1, 'execution_horizon_s': 1.6666666666666667, 'aligned_task_change_bypasses_refill': False}
+INFO 2026-09-30 16:02:10 ies/core.py:100 Inference engine started
+INFO 2026-09-30 16:02:10 gies/base.py:40 Base strategy ready
+INFO 2026-09-30 16:02:10 _rollout.py:260 Rollout setup complete — starting interactive session (robot idle until /start)
+────────────────────────────────────────────────────────────
+Interactive rollout session — the robot will NOT move until you type /start.
+Task: 'Pick up the blue cube, and the yellow cube, and drop them in the green box one by one.'
+Available commands:
+  /start                  start (or restart) the policy control loop
+  /subtask <text>         set the instruction the policy follows
+  /vqa <text>             ask the policy a question about what it sees
+  /autosteer <goal>|off   let the policy pick its own subtasks toward a high-level goal
+  /reset                  stop movement, return to initial position, restore the task
+  /stop                   end the session and shut down
+  /help                   show this help
+Routine system logs and warnings are muted during the session (errors and the cadence summary of each run still show).
+────────────────────────────────────────────────────────────
+INFO 2026-09-30 16:02:35 ls/utils.py:150 Interactive session ended
+INFO 2026-09-30 16:02:35 ies/core.py:225 Stopping inference engine...
+INFO 2026-09-30 16:02:35 e/remote.py:104 Remote inference {'event': 'invalidate', 'time': 1035325.673973296, 'deployment': 'omx-smolvla', 'instance': 'e2bfb87734624c3d9dbc6f16e552de59', 'session': 'eaa9355c7eb541b5a860285b5c2442b4', 'generation': 3, 'control_tick': 0}
+INFO 2026-09-30 16:02:35 ies/core.py:234 Returning robot to initial position before shutdown...
+INFO 2026-09-30 16:02:38 ies/core.py:240 Disconnecting robot...
+INFO 2026-09-30 16:02:39 a_opencv.py:634 OpenCVCamera(/dev/video2) disconnected.
+INFO 2026-09-30 16:02:39 a_opencv.py:634 OpenCVCamera(/dev/video0) disconnected.
+INFO 2026-09-30 16:02:39 follower.py:233 omx_follower OmxFollower disconnected.
+INFO 2026-09-30 16:02:39 gies/base.py:96 Base strategy teardown complete
+INFO 2026-09-30 16:02:39 _rollout.py:272 Rollout finished

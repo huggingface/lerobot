@@ -46,10 +46,20 @@ class ErrorCode(StrEnum):
 class ProtocolError(ValueError):
     """A bounded, structured failure suitable for returning to a peer."""
 
-    def __init__(self, code: ErrorCode, message: str) -> None:
+    def __init__(self, code: ErrorCode, message: str, *, details: dict[str, Any] | None = None) -> None:
         """Attach the machine-readable error category."""
         super().__init__(message)
         self.code = code
+        self.details = details
+
+
+class AdmissionDeniedError(ProtocolError):
+    """An expected BUSY reply specifically to an attempt to open a session."""
+
+    def __init__(self, deployment: str, message: str, *, details: dict[str, Any] | None = None) -> None:
+        """Retain the rejected deployment and the server's structured diagnostic."""
+        super().__init__(ErrorCode.BUSY, message, details=details)
+        self.deployment = deployment
 
 
 def validate_segment(value: str, label: str = "identifier") -> str:
@@ -122,6 +132,9 @@ class Envelope:
             message_type, self.instance_id, self.session_id, self.generation, self.request_id, body
         )
 
-    def error(self, code: ErrorCode, message: str) -> "Envelope":
+    def error(self, code: ErrorCode, message: str, *, details: dict[str, Any] | None = None) -> "Envelope":
         """Create a correlated error with bounded diagnostic text."""
-        return self.reply(MessageType.ERROR, {"code": str(code), "message": message[:2048]})
+        body: dict[str, Any] = {"code": str(code), "message": message[:2048]}
+        if details is not None:
+            body["details"] = details
+        return self.reply(MessageType.ERROR, body)

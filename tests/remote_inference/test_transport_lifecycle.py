@@ -37,7 +37,8 @@ def exchange(transport, key, request):
     return response
 
 
-def test_transport_loss_cleans_up_and_readmits_without_restarting_server(remote_server):
+def test_transport_loss_cleans_up_and_readmits_without_restarting_server(remote_server, caplog):
+    caplog.set_level("INFO", logger="lerobot.remote_inference.server")
     worker, config = remote_server
     key = instance_prefix(config.deployment, worker.instance_id) + "/open"
     disconnected = ZenohTransport(ZenohConfig(connect_endpoints=[config.endpoint])).open()
@@ -55,6 +56,9 @@ def test_transport_loss_cleans_up_and_readmits_without_restarting_server(remote_
             session_prefix(config.deployment, worker.instance_id, first.session_id) + "/alive"
         )
         wait_for(lambda: worker.descriptor["session"]["client_present"] is True)
+        assert "Session initial presence established" in caplog.text
+        assert "Session client absent" not in caplog.text
+        assert "Session presence restored" not in caplog.text
         # Close only the transport, as after a crashed process: no session CLOSE operation.
         disconnected.close()
         wait_for(lambda: worker.descriptor["session"]["client_present"] is False)
@@ -63,10 +67,10 @@ def test_transport_loss_cleans_up_and_readmits_without_restarting_server(remote_
             assert rejected.message_type is MessageType.ERROR
             assert rejected.body["code"] == ErrorCode.BUSY
             assert "admission_blocker=absence_grace" in rejected.body["message"]
-            # The exact 30-second boundary is covered with a controlled clock in test_session.
+            # The exact 10-second boundary is covered with a controlled clock in test_session.
             worker.idle_timeout_s = 0.02
             wait_for(lambda: worker.descriptor["available"])
-            worker.idle_timeout_s = 30.0
+            worker.idle_timeout_s = 10.0
             accepted = exchange(replacement, key, open_request(worker))
             assert accepted.message_type is MessageType.ACCEPTED
             assert accepted.session_id != first.session_id

@@ -68,6 +68,7 @@ class _Session:
     closing: bool = False
     faulted: bool = False
     present: bool | None = None
+    presence_established: bool = False
     absent_since: float | None = None
     cleanup_reason: str | None = None
     cleanup_queue_blocked: bool = False
@@ -86,7 +87,7 @@ class SessionWorker:
         semantics: str,
         action_deadline_s: float = 5.0,
         language_deadline_s: float = 60.0,
-        idle_timeout_s: float = 30.0,
+        idle_timeout_s: float = 10.0,
         max_input_chars: int = 4096,
         max_output_chars: int = 8192,
         blendable_components: tuple[str, ...] = (),
@@ -155,6 +156,8 @@ class SessionWorker:
                 if session.closing
                 else "cleanup_queue_full"
                 if session.cleanup_queue_blocked
+                else "awaiting_initial_presence"
+                if session.absent_since is not None and not session.presence_established
                 else "absence_grace"
                 if session.absent_since is not None
                 else "active_session"
@@ -237,7 +240,14 @@ class SessionWorker:
                             "unfinished model calls are never taken over."
                         )
                         logger.info("Session admission blocked instance=%s %s", self.instance_id, detail)
-                        raise ProtocolError(ErrorCode.BUSY, detail)
+                        raise ProtocolError(
+                            ErrorCode.BUSY,
+                            detail,
+                            details={
+                                "admission_blocker": state["admission_blocker"],
+                                "absence_grace_remaining_s": state["absence_grace_remaining_s"],
+                            },
+                        )
                     if self._commands.full():
                         raise ProtocolError(ErrorCode.BUSY, "Policy command queue is full")
                     self._validate_open(message.body)
@@ -308,7 +318,8 @@ class SessionWorker:
                     if isinstance(exc, Full)
                     else ErrorCode.MALFORMED
                 )
-                future.set_result(message.error(code, str(exc)))
+                details = exc.details if isinstance(exc, ProtocolError) else None
+                future.set_result(message.error(code, str(exc), details=details))
         return future
 
     def _mark_closing_locked(self, session: _Session, *, reason: str) -> None:
@@ -591,20 +602,27 @@ class SessionWorker:
             future.set_result(response)
 
     def expire(self, *, present: bool) -> None:
-        """Release absent idle clients via the worker, never from the IO thread."""
+        """Bound initial presence and later absence; release only through the worker."""
         with self._lock:
             session = self._session
             if session is None or session.closing:
                 return
             now = time.monotonic()
             if present:
-                if session.present is False:
+                if not session.presence_established:
+                    logger.info(
+                        "Session initial presence established instance=%s session=%s",
+                        self.instance_id,
+                        session.identity,
+                    )
+                elif session.present is False:
                     logger.info(
                         "Session presence restored instance=%s session=%s; absence cleanup cancelled",
                         self.instance_id,
                         session.identity,
                     )
                 session.present = True
+                session.presence_established = True
                 session.absent_since = None
                 session.cleanup_queue_blocked = False
                 return
@@ -612,7 +630,11 @@ class SessionWorker:
             if session.absent_since is None:
                 session.absent_since = now
                 logger.info(
-                    "Session client absent instance=%s session=%s grace_s=%.3f inference_pending=%s",
+                    (
+                        "Session client absent instance=%s session=%s grace_s=%.3f inference_pending=%s"
+                        if session.presence_established
+                        else "Session awaiting initial presence instance=%s session=%s grace_s=%.3f inference_pending=%s"
+                    ),
                     self.instance_id,
                     session.identity,
                     self.idle_timeout_s,
@@ -623,7 +645,7 @@ class SessionWorker:
             if self._commands.full():
                 if not session.cleanup_queue_blocked:
                     logger.info(
-                        "Session absence grace expired instance=%s session=%s; cleanup waiting for worker queue capacity",
+                        "Session presence grace expired instance=%s session=%s; cleanup waiting for worker queue capacity",
                         self.instance_id,
                         session.identity,
                     )
@@ -637,7 +659,10 @@ class SessionWorker:
                 uuid4().hex,
                 {"operation": "close"},
             )
-            self._mark_closing_locked(session, reason="client_absence")
+            self._mark_closing_locked(
+                session,
+                reason="client_absence" if session.presence_established else "initial_presence_timeout",
+            )
             self._commands.put_nowait((close, Future(), now))
 
     def close(self) -> None:

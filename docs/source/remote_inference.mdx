@@ -2,7 +2,7 @@
 
 Remote inference keeps observation capture, robot commands, operator interaction and recording on the robot computer. A separate process loads one checkpoint and its policy processors. `lerobot-rollout --inference.type=remote` obtains the serving contract without loading policy weights on the client.
 
-This implementation is under validation. Physical LAN action tests have run with SmolVLA, XVLA, LaWAM and ACT. The first ACT alignment/blending comparison performed worse than append; the request-timing correction described below still needs a physical retest. Hardware fault/hold checks, representative remote latency, and an end-to-end run with a language-capable checkpoint also remain release requirements. The existing async implementation remains available until the action/language acceptance gate passes.
+This implementation is under validation. Physical LAN action tests have run with SmolVLA, XVLA, LaWAM and ACT. The first ACT alignment/blending comparison performed worse than append; after the request-timing correction below, the operator reported successful tasks with reduced bumps for alignment and no noticeable bumps with blending. Hardware fault/hold checks, representative remote latency, and an end-to-end run with a language-capable checkpoint remain release requirements. The existing async implementation remains available until the action/language acceptance gate passes.
 
 ## Install and configure a deployment
 
@@ -52,13 +52,15 @@ Server YAML fields accept nested CLI overrides; CLI values take precedence. For 
 ```bash
 uv run --no-sync lerobot-policy-server --config_path=server.yaml \
   --model.device=cuda \
-  --execution.idle_timeout_s=30 \
+  --execution.idle_timeout_s=10 \
   --zenoh.listen_endpoints='[tcp/127.0.0.1:7447]'
 ```
 
 Quote lists and mappings as one shell argument. These are server configuration fields, not arbitrary `--policy.*` checkpoint overrides.
 
-Clean close releases ownership after the worker resets the policy. After an abrupt disconnect, the default and deployment presets allow **30 seconds from observed client absence**, then queue cleanup behind any running model call. A live paused client retains its session. Admission diagnostics expose the owner, presence, remaining grace, pending inference and cleanup reason. A hung model call retains ownership even after the grace ends; cleanup does not cancel GPU execution or resume old motion.
+Clean close releases ownership after the worker resets the policy. After an abrupt disconnect, the default and deployment presets allow **10 seconds from observed client absence**, then queue cleanup behind any running model call. A live paused client retains its session. A client that never announces its initial presence also receives bounded cleanup; startup logs distinguish this from loss of an established client. Rejected replacement attempts do not extend the grace. Expected occupied-deployment denials print a concise explanation and approximate remaining grace when known. Cleanup waiting for a model call has no guaranteed completion time. A hung call retains ownership even after the grace ends; cleanup does not cancel GPU execution or resume old motion.
+
+This grace controls server ownership, not how long the robot can move without new actions. The client's action deadlines, freshness limits and buffer exhaustion remain independent. A new client process needs a new session; a client that has observed server-presence loss cannot automatically recover it.
 
 Both processes log their LeRobot version and available source revision captured at startup; the server includes that snapshot in discovery. A dirty checkout is reported as such. Wheels/source archives without Git report an unknown revision. Build labels help identify an outdated running server; protocol, required capabilities and exact execution settings determine compatibility. Artifact identity covers deployed model/processor content and settings, not implementation code.
 
@@ -178,7 +180,45 @@ Blending happens after canonical postprocessing, including relative-to-absolute 
 
 Alignment/blending require advertised execution capabilities and an exact admission acknowledgment. An older server that lacks them fails before motion, with no fallback to append. The refill timing correction is a client-local scheduling change and adds no wire capability; check the client's startup build metadata to confirm which implementation is running. Alignment trims outdated assigned steps; blending averages eligible predictions; interpolation connects committed endpoints over motor ticks; RTC conditions inference on continuation. They solve different parts of continuity, and none guarantees smooth motion or task success.
 
-The first pick-and-place ACT comparison requested aligned chunks roughly every 36 ms, replacing the future after a median of one dispatched action, and performed worse than the append reference. That implementation did not apply refill to aligned scheduling. The revised timing needs its own physical comparison: first alignment without blending, then the same refill with blending only if task progress recovers. For the recorded 30-step, 30-Hz ACT setup, 0.5 seconds is an initial comparison point against the successful append/refill 0.1 reference, not a measured optimum. Smaller command deltas alone do not establish a task-performance benefit.
+The first pick-and-place ACT comparison requested aligned chunks roughly every 36 ms, replacing the future after a median of one dispatched action, and performed worse than the append reference. That implementation did not apply refill to aligned scheduling. With the corrected timing, the operator reran the baseline and reported successful task completion for alignment/refill 0.5 and the same timing with five-step, 0.5 arm-only blending. Alignment reduced visible bumps; blending produced no noticeable bumps. Additional refill, blend-window and interpolation trials behaved differently, reinforcing deployment-specific tuning rather than a universal optimum. These follow-up results are qualitative reports, without new log-derived timing statistics. Task completion matters alongside visible smoothness.
+
+### A practical tuning starting point
+
+Aim first for **useful task progress with long enough trajectory execution and no inference pauses**. Then explore whether faster replanning improves the task. A faster server can buy more latency headroom without spending every available cycle on new predictions.
+
+1. **Keep a working reference.** Use the same checkpoint, task, camera views, robot settings and policy FPS as a successful rollout. Keep interpolation fixed initially. Assess task completion, grasp/release and visible motion separately.
+2. **Establish aligned playback before tuning blending.** Start with `chunk_merge=aligned` and `blend_steps=0`. Check the negotiated execution horizon and full client turnaround, including its slower requests. Choose refill coverage that leaves latency headroom while allowing a substantial part of each trajectory to execute. There is no universal refill value: a consistently slow executor may leave no usable budget within a short horizon.
+3. **Add a short transition blend at the same timing.** Select eligible continuous arm components explicitly and leave contact-sensitive components such as the gripper out unless their semantics have been validated. Compare task success as well as smoothness; averaging two different approaches can produce a poor grasp even when motion looks smooth.
+4. **Replan more often only for a task benefit.** Increase refill to request while more old playback remains. This creates more opportunities to react to changes, but can also interrupt useful trajectories. Predictions that agree can remain smooth; frequent replacement is not inherently better or worse. If task progress degrades, return to the working cadence before changing several blend settings.
+5. **Keep the simplest setting that works.** Change one parameter at a time and retain the logs. Buffer exhaustion calls for inspecting turnaround and coverage, not blindly reducing refill. Longer deadlines do not supply missing actions, and strong blending does not repair an unsuitable plan.
+
+The directions of the settings matter:
+
+| Change | Effect in aligned mode | Tradeoff to observe |
+| --- | --- | --- |
+| Increase `refill_seconds` | Generally request earlier and more often | More latency coverage and correction opportunities, less trajectory follow-through |
+| Decrease `refill_seconds` | Generally request later and less often, until the measured floor dominates | More follow-through, less protection against turnaround spikes |
+| Increase `blend_steps` | Mix more matching old/new future steps, capped by actual overlap | Longer transition, potentially more influence from an older plan |
+| Decrease `blend_weight` | Retain more of the old target; the weight is the incoming fraction | Gentler change when plans differ, potentially slower correction |
+| Increase `interpolation_multiplier` | Emit more intermediate motor commands between policy endpoints | Finer command steps, with no extra policy decisions or playback coverage |
+
+These describe implementation behavior, not guarantees about physical smoothness or task success. The robot need not have reached a committed endpoint, and a learned policy need not predict mutually consistent trajectories on successive calls.
+
+#### Example: a 0.8-second execution horizon
+
+`refill_seconds` is **remaining playback**, not time between requests. Under approximately steady action consumption and turnaround, fresh captures near submission, and successful aligned replacements, request spacing is roughly `execution_horizon - effective_refill`:
+
+| Effective refill | Approximate request spacing |
+| --- | --- |
+| 0.2 s | 0.6 s |
+| 0.4 s | 0.4 s |
+| 0.6 s | 0.2 s |
+
+This estimate excludes startup, task/hold exceptions, control-tick quantization and saturation. Use logged spacing rather than treating it as a fixed timer; the measured floor can override the configured value. For synchronous execution, 0.8 seconds is nominal playback; blocking inference adds to its wall-clock cycle.
+
+Overlap available for blending is what remains **when the reply arrives**, not at submission. For example, 0.2 seconds of playback at submission and 0.1 seconds of full turnaround leave roughly 0.1 seconds (three actions at 30 Hz) to blend. These are illustrative full-turnaround numbers, not a budget based solely on server inference time. A ten-step blend window cannot create extra overlap. Even a short blend can materially affect the transition. Repeated blending can delay corrections and retain older contributors under the existing age bound.
+
+Append remains useful as a simple reference and for deployments where preserving the whole configured prediction slice works well. Alignment removes already-committed temporal indices but does not prove the robot reached the state assumed by the remaining prediction, so it is not universally equivalent or superior. The reported ACT/LaWAM results support aligned playback and optional blending for those tested setups, without changing the append default.
 
 ### Diagnose and tune from logs
 
@@ -234,7 +274,11 @@ and LAN guided-RTC runs. This comparison is for SmolVLA; XVLA supports plain chu
 
 Raw RGB is the default lossless transport. `--inference.encoding=jpeg --inference.jpeg_quality=90` reduces bandwidth at the cost of image information. Validate policy behavior after enabling JPEG. Arbitrary tensors and depth data are never silently JPEG encoded. Typed MessagePack decoding bounds payloads, dimensions, dtype, image size and strings before tensor/image allocation. Non-finite actions and mismatched results are rejected.
 
-A late response can only be used while its request, session, server instance, generation and source age remain valid. Buffered actions may continue within the local limits; starvation, stale actions, malformed active replies or request expiry latch a fault. The dispatch gate checks every motor tick, including interpolation-only ticks. Fault handling invalidates queued/interpolated motion, holds locally, and does not home the robot. A returning network connection cannot resume motion: restart rollout to establish a new session.
+A late response can only be used while its request, session, server instance, generation and source age remain valid. Buffered actions may continue within the local limits; starvation, stale actions, malformed active replies or request expiry latch a fault. The dispatch gate checks every motor tick, including interpolation-only ticks. A returning network connection cannot resume policy motion: restart rollout to establish a new session.
+
+After a terminal inference fault, rollout invalidates policy actions/interpolation, commands a temporary local hold and stops inference. With usable local hardware, it then honors `--return_to_initial_position=true` (the default), performing the local return movement before disconnecting. This movement does not need the server. `--return_to_initial_position=false` skips the movement. Normal Ctrl+C and `/stop` honor the same setting. A failed robot observation, action write or hold is latched for the session; shutdown skips further hold/homing attempts through that failed interface. An interrupted/failed return is not retried automatically.
+
+Disconnect is separate from holding. OMX defaults to `--robot.disable_torque_on_disconnect=true`, releasing torque on disconnect; the arm may move under gravity even after a hold command or completed return commands. Setting `return_to_initial_position=false` does not request a persistent powered hold. Logs report the return/skip reason and the driver's torque setting where available. Recoverable pauses and planned language holds keep hardware connected. A forcibly killed client or powered-off host cannot guarantee software cleanup. The revised terminal shutdown still needs physical verification after the earlier Test 5 exposed a fall with the previous skip-homing/torque-release behavior.
 
 ## Live instructions and language
 

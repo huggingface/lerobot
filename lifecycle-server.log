@@ -1,0 +1,21 @@
+(lerobot) steven-palma@lerobot-linux-server:~/Documents/lerobot$ cat lifecycle-server.log
+INFO 2026-09-30 15:57:14 y_server.py:143 Policy server software={'lerobot_version': '0.6.2', 'revision': '6386e5e4573f7c385c9056c1ab52feea06127a11', 'dirty': True} protocol=1
+Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 225.64it/s]
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading  HuggingFaceTB/SmolVLM2-500M-Video-Instruct weights ...
+Loading weights: 100%|██████████| 489/489 [00:00<00:00, 5911.56it/s]
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+WARNING 2026-09-30 15:57:14 ls/_http.py:993 Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+INFO 2026-09-30 15:57:21 y_server.py:160 Deployment warmed: name=omx-smolvla instance=e2bfb87734624c3d9dbc6f16e552de59 artifact=sha256:57e95905d79a4b74031d63743a198d78c7cc1b3ce82ac1c75a0f3b2b40a19aba capabilities=PolicyCapabilities(modes=(<ExecutionMode.CHUNK: 'chunk'>,), prediction_steps=50, execution_steps=50, action_interval=0.03333333333333333, features=(FeatureSpec(name='observation.state', shape=(6,), dtype='float32', kind='tensor', names=('shoulder_pan.pos', 'shoulder_lift.pos', 'elbow_flex.pos', 'wrist_flex.pos', 'wrist_roll.pos', 'gripper.pos'), semantics='omx-normalized-joints-gripper-percent-v1'), FeatureSpec(name='observation.images.camera1', shape=(480, 640, 3), dtype='uint8', kind='rgb', names=(), semantics='rgb-wrist-v1'), FeatureSpec(name='observation.images.camera2', shape=(480, 640, 3), dtype='uint8', kind='rgb', names=(), semantics='rgb-front-v1')), action_feature=FeatureSpec(name='action', shape=(6,), dtype='float32', kind='tensor', names=('shoulder_pan.pos', 'shoulder_lift.pos', 'elbow_flex.pos', 'wrist_flex.pos', 'wrist_roll.pos', 'gripper.pos'), semantics='omx-normalized-joints-gripper-percent-v1'), language=False, training_max_delay=0, rtc_horizon=0, current_observation_only=True, retains_session_state=True, action_representation='canonical')
+INFO 2026-09-30 15:59:44 e/server.py:430 Session admitted instance=e2bfb87734624c3d9dbc6f16e552de59 session=a26399dae5874e2b8ca8a8e0ac5c4a3e
+INFO 2026-09-30 15:59:44 e/server.py:614 Session client absent instance=e2bfb87734624c3d9dbc6f16e552de59 session=a26399dae5874e2b8ca8a8e0ac5c4a3e grace_s=30.000 inference_pending=False
+INFO 2026-09-30 15:59:44 e/server.py:602 Session presence restored instance=e2bfb87734624c3d9dbc6f16e552de59 session=a26399dae5874e2b8ca8a8e0ac5c4a3e; absence cleanup cancelled
+INFO 2026-09-30 16:00:41 e/server.py:614 Session client absent instance=e2bfb87734624c3d9dbc6f16e552de59 session=a26399dae5874e2b8ca8a8e0ac5c4a3e grace_s=30.000 inference_pending=False
+INFO 2026-09-30 16:01:11 e/server.py:318 Session cleanup queued instance=e2bfb87734624c3d9dbc6f16e552de59 session=a26399dae5874e2b8ca8a8e0ac5c4a3e reason=client_absence inference_pending=False; ownership releases only after worker close/reset completes
+INFO 2026-09-30 16:01:11 e/server.py:459 Session released instance=e2bfb87734624c3d9dbc6f16e552de59 session=a26399dae5874e2b8ca8a8e0ac5c4a3e reason=client_absence; deployment available for a new session
+INFO 2026-09-30 16:02:10 e/server.py:430 Session admitted instance=e2bfb87734624c3d9dbc6f16e552de59 session=eaa9355c7eb541b5a860285b5c2442b4
+INFO 2026-09-30 16:02:10 e/server.py:614 Session client absent instance=e2bfb87734624c3d9dbc6f16e552de59 session=eaa9355c7eb541b5a860285b5c2442b4 grace_s=30.000 inference_pending=False
+INFO 2026-09-30 16:02:10 e/server.py:602 Session presence restored instance=e2bfb87734624c3d9dbc6f16e552de59 session=eaa9355c7eb541b5a860285b5c2442b4; absence cleanup cancelled
+INFO 2026-09-30 16:02:35 e/server.py:318 Session cleanup queued instance=e2bfb87734624c3d9dbc6f16e552de59 session=eaa9355c7eb541b5a860285b5c2442b4 reason=client_close inference_pending=False; ownership releases only after worker close/reset completes
+INFO 2026-09-30 16:02:35 e/server.py:459 Session released instance=e2bfb87734624c3d9dbc6f16e552de59 session=eaa9355c7eb541b5a860285b5c2442b4 reason=client_close; deployment available for a new session
+(lerobot) steven-palma@lerobot-linux-server:~/Documents/lerobot$
