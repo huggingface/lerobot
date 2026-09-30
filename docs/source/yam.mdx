@@ -80,6 +80,18 @@ After one second without a fresh policy target, each servo holds fresh measured 
 
 This is an experimental adapter. Gravity compensation uses the standard arm/gripper inertias and excludes added camera/payload mass. There is no collision avoidance. Validate control, loading, stopping behavior, and task performance on the installation before normal use. For initial rollout testing, set `return_to_initial_position=false` to avoid an unvalidated automatic return motion.
 
+## Interactive rollout and return to startup pose
+
+Add `--interactive=true --return_to_initial_position=true` to keep the policy and hardware connected between attempts and return before normal shutdown. The captured startup pose, including grippers, is the return target; this does not perform encoder homing. Motors hold their measured pose after connection, and policy actions begin with `/start`.
+
+- `/start`: run the current instruction. `--duration` limits each run, not the session.
+- `/subtask <text>`: change the instruction; with RTC it takes effect through the next generated chunk.
+- `/reset`: stop policy execution, return to the startup pose, restore the original task, and wait for another `/start`.
+- `/stop`: return to the startup pose, then disconnect and disable torque.
+- `/help`: list available commands.
+
+YAM retains its servo limits during the return. After the interpolated trajectory, it refreshes the final target until both arms remain within 0.03 radians and both grippers within 0.05 of their targets for 0.2 seconds. Settling has a distance-dependent timeout, capped at 30 seconds. A timeout or feedback fault reports failure instead of claiming a completed return; normal shutdown still disconnects. Clear the return path before resetting or stopping: the return is joint-space motion without obstacle avoidance, and returning the grippers to their startup opening can release a held object.
+
 ## Communication faults
 
 Feedback errors include the CAN interface and motor name. A motor reporting `0xD` has latched a communication-loss fault. Stop rollout, support the arms, and address the transport/control interruption before resetting motor power. The adapter never automatically clears a fault or resumes motion. Saved gripper calibration is retained across power cycles.

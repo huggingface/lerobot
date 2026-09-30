@@ -498,6 +498,56 @@ class BiYamFollower(Robot):
                 arm.commanded_at = now
         return dict(action)
 
+    @check_if_not_connected
+    def wait_until_reached(self, position: RobotAction) -> None:
+        """Maintain the return target until both arms settle, or fail within a bounded time.
+
+        Use motor feedback directly: camera availability must not determine
+        whether a completed return is reported. Servo speed and torque limits
+        remain active throughout this phase.
+        """
+        self.send_action(position)
+        with self._lock:
+            self._check_feedback()
+            travel_s = max(
+                max(
+                    float(np.max(np.abs(arm.target[:6] - arm.position[:6])))
+                    / arm.config.max_joint_speed_rad_s,
+                    abs(float(arm.target[6] - arm.position[6])) / arm.config.max_gripper_speed_s,
+                )
+                for arm in self.arms.values()
+            )
+        deadline = time.monotonic() + min(30.0, 2 * travel_s + 5.0)
+        settled_since = None
+        try:
+            while True:
+                self.send_action(position)
+                with self._lock:
+                    self._check_feedback()
+                    reached = all(
+                        np.max(np.abs(arm.position[:6] - arm.target[:6])) <= 0.03
+                        and abs(arm.position[6] - arm.target[6]) <= 0.05
+                        for arm in self.arms.values()
+                    )
+                now = time.monotonic()
+                settled_since = (now if settled_since is None else settled_since) if reached else None
+                if settled_since is not None and now - settled_since >= 0.2:
+                    return
+                if now >= deadline:
+                    raise TimeoutError(
+                        "YAM return did not reach the startup pose within its settling deadline"
+                    )
+                self._stop.wait(min(0.02, self.config.command_timeout_s / 3))
+        except Exception:
+            # A failed reset must not keep pursuing its old target while the
+            # interactive session reports failure and waits for the operator.
+            with self._lock:
+                for arm in self.arms.values():
+                    arm.target = arm.position.copy()
+                    arm.command = arm.position.copy()
+                    arm.commanded_at = time.monotonic()
+            raise
+
     def _close(self) -> None:
         self._stop.set()
         for arm in self.arms.values():

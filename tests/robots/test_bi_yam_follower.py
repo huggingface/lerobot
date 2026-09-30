@@ -118,6 +118,70 @@ def robot(monkeypatch, tmp_path, *, read_only=True, buses=None):
     return BiYamFollower(cfg), buses
 
 
+@pytest.mark.parametrize("outcome", ["arrive", "stuck", "fault", "stale"])
+def test_return_waits_for_measured_arrival(monkeypatch, tmp_path, outcome):
+    bot, buses = robot(monkeypatch, tmp_path, read_only=False)
+    bot._connected = True
+    clock = [0.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    for arm in bot.arms.values():
+        arm.position[0] = 1.5  # Five seconds at the configured 0.3 rad/s.
+        arm.position[6] = 0.0
+    target = dict.fromkeys(YAM_FEATURE_NAMES, 0.0)
+    target["left_gripper.pos"] = target["right_gripper.pos"] = 1.0
+
+    def tick(dt):
+        clock[0] += dt
+        for arm in bot.arms.values():
+            # The final target must be refreshed throughout settling.
+            assert clock[0] - arm.commanded_at < bot.config.command_timeout_s
+            if outcome != "stale":
+                arm.updated_at = clock[0]
+            if outcome == "arrive":
+                arm.position[:6] += np.clip(
+                    arm.target[:6] - arm.position[:6],
+                    -arm.config.max_joint_speed_rad_s * dt,
+                    arm.config.max_joint_speed_rad_s * dt,
+                )
+                arm.position[6] += np.clip(
+                    arm.target[6] - arm.position[6],
+                    -arm.config.max_gripper_speed_s * dt,
+                    arm.config.max_gripper_speed_s * dt,
+                )
+        if outcome == "fault":
+            bot._failure = ConnectionError("motor fault")
+
+    monkeypatch.setattr(bot._stop, "wait", tick)
+    try:
+        if outcome == "arrive":
+            bot.wait_until_reached(target)
+            assert clock[0] > 5.0
+            for arm in bot.arms.values():
+                np.testing.assert_allclose(arm.position, [0, 0, 0, 0, 0, 0, 1], atol=0.03)
+        else:
+            error = TimeoutError if outcome == "stuck" else ConnectionError
+            with pytest.raises(error):
+                bot.wait_until_reached(target)
+            assert clock[0] <= 15.1
+            for arm in bot.arms.values():
+                np.testing.assert_array_equal(arm.target, arm.position)
+                np.testing.assert_array_equal(arm.command, arm.position)
+        # This unit test only simulates feedback; no bus write is performed.
+        assert all(not bus.calls for bus in buses.values())
+    finally:
+        bot._connected = False
+
+
+def test_return_read_only_forbids_target_updates(monkeypatch, tmp_path):
+    bot, _ = robot(monkeypatch, tmp_path)
+    bot._connected = True
+    try:
+        with pytest.raises(RuntimeError, match="read_only"):
+            bot.wait_until_reached(dict.fromkeys(YAM_FEATURE_NAMES, 0.0))
+    finally:
+        bot._connected = False
+
+
 def test_read_only_never_enables_or_commands(monkeypatch, tmp_path):
     bot, buses = robot(monkeypatch, tmp_path)
     bot.connect()

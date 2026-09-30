@@ -67,6 +67,15 @@ class Robot(abc.ABC):
         """
         return None
 
+    def wait_until_reached(self, position: RobotAction) -> None:
+        """Optional settling phase after a rollout return-to-position trajectory.
+
+        The default returns immediately, preserving the timed return behavior.
+        Adapters with asynchronous target limiting may override this to maintain
+        the final target and verify measured arrival, raising on failure.
+        """
+        return None
+
     def __enter__(self):
         """
         Context manager entry.

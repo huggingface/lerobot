@@ -212,7 +212,10 @@ class RolloutStrategy(abc.ABC):
         if robot.is_connected:
             if return_to_initial_position and hw.initial_position:
                 logger.info("Returning robot to initial position before shutdown...")
-                self.return_to_initial_position(hw)
+                if not self.return_to_initial_position(hw):
+                    logger.error(
+                        "Return to initial position failed; disconnecting without a completed return"
+                    )
             elif not return_to_initial_position:
                 logger.info(
                     "Skipping return-to-initial-position (disabled by config); leaving robot in final pose."
@@ -248,6 +251,7 @@ class RolloutStrategy(abc.ABC):
                     interp[k] = current_pos[k] * (1 - t) + target[k] * t
                 robot.send_action(interp)
                 precise_sleep(1 / fps)
+            robot.inner.wait_until_reached(target)
         except Exception as e:
             logger.warning("Could not return to initial position: %s", e)
             return False

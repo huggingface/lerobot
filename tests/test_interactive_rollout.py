@@ -402,6 +402,22 @@ def test_controller_failed_return_move_emits_reset_failed():
     _join_session(thread)
 
 
+@pytest.mark.parametrize("settle_error", [None, TimeoutError("still moving")])
+def test_return_move_waits_for_robot_settling(monkeypatch, settle_error):
+    from lerobot.rollout.strategies import core
+
+    robot = MagicMock()
+    robot.get_observation.return_value = {"joint.pos": 1.0}
+    target = {"joint.pos": 0.0}
+    robot.inner.wait_until_reached.side_effect = settle_error
+    hw = SimpleNamespace(robot_wrapper=robot, initial_position=target)
+    monkeypatch.setattr(core, "precise_sleep", lambda _: None)
+    result = RolloutStrategy.return_to_initial_position(hw, duration_s=0.1, fps=10)
+    robot.send_action.assert_called_once_with(target)
+    robot.inner.wait_until_reached.assert_called_once_with(target)
+    assert result is (settle_error is None)
+
+
 def test_controller_engine_failure_emits_event():
     def failing_run(c):
         c.policy.inference.failed = True
