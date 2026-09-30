@@ -25,16 +25,28 @@ lerobot-calibrate \
     --teleop.port=/dev/tty.usbmodem58760431551 \
     --teleop.id=blue
 ```
+
+SO-101 arms can also calibrate themselves, driving each joint into its end stops (the arm moves on
+its own; see docs/source/so101.mdx):
+
+```shell
+lerobot-calibrate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.id=my_awesome_follower_arm \
+    --auto=true
+```
 """
 
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pprint import pformat
 
 import draccus
 
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.motors.feetech.auto_calibration import AutoCalibrationConfig
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -75,6 +87,10 @@ from lerobot.utils.utils import init_logging
 class CalibrateConfig:
     teleop: TeleoperatorConfig | None = None
     robot: RobotConfig | None = None
+    # Calibrate without moving the arm by hand: it drives each joint into its end stops (SO-101).
+    auto: bool = False
+    # Options of the automatic calibration, e.g. --auto_calibration.velocity=200.
+    auto_calibration: AutoCalibrationConfig = field(default_factory=AutoCalibrationConfig)
 
     def __post_init__(self) -> None:
         if bool(self.teleop) == bool(self.robot):
@@ -101,10 +117,17 @@ def calibrate(cfg: CalibrateConfig) -> None:
     elif isinstance(cfg.device, TeleoperatorConfig):
         device = make_teleoperator_from_config(cfg.device)
 
+    auto_calibrate = getattr(device, "auto_calibrate", None)
+    if cfg.auto and auto_calibrate is None:
+        raise ValueError(f"{device} has no automatic calibration; run it without --auto.")
+
     device.connect(calibrate=False)
 
     try:
-        device.calibrate()
+        if cfg.auto and auto_calibrate is not None:
+            auto_calibrate(cfg.auto_calibration)
+        else:
+            device.calibrate()
     finally:
         device.disconnect()
 
