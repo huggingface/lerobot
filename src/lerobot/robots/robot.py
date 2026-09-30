@@ -18,6 +18,7 @@ from pathlib import Path
 
 import draccus
 
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors import MotorCalibration
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, ROBOTS
@@ -57,6 +58,14 @@ class Robot(abc.ABC):
 
     def __str__(self) -> str:
         return f"{self.id} {self.__class__.__name__}"
+
+    def validate_policy_config(self, policy: PreTrainedConfig) -> None:
+        """Validate embodiment-specific policy contracts before connecting hardware.
+
+        Robots with semantic requirements beyond tensor shapes may override this
+        hook, for example to reject Cartesian actions on a joint-only adapter.
+        """
+        return None
 
     def __enter__(self):
         """

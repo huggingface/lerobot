@@ -17,6 +17,7 @@
 # https://github.com/cmjang/DM_Control_Python
 
 import logging
+import math
 import time
 from contextlib import contextmanager
 from copy import deepcopy
@@ -236,7 +237,7 @@ class DamiaoMotorsBus(MotorsBusBase):
             if response is None:
                 missing_motors.append(motor_name)
             else:
-                self._process_response(motor_name, msg)
+                self._process_response(motor_name, response)
             time.sleep(MEDIUM_TIMEOUT_SEC)
 
         if missing_motors:
@@ -443,8 +444,8 @@ class DamiaoMotorsBus(MotorsBusBase):
         pmax, vmax, tmax = MOTOR_LIMIT_PARAMS[motor_type]
 
         # Encode parameters
-        kp_uint = self._float_to_uint(kp, *MIT_KP_RANGE, 12)
-        kd_uint = self._float_to_uint(kd, *MIT_KD_RANGE, 12)
+        kp_uint = self._float_to_uint(kp, MIT_KP_RANGE[0], MIT_KP_RANGE[1], 12)
+        kd_uint = self._float_to_uint(kd, MIT_KD_RANGE[0], MIT_KD_RANGE[1], 12)
         q_uint = self._float_to_uint(position_rad, -pmax, pmax, 16)
         dq_uint = self._float_to_uint(velocity_rad_per_sec, -vmax, vmax, 12)
         tau_uint = self._float_to_uint(torque, -tmax, tmax, 12)
@@ -525,6 +526,32 @@ class DamiaoMotorsBus(MotorsBusBase):
         for recv_id, motor_name in recv_id_to_motor.items():
             if msg := responses.get(recv_id):
                 self._process_response(motor_name, msg)
+
+    @check_if_not_connected
+    def sync_write_mit(self, commands: dict[str, tuple[float, float, float, float, float]]) -> None:
+        """Write ``(kp, kd, position_deg, velocity_deg_s, torque_Nm)`` through the bus.
+
+        Validate the entire batch before transmitting any command. This public
+        interface allows robot controllers to supply gravity feedforward without
+        implementing their own CAN transport or using private driver methods.
+        """
+        for name, values in commands.items():
+            if name not in self.motors or len(values) != 5 or not all(map(math.isfinite, values)):
+                raise ValueError(f"Invalid MIT command for {name!r}: {values}")
+            kp, kd, position, velocity, torque = values
+            pmax, vmax, tmax = MOTOR_LIMIT_PARAMS[self._motor_types[name]]
+            if not (
+                MIT_KP_RANGE[0] <= kp <= MIT_KP_RANGE[1]
+                and MIT_KD_RANGE[0] <= kd <= MIT_KD_RANGE[1]
+                and abs(math.radians(position)) <= pmax
+                and abs(math.radians(velocity)) <= vmax
+                and abs(torque) <= tmax
+            ):
+                raise ValueError(f"MIT command outside motor limits for {name!r}: {values}")
+        bus_commands: dict[str | int, tuple[float, float, float, float, float]] = {}
+        for name, values in commands.items():
+            bus_commands[name] = values
+        self._mit_control_batch(bus_commands)
 
     def _float_to_uint(self, x: float, x_min: float, x_max: float, bits: int) -> int:
         """Convert float to unsigned integer for CAN transmission."""
@@ -656,6 +683,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         motors: str | list[str] | None = None,
         *,
         num_retry: int = 0,
+        strict: bool = False,
     ) -> dict[str, MotorState]:
         """
         Read ALL motor states (position, velocity, torque) from multiple motors in ONE refresh cycle.
@@ -665,18 +693,27 @@ class DamiaoMotorsBus(MotorsBusBase):
             Example: {'joint_1': {'position': 45.2, 'velocity': 1.3, 'torque': 0.5}, ...}
         """
         target_motors = self._get_motors_list(motors)
-        self._batch_refresh(target_motors)
+        self._batch_refresh(target_motors, strict=strict)
 
         result = {}
         for motor in target_motors:
             result[motor] = self._last_known_states[motor].copy()
         return result
 
-    def _batch_refresh(self, motors: list[str]) -> None:
+    def _batch_refresh(self, motors: list[str], *, strict: bool = False) -> None:
         """Internal helper to refresh a list of motors and update cache."""
 
         if self.canbus is None:
             raise RuntimeError("CAN bus is not initialized.")
+
+        if strict:
+            # Do not mistake feedback left over from an earlier write for the
+            # response to this refresh. Bound draining on a busy shared bus.
+            for _ in range(1024):
+                if self.canbus.recv(timeout=0) is None:
+                    break
+            else:
+                raise ConnectionError("CAN receive queue did not drain before strict refresh")
 
         # Send refresh commands
         for motor in motors:
@@ -695,6 +732,13 @@ class DamiaoMotorsBus(MotorsBusBase):
         for motor in motors:
             recv_id = self._get_motor_recv_id(motor)
             msg = responses.get(recv_id)
+            if strict:
+                if msg is None:
+                    raise ConnectionError(f"Missing fresh feedback from {motor} (0x{recv_id:02X})")
+                if len(msg.data) != 8 or (msg.data[0] & 0x0F) != self._get_motor_id(motor):
+                    raise ConnectionError(f"Malformed motor feedback from {motor}")
+                if (status := msg.data[0] >> 4) not in (0, 1):
+                    raise ConnectionError(f"Motor {motor} reports fault status 0x{status:X}")
             if msg:
                 self._process_response(motor, msg)
             else:

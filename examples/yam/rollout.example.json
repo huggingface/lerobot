@@ -1,0 +1,32 @@
+{
+  "robot": {
+    "type": "bi_yam_follower",
+    "id": "bimanual_yam",
+    "read_only": true,
+    "left_arm": {
+      "port": "can0",
+      "gripper_closed_rad": null,
+      "gripper_open_rad": null,
+      "initial_gripper_position": 1.0
+    },
+    "right_arm": {
+      "port": "can1",
+      "gripper_closed_rad": null,
+      "gripper_open_rad": null,
+      "initial_gripper_position": 1.0
+    },
+    "cameras": {
+      "top": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30, "fourcc": "YUYV"},
+      "left": {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30, "fourcc": "MJPG"},
+      "right": {"type": "opencv", "index_or_path": 4, "width": 640, "height": 480, "fps": 30, "fourcc": "MJPG"}
+    }
+  },
+  "policy": {"path": "/absolute/path/to/molmoact2-bimanual-yam"},
+  "inference": {"type": "sync"},
+  "fps": 30,
+  "duration": 30,
+  "device": "cuda",
+  "task": "pick up the red block",
+  "play_sounds": false,
+  "return_to_initial_position": false
+}

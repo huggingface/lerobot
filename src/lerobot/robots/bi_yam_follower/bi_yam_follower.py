@@ -1,0 +1,408 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
+
+"""Bimanual YAM: native MotorsBus transport and a policy-independent servo loop."""
+
+import logging
+import math
+import threading
+import time
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import numpy as np
+
+from lerobot.cameras import make_cameras_from_configs
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.motors import Motor, MotorNormMode
+from lerobot.motors.damiao import DamiaoMotorsBus
+from lerobot.motors.damiao.damiao import MotorState
+from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.import_utils import _mujoco_available, require_package
+
+from ..robot import Robot
+from .config_bi_yam_follower import (
+    JOINT_LIMITS,
+    MOTOR_NAMES,
+    YAM_FEATURE_NAMES,
+    BiYamFollowerConfig,
+    YamArmConfig,
+)
+
+if TYPE_CHECKING or _mujoco_available:
+    import mujoco
+
+logger = logging.getLogger(__name__)
+
+
+def verify_adapter(config: YamArmConfig) -> None:
+    """Check the USB ancestor of a SocketCAN interface before opening either arm."""
+    if config.expected_adapter_serial is None:
+        return
+    device = (Path("/sys/class/net") / config.port / "device").resolve()
+    for parent in (device, *device.parents):
+        serial = parent / "serial"
+        if serial.is_file():
+            actual = serial.read_text().strip()
+            if actual != config.expected_adapter_serial:
+                raise ValueError(f"{config.port} adapter serial {actual!r} does not match the configured arm")
+            return
+    raise ValueError(f"Cannot verify USB serial for {config.port}; check the adapter connection")
+
+
+def make_yam_bus(config: YamArmConfig) -> DamiaoMotorsBus:
+    """IDs 1..7 / feedback 17..23, classic CAN at 1 Mbit/s (not OpenArm CAN FD)."""
+    return DamiaoMotorsBus(
+        port=config.port,
+        can_interface="socketcan",
+        use_can_fd=False,
+        bitrate=1_000_000,
+        motors={
+            name: Motor(
+                i + 1,
+                "dm4340" if i < 3 else "dm4310",
+                MotorNormMode.DEGREES,
+                motor_type_str="dm4340" if i < 3 else "dm4310",
+                recv_id=i + 17,
+            )
+            for i, name in enumerate(MOTOR_NAMES)
+        },
+    )
+
+
+def decode_positions(config: YamArmConfig, states: dict[str, MotorState]) -> np.ndarray:
+    """Convert bus degrees to dataset radians, and gripper 0=closed / 1=open."""
+    closed, opened = config.gripper_closed_rad, config.gripper_open_rad
+    if closed is None or opened is None:
+        raise ValueError("Measure and configure gripper_closed_rad and gripper_open_rad before connecting")
+    raw = np.radians([states[name]["position"] for name in MOTOR_NAMES])
+    if not np.isfinite(raw).all():
+        raise ConnectionError("Non-finite YAM feedback")
+    joints = raw[:6] * np.asarray(config.joint_signs) + np.asarray(config.joint_offsets_rad)
+    gripper = (raw[6] - closed) / (opened - closed)
+    if not -0.05 <= gripper <= 1.05:
+        raise ValueError("Gripper feedback is outside the calibrated stroke; check endpoints")
+    return np.r_[joints, np.clip(gripper, 0, 1)]
+
+
+def encode_positions(config: YamArmConfig, positions: np.ndarray) -> np.ndarray:
+    """Inverse of decode_positions, returning the motor's native degrees."""
+    closed, opened = config.gripper_closed_rad, config.gripper_open_rad
+    if closed is None or opened is None:
+        raise ValueError("Missing gripper calibration")
+    raw = (positions[:6] - np.asarray(config.joint_offsets_rad)) / np.asarray(config.joint_signs)
+    return np.degrees(np.r_[raw, closed + float(positions[6]) * (opened - closed)])
+
+
+def validate_target(values: np.ndarray, *, feedback: bool = False) -> None:
+    if values.shape != (7,) or not np.isfinite(values).all():
+        raise ValueError("YAM requires six finite joint radians and one normalized gripper position")
+    for i, (value, (lower, upper)) in enumerate(zip(values, (*JOINT_LIMITS, (0, 1)), strict=True)):
+        tolerance = 0.03 if feedback and i < 6 else 0.0
+        if not lower - tolerance <= value <= upper + tolerance:
+            raise ValueError(f"YAM joint/gripper {i} target {value} outside [{lower}, {upper}]")
+
+
+class _Gravity:
+    def __init__(self) -> None:
+        require_package("mujoco", extra="yam")
+        self.model = mujoco.MjModel.from_xml_path(str(Path(__file__).parent / "assets/yam_linear.xml"))
+        self.data = mujoco.MjData(self.model)
+
+    def torque(self, positions: np.ndarray) -> np.ndarray:
+        self.data.qpos[:6] = positions[:6]
+        self.data.qpos[6:] = positions[6] * 0.0475
+        self.data.qvel[:] = 0
+        mujoco.mj_forward(self.model, self.data)
+        return self.data.qfrc_bias[:6].copy()
+
+
+class _Arm:
+    def __init__(self, config: YamArmConfig) -> None:
+        self.config = config
+        self.bus = make_yam_bus(config)
+        self.position = np.zeros(7)
+        self.target = np.zeros(7)
+        self.command = np.zeros(7)
+        self.updated_at = 0.0
+        self.commanded_at = 0.0
+        self.gravity: _Gravity | None = None
+        self.thread: threading.Thread | None = None
+        self.ready = threading.Event()
+        self.enabled = False
+
+    def command_packet(
+        self, position: np.ndarray, dt: float
+    ) -> dict[str, tuple[float, float, float, float, float]]:
+        cfg = self.config
+        speeds = np.r_[np.full(6, cfg.max_joint_speed_rad_s), cfg.max_gripper_speed_s]
+        self.command += np.clip(self.target - self.command, -speeds * dt, speeds * dt)
+        self.command[:6] = np.clip(
+            self.command[:6],
+            position[:6] - cfg.max_tracking_error_rad,
+            position[:6] + cfg.max_tracking_error_rad,
+        )
+        raw_goal = encode_positions(cfg, self.command)
+        raw_position = encode_positions(cfg, position)
+        # Limit proportional closing/opening torque even on a blocked gripper.
+        gripper_error_deg = math.degrees(cfg.gripper_torque_limit / cfg.gripper_kp)
+        raw_goal[6] = np.clip(
+            raw_goal[6], raw_position[6] - gripper_error_deg, raw_position[6] + gripper_error_deg
+        )
+        gravity = np.zeros(6) if self.gravity is None else self.gravity.torque(position)
+        gravity *= np.asarray(cfg.gravity_factors) * np.asarray(cfg.joint_signs)
+        gravity = np.clip(gravity, -10.0, 10.0)
+        kp, kd = [*cfg.kp, cfg.gripper_kp], [*cfg.kd, cfg.gripper_kd]
+        return {
+            name: (kp[i], kd[i], float(raw_goal[i]), 0.0, float(gravity[i]) if i < 6 else 0.0)
+            for i, name in enumerate(MOTOR_NAMES)
+        }
+
+
+class BiYamFollower(Robot):
+    """Absolute joint control: left six joints + gripper, then right six + gripper.
+
+    End-effector poses are not joint commands. Cartesian policies require an
+    explicit, separately validated IK processor; this adapter does not guess.
+    """
+
+    config_class = BiYamFollowerConfig
+    name = "bi_yam_follower"
+
+    def __init__(self, config: BiYamFollowerConfig) -> None:
+        super().__init__(config)
+        self.config = config
+        self.arms = {"left": _Arm(config.left_arm), "right": _Arm(config.right_arm)}
+        self.cameras = make_cameras_from_configs(config.cameras)
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._failure: Exception | None = None
+        self._connected = False
+
+    @property
+    def action_features(self) -> dict[str, type]:
+        return dict.fromkeys(YAM_FEATURE_NAMES, float)
+
+    @property
+    def observation_features(self) -> dict[str, type | tuple]:
+        return {
+            **self.action_features,
+            **{name: (cfg.height, cfg.width, 3) for name, cfg in self.config.cameras.items()},
+        }
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected
+
+    @property
+    def is_calibrated(self) -> bool:
+        return all(
+            a.config.gripper_closed_rad is not None and a.config.gripper_open_rad is not None
+            for a in self.arms.values()
+        )
+
+    def calibrate(self) -> None:
+        raise NotImplementedError(
+            "Use the YAM setup guide to measure gripper endpoints; never reset joint zeros"
+        )
+
+    def configure(self) -> None:
+        """No persistent motor writes: factory MIT mode, IDs, and zero positions are retained."""
+
+    def validate_policy_config(self, policy: PreTrainedConfig) -> None:
+        action = (policy.output_features or {}).get(ACTION)
+        if action is None or tuple(action.shape) != (14,):
+            raise ValueError("Bimanual YAM requires a 14-dimensional absolute-joint action")
+        names = (policy.dataset_feature_names or {}).get(ACTION)
+        if names is not None and list(names) != list(YAM_FEATURE_NAMES):
+            raise ValueError(
+                "Policy action order differs from left joints/gripper, then right joints/gripper"
+            )
+        if policy.type == "molmoact2":
+            if getattr(policy, "control_mode", None) != "absolute joint pose":
+                raise ValueError("YAM cannot execute end-effector actions without an explicit IK processor")
+            state = (policy.input_features or {}).get(OBS_STATE)
+            if state is None or tuple(state.shape) != (14,):
+                raise ValueError("MolmoAct2 YAM state must contain 14 joint/gripper values")
+            state_names = (policy.dataset_feature_names or {}).get(OBS_STATE)
+            if state_names is not None and list(state_names) != list(YAM_FEATURE_NAMES):
+                raise ValueError("MolmoAct2 YAM state joint order is incorrect")
+            if getattr(policy, "normalize_gripper", None) is not False:
+                raise ValueError("MolmoAct2 YAM requires unnormalized continuous grippers")
+            expected = [f"observation.images.{name}" for name in ("top", "left", "right")]
+            if list(getattr(policy, "image_keys", [])) != expected:
+                raise ValueError("MolmoAct2 YAM camera order must be top, left, right")
+            if not {"top", "left", "right"}.issubset(self.cameras):
+                raise ValueError("Configure all three YAM cameras before rollout")
+
+    @check_if_already_connected
+    def connect(self, calibrate: bool = True) -> None:
+        if not self.is_calibrated:
+            raise ValueError(
+                "Both YAM grippers require measured closed/open motor radians; see docs/source/yam.mdx"
+            )
+        self._stop.clear()
+        self._failure = None
+        try:
+            for arm in self.arms.values():
+                verify_adapter(arm.config)
+            for camera in self.cameras.values():
+                camera.connect()
+            # Validate BOTH arms before enabling either. handshake=True enables
+            # torque in DamiaoMotorsBus, so use the strictly read-only refresh.
+            for side, arm in self.arms.items():
+                arm.bus.connect(handshake=False)
+                arm.position = decode_positions(arm.config, arm.bus.sync_read_all_states(strict=True))
+                validate_target(arm.position, feedback=True)
+                if not self.config.read_only and np.any(
+                    np.abs(arm.position[:6] - arm.config.initial_position_rad)
+                    > arm.config.initial_tolerance_rad
+                ):
+                    raise ValueError(
+                        f"{side} arm is not in the configured initial pose; no automatic homing performed"
+                    )
+                if (
+                    not self.config.read_only
+                    and arm.config.initial_gripper_position is not None
+                    and abs(arm.position[6] - arm.config.initial_gripper_position)
+                    > arm.config.initial_gripper_tolerance
+                ):
+                    raise ValueError(f"{side} gripper is not in the configured initial position")
+                arm.target = arm.position.copy()
+                arm.command = arm.position.copy()
+                arm.updated_at = arm.commanded_at = time.monotonic()
+                if arm.config.gravity_compensation and not self.config.read_only:
+                    arm.gravity = _Gravity()
+            self.configure()
+            for side, arm in self.arms.items():
+                if self._stop.is_set():
+                    raise ConnectionError("YAM feedback failed during startup") from self._failure
+                arm.ready.clear()
+                if not self.config.read_only:
+                    # Seed a zero-gain packet at the measured pose before enable;
+                    # never let a zero-initialized position target reach the motors.
+                    arm.bus.sync_write_mit(
+                        {
+                            n: (0.0, 0.0, float(p), 0.0, 0.0)
+                            for n, p in zip(
+                                MOTOR_NAMES, encode_positions(arm.config, arm.position), strict=True
+                            )
+                        }
+                    )
+                    arm.enabled = True
+                    arm.bus.enable_torque()
+                arm.thread = threading.Thread(target=self._run, args=(arm,), name=f"yam-{side}", daemon=True)
+                arm.thread.start()
+                if not arm.ready.wait(timeout=self.config.feedback_timeout_s) or self._failure is not None:
+                    raise ConnectionError(f"{side} YAM servo failed to start") from self._failure
+            self._connected = True
+            self._check_feedback()
+        except Exception:
+            self._close()
+            raise
+
+    def _run(self, arm: _Arm) -> None:
+        previous = time.monotonic()
+        try:
+            while not self._stop.is_set():
+                started = time.monotonic()
+                states = arm.bus.sync_read_all_states(strict=True)
+                position = decode_positions(arm.config, states)
+                validate_target(position, feedback=True)
+                with self._lock:
+                    arm.position = position
+                    arm.updated_at = time.monotonic()
+                    arm.ready.set()
+                    if started - arm.commanded_at > self.config.command_timeout_s:
+                        # Freeze at fresh feedback after policy silence; do not
+                        # keep progressing toward an old distant target.
+                        arm.target = position.copy()
+                        arm.command = position.copy()
+                    packet = (
+                        arm.command_packet(position, min(started - previous, 0.05)) if arm.enabled else None
+                    )
+                if packet is not None and not self._stop.is_set():
+                    arm.bus.sync_write_mit(packet)
+                previous = started
+                self._stop.wait(max(0, 1 / self.config.control_frequency - (time.monotonic() - started)))
+        except Exception as exc:
+            with self._lock:
+                self._failure = exc
+            self._stop.set()
+        finally:
+            if arm.enabled:
+                try:
+                    arm.bus.disable_torque()
+                except Exception:
+                    logger.exception("Could not disable YAM torque; use the hardware e-stop")
+                arm.enabled = False
+
+    def _check_feedback(self) -> None:
+        if self._failure is not None:
+            raise ConnectionError("YAM servo loop stopped after a motor/feedback error") from self._failure
+        if any(
+            time.monotonic() - arm.updated_at > self.config.feedback_timeout_s for arm in self.arms.values()
+        ):
+            self._stop.set()
+            raise ConnectionError("YAM feedback is stale")
+
+    @check_if_not_connected
+    def get_observation(self) -> RobotObservation:
+        with self._lock:
+            self._check_feedback()
+            result = {
+                f"{side}_{name}.pos": float(arm.position[i])
+                for side, arm in self.arms.items()
+                for i, name in enumerate(MOTOR_NAMES)
+            }
+        for name, camera in self.cameras.items():
+            result[name] = camera.async_read()
+        return result
+
+    @check_if_not_connected
+    def send_action(self, action: RobotAction) -> RobotAction:
+        if self.config.read_only:
+            raise RuntimeError("YAM read_only=true forbids motor commands")
+        if set(action) != set(YAM_FEATURE_NAMES):
+            raise ValueError(
+                "YAM requires the complete 14 absolute-joint/gripper action; Cartesian actions need IK"
+            )
+        targets = {
+            side: np.asarray([action[f"{side}_{name}.pos"] for name in MOTOR_NAMES], dtype=float)
+            for side in self.arms
+        }
+        for target in targets.values():
+            validate_target(target)
+        with self._lock:
+            self._check_feedback()
+            now = time.monotonic()
+            for side, arm in self.arms.items():
+                arm.target = targets[side]
+                arm.commanded_at = now
+        return dict(action)
+
+    def _close(self) -> None:
+        self._stop.set()
+        for arm in self.arms.values():
+            if arm.thread is not None:
+                arm.thread.join(timeout=2)
+                if arm.thread.is_alive():
+                    raise RuntimeError("YAM servo did not stop; use the hardware e-stop")
+        for arm in self.arms.values():
+            if arm.bus.is_connected:
+                try:
+                    arm.bus.disconnect(disable_torque=arm.enabled)
+                except Exception:
+                    logger.exception("Failed to close YAM CAN bus")
+        for camera in self.cameras.values():
+            if camera.is_connected:
+                camera.disconnect()
+        self._connected = False
+
+    @check_if_not_connected
+    def disconnect(self) -> None:
+        self._close()

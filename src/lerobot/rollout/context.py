@@ -391,6 +391,7 @@ def build_rollout_context(
         raise ValueError("--robot.type is required for rollout")
     logger.info("Connecting robot (%s)...", robot_config.type)
     robot = make_robot_from_config(robot_config)
+    robot.validate_policy_config(policy_config)
     robot.connect()
     logger.info("Robot connected: %s", robot.name)
 

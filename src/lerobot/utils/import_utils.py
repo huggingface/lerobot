@@ -144,6 +144,7 @@ _dynamixel_sdk_available = is_package_available("dynamixel-sdk", import_name="dy
 _feetech_sdk_available = is_package_available("feetech-servo-sdk", import_name="scservo_sdk")
 _reachy2_sdk_available = is_package_available("reachy2_sdk")
 _can_available = is_package_available("python-can", "can")
+_mujoco_available = is_package_available("mujoco")
 _motorbridge_available = is_package_available("motorbridge")
 _motorbridge_smart_servo_available = is_package_available(
     "motorbridge-smart-servo", import_name="motorbridge_smart_servo"

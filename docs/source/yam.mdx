@@ -1,0 +1,119 @@
+# Bimanual YAM with native MotorsBus
+
+This adapter supports two standard I2RT YAM v1 arms with linear DM4310 grippers, including the ABC box arrangement. CAN communication uses LeRobot's `DamiaoMotorsBus` directly; neither I2RT's Python controller nor a Portal server is required. MuJoCo computes gravity feedforward from a bundled, MIT-licensed inertial model; it does not communicate with the motors.
+
+This is an experimental hardware adapter. Start with read-only inspection and a supported, empty workspace. Motion control, gravity compensation with your cameras/payload, emergency stopping, and task success require validation on your installation. Keep the hardware e-stop accessible. A feedback fault disables both arms; support them so loss of torque cannot cause a fall. The controller has no collision detection.
+
+## Install and connect
+
+```bash
+uv sync --locked --extra yam --extra molmoact2 --extra dataset
+```
+
+Each arm needs a separate classic SocketCAN channel at **1 Mbit/s**. Both arms reuse motor IDs 1–7 and feedback IDs 17–23. Motors 1–3 are DM4340 and 4–7 are DM4310. Do not put both arms on one CAN channel, select CAN FD, reset encoder zeros, or run another controller at the same time.
+
+Bring up the verified interfaces; substitute your actual names:
+
+```bash
+sudo ip link set can0 type can bitrate 1000000
+sudo ip link set can0 up
+sudo ip link set can1 type can bitrate 1000000
+sudo ip link set can1 up
+```
+
+Copy `examples/yam/rollout.example.json` outside the repository and edit it for your installation. **Its CAN sides and camera indices are placeholders**, not automatically discovered assignments. Confirm the physical arm side with feedback while gently moving only one supported gripper by hand. An arm's `expected_adapter_serial` can bind its port to its USB serial: the adapter refuses to connect if Linux assigns that port to the other arm after a reboot.
+
+The example remains `read_only=true`. Inspect raw motor radians without calibrating or enabling anything:
+
+```bash
+uv run python examples/yam/inspect_yam.py --config /absolute/path/to/rollout.json
+```
+
+The helper uses status refresh requests with `handshake=False` and disconnects without torque commands. It never resets encoders or enables motors.
+
+## Grippers and initial position
+
+The policy's grippers are continuous: **0 = closed, 1 = open**. They are not motor radians, percentages, binary flags, or finger separation in meters. Measure each arm independently; equal-looking grippers need not have identical zeros, travel, or polarity:
+
+```bash
+uv run python examples/yam/inspect_yam.py \
+  --config /absolute/path/to/rollout.json --calibrate-grippers
+```
+
+The helper prompts for both grippers fully closed and then fully open, moved gently **by hand** with the arms supported. Do not force a resisting mechanism. It checks that each reading is stable and that the endpoints are distinct, then saves the measurements atomically. It sends no actuation commands. This produces `gripper_closed_rad` and `gripper_open_rad`, measured at the motor encoder. For either polarity:
+
+```text
+policy_gripper = (motor_rad - closed_rad) / (open_rad - closed_rad)
+motor_rad = closed_rad + policy_gripper * (open_rad - closed_rad)
+```
+
+Missing endpoints block robot connection. Small feedback overshoot is tolerated; a reading outside the calibrated stroke by more than 5% fails. Re-measure after a gripper or encoder-frame change.
+
+For the included MolmoAct2 example, manually arrange both supported arms near the manufacturer's folded zero pose, with both grippers open. Each joint must be within 0.2 radians of its configured `initial_position_rad` (default six zeros), and the example requires gripper position within 0.1 of fully open. The published checkpoint example also starts near the folded pose with open grippers; this does not establish a universal valid starting pose for every scene.
+
+Startup **checks** this pose; it does not move there. Both arms must pass feedback, calibration, and initial-pose validation before either is enabled. The first packet uses the measured position with zero gains, then a separate servo loop ramps toward accepted policy targets. Factory encoder frames are preserved; `joint_signs` and `joint_offsets_rad` exist for an explicitly verified frame conversion and must not be guessed from an image.
+
+## Three RGB cameras
+
+The model expects camera roles in this order: **top, left wrist, right wrist**. Confirm wrist roles by covering only one lens and capturing images. Prefer persistent `/dev/v4l/by-path/...` paths over numeric indices, then visually recheck after moving USB cables. Multi-interface RGB-D cameras expose several video nodes; select the RGB stream, not a depth or metadata node. Some identical cameras have colliding `/dev/v4l/by-id` links across their interfaces.
+
+The example uses OpenCV, RGB output, 640×480 at 30 FPS, YUYV for the top camera, and MJPG for the wrist cameras. Adapt these to formats actually supported by your devices. Check all three cameras streaming simultaneously; a successful single-camera capture does not establish shared USB bandwidth.
+
+After calibration, capture three RGB images and the corresponding state without enabling motors:
+
+```bash
+uv run python examples/yam/inspect_yam.py \
+  --config /absolute/path/to/rollout.json --snapshot /absolute/path/to/snapshot
+```
+
+## Prepare MolmoAct2
+
+[`allenai/MolmoAct2-BimanualYAM`](https://huggingface.co/allenai/MolmoAct2-BimanualYAM) emits **absolute joint positions in radians**, with this exact 14-value order:
+
+```text
+left_joint_0.pos ... left_joint_5.pos, left_gripper.pos,
+right_joint_0.pos ... right_joint_5.pos, right_gripper.pos
+```
+
+The native bus uses degrees internally. Conversion happens once at the robot boundary; dataset/policy joints remain radians. End-effector position/orientation outputs cannot be passed to this robot as joints. Such a policy needs a separately validated kinematics/IK pipeline; the MolmoAct2 rollout compatibility check rejects an EE control mode before robot connection.
+
+The upstream release is an HF checkpoint, so first save a LeRobot checkpoint together with its processors:
+
+```bash
+uv run python examples/yam/prepare_molmoact2.py \
+  --revision 8dcbed66f2380e4393189c303ea72488eb9e63c2 \
+  --output /absolute/path/to/molmoact2-bimanual-yam
+```
+
+The converter verifies joint names, camera order, control mode, and gripper masks against `norm_stats.json`. It saves the original `yam_dual_molmoact2` q01/q99 statistics for state normalization and action unnormalization. Gripper dimensions 6 and 13 are masked out and remain in [0, 1]. Do not estimate new stats from live observations, normalize the gripper again, or pass a new `norm_tag` when loading the converted checkpoint. The saved processors carry the training statistics.
+
+Conversion retains the release's `action_mode="both"` metadata for native attention masking, while `inference_action_mode="continuous"` selects continuous predictions. `train_mode_vlm="fft"` avoids adding LoRA adapters; this script does no training. The default is float32. A 32 GB RTX 5090 was sufficient for the no-motion inference check; availability depends on other GPU users and settings.
+
+Set the rollout profile's `policy.path` to the converted directory. Check checkpoint reload, processors, finite output, joint limits, memory, and latency without connecting a robot:
+
+```bash
+uv run python examples/yam/check_molmoact2.py \
+  --checkpoint /absolute/path/to/molmoact2-bimanual-yam \
+  --observation /absolute/path/to/snapshot/observation.json \
+  --task "pick up the red block" \
+  --output /absolute/path/to/inference-check.json
+```
+
+Omit `--observation` to use the release's published example images/state. Check `limit_violations` in the report before enabling rollout. This predicts twice, never dispatches actions, and does not demonstrate successful manipulation.
+
+## Rollout
+
+Check out the branch containing this adapter on the robot computer before running it. With calibrated grippers, confirmed camera/CAN roles, supported arms in the configured initial pose, and an accessible e-stop:
+
+```bash
+uv run lerobot-rollout \
+  --config_path=/absolute/path/to/rollout.json \
+  --robot.read_only=false \
+  --task="pick up the red block"
+```
+
+The supplied profile requests 30 Hz synchronous policy execution and a 30-second run. A per-arm servo loop (default 200 Hz) independently handles gravity compensation, bounded target speeds (default 0.3 rad/s and 0.5 gripper strokes/s), tracking-error bounds, and a proportional gripper torque limit of 0.5 Nm. Damping contributes additional torque; this is not a certified contact-force limit. `send_action` returns the accepted target; feedback reports the achieved pose.
+
+After one second without a new target, each servo holds fresh measured position rather than continuing toward an old target. Missing, malformed, or faulted motor feedback stops both workers. A software stop cannot guarantee a physical stop after communication or power failure. Do not rely on these checks instead of the hardware e-stop.
+
+`return_to_initial_position=false` avoids an unvalidated automatic return motion. Disconnect disables torque, so arrange physical support before ending a run. Slow target limits change execution timing relative to training; tune only after validating the installation. The gravity model excludes added camera and payload inertia and does not simulate collision geometry.

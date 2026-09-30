@@ -182,6 +182,7 @@ robstride = ["lerobot[can-dep]"]
 
 # Robots
 openarms = ["lerobot[damiao]"]
+yam = ["lerobot[damiao]", "mujoco>=3.3.0,<4.0.0"]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
 lekiwi = ["lerobot[feetech]", "lerobot[pyzmq-dep]"]
@@ -319,6 +320,7 @@ all = [
     "lerobot[dynamixel]",
     "lerobot[feetech]",
     "lerobot[damiao]",
+    "lerobot[yam]",
     "lerobot[robstride]",
     "lerobot[gamepad]",
     "lerobot[hopejr]",
@@ -396,7 +398,7 @@ torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 
 [tool.setuptools.package-data]
-lerobot = ["envs/*.json", "annotations/steerable_pipeline/prompts/*.txt"]
+lerobot = ["envs/*.json", "annotations/steerable_pipeline/prompts/*.txt", "robots/bi_yam_follower/assets/*"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
