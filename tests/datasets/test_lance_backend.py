@@ -369,8 +369,9 @@ def test_rgb_batch_decode_respects_byte_limit_for_float_output():
     with ThreadPoolExecutor(max_workers=1) as reader._decode_pool:
         decoded = reader._decode_videos([{}, {}], {"timestamp": []}, {}, {file_key: (decoder, None)})
 
-    # At 1024x1024 float32, the 64 MiB byte budget permits five RGB frames per call.
-    assert decoder.calls == [list(range(5)), [5, 6]]
+    # At 1024x1024, each normalized frame temporarily occupies 3 MiB of decoder
+    # uint8 storage plus 12 MiB of float32 output, so the 64 MiB budget permits four.
+    assert decoder.calls == [list(range(4)), list(range(4, 7))]
     torch.testing.assert_close(
         decoded[0][file_key[0]][:, 0, 0, 0], torch.arange(4, dtype=torch.float32) / 255
     )

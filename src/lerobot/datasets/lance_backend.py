@@ -517,7 +517,11 @@ class LanceDatasetReader(BaseDatasetReader):
             unique_indices = sorted({index for indices in request_indices for index in indices})
             shape = self.meta.features[key].get("shape") or ()
             frame_values = int(np.prod(shape)) if shape else 0
-            value_bytes = np.dtype(np.uint8 if self.return_uint8 else np.float32).itemsize
+            # Normalization allocates float32 output while ``batch`` still owns the
+            # decoder's uint8 tensor, so both storages contribute to peak decode memory.
+            value_bytes = np.dtype(np.uint8).itemsize
+            if not self.return_uint8:
+                value_bytes += np.dtype(np.float32).itemsize
             byte_limited_frames = (
                 max(1, _RGB_DECODE_MAX_BYTES // (frame_values * value_bytes))
                 if frame_values
