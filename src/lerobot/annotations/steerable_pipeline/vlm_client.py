@@ -244,6 +244,14 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
 
     api_base = config.api_base
     api_key = config.api_key
+    if config.api_key_env:
+        api_key = os.environ.get(config.api_key_env, "")
+        if not api_key:
+            raise ValueError(f"Environment variable {config.api_key_env!r} is not set")
+    if config.api_mode not in {"chat_completions", "responses"}:
+        raise ValueError("api_mode must be chat_completions or responses")
+    if config.request_timeout_s <= 0 or config.request_max_retries < 0:
+        raise ValueError("Request timeout must be positive and retries non-negative")
     auto_serve = config.auto_serve
     api_bases: list[str] = [api_base]
 
@@ -267,7 +275,15 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
             api_bases = [api_base]
             print(f"[lerobot-annotate] server ready at {api_base}", flush=True)
 
-    clients = [OpenAI(base_url=base, api_key=api_key) for base in api_bases]
+    clients = [
+        OpenAI(
+            base_url=base,
+            api_key=api_key,
+            timeout=config.request_timeout_s,
+            max_retries=config.request_max_retries,
+        )
+        for base in api_bases
+    ]
     # round-robin counter for parallel mode
     rr_counter = {"i": 0}
 
@@ -298,6 +314,20 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
         with rr_lock:
             chosen = clients[rr_counter["i"] % len(clients)]
             rr_counter["i"] += 1
+        if config.api_mode == "responses":
+            response_kwargs = {
+                "model": config.model_id,
+                "input": _to_responses_input(api_messages),
+                "max_output_tokens": max_tok,
+                "text": {"format": {"type": "json_object"}},
+                "store": False,
+            }
+            if config.reasoning_effort:
+                response_kwargs["reasoning"] = {"effort": config.reasoning_effort}
+            response = chosen.responses.create(**response_kwargs)
+            if response.status != "completed" or not response.output_text:
+                raise ValueError(f"VLM response did not complete: {response.status}")
+            return response.output_text
         response = chosen.chat.completions.create(**kwargs)
         # Some OpenAI-compatible servers can return a choice with no message
         # (safety filter, or a "thinking" model that spends the whole budget
@@ -317,6 +347,27 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
             return [f.result() for f in futures]
 
     return _GenericTextClient(_gen, config)
+
+
+def _to_responses_input(messages: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Translate the shared client's text/image messages into Responses input."""
+    result = []
+    for message in messages:
+        content = message["content"]
+        if isinstance(content, str):
+            result.append({"role": message["role"], "content": content})
+            continue
+        blocks = []
+        for block in content:
+            if block["type"] == "text":
+                blocks.append({"type": "input_text", "text": block["text"]})
+            elif block["type"] == "image_url":
+                blocks.append({"type": "input_image", **block["image_url"]})
+                blocks[-1]["image_url"] = blocks[-1].pop("url")
+            else:
+                raise ValueError(f"Unsupported Responses content block: {block['type']}")
+        result.append({"role": message["role"], "content": blocks})
+    return result
 
 
 def _bind_serve_port(cmd: str, port: int) -> str:

@@ -39,3 +39,71 @@ def test_bind_serve_port_appends_when_missing() -> None:
 def test_bind_serve_port_leaves_explicit_port_untouched() -> None:
     cmd = "vllm serve M --port 9000"
     assert _bind_serve_port(cmd, 8000) == cmd
+
+
+def test_responses_client_uses_env_key_and_vision_without_chat_parameters(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from PIL import Image
+
+    from lerobot.annotations.steerable_pipeline.config import VlmConfig
+    from lerobot.annotations.steerable_pipeline.vlm_client import make_vlm_client
+
+    sdk = MagicMock()
+    sdk.return_value.responses.create.return_value = SimpleNamespace(
+        status="completed", output_text='{"answer":"ok"}'
+    )
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=sdk))
+    monkeypatch.setenv("TEST_VLM_KEY", "synthetic-key")
+    cfg = VlmConfig(
+        api_mode="responses",
+        api_key_env="TEST_VLM_KEY",
+        api_base="https://api.openai.com/v1",
+        auto_serve=False,
+        model_id="gpt-6.1-sol",
+        reasoning_effort="low",
+        request_timeout_s=20,
+        request_max_retries=0,
+    )
+    client = make_vlm_client(cfg)
+    result = client.generate_json(
+        [
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "JSON please"},
+                        {"type": "image", "image": Image.new("RGB", (4, 4))},
+                    ],
+                }
+            ]
+        ]
+    )
+    assert result == [{"answer": "ok"}]
+    sdk.assert_called_once_with(base_url=cfg.api_base, api_key="synthetic-key", timeout=20, max_retries=0)
+    request = sdk.return_value.responses.create.call_args.kwargs
+    assert request["input"][0]["content"][1]["type"] == "input_image"
+    assert request["input"][0]["content"][1]["image_url"].startswith("data:image/")
+    assert request["model"] == "gpt-6.1-sol"
+    assert request["reasoning"] == {"effort": "low"}
+    assert "temperature" not in request and "max_tokens" not in request and "extra_body" not in request
+    assert not request["store"]
+    assert cfg.api_key == "EMPTY"  # secret never copied into the logged dataclass
+
+
+def test_missing_env_key_fails_before_client_creation(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from lerobot.annotations.steerable_pipeline.config import VlmConfig
+    from lerobot.annotations.steerable_pipeline.vlm_client import make_vlm_client
+
+    sdk = MagicMock()
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=sdk))
+    monkeypatch.delenv("TEST_VLM_KEY", raising=False)
+    with pytest.raises(ValueError, match="TEST_VLM_KEY"):
+        make_vlm_client(VlmConfig(api_key_env="TEST_VLM_KEY", auto_serve=False))
+    sdk.assert_not_called()

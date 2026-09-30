@@ -29,6 +29,7 @@ from lerobot.robots.config import RobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
 
+from .hybrid import HybridConfig
 from .inference import InferenceEngineConfig, SyncInferenceConfig
 from .planner import PlannerConfig
 
@@ -292,6 +293,7 @@ class RolloutConfig:
     # Inference backend (polymorphic: --inference.type=sync|rtc)
     inference: InferenceEngineConfig = field(default_factory=SyncInferenceConfig)
     planner: PlannerConfig | None = None
+    hybrid: HybridConfig | None = None
 
     # Dataset (required, optional or rejected according to the strategy's ``dataset_mode``)
     dataset: DatasetRecordConfig | None = None
@@ -347,6 +349,13 @@ class RolloutConfig:
 
     def __post_init__(self):
         """Validate config invariants and load the policy config from ``--policy.path``."""
+        if self.hybrid is not None:
+            if self.planner is None or not self.hybrid.limits:
+                raise ValueError("Hybrid control requires a planner and explicit action limits")
+            if self.inference.type not in {"sync", "rtc"} or self.use_torch_compile:
+                raise ValueError("Hybrid control supports sync/RTC without torch.compile")
+            if self.strategy.type not in {"base", "sentry"}:
+                raise ValueError("Hybrid control supports base/sentry strategies")
         if self.interpolation_multiplier < 1:
             raise ValueError(f"interpolation_multiplier must be >= 1, got {self.interpolation_multiplier}")
 

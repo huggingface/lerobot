@@ -526,3 +526,55 @@ finally:
 ```
 
 See `examples/so100_to_so100_EE/rollout.py` and `examples/phone_to_so100/rollout.py` for full examples with kinematics processors.
+
+### Hybrid external planner (experimental)
+
+An opt-in hybrid supervisor lets the external VLM choose a policy subtask or a bounded absolute-position correction. It works with sync/RTC inference and the `base` or `sentry` strategy. It does not execute model-generated Python, end-effector commands, or inverse kinematics.
+
+Set `hybrid.limits` explicitly for **every** action key. The observation must expose those same keys as measured absolute positions, in the same physical units as robot actions after policy unnormalization. The action processor must preserve those units; relative/delta or torque action interfaces are unsuitable. Joint limits alone do not establish collision-free motion. Keep the hardware driver's existing interlocks enabled.
+
+For example, a two-axis robot might use:
+
+```bash
+lerobot-rollout ... --interactive=true --task="Put all colored cubes in the green bin." \
+    --planner.model_id=gpt-6.1-sol \
+    --planner.api_mode=responses \
+    --planner.api_base=https://api.openai.com/v1 \
+    --planner.api_key_env=OPENAI_API_KEY \
+    --planner.reasoning_effort=low \
+    --planner.max_new_tokens=2048 \
+    --planner.request_timeout_s=45 \
+    --planner.request_max_retries=0 \
+    --planner.history=2 \
+    --planner.log_path=outputs/planner.jsonl \
+    --planner.instructions='["Pick up the red block and place it in the green bin.","Pick up the blue block and place it in the green bin."]' \
+    --hybrid.policy_window_s=5 \
+    --hybrid.review_timeout_s=60 \
+    --hybrid.limits='{"joint.pos":{"minimum":-1,"maximum":1,"max_delta":0.05,"max_speed":0.1,"tolerance":0.02,"description":"Absolute joint angle in radians; verify its physical axis before allowing corrections."},"gripper.pos":{"minimum":0,"maximum":1,"max_delta":1,"max_speed":1,"tolerance":0.03,"description":"Measured opening: 0 closed, 1 open."}}'
+```
+
+Replace the example keys and limits with your robot's verified action contract. Set the API key in the launcher's environment, never in CLI flags or saved rollout configuration. The Responses client sends images and JSON requests without local-server chat-template parameters; `max_new_tokens` includes the reasoning budget. It rejects incomplete/refused responses. Standard OpenAI-compatible Chat Completions remains the default for other providers. For Hugging Face Inference Providers, use `planner.api_base=https://router.huggingface.co/v1`, `planner.api_key_env=HF_TOKEN`, and a provider-qualified model ID. The token needs **Make calls to Inference Providers** permission.
+
+`/start` begins with a review. The supervisor holds a measured pose while the request runs, then executes up to `hybrid.policy_window_s` seconds of VLA actions before reviewing again. This is **stop-and-review control**, not a concurrent high-frequency VLM. Actual review frequency is the policy window plus settling and API latency. `autosteer_interval_s` applies to ordinary planning; hybrid timing uses `hybrid.policy_window_s`.
+
+The VLM returns one JSON object:
+
+```json
+{
+  "mode": "intervention",
+  "scene": "The held block is above the bin; fingers remain closed.",
+  "reason": "Release the block, then inspect whether it landed inside.",
+  "instruction": "",
+  "targets": { "gripper.pos": 1.0 },
+  "duration_s": 1.0
+}
+```
+
+- `policy`: a non-empty `instruction`; empty `targets`, duration 0.
+- `intervention`: absolute targets for selected action keys and a positive bounded duration; empty instruction. Unmentioned axes hold their measured starting positions.
+- `hold`: stop the segment for operator input, retaining the held command until the controller handles stopping. Empty instruction/targets, duration 0.
+- `done`: normal completion; stop and, if `return_to_initial_position=true`, request the existing home routine. Empty instruction/targets, duration 0. A hardware fault can still prevent homing.
+
+The supervisor validates all targets before dispatch, limits each correction's range/delta/speed/duration, checks drift during review, and observes again after each correction. It discards queued and in-flight RTC actions at each handover. Reset, manual takeover, and a new goal invalidate pending replies, including `done`. A review timeout, invalid proposal, or missed target stops the segment; it never silently resumes the previous policy instruction. `/subtask` gives the operator control and cancels automatic reviews; `/autosteer <goal>` restores them.
+
+Raw replies and latency are written to `planner.log_path`. Accepted decisions appear in the interactive prompt. With `sentry`, hold, intervention, and policy actions are recorded at the base FPS, preserving configured command interpolation. No scoring or robot-specific calibration is included in this supervisor.

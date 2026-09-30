@@ -19,6 +19,8 @@ The prompt follows the in-context planner of *Steerable Vision-Language-Action P
 order, then the current images. The VLM replies with one JSON field.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import time
@@ -26,6 +28,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -39,6 +42,9 @@ from lerobot.processor import RenderRuntimeMessagesStep
 from lerobot.utils.constants import MESSAGES_RENDERED, QUERY_KIND, QUERY_TEXT
 
 from .inference import EXTERNAL_HISTORY_DEFAULT, PolicyQuery, QueryKind
+
+if TYPE_CHECKING:
+    from .hybrid import PlannerDecision
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +128,7 @@ class VlmPlanner:
         self.client = client or make_vlm_client(config)
         self._assessments: deque[dict] = deque(maxlen=config.history)
 
-    def __call__(self, obs_processed: dict, query: PolicyQuery, task: str) -> str:
+    def __call__(self, obs_processed: dict, query: PolicyQuery, task: str) -> str | PlannerDecision:
         started = time.perf_counter()
         messages = self.build_messages(obs_processed, query, task)
         try:
@@ -145,7 +151,7 @@ class VlmPlanner:
         started: float,
         *,
         reply: object,
-        returned: str | None,
+        returned: str | PlannerDecision | None,
         error: Exception | None,
     ) -> None:
         """Append the full exchange (request text, raw reply, latency) as one JSON line."""
@@ -232,7 +238,7 @@ class VlmPlanner:
                 blocks.append({"type": "image", "image": Image.fromarray(value)})
         return blocks
 
-    def parse_reply(self, reply: object, query: PolicyQuery, task: str) -> str:
+    def parse_reply(self, reply: object, query: PolicyQuery, task: str) -> str | PlannerDecision:
         """The reply field as text; a next-subtask reply of ``done`` holds the current instruction."""
         reply_field = REPLY_FIELD[query.kind]
         logger.info("Planner reply (%s): %r", query.kind.value, reply)

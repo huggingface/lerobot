@@ -361,6 +361,15 @@ class RTCInferenceEngine(InferenceEngine):
     # Action production (called from main thread)
     # ------------------------------------------------------------------
 
+    def discard_actions(self) -> None:
+        # Do not reset policy/processors from the control thread while inference owns them.
+        # The epoch also rejects a chunk which was already generating when paused.
+        with self._obs_lock:
+            self._reset_epoch += 1
+            self._obs_holder["obs"] = None
+            if self._action_queue is not None:
+                self._action_queue.clear()
+
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
         """Pop the next action from the RTC queue (ignores ``obs_frame``)."""
         if self.hold_for_planner():

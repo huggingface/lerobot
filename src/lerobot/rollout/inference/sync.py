@@ -83,6 +83,9 @@ class SyncInferenceEngine(InferenceEngine):
         # The policy was just reset, so a pending task change has nothing stale to flush.
         self._discard_task_change()
 
+    def discard_actions(self) -> None:
+        self._policy.drop_queued_actions()
+
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
         """Run the full inference pipeline on ``obs_frame`` and return an action tensor."""
         if obs_frame is None:

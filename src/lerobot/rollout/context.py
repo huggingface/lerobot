@@ -56,11 +56,13 @@ from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_fea
 from lerobot.utils.import_utils import _peft_available, require_package
 
 from .configs import RolloutConfig
+from .hybrid import HybridPlanner
 from .inference import (
     InferenceEngine,
     RTCInferenceConfig,
     create_inference_engine,
 )
+from .inference.hybrid import HybridInferenceEngine
 from .inference.rtc import supports_rtc_inference
 from .planner import VlmPlanner, training_vocabulary
 from .robot_wrapper import ThreadSafeRobot
@@ -617,7 +619,17 @@ def build_rollout_context(
                     "dataset — planner answers stay free-form",
                     exc_info=True,
                 )
-        inference_strategy.external_text = VlmPlanner(cfg.planner, robot_wrapper.robot_type, runtime_messages)
+        if cfg.hybrid is not None:
+            inference_strategy = HybridInferenceEngine(
+                inference_strategy, cfg.hybrid, ordered_action_keys, cfg.interpolation_multiplier
+            )
+            inference_strategy.external_text = HybridPlanner(
+                cfg.planner, robot_wrapper.robot_type, runtime_messages, hybrid=cfg.hybrid
+            )
+        else:
+            inference_strategy.external_text = VlmPlanner(
+                cfg.planner, robot_wrapper.robot_type, runtime_messages
+            )
         inference_strategy.external_history = deque(maxlen=cfg.planner.history)
 
     # --- 8. Assemble ---------------------------------------------------

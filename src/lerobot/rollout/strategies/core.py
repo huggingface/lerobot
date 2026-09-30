@@ -93,6 +93,10 @@ class RolloutStrategy(abc.ABC):
         """
         self._interpolator = ActionInterpolator(multiplier=ctx.runtime.cfg.interpolation_multiplier)
         self._engine = ctx.policy.inference
+        if self._engine.interpolates_actions is True:
+            if self._engine.control_interpolator is None:
+                raise ValueError("An interpolating engine must expose its control interpolator")
+            self._interpolator = self._engine.control_interpolator
         logger.info("Starting inference engine...")
         self.reset_control_state()
         self._engine.start()
@@ -410,14 +414,22 @@ def send_next_action(
     # ``timer.section`` verbatim when no timer was passed.
     section = timer.section if timer is not None else contextlib.nullcontext
 
-    if interpolator.needs_new_action():
+    if engine.interpolates_actions is True:
+        with section("infer"):
+            obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+            interp = engine.get_action(obs_frame)
+        if engine.terminal:
+            ctx.runtime.shutdown_event.set()
+            return None
+    elif interpolator.needs_new_action():
         with section("infer"):
             obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
             action_tensor = engine.get_action(obs_frame)
         if action_tensor is not None:
             interpolator.add(action_tensor.cpu())
 
-    interp = interpolator.get()
+    if engine.interpolates_actions is not True:
+        interp = interpolator.get()
     if interp is None:
         if timer is not None:
             timer.note_starved_tick()

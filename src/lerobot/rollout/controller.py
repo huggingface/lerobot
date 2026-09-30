@@ -452,6 +452,11 @@ class RolloutController:
     def _on_query_answer(self, answer: QueryAnswer) -> None:
         """Engine answer observer — runs on the serve thread (see ``__init__``)."""
         self._emit(RolloutEvent.QUERY_ANSWERED, answer)
+        if answer.completed:
+            if self._ctx.runtime.cfg.return_to_initial_position:
+                self.reset()
+            else:
+                self.stop()
 
     def _emit(self, event: RolloutEvent, payload: QueryAnswer | None = None) -> None:
         if self._on_event is None:
