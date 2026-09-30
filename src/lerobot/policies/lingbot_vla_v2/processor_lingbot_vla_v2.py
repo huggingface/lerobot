@@ -1037,11 +1037,17 @@ def make_lingbot_vla_v2_pre_post_processors_from_pretrained(
         },
     )
     tokenizer_path = config.tokenizer_path or config.tokenizer_path
+    # Derive camera names from input_features (the checkpoint's declared cameras) rather
+    # than canonical_cameras — same rule as ``make_lingbot_vla_v2_pre_post_processors``.
+    # Falls back to the checkpoint's saved value when input_features has no cameras.
+    image_cameras = [
+        key.replace(f"{OBS_IMAGES}.", "") for key in (config.input_features or {}) if key.startswith(f"{OBS_IMAGES}.")
+    ]
     _overrides(
         IMAGE_STEP,
         {
             "tokenizer_path": tokenizer_path,
-            "cameras": config.canonical_cameras,
+            "cameras": image_cameras or None,
             "resize_imgs_with_padding": tuple(config.resize_imgs_with_padding)
             if config.resize_imgs_with_padding
             else None,
