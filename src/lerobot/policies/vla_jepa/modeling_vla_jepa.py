@@ -355,6 +355,8 @@ class VLAJEPAModel(nn.Module):
         images: list[list[Tensor]],
         instructions: list[str],
         state: Tensor | None = None,
+        *,
+        noise: Tensor | None = None,
     ) -> Tensor:
         """Predict an action chunk. `images` is per-sample, per-view float [0,1] [C, H, W] tensors."""
         if self.config.resize_images_to is not None:
@@ -366,7 +368,7 @@ class VLAJEPAModel(nn.Module):
 
         embodied_action_tokens, _ = self._encode_qwen(images, instructions, need_action_tokens=False)
         return self.action_model.predict_action(
-            embodied_action_tokens.float(), state.float() if state is not None else None
+            embodied_action_tokens.float(), state.float() if state is not None else None, noise=noise
         )
 
 
@@ -504,12 +506,18 @@ class VLAJEPAPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
-        """LeRobot inference: convert → native predict → return as Tensor."""
+        """LeRobot inference: convert → native predict → return as Tensor.
+
+        `noise` is the starting sample of the flow, shaped `(batch_size, chunk_size, action_dim)`.
+        When it is None, it is drawn with `torch.randn`.
+        """
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
         inputs = self._prepare_model_inputs(batch, training=False)
-        actions = self.model.predict_action(inputs["images"], inputs["instructions"], inputs.get("state"))
+        actions = self.model.predict_action(
+            inputs["images"], inputs["instructions"], inputs.get("state"), noise=noise
+        )
         return actions.to(device=self.config.device, dtype=torch.float32)
 
     @torch.no_grad()
@@ -518,7 +526,7 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
         if len(self._queues[ACTION]) == 0:
-            actions = self.predict_action_chunk(batch)
+            actions = self.predict_action_chunk(batch, noise=noise)
             self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
         return self._queues[ACTION].popleft()
 

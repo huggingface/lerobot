@@ -327,15 +327,19 @@ class VLAJEPAActionHead(nn.Module):
         self,
         conditioning_tokens: torch.Tensor,
         state: torch.Tensor | None = None,
+        *,
+        noise: torch.Tensor | None = None,
     ) -> torch.Tensor:
         batch_size = conditioning_tokens.shape[0]
-        actions = torch.randn(
-            batch_size,
-            self.action_horizon,
-            self.config.action_dim,
-            dtype=conditioning_tokens.dtype,
-            device=conditioning_tokens.device,
-        )
+        if noise is None:
+            noise = torch.randn(
+                batch_size,
+                self.action_horizon,
+                self.config.action_dim,
+                dtype=conditioning_tokens.dtype,
+                device=conditioning_tokens.device,
+            )
+        actions = noise
         dt = 1.0 / max(self.num_inference_timesteps, 1)
         for step in range(self.num_inference_timesteps):
             t_cont = step / float(max(self.num_inference_timesteps, 1))
