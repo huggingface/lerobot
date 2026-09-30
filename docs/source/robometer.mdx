@@ -75,7 +75,7 @@ Older RoboMeter configurations may contain `reward_output` and `success_threshol
 
 ### Migrating from the scalar API
 
-````python
+```python
 import torch
 
 reward_model.eval()
@@ -89,12 +89,16 @@ reward = prediction.progress[:, -1]
 reward = (
     prediction.success_probability[:, -1] > success_threshold
 ).float()
+```
+
+Offline dataset scoring exposes both signals explicitly through the shared [offline scoring workflow](./reward_scoring). It does not read the compatibility-only `reward_output` field.
 
 ## Usage
 
 ### Load the Reward Model Directly
 
 ```python
+from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.rewards.robometer import RobometerConfig, RobometerRewardModel
 
 cfg = RobometerConfig(
@@ -102,31 +106,27 @@ cfg = RobometerConfig(
     device="cuda",
 )
 reward_model = RobometerRewardModel.from_pretrained(cfg.pretrained_path, config=cfg)
-````
+preprocessor, _ = make_reward_pre_post_processors(cfg)
+```
 
 ### Encode Frames and Compute a Reward
 
-For a direct Python call, provide frames as `uint8` arrays with shape `(T, H, W, C)` and a task string:
+For a direct Python call, provide frames with shape `(T, C, H, W)` and a task string:
 
 ```python
-from lerobot.rewards.robometer.modeling_robometer import ROBOMETER_FEATURE_PREFIX
-from lerobot.rewards.robometer.processor_robometer import RobometerEncoderProcessorStep
+from lerobot.lerobot_types import TransitionKey
 
-# frames: np.ndarray, shape (T, H, W, C), dtype uint8
+# frames: torch.Tensor, shape (T, C, H, W)
 # task: str
-encoder = RobometerEncoderProcessorStep(
-    base_model_id=cfg.base_model_id,
-    use_multi_image=cfg.use_multi_image,
-    use_per_frame_progress_token=cfg.use_per_frame_progress_token,
-    max_frames=cfg.max_frames,
-)
-
-encoded = encoder.encode_samples([(frames, task)])
-batch = {f"{ROBOMETER_FEATURE_PREFIX}{key}": value for key, value in encoded.items()}
+transition = {
+    TransitionKey.OBSERVATION: {cfg.image_key: frames},
+    TransitionKey.COMPLEMENTARY_DATA: {cfg.task_key: task},
+}
+encoded = preprocessor(transition)
 
 reward_model.eval()
 with torch.inference_mode():
-    prediction = reward_model.predict_progress(batch)
+    prediction = reward_model.predict_progress(encoded[TransitionKey.OBSERVATION])
 last_frame_progress = prediction.progress[:, -1]
 last_frame_success = prediction.success_probability[:, -1] > 0.5
 ```
@@ -151,6 +151,35 @@ preprocessor, postprocessor = make_reward_pre_post_processors(cfg)
 ```
 
 The preprocessor writes Qwen-VL tensors under the `observation.robometer.*` namespace, and `predict_progress()` reads those encoded tensors.
+
+### Score a LeRobot Dataset
+
+Install both dataset and ROBOMETER dependencies, then run:
+
+```bash
+pip install -e ".[dataset,robometer]"
+
+uv run lerobot-score \
+    --dataset_repo_id=lerobot/libero_10_image \
+    --reward_model_path=lerobot/Robometer-4B \
+    --device=cuda
+```
+
+The default dataset score, named `robometer`, contains:
+
+- `reward.robometer.progress`
+- `reward.robometer.success_probability`
+
+Both are dense float32 frame signals in `[0, 1]`. ROBOMETER's frame scorer uses the characterized fixed-prefix sampling rule, while the shared scoring workflow handles validation, atomic episode writes, resume, and deterministic merging.
+
+For RA-BC weighting, select the namespaced progress signal explicitly:
+
+```yaml
+sample_weighting:
+  type: rabc
+  score_name: robometer
+  signal_name: reward.robometer.progress
+```
 
 ## Configuration Notes
 

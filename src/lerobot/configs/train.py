@@ -94,13 +94,14 @@ def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None
     if migrated_config.get("sample_weighting") is None and use_rabc:
         sample_weighting: dict[str, Any] = {"type": "rabc"}
         if rabc_progress_path is not None:
-            sample_weighting["progress_path"] = rabc_progress_path
+            filename = str(rabc_progress_path).rstrip("/").rsplit("/", maxsplit=1)[-1]
+            sample_weighting["score_name"] = filename.removesuffix(".parquet")
         if rabc_kappa is not None:
             sample_weighting["kappa"] = rabc_kappa
         if rabc_epsilon is not None:
             sample_weighting["epsilon"] = rabc_epsilon
         if rabc_head_mode is not None:
-            sample_weighting["head_mode"] = rabc_head_mode
+            sample_weighting["signal_name"] = f"progress_{rabc_head_mode}"
         migrated_config["sample_weighting"] = sample_weighting
 
     return migrated_config

@@ -89,6 +89,8 @@
     title: WALL-OSS
   title: "Policies"
 - sections:
+  - local: reward_scoring
+    title: Offline Scoring
   - local: sarm
     title: SARM
   - local: robometer

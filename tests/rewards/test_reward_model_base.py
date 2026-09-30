@@ -77,6 +77,81 @@ def test_factory_unknown_raises():
         get_reward_model_class("nonexistent_reward_model")
 
 
+def test_make_frame_scorer_uses_reward_model_naming_convention(monkeypatch):
+    import lerobot.rewards.factory as reward_factory
+
+    class PluginConfig:
+        type = "plugin"
+
+    PluginConfig.__module__ = "example.configuration_plugin"
+    model = SimpleNamespace(config=PluginConfig())
+    expected = object()
+    captured = {}
+
+    def make_plugin_frame_scorer(*, model, **kwargs):
+        captured.update(model=model, kwargs=kwargs)
+        return expected
+
+    module = SimpleNamespace(make_plugin_frame_scorer=make_plugin_frame_scorer)
+    monkeypatch.setattr(reward_factory.importlib, "import_module", lambda name: module)
+
+    scorer = reward_factory.make_frame_scorer(model, batch_size=8)
+
+    assert scorer is expected
+    assert captured == {"model": model, "kwargs": {"batch_size": 8}}
+
+
+def test_make_frame_scorer_preserves_nested_import_errors(monkeypatch):
+    import lerobot.rewards.factory as reward_factory
+
+    class PluginConfig:
+        type = "plugin"
+
+    PluginConfig.__module__ = "example.configuration_plugin"
+    model = SimpleNamespace(config=PluginConfig())
+
+    def raise_missing_dependency(_module_path):
+        raise ModuleNotFoundError("No module named 'plugin_dependency'", name="plugin_dependency")
+
+    monkeypatch.setattr(reward_factory.importlib, "import_module", raise_missing_dependency)
+
+    with pytest.raises(ModuleNotFoundError, match="plugin_dependency"):
+        reward_factory.make_frame_scorer(model)
+
+
+def test_make_frame_scorer_reports_missing_scoring_module(monkeypatch):
+    import lerobot.rewards.factory as reward_factory
+
+    class PluginConfig:
+        type = "plugin"
+
+    PluginConfig.__module__ = "example.configuration_plugin"
+    model = SimpleNamespace(config=PluginConfig())
+    module_path = "example.scoring_plugin"
+
+    def raise_missing_module(_module_path):
+        raise ModuleNotFoundError(f"No module named {module_path!r}", name=module_path)
+
+    monkeypatch.setattr(reward_factory.importlib, "import_module", raise_missing_module)
+
+    with pytest.raises(ValueError, match="Frame scorer.*not implemented"):
+        reward_factory.make_frame_scorer(model)
+
+
+def test_make_frame_scorer_reports_missing_factory_function(monkeypatch):
+    import lerobot.rewards.factory as reward_factory
+
+    class PluginConfig:
+        type = "plugin"
+
+    PluginConfig.__module__ = "example.configuration_plugin"
+    model = SimpleNamespace(config=PluginConfig())
+    monkeypatch.setattr(reward_factory.importlib, "import_module", lambda name: SimpleNamespace())
+
+    with pytest.raises(ValueError, match="Frame scorer.*not implemented"):
+        reward_factory.make_frame_scorer(model)
+
+
 def test_pretrained_reward_model_has_no_universal_inference_method():
     assert not hasattr(PreTrainedRewardModel, "compute_reward")
 
@@ -278,10 +353,10 @@ def test_train_pipeline_config_from_pretrained_migrates_legacy_rabc_fields(tmp_p
 
     assert loaded.sample_weighting is not None
     assert loaded.sample_weighting.type == "rabc"
-    assert loaded.sample_weighting.progress_path == "hf://datasets/user/repo/sarm_progress.parquet"
+    assert loaded.sample_weighting.score_name == "sarm_progress"
+    assert loaded.sample_weighting.signal_name == "progress_dense"
     assert loaded.sample_weighting.kappa == 0.05
     assert loaded.sample_weighting.epsilon == 1e-5
-    assert loaded.sample_weighting.head_mode == "dense"
 
 
 def test_train_pipeline_config_from_pretrained_strips_legacy_rabc_when_disabled(tmp_path):
@@ -465,6 +540,17 @@ def test_publish_trained_model_uploads_expected_reward_files(monkeypatch, _offli
     assert TRAIN_CONFIG_NAME in all_files  # train_config.json (bundle commit)
     assert "README.md" in all_files  # reward-specific card (bundle commit)
     assert any(name.endswith(".safetensors") for name in all_files)  # weights (model commit)
+
+
+def test_from_pretrained_records_loaded_checkpoint(tmp_path):
+    """Score provenance relies on the config naming the checkpoint actually loaded."""
+    model, _ = _make_dummy_reward_model(pretrained_path="some/other-model")
+    model.save_pretrained(tmp_path)
+
+    loaded = _DummyHubReward.from_pretrained(tmp_path)
+
+    assert loaded.config.pretrained_path == str(tmp_path)
+    assert loaded.config.pretrained_revision is None
 
 
 def test_save_pretrained_writes_nothing_off_main_rank(tmp_path, monkeypatch):

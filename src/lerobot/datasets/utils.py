@@ -96,6 +96,7 @@ STATS_PATH = "meta/stats.json"
 EPISODES_DIR = "meta/episodes"
 DATA_DIR = "data"
 VIDEO_DIR = "videos"
+SCORES_DIR = "reward_signals"
 
 CHUNK_FILE_PATTERN = "chunk-{chunk_index:03d}/file-{file_index:03d}"
 IMAGE_FILE_PATTERN = "frame-{frame_index:06d}.png"

@@ -16,7 +16,7 @@
 
 import importlib
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 
@@ -28,6 +28,9 @@ from .pretrained import PreTrainedRewardModel
 from .robometer.configuration_robometer import RobometerConfig
 from .sarm.configuration_sarm import SARMConfig
 from .topreward.configuration_topreward import TOPRewardConfig
+
+if TYPE_CHECKING:
+    from lerobot.datasets.scores import FrameScorer
 
 
 def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:
@@ -134,6 +137,31 @@ def make_reward_model(cfg: RewardModelConfig, **kwargs) -> PreTrainedRewardModel
         raise TypeError(f"Expected a torch.nn.Module, got {type(reward_model).__name__}")
 
     return reward_model
+
+
+def make_frame_scorer(model: PreTrainedRewardModel, **kwargs: Any) -> "FrameScorer":
+    """
+    Create the standard offline frame scorer for a reward model.
+
+    The scorer is built by the ``make_<type>_frame_scorer`` function of the model's
+    ``scoring_<type>`` module, found next to its configuration module.
+
+    Args:
+        model: The reward model the scorer will run.
+        **kwargs: Scorer options forwarded to the model-specific factory
+            (e.g., ``batch_size``).
+
+    Returns:
+        A frame scorer that can be passed to ``LeRobotDataset.add_score()``.
+
+    Raises:
+        ValueError: If no frame scorer is implemented for the model's type.
+    """
+    return _make_frame_scorer_from_reward_model_config(
+        config=model.config,
+        model=model,
+        **kwargs,
+    )
 
 
 def make_reward_pre_post_processors(
@@ -268,3 +296,41 @@ def _make_processors_from_reward_model_config(
     module = importlib.import_module(module_path)
     function = getattr(module, function_name)
     return function(config, dataset_stats=dataset_stats)
+
+
+def _make_frame_scorer_from_reward_model_config(
+    config: RewardModelConfig,
+    model: PreTrainedRewardModel,
+    **kwargs: Any,
+) -> "FrameScorer":
+    """Create a frame scorer from a reward model configuration using dynamic imports.
+
+    This is used as a helper function to import frame-scorer factories from built-in
+    reward models and 3rd party lerobot reward model plugins.
+
+    Args:
+        config: The reward model configuration object.
+        model: The reward model the scorer will run.
+        **kwargs: Scorer options forwarded to the factory.
+
+    Returns:
+        The frame scorer returned by ``make_<type>_frame_scorer``.
+
+    Raises:
+        ValueError: If the scoring module or its factory function does not exist.
+    """
+    function_name = f"make_{config.type}_frame_scorer"
+    module_path = config.__class__.__module__.replace("configuration_", "scoring_")
+    not_implemented = f"Frame scorer for reward model type '{config.type}' is not implemented."
+    try:
+        module = importlib.import_module(module_path)
+    except ModuleNotFoundError as exc:
+        # A dependency missing inside the scoring module is the real cause; keep it.
+        if exc.name != module_path:
+            raise
+        raise ValueError(not_implemented) from exc
+
+    function = getattr(module, function_name, None)
+    if function is None:
+        raise ValueError(not_implemented)
+    return function(model=model, **kwargs)

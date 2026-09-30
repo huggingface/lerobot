@@ -27,7 +27,6 @@ from torch import Tensor
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
-    AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
@@ -115,7 +114,7 @@ class RobometerEncoderProcessorStep(ProcessorStep):
 
     At call time the step reads:
 
-    - ``observation[image_key]``: ``(B, T, C, H, W)`` or ``(B, C, H, W)`` frames.
+    - ``observation[image_key]``: ``(B, T, C, H, W)`` or ``(T, C, H, W)`` frames.
     - ``complementary_data[task_key]``: a string or list of strings.
 
     and writes ``observation[f"{ROBOMETER_FEATURE_PREFIX}<name>"]`` for:
@@ -172,10 +171,10 @@ class RobometerEncoderProcessorStep(ProcessorStep):
         frames = observation[self.image_key]
         tensor = frames.detach().cpu() if isinstance(frames, Tensor) else torch.as_tensor(frames)
         if tensor.ndim == 4:
-            tensor = tensor.unsqueeze(1)
+            tensor = tensor.unsqueeze(0)
         elif tensor.ndim != 5:
             raise ValueError(
-                f"Expected Robometer frames with shape (B,C,H,W) or (B,T,C,H,W); got {tuple(tensor.shape)}"
+                f"Expected Robometer frames with shape (T,C,H,W) or (B,T,C,H,W); got {tuple(tensor.shape)}"
             )
 
         batch_size = tensor.shape[0]
@@ -308,22 +307,19 @@ def make_robometer_pre_post_processors(
 ]:
     """Pipeline that pre-encodes frames + task into Qwen-VL tensors.
 
-    The preprocessor adds a batch dimension if needed, runs Robometer's
-    encoder, and moves everything to the configured device. The
-    postprocessor is the identity because ``predict_progress`` returns its
-    typed tensor result directly.
+    The encoder accepts one trajectory or an existing trajectory batch and
+    moves the encoded model inputs to the configured device.
     """
     del dataset_stats  # Robometer has its own normalisation inside the Qwen-VL processor.
 
     preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
         steps=[
-            AddBatchDimensionProcessorStep(),
             RobometerEncoderProcessorStep(
                 base_model_id=config.base_model_id,
                 image_key=config.image_key,
                 task_key=config.task_key,
                 default_task=config.default_task,
-                max_frames=config.max_frames,
+                max_frames=None,
                 use_multi_image=config.use_multi_image,
                 use_per_frame_progress_token=config.use_per_frame_progress_token,
             ),

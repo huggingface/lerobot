@@ -18,12 +18,11 @@
 
 from unittest.mock import Mock
 
+import datasets
 import pytest
-
-pytest.importorskip("pandas", reason="pandas is required (install lerobot[dataset])")
-
 import torch
 
+from lerobot.datasets import SignalDescriptor
 from lerobot.utils.sample_weighting import (
     SampleWeighter,
     SampleWeightingConfig,
@@ -36,22 +35,39 @@ from lerobot.utils.sample_weighting import (
 # =============================================================================
 
 
-@pytest.fixture
-def sample_progress_parquet(tmp_path):
-    """Create a sample progress parquet file for testing."""
-    import pandas as pd
+class FakeScoreDataset:
+    def __init__(self, scores: datasets.Dataset, descriptors) -> None:
+        self.scores = scores
+        self.descriptors = descriptors
+        self.read_names: list[str] = []
 
-    # Create sample progress data for 2 episodes with 10 frames each
-    data = {
-        "index": list(range(20)),
-        "episode_index": [0] * 10 + [1] * 10,
-        "frame_index": list(range(10)) * 2,
-        "progress_sparse": [i / 10.0 for i in range(10)] * 2,
-    }
-    df = pd.DataFrame(data)
-    parquet_path = tmp_path / "sarm_progress.parquet"
-    df.to_parquet(parquet_path)
-    return parquet_path
+    def read_score(self, name: str) -> datasets.Dataset:
+        self.read_names.append(name)
+        return self.scores
+
+    def get_score_descriptors(self, name: str):
+        assert name in self.read_names
+        return self.descriptors
+
+
+@pytest.fixture
+def sample_score_dataset():
+    return FakeScoreDataset(
+        datasets.Dataset.from_dict(
+            {
+                "index": list(range(20)),
+                "episode_index": [0] * 10 + [1] * 10,
+                "frame_index": list(range(10)) * 2,
+                "progress_sparse": [i / 10.0 for i in range(10)] * 2,
+            }
+        ),
+        {
+            "progress_sparse": SignalDescriptor(
+                description="Legacy sparse progress.",
+                direction="higher",
+            )
+        },
+    )
 
 
 # =============================================================================
@@ -63,8 +79,8 @@ def test_config_default_values():
     """Test default configuration values."""
     config = SampleWeightingConfig()
     assert config.type == "rabc"
-    assert config.progress_path is None
-    assert config.head_mode == "sparse"
+    assert config.score_name is None
+    assert config.signal_name is None
     assert config.kappa == 0.01
     assert config.epsilon == 1e-6
     assert config.extra_params == {}
@@ -74,15 +90,15 @@ def test_config_custom_values():
     """Test configuration with custom values."""
     config = SampleWeightingConfig(
         type="rabc",
-        progress_path="/path/to/progress.parquet",
-        head_mode="dense",
+        score_name="robometer",
+        signal_name="reward.robometer.progress",
         kappa=0.05,
         epsilon=1e-8,
         extra_params={"fallback_weight": 0.5},
     )
     assert config.type == "rabc"
-    assert config.progress_path == "/path/to/progress.parquet"
-    assert config.head_mode == "dense"
+    assert config.score_name == "robometer"
+    assert config.signal_name == "reward.robometer.progress"
     assert config.kappa == 0.05
     assert config.epsilon == 1e-8
     assert config.extra_params == {"fallback_weight": 0.5}
@@ -223,7 +239,8 @@ def test_factory_rabc_requires_chunk_size():
     """Test that RABC weighter requires chunk_size in policy config."""
     config = SampleWeightingConfig(
         type="rabc",
-        progress_path="/path/to/progress.parquet",
+        score_name="sarm",
+        signal_name="progress_sparse",
     )
     policy = Mock()
     policy.config = Mock()
@@ -234,72 +251,34 @@ def test_factory_rabc_requires_chunk_size():
         make_sample_weighter(config, policy, device)
 
 
-def test_factory_rabc_requires_progress_path_or_dataset_info():
-    """Test that RABC weighter requires progress_path or dataset info for auto-detection."""
+def test_factory_rabc_requires_dataset_score_api():
     config = SampleWeightingConfig(
         type="rabc",
-        progress_path=None,  # No progress path
+        score_name="sarm",
+        signal_name="progress_sparse",
     )
     policy = Mock()
     policy.config = Mock()
     policy.config.chunk_size = 50
     device = torch.device("cpu")
 
-    # Should fail when no progress_path AND no dataset info
-    with pytest.raises(ValueError, match="progress_path"):
+    with pytest.raises(ValueError, match="can read scores.*got NoneType"):
         make_sample_weighter(config, policy, device)
 
 
-def test_factory_rabc_auto_detects_from_dataset_root(sample_progress_parquet):
-    """Test that RABC weighter auto-detects progress_path from dataset_root."""
-    config = SampleWeightingConfig(
-        type="rabc",
-        progress_path=None,  # Not provided, should auto-detect
-    )
+def test_factory_rabc_requires_score_and_signal_names(sample_score_dataset):
+    config = SampleWeightingConfig(type="rabc")
     policy = Mock()
     policy.config = Mock()
     policy.config.chunk_size = 5
-    device = torch.device("cpu")
 
-    # The parquet file is at sample_progress_parquet, get its parent directory
-    dataset_root = sample_progress_parquet.parent
-    weighter = make_sample_weighter(
-        config,
-        policy,
-        device,
-        dataset_root=str(dataset_root),
-    )
-
-    assert weighter is not None
-    from lerobot.rewards.sarm.rabc import RABCWeights
-
-    assert isinstance(weighter, RABCWeights)
-
-
-def test_factory_rabc_auto_detects_from_repo_id():
-    """Test that RABC weighter constructs HF path from repo_id."""
-    config = SampleWeightingConfig(
-        type="rabc",
-        progress_path=None,  # Not provided, should auto-detect
-    )
-    policy = Mock()
-    policy.config = Mock()
-    policy.config.chunk_size = 50
-    device = torch.device("cpu")
-
-    # This will construct the path but fail when trying to load (file doesn't exist)
-    # We just verify it doesn't raise the "progress_path required" error
-    with pytest.raises(Exception) as exc_info:
+    with pytest.raises(ValueError, match="score_name.*signal_name"):
         make_sample_weighter(
             config,
             policy,
-            device,
-            dataset_repo_id="test-user/test-dataset",
+            torch.device("cpu"),
+            dataset=sample_score_dataset,
         )
-    # Should NOT be the "progress_path required" error - it should try to load the file
-    assert (
-        "progress_path" not in str(exc_info.value).lower() or "auto-detection" in str(exc_info.value).lower()
-    )
 
 
 # =============================================================================
@@ -307,26 +286,28 @@ def test_factory_rabc_auto_detects_from_repo_id():
 # =============================================================================
 
 
-def test_rabc_weights_is_sample_weighter(sample_progress_parquet):
+def test_rabc_weights_is_sample_weighter(sample_score_dataset):
     """Test that RABCWeights inherits from SampleWeighter."""
     from lerobot.rewards.sarm.rabc import RABCWeights
 
     weighter = RABCWeights(
-        progress_path=sample_progress_parquet,
+        dataset=sample_score_dataset,
+        score_name="sarm",
+        signal_name="progress_sparse",
         chunk_size=5,
-        head_mode="sparse",
     )
     assert isinstance(weighter, SampleWeighter)
 
 
-def test_rabc_compute_batch_weights(sample_progress_parquet):
+def test_rabc_compute_batch_weights(sample_score_dataset):
     """Test RABCWeights.compute_batch_weights returns correct structure."""
     from lerobot.rewards.sarm.rabc import RABCWeights
 
     weighter = RABCWeights(
-        progress_path=sample_progress_parquet,
+        dataset=sample_score_dataset,
+        score_name="sarm",
+        signal_name="progress_sparse",
         chunk_size=5,
-        head_mode="sparse",
         device=torch.device("cpu"),
     )
 
@@ -339,14 +320,15 @@ def test_rabc_compute_batch_weights(sample_progress_parquet):
     assert "mean_weight" in stats
 
 
-def test_rabc_get_stats(sample_progress_parquet):
+def test_rabc_get_stats(sample_score_dataset):
     """Test RABCWeights.get_stats returns expected structure."""
     from lerobot.rewards.sarm.rabc import RABCWeights
 
     weighter = RABCWeights(
-        progress_path=sample_progress_parquet,
+        dataset=sample_score_dataset,
+        score_name="sarm",
+        signal_name="progress_sparse",
         chunk_size=5,
-        head_mode="sparse",
     )
 
     stats = weighter.get_stats()
@@ -355,20 +337,77 @@ def test_rabc_get_stats(sample_progress_parquet):
     assert "num_frames" in stats
     assert "chunk_size" in stats
     assert stats["chunk_size"] == 5
-    assert "head_mode" in stats
-    assert stats["head_mode"] == "sparse"
+    assert stats["score_name"] == "sarm"
     assert "delta_mean" in stats
     assert "delta_std" in stats
 
 
-def test_factory_creates_rabc_weighter(sample_progress_parquet):
+def test_rabc_accepts_namespaced_signal():
+    """Shared scoring sidecars can select a progress signal explicitly."""
+    from lerobot.rewards.sarm.rabc import RABCWeights
+
+    scores = datasets.Dataset.from_dict(
+        {
+            "index": [0, 1],
+            "episode_index": [0, 0],
+            "frame_index": [0, 1],
+            "reward.robometer.progress": [0.0, 1.0],
+        }
+    )
+    dataset = FakeScoreDataset(
+        scores,
+        {
+            "reward.robometer.progress": SignalDescriptor(
+                description="RoboMeter progress.", direction="higher"
+            )
+        },
+    )
+    weighter = RABCWeights(
+        dataset=dataset,
+        score_name="robometer",
+        signal_name="reward.robometer.progress",
+        chunk_size=1,
+        device=torch.device("cpu"),
+    )
+
+    assert weighter.progress_column == "reward.robometer.progress"
+    assert weighter.get_stats()["signal_name"] == "reward.robometer.progress"
+
+
+def test_rabc_rejects_lower_is_better_signal():
+    from lerobot.rewards.sarm.rabc import RABCWeights
+
+    signal_name = "reward.example.remaining_time_s"
+    scores = datasets.Dataset.from_dict(
+        {
+            "index": [0, 1],
+            "episode_index": [0, 0],
+            "frame_index": [0, 1],
+            signal_name: [2.0, 1.0],
+        }
+    )
+
+    dataset = FakeScoreDataset(
+        scores,
+        {signal_name: SignalDescriptor(description="Predicted remaining time.", direction="lower")},
+    )
+    with pytest.raises(ValueError, match="higher values indicate better progress"):
+        RABCWeights(
+            dataset=dataset,
+            score_name="remaining-time",
+            signal_name=signal_name,
+            chunk_size=1,
+        )
+
+
+def test_factory_creates_rabc_weighter(sample_score_dataset):
     """Test factory creates RABCWeights with valid config."""
     from lerobot.rewards.sarm.rabc import RABCWeights
 
     config = SampleWeightingConfig(
         type="rabc",
-        progress_path=str(sample_progress_parquet),
-        head_mode="sparse",
+        score_name="sarm",
+        signal_name="progress_sparse",
         kappa=0.01,
     )
     policy = Mock()
@@ -376,20 +415,40 @@ def test_factory_creates_rabc_weighter(sample_progress_parquet):
     policy.config.chunk_size = 5
     device = torch.device("cpu")
 
-    weighter = make_sample_weighter(config, policy, device)
+    weighter = make_sample_weighter(config, policy, device, dataset=sample_score_dataset)
 
     assert isinstance(weighter, RABCWeights)
     assert isinstance(weighter, SampleWeighter)
+    assert weighter.progress_column == "progress_sparse"
 
 
-def test_rabc_weights_normalization(sample_progress_parquet):
+def test_factory_rejects_signal_name_in_extra_params(sample_score_dataset):
+    config = SampleWeightingConfig(
+        score_name="sarm",
+        signal_name="progress_sparse",
+        extra_params={"signal_name": "progress_sparse"},
+    )
+    policy = Mock()
+    policy.config.chunk_size = 5
+
+    with pytest.raises(TypeError, match="signal_name"):
+        make_sample_weighter(
+            config,
+            policy,
+            torch.device("cpu"),
+            dataset=sample_score_dataset,
+        )
+
+
+def test_rabc_weights_normalization(sample_score_dataset):
     """Test that RABCWeights normalizes weights to sum to batch_size."""
     from lerobot.rewards.sarm.rabc import RABCWeights
 
     weighter = RABCWeights(
-        progress_path=sample_progress_parquet,
+        dataset=sample_score_dataset,
+        score_name="sarm",
+        signal_name="progress_sparse",
         chunk_size=5,
-        head_mode="sparse",
         device=torch.device("cpu"),
     )
 

@@ -1,0 +1,102 @@
+# Offline Reward-Model Scoring
+
+LeRobot's offline scoring workflow runs a reward model over dataset episodes and writes frame-aligned signals to a versioned Parquet sidecar. A sidecar is a separate file that joins back to source frames through `(episode_index, frame_index)`. The optional `index` column is a convenient source-global index for unchanged datasets. The source dataset is not modified, and filtering remains a downstream decision.
+
+```text
+  LeRobotDataset                  reward model
+        │                              │
+        └──────────────┬───────────────┘
+                       ▼
+             ┌───────────────────┐
+             │ model-specific    │
+             │ frame scorer      │
+             └─────────┬─────────┘
+                       │ FrameSignals for one episode
+                       ▼
+             ┌───────────────────┐
+             │ LeRobotDataset    │
+             │ add_score()       │
+             └─────────┬─────────┘
+                       │
+                       ▼
+             ┌───────────────────┐
+             │ dataset-owned     │
+             │ score storage     │
+             └─────────┬─────────┘
+                       │
+                       ▼
+       annotation / filtering / weighting / evaluation
+```
+
+The model-specific scorer owns sampling, preprocessing, and conversion from native predictions to `FrameSignals`. `LeRobotDataset` selects episodes, validates signals, and owns sidecar persistence, resume, reading, and discovery.
+
+## Score a Dataset
+
+The scoring command currently supports RoboMeter:
+
+```bash
+uv run lerobot-score \
+    --dataset_repo_id=lerobot/libero_10_image \
+    --dataset_root=/path/to/local/dataset \
+    --reward_model_path=lerobot/Robometer-4B \
+    --device=cuda
+```
+
+By default, the score is named `robometer`. Use `--name=robometer-4b` to keep results from a specific model or configuration and `--episodes='[0,1]'` to select episodes.
+
+Scoring requires a writable local LeRobot dataset root. Pass `--dataset_root=/path/to/dataset` when the dataset is not already materialized locally.
+
+Pass `--push_to_hub=true` to upload the completed score to the dataset repository. The dataset API owns its Hub location and local staging data.
+
+For an immutable run, pass commit hashes through `--dataset_revision` and `--reward_model_revision`. The requested revisions are stored in provenance and must match when resuming.
+
+The command is resumable by default. A retry skips completed episodes only when the dataset revision, model revision, scorer options, episode selection, and schema are unchanged. Completed parts are combined into the final score in episode order, with one Parquet row group per episode. Published scores are immutable; choose another name or pass `--overwrite=true` to replace one atomically.
+
+## Python API
+
+```python
+from lerobot.datasets import LeRobotDataset
+from lerobot.rewards.robometer import RobometerRewardModel
+from lerobot.rewards.robometer.scoring_robometer import make_robometer_frame_scorer
+
+dataset = LeRobotDataset("user/my_dataset")
+model = RobometerRewardModel.from_pretrained("lerobot/Robometer-4B")
+scorer = make_robometer_frame_scorer(model)
+
+dataset.add_score(
+    scorer,
+    name="robometer-4b",
+    episodes=[0, 1],
+)
+
+scores = dataset.read_score("robometer-4b")
+print(scores.column_names)
+print(scores[0]["reward.robometer.progress"])
+
+descriptors = dataset.get_score_descriptors("robometer-4b")
+provenance = dataset.get_score_provenance("robometer-4b")
+available = dataset.list_scores()
+```
+
+Applications that load reward models dynamically can use `lerobot.rewards.make_frame_scorer()` instead. The CLI and both programmatic factories follow the same path: construct a model-specific frame scorer, then call `dataset.add_score()`.
+
+A scorer returns one `FrameSignals` object per episode. Frame indices may be dense or sparse, but must be episode-local, unique, strictly increasing, and aligned with one-dimensional numeric signal arrays.
+
+## Output Contract
+
+Every new sidecar contains:
+
+- `index`, `episode_index`, and `frame_index` identity columns;
+- namespaced signal columns such as `reward.robometer.progress`;
+- semantic descriptors: a description, optimization direction, optional unit and bounds, plus whether NaN is allowed;
+- provenance for the dataset, model, scorer options, and LeRobot version.
+
+`bounds` describes the signal's theoretical or semantic range, not the minimum and maximum observed in one run. The first storage version validates structure and alignment; descriptor bounds and `allow_nan` remain metadata for consumers.
+
+`read_score()` returns a Hugging Face `datasets.Dataset`. The dataset-owned storage component keeps Arrow, Parquet, and filesystem paths private. Descriptors and provenance are encoded once in storage metadata rather than repeated on every frame row.
+
+The reader also recognizes older LeRobot `progress_sparse` and `progress_dense` Parquet sidecars. It preserves their column names and attaches explicit legacy provenance rather than pretending they were produced by the new schema.
+
+## Scope
+
+Offline scoring is for annotation, inspection, filtering, and later relabeling. It is not used inside the environment control loop. Online RL will call the same native model APIs through a transition-time consumer, without Parquet IO or sidecar merging.
