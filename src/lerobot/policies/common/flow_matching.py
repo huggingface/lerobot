@@ -25,7 +25,7 @@ not affect checkpoints.
 
 import enum
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import torch
 from torch import Tensor
@@ -163,7 +163,13 @@ def euler_integrate(
     uniform_dt = (-1.0 if noise_at_one else 1.0) / num_steps
 
     def velocity(x_t: Tensor, time_tensor: Tensor, step: int) -> Tensor:
-        return denoise_fn(x_t, time_tensor, step) if step_aware else denoise_fn(x_t, time_tensor)
+        if step_aware:
+            return cast(Callable[[Tensor, Tensor, int], Tensor], denoise_fn)(x_t, time_tensor, step)
+        return cast(Callable[[Tensor, Tensor], Tensor], denoise_fn)(x_t, time_tensor)
+
+    guidance = rtc_processor if rtc_enabled else None
+    if rtc_enabled and guidance is None:
+        raise ValueError("rtc_processor is required when rtc_enabled is True")
 
     x_t = noise
     for step in range(num_steps):
@@ -174,7 +180,6 @@ def euler_integrate(
         else:
             # Slice the grid rather than reading it back: `float(time_grid[step])` would
             # synchronise with the accelerator once per step.
-            time = None
             dt = time_grid[step + 1] - time_grid[step]
             time_tensor = time_grid[step].to(dtype=torch.float32, device=device).expand(bsize)
 
@@ -185,21 +190,25 @@ def euler_integrate(
             time_tensor = time_tensor[:, None].expand(bsize, x_t.shape[1]).clone()
             time_tensor[hard_prefix_mask[..., 0]] = clean_time
 
-        def denoise_step_partial_call(input_x_t, current_timestep=time_tensor, current_step=step):
+        def denoise_step_partial_call(
+            input_x_t: Tensor, current_timestep: Tensor = time_tensor, current_step: int = step
+        ) -> Tensor:
             return velocity(input_x_t, current_timestep, current_step)
 
-        def flipped_denoise_step_partial_call(input_x_t, current_timestep=time_tensor, current_step=step):
+        def flipped_denoise_step_partial_call(
+            input_x_t: Tensor, current_timestep: Tensor = time_tensor, current_step: int = step
+        ) -> Tensor:
             return -velocity(input_x_t, current_timestep, current_step)
 
         needs_rtc_time = rtc_enabled or (rtc_processor is not None and rtc_processor.is_debug_enabled())
         if needs_rtc_time:
             # RTCProcessor takes a plain float in the NOISE_AT_ONE convention. On the explicit-grid
             # path this is the one place the schedule has to come back to the host.
-            host_time = time if time is not None else float(time_grid[step])
+            host_time = time if time_grid is None else float(time_grid[step])
             rtc_time = host_time if noise_at_one else 1.0 - host_time
 
-        if rtc_enabled:
-            v_t = rtc_processor.denoise_step(
+        if guidance is not None:
+            v_t = guidance.denoise_step(
                 x_t=x_t,
                 prev_chunk_left_over=prev_chunk_left_over,
                 inference_delay=inference_delay,

@@ -39,7 +39,8 @@ from lerobot.common.control_utils import (
     teleop_supports_feedback,
 )
 from lerobot.configs import parser
-from lerobot.datasets import VideoEncodingManager
+from lerobot.datasets import LeRobotDataset, VideoEncodingManager
+from lerobot.teleoperators import Teleoperator
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
@@ -50,6 +51,7 @@ from lerobot.utils.visualization_utils import log_visualization_data
 
 from ..configs import EpisodicStrategyConfig
 from ..context import RolloutContext
+from ..robot_wrapper import ThreadSafeRobot
 from .core import RolloutStrategy, safe_push_to_hub, send_next_action
 
 logger = logging.getLogger(__name__)
@@ -80,16 +82,16 @@ class EpisodicStrategy(RolloutStrategy):
     def __init__(self, config: EpisodicStrategyConfig) -> None:
         super().__init__(config)
         self._listener = None
-        self._events: dict | None = None
+        self._events: dict[str, bool] | None = None
 
     def setup(self, ctx: RolloutContext) -> None:
         """Start the inference engine and attach the keyboard listener."""
         self._init_engine(ctx)
         cfg = ctx.runtime.cfg
-        dataset_cfg = cfg.dataset  # never None: dataset_mode="required"
         # --duration caps a single episode, not the whole session (the session ends
         # after --dataset.num_episodes episodes).
         if cfg.duration > 0:
+            dataset_cfg = self._require_dataset_cfg(cfg)
             if parser.parse_arg("dataset.episode_time_s") is not None:
                 logger.warning(
                     "Both --duration and --dataset.episode_time_s are set for the episodic strategy; "
@@ -104,12 +106,16 @@ class EpisodicStrategy(RolloutStrategy):
 
     def run(self, ctx: RolloutContext) -> None:
         """Main multi-episode recording loop."""
+        engine = self._require_engine()
+        interpolator = self._require_interpolator()
+        events = self._events
+        if events is None:
+            raise RuntimeError(f"{type(self).__name__}: keyboard events not attached; call setup() first")
         cfg = ctx.runtime.cfg
-        dataset_cfg = cfg.dataset
+        dataset_cfg = self._require_dataset_cfg(cfg)
         robot = ctx.hardware.robot_wrapper
         teleop = ctx.hardware.teleop
-        dataset = ctx.data.dataset
-        events = self._events
+        dataset = self._require_dataset(ctx.data)
         features = ctx.data.dataset_features
 
         fps = cfg.fps
@@ -127,7 +133,7 @@ class EpisodicStrategy(RolloutStrategy):
 
         # One timer for the whole session: episodes get their own cadence line, and
         # the run summary averages across them without the untimed reset phases.
-        timer = CycleTimer(fps, self._interpolator.multiplier)
+        timer = CycleTimer(fps, interpolator.multiplier)
 
         with VideoEncodingManager(dataset):
             try:
@@ -137,13 +143,13 @@ class EpisodicStrategy(RolloutStrategy):
                         break
 
                     # Reset policy state at episode start (discard leftover hidden state / queue)
-                    self._engine.reset()
-                    self._interpolator.reset()
+                    engine.reset()
+                    interpolator.reset()
                     # A reset interpolator re-primes over two consecutive inference
                     # ticks, exactly like loop start-up, so exempt the group that
                     # spans them instead of reporting a healthy episode as slow.
                     timer.restart()
-                    self._engine.resume()
+                    engine.resume()
 
                     log_say(f"Recording episode {dataset.num_episodes}", play_sounds)
                     self._policy_loop(
@@ -233,12 +239,12 @@ class EpisodicStrategy(RolloutStrategy):
     def _policy_loop(
         self,
         ctx: RolloutContext,
-        robot,
-        events: dict,
-        features: dict,
+        robot: ThreadSafeRobot,
+        events: dict[str, bool],
+        features: dict[str, dict],
         timer: CycleTimer,
         control_time_s: float,
-        dataset,
+        dataset: LeRobotDataset,
         single_task: str,
     ) -> None:
         """Policy-driven recording loop for a single episode.
@@ -246,7 +252,7 @@ class EpisodicStrategy(RolloutStrategy):
         *timer* is owned by :meth:`run` and shared across episodes so its run
         summary spans the session; the caller re-arms it between episodes.
         """
-        interpolator = self._interpolator
+        interpolator = self._require_interpolator()
 
         timestamp = 0.0
         start_t = time.perf_counter()
@@ -289,9 +295,9 @@ class EpisodicStrategy(RolloutStrategy):
     def _reset_loop(
         self,
         ctx: RolloutContext,
-        robot,
-        teleop,
-        events: dict,
+        robot: ThreadSafeRobot,
+        teleop: Teleoperator | None,
+        events: dict[str, bool],
         fps: float,
         control_time_s: float,
         display_data: bool,

@@ -356,9 +356,10 @@ class AlternateVLDiT(DiT):
         hidden_attention_mask: torch.Tensor | None = None,
         encoder_attention_mask: torch.Tensor | None = None,
         return_all_hidden_states: bool = False,
+        hidden_positional_embeddings: torch.Tensor | None = None,
+        *,
         image_mask: torch.Tensor | None = None,
         vlm_mask: torch.Tensor | None = None,  # [B, S], True=VLM tokens
-        hidden_positional_embeddings: torch.Tensor | None = None,
     ):
         if image_mask is None or vlm_mask is None:
             raise ValueError("AlternateVLDiT requires image_mask and vlm_mask.")

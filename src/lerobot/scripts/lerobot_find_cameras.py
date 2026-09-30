@@ -36,7 +36,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from lerobot.cameras import ColorMode
+from lerobot.cameras import Camera, ColorMode
 from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 from lerobot.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
 from lerobot.utils.utils import init_logging
@@ -155,9 +155,13 @@ def create_camera_instance(cam_meta: dict[str, Any], *, warmup_s: int = 1) -> di
     """Create and connect to a camera instance based on metadata."""
     cam_type = cam_meta.get("type")
     cam_id = cam_meta.get("id")
-    instance = None
+    instance: Camera | None = None
 
     logger.info(f"Preparing {cam_type} ID {cam_id} with default profile")
+
+    if cam_id is None:
+        logger.warning(f"Camera metadata of type {cam_type} has no 'id'. Skipping.")
+        return None
 
     try:
         if cam_type == "OpenCV":
@@ -178,10 +182,9 @@ def create_camera_instance(cam_meta: dict[str, Any], *, warmup_s: int = 1) -> di
             logger.warning(f"Unknown camera type: {cam_type} for ID {cam_id}. Skipping.")
             return None
 
-        if instance:
-            logger.info(f"Connecting to {cam_type} camera: {cam_id}...")
-            instance.connect(warmup=True)
-            return {"instance": instance, "meta": cam_meta}
+        logger.info(f"Connecting to {cam_type} camera: {cam_id}...")
+        instance.connect(warmup=True)
+        return {"instance": instance, "meta": cam_meta}
     except Exception as e:
         logger.error(f"Failed to connect or configure {cam_type} camera {cam_id}: {e}")
         if instance and instance.is_connected:

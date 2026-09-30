@@ -70,7 +70,7 @@ def _natten_attention_kwargs(q: Tensor, k: Tensor, v: Tensor) -> dict:
                 backend = "flex-fna"  # universal fallback, no compiled kernels needed
         logger.info("natten backend (%dD tokens): %s", q.ndim - 3, backend)
         _natten_backends[q.ndim] = backend
-    kwargs = {"backend": backend}
+    kwargs: dict[str, str | bool] = {"backend": backend}
     if backend in _PERSISTENT_KERNEL_BACKENDS:
         kwargs["run_persistent_kernel"] = True
     return kwargs
@@ -250,7 +250,7 @@ class TemporalExpansion(nn.Module):
     def __init__(self, dim: int, out_dim: int | None = None, avg_skip: bool = True):
         super().__init__()
         self.dim = dim
-        self.out_dim = out_dim
+        self.out_dim = dim if out_dim is None else out_dim
         self.norm = _norm_layer(dim)
         self.expansion = nn.Linear(dim, 2 * self.out_dim, bias=False)
         self.avg_skip = avg_skip

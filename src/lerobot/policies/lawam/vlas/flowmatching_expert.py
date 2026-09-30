@@ -10,6 +10,7 @@
 
 import math
 from dataclasses import dataclass
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -181,7 +182,7 @@ class ConditionalFlowMatchingHead(nn.Module):
         self.enc_vlm = VectorMLP(in_dim=self.config.vlm_dim, hidden_dim=self.config.vision_dim)
         # self.enc_a_p_to_a = VectorMLP(in_dim=2 * self.config.hidden_dim, hidden_dim=self.config.hidden_dim)
         if self.config.use_state:
-            self.enc_state = MultiEmbodimentActionEncoder(
+            self.enc_state: MultiEmbodimentActionEncoder | None = MultiEmbodimentActionEncoder(
                 action_dim=self.config.state_dim,
                 hidden_size=self.config.hidden_dim,
                 num_embodiments=self.config.num_embodiments,
@@ -211,7 +212,7 @@ class ConditionalFlowMatchingHead(nn.Module):
         # cross_attention_dim must be set so condition tokens are consumed by cross-attention blocks.
         dit_class = AlternateVLDiT if self.config.use_alternate_vldit else DiT
 
-        dit_kwargs = {
+        dit_kwargs: dict[str, Any] = {
             "num_attention_heads": self.config.attention_heads,
             "attention_head_dim": int(self.config.hidden_dim // self.config.attention_heads),
             "output_dim": self.config.hidden_dim,

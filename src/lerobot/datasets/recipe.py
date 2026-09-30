@@ -153,7 +153,7 @@ class TrainingRecipe:
     @classmethod
     def from_yaml(cls, path: str | Path) -> TrainingRecipe:
         """Load a :class:`TrainingRecipe` from a YAML file at ``path``."""
-        import yaml  # type: ignore[import-untyped]
+        import yaml
 
         with open(path) as f:
             data = yaml.safe_load(f)

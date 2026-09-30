@@ -59,7 +59,7 @@ class LeKiwiHost:
 
 
 @draccus.wrap()
-def main(cfg: LeKiwiServerConfig):
+def main(cfg: LeKiwiServerConfig) -> None:
     logging.info("Configuring LeKiwi")
     robot = LeKiwi(cfg.robot)
 
@@ -75,7 +75,7 @@ def main(cfg: LeKiwiServerConfig):
     try:
         # Business logic
         start = time.perf_counter()
-        duration = 0
+        duration = 0.0
         while duration < host.connection_time_s:
             loop_start_time = time.time()
             try:
