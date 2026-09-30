@@ -38,9 +38,9 @@ Usage:
         --push-to-hub \
         --branch main
 
-Note: This script now uses the modern `make_pre_post_processors` and `make_policy_config`
-factory functions from `lerobot.policies.factory` to create processors and configurations,
-ensuring consistency with the current codebase.
+Note: This script now uses the modern `make_pre_post_processors` factory function and the
+canonical `PreTrainedConfig.from_pretrained` parsing path to create processors and
+configurations, ensuring consistency with the current codebase.
 
 The script extracts normalization statistics from the old model's state_dict, creates clean
 processor pipelines using the factory functions, and saves a migrated model that is compatible
@@ -57,8 +57,8 @@ import torch
 from huggingface_hub import HfApi, hf_hub_download
 from safetensors.torch import load_file as load_safetensors
 
-from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.policies import get_policy_class, make_policy_config, make_pre_post_processors
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.policies import get_policy_class, make_pre_post_processors
 from lerobot.utils.constants import ACTION
 
 
@@ -362,39 +362,6 @@ def load_state_dict_with_missing_key_handling(
     return problematic_missing_keys
 
 
-def convert_features_to_policy_features(features_dict: dict[str, dict]) -> dict[str, PolicyFeature]:
-    """
-    Converts a feature dictionary from the old config format to the new `PolicyFeature` format.
-
-    Args:
-        features_dict: The feature dictionary in the old format, where values are
-                       simple dictionaries (e.g., `{"shape": [7]}`).
-
-    Returns:
-        A dictionary mapping feature names to `PolicyFeature` dataclass objects.
-    """
-    converted_features = {}
-
-    for key, feature_dict in features_dict.items():
-        # Determine feature type based on key
-        if "image" in key or "visual" in key:
-            feature_type = FeatureType.VISUAL
-        elif "state" in key:
-            feature_type = FeatureType.STATE
-        elif ACTION in key:
-            feature_type = FeatureType.ACTION
-        else:
-            feature_type = FeatureType.STATE
-
-        # Get shape from feature dict
-        shape = feature_dict.get("shape", feature_dict.get("dim"))
-        shape = (shape,) if isinstance(shape, int) else tuple(shape) if shape is not None else ()
-
-        converted_features[key] = PolicyFeature(feature_type, shape)
-
-    return converted_features
-
-
 def display_migration_summary_with_warnings(problematic_missing_keys: list[str]) -> None:
     """
     Display final migration summary with warnings about problematic missing keys.
@@ -563,32 +530,21 @@ def main():
     policy_type = config["type"]
     print(f"Detected policy type: {policy_type}")
 
-    # Clean up config - remove fields that shouldn't be passed to config constructor
-    cleaned_config = dict(config)
-
-    # Remove fields that are not part of the config class constructors
-    fields_to_remove = ["normalization_mapping", "type"]
-    for field in fields_to_remove:
-        if field in cleaned_config:
-            print(f"Removing '{field}' field from config")
-            del cleaned_config[field]
-
-    # Convert input_features and output_features to PolicyFeature objects if they exist
-    if "input_features" in cleaned_config:
-        cleaned_config["input_features"] = convert_features_to_policy_features(
-            cleaned_config["input_features"]
-        )
-    if "output_features" in cleaned_config:
-        cleaned_config["output_features"] = convert_features_to_policy_features(
-            cleaned_config["output_features"]
-        )
-
-    # Add normalization mapping to config
-    cleaned_config["normalization_mapping"] = norm_map
-
-    # Create policy configuration using the factory
+    # Parse the serialized config through the canonical `PreTrainedConfig.from_pretrained`
+    # path so JSON-native values land in their declared field types (e.g. `crop_shape` as a
+    # tuple from a JSON list). Passing raw JSON values straight into the config constructor
+    # leaves them unconverted, which later crashes draccus.encode inside `save_pretrained`:
+    # config.json is truncated to 0 bytes and model.safetensors is never written (#4649).
     print(f"Creating {policy_type} policy configuration...")
-    policy_config = make_policy_config(policy_type, **cleaned_config)
+    policy_config = PreTrainedConfig.from_pretrained(args.pretrained_path, revision=args.revision)
+
+    # The old in-model normalization layers move into the pre/post-processors; recompute the
+    # mapping from the extracted stats (configs that don't carry a serialized mapping still
+    # need one) and override whatever the parsed config holds, using plain str keys to match
+    # the field's declared type.
+    policy_config.normalization_mapping = {
+        feature_type.value: mode for feature_type, mode in norm_map.items()
+    }
 
     # Create policy instance using the factory
     print(f"Instantiating {policy_type} policy...")
