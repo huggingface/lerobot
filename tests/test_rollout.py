@@ -319,6 +319,7 @@ def test_build_rollout_context_uses_resolved_device(
     def make_processors(
         *, policy_cfg: ACTConfig, preprocessor_overrides: dict[str, dict[str, str]], **kwargs: object
     ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
+        assert not robot.is_connected
         assert policy_cfg.device == preprocessor_overrides["device_processor"]["device"]
         processor = PolicyProcessorPipeline(
             steps=[DeviceProcessorStep(device=policy_cfg.device)],
@@ -1532,3 +1533,63 @@ def test_sync_engine_without_a_relative_step_binds_nothing():
     policy.config.use_amp = False
     assert bind_relative_anchor(policy, MagicMock(steps=[])) is None
     _build_sync_engine(policy, MagicMock(steps=[]), MagicMock())  # must not raise
+
+
+@pytest.mark.parametrize("failure_stage", [None, "processors", "engine", "observation"])
+def test_rollout_initializes_processors_and_engine_before_hardware(monkeypatch, failure_stage):
+    import lerobot.rollout.context as module
+    from lerobot.policies.act.configuration_act import ACTConfig
+    from lerobot.processor import PolicyProcessorPipeline
+    from lerobot.rollout import RolloutConfig
+    from tests.mocks.mock_robot import MockRobot, MockRobotConfig
+
+    robot_config = MockRobotConfig(random_values=False, static_values=[0.0] * 3)
+    robot = MockRobot(robot_config)
+    policy_config = ACTConfig(device="cpu", pretrained_path=Path("unused-checkpoint"))
+    cfg = RolloutConfig(robot=robot_config, policy=policy_config, device="cpu")
+    calls = []
+    original_connect = robot.connect
+    original_observation = robot.get_observation
+
+    def observation():
+        if failure_stage == "observation":
+            raise RuntimeError("observation setup failed")
+        return original_observation()
+
+    def connect():
+        calls.append("connect")
+        original_connect()
+
+    def processors(**kwargs):
+        assert not robot.is_connected
+        calls.append("processors")
+        if failure_stage == "processors":
+            raise RuntimeError("processor setup failed")
+        return PolicyProcessorPipeline(steps=[]), PolicyProcessorPipeline(steps=[])
+
+    def engine(*args, **kwargs):
+        assert not robot.is_connected
+        calls.append("engine")
+        if failure_stage == "engine":
+            raise RuntimeError("engine setup failed")
+        return MagicMock()
+
+    monkeypatch.setattr(module, "_load_pretrained_policy", lambda _: torch.nn.Linear(3, 3))
+    monkeypatch.setattr(module, "make_robot_from_config", lambda _: robot)
+    monkeypatch.setattr(module, "make_pre_post_processors", processors)
+    monkeypatch.setattr(module, "create_inference_engine", engine)
+    monkeypatch.setattr(robot, "connect", connect)
+    monkeypatch.setattr(robot, "get_observation", observation)
+    try:
+        if failure_stage:
+            with pytest.raises(RuntimeError, match="setup failed"):
+                module.build_rollout_context(cfg, threading.Event())
+            assert ("connect" in calls) == (failure_stage == "observation")
+            assert not robot.is_connected
+        else:
+            ctx = module.build_rollout_context(cfg, threading.Event())
+            assert calls == ["processors", "engine", "connect"]
+            assert ctx.hardware.initial_position == {f"motor_{i}.pos": 0.0 for i in range(1, 4)}
+    finally:
+        if robot.is_connected:
+            robot.disconnect()

@@ -385,45 +385,13 @@ def build_rollout_context(
         robot_action_processor = robot_action_processor or _r
         robot_observation_processor = robot_observation_processor or _o
 
-    # --- 3. Hardware (heaviest side-effect, deferred) -----------------
+    # --- 3. Hardware descriptions only (no connection yet) ----------
     robot_config = cfg.robot
     if robot_config is None:
         raise ValueError("--robot.type is required for rollout")
-    logger.info("Connecting robot (%s)...", robot_config.type)
     robot = make_robot_from_config(robot_config)
     robot.validate_policy_config(policy_config)
-    robot.connect()
-    logger.info("Robot connected: %s", robot.name)
-
-    # Store the initial joint positions so we can return to a safe pose on shutdown.
-    initial_obs = robot.get_observation()
-    initial_position = {k: v for k, v in initial_obs.items() if k.endswith(".pos")}
-    logger.info("Captured initial robot position (%d keys)", len(initial_position))
-
     robot_wrapper = ThreadSafeRobot(robot)
-
-    teleop = None
-    if cfg.teleop is not None:
-        logger.info("Connecting teleoperator (%s)...", cfg.teleop.type)
-        teleop = make_teleoperator_from_config(cfg.teleop)
-        teleop.connect()
-        logger.info("Teleoperator connected")
-
-    # TODO(Steven): once Teleoperator motor-control methods are standardised
-    # (``enable_torque`` / ``disable_torque`` / ``write_goal_positions``), gate
-    # the DAgger strategy on their presence here and fail fast with a helpful
-    # message instead of relying on the operator to pre-align the leader by
-    # hand.  See :func:`DAggerStrategy._apply_transition` for the matching
-    # disabled call sites.
-    # if isinstance(cfg.strategy, DAggerStrategyConfig) and teleop is not None:
-    #     required_teleop_methods = ("enable_torque", "disable_torque", "write_goal_positions")
-    #     missing = [m for m in required_teleop_methods if not callable(getattr(teleop, m, None))]
-    #     if missing:
-    #         teleop.disconnect()
-    #         raise ValueError(
-    #             f"DAgger strategy requires a teleoperator with motor control methods "
-    #             f"{required_teleop_methods}. '{type(teleop).__name__}' is missing: {missing}"
-    #         )
 
     # --- 4. Features + action-key reconciliation ---------------------
     # TODO(Steven):Only ``.pos`` joint features are routed to the policy as state and as the
@@ -594,7 +562,55 @@ def build_rollout_context(
         shutdown_event=shutdown_event,
     )
 
-    # --- 8. Assemble ---------------------------------------------------
+    # --- 8. Connect only after all model/processor/engine setup -------
+    # Tokenizer/processor loading can hold the GIL for hundreds of milliseconds.
+    # Starting a threaded motor servo before it finishes can trip both the
+    # software feedback deadline and the motor's communication watchdog.
+    teleop = None
+    try:
+        logger.info("Connecting robot (%s)...", robot_config.type)
+        robot.connect()
+        logger.info("Robot connected: %s", robot.name)
+
+        # Store the initial joint positions so we can return to a safe pose on shutdown.
+        initial_obs = robot.get_observation()
+        initial_position = {k: v for k, v in initial_obs.items() if k.endswith(".pos")}
+        logger.info("Captured initial robot position (%d keys)", len(initial_position))
+
+        if cfg.teleop is not None:
+            logger.info("Connecting teleoperator (%s)...", cfg.teleop.type)
+            teleop = make_teleoperator_from_config(cfg.teleop)
+            teleop.connect()
+            logger.info("Teleoperator connected")
+
+    except BaseException:
+        # No context exists yet for strategy teardown to own. In particular,
+        # an initial-observation failure must not leave a servo running.
+        for device in (teleop, robot):
+            if device is not None and device.is_connected:
+                try:
+                    device.disconnect()
+                except Exception:
+                    logger.exception("Failed to disconnect hardware after rollout setup failed")
+        raise
+
+    # TODO(Steven): once Teleoperator motor-control methods are standardised
+    # (``enable_torque`` / ``disable_torque`` / ``write_goal_positions``), gate
+    # the DAgger strategy on their presence here and fail fast with a helpful
+    # message instead of relying on the operator to pre-align the leader by
+    # hand.  See :func:`DAggerStrategy._apply_transition` for the matching
+    # disabled call sites.
+    # if isinstance(cfg.strategy, DAggerStrategyConfig) and teleop is not None:
+    #     required_teleop_methods = ("enable_torque", "disable_torque", "write_goal_positions")
+    #     missing = [m for m in required_teleop_methods if not callable(getattr(teleop, m, None))]
+    #     if missing:
+    #         teleop.disconnect()
+    #         raise ValueError(
+    #             f"DAgger strategy requires a teleoperator with motor control methods "
+    #             f"{required_teleop_methods}. '{type(teleop).__name__}' is missing: {missing}"
+    #         )
+
+    # --- 9. Assemble ---------------------------------------------------
     logger.info("Rollout context assembled successfully")
     return RolloutContext(
         runtime=RuntimeContext(cfg=cfg, shutdown_event=shutdown_event),
