@@ -31,6 +31,7 @@ from lerobot.processor import ActionTokenizerProcessorStep, DataProcessorPipelin
 from lerobot.processor.converters import create_transition, identity_transition
 from lerobot.utils.constants import (
     ACTION,
+    ACTION_CODE_TOKEN_MASK,
     ACTION_TOKEN_MASK,
     ACTION_TOKENS,
     OBS_IMAGE,
@@ -1605,7 +1606,7 @@ def test_action_tokenizer_padding_shapes_and_mask(mock_auto_tokenizer):
     )
     action = torch.zeros(1, 7)  # single sample, (1, action_dim)
 
-    tokens, mask = step._tokenize_action(action)
+    tokens, mask, code_mask = step._tokenize_action(action)
 
     # prefix [bos, "Action: "] + 3 transformed action tokens + suffix ["|"] = 7 real tokens
     # transformed: vocab_size - 1 - fast_skip_tokens - raw = 1000 - 1 - 128 - {5,6,7} = {866,865,864}
@@ -1618,6 +1619,10 @@ def test_action_tokenizer_padding_shapes_and_mask(mock_auto_tokenizer):
     assert not mask[0, 7:].any()
     assert tokens.dtype == torch.long
     assert mask.dtype == torch.bool
+    # code mask selects only the 3 action-code positions (3-5): no BOS, prompt, suffix or padding
+    assert code_mask.shape == (1, 10)
+    assert code_mask.dtype == torch.bool
+    assert code_mask[0].nonzero().flatten().tolist() == [3, 4, 5]
 
 
 @skip_if_package_missing("transformers")
@@ -1632,7 +1637,7 @@ def test_action_tokenizer_truncation(mock_auto_tokenizer):
     )
     action = torch.zeros(1, 7)
 
-    tokens, mask = step._tokenize_action(action)
+    tokens, mask, code_mask = step._tokenize_action(action)
 
     # Full sequence would be 7 tokens (see padding test); truncated to first 5.
     expected = torch.tensor([1, 10, 11, 866, 865], dtype=torch.long)
@@ -1640,6 +1645,9 @@ def test_action_tokenizer_truncation(mock_auto_tokenizer):
     assert torch.equal(tokens[0], expected)
     assert mask.shape == (1, 5)
     assert mask.all()
+    # only the action-code positions that survive truncation (3-4) remain selected
+    assert code_mask.shape == (1, 5)
+    assert code_mask[0].nonzero().flatten().tolist() == [3, 4]
 
 
 @skip_if_package_missing("transformers")
@@ -1654,7 +1662,7 @@ def test_action_tokenizer_batch(mock_auto_tokenizer):
     )
     action = torch.zeros(4, 7)  # batch_size=4
 
-    tokens, mask = step._tokenize_action(action)
+    tokens, mask, code_mask = step._tokenize_action(action)
 
     assert tokens.shape == (4, 10)
     assert mask.shape == (4, 10)
@@ -1663,6 +1671,7 @@ def test_action_tokenizer_batch(mock_auto_tokenizer):
         assert torch.equal(tokens[i, :7], expected_real)
         assert mask[i, :7].all()
         assert not mask[i, 7:].any()
+        assert code_mask[i].nonzero().flatten().tolist() == [3, 4, 5]
 
 
 @skip_if_package_missing("transformers")
@@ -1677,7 +1686,7 @@ def test_action_tokenizer_single_sample_no_batch_dim(mock_auto_tokenizer):
     )
     action = torch.zeros(7)  # (action_dim,), single_sample path
 
-    tokens, mask = step._tokenize_action(action)
+    tokens, mask, code_mask = step._tokenize_action(action)
 
     assert tokens.shape == (10,)
     assert mask.shape == (10,)
@@ -1685,6 +1694,8 @@ def test_action_tokenizer_single_sample_no_batch_dim(mock_auto_tokenizer):
     assert torch.equal(tokens[:7], expected_real)
     assert mask[:7].all()
     assert not mask[7:].any()
+    assert code_mask.shape == (10,)
+    assert code_mask.nonzero().flatten().tolist() == [3, 4, 5]
 
 
 @skip_if_package_missing("transformers")
@@ -1699,11 +1710,12 @@ def test_action_tokenizer_accepts_tensor_output(mock_auto_tokenizer):
     )
     action = torch.zeros(1, 7)
 
-    tokens, mask = step._tokenize_action(action)
+    tokens, mask, code_mask = step._tokenize_action(action)
 
     expected_real = torch.tensor([1, 10, 11, 866, 865, 864, 99], dtype=torch.long)
     assert torch.equal(tokens[0, :7], expected_real)
     assert mask[0, :7].all()
+    assert code_mask[0].nonzero().flatten().tolist() == [3, 4, 5]
 
 
 @skip_if_package_missing("transformers")
@@ -1718,11 +1730,12 @@ def test_action_tokenizer_flattens_multidim_tensor_output(mock_auto_tokenizer):
     )
     action = torch.zeros(1, 7)
 
-    tokens, mask = step._tokenize_action(action)
+    tokens, mask, code_mask = step._tokenize_action(action)
 
     expected_real = torch.tensor([1, 10, 11, 866, 865, 864, 99], dtype=torch.long)
     assert torch.equal(tokens[0, :7], expected_real)
     assert mask[0, :7].all()
+    assert code_mask[0].nonzero().flatten().tolist() == [3, 4, 5]
 
 
 @skip_if_package_missing("transformers")
@@ -1759,6 +1772,9 @@ def test_action_tokenizer_call_stores_tokens_and_mask_in_complementary_data(mock
     assert ACTION_TOKEN_MASK in complementary_data
     assert complementary_data[ACTION_TOKENS].shape == (1, 10)
     assert complementary_data[ACTION_TOKEN_MASK].shape == (1, 10)
+    assert ACTION_CODE_TOKEN_MASK in complementary_data
+    assert complementary_data[ACTION_CODE_TOKEN_MASK].shape == (1, 10)
+    assert complementary_data[ACTION_CODE_TOKEN_MASK][0].nonzero().flatten().tolist() == [3, 4, 5]
 
 
 @skip_if_package_missing("transformers")
