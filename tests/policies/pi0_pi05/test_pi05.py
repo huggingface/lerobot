@@ -190,3 +190,13 @@ def test_default_peft_targets_match_model_module_names():
     # pi0-style names do not exist in PI05Pytorch and must not be targeted.
     for module in ("model.action_time_mlp_in", "model.action_time_mlp_out"):
         assert not pattern.fullmatch(module), f"PEFT target regex should not match {module}"
+
+
+def test_predict_action_chunk_takes_noise_as_keyword():
+    import inspect
+
+    signature = inspect.signature(PI05Policy.predict_action_chunk)
+
+    assert signature.parameters["noise"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert signature.parameters["noise"].default is None
+    signature.bind(object(), {}, noise=torch.zeros(1), inference_delay=2, prev_chunk_left_over=None)
