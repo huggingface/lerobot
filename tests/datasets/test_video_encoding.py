@@ -17,6 +17,7 @@
 """Unit tests for ``lerobot.datasets.video_utils`` encoding functions and ``lerobot.configs.video.VideoEncoderConfig`` config class."""
 
 import json
+from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
@@ -392,6 +393,28 @@ class TestGetVideoInfo:
         assert "video.g" not in info
         assert "video.crf" not in info
         assert "video.preset" not in info
+
+    @require_h264
+    def test_fractional_frame_rate_is_not_truncated(self, tmp_path):
+        """A 30000/1001 stream is 29.97 fps. int(base_rate) used to report 29."""
+        path = tmp_path / "ntsc.mp4"
+        rate = Fraction(30000, 1001)
+        with av.open(str(path), "w") as container:
+            stream = container.add_stream("h264", rate=rate)
+            stream.width = 16
+            stream.height = 16
+            stream.pix_fmt = "yuv420p"
+            for i in range(3):
+                frame = av.VideoFrame(16, 16, "yuv420p")
+                frame.pts = i
+                for packet in stream.encode(frame):
+                    container.mux(packet)
+            for packet in stream.encode():
+                container.mux(packet)
+
+        info = get_video_info(path)
+        assert info["video.fps"] != 29
+        assert abs(info["video.fps"] - float(rate)) < 1e-6
 
     @require_libsvtav1
     def test_merges_encoder_config_as_video_prefixed_entries(self):
