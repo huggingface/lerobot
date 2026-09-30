@@ -413,3 +413,54 @@ validation/materialization when introducing new columns, preserve native data, a
 review a small sample before scaling. Keep model/prompt semantics in the annotation
 module and scheduling, storage and retries in the engine. Run `lerobot-annotate --help`
 for the complete option list.
+
+## Human demonstration videos (`--human_video.*`)
+
+The optional `human_video` module turns every subtask into a short video of a person doing it, the
+"HumanGen" data of [Zero-WAM](https://robbyant-research.github.io/Zero-WAM/): policies such as
+Zero-WAM take such videos as in-context task prompts. For each subtask segment:
+
+1. the VLM reads frames of the robot segment and writes the human task and an image-edit prompt;
+2. an image-editing model turns the segment's first frame into a first-person view with the robot
+   removed and two human hands at rest;
+3. the VLM writes a step-by-step video prompt from the edited frame and the robot frames;
+4. an image-to-video model animates the edited frame.
+
+Steps 2 and 4 run on [Inference Providers](https://huggingface.co/docs/inference-providers) and are
+billed to the account of your Hugging Face token. The defaults are
+[Qwen-Image-Edit-2509](https://huggingface.co/Qwen/Qwen-Image-Edit-2509) and
+[MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3) at 480p on fal. The module reads the
+subtasks from the `plan` module, or from the dataset's `language_persistent` column when `plan` is
+off, so an already annotated dataset only needs:
+
+```bash
+lerobot-annotate \
+    --repo_id=user/my_annotated_dataset \
+    --plan.enabled=false --interjections.enabled=false --vqa.enabled=false \
+    --human_video.enabled=true \
+    --vlm.api_base=https://router.huggingface.co/v1 --vlm.auto_serve=false \
+    --vlm.model_id=Qwen/Qwen3.8-27B:novita --vlm.api_key=$HF_TOKEN \
+    --vlm.chat_template_kwargs='{"enable_thinking": false}'
+```
+
+Videos are written to `human_videos/episode_XXXXXX/segment_XXX.mp4` (with the edited first frame
+next to each) and indexed in `meta/human_videos.jsonl`: one line per segment with the subtask, its
+start and end time, the human task, the prompts, the models and the file paths. They are not
+written to the language columns. A failed request is recorded with `"status": "failed"` and does not
+stop the run.
+
+| Flag                                     | Default                     | What it does                                                   |
+| ---------------------------------------- | --------------------------- | -------------------------------------------------------------- |
+| `--human_video.provider`                 | `fal-ai`                    | Inference provider for editing and video generation.           |
+| `--human_video.edit_model`               | `Qwen/Qwen-Image-Edit-2509` | Image-editing model; `null` animates the unedited robot frame. |
+| `--human_video.edit_guidance_scale`      | `1.5`                       | Edit guidance; higher values oversaturate on fal.              |
+| `--human_video.video_model`              | `MiniMaxAI/MiniMax-H3`      | Image-to-video model.                                          |
+| `--human_video.resolution`               | `480P`                      | Provider resolution (`480P`, `768P`, `1080P` for MiniMax H3).  |
+| `--human_video.duration_s`               | `5`                         | Video length in seconds.                                       |
+| `--human_video.camera_key`               | `--vlm.camera_key`          | Camera to edit and animate.                                    |
+| `--human_video.frame_offset_s`           | `0.0`                       | Take the first frame this long after the subtask starts.       |
+| `--human_video.max_segments_per_episode` | all                         | Cap on videos per episode.                                     |
+| `--human_video.max_concurrency`          | `4`                         | Concurrent provider requests per episode.                      |
+
+Generated videos can drop, duplicate or change objects. Review them before training on them, for
+example by filtering with a VLM as Zero-WAM does.

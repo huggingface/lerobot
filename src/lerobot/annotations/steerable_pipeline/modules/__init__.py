@@ -15,11 +15,14 @@
 # limitations under the License.
 
 from .general_vqa import GeneralVqaModule
+from .human_video import HumanVideoModule, InferenceProvidersGenerator
 from .interjections_and_speech import InterjectionsAndSpeechModule
 from .plan_subtasks_memory import PlanSubtasksMemoryModule
 
 __all__ = [
     "GeneralVqaModule",
+    "HumanVideoModule",
+    "InferenceProvidersGenerator",
     "InterjectionsAndSpeechModule",
     "PlanSubtasksMemoryModule",
 ]

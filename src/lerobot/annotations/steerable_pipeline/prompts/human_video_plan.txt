@@ -1,0 +1,14 @@
+You are preparing a human demonstration of one step of a robot manipulation video.
+
+The {n} images are frames sampled uniformly from the robot's segment ({duration:.1f} s); image 1 is its first frame.
+Subtask performed in this segment (authoritative): "{subtask}"
+Episode instruction (context only): "{task}"
+
+Return one JSON object with exactly these keys:
+- "human_task": the subtask phrased for a person, naming the hand that acts (the hand on the same image side as the robot arm that acts), e.g. "Pick up the red cup with the right hand and place it on the tray."
+- "object": short name and appearance of the manipulated object.
+- "target": short name and appearance of where it goes (or "" if there is none).
+- "hand": "left" or "right".
+- "steps": list of 2 to 4 short steps describing how the objects move during the segment.
+- "final_state": one short phrase describing the final object state.
+- "edit_prompt": an instruction for an image-editing model that turns image 1 into a first-person view of a person doing the task. It must: (1) completely remove every robot arm, gripper, cable and robot base, filling those areas with the continuing table and background; (2) add exactly two realistic human hands and forearms (the viewer's own) entering from the bottom edge and resting relaxed on the near edge of the table, touching nothing; (3) list every object that must stay exactly as it is, with colour and position; (4) keep the camera viewpoint, table, background, lighting and layout unchanged and photorealistic. It must not add any other people, arms or objects.
