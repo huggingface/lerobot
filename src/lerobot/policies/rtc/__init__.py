@@ -21,7 +21,7 @@ from lerobot.utils.import_utils import lazy_exports
 from .configuration_rtc import RTCConfig, validate_trained_rtc_horizon
 from .latency_tracker import LatencyTracker
 
-# These import torch, so each is imported the first time it is used.
+# These import torch (all but ActionInterpolator), so each is imported the first time it is used.
 if TYPE_CHECKING:
     from .action_interpolator import ActionInterpolator
     from .action_queue import ActionQueue, QueueSnapshot
