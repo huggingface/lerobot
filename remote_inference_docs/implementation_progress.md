@@ -1,11 +1,11 @@
 # Async remote inference implementation progress
 
-Authoritative requirements: [async_proposal.md](async_proposal.md), originally 2026-09-28, revised 2026-09-29 with post-LAN learnings and the focused ACT request-timing correction.
+Authoritative requirements: [async_proposal.md](async_proposal.md), originally 2026-09-28, revised through 2026-09-30 with post-LAN learnings and the focused ACT request-timing correction.
 Baseline: `e595b7902`. Existing proposal and other untracked documentation are user work.
 
 Current handoff: the approved post-LAN engineering follow-up is implemented on `test/remote_inference_super_chatton` (clean baseline `9dcad3859`): 30-second absent-client cleanup and diagnostics; shared plain alignment and configurable blending; timing diagnostics/tuning guidance; lightweight loaded-build reporting. Integrated regression validation: **640 passed, 6 skipped** (2026-09-29). **The first physical alignment/blending comparison failed to improve task performance:** pick-and-place ACT append/refill 0.1 worked with residual bumps; alignment and blending were significantly worse. Results and the cadence hypothesis are recorded below and in [hardware_experiment_workbook.md](hardware_experiment_workbook.md). Automated/loopback correctness coverage does not establish physical task performance. Sensor-stall expansion remains deferred.
 
-**Next implementation:** apply the existing `refill_seconds` / measured-turnaround playback gate to aligned mode, both with and without blending. The revised proposal separates request timing from merge behavior; no extra cadence parameter is planned. This correction is **designed but not implemented or tested**. Current code and existing workbook commands still use the aggressive aligned scheduler. See the final section for the staged handoff and small physical follow-up.
+**Current continuation (2026-09-30):** the aligned request-timing correction is implemented and automatically validated: **685 passed, 6 skipped** in the integrated regression suite. Both aligned variants now use the existing `refill_seconds` / measured-turnaround playback gate; no extra cadence parameter was added. Work remains on `test/remote_inference_super_chatton`, starting at `efa521a7f`; the untracked learning artifacts are preserved as the prior implementation snapshot. No new physical validation has run. **Next:** the one alignment/refill 0.5 check in [the workbook](hardware_experiment_workbook.md), then blending at the same timing only if task progress recovers. See the final section for exact changes, checks and remaining gates.
 
 Priority clarification: policy/robot integration simplification is a lower-priority follow-up, **not a prerequisite** for the sequence below. Backward compatibility with the legacy `src/lerobot/async_inference/` module is not required; it will be deleted when the replacement lands after the existing acceptance gate.
 
@@ -16,7 +16,8 @@ Priority clarification: policy/robot integration simplification is a lower-prior
 - [x] Stage 3 implementation and automated lifecycle coverage: live task versions, language topics, hold acknowledgment, query-intent generations, serialized controls and fresh action resumption. **Acceptance gate remains open: VQA/autosteering have not run with a real text-capable checkpoint.**
 - [ ] Stage 4 hardware/performance validation and legacy replacement. First physical LAN action-test round concluded by the user on 2026-09-29, covering SmolVLA, XVLA, LaWAM and two ACT checkpoints across both host directions; results are recorded below. New user documentation, examples, extra and script registration are implemented. **Removal gate requires the complete real action/language workflow first.**
 - [x] Approved post-LAN engineering follow-up: cleanup, alignment/blending, diagnostics and compatibility reporting implemented and automatically tested. First physical comparison now shows an alignment/blending task-performance regression requiring investigation; the checks below do not replace the release acceptance gate.
-- [ ] ACT follow-up correction: buffer-driven aligned scheduling, focused regression coverage and guidance, then one alignment comparison and a conditional blend comparison. Design recorded; implementation pending.
+- [x] ACT follow-up engineering: buffer-driven aligned scheduling, focused regression coverage and updated diagnostics/guidance, completed 2026-09-30.
+- [ ] ACT physical follow-up: one alignment comparison and a conditional blend comparison. Neither has run with the corrected scheduler.
 
 ## Approved post-LAN implementation sequence — 2026-09-29
 
@@ -94,7 +95,7 @@ The compatibility concern is about accurately representing existing preparation 
 ## Remaining work / handoff
 
 1. Review/integrate the completed post-LAN changes on this test branch, preserving tested policy/robot fixes when continuing on `feat/remote_inference`. No branch switch, merge, commit or cherry-pick was performed in this session. Lower-priority integration simplification remains optional follow-up, not a prerequisite for hardware comparison.
-2. When physical testing resumes, compare append, aligned replacement and aligned blending on supported plain policies, measuring discontinuities and task/gripper outcomes across a practical timing range. Do not claim that guided RTC results validate the new merge mode.
+2. When physical testing resumes, use the focused ACT comparison at the end of this document and in the workbook: one aligned/refill 0.5 run against the recorded append/refill 0.1 reference, then a conditional blend run at the same timing. No parameter sweep or broad checkpoint matrix is needed now. Do not claim that guided RTC results validate the new merge mode.
 3. Physical LAN action runs have now been reported for five checkpoints (see the round summary below). Real text-capable checkpoint validation (including VQA and autosteering) remains open. Complete the existing physical lifecycle/fault/hold acceptance checks; the newly identified sensor-stall expansion is deferred, not added to this batch.
 4. Measure GPU/model turnaround tails, edge encoding/decoding cost, playback coverage, task-change latency and JPEG policy impact over wired LAN and representative private remote conditions. Keep empirical refill settings separate from guaranteed budgets. Wire camera schemas require exact resolution; checkpoint shape exceptions require a policy-owned input validation contract.
 5. Once the real action/language gate passes, remove the legacy async package/tests/docs and dedicated configuration. Remove only its protobuf service/messages, regenerate bindings and run transport/RL checks; retain unrelated gRPC services/dependencies. Finish stale-reference cleanup then.
@@ -293,9 +294,9 @@ The follow-up inspection found a useful existing mechanism: legacy `async_infere
 
 | Stage | Work and completion criteria | Status |
 | --- | --- | --- |
-| 1. Shared scheduling correction | Gate aligned requests on remaining playback; keep acceptance-time replacement and blending unchanged. Select the latest eligible capture when requesting; preserve pre-submission/in-flight cursor trimming and one-in-flight. Preserve prompt startup, task-version changes, reset/resume and planned-language resumption without bypassing hold/fault permission or freshness. Do not apply append's successor-slot restriction to aligned mode. | Pending |
-| 2. Focused validation and user guidance | Cover above/at/below threshold, measured floor, horizon saturation, fresh capture after waiting and the stage-1 control cases. Run existing aligned/blend/provenance/remote-engine and relevant append/RTC regressions; adapt existing integration coverage rather than constructing a new simulation suite. Update scheduler labels, CLI help, user guide and workbook; expose request spacing/progress using existing events and warn when the threshold covers the full execution horizon. | Pending |
-| 3. Alignment hardware check | Same pick-and-place ACT setup, blending off, initially refill 0.5 s for the observed 1 s horizon. Compare task performance and bumps against the recorded successful append/refill 0.1 reference; rerun baseline only if the setup changed. Logs must show increased request spacing/actions between replacements and no exhaustion. If task performance remains poor, obtain targeted trajectory/anchoring evidence before adding knobs. | Not run; requires stages 1–2 |
+| 1. Shared scheduling correction | Gate aligned requests on remaining playback; keep acceptance-time replacement and blending unchanged. Select the latest eligible capture when requesting; preserve pre-submission/in-flight cursor trimming and one-in-flight. Preserve prompt startup, task-version changes, reset/resume and planned-language resumption without bypassing hold/fault permission or freshness. Do not apply append's successor-slot restriction to aligned mode. | Implemented, 2026-09-30; focused and aggregate checks pass |
+| 2. Focused validation and user guidance | Cover above/at/below threshold, measured floor, horizon saturation, fresh capture after waiting and the stage-1 control cases. Run existing aligned/blend/provenance/remote-engine and relevant append/RTC regressions; adapt existing integration coverage rather than constructing a new simulation suite. Update scheduler labels, CLI help, user guide and workbook; expose request spacing/progress using existing events and warn when the threshold covers the full execution horizon. | Implemented, 2026-09-30; 685 passed, 6 skipped; guidance updated |
+| 3. Alignment hardware check | Same pick-and-place ACT setup, blending off, initially refill 0.5 s for the observed 1 s horizon. Compare task performance and bumps against the recorded successful append/refill 0.1 reference; rerun baseline only if the setup changed. Logs must show increased request spacing/actions between replacements and no exhaustion. If task performance remains poor, obtain targeted trajectory/anchoring evidence before adding knobs. | Ready for user-operated hardware test; not run |
 | 4. Conditional blend check | Only if stage 3 restores useful task progress, keep its refill unchanged and enable the existing five-step, 0.5 incoming, arm-only blend. Judge grasp/release and task progress as well as smoothness. If it harms performance, keep blending disabled for this checkpoint and investigate separately. | Not run; conditional on stage 3 |
 
 Important boundaries for implementation:
@@ -306,4 +307,39 @@ Important boundaries for implementation:
 - Existing alignment/blending wire semantics remain valid; log the actual client scheduler and loaded build. Do not add a compatibility framework solely for a local trigger change.
 - No legacy similarity filter, action-clock comparison across hosts, queue implementation, unrestricted aggregation or automatic recovery is being restored. No broad experiment matrix, extra minimum-step knob, automatic optimizer, sensor-stall work or new policy integration is in scope.
 
-The revised proposal sections 6.4–6.5 and 16 are the source of truth for this correction. This planning update edits only the proposal and progress record; it does not implement the change, refresh hardware commands prematurely or claim additional tests passed. The original hardware comparison remains evidence against the previous scheduling choice. The 640-pass aggregate remains historical; real language, lifecycle and legacy-removal gates remain open.
+The revised proposal sections 6.4–6.5 and 16 are the source of truth for this correction. The 2026-09-29 planning update changed only the proposal and progress record; implementation and new validation are recorded below. The original hardware comparison remains evidence against the previous scheduling choice. Real language, lifecycle and legacy-removal gates remain open.
+
+## Aligned request-timing correction — implemented, 2026-09-30
+
+Repository/proposal/progress inspection confirmed this focused correction as the next authorized stage. No branch switch, integration, commit or robot/model-server launch on physical devices was performed. Existing user test artifacts and the untracked learning presentation were preserved.
+
+Changes and decisions:
+
+- `ChunkRuntime.should_request()` now applies the existing playback threshold to aligned mode; append alone retains its successor-slot restriction. `begin()` supplies the observation task version, allowing a changed aligned task to bypass only the playback gate. Existing permission, pending-request, age, generation, capture and cursor checks still run. No merge/trim/blend changes, new setting, default change or protocol capability was needed.
+- Remote startup and request events report `scheduling=playback_threshold`. Request events add `request_spacing_s`, `committed_actions_since_request` and `task_changed_since_request`, using one bounded scalar history tuple. Spacing/progress are `null` on the first request of each execution generation. These count committed policy endpoints, not achieved robot motion; first-dispatch events remain available to inspect actual chunk switches.
+- Aligned clients warn once per engine if configured refill or the measured turnaround floor covers the full negotiated execution horizon. Startup and result acceptance both check this condition. The warning does not clamp configuration, expand actions or relax fault handling. Near the shorter post-trim horizon, frequent requests are still possible without this full-horizon warning.
+- Existing merge tests explicitly permit their small test horizons so they continue isolating cursor/provenance/blend behavior. Dedicated timing tests cover the lower threshold, measured floor and controls. Remote engine tests now exercise append, alignment and blending, including selecting a newer capture after waiting. The existing real separate-process test now checks waiting above and requesting at the threshold while retaining relative-action conversion and in-flight trimming/blending assertions.
+- Updated CLI refill help, user guide and hardware workbook. The workbook preserves the failed historical comparison and asks for one alignment run plus a conditional blend run. Camera assignment must come from the last working command: the latest logs show devices 1 and 4 but do not identify wrist/top mapping. The learning deck remains an explicitly dated 2026-09-29 snapshot.
+
+Validation actually run:
+
+- Focused shared execution/alignment: **49 passed**; full `tests/inference`: **77 passed**.
+- Remote engine plus robot-boundary rollout checks: **59 passed**. An initial new log assertion incorrectly indexed Python logging's dictionary arguments as a tuple; corrected the assertion and reran successfully.
+- Real separate-process alignment/blending: **2 passed**, including canonical processors and loopback Zenoh. These are controlled test processes, not physical robot experiments.
+- Integrated regression command:
+
+  ```bash
+  UV_CACHE_DIR=/private/tmp/lerobot-uv-cache uv run --no-sync pytest \
+    tests/inference tests/remote_inference tests/test_remote_rollout.py \
+    tests/test_rollout.py tests/test_interactive_rollout.py \
+    tests/test_rollout_action_ordering.py tests/policies/rtc \
+    tests/policies/pi0_pi05/test_pi05_training_time_rtc.py \
+    tests/policies/test_pretrained_interactive_contracts.py \
+    tests/policies/lawam/test_lawam.py \
+    -q -rs --disable-warnings --maxfail=5
+  ```
+
+  **685 passed, 6 skipped** in 23.16 s, test device MPS. Four skips require CUDA; two require the external `zenohd` 1.9.0 router binary, which is absent here. Local socket tests required approved sandbox escalation. Router/security checks were not rerun successfully in this session; their previous results remain historical.
+- Ruff check and format check passed for all six modified Python files. Targeted mypy with `--follow-imports=silent` passed for the three modified production modules. CLI `lerobot-rollout --inference.type=remote --help` passed and the rendered refill help was inspected. All 21 Bash examples in the guide/workbook pass syntax checking without execution. `git diff --check` passes. Full-repository pre-commit/mypy and the complete unrelated test suite were not run.
+
+No material deviations from the approved correction. Automated results establish scheduling/contract regressions only; they do not establish improved task success or smoothness. Next work requires the user's physical Next A result, followed by Next B only if useful task progress recovers. Physical fault/hold and real language-checkpoint acceptance remain open; keep the legacy module until that release gate passes. Lower-priority policy/robot integration refactors, sensor-stall expansion and automatic cadence tuning remain deferred.

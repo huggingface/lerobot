@@ -147,7 +147,7 @@ def test_aligned_relative_chunks_between_processes(process_server, blend_steps):
         runtime = ChunkRuntime(
             mode=ExecutionMode.CHUNK,
             action_interval=caps.action_interval,
-            refill_seconds=0.01,
+            refill_seconds=2 * caps.action_interval,
             max_observation_age_s=10,
             action_timeout_s=5,
             startup_timeout_s=5,
@@ -168,8 +168,17 @@ def test_aligned_relative_chunks_between_processes(process_server, blend_steps):
         torch.testing.assert_close(first_result.canonical_actions, old_actions)
         assert first_result.execution_steps == 3  # prediction horizon is eight
         assert runtime.accept(first, first_result, task_version=first_source.task_version)
-        torch.testing.assert_close(runtime.pop()[0], old_actions[0])
 
+        # Three queued endpoints cover more than the two-endpoint refill threshold.
+        # Waiting is a client playback decision even though the server is idle.
+        assert runtime.queue.qsize() == 3
+        assert not runtime.should_request(task_version=first_source.task_version)
+        assert runtime.pending is None
+        torch.testing.assert_close(runtime.pop()[0], old_actions[0])
+        assert runtime.queue.qsize() == 2
+        assert runtime.should_request(task_version=first_source.task_version)
+
+        # Capture after the gate opens; the next chunk must use this latest state.
         next_source = runtime.anchor_observation(
             replace(observation(10.0), capture_time=time.monotonic(), observation_id="next")
         )

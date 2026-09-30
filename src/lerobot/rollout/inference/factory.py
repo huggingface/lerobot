@@ -14,7 +14,7 @@
 
 """Inference engine configs and factory.
 
-Selection is explicit via ``--inference.type=sync|rtc``.  Adding a new
+Selection is explicit via ``--inference.type=sync|rtc|remote``. Adding a new
 backend requires registering its config subclass and dispatching it in
 :func:`create_inference_engine`.
 """
@@ -97,6 +97,9 @@ class RemoteInferenceConfig(InferenceEngineConfig):
     mode: str = "chunk"
     semantics: str = ""
     hold_mode: str = ""
+    # Request when remaining playback reaches this threshold (append, aligned and RTC).
+    # Effective floor: recent maximum turnaround + one policy action interval.
+    # Smaller values allow more aligned follow-through; aligned task changes bypass this gate.
     refill_seconds: float = 0.5
     chunk_merge: Literal["append", "aligned"] = "append"
     blend_steps: int = 0

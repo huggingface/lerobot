@@ -80,6 +80,9 @@ class RemoteInferenceEngine(InferenceEngine):
         self._event_writer: EventWriter | None = None
         self._tick = 0
         self._fault_reported = False
+        self._refill_horizon_warned = False
+        # Bounded scalar history for cadence diagnostics; do not retain captures.
+        self._last_request: tuple[int, float, int, int] | None = None
 
     def configure_event_log(self, path: Path) -> None:
         self._event_writer = EventWriter(path)
@@ -132,8 +135,41 @@ class RemoteInferenceEngine(InferenceEngine):
     def start(self) -> None:
         if self._thread is not None:
             raise RuntimeError("Remote inference engine has already started")
+        self._event(
+            "scheduling",
+            scheduling="playback_threshold",
+            mode=self.config.mode,
+            chunk_merge=self.config.chunk_merge,
+            blend_steps=self.config.blend_steps,
+            configured_refill_s=self.runtime.refill_seconds,
+            effective_refill_s=self.runtime.effective_refill,
+            execution_horizon_s=self.client.capabilities.execution_steps * self.runtime.interval,
+            aligned_task_change_bypasses_refill=self.config.chunk_merge == "aligned",
+        )
+        self._warn_refill_horizon()
         self._thread = Thread(target=self._loop, daemon=True, name="RemoteInference")
         self._thread.start()
+
+    def _warn_refill_horizon(self) -> None:
+        """Report saturation once, including when the measured latency floor grows."""
+        horizon = self.client.capabilities.execution_steps * self.runtime.interval
+        if (
+            self.config.chunk_merge == "aligned"
+            and not self._refill_horizon_warned
+            and self.runtime.effective_refill + 1e-9 >= horizon
+        ):
+            self._refill_horizon_warned = True
+            logger.warning(
+                "Aligned effective refill %.3fs (configured %.3fs, recent turnaround %.3fs) "
+                "covers the full execution horizon %.3fs; requests may follow every fresh advanced "
+                "observation. Inspect request_spacing_s and committed_actions_since_request; "
+                "lower configured refill only within measured latency headroom, or use a supported "
+                "longer execution horizon. No setting was changed.",
+                self.runtime.effective_refill,
+                self.runtime.refill_seconds,
+                self.runtime.turnaround,
+                horizon,
+            )
 
     def stop(self) -> None:
         self.pause()
@@ -413,6 +449,13 @@ class RemoteInferenceEngine(InferenceEngine):
                 if request is None:
                     self._stop_event.wait(0.002)
                     continue
+                previous = self._last_request
+                request_spacing = committed_since_request = None
+                task_changed = False
+                if previous is not None and previous[0] == request.generation:
+                    request_spacing = request.submitted_at - previous[1]
+                    committed_since_request = request.continuation.cursor - previous[2]
+                    task_changed = observation.task_version != previous[3]
                 self._event(
                     "request",
                     request_id=request.request_id,
@@ -422,14 +465,21 @@ class RemoteInferenceEngine(InferenceEngine):
                     chunk_merge=self.config.chunk_merge,
                     configured_refill_s=self.runtime.refill_seconds,
                     effective_refill_s=self.runtime.effective_refill,
-                    scheduling="fresh_advanced_observation"
-                    if self.config.chunk_merge == "aligned"
-                    else "playback_threshold",
+                    scheduling="playback_threshold",
+                    request_spacing_s=request_spacing,
+                    committed_actions_since_request=committed_since_request,
+                    task_changed_since_request=task_changed,
                     recent_turnaround_s=self.runtime.turnaround,
                     playback_at_submission_s=request.playback_at_submission,
                     observation_age_at_submission_s=request.submitted_at - observation.capture_time,
                     observation_cursor=observation.action_cursor,
                     submission_cursor=request.continuation.cursor,
+                )
+                self._last_request = (
+                    request.generation,
+                    request.submitted_at,
+                    request.continuation.cursor,
+                    observation.task_version,
                 )
                 try:
                     request_generation = request.generation
@@ -447,6 +497,7 @@ class RemoteInferenceEngine(InferenceEngine):
                 # old in-flight result cannot pass using a previously read version.
                 with self._task_lock:
                     accepted = self.runtime.accept(request, result, task_version=self._task_version)
+                self._warn_refill_horizon()
                 self._event(
                     "result",
                     request_id=request.request_id,

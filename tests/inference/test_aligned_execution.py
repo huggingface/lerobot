@@ -12,12 +12,14 @@ from tests.inference.test_execution import Clock
 from tests.inference.test_policy_runner import ConformingPolicy, observation, runner_for, tiny_config
 
 
-def runtime(**kwargs):
+def runtime(*, refill_seconds=0.6, **kwargs):
+    # Merge-focused tests keep the six-action horizon eligible. Scheduling tests
+    # below select a smaller threshold to exercise waiting for playback.
     clock = Clock()
     rt = ChunkRuntime(
         mode=ExecutionMode.CHUNK,
         action_interval=0.1,
-        refill_seconds=0.01,
+        refill_seconds=refill_seconds,
         max_observation_age_s=10,
         action_timeout_s=3,
         startup_timeout_s=5,
@@ -83,8 +85,166 @@ def test_startup_delay_does_not_trim_and_replanning_requires_fresh_advanced_samp
     assert rt.pop()[0].tolist() == [0, 100]
     assert rt.begin(source) is None  # advanced execution, old capture/anchor
     request = rt.begin(sample(rt, clock))
-    assert request is not None  # queue far above refill; sustained replanning
+    assert request is not None  # playback is below the explicitly configured threshold
     assert rt.begin(sample(rt, clock)) is None  # still one in flight
+
+
+@pytest.mark.parametrize("blend_steps", [0, 2])
+@pytest.mark.parametrize("committed, eligible", [(2, False), (3, True), (4, True)])
+def test_aligned_refill_gates_above_at_and_below_playback_threshold(blend_steps, committed, eligible):
+    rt, clock = runtime(
+        refill_seconds=0.3, blend_steps=blend_steps, blend_indices=(0,) if blend_steps else ()
+    )
+    initial(rt, clock)
+    for _ in range(committed):
+        assert rt.pop() is not None
+    clock.now += committed * rt.interval
+    assert rt.should_request() is eligible
+    request = rt.begin(sample(rt, clock))
+    assert (request is not None) is eligible
+    if request is not None:
+        assert request.playback_at_submission == pytest.approx((6 - committed) * rt.interval)
+
+
+def test_waiting_for_playback_does_not_reserve_an_old_capture():
+    rt, clock = runtime(refill_seconds=0.3)
+    first = initial(rt, clock)
+    rt.pop()
+    clock.now += 0.1
+    waiting = sample(rt, clock)
+    assert rt.begin(waiting) is None
+    assert rt.pending is None
+    rt.pop()
+    clock.now += 0.1
+    assert rt.begin(sample(rt, clock)) is None
+    rt.pop()
+    clock.now += 0.1
+    latest = sample(rt, clock)
+    request = rt.begin(latest)
+    assert request is not None
+    assert request.observation is latest
+    assert request.observation.capture_time > waiting.capture_time > first.observation.capture_time
+    assert request.observation.action_cursor == 3
+    rt.pop()
+    assert rt.accept(request, result(request, 10), task_version=0)
+    assert rt.last_accept["trimmed_actions"] == 1
+    assert rt.pop()[0].tolist() == [11, 111]
+
+
+def test_aligned_refill_floor_uses_steady_turnaround_and_excludes_startup():
+    rt, clock = runtime(refill_seconds=0.01)
+    first = rt.begin(sample(rt, clock))
+    clock.now += 0.8
+    assert rt.accept(first, result(first), task_version=0)
+    assert rt.effective_refill == pytest.approx(0.1)
+    for _ in range(5):
+        rt.pop()
+    request = rt.begin(sample(rt, clock))
+    assert request is not None
+    clock.now += 0.25
+    assert rt.accept(request, result(request, 10), task_version=0)
+    assert rt.turnaround == pytest.approx(0.25)
+    assert rt.effective_refill == pytest.approx(0.35)
+    for _ in range(2):
+        rt.pop()
+    assert not rt.should_request()  # 0.4 seconds remain
+    rt.pop()
+    assert rt.should_request()  # 0.3 seconds remain: the measured floor dominates
+    assert rt.begin(sample(rt, clock)) is not None
+
+
+@pytest.mark.parametrize("floor_dominates", [False, True])
+def test_threshold_covering_horizon_allows_frequent_requests_without_expanding_slice(floor_dominates):
+    rt, clock = runtime(refill_seconds=0.01 if floor_dominates else 0.6)
+    if floor_dominates:
+        rt.turnarounds.append(0.5)
+    first = rt.begin(sample(rt, clock))
+    assert rt.accept(first, result(first, execution_steps=3), task_version=0)
+    for offset in (10, 20, 30):
+        assert rt.queue.qsize() == 3  # the six predicted actions never expand the execution slice
+        assert rt.begin(sample(rt, clock)) is None  # still requires a fresh advanced capture
+        rt.pop()
+        clock.now += 0.1
+        request = rt.begin(sample(rt, clock))
+        assert request is not None
+        assert rt.accept(request, result(request, offset, execution_steps=3), task_version=0)
+
+
+def test_aligned_replacement_does_not_inherit_append_successor_slot_restriction():
+    rt, clock = runtime()
+    first = initial(rt, clock)
+    rt.pop()
+    clock.now += 0.1
+    request = rt.begin(sample(rt, clock))
+    rt.pop()  # commit old trajectory during inference
+    clock.now += 0.1
+    assert rt.accept(request, result(request, 10), task_version=0)
+    assert rt.current.request_id == first.request_id
+    assert {source.request_id for source in rt.queue.snapshot().provenance} == {request.request_id}
+    assert rt.begin(sample(rt, clock)) is not None
+
+
+def test_fresh_task_change_bypasses_playback_gate_at_same_cursor():
+    rt, clock = runtime(refill_seconds=0.01)
+    initial(rt, clock)
+    assert not rt.should_request()
+    clock.now += 0.1
+    assert rt.begin(sample(rt, clock)) is None  # same task and cursor, full playback buffer
+    request = rt.begin(sample(rt, clock, task="new", version=1))
+    assert request is not None
+    assert request.observation.action_cursor == 0
+    assert request.playback_at_submission == pytest.approx(0.6)
+    assert rt.accept(request, result(request, 10), task_version=1)
+    assert rt.pop()[1].task == "new"
+
+
+@pytest.mark.parametrize(
+    "blocked_by", ["inactive", "held", "fault", "pending", "stale", "generation", "capture"]
+)
+def test_task_change_never_bypasses_permission_inflight_or_freshness(blocked_by):
+    rt, clock = runtime(refill_seconds=0.01)
+    initial(rt, clock)
+    clock.now += 0.1
+    source = sample(rt, clock, task="new", version=1)
+    if blocked_by == "inactive":
+        rt.active = False
+    elif blocked_by == "held":
+        rt.held = True
+    elif blocked_by == "fault":
+        rt.fault("operator fault")
+    elif blocked_by == "pending":
+        assert rt.begin(source) is not None
+        source = replace(source, task_version=2, capture_time=clock() + 0.01)
+        clock.now += 0.01
+    elif blocked_by == "stale":
+        rt.max_age = 0.05
+        clock.now += 0.1
+    elif blocked_by == "generation":
+        source = replace(source, execution_generation=rt.generation + 1)
+    elif blocked_by == "capture":
+        source = replace(source, capture_time=rt.started_at)  # same capture as the previous request
+    assert rt.begin(source) is None
+
+
+@pytest.mark.parametrize("held", [False, True])
+def test_reset_and_hold_resume_start_promptly_from_fresh_generation(held):
+    rt, clock = runtime(refill_seconds=0.01)
+    initial(rt, clock)
+    clock.now += 0.1
+    before_reset = sample(rt, clock)
+    rt.invalidate(held=held)
+    assert rt.begin(before_reset) is None
+    if held:
+        clock.now += 1
+        assert rt.begin(sample(rt, clock)) is None
+        rt.held = False
+        rt.started_at = clock()
+    clock.now += 0.1
+    request = rt.begin(sample(rt, clock))
+    assert request is not None
+    assert request.playback_at_submission == 0
+    assert rt.accept(request, result(request), task_version=0)
+    assert rt.pop()[0].tolist() == [0, 100]
 
 
 def test_execution_slice_is_honored_and_empty_suffix_does_not_destroy_eligible_buffer():

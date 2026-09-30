@@ -137,7 +137,7 @@ class ChunkRuntime:
 
     @property
     def effective_refill(self) -> float:
-        """Append/RTC playback threshold including measured turnaround headroom."""
+        """Playback threshold including measured turnaround headroom."""
         return max(self.refill_seconds, self.turnaround + self.interval)
 
     def anchor_observation(self, observation: ObservationSnapshot) -> ObservationSnapshot:
@@ -188,16 +188,25 @@ class ChunkRuntime:
             elif not self.has_executed and now - self.started_at > self.startup_timeout:
                 self.fault("Initial action deadline exceeded")
 
-    def should_request(self) -> bool:
-        """Allow refill only with a free request/successor slot and playback need."""
+    def should_request(self, *, task_version: int | None = None) -> bool:
+        """Check permission and playback need without reserving an observation.
+
+        Aligned task changes may bypass the playback threshold. ``begin`` still
+        validates their fresh capture, generation and commitment anchor.
+        """
         with self.lock:
             self.check_deadlines()
             if self.failure or not self.active or self.held or self.pending is not None:
                 return False
             snapshot = self.queue.snapshot()
-            if self.chunk_merge == "aligned":
-                return True  # begin also requires a fresh capture and an advanced step
-            if self.mode is ExecutionMode.CHUNK:
+            if (
+                self.chunk_merge == "aligned"
+                and task_version is not None
+                and self._last_anchor is not None
+                and task_version != self._last_anchor[2]
+            ):
+                return True
+            if self.mode is ExecutionMode.CHUNK and self.chunk_merge == "append":
                 # One accepted successor beyond the executing chunk, never a chain
                 # of old-observation predictions hidden behind newer provenance.
                 sources = {p.request_id for p in snapshot.provenance if p is not None}
@@ -211,7 +220,7 @@ class ChunkRuntime:
     def begin(self, observation: ObservationSnapshot) -> ChunkRequest | None:
         """Reserve inference against one atomic cursor/continuation snapshot."""
         with self.lock:
-            if not self.should_request():
+            if not self.should_request(task_version=observation.task_version):
                 return None
             age = self.clock() - observation.capture_time
             if age < 0 or age > self.max_age:
