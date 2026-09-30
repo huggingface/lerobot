@@ -16,10 +16,12 @@
 
 from contextlib import contextmanager
 
+import numpy as np
 import pytest
 import torch
 
 from lerobot.inference import InferenceEngine, dispatch_tick
+from lerobot.processor.converters import create_transition
 from lerobot.utils.action_interpolator import ActionInterpolator
 
 
@@ -32,7 +34,7 @@ class GateEngine(InferenceEngine):
         super().__init__("task")
         self.permissions = list(permissions)  # consumed first, then ``allowed`` applies
         self.allowed = True
-        self.actions: list[torch.Tensor] = []
+        self.actions: list[torch.Tensor | np.ndarray] = []
         self.frames = []
         self.acknowledged = 0
         self.dispatched = 0
@@ -89,9 +91,13 @@ class Timer:
         self.starved += 1
 
 
-def test_permitted_ticks_pull_once_per_policy_action_and_send_each_interpolated_target():
+@pytest.mark.parametrize(
+    "convert", [torch.tensor, lambda a: np.array(a, dtype=np.float32)], ids=["tensor", "numpy"]
+)
+def test_permitted_ticks_pull_once_per_policy_action_and_send_each_interpolated_target(convert):
     engine = GateEngine()
-    engine.actions = [torch.tensor([3.0]), torch.tensor([6.0])]
+    engine.actions = [convert([3.0]), convert([6.0])]
+    action_type = type(engine.actions[0])
     interpolator = ActionInterpolator(multiplier=3)
     robot, timer = Robot(), Timer()
     frames_built = 0
@@ -106,10 +112,20 @@ def test_permitted_ticks_pull_once_per_policy_action_and_send_each_interpolated_
         for _ in range(4)
     ]
     assert [target.item() for target in targets] == [3.0, 4.0, 5.0, 6.0] == robot.sent
+    assert {type(target) for target in targets} == {action_type}, "targets keep the engine's action type"
     assert frames_built == 2, "the frame factory runs only when a new policy action is pulled"
     assert engine.frames == [{"built": 1}, {"built": 2}]
     assert engine.dispatched == 4 and engine.acknowledged == 0 and robot.holds == 0
     assert timer.sections.count("infer") == 2 and timer.sections.count("send") == 4 and timer.starved == 0
+
+
+def test_numpy_action_inside_a_transition_is_refused():
+    engine = GateEngine()
+    engine.actions = [create_transition(action=np.array([1.0], dtype=np.float32))]
+    robot = Robot()
+    with pytest.raises(TypeError, match="NumPy action bare"):
+        dispatch_tick(engine, ActionInterpolator(), None, send=robot.send, hold=robot.hold)
+    assert robot.sent == []
 
 
 def test_denial_before_the_pull_holds_acknowledges_and_clears_interpolation():

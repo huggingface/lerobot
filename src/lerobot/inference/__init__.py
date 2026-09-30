@@ -39,6 +39,7 @@ from .contracts import (
     PolicyCapabilities,
     QueryKind,
 )
+from .dispatch import commit_action, dispatch_permitted, dispatch_tick, next_interpolated_action
 from .factory import (
     InferenceEngineConfig,
     RemoteInferenceConfig,
@@ -49,7 +50,6 @@ from .factory import (
 
 # These import torch, so each is imported the first time it is used.
 if TYPE_CHECKING:
-    from .dispatch import commit_action, dispatch_permitted, dispatch_tick, next_interpolated_action
     from .execution import ChunkRequest, ChunkRuntime, HoldState, estimate_delay, trained_overlap_valid
     from .policy_runner import PolicyRunner
     from .prediction import ChunkPrediction, chunk_inference_context, predict_chunk
@@ -59,10 +59,6 @@ else:
     __getattr__, __dir__ = lazy_exports(
         __name__,
         {
-            "commit_action": ".dispatch.commit_action",
-            "dispatch_permitted": ".dispatch.dispatch_permitted",
-            "dispatch_tick": ".dispatch.dispatch_tick",
-            "next_interpolated_action": ".dispatch.next_interpolated_action",
             "ChunkRequest": ".execution.ChunkRequest",
             "ChunkRuntime": ".execution.ChunkRuntime",
             "HoldState": ".execution.HoldState",

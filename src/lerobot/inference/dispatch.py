@@ -30,10 +30,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import nullcontext
+from typing import TYPE_CHECKING
 
-import torch
+import numpy as np
 
-from lerobot.lerobot_types import PolicyPrediction
+from lerobot.lerobot_types import PolicyPrediction, TransitionKey
 from lerobot.processor import (
     policy_output_to_transition,
     transition_to_policy_action,
@@ -43,6 +44,9 @@ from lerobot.utils.action_interpolator import ActionInterpolator
 from lerobot.utils.cycle_timer import CycleTimer
 
 from .base import InferenceEngine
+
+if TYPE_CHECKING:
+    import torch
 
 
 def dispatch_permitted(
@@ -72,7 +76,7 @@ def next_interpolated_action(
     hold: Callable[[], None] | None = None,
     timer: CycleTimer | None = None,
     on_prediction: Callable[[PolicyPrediction], None] | None = None,
-) -> torch.Tensor | None:
+) -> torch.Tensor | np.ndarray | None:
     """Return the next interpolated target, pulling one policy action when needed.
 
     ``obs_frame`` is the frame handed to ``engine.get_action`` or a zero-argument
@@ -84,6 +88,8 @@ def next_interpolated_action(
     The engine may return the action with the policy's prediction (an ``EnvTransition``,
     see ``PreTrainedPolicy.select_action``); only the action is interpolated, and a
     non-empty prediction is handed to ``on_prediction`` on the tick that pulled it.
+    A NumPy action is returned bare, carries no prediction and is interpolated as it
+    is; a transition holding a NumPy action raises ``TypeError``.
     """
     if not dispatch_permitted(engine, interpolator, hold):
         return None
@@ -91,7 +97,11 @@ def next_interpolated_action(
         with timer.section("infer") if timer is not None else nullcontext():
             frame = obs_frame() if callable(obs_frame) else obs_frame
             result = engine.get_action(frame)
-        if result is not None:
+        if isinstance(result, np.ndarray):
+            interpolator.add(result)
+        elif isinstance(result, dict) and isinstance(result.get(TransitionKey.ACTION), np.ndarray):
+            raise TypeError("get_action must return a NumPy action bare, not inside a transition")
+        elif result is not None:
             step = policy_output_to_transition(result)
             interpolator.add(transition_to_policy_action(step).cpu())
             if on_prediction is not None and (prediction := transition_to_prediction(step)):
@@ -129,10 +139,10 @@ def dispatch_tick(
     interpolator: ActionInterpolator,
     obs_frame: dict | Callable[[], dict | None] | None = None,
     *,
-    send: Callable[[torch.Tensor], None],
+    send: Callable[[torch.Tensor | np.ndarray], None],
     hold: Callable[[], None] | None = None,
     timer: CycleTimer | None = None,
-) -> torch.Tensor | None:
+) -> torch.Tensor | np.ndarray | None:
     """One complete autonomous motor tick: gate, pull, interpolate, gate, send, record.
 
     ``send`` receives the canonical target in the engine's action order and must

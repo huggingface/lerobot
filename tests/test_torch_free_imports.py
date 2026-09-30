@@ -80,6 +80,50 @@ def test_imports_without_torch(module):
     assert result.returncode == 0, result.stderr
 
 
+def test_numpy_actions_dispatch_without_torch():
+    code = (
+        BLOCK_TORCH
+        + """
+import numpy as np
+
+from lerobot.inference import InferenceEngine, dispatch_tick
+from lerobot.utils.action_interpolator import ActionInterpolator
+
+
+class Engine(InferenceEngine):
+    control_thread_owns_policy = True
+
+    def __init__(self):
+        super().__init__()
+        self.actions = [np.array([3.0], dtype=np.float32), np.array([6.0], dtype=np.float32)]
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    def reset(self):
+        pass
+
+    def get_action(self, obs_frame):
+        return self.actions.pop(0)
+
+
+sent = []
+engine, interpolator = Engine(), ActionInterpolator(multiplier=3)
+for _ in range(4):
+    dispatch_tick(engine, interpolator, send=sent.append)
+print([target.item() for target in sent])
+if attempts:
+    sys.exit(attempts[0])
+"""
+    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "[3.0, 4.0, 5.0, 6.0]"
+
+
 @pytest.mark.dataset
 @pytest.mark.skipif(not _datasets_available, reason="datasets not installed")
 def test_rollout_parses_and_rejects_a_bad_command_line_without_torch():
