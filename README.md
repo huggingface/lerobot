@@ -100,8 +100,11 @@ Training a policy is as simple as running a script configuration:
 ```bash
 lerobot-train \
   --policy.type=act \
-  --dataset.repo_id=lerobot/aloha_mobile_cabinet
+  --dataset.repo_id=lerobot/aloha_mobile_cabinet \
+  --policy.push_to_hub=false
 ```
+
+To push the trained model to the Hub instead, replace `--policy.push_to_hub=false` with `--policy.repo_id=<your_hf_username>/<model_name>`.
 
 | Category                   | Models                                                                                                                                                                                                                                                                                                                                                                                     |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
