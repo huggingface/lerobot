@@ -80,7 +80,9 @@ if attempts:
         "lerobot.policies",
         "lerobot.policies.rtc",
         "lerobot.inference",
+        "lerobot.inference.dispatch",
         "lerobot.processor",
+        "lerobot.utils.action_interpolator",
         pytest.param(
             "lerobot.scripts.lerobot_rollout",
             marks=[

@@ -41,7 +41,7 @@ from .errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from .import_utils import is_package_available, lazy_exports, register_third_party_plugins, require_package
 from .utils import init_logging
 
-# These import torch, so each is imported the first time it is used.
+# These import torch (all but ActionInterpolator), so each is imported the first time it is used.
 if TYPE_CHECKING:
     from .action_interpolator import ActionInterpolator
     from .device_utils import auto_select_torch_device, get_safe_torch_device, is_torch_device_available
