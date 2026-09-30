@@ -676,8 +676,16 @@ class BiYamFollower(Robot):
         # Validate the complete target before any possible reactivation.
         if set(position) != set(YAM_FEATURE_NAMES):
             raise ValueError("YAM return requires all 14 joint/gripper positions")
+        # A captured observation may sit just beyond a joint bound because
+        # feedback permits encoder/zero noise. Never send that as an out-of-range
+        # command: validate with the feedback tolerance, then project onto the
+        # unchanged command limits. Normal policy actions remain strictly checked.
+        target = dict(position)
         for side in self.arms:
-            validate_target(np.asarray([position[f"{side}_{name}.pos"] for name in MOTOR_NAMES]))
+            values = np.asarray([position[f"{side}_{name}.pos"] for name in MOTOR_NAMES])
+            validate_target(values, feedback=True)
+            for i, (lower, upper) in enumerate(JOINT_LIMITS):
+                target[f"{side}_{MOTOR_NAMES[i]}.pos"] = float(np.clip(values[i], lower, upper))
         try:
             with self._lock:
                 self._check_feedback()
@@ -685,7 +693,7 @@ class BiYamFollower(Robot):
             if not self.config.recover_on_feedback_timeout:
                 raise
             self._recover_feedback_for_return()
-        self.wait_until_reached(position)
+        self.wait_until_reached(target)
         return True
 
     @check_if_not_connected

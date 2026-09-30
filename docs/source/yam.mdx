@@ -94,7 +94,7 @@ This is an experimental adapter. Gravity compensation uses the standard arm/grip
 
 ## Interactive rollout and return to startup pose
 
-Add `--interactive=true --return_to_initial_position=true` to keep the policy and hardware connected between attempts and return before normal shutdown. The captured startup pose, including grippers, is the return target; this does not perform encoder homing. By default, motors hold their measured pose after connection, even before policy actions begin with `/start`.
+Add `--interactive=true --return_to_initial_position=true` to keep the policy and hardware connected between attempts and return before normal shutdown. The captured startup pose, including grippers, is the return target; this does not perform encoder homing. Small joint-boundary deviations within the existing feedback tolerance are clamped to the legal command boundary for return, so encoder noise near zero cannot invalidate home. Larger deviations are rejected; policy command limits are unchanged. By default, motors hold their measured pose after connection, even before policy actions begin with `/start`.
 
 To keep YAM torque disabled during the initial interactive wait, also set `--robot.defer_torque_enable=true`. Support the arms in their starting pose: this mode reads feedback but provides no powered hold or gravity compensation until `/start`. Both starting poses are rechecked on `/start`; each bus worker seeds its controller from fresh measured positions before enabling torque. `/reset` and `/stop` before the first `/start` do not command a return. After activation, `/reset` returns home and leaves holding torque on for the next run.
 

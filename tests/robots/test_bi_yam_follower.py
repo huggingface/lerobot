@@ -776,3 +776,45 @@ def test_expired_commands_latch_hold_pose_until_next_command(monkeypatch, tmp_pa
     assert bot._failure is None
     goals = [math.radians(p["joint_0"][2]) for p in packets]
     assert goals == pytest.approx([0.0, 0.0, 0.12, 0.12])
+
+
+@pytest.mark.parametrize("side", ["left", "right"])
+@pytest.mark.parametrize("joint", range(6))
+@pytest.mark.parametrize("endpoint", [0, 1])
+def test_return_clamps_captured_feedback_noise_to_command_bounds(
+    monkeypatch, tmp_path, side, joint, endpoint
+):
+    bot, _ = robot(monkeypatch, tmp_path, read_only=False)
+    bot._connected = True
+    bot._control_started = True
+    target = dict.fromkeys(YAM_FEATURE_NAMES, 0.0)
+    key = f"{side}_joint_{joint}.pos"
+    limit = module.JOINT_LIMITS[joint][endpoint]
+    target[key] = limit + (-1 if endpoint == 0 else 1) * 0.00019073777370870462
+    monkeypatch.setattr(bot, "_check_feedback", lambda: None)
+    wait = MagicMock()
+    monkeypatch.setattr(bot, "wait_until_reached", wait)
+    assert bot.return_to_position(target)
+    returned = wait.call_args.args[0]
+    assert returned[key] == limit
+    assert returned is not target
+    for arm in bot.arms:
+        module.validate_target(np.asarray([returned[f"{arm}_{name}.pos"] for name in MOTOR_NAMES]))
+    # Policy actions must still reject the same out-of-range command.
+    with pytest.raises(ValueError, match="outside"):
+        bot.send_action(target)
+
+
+@pytest.mark.parametrize("value", [-0.031, float("nan"), float("inf")])
+def test_invalid_home_target_cannot_trigger_feedback_recovery(monkeypatch, tmp_path, value):
+    bot, _ = robot(monkeypatch, tmp_path, read_only=False)
+    bot._connected = True
+    bot._control_started = True
+    bot.config.recover_on_feedback_timeout = True
+    target = dict.fromkeys(YAM_FEATURE_NAMES, 0.0)
+    target["left_joint_1.pos"] = value
+    recover = MagicMock()
+    monkeypatch.setattr(bot, "_recover_feedback_for_return", recover)
+    with pytest.raises(ValueError):
+        bot.return_to_position(target)
+    recover.assert_not_called()
