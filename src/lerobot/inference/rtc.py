@@ -635,7 +635,8 @@ class RTCInferenceEngine(InferenceEngine):
                         warmup_previous = None
                         self._compile_warmup_done.set()
                     continue
-                self.inference_seconds.append(time.perf_counter() - started)
+                finished = time.perf_counter()
+                self.inference_times.append((finished, finished - started))
                 chunk = ActionChunk(
                     model_actions=original,
                     canonical_actions=processed,
