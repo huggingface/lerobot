@@ -63,6 +63,12 @@ def drop_projector_bias(state_dict):
     del state_dict["paligemma_with_expert.paligemma.model.multi_modal_projector.linear.bias"]
 
 
+def add_unknown_weights(state_dict):
+    """Add weights the policy does not have, as a checkpoint trained by a variant with an extra layer holds."""
+    state_dict["state_mlp_in.weight"] = torch.ones(4, 8)
+    state_dict["state_mlp_in.bias"] = torch.ones(4)
+
+
 def save_checkpoint(policy_cls, config, path, renames=None, edit=None):
     """Save a checkpoint in the OpenPI layout that `_fix_pytorch_state_dict_keys` converts."""
     torch.manual_seed(0)

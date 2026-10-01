@@ -155,7 +155,6 @@ def test_meta_build_draws_no_random_numbers(config):
     "edit",
     [
         lambda sd: sd.pop("state_proj.bias"),
-        lambda sd: sd.update(extra=torch.ones(1)),
         lambda sd: sd.update({"state_proj.bias": torch.ones(3)}),
     ],
 )
@@ -165,6 +164,16 @@ def test_other_checkpoints_load_the_regular_way(config, tmp_path, monkeypatch, e
     model, used_meta = load(PI0Policy, path, config, monkeypatch, strict=strict)
     expected, _ = load(PI0Policy, path, config, monkeypatch, regular=True, strict=strict)
     assert not used_meta
+    assert_same(model, expected)
+
+
+@pytest.mark.parametrize("strict", [True, False])
+def test_weights_the_policy_does_not_have_are_skipped(config, tmp_path, monkeypatch, strict):
+    # The regular path ignores them too: load_state_dict copies every other weight before it reports them.
+    path = save(config, tmp_path / "ckpt", lambda sd: sd.update(extra=torch.ones(1)))
+    model, used_meta = load(PI0Policy, path, config, monkeypatch, strict=strict)
+    expected, _ = load(PI0Policy, path, config, monkeypatch, regular=True, strict=strict)
+    assert used_meta
     assert_same(model, expected)
 
 
