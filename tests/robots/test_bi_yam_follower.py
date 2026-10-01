@@ -268,3 +268,10 @@ def test_calibration_preserves_factory_zeros_and_polarity(robot, monkeypatch):
         arm.enable.assert_not_called()
         arm.configure.assert_not_called()
     robot.disconnect()
+
+
+def test_installed_optional_dependencies_allow_construction(tmp_path):
+    pytest.importorskip("motorbridge")
+    pytest.importorskip("can")
+    bot = BiYamFollower(BiYamFollowerConfig(id="imports", calibration_dir=tmp_path))
+    assert not bot.is_connected
