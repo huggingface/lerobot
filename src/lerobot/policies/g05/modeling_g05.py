@@ -1328,7 +1328,11 @@ class G05NativeBackend(nn.Module):
         )
 
     def _action_cache(self, vlm_cache, prefix_length: int, *, repeats: int = 1):
-        """Build the action expert's attention cache."""
+        """Build the action expert's attention cache.
+
+        The prefix keys and values are detached, as the author's flow loss does by default
+        (``fm.joint_training: false``): the flow loss does not train the VLM (knowledge insulation).
+        """
         cache = DynamicCache(config=self.model.action_expert.config)
         layer_types = self.model.vlm.config.layer_types
         for layer_index, layer_type in enumerate(layer_types):
@@ -1340,8 +1344,10 @@ class G05NativeBackend(nn.Module):
             key = source.keys[..., :prefix_length, :].detach()
             value = source.values[..., :prefix_length, :].detach()
             if repeats > 1:
-                key = key.repeat_interleave(repeats, dim=0)
-                value = value.repeat_interleave(repeats, dim=0)
+                # Tiled like every other flow-sample tensor in `_flow_loss` (`.repeat(samples, ...)`,
+                # rows [b0, b1, ..., b0, b1, ...]) and like the author's SparseKVCache.repeat.
+                key = key.repeat(repeats, *([1] * (key.ndim - 1)))
+                value = value.repeat(repeats, *([1] * (value.ndim - 1)))
             cache.layers[layer_index].update(key, value)
         return cache
 

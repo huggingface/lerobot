@@ -1467,6 +1467,61 @@ def test_from_pretrained_constructs_on_meta_and_assigns_directly(tmp_path: Path,
     torch.testing.assert_close(loaded.backend.proj.weight, reference.backend.proj.weight)
 
 
+def test_action_cache_keeps_the_flow_loss_out_of_the_vlm():
+    # The author's flow loss detaches the VLM KV by default (fm.joint_training: false), so the
+    # action expert's flow loss does not train the VLM keys and values it attends to.
+    config = Qwen3_5TextConfig(
+        hidden_size=32,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=16,
+        num_hidden_layers=2,
+        layer_types=["linear_attention", "full_attention"],
+    )
+    backend = G05NativeBackend.__new__(G05NativeBackend)
+    nn.Module.__init__(backend)
+    backend.model = SimpleNamespace(
+        vlm=SimpleNamespace(config=config), action_expert=SimpleNamespace(config=config)
+    )
+    key = torch.randn(1, 1, 5, 16, requires_grad=True)
+    value = torch.randn(1, 1, 5, 16, requires_grad=True)
+    vlm_cache = DynamicCache(config=config)
+    vlm_cache.layers[1].update(key, value)
+
+    cache = G05NativeBackend._action_cache(backend, vlm_cache, 3, repeats=2)
+
+    assert cache.layers[1].keys.shape == (2, 1, 3, 16)
+    assert not cache.layers[1].keys.requires_grad
+    assert not cache.layers[1].values.requires_grad
+
+
+def test_action_cache_repeats_flow_samples_in_the_targets_row_order():
+    # _flow_loss tiles the targets, noise and masks with .repeat(samples, ...), so row r belongs to
+    # batch item r % B; the context the action expert reads must follow the same order.
+    config = Qwen3_5TextConfig(
+        hidden_size=32,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=16,
+        num_hidden_layers=2,
+        layer_types=["linear_attention", "full_attention"],
+    )
+    backend = G05NativeBackend.__new__(G05NativeBackend)
+    nn.Module.__init__(backend)
+    backend.model = SimpleNamespace(
+        vlm=SimpleNamespace(config=config), action_expert=SimpleNamespace(config=config)
+    )
+    batch = torch.arange(3, dtype=torch.float32).view(3, 1, 1, 1).expand(3, 1, 4, 16).contiguous()
+    vlm_cache = DynamicCache(config=config)
+    vlm_cache.layers[1].update(batch, batch.clone())
+
+    cache = G05NativeBackend._action_cache(backend, vlm_cache, 4, repeats=2)
+    rows = cache.layers[1].keys[:, 0, 0, 0].tolist()
+    targets = torch.arange(3).repeat(2).tolist()
+
+    assert rows == targets == [0, 1, 2, 0, 1, 2]
+
+
 def test_meta_loader_materializes_transformers_rotary_buffers():
     config = Qwen3_5TextConfig(
         hidden_size=32,
