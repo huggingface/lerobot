@@ -57,10 +57,6 @@ uv run --no-sync lerobot-rollout \
   --robot.type=bi_yam_follower --robot.id=bimanual_yam \
   --robot.read_only=false \
   --robot.left_arm.port=can0 --robot.right_arm.port=can1 \
-  --robot.left_arm.gripper_kp=5.0 --robot.left_arm.gripper_kd=0.005 \
-  --robot.left_arm.max_gripper_speed_s=12.0 --robot.left_arm.gripper_torque_limit=0.5 \
-  --robot.right_arm.gripper_kp=5.0 --robot.right_arm.gripper_kd=0.005 \
-  --robot.right_arm.max_gripper_speed_s=12.0 --robot.right_arm.gripper_torque_limit=0.5 \
   --robot.cameras='{"top":{"type":"opencv","index_or_path":"/dev/v4l/by-id/TOP_CAMERA","width":640,"height":480,"fps":30},"left":{"type":"opencv","index_or_path":"/dev/v4l/by-id/LEFT_CAMERA","width":640,"height":480,"fps":30,"fourcc":"MJPG"},"right":{"type":"opencv","index_or_path":"/dev/v4l/by-id/RIGHT_CAMERA","width":640,"height":480,"fps":30,"fourcc":"MJPG"}}' \
   --policy.path=/path/to/molmoact2-bimanual-yam \
   --inference.type=rtc --inference.rtc.mode=guided \
@@ -71,6 +67,6 @@ uv run --no-sync lerobot-rollout \
   --task="Pick up the red block and place it in the green bin"
 ```
 
-The example opts into faster gripper tuning: `gripper_kp=5`, `gripper_kd=0.005`, and `max_gripper_speed_s=12` (normalized full strokes per second). With the 0.5 Nm proportional torque cap, `Kp=5` allows a motor-position target up to 0.1 rad ahead of the measured position, compared with 0.025 rad at the default `Kp=20`. Lower damping reduces velocity resistance. These settings apply to both opening and closing; they are configurable overrides, not new hardware defaults. Command generation has been checked in both directions, but the resulting physical speed has not been measured. Actual speed depends on policy targets, load, and motor response.
+Both arms default to `gripper_kp=5`, `gripper_kd=0.005`, and `max_gripper_speed_s=12` (normalized full strokes per second). With the 0.5 Nm proportional torque cap, `Kp=5` allows a motor-position target up to 0.1 rad ahead of the measured position. These settings apply to both opening and closing and can be overridden per arm. Command generation has been checked in both directions and with either calibration polarity, but the resulting physical speed has not been measured. Actual speed depends on policy targets, load, and motor response.
 
 Type `/start` to begin policy execution, `/subtask <text>` to change the instruction, and `/reset` to request a return to the captured startup pose. `duration=0` means no episode time limit. This integration leaves standard rollout controls unchanged: its return trajectory has a fixed duration and does not verify that the arms have settled at home. The YAM speed/tracking limits still apply, so do not interpret completion of that trajectory as measured arrival. Support the arms before disconnecting; torque is disabled on disconnect.
