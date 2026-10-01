@@ -53,6 +53,7 @@ from .controller import (
     RolloutEvent,
 )
 from .inference import (
+    AgentInferenceConfig,
     InferenceEngine,
     InferenceEngineConfig,
     QueryAnswer,
@@ -75,6 +76,7 @@ from .strategies import (
 )
 
 __all__ = [
+    "AgentInferenceConfig",
     "AskResult",
     "BaseStrategy",
     "BaseStrategyConfig",

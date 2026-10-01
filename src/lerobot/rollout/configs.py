@@ -30,6 +30,7 @@ from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
 
 from .inference import InferenceEngineConfig, SyncInferenceConfig
+from .inference.factory import AgentInferenceConfig
 from .planner import PlannerConfig
 
 logger = logging.getLogger(__name__)
@@ -411,7 +412,16 @@ class RolloutConfig:
                 cli_overrides=policy_overrides,
             )
             self.policy.pretrained_path = policy_path
-        if self.policy is None:
+        if isinstance(self.inference, AgentInferenceConfig):
+            if self.policy is not None or self.planner is not None or self.use_torch_compile:
+                raise ValueError("Agent inference owns its VLM: omit policy, planner and torch.compile")
+            if self.strategy.type not in ("base", "sentry") or self.teleop is not None:
+                raise ValueError("Agent inference currently supports base/sentry without teleoperation")
+            if self.interpolation_multiplier != 1:
+                raise ValueError(
+                    "Agent tools already interpolate: use interpolation_multiplier=1 and set fps directly"
+                )
+        elif self.policy is None:
             raise ValueError("--policy.path is required for rollout")
 
         # --- Task resolution ---
@@ -430,7 +440,7 @@ class RolloutConfig:
         # components (policy.to, preprocessor, inference engine) use the same
         # device string instead of inconsistent fallbacks.
         if self.device is None or not is_torch_device_available(self.device):
-            resolved = self.policy.device
+            resolved = self.policy.device if self.policy is not None else "cpu"
             if resolved:
                 self.device = resolved
                 logger.info("Resolved device from policy config: %s", self.device)
