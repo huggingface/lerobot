@@ -57,6 +57,7 @@ class HybridConfig:
 
     limits: dict[str, InterventionLimit] = field(default_factory=dict)
     end_effectors: dict[str, EndEffectorConfig] = field(default_factory=dict)
+    vlm_only: bool = False
     policy_window_s: float = 5.0
     review_policy_chunks: bool = False
     proposal_execution_steps: int = 15
@@ -69,6 +70,8 @@ class HybridConfig:
     max_consecutive_interventions: int = 3
 
     def __post_init__(self):
+        if self.vlm_only and self.review_policy_chunks:
+            raise ValueError("VLM-only control cannot review VLA proposals")
         for value in (
             self.policy_window_s,
             self.proposal_timeout_s,
@@ -110,7 +113,15 @@ class PlannerDecision:
         optional = {"ee_targets", "execution_status", "intent_status"}
         if not isinstance(reply, dict) or not fields <= set(reply) or set(reply) - fields - optional:
             raise ValueError(f"Hybrid reply must contain exactly {sorted(fields)}")
-        if reply["mode"] not in {"accept", "policy", "intervention", "end_effector", "hold", "done"}:
+        if reply["mode"] not in {
+            "accept",
+            "policy",
+            "intervention",
+            "end_effector",
+            "observe",
+            "hold",
+            "done",
+        }:
             raise ValueError("Unknown hybrid mode")
         for key in ("scene", "reason", "instruction"):
             if not isinstance(reply[key], str):

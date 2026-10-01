@@ -80,6 +80,7 @@ class HybridInferenceEngine(InferenceEngine):
         self._last_execution: dict | None = None
         self._executed_steps = 0
         self._executed_seconds = 0.0
+        self._vlm_feedback = None
 
     @property
     def control_thread_owns_policy(self):
@@ -141,6 +142,7 @@ class HybridInferenceEngine(InferenceEngine):
         self._last_execution = None
         self._executed_steps = 0
         self._executed_seconds = 0.0
+        self._vlm_feedback = None
 
     def start_autosteer(self, goal, interval_s):
         with self._query_lock:
@@ -249,6 +251,14 @@ class HybridInferenceEngine(InferenceEngine):
         self._autosteer_due_at = self._review_started
 
     def pump_query(self, obs_processed=None):
+        if self.config.vlm_only and obs_processed is not None:
+            obs_processed = dict(obs_processed)
+            if self._vlm_feedback is not None:
+                obs_processed["_vlm_feedback"] = self._vlm_feedback
+            if self._last_execution is not None:
+                obs_processed["_hybrid_execution"] = self._last_execution | {
+                    "measured_after_settling": self._pose(),
+                }
         if self.config.review_policy_chunks and self._proposal is not None and obs_processed is not None:
             proposal = self._proposal
             # Images, joints and prediction come from the SAME inference snapshot.
@@ -347,12 +357,21 @@ class HybridInferenceEngine(InferenceEngine):
         if epoch != self._query_epoch:
             return
         if error is not None:
+            if self.config.vlm_only and error.startswith("AgentToolError:"):
+                self._agent_feedback("rejected", error, None, observation)
+                return
+            # Authentication, transport and hardware failures are not valid actions.
             self._finish(error=error)
             return
         self._check_hold(observation)
         if time.perf_counter() - self._review_started > self.config.review_timeout_s:
             raise ValueError("Planner review deadline exceeded; proposal discarded")
-        if decision.mode == "accept":
+        if self.config.vlm_only and decision.mode in {"accept", "policy"}:
+            raise ValueError("VLM-only control cannot delegate to a policy")
+        if decision.mode == "observe" and self.config.vlm_only:
+            self._vlm_feedback = {"status": "observed", "note": decision.reason}
+            self._begin_review(retain_endpoint=True)
+        elif decision.mode == "accept":
             if not self.config.review_policy_chunks or self._proposal is None:
                 raise ValueError("No unexecuted proposal to accept")
             if observation.get("_hybrid_proposal", {}).get("id") != self._proposal.proposal_id:
@@ -376,12 +395,19 @@ class HybridInferenceEngine(InferenceEngine):
                 and decision.intent_status != "misaligned"
             ):
                 raise ValueError("Correction requires failed execution or misaligned intent")
-            if self._consecutive >= self.config.max_consecutive_interventions:
+            if not self.config.vlm_only and self._consecutive >= self.config.max_consecutive_interventions:
                 raise ValueError("Consecutive intervention limit reached")
             # IK and correction deltas start from fresh measured joints, not the
             # hold command (a loaded arm can settle at a small tracking offset).
             motion_start = self._pose()
-            resolved = decision.resolve_motion(self.config, motion_start, self.kinematics)
+            try:
+                resolved = decision.resolve_motion(self.config, motion_start, self.kinematics)
+            except ValueError as exc:
+                if not self.config.vlm_only:
+                    raise
+                self._agent_feedback("rejected", str(exc), decision, observation)
+                return
+            self._execution_start = motion_start
             motion_keys = set(decision.targets)
             for name in decision.ee_targets:
                 motion_keys.update(self.config.end_effectors[name].action_keys)
@@ -408,8 +434,26 @@ class HybridInferenceEngine(InferenceEngine):
         self.external_history.append((observation, description))
         if not self.terminal:
             self._publish_answer(
-                QueryAnswer(question=self._autosteer_goal, answer=description, kind=QueryKind.NEXT_SUBTASK)
+                QueryAnswer(
+                    question=self._autosteer_goal,
+                    answer=f"VLM {decision.mode}: {decision.reason}" if self.config.vlm_only else description,
+                    kind=QueryKind.NEXT_SUBTASK,
+                    status_only=self.config.vlm_only,
+                )
             )
+
+    def _agent_feedback(self, status, message, decision, observation):
+        self._vlm_feedback = {"status": status, "message": message, "executed": False}
+        self.external_history.append((observation, json.dumps(asdict(decision)) if decision else message))
+        self._begin_review(retain_endpoint=True)
+        self._publish_answer(
+            QueryAnswer(
+                question=self._autosteer_goal,
+                answer=f"VLM {status}: {message}; holding and requesting a revised action.",
+                kind=QueryKind.NEXT_SUBTASK,
+                status_only=True,
+            )
+        )
 
     def get_action(self, obs_frame):
         with self._query_lock:
@@ -418,7 +462,12 @@ class HybridInferenceEngine(InferenceEngine):
                 if self._manual_task is not None:
                     task, self._manual_task = self._manual_task, None
                     self._hold = pose
-                    self._start_policy(task, manual=True)
+                    if self.config.vlm_only:
+                        self.start_autosteer(task, self.config.policy_window_s)
+                        self._reset_execution_feedback()
+                        self._begin_review()
+                    else:
+                        self._start_policy(task, manual=True)
                 if self._mode == "review_due" or (
                     self._mode == "policy" and time.perf_counter() >= self._due
                 ):
@@ -480,10 +529,29 @@ class HybridInferenceEngine(InferenceEngine):
                             self.kinematics[name].reached(goal, pose)
                             for name, goal in self._ee_targets.items()
                         )
-                        if reached:
+                        expired = elapsed > self._motion_duration + self.config.settle_s
+                        if self.config.vlm_only and (reached or expired):
+                            self._last_execution = {
+                                "measured_start": self._execution_start,
+                                "commanded_endpoint": dict(self._target),
+                                "reached": reached,
+                            }
+                            self._vlm_feedback = {
+                                "status": "reached" if reached else "not_reached",
+                                "residual_robot_units": {
+                                    k: self._target[k] - pose[k] for k in self._motion_keys
+                                },
+                                "note": "Measured arrival, not object/task success. Reobserve before next move.",
+                            }
+                            # Stop pursuing an obstructed endpoint; let the next request
+                            # reason from measured feedback rather than force contact.
+                            self._hold = dict(self._target) if reached else pose
+                            self._begin_review(retain_endpoint=True)
+                            target = self._hold
+                        elif reached:
                             self._begin_review()
                             target = self._hold
-                        elif elapsed > self._motion_duration + self.config.settle_s:
+                        elif expired:
                             raise ValueError("Intervention did not reach its target in time")
                     return self._emit_position(target, "VLM intervention")
                 if self._hold is None:

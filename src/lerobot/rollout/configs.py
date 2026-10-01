@@ -406,7 +406,12 @@ class RolloutConfig:
         if self.robot is None:
             raise ValueError("--robot.type is required for rollout")
 
+        vlm_only = self.hybrid is not None and self.hybrid.vlm_only
         policy_path = parser.get_path_arg("policy")
+        if vlm_only and (policy_path or self.policy is not None):
+            raise ValueError("VLM-only control does not load a policy; remove --policy.* flags")
+        if vlm_only and self.inference.type != "sync":
+            raise ValueError("VLM-only control requires --inference.type=sync (no RTC/VLA)")
         if policy_path:
             yaml_overrides = parser.get_yaml_overrides("policy")
             cli_overrides = parser.get_cli_overrides("policy") or []
@@ -420,7 +425,7 @@ class RolloutConfig:
                 cli_overrides=policy_overrides,
             )
             self.policy.pretrained_path = policy_path
-        if self.policy is None:
+        if self.policy is None and not vlm_only:
             raise ValueError("--policy.path is required for rollout")
 
         # --- Task resolution ---
@@ -439,7 +444,7 @@ class RolloutConfig:
         # components (policy.to, preprocessor, inference engine) use the same
         # device string instead of inconsistent fallbacks.
         if self.device is None or not is_torch_device_available(self.device):
-            resolved = self.policy.device
+            resolved = self.policy.device if self.policy is not None else "cpu"
             if resolved:
                 self.device = resolved
                 logger.info("Resolved device from policy config: %s", self.device)
