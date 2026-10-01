@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 import time
+from collections import deque
 from threading import Lock
 from typing import Any
 
@@ -43,6 +44,8 @@ class ThreadSafeRobot:
         self._last_applied_action: dict[str, float] | None = None
         self._observation_time: float | None = None
         self._hardware_failure: str | None = None
+        # When the latest observations were read: strategies read once per control tick, so this gives the loop rate.
+        self.observation_times: deque[float] = deque(maxlen=128)
 
     # -- Lock-protected I/O --------------------------------------------------
 
@@ -56,7 +59,8 @@ class ThreadSafeRobot:
                 if key.endswith(".pos") and key in observation
             }
             self._observation_time = sampled_at
-            return observation
+        self.observation_times.append(time.perf_counter())
+        return observation
 
     @property
     def observation_time(self) -> float | None:
