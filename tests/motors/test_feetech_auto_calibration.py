@@ -730,3 +730,13 @@ def test_lerobot_calibrate_auto():
     device.auto_calibrate.assert_called_once_with(cfg.auto_calibration)
     device.calibrate.assert_not_called()
     device.disconnect.assert_called_once()
+
+
+def test_lerobot_calibrate_help(capsys):
+    """`--help` lists the options: argparse %-formats help text, and a "%" in a field comment broke it."""
+    from lerobot.scripts.lerobot_calibrate import calibrate
+
+    with patch("sys.argv", ["lerobot-calibrate", "--help"]), pytest.raises(SystemExit) as exit_info:
+        calibrate()
+    assert exit_info.value.code == 0
+    assert "--auto_calibration.torque_limit" in capsys.readouterr().out

@@ -107,8 +107,8 @@ def homing_offset_for(raw: int, present: int = HALF_TURN) -> int:
 class AutoCalibrationConfig:
     # Speed of the end-stop search and of every move, in encoder steps per second (4096 steps per turn).
     velocity: int = 200
-    # Torque_Limit during the run, in 0.1 % of the servo's maximum torque. Never above the servo's
-    # Max_Torque_Limit. None: the plan's torque limit for that arm.
+    # Torque_Limit during the run, in tenths of a percent of the servo's maximum torque. Never above the
+    # servo's Max_Torque_Limit. None: the plan's torque limit for that arm.
     torque_limit: int | None = None
     # Acceleration register during the run.
     acceleration: int = 50
@@ -132,8 +132,9 @@ class AutoCalibrationConfig:
     # Time after torque comes on before checking that no joint moved.
     start_delay_s: float = 0.5
     # A joint that holds still while another one reaches an end stop, and whose load then changes by at least
-    # this much (in 0.1 % of full torque), shows an external contact: the arm pushes on the table or a clamp
-    # rather than resting against the joint's own stop. "abort" ends the run, "warn" logs it, "off" skips it.
+    # this much (in tenths of a percent of full torque), shows an external contact: the arm pushes on the table
+    # or a clamp rather than resting against the joint's own stop. "abort" ends the run, "warn" logs it, "off"
+    # skips it.
     contact_check: str = "abort"
     contact_load_delta: int = 150
     # Refuse ranges outside the span the plan gives for each joint.
@@ -218,8 +219,8 @@ class AutoCalibrationPlan:
     start_pose: str
     joints: Mapping[str, JointRange]
     steps: tuple[Step, ...]
-    # Torque_Limit of the run unless AutoCalibrationConfig.torque_limit is set, in 0.1 % of the servos' maximum
-    # torque: enough for them to hold the stretched arm, and little more.
+    # Torque_Limit of the run unless AutoCalibrationConfig.torque_limit is set, in tenths of a percent of the
+    # servos' maximum torque: enough for them to hold the stretched arm, and little more.
     torque_limit: int = 500
 
     def validate(self, motors: Iterable[str]) -> None:
