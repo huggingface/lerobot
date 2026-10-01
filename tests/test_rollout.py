@@ -1588,7 +1588,10 @@ def test_status_line_redraws_in_place_and_steps_aside_for_log_records():
     root = logging.getLogger()
     root.addHandler(handler)
     try:
-        with patch("lerobot.rollout.status_line.REFRESH_S", 0.01), StatusLine(robot, engine, 30, terminal):
+        with (
+            patch("lerobot.rollout.status_line.REFRESH_S", 0.01),
+            StatusLine(robot, engine, 30, stream=terminal),
+        ):
             for _ in range(3):
                 robot.observation_times.append(time.perf_counter())
                 time.sleep(0.02)
@@ -1600,7 +1603,7 @@ def test_status_line_redraws_in_place_and_steps_aside_for_log_records():
 
     output = terminal.getvalue()
     assert "\r\033[2Kloop " in output
-    assert "infer  30.0 ms (worst  30.0)" in output
+    assert "infer  25.0 ms (worst  30.0)" in output
     assert "\r\033[2Ka log record\n" in output
     assert output.endswith("\n")
 
@@ -1610,6 +1613,19 @@ def test_status_line_stays_silent_off_a_terminal():
 
     stream = io.StringIO()
     robot = SimpleNamespace(observation_times=deque([0.0, 1.0]))
-    with StatusLine(robot, SimpleNamespace(inference_seconds=deque([0.1])), 30, stream):
+    with StatusLine(robot, SimpleNamespace(inference_seconds=deque([0.1])), 30, stream=stream):
         time.sleep(0.05)
     assert stream.getvalue() == ""
+
+
+def test_status_line_rate_counts_only_the_last_second():
+    """A loop that stopped reading the robot shows 0 Hz, not the rate it last had."""
+    from lerobot.rollout.status_line import StatusLine
+
+    now = time.perf_counter()
+    running = SimpleNamespace(observation_times=deque(now - i / 30 for i in range(60)))
+    stalled = SimpleNamespace(observation_times=deque(now - 5 - i / 30 for i in range(60)))
+    engine = SimpleNamespace(inference_seconds=deque())
+
+    assert StatusLine(running, engine, 30, stream=io.StringIO())._format().startswith("loop  30/30 Hz")
+    assert StatusLine(stalled, engine, 30, stream=io.StringIO())._format().startswith("loop   0/30 Hz")

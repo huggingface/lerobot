@@ -39,7 +39,7 @@ class ThreadSafeRobot:
         self._robot = robot
         self._lock = Lock()
         # When the latest observations were read: strategies read once per control tick, so this gives the loop rate.
-        self.observation_times: deque[float] = deque(maxlen=128)
+        self.observation_times: deque[float] = deque(maxlen=1024)
 
     # -- Lock-protected I/O --------------------------------------------------
 
