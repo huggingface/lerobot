@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import logging
+from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
@@ -150,7 +151,7 @@ class ProcessorConfigKwargs(TypedDict, total=False):
 
 def make_pre_post_processors(
     policy_cfg: PreTrainedConfig,
-    pretrained_path: str | None = None,
+    pretrained_path: str | Path | None = None,
     pretrained_revision: str | None = None,
     **kwargs: Unpack[ProcessorConfigKwargs],
 ) -> tuple[
@@ -273,7 +274,7 @@ def make_policy(
 
     policy_cls = get_policy_class(cfg.type)
 
-    kwargs = {}
+    kwargs: dict[str, Any] = {}
     if ds_meta is not None:
         features = dataset_to_policy_features(ds_meta.features)
     else:
@@ -315,7 +316,13 @@ def make_policy(
     if ds_meta is not None:
         set_dataset_feature_metadata = getattr(cfg, "set_dataset_feature_metadata", None)
         if callable(set_dataset_feature_metadata):
-            set_dataset_feature_metadata(ds_meta.features)
+            ds_feature = ds_meta.features
+            if rename_map:  # use the policy-side (renamed) keys
+                ds_feature = {
+                    rename_map.get(dataset_key, dataset_key): feature
+                    for dataset_key, feature in ds_meta.features.items()
+                }
+            set_dataset_feature_metadata(ds_feature)
         cfg._runtime_dataset_meta = ds_meta
 
     kwargs["config"] = cfg
@@ -411,7 +418,7 @@ def _import_sibling_policy_module(config_cls: type[PreTrainedConfig], prefix: st
 
 def _make_pretrained_processors_from_policy_config(
     config: PreTrainedConfig,
-    pretrained_path: str,
+    pretrained_path: str | Path,
     *,
     revision: str | None,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None,
