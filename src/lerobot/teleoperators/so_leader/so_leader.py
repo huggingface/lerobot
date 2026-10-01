@@ -29,6 +29,10 @@ from .config_so_leader import SOLeaderTeleopConfig
 
 logger = logging.getLogger(__name__)
 
+# Joints negated by `mirror`: a mirror image across the arm's vertical plane reverses the turns about axes
+# in that plane (pan about the vertical, roll about the forearm) and keeps those about axes across it.
+MIRRORED_MOTORS = ("shoulder_pan", "wrist_roll")
+
 _HOMING_POSITION_DIAGRAM = r"""
        ╭─────┬────────────────────┬──────╮ ◉╲═════╗   ← moveable claw
        │     │      forearm       │  ▤▤  │╤══╲════╝
@@ -169,7 +173,7 @@ class SOLeader(Teleoperator):
     def get_action(self) -> dict[str, float]:
         start = time.perf_counter()
         action = self.bus.sync_read("Present_Position", num_retry=self.config.num_read_retries)
-        action = {f"{motor}.pos": val for motor, val in action.items()}
+        action = {f"{motor}.pos": val for motor, val in self._mirror(action).items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
         return action
@@ -177,8 +181,15 @@ class SOLeader(Teleoperator):
     @check_if_not_connected
     def send_feedback(self, feedback: dict[str, float]) -> None:
         goals = {k.removesuffix(".pos"): v for k, v in feedback.items() if k.endswith(".pos")}
+        goals = self._mirror(goals)
         if goals:
             self.bus.sync_write("Goal_Position", goals)
+
+    def _mirror(self, positions: dict[str, float]) -> dict[str, float]:
+        """Negate the mirrored joints when `config.mirror` is set (its own inverse, so it serves both ways)."""
+        if not self.config.mirror:
+            return positions
+        return {motor: -val if motor in MIRRORED_MOTORS else val for motor, val in positions.items()}
 
     @check_if_not_connected
     def disconnect(self) -> None:
