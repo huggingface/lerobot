@@ -24,6 +24,7 @@ import tempfile
 import threading
 import warnings
 from collections import OrderedDict
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from fractions import Fraction
 from pathlib import Path
@@ -652,7 +653,7 @@ def reencode_video(
 
 
 def concatenate_video_files(
-    input_video_paths: list[Path | str],
+    input_video_paths: Sequence[Path | str],
     output_video_path: Path,
     overwrite: bool = True,
     compatibility_check: bool = False,

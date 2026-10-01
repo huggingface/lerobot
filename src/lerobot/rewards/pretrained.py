@@ -39,8 +39,8 @@ T = TypeVar("T", bound="PreTrainedRewardModel")
 class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
     """Base class for reward models."""
 
-    config_class: None
-    name: None
+    config_class: type[RewardModelConfig]
+    name: str
 
     def __init__(self, config: RewardModelConfig, *inputs, **kwargs):
         super().__init__()

@@ -27,6 +27,7 @@ from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.configs import DEFAULT_DEPTH_UNIT, DepthEncoderConfig, RGBEncoderConfig
 from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
+from lerobot.utils.import_utils import get_safe_default_video_backend
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .dataset_reader import BaseDatasetReader, DatasetReader
@@ -42,10 +43,7 @@ from .utils import (
     get_safe_version,
     is_valid_version,
 )
-from .video_utils import (
-    StreamingVideoEncoder,
-    get_safe_default_video_backend,
-)
+from .video_utils import StreamingVideoEncoder
 
 logger = logging.getLogger(__name__)
 

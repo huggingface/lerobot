@@ -68,9 +68,7 @@ LEROBOT_TAG = "lerobot"
 
 def resolve_job_tags(extra: list[str] | None) -> list[str]:
     """Return the tag list for a run: the lerobot tag plus any extras, deduped, order-stable."""
-    tags = [LEROBOT_TAG, *(extra or [])]
-    seen: set[str] = set()
-    return [t for t in tags if not (t in seen or seen.add(t))]
+    return list(dict.fromkeys([LEROBOT_TAG, *(extra or [])]))
 
 
 def resolve_wandb_api_key() -> str | None:
@@ -324,6 +322,9 @@ def _build_resume_job(cfg: TrainPipelineConfig, username: str) -> tuple[str, lis
     re-dispatch itself.
     """
     config_path = parser.parse_arg("config_path")
+    if not config_path:
+        # validate() only enforces this on its own resume path; keep the helper self-contained.
+        raise ValueError("A config_path is expected when resuming a run.")
     forwarded = _pod_forwarded_args(
         sys.argv[1:],
         drop_names=("--config_path", "--policy.repo_id", "--policy.push_to_hub", "--dataset.root"),
@@ -332,6 +333,12 @@ def _build_resume_job(cfg: TrainPipelineConfig, username: str) -> tuple[str, lis
 
     if Path(config_path).exists():
         # Local checkpoint: stage it on the Hub so the pod can resume from it, and push back there.
+        if cfg.checkpoint_path is None:
+            raise ValueError(
+                f"Cannot resume from local checkpoint {config_path!r}: --policy.path / "
+                "--reward_model.path take priority over --resume, so no checkpoint was resolved. "
+                "Drop them to resume from --config_path."
+            )
         # Resolve so a `last` symlink uploads under its real step name (digit), which the pod's
         # latest-checkpoint lookup keys on.
         checkpoint_dir = Path(cfg.checkpoint_path).resolve()
@@ -404,7 +411,8 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
     # dataset is pushed PRIVATE here. Hoisted before the resume/fresh branch since it applies to both.
     ensure_dataset_available(cfg.dataset.repo_id, api=api, tags=tags)
 
-    if cfg.resume:
+    if fresh_repo_id is None:
+        # Resuming (fresh_repo_id is only set for fresh runs): the model repo comes from the checkpoint.
         repo_id, command = _build_resume_job(cfg, username)
     else:
         config_repo_id = _stage_config_on_hub(cfg, fresh_repo_id, token, tags=tags)

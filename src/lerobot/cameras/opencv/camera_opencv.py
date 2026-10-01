@@ -25,12 +25,12 @@ from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Any
 
-from numpy.typing import NDArray  # type: ignore  # TODO: add type stubs for numpy.typing
+from numpy.typing import NDArray
 
 # Fix MSMF hardware transform compatibility for Windows before importing cv2
 if platform.system() == "Windows" and "OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS" not in os.environ:
     os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
-import cv2  # type: ignore  # TODO: add type stubs for OpenCV
+import cv2
 
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.errors import DeviceNotConnectedError
@@ -262,7 +262,10 @@ class OpenCVCamera(Camera):
     def _validate_fourcc(self) -> None:
         """Validates and sets the camera's FOURCC code."""
 
-        fourcc_code = cv2.VideoWriter_fourcc(*self.config.fourcc)
+        fourcc = self.config.fourcc
+        if fourcc is None:
+            raise ValueError(f"{self} has no fourcc configured to validate.")
+        fourcc_code = cv2.VideoWriter_fourcc(*fourcc)
 
         if self.videocapture is None:
             raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
