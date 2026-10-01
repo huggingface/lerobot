@@ -55,15 +55,17 @@ The `lerobot-rollout --strategy.type=dagger` mode requires **teleoperators with 
 - Enable/disable torque programmatically
 - Move to target positions (to mirror the robot state when pausing)
 
+When you pause, the leader arm moves to match the robot, so control passes between the policy and the human without jumps. Jumps would end up in the recorded corrections and teach the policy jerky trajectories.
+
 **Compatible teleoperators:**
 
 - `bi_openarm_mini` - Bimanual OpenArm Mini
-- `so_leader` - SO100 / SO101 leader arm
+- `so100_leader` / `so101_leader` - SO100 / SO101 leader arm
 - `bi_so_leader` - Bimanual SO100 / SO101 leader arms
 
 > [!IMPORTANT]
 > The provided commands default to `bi_openarm_follower` + `bi_openarm_mini`.
-> `so_follower` + `so_leader` configs are also registered and can be used via CLI flags.
+> SO100 / SO101 setups work the same way, e.g. `--robot.type=so101_follower` with `--teleop.type=so101_leader`.
 
 ---
 
@@ -82,12 +84,13 @@ Use `lerobot-rollout` with `--strategy.type=dagger` for HIL data collection. Sel
 
 ### Step 1: Pre-train a Base Policy
 
-First, train a policy on your demonstration dataset:
+First, train a policy on your demonstration dataset. This example trains ACT, which runs with standard inference in step 2:
 
 ```bash
-python src/lerobot/scripts/lerobot_train.py \
-    --dataset.repo_id=your-username/demo-dataset \
-    --policy.type=pi0 \
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/demo-dataset \
+    --policy.type=act \
+    --policy.repo_id=${HF_USER}/act_pretrain \
     --output_dir=outputs/pretrain \
     --batch_size=32 \
     --steps=50000
@@ -109,7 +112,7 @@ lerobot-rollout --strategy.type=dagger \
     --teleop.left_arm_config.port=/dev/ttyACM0 \
     --teleop.right_arm_config.port=/dev/ttyACM1 \
     --policy.path=outputs/pretrain/checkpoints/last/pretrained_model \
-    --dataset.repo_id=your-username/rollout_hil_dataset \
+    --dataset.repo_id=${HF_USER}/rollout_hil_dataset \
     --dataset.single_task="Fold the T-shirt properly" \
     --dataset.fps=30 \
     --strategy.num_episodes=50 \
@@ -120,7 +123,7 @@ With `--interpolation_multiplier=N`, the robot receives `N` interpolated command
 
 **With RTC for large models (Pi0, Pi0.5, SmolVLA):**
 
-For models with high inference latency, enable RTC for smooth execution:
+For models with high inference latency, enable RTC for smooth execution. This needs a VLA base policy such as Pi0, Pi0.5 or SmolVLA instead of the ACT policy from step 1:
 
 ```bash
 lerobot-rollout --strategy.type=dagger \
@@ -138,42 +141,41 @@ lerobot-rollout --strategy.type=dagger \
     --teleop.left_arm_config.port=/dev/ttyACM0 \
     --teleop.right_arm_config.port=/dev/ttyACM1 \
     --policy.path=outputs/pretrain/checkpoints/last/pretrained_model \
-    --dataset.repo_id=your-username/rollout_hil_rtc_dataset \
+    --dataset.repo_id=${HF_USER}/rollout_hil_rtc_dataset \
     --dataset.single_task="Fold the T-shirt properly" \
     --dataset.fps=30 \
     --strategy.num_episodes=50 \
     --interpolation_multiplier=3
 ```
 
-**Controls (Conceptual):**
+**Controls:**
 
-The interaction model is:
+| Key     | Action                                                                  |
+| ------- | ----------------------------------------------------------------------- |
+| `Space` | Pause the policy / resume the policy                                    |
+| `Tab`   | Start / stop a correction (only while paused); corrections are recorded |
+| `Enter` | Push the dataset to the Hub (corrections-only mode)                     |
+| `ESC`   | Stop the session                                                        |
 
-- **Pause input**: pause autonomous policy execution
-- **Takeover input**: transfer control to the human operator and record intervention data
-- **Return-to-policy input**: hand control back to the policy and continue the same episode
-- **Episode control inputs**: save/re-record/stop/reset as needed
-
-Exact key/pedal bindings can differ across scripts and hardware integrations. Use each script's printed controls as the source of truth for the concrete mapping on your setup.
+A USB foot pedal can be used instead of the keyboard with `--strategy.input_device=pedal`. See [Policy Deployment](./inference) for all DAgger flags.
 
 **The HIL Protocol:**
 
 1. Watch the policy run autonomously (teleop is idle/free)
-2. When you see imminent failure, trigger the **pause input**
+2. When you see imminent failure, press `Space` to **pause**
    - Policy stops
    - Teleoperator moves to match robot position (torque enabled)
    - No frames recorded during pause
-3. Trigger the **takeover input** to take control
+3. Press `Tab` to **take control**
    - Teleoperator torque disabled, free to move
    - **Recovery**: Teleoperate the robot back to a good state
    - **Correction**: Correct the behavior
    - All movements are recorded
-4. Trigger the **return-to-policy input**
+4. Press `Tab` again to end the correction, then `Space` to **return control to the policy**
    - Policy resumes autonomous execution from the current state
    - You can intervene again at any time (repeat steps 2–4)
-5. End and save the episode when the task is complete (or episode time limit is reached)
-6. **Reset**: Teleop moves to robot position, you can move the robot to the starting position
-7. Start the next episode
+5. In the default mode, each correction is saved as its own episode. With `--strategy.record_autonomous=true`, everything is recorded and split into episodes automatically
+6. Press `ESC` to stop the session
 
 **Foot Pedal Setup (Linux):**
 
@@ -183,15 +185,36 @@ If using a USB foot pedal (PCsensor FootSwitch), ensure access:
 sudo setfacl -m u:$USER:rw /dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd
 ```
 
-### Step 3: Fine-tune the Policy
+### Step 3: Merge the Datasets
 
-Fine-tune on the **combined** dataset (`demo-dataset` + `hil-dataset` merged together):
+`lerobot-rollout` adds a timestamp to the dataset name, so the HIL dataset from step 2 is saved as `your-username/rollout_hil_dataset_YYYYMMDD_HHMMSS`. Use that full name below.
+
+The HIL dataset has an extra `intervention` column that marks human-controlled frames, and datasets can only be merged when they have the same features. Remove the column first, then merge the HIL data with your demonstrations:
 
 ```bash
-python src/lerobot/scripts/lerobot_train.py \
-    --dataset.repo_id=your-username/hil-dataset \
-    --policy.type=pi0 \
-    --policy.pretrained_path=outputs/pretrain/checkpoints/last/pretrained_model \
+lerobot-edit-dataset \
+    --repo_id ${HF_USER}/rollout_hil_dataset_YYYYMMDD_HHMMSS \
+    --new_repo_id ${HF_USER}/hil_dataset_no_intervention \
+    --operation.type remove_feature \
+    --operation.feature_names "['intervention']"
+
+lerobot-edit-dataset \
+    --new_repo_id ${HF_USER}/demo_plus_hil \
+    --operation.type merge \
+    --operation.repo_ids "['${HF_USER}/demo-dataset', '${HF_USER}/hil_dataset_no_intervention']"
+```
+
+Both datasets must also use the same robot, cameras and fps. See [Using Dataset Tools](./using_dataset_tools#merge-datasets) for more merge options.
+
+### Step 4: Fine-tune the Policy
+
+Fine-tune the policy from step 1 on the **merged** dataset:
+
+```bash
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/demo_plus_hil \
+    --policy.path=outputs/pretrain/checkpoints/last/pretrained_model \
+    --policy.repo_id=${HF_USER}/act_hil_finetune \
     --output_dir=outputs/hil_finetune \
     --steps=20000
 ```
