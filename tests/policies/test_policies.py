@@ -393,9 +393,7 @@ def test_act_single_channel_camera_shares_rgb_backbone(camera_channels: int):
         input_features={
             OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(dim,)),
             f"{OBS_IMAGES}.top": PolicyFeature(type=FeatureType.VISUAL, shape=(3, h, w)),
-            f"{OBS_IMAGES}.top_depth": PolicyFeature(
-                type=FeatureType.VISUAL, shape=(camera_channels, h, w)
-            ),
+            f"{OBS_IMAGES}.top_depth": PolicyFeature(type=FeatureType.VISUAL, shape=(camera_channels, h, w)),
         },
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(dim,))},
     )
