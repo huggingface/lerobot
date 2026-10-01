@@ -321,3 +321,95 @@ def test_timeout_does_not_release_a_still_running_http_request(rig):
         assert engine._query_in_flight  # cannot overlap requests after restarting
     finally:
         release.set()
+
+
+def test_repairs_policy_window_confusion_once_and_logs_both_replies(tmp_path):
+    import json
+
+    cfg = HybridConfig(limits={"gripper.pos": InterventionLimit(0, 1, 1, 1, 0.03)})
+    bad = asdict(decision()) | {"duration_s": 5}
+    good = asdict(decision())
+    requests = []
+
+    def respond(messages):
+        requests.append(messages)
+        return bad if len(requests) == 1 else good
+
+    path = tmp_path / "planner.jsonl"
+    planner = HybridPlanner(
+        PlannerConfig(log_path=str(path)), "test_robot", hybrid=cfg, client=StubVlmClient(respond)
+    )
+    query = PolicyQuery(QueryKind.NEXT_SUBTASK, "Put all cubes in bin")
+    result = planner({"gripper.pos": 0.5}, query, "Put all cubes in bin")
+    assert result.mode == "policy" and result.duration_s == 0
+    assert len(requests) == 2
+    assert "do not copy it into duration_s" in requests[1][-1]["content"]
+    assert "duration_s=0" in planner.request_text(query, "previous")
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    assert records[0]["reply"] == bad and records[0]["error"]
+    assert records[1]["reply"] == good and records[1]["error"] is None
+
+
+def test_repeated_invalid_reply_stops_after_one_repair():
+    calls = []
+
+    def respond(messages):
+        calls.append(messages)
+        return asdict(decision()) | {"duration_s": 5}
+
+    planner = HybridPlanner(
+        PlannerConfig(), "test_robot", hybrid=HybridConfig(), client=StubVlmClient(respond)
+    )
+    with pytest.raises(ValueError, match="policy mode requires"):
+        planner({}, PolicyQuery(QueryKind.NEXT_SUBTASK, "Move"), "Move")
+    assert len(calls) == 2
+
+
+def test_network_failure_is_not_a_format_retry():
+    client = MagicMock()
+    client.generate_json.side_effect = TimeoutError("request timed out")
+    planner = HybridPlanner(PlannerConfig(), "test_robot", hybrid=HybridConfig(), client=client)
+    with pytest.raises(TimeoutError):
+        planner({}, PolicyQuery(QueryKind.NEXT_SUBTASK, "Move"), "Move")
+    assert client.generate_json.call_count == 1
+
+
+def test_out_of_bounds_motion_is_not_repaired_or_clipped(rig):
+    engine, delegate, _ = rig
+    client = MagicMock()
+    client.generate_json.return_value = [
+        asdict(decision("intervention", targets={"joint.pos": 2}, duration_s=1))
+    ]
+    planner = HybridPlanner(PlannerConfig(), "test_robot", hybrid=engine.config, client=client)
+    proposal = planner(engine._obs, PolicyQuery(QueryKind.NEXT_SUBTASK, "Move"), "Move")
+    assert accept(engine, proposal) is None
+    assert engine.terminal
+    delegate.resume.assert_not_called()
+    assert client.generate_json.call_count == 1
+
+
+def test_takeover_during_format_repair_discards_corrected_motion(rig):
+    engine, delegate, _ = rig
+    count = 0
+
+    def respond(messages):
+        nonlocal count
+        count += 1
+        if count == 1:
+            return asdict(decision()) | {"duration_s": 5}
+        engine.pause()  # Operator reset/stop while the corrected reply is in flight.
+        return asdict(decision("intervention", targets={"gripper.pos": 1}, duration_s=1))
+
+    planner = HybridPlanner(
+        PlannerConfig(), "test_robot", hybrid=engine.config, client=StubVlmClient(respond)
+    )
+    engine._resolve_query(
+        PolicyQuery(QueryKind.NEXT_SUBTASK, engine.autosteer_goal),
+        engine._obs,
+        lambda obs, query: planner(obs, query, "Move"),
+        epoch=engine._query_epoch,
+    )
+    assert count == 2
+    assert engine._pending_decision is None
+    assert engine._mode == "idle"
+    delegate.resume.assert_not_called()

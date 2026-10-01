@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from dataclasses import asdict, dataclass, field
 
 from .end_effector import EndEffectorConfig, EndEffectorKinematics, parse_pose
@@ -122,7 +123,10 @@ class PlannerDecision:
             if not targets or reply["duration_s"] <= 0 or reply["instruction"]:
                 raise ValueError("An intervention needs targets and duration, with an empty instruction")
         elif reply["mode"] != "end_effector" and (targets or reply["duration_s"] != 0):
-            raise ValueError("Only an intervention may supply targets or duration")
+            raise ValueError(
+                f"{reply['mode']} mode requires targets={{}}, ee_targets={{}}, and duration_s=0; "
+                "the controller sets the policy execution window"
+            )
         if (reply["mode"] == "policy") != bool(reply["instruction"].strip()):
             raise ValueError("Only policy mode must supply a non-empty instruction")
         return cls(**reply)
@@ -177,6 +181,45 @@ class HybridPlanner(VlmPlanner):
         self.hybrid = hybrid
         self.kinematics = {name: EndEffectorKinematics(ee) for name, ee in hybrid.end_effectors.items()}
 
+    def __call__(self, obs_processed: dict, query: PolicyQuery, task: str) -> PlannerDecision | str:
+        if query.kind is QueryKind.VQA:
+            return super().__call__(obs_processed, query, task)
+        messages = self.build_messages(obs_processed, query, task)
+        for attempt in range(2):
+            started = time.perf_counter()
+            try:
+                reply = self.client.generate_json([messages])[0]
+            except Exception as exc:
+                self._log_exchange(query, task, started, reply=None, returned=None, error=exc)
+                raise
+            try:
+                decision = self.parse_reply(reply, query, task)
+            except (ValueError, TypeError) as exc:
+                self._log_exchange(query, task, started, reply=reply, returned=None, error=exc)
+                if attempt:
+                    raise
+                # Repair the reply contract once, never relax or clip a motion proposal.
+                # The engine's original review deadline/epoch still covers both requests.
+                messages = [
+                    *messages,
+                    {"role": "assistant", "content": json.dumps(reply)},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Your reply was rejected before execution: {exc}. "
+                            "Return one corrected decision using the original observation and contract. "
+                            "For policy, hold or done: targets={}, ee_targets={}, duration_s=0. "
+                            "The controller owns policy_window_s; do not copy it into duration_s. "
+                            "Only intervention/end_effector use a positive duration. "
+                            "Do not change mode to authorize motion just to satisfy the format."
+                        ),
+                    },
+                ]
+                continue
+            self._log_exchange(query, task, started, reply=reply, returned=decision, error=None)
+            return decision
+        raise RuntimeError("Unreachable hybrid reply loop")
+
     def recipe_turns(self, query: PolicyQuery) -> list[dict]:
         return []
 
@@ -192,14 +235,20 @@ class HybridPlanner(VlmPlanner):
             "the supplied action descriptions and observations. Never guess coordinate frames, IK, or joint "
             "directions. Use hold if uncertain or operator help is needed. Use done only when the images show "
             "the entire goal is complete. hold ends this segment for operator input.\n"
-            "Return exactly one JSON object with mode (policy, intervention, hold, done), scene (brief visible "
-            "evidence), reason (brief rationale), instruction (non-empty only for policy), targets (absolute "
-            "robot-unit positions for interventions), duration_s (positive only for motion, "
-            "otherwise 0). Unmentioned joints are held. No code, velocities, normalized policy actions, "
+            "Return exactly one JSON object with mode, scene, reason, instruction, targets, ee_targets, "
+            "duration_s. scene and reason must be non-empty text. Choose one mode:\n"
+            "- policy: instruction is a concrete subtask; targets={}, ee_targets={}, duration_s=0. "
+            "The controller sets the execution window; NEVER put that window in duration_s.\n"
+            "- intervention: instruction is empty, targets contains absolute robot-unit positions, "
+            "ee_targets={}, and duration_s is positive and bounded.\n"
+            "- end_effector: available only with the contract below; instruction is empty, ee_targets "
+            "contains one tool pose, targets may contain a gripper command, and duration_s is positive.\n"
+            "- hold or done: instruction is empty, targets={}, ee_targets={}, duration_s=0.\n"
+            "Unmentioned joints are held. No code, velocities, normalized policy actions, "
             "or simultaneous policy and intervention commands.\n"
             + self.end_effector_contract()
             + f"Policy instructions: {self.config.instructions or 'free-form concrete subtasks'}\n"
-            f"Policy execution window: {self.hybrid.policy_window_s}s. "
+            f"Controller-owned policy_window_s: {self.hybrid.policy_window_s}s (policy replies still use duration_s=0). "
             f"Maximum intervention duration: {self.hybrid.max_intervention_s}s.\n"
             f"Action contract: {json.dumps({k: asdict(v) for k, v in self.hybrid.limits.items()})}"
         )

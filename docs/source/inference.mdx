@@ -557,7 +557,7 @@ Replace the example keys and limits with your robot's verified action contract. 
 
 `/start` begins with a review. The supervisor holds a measured pose while the request runs, then executes up to `hybrid.policy_window_s` seconds of VLA actions before reviewing again. This is **stop-and-review control**, not a concurrent high-frequency VLM. Actual review frequency is the policy window plus settling and API latency. `autosteer_interval_s` applies to ordinary planning; hybrid timing uses `hybrid.policy_window_s`.
 
-The VLM returns one JSON object:
+The VLM returns one JSON object. For `policy`, `hold` and `done`, `duration_s` must be **0** and both target maps empty. The controller owns the policy execution window; that window must not be copied into the reply. A malformed reply gets one format-correction request while the robot continues holding. Both attempts remain subject to the original review deadline and cancellation epoch; a second invalid reply stops the segment. Motion range/speed/IK failures are not retried or silently clipped. Raw failed replies are retained in the planner log.
 
 ```json
 {
