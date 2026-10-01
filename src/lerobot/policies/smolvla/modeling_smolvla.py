@@ -258,11 +258,9 @@ class SmolVLAPolicy(PreTrainedPolicy):
         )
 
         self.eval()
-        batch = self._prepare_batch(batch)
-        self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
-
         if self._check_get_actions_condition():
-            actions = self._get_action_chunk(batch, noise)
+            # Through predict_action_chunk, so a wrapper installed on it also covers this path.
+            actions = self.predict_action_chunk(batch, noise=noise)
 
             # `self.predict_action_chunk` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
