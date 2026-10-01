@@ -174,7 +174,13 @@ class YamArm:
                         raise ConnectionError(f"{self.config.port}: invalid {name} feedback")
                 return states
             if time.monotonic() >= deadline:
-                raise ConnectionError(f"{self.config.port}: missing or stale motor feedback")
+                ages = ", ".join(
+                    f"{i}: {(now - self.last_feedback[i + 16]) * 1000:.1f} ms"
+                    if i + 16 in self.last_feedback
+                    else f"{i}: missing"
+                    for i in range(1, 8)
+                )
+                raise ConnectionError(f"{self.config.port}: missing or stale motor feedback ({ages})")
             time.sleep(0.001)
 
     def configure(self) -> None:
