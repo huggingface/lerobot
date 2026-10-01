@@ -28,7 +28,7 @@ During a HIL session, the human operator follows this loop within each episode:
 5. Repeat steps 2–4 as many times as needed during the episode
 6. **End the episode** when the task is complete, save and move on to the next rollout
 
-Both autonomous and human-controlled segments are recorded. The policy and human can alternate control multiple times within a single episode, and the episode continues from the current state after each handoff (no reset required just because intervention happened). This captures autonomous execution, recovery, and correction in one continuous trajectory. After collection, the combined dataset (original demonstrations + HIL data) is used to fine-tune the policy.
+By default, only the human-controlled segments (recovery and correction) are recorded, and each correction becomes its own episode. With `--strategy.record_autonomous=true`, the autonomous segments are recorded too: the policy and human can alternate control multiple times, and autonomous execution, recovery and correction are captured in one continuous trajectory. In both modes, the robot continues from its current state after each handoff (no reset required just because an intervention happened). After collection, the combined dataset (original demonstrations + HIL data) is used to fine-tune the policy.
 
 This process can be repeated iteratively: deploy, collect, fine-tune, repeat. Each round targets the current policy's failure modes.
 
