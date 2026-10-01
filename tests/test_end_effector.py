@@ -70,6 +70,29 @@ def test_fk_matches_analytic_planar_chain_and_config_round_trip(arm):
     assert draccus.decode(HybridConfig, asdict(config)) == config
 
 
+def test_proposal_fk_uses_ordered_postprocessed_joint_targets(arm):
+    config, pose, _ = arm
+    config.review_policy_chunks = True
+    planner = HybridPlanner(PlannerConfig(), "mock", hybrid=config, client=MagicMock())
+    keys = ["gripper.pos", "c.pos", "a.pos", "b.pos"]
+    obs = pose | {
+        "_hybrid_proposal": {
+            "id": 1,
+            "action_keys": keys,
+            "actions": [[0.7, 0.0, 0.0, 0.0], [0.2, 0.0, np.pi / 2, 0.0]],
+            "execute_steps": 1,
+            "fps": 30,
+            "task": "Move",
+        }
+    }
+    context = planner.proposal_context(obs)
+    poses = context["end_effector_trajectory"]
+    assert poses[0]["arm"]["position_m"] == pytest.approx([0.48, 0, 0])
+    assert poses[1]["arm"]["position_m"] == pytest.approx([0, 0.48, 0])
+    assert context["actions"][0][0] == 0.7  # Gripper stays in native opening units.
+    assert len(poses) == 2  # Review includes the suffix, even though only one step is authorized.
+
+
 def test_fk_ik_round_trip_preserves_uncommanded_gripper(arm):
     config, pose, solver = arm
     target = solver.forward(pose | {"b.pos": pose["b.pos"] + 0.025})

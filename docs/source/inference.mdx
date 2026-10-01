@@ -557,6 +557,18 @@ Replace the example keys and limits with your robot's verified action contract. 
 
 `/start` begins with a review. The supervisor holds a measured pose while the request runs, then executes up to `hybrid.policy_window_s` seconds of VLA actions before reviewing again. This is **stop-and-review control**, not a concurrent high-frequency VLM. Actual review frequency is the policy window plus settling and API latency. `autosteer_interval_s` applies to ordinary planning; hybrid timing uses `hybrid.policy_window_s`.
 
+To review the VLA's predictions **before execution**, use an RTC backend and add:
+
+```shell
+--hybrid.review_policy_chunks=true \
+--hybrid.proposal_execution_steps=15 \
+--hybrid.proposal_timeout_s=30
+```
+
+In this mode, the RTC inference worker generates one isolated, postprocessed action chunk from a held observation. It does not put that chunk in the live action queue. The VLM receives that same observation, all predicted joint/gripper targets, and robot-only FK poses for each predicted step when end effectors are configured. `mode=accept` authorizes only the first `proposal_execution_steps` targets of that exact chunk; interpolation and the robot driver still apply. The remaining suffix is discarded, then the robot holds for fresh inference and review. A changed `policy` instruction requests another proposal and review without executing it. There is no unreviewed background refill. `policy_window_s` does not determine execution length in this mode: 15 steps at 30 Hz is about 0.5 seconds of motion, plus settling, inference and API latency between prefixes. This trades uninterrupted RTC operation for a review before every accepted prefix.
+
+Proposal-review replies additionally require `execution_status` (`not_started`, `progressing`, `failed`, `uncertain`, or `recovered`) and `intent_status` (`aligned`, `misaligned`, or `uncertain`). Explain the observed outcome and predicted intent separately in `reason`. Direct corrections require failed execution or misaligned intent; uncertainty and slow startup alone are not failures. `accept` uses empty instruction/target maps and `duration_s=0`. Prediction IDs, native targets and FK trajectories are saved as `proposal_review` records alongside VLM replies. Cancellation, drift and deadlines invalidate pending approvals. Use the outcome-review mode above with backends that do not support isolated proposals.
+
 The VLM returns one JSON object. For `policy`, `hold` and `done`, `duration_s` must be **0** and both target maps empty. The controller owns the policy execution window; that window must not be copied into the reply. A malformed reply gets one format-correction request while the robot continues holding. Both attempts remain subject to the original review deadline and cancellation epoch; a second invalid reply stops the segment. Motion range/speed/IK failures are not retried or silently clipped. Raw failed replies are retained in the planner log.
 
 ```json
@@ -581,7 +593,7 @@ Raw replies and latency are written to `planner.log_path`. Accepted decisions ap
 
 #### End-effector corrections
 
-Install `lerobot[hybrid-ik]` and configure `hybrid.end_effectors` with one `EndEffectorConfig` per arm: a local MJCF `model_path`, a tool-centre `site`, ordered `joint_names`, matching absolute-radian `action_keys`, and an explicit `frame_description`. Each chain must have a fixed base, bounded hinge joints and all joints contributing to that site. The model must use the same signs/zeros as measured robot positions. The planner receives current FK poses alongside the images and state; it does not receive a preview of future policy action chunks.
+Install `lerobot[hybrid-ik]` and configure `hybrid.end_effectors` with one `EndEffectorConfig` per arm: a local MJCF `model_path`, a tool-centre `site`, ordered `joint_names`, matching absolute-radian `action_keys`, and an explicit `frame_description`. Each chain must have a fixed base, bounded hinge joints and all joints contributing to that site. The model must use the same signs/zeros as measured robot positions. The planner receives current FK poses alongside the images and state. With `review_policy_chunks=true`, it also receives FK trajectories for the unexecuted policy proposal.
 
 `mode=end_effector` supplies `ee_targets` for exactly one configured arm, with `position_m: [x,y,z]` and a unit `quaternion_wxyz: [w,x,y,z]`. Poses are absolute in that arm's **model world/base frame**. Neither the solver nor the planner infers camera extrinsics, the table frame, or the transform between two independently mounted arms. For example, a 1 cm upward correction in a verified z-up model frame adds `0.01` to the current FK position's z component and copies its quaternion. `instruction` is empty and `duration_s` is positive. Other modes may omit `ee_targets` or supply `{}`.
 

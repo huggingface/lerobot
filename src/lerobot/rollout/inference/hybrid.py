@@ -27,7 +27,7 @@ from lerobot.utils.action_interpolator import ActionInterpolator
 
 from ..end_effector import EndEffectorKinematics
 from ..hybrid import HybridConfig, PlannerDecision
-from .base import InferenceEngine, QueryAnswer, QueryKind
+from .base import ActionProposal, InferenceEngine, QueryAnswer, QueryKind
 
 
 class HybridInferenceEngine(InferenceEngine):
@@ -46,6 +46,10 @@ class HybridInferenceEngine(InferenceEngine):
             raise ValueError("Hybrid limits must cover exactly the robot's ordered action keys")
         self.delegate = delegate
         self.config = config
+        if config.review_policy_chunks and not delegate.supports_action_proposals:
+            raise ValueError(
+                "review_policy_chunks requires an inference backend with isolated proposals (RTC)"
+            )
         self.keys = keys
         self.kinematics = {name: EndEffectorKinematics(ee) for name, ee in config.end_effectors.items()}
         self.control_interpolator = ActionInterpolator(multiplier=multiplier)
@@ -64,6 +68,10 @@ class HybridInferenceEngine(InferenceEngine):
         self._ee_targets: dict[str, dict[str, list[float]]] = {}
         self._motion_keys: set[str] = set()
         self.terminal = False
+        self._proposal: ActionProposal | None = None
+        self._approved_actions: torch.Tensor | None = None
+        self._approved_index = 0
+        self._proposal_started = 0.0
 
     @property
     def control_thread_owns_policy(self):
@@ -96,6 +104,7 @@ class HybridInferenceEngine(InferenceEngine):
             self._query_epoch += 1
             self._pending_decision = None
             self._mode = "idle"
+            self._clear_proposal()
             self.delegate.pause()
             self.delegate.discard_actions()
             self.control_interpolator.reset()
@@ -131,6 +140,7 @@ class HybridInferenceEngine(InferenceEngine):
             self._pending_decision = None
             self._manual_task = None
             self._mode = "hold"
+            self._clear_proposal()
             self.delegate.pause()
             self.delegate.discard_actions()
             self.control_interpolator.reset()
@@ -169,10 +179,60 @@ class HybridInferenceEngine(InferenceEngine):
         self.delegate.discard_actions()
         self.control_interpolator.reset()
         self._hold = self._pose()
-        self._mode = "review"
+        self._clear_proposal()
+        self._mode = "settling" if self.config.review_policy_chunks else "review"
         self._review_started = time.perf_counter()
         self._pending_decision = None
         self._autosteer_due_at = self._review_started + self.config.settle_s
+
+    def _clear_proposal(self):
+        self._proposal = None
+        self._approved_actions = None
+        self._approved_index = 0
+
+    def _poll_proposal(self):
+        if self._mode == "settling" and time.perf_counter() >= self._autosteer_due_at:
+            self.delegate.request_action_proposal(self._obs, self.task)
+            self._proposal_started = time.perf_counter()
+            self._mode = "proposing"
+        if self._mode != "proposing":
+            return
+        if time.perf_counter() - self._proposal_started > self.config.proposal_timeout_s:
+            raise ValueError("Policy proposal inference deadline exceeded")
+        proposal = self.delegate.take_action_proposal()
+        if proposal is None:
+            return
+        actions = proposal.actions
+        if (
+            actions.ndim != 2
+            or not 1 <= actions.shape[0] <= 1024
+            or actions.shape[1] != len(self.keys)
+            or not torch.isfinite(actions).all()
+            or not math.isfinite(proposal.fps)
+            or proposal.fps <= 0
+            or proposal.task != self.task
+        ):
+            raise ValueError("Invalid policy proposal shape, values, FPS or task")
+        self._check_hold(proposal.observation)
+        self._proposal = proposal
+        self._mode = "review"
+        self._review_started = time.perf_counter()
+        self._autosteer_due_at = self._review_started
+
+    def pump_query(self, obs_processed=None):
+        if self.config.review_policy_chunks and self._proposal is not None and obs_processed is not None:
+            proposal = self._proposal
+            # Images, joints and prediction come from the SAME inference snapshot.
+            obs_processed = dict(proposal.observation)
+            obs_processed["_hybrid_proposal"] = {
+                "id": proposal.proposal_id,
+                "task": proposal.task,
+                "fps": proposal.fps,
+                "action_keys": self.keys,
+                "actions": proposal.actions.tolist(),
+                "execute_steps": min(self.config.proposal_execution_steps, len(proposal.actions)),
+            }
+        return super().pump_query(obs_processed)
 
     def _check_hold(self, observation):
         pose = self._pose()
@@ -189,6 +249,12 @@ class HybridInferenceEngine(InferenceEngine):
                 )
 
     def _start_policy(self, instruction, *, manual=False):
+        if self.config.review_policy_chunks and not manual:
+            InferenceEngine.set_task(self, instruction)
+            self.delegate.set_task(instruction)
+            self._begin_review()
+            return
+        self._clear_proposal()
         self.delegate.pause()
         self.delegate.set_task(instruction)
         self.delegate.discard_actions()
@@ -205,6 +271,7 @@ class HybridInferenceEngine(InferenceEngine):
         self.delegate.discard_actions()
         self.control_interpolator.reset()
         self._mode = "hold"
+        self._clear_proposal()
         self.terminal = True
         goal = self._autosteer_goal or self.task
         self._autosteer_goal = None
@@ -235,9 +302,28 @@ class HybridInferenceEngine(InferenceEngine):
         self._check_hold(observation)
         if time.perf_counter() - self._review_started > self.config.review_timeout_s:
             raise ValueError("Planner review deadline exceeded; proposal discarded")
-        if decision.mode == "policy":
+        if decision.mode == "accept":
+            if not self.config.review_policy_chunks or self._proposal is None:
+                raise ValueError("No unexecuted proposal to accept")
+            if observation.get("_hybrid_proposal", {}).get("id") != self._proposal.proposal_id:
+                raise ValueError("Reviewed proposal identity mismatch")
+            count = min(self.config.proposal_execution_steps, len(self._proposal.actions))
+            self._approved_actions = self._proposal.actions[:count].clone()
+            self._approved_index = 0
+            self.control_interpolator.reset()
+            self.control_interpolator.add(torch.tensor([self._hold[key] for key in self.keys]))
+            self.control_interpolator.get()  # Seed interpolation from the held pose, without dispatch.
+            self._mode = "approved"
+            self._consecutive = 0
+        elif decision.mode == "policy":
             self._start_policy(decision.instruction)
         elif decision.mode in {"intervention", "end_effector"}:
+            if (
+                self.config.review_policy_chunks
+                and decision.execution_status != "failed"
+                and decision.intent_status != "misaligned"
+            ):
+                raise ValueError("Correction requires failed execution or misaligned intent")
             if self._consecutive >= self.config.max_consecutive_interventions:
                 raise ValueError("Consecutive intervention limit reached")
             # IK and correction deltas start from fresh measured joints, not the
@@ -285,6 +371,8 @@ class HybridInferenceEngine(InferenceEngine):
                     self._mode == "policy" and time.perf_counter() >= self._due
                 ):
                     self._begin_review()
+                if self.config.review_policy_chunks:
+                    self._poll_proposal()
                 if self._pending_decision is not None:
                     self._accept_decision()
                 if (
@@ -300,6 +388,18 @@ class HybridInferenceEngine(InferenceEngine):
                     action = self.control_interpolator.get()
                     if action is not None:
                         self._set_dispatched_task(self.delegate.dispatched_task)
+                        self._hold = dict(zip(self.keys, action.tolist(), strict=True))
+                        return action
+                if self._mode == "approved":
+                    if self.control_interpolator.needs_new_action():
+                        if self._approved_index >= len(self._approved_actions):
+                            self._begin_review()
+                        else:
+                            self.control_interpolator.add(self._approved_actions[self._approved_index])
+                            self._approved_index += 1
+                    if self._mode == "approved":
+                        action = self.control_interpolator.get()
+                        self._set_dispatched_task(self._proposal.task)
                         self._hold = dict(zip(self.keys, action.tolist(), strict=True))
                         return action
                 if self._mode == "intervention":

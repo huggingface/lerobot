@@ -25,6 +25,7 @@ import json
 import math
 import time
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 
 from .end_effector import EndEffectorConfig, EndEffectorKinematics, parse_pose
 from .inference import PolicyQuery, QueryKind
@@ -57,6 +58,9 @@ class HybridConfig:
     limits: dict[str, InterventionLimit] = field(default_factory=dict)
     end_effectors: dict[str, EndEffectorConfig] = field(default_factory=dict)
     policy_window_s: float = 5.0
+    review_policy_chunks: bool = False
+    proposal_execution_steps: int = 15
+    proposal_timeout_s: float = 30.0
     max_intervention_s: float = 2.0
     settle_s: float = 0.5
     review_timeout_s: float = 60.0
@@ -67,6 +71,7 @@ class HybridConfig:
     def __post_init__(self):
         for value in (
             self.policy_window_s,
+            self.proposal_timeout_s,
             self.max_intervention_s,
             self.settle_s,
             self.review_timeout_s,
@@ -79,6 +84,12 @@ class HybridConfig:
             raise ValueError("End-effector mappings must be disjoint subsets of the action contract")
         if self.max_consecutive_interventions < 1:
             raise ValueError("max_consecutive_interventions must be positive")
+        if (
+            isinstance(self.proposal_execution_steps, bool)
+            or not isinstance(self.proposal_execution_steps, int)
+            or self.proposal_execution_steps < 1
+        ):
+            raise ValueError("proposal_execution_steps must be a positive integer")
 
 
 @dataclass(frozen=True)
@@ -90,13 +101,16 @@ class PlannerDecision:
     targets: dict[str, float]
     duration_s: float
     ee_targets: dict[str, dict[str, list[float]]] = field(default_factory=dict)
+    execution_status: str = ""
+    intent_status: str = ""
 
     @classmethod
     def parse(cls, reply: object) -> PlannerDecision:
         fields = {"mode", "scene", "reason", "instruction", "targets", "duration_s"}
-        if not isinstance(reply, dict) or set(reply) not in (fields, fields | {"ee_targets"}):
+        optional = {"ee_targets", "execution_status", "intent_status"}
+        if not isinstance(reply, dict) or not fields <= set(reply) or set(reply) - fields - optional:
             raise ValueError(f"Hybrid reply must contain exactly {sorted(fields)}")
-        if reply["mode"] not in {"policy", "intervention", "end_effector", "hold", "done"}:
+        if reply["mode"] not in {"accept", "policy", "intervention", "end_effector", "hold", "done"}:
             raise ValueError("Unknown hybrid mode")
         for key in ("scene", "reason", "instruction"):
             if not isinstance(reply[key], str):
@@ -129,6 +143,17 @@ class PlannerDecision:
             )
         if (reply["mode"] == "policy") != bool(reply["instruction"].strip()):
             raise ValueError("Only policy mode must supply a non-empty instruction")
+        if reply.get("execution_status", "") not in {
+            "",
+            "not_started",
+            "progressing",
+            "failed",
+            "uncertain",
+            "recovered",
+        }:
+            raise ValueError("Invalid execution_status")
+        if reply.get("intent_status", "") not in {"", "aligned", "misaligned", "uncertain"}:
+            raise ValueError("Invalid intent_status")
         return cls(**reply)
 
     def validate_motion(self, config: HybridConfig, pose: dict[str, float]) -> dict[str, float]:
@@ -185,6 +210,14 @@ class HybridPlanner(VlmPlanner):
         if query.kind is QueryKind.VQA:
             return super().__call__(obs_processed, query, task)
         messages = self.build_messages(obs_processed, query, task)
+        if self.config.log_path and "_hybrid_proposal" in obs_processed:
+            path = Path(self.config.log_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a") as stream:
+                stream.write(
+                    json.dumps({"event": "proposal_review", "proposal": self.proposal_context(obs_processed)})
+                    + "\n"
+                )
         for attempt in range(2):
             started = time.perf_counter()
             try:
@@ -208,7 +241,7 @@ class HybridPlanner(VlmPlanner):
                         "content": (
                             f"Your reply was rejected before execution: {exc}. "
                             "Return one corrected decision using the original observation and contract. "
-                            "For policy, hold or done: targets={}, ee_targets={}, duration_s=0. "
+                            "For accept, policy, hold or done: targets={}, ee_targets={}, duration_s=0. "
                             "The controller owns policy_window_s; do not copy it into duration_s. "
                             "Only intervention/end_effector use a positive duration. "
                             "Do not change mode to authorize motion just to satisfy the format."
@@ -261,6 +294,7 @@ class HybridPlanner(VlmPlanner):
             "Unmentioned joints are held. No code, velocities, normalized policy actions, "
             "or simultaneous policy and intervention commands.\n"
             + self.end_effector_contract()
+            + self.proposal_contract()
             + f"Policy instructions: {self.config.instructions or 'free-form concrete subtasks'}\n"
             f"Controller-owned policy_window_s: {self.hybrid.policy_window_s}s (policy replies still use duration_s=0). "
             f"Maximum intervention duration: {self.hybrid.max_intervention_s}s.\n"
@@ -274,7 +308,44 @@ class HybridPlanner(VlmPlanner):
         if self.kinematics:
             measured = {name: solver.forward(pose) for name, solver in self.kinematics.items()}
             blocks.append(text_block(f"Measured end-effector poses from FK: {json.dumps(measured)}"))
+        if "_hybrid_proposal" in obs_processed:
+            blocks.append(
+                text_block(
+                    f"Unexecuted policy proposal (robot-only FK, not object predictions): {json.dumps(self.proposal_context(obs_processed))}"
+                )
+            )
         return blocks
+
+    def proposal_context(self, obs):
+        proposal = dict(obs["_hybrid_proposal"])
+        proposal["end_effector_trajectory"] = [
+            {
+                name: solver.forward(dict(zip(proposal["action_keys"], row, strict=True)))
+                for name, solver in self.kinematics.items()
+            }
+            for row in proposal["actions"]
+        ]
+        return proposal
+
+    def proposal_contract(self):
+        if not self.hybrid.review_policy_chunks:
+            return "The accept mode is disabled; future policy chunks are not supplied.\n"
+        return (
+            "PROPOSAL REVIEW: Review the supplied unexecuted policy chunk before any of it moves the robot. "
+            "Add execution_status (not_started/progressing/failed/uncertain/recovered) and intent_status "
+            "(aligned/misaligned/uncertain) to your JSON. In reason separately explain the observed result "
+            "of the previous execution and whether this proposed trajectory pursues the right next subgoal. "
+            "Use previous/current RGB and measured poses for outcomes, and the proposed FK trajectory and "
+            "gripper sequence for predicted motion. Robot FK does not predict object motion, contact or success. "
+            "Uncertainty or slow startup is not failure; permit self-recovery. "
+            "Choose mode=accept with empty instruction/targets/ee_targets and duration_s=0 to execute only "
+            "the advertised prefix of this exact proposal. The remainder is discarded, followed by fresh "
+            "inference and review. Prefer accepting an appropriate proposal under the current instruction. "
+            "mode=policy changes the instruction and requests another proposal; it does NOT authorize that "
+            "new proposal to execute without review. An intervention/end_effector takeover requires "
+            "execution_status=failed or intent_status=misaligned, supported by evidence in reason. "
+            "After recovery, accept a suitable policy proposal to hand control back.\n"
+        )
 
     def end_effector_contract(self):
         if not self.hybrid.end_effectors:
@@ -293,7 +364,14 @@ class HybridPlanner(VlmPlanner):
             "ee_targets must be {}. IK rejects unreachable or excessive moves. Joint interpolation follows "
             "IK; it is not a straight Cartesian path or collision-aware plan. Do not propose motions near "
             "obstacles, the other arm, or the table without visible clearance. Do not infer a camera-to-base "
-            "transform from this contract. If direction is uncertain use the policy or hold.\n"
+            "transform from this contract. Missing camera calibration does not forbid every correction: "
+            "use documented base axes, current measured FK, and supplied policy FK trajectories to reason "
+            "about a small recovery in that known frame when clearance and benefit are evident. For example, "
+            "a small lift along a documented upward axis may be justified by a failed grasp and visible "
+            "clearance; preserve orientation. Do not assume that image left/right equals base X/Y, or "
+            "invent a metric cube location. Proposed FK is a motion hypothesis, not a camera calibration. "
+            "Explain the geometric evidence for the correction; if its direction is unknown, continue an "
+            "appropriate policy rather than inventing coordinates.\n"
             f"End-effector contracts: {json.dumps(contracts)}\n"
         )
 
@@ -301,6 +379,21 @@ class HybridPlanner(VlmPlanner):
         if query.kind is QueryKind.VQA:
             return super().parse_reply(reply, query, task)
         decision = PlannerDecision.parse(reply)
+        if decision.mode == "accept" and not self.hybrid.review_policy_chunks:
+            raise ValueError("accept requires review_policy_chunks")
+        if self.hybrid.review_policy_chunks:
+            if not decision.execution_status or not decision.intent_status:
+                raise ValueError("Proposal review requires execution_status and intent_status")
+            if decision.mode == "accept" and decision.intent_status == "misaligned":
+                raise ValueError("Cannot accept a proposal assessed as misaligned")
+            if (
+                decision.mode in {"intervention", "end_effector"}
+                and decision.execution_status != "failed"
+                and decision.intent_status != "misaligned"
+            ):
+                raise ValueError(
+                    "A correction requires observed execution failure or misaligned proposal intent"
+                )
         if decision.mode == "policy" and self.config.instructions:
             allowed = {normalize_instruction(s) for s in self.config.instructions}
             if normalize_instruction(decision.instruction) not in allowed:

@@ -42,6 +42,17 @@ logger = logging.getLogger(__name__)
 EXTERNAL_HISTORY_DEFAULT = 4
 
 
+@dataclass(frozen=True)
+class ActionProposal:
+    """One postprocessed, unexecuted chunk tied to its inference observation."""
+
+    proposal_id: int
+    actions: torch.Tensor
+    observation: dict
+    task: str
+    fps: float
+
+
 class QueryKind(Enum):
     """What the policy's text head is being asked for."""
 
@@ -125,6 +136,14 @@ class InferenceEngine(abc.ABC):
 
     Subclasses must call ``super().__init__(task=...)``.
     """
+
+    supports_action_proposals = False
+
+    def request_action_proposal(self, obs: dict, task: str) -> None:
+        raise NotImplementedError("This inference backend cannot produce isolated action proposals")
+
+    def take_action_proposal(self) -> ActionProposal | None:
+        raise NotImplementedError("This inference backend cannot produce isolated action proposals")
 
     def __init__(self, task: str = "") -> None:
         self._task = task

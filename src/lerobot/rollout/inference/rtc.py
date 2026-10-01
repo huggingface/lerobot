@@ -27,6 +27,7 @@ import logging
 import math
 import time
 import traceback
+from copy import deepcopy
 from threading import Event, Lock, Thread
 from typing import Any, Protocol, cast
 
@@ -44,7 +45,7 @@ from lerobot.processor import (
 from lerobot.utils.feature_utils import build_dataset_frame
 
 from ..robot_wrapper import ThreadSafeRobot
-from .base import InferenceEngine, PolicyQuery
+from .base import ActionProposal, InferenceEngine, PolicyQuery
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +196,8 @@ class RTCInferenceEngine(InferenceEngine):
     human-intervention phases.
     """
 
+    supports_action_proposals = True
+
     def __init__(
         self,
         policy: PreTrainedPolicy,
@@ -231,6 +234,8 @@ class RTCInferenceEngine(InferenceEngine):
         # Bumped by reset() under _obs_lock, so a chunk whose inference started before a
         # reset is discarded instead of merged into the fresh queue.
         self._reset_epoch = 0
+        self._proposal_requested = False
+        self._proposal_result: ActionProposal | None = None
         self._policy_active = Event()
         self._compile_warmup_done = Event()
         self._shutdown_event = Event()
@@ -354,6 +359,8 @@ class RTCInferenceEngine(InferenceEngine):
                 self._action_queue.clear()
             self._obs_holder["obs"] = None
             self._reset_epoch += 1
+            self._proposal_requested = False
+            self._proposal_result = None
         # The queue is empty, so a pending task change has nothing stale to blend against.
         self._discard_task_change()
 
@@ -366,9 +373,30 @@ class RTCInferenceEngine(InferenceEngine):
         # The epoch also rejects a chunk which was already generating when paused.
         with self._obs_lock:
             self._reset_epoch += 1
+            self._proposal_requested = False
+            self._proposal_result = None
             self._obs_holder["obs"] = None
             if self._action_queue is not None:
                 self._action_queue.clear()
+
+    def request_action_proposal(self, obs: dict, task: str) -> None:
+        """Generate exactly one fresh chunk on the RTC thread, without queueing motion."""
+        self.pause()
+        self.set_task(task)
+        snapshot = deepcopy(obs)
+        with self._obs_lock:
+            self._reset_epoch += 1
+            if self._action_queue is not None:
+                self._action_queue.clear()
+            self._obs_holder["obs"] = snapshot
+            self._proposal_result = None
+            self._proposal_requested = True
+            self._policy_active.set()
+
+    def take_action_proposal(self) -> ActionProposal | None:
+        with self._obs_lock:
+            result, self._proposal_result = self._proposal_result, None
+            return result
 
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
         """Pop the next action from the RTC queue (ignores ``obs_frame``)."""
@@ -450,6 +478,7 @@ class RTCInferenceEngine(InferenceEngine):
                 with self._obs_lock:
                     obs = self._obs_holder.get("obs")
                     epoch_before = self._reset_epoch
+                    proposal_requested = self._proposal_requested
                 if queue is None or obs is None:
                     time.sleep(_RTC_IDLE_SLEEP_S)
                     continue
@@ -459,7 +488,7 @@ class RTCInferenceEngine(InferenceEngine):
                 # for it to drain.  A next-subtask answer is applied via ``set_task``, so the chunk path
                 # below uses it, and that path re-runs the preprocessor on its own observation, so
                 # stateful steps (relative-action anchoring) are not left holding this query's.
-                if self._service_query(obs):
+                if not proposal_requested and self._service_query(obs):
                     # The generation took seconds, so the snapshot above is stale: re-read
                     # the observation, and the epoch so the discard guard below also covers
                     # a reset that landed during the query.
@@ -486,6 +515,9 @@ class RTCInferenceEngine(InferenceEngine):
                             training_max_delay=training_max_delay,
                             has_previous_actions=has_previous_actions,
                         )
+                        if proposal_requested:
+                            # The robot holds; no prefix executes during this inference.
+                            delay = 0
                         if self._rtc_config.mode == "trained" and delay > 0:
                             delay = _clamp_trained_rtc_delay(
                                 conditioned_delay=delay,
@@ -557,7 +589,8 @@ class RTCInferenceEngine(InferenceEngine):
                             latency_tracker.add(new_latency)
 
                         if (
-                            not is_warmup
+                            not proposal_requested
+                            and not is_warmup
                             and self._rtc_config.mode == "trained"
                             and not _trained_rtc_chunk_can_merge(
                                 conditioned_delay=delay,
@@ -594,7 +627,14 @@ class RTCInferenceEngine(InferenceEngine):
                             # a pre-reset chunk.  Lock order: _obs_lock -> queue.lock.
                             epoch_unchanged = epoch_before == self._reset_epoch
                             if epoch_unchanged:
-                                queue.merge(original, processed, new_delay, idx_before, task=task)
+                                if proposal_requested and not is_warmup:
+                                    self._proposal_result = ActionProposal(
+                                        epoch_before, processed.detach().cpu().clone(), obs, task, self._fps
+                                    )
+                                    self._proposal_requested = False
+                                    self._policy_active.clear()
+                                elif not proposal_requested:
+                                    queue.merge(original, processed, new_delay, idx_before, task=task)
                         if not epoch_unchanged:
                             logger.info("Discarding action chunk computed before an engine reset")
 
