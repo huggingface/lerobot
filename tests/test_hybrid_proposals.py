@@ -88,6 +88,35 @@ def test_only_approved_prefix_executes_and_suffix_is_discarded(proposal_rig):
     delegate.resume.assert_not_called()
 
 
+def test_review_keeps_approved_endpoint_while_feedback_catches_up(proposal_rig):
+    engine, delegate, clock, proposal = proposal_rig
+    apply_review(engine, proposal, review_decision())
+    for _ in range(3):
+        engine.get_action({})
+    # Real motors can lag the final sample. Do not cancel its remaining travel.
+    lagging = {"a.pos": 0.39, "b.pos": 0.49}
+    engine.notify_observation(lagging)
+    assert engine.get_action({}).tolist() == pytest.approx([0.4, 0.5])
+    assert engine._mode == "settling"
+    assert engine._hold == pytest.approx({"a.pos": 0.4, "b.pos": 0.5})
+    delegate.take_action_proposal.return_value = None
+    clock.now += engine.config.settle_s
+    settled = {"a.pos": 0.399, "b.pos": 0.499}
+    engine.notify_observation(settled)
+    assert engine.get_action({}).tolist() == pytest.approx([0.4, 0.5])
+    delegate.request_action_proposal.assert_called_with(settled, proposal.task)
+
+
+def test_entire_chunk_is_reviewed_and_executed_when_configured(proposal_rig):
+    engine, _, _, proposal = proposal_rig
+    engine.config.proposal_execution_steps = len(proposal.actions)
+    output = [apply_review(engine, proposal, review_decision())]
+    output.extend(engine.get_action({}) for _ in range(5))
+    torch.testing.assert_close(torch.stack(output)[1::2], proposal.actions)
+    assert engine.get_action({}).tolist() == pytest.approx(proposal.actions[-1].tolist())
+    assert engine._mode == "settling"
+
+
 def test_changed_instruction_requires_a_new_review(proposal_rig):
     engine, delegate, _, proposal = proposal_rig
     d = PlannerDecision("policy", "Red complete", "Select blue", "Pick blue block", {}, 0)

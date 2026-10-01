@@ -591,6 +591,12 @@ The supervisor validates all targets before dispatch, limits each correction's r
 
 Raw replies and latency are written to `planner.log_path`. Accepted decisions appear in the interactive prompt. With `sentry`, hold, intervention, and policy actions are recorded at the base FPS, preserving configured command interpolation. No scoring or robot-specific calibration is included in this supervisor.
 
+After an approved prefix, the controller retains its final commanded target while
+settling and reviewing. It does not cancel unfinished tracking motion by replacing
+that endpoint with lagging measured feedback. New inference and review still use
+fresh measured observations, and movement after the reviewed snapshot invalidates
+the decision when it exceeds the configured drift tolerance.
+
 #### End-effector corrections
 
 For a camera rigidly attached to the tool, an end-effector config can optionally supply

@@ -174,11 +174,16 @@ class HybridInferenceEngine(InferenceEngine):
             pose[key] = max(limit.minimum, min(limit.maximum, value))
         return pose
 
-    def _begin_review(self):
+    def _begin_review(self, *, retain_endpoint=False):
         self.delegate.pause()
         self.delegate.discard_actions()
         self.control_interpolator.reset()
-        self._hold = self._pose()
+        measured = self._pose()
+        # After an approved prefix, keep its final commanded endpoint during
+        # settling. Replacing it with lagging feedback cancels the remaining
+        # tracking motion and repeatedly re-anchors each chunk short of target.
+        if not retain_endpoint or self._hold is None:
+            self._hold = measured
         self._clear_proposal()
         self._mode = "settling" if self.config.review_policy_chunks else "review"
         self._review_started = time.perf_counter()
@@ -393,7 +398,7 @@ class HybridInferenceEngine(InferenceEngine):
                 if self._mode == "approved":
                     if self.control_interpolator.needs_new_action():
                         if self._approved_index >= len(self._approved_actions):
-                            self._begin_review()
+                            self._begin_review(retain_endpoint=True)
                         else:
                             self.control_interpolator.add(self._approved_actions[self._approved_index])
                             self._approved_index += 1
