@@ -46,7 +46,7 @@ class BiYamFollower(Robot):
 
     def __init__(self, config: BiYamFollowerConfig) -> None:
         require_package("motorbridge", extra="yam")
-        require_package("python-can", extra="yam")
+        require_package("python-can", extra="yam", import_name="can")
         super().__init__(config)
         self.config = config
         self.arms = {"left": YamArm(config.left_arm), "right": YamArm(config.right_arm)}
