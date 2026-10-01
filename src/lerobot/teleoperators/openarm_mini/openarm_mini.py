@@ -33,8 +33,8 @@ logger = logging.getLogger(__name__)
 
 # Per-side motor direction flips applied during readout.
 SIDE_MOTORS_TO_FLIP: dict[str, list[str]] = {
-    "left": ["joint_1", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"],
-    "right": ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_7"],
+    "left": ["joint_1", "joint_3", "joint_5", "joint_6", "joint_7"],
+    "right": ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
 }
 
 # Leader joint 6 ↔ follower joint 7 (symmetric — its own inverse).
