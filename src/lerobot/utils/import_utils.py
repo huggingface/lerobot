@@ -146,6 +146,7 @@ _deepdiff_available = is_package_available("deepdiff")
 _rustypot_available = is_package_available("rustypot")
 _reachy2_sdk_available = is_package_available("reachy2_sdk")
 _can_available = is_package_available("python-can", "can")
+_mujoco_available = is_package_available("mujoco")
 _motorbridge_available = is_package_available("motorbridge")
 _motorbridge_smart_servo_available = is_package_available(
     "motorbridge-smart-servo", import_name="motorbridge_smart_servo"

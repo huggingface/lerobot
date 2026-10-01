@@ -1,0 +1,56 @@
+# Bimanual YAM
+
+The `bi_yam_follower` integration supports two standard YAM v1 arms with linear DM4310 grippers on Linux SocketCAN. Like [reBot B601](rebot_b601), it uses `motorbridge.Controller` and its Damiao motor API. Each arm has its own classic CAN interface at 1 Mbit/s: motor IDs 1–7, feedback IDs 17–23, three 4340 motors followed by four 4310 motors. Other grippers and modified encoder zeros need separate validation.
+
+## Install and calibrate
+
+```bash
+uv sync --locked --extra yam --extra molmoact2
+```
+
+Prepare the two SocketCAN interfaces at 1 Mbit/s using your adapter's instructions. Verify which physical arm each interface controls; `expected_adapter_serial` can guard against USB enumeration swapping the arms. Never run another robot controller on these interfaces at the same time.
+
+With the arms supported, measure the gripper endpoints:
+
+```bash
+uv run --no-sync lerobot-calibrate \
+  --robot.type=bi_yam_follower --robot.id=bimanual_yam \
+  --robot.left_arm.port=can0 --robot.right_arm.port=can1
+```
+
+Follow the closed/open prompts. Calibration reads feedback only: it does not enable torque, move the grippers, or change the factory joint zeros. It saves standard LeRobot calibration records; an existing `bi_yam_follower/bimanual_yam.json` from the earlier YAM integration remains compatible. Either raw gripper polarity is supported. Explicit `gripper_closed_rad` and `gripper_open_rad` override the saved endpoints.
+
+## Control and units
+
+The observation and action order is `left_joint_0.pos` through `left_joint_5.pos`, `left_gripper.pos`, then the corresponding right-arm fields. Joints are **absolute radians**; each gripper is **0 closed, 1 open**. These are not reBot's degree-valued features. End-effector policies require a separately configured IK processor.
+
+`read_only` defaults to `true`. With `read_only=false`, connecting validates both arms and cameras before enabling impedance control at the measured pose. This begins holding immediately; interactive `/start` begins policy actions. There is no automatic startup homing. By default, the six joints must be within 0.2 radians of the factory folded zero pose; gripper opening is unrestricted within its calibrated stroke. Set `initial_position_rad` and `initial_tolerance_rad` for a verified alternative starting pose.
+
+A robot-owned servo loop maintains position stiffness and gravity feed-forward while inference runs. It limits joint/gripper target speed, joint tracking error, and gripper proportional torque. If commands expire, it captures and holds the measured position once. Faults or missing feedback stop both arms; this can remove their support. A return motion is never attempted using stale feedback.
+
+Motorbridge 0.5 returns cached positions without timestamps. A receive-only `python-can` subscriber therefore checks kernel receive timestamps for all seven motors. It sends no packets and does not decode positions; motorbridge owns motor communication and position decoding. The Python servo is not a hard real-time controller.
+
+Gravity feed-forward uses the bundled inertial-only I2RT model, including the linear gripper. The original MIT notice is retained inside the XML. `gravity_factors` scale its six joint torques. Added cameras/payloads are not modeled, and this model provides no collision detection.
+
+## MolmoAct2 rollout
+
+Use a **LeRobot-format** checkpoint directory with its saved processors, not the original model repository as `policy.path`. For `allenai/MolmoAct2-BimanualYAM`, the original embodiment tag is `yam_dual_molmoact2`: absolute joint pose, the 14 features above, and camera order **top, left, right**. Keep the released quantile statistics and `normalize_gripper=false`; the two gripper dimensions are excluded from quantile normalization. Do not estimate replacement statistics from live observations. See [MolmoAct2](molmoact2) for policy loading.
+
+For an already converted checkpoint, configure your three RGB camera paths and run:
+
+```bash
+uv run --no-sync lerobot-rollout \
+  --robot.type=bi_yam_follower --robot.id=bimanual_yam \
+  --robot.read_only=false \
+  --robot.left_arm.port=can0 --robot.right_arm.port=can1 \
+  --robot.cameras='{"top":{"type":"opencv","index_or_path":"/dev/v4l/by-id/TOP_CAMERA","width":640,"height":480,"fps":30},"left":{"type":"opencv","index_or_path":"/dev/v4l/by-id/LEFT_CAMERA","width":640,"height":480,"fps":30,"fourcc":"MJPG"},"right":{"type":"opencv","index_or_path":"/dev/v4l/by-id/RIGHT_CAMERA","width":640,"height":480,"fps":30,"fourcc":"MJPG"}}' \
+  --policy.path=/path/to/molmoact2-bimanual-yam \
+  --inference.type=rtc --inference.rtc.mode=guided \
+  --inference.rtc.execution_horizon=20 --inference.queue_threshold=20 \
+  --device=cuda --fps=30 --interpolation_multiplier=2 \
+  --duration=0 --interactive=true --play_sounds=false \
+  --return_to_initial_position=true \
+  --task="Pick up the red block and place it in the green bin"
+```
+
+Type `/start` to begin policy execution, `/subtask <text>` to change the instruction, and `/reset` to request a return to the captured startup pose. `duration=0` means no episode time limit. This integration leaves standard rollout controls unchanged: its return trajectory has a fixed duration and does not verify that the arms have settled at home. The YAM speed/tracking limits still apply, so do not interpret completion of that trajectory as measured arrival. Support the arms before disconnecting; torque is disabled on disconnect.
