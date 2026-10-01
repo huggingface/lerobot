@@ -46,11 +46,11 @@ class YamArmConfig:
     initial_gripper_tolerance: float = 0.1
     kp: list[float] = field(default_factory=lambda: [80.0, 80.0, 80.0, 10.0, 10.0, 10.0])
     kd: list[float] = field(default_factory=lambda: [5.0, 5.0, 5.0, 1.5, 1.5, 1.5])
-    gripper_kp: float = 20.0
-    gripper_kd: float = 0.5
+    gripper_kp: float = 5.0
+    gripper_kd: float = 0.005
     gripper_torque_limit: float = 0.5
     max_joint_speed_rad_s: float = 0.3
-    max_gripper_speed_s: float = 0.5
+    max_gripper_speed_s: float = 12.0
     max_tracking_error_rad: float = 0.15
     # Feedforward for the standard linear_4310 hardware. Camera/payload changes
     # require revalidation. This model is not a collision avoidance system.

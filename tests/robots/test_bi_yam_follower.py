@@ -135,8 +135,26 @@ def test_slew_gripper_torque_and_gravity_feedforward():
     packet = arm.command_packet(arm.position, 0.01)
     assert packet["joint_0"] == pytest.approx((0.003, 0, 80, 5, 1))
     assert packet["joint_1"][-1] == pytest.approx(1.1)
-    # Raw gripper target is capped to 0.5 Nm / 20 Nm/rad = 0.025 rad ahead.
-    assert packet["gripper"] == pytest.approx((3.125, 0, 20, 0.5, 0))
+    # Raw gripper target is capped to 0.5 Nm / 5 Nm/rad = 0.1 rad ahead.
+    assert packet["gripper"] == pytest.approx((3.2, 0, 5, 0.005, 0))
+
+
+@pytest.mark.parametrize("direction", [-1, 1])
+@pytest.mark.parametrize("polarity", [-1, 1])
+def test_default_gripper_slew_preserves_torque_bound(direction, polarity):
+    cfg = arm_config()
+    cfg.gripper_open_rad = cfg.gripper_closed_rad + polarity * 6.0
+    arm = YamArm(cfg)
+    arm.position = np.array([0, 0.5, 0.5, 0, 0, 0, 0.5])
+    arm.command = arm.position.copy()
+    arm.target = arm.position.copy()
+    arm.target[6] = 1 if direction > 0 else 0
+    packet = arm.command_packet(arm.position, 0.01)["gripper"]
+    # At 100 Hz, the default slew allows 0.12 normalized stroke per tick.
+    assert arm.command[6] == pytest.approx(0.5 + direction * 0.12)
+    raw_measured = 0.1 + polarity * 3.0
+    assert packet == pytest.approx((raw_measured + direction * polarity * 0.1, 0, 5, 0.005, 0))
+    assert (packet[0] - raw_measured) * packet[2] == pytest.approx(direction * polarity * 0.5)
 
 
 def test_gravity_matches_potential_energy_gradient():
