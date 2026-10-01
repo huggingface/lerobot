@@ -108,8 +108,8 @@ lerobot-rollout \
 
 | Flag                                   | Description                                    |
 | -------------------------------------- | ---------------------------------------------- |
-| `--strategy.ring_buffer_seconds`       | Duration of buffered telemetry (default: 30)   |
-| `--strategy.ring_buffer_max_memory_mb` | Memory cap for the ring buffer (default: 2048) |
+| `--strategy.ring_buffer_seconds`       | Duration of buffered telemetry (default: 10)   |
+| `--strategy.ring_buffer_max_memory_mb` | Memory cap for the ring buffer (default: 1024) |
 | `--strategy.save_key`                  | Key to toggle recording (default: `s`)         |
 | `--strategy.push_key`                  | Key to push to Hub (default: `h`)              |
 
@@ -161,7 +161,7 @@ Foot pedal input is also supported via `--strategy.input_device=pedal`. Configur
 
 | Flag                                 | Description                                                                                                                                                    |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--strategy.num_episodes`            | Number of correction episodes to record (default: 10)                                                                                                          |
+| `--strategy.num_episodes`            | Number of correction episodes to record (default: `--dataset.num_episodes`)                                                                                    |
 | `--strategy.record_autonomous`       | Record autonomous frames too (default: false)                                                                                                                  |
 | `--strategy.upload_every_n_episodes` | Push to Hub every N episodes (default: 5)                                                                                                                      |
 | `--strategy.input_device`            | Input device: `keyboard` or `pedal` (default: keyboard)                                                                                                        |
