@@ -714,6 +714,7 @@ def _tokenizer_policy_config(config: G05Config) -> dict[str, Any]:
         "processor_metadata": config.processor_metadata,
         "cot_bbox_camera": config.cot_bbox_camera,
         "runtime_cot_fields": config.runtime_cot_fields,
+        "proprio_dropout_p": config.proprio_dropout_p,
     }
 
 
@@ -1191,6 +1192,7 @@ class G05TokenizerStep(ProcessorStep):
                 prepared["samples"],
                 device=state.device,
                 action_codec=self._get_action_codec(state.device),
+                proprio_dropout_p=float(self.policy_config.get("proprio_dropout_p", 0.0)),
             )
         complementary.update(
             {

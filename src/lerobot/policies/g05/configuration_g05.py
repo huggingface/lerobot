@@ -326,6 +326,10 @@ class G05Config(PreTrainedConfig):
     # SubtaskCoTBuilder prompt, ("bbox", "subtask") its BBoxSubtaskCoTBuilder prompt (boxes
     # first, then the subtask; the action attends to both).
     runtime_cot_fields: tuple[str, ...] = ("subtask",)
+    # Training-only probability of dropping a sample's <state> token from the prompt, as upstream's
+    # `proprio_encoder: mlp_dropout` (its default p is 0.2). Keeps the policy from acting on the
+    # arm state alone and ignoring the cameras.
+    proprio_dropout_p: float = 0.2
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -425,6 +429,8 @@ class G05Config(PreTrainedConfig):
             raise ValueError("G0.5 System 2 requires predict_cot=True in the packaged checkpoint.")
         if self.language_recipe_enabled and not self.predict_cot:
             raise ValueError("G0.5 recipe-driven CoT training requires predict_cot=True.")
+        if not 0.0 <= self.proprio_dropout_p <= 1.0:
+            raise ValueError(f"proprio_dropout_p must be in [0, 1], got {self.proprio_dropout_p}.")
         if not 1 <= self.n_action_steps <= self.chunk_size:
             raise ValueError("n_action_steps must be between 1 and chunk_size.")
         if self.action_head == "actioncodec" and not self.discrete_action:

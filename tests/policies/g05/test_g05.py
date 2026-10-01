@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -174,7 +175,7 @@ class TinyLanguageTrainingBackend(G05NativeBackend):
             )
         )
         self.processor = SimpleNamespace(
-            encode_train=lambda samples, device, action_codec: SimpleNamespace(
+            encode_train=lambda samples, device, action_codec, proprio_dropout_p=0.0: SimpleNamespace(
                 labels=torch.tensor([[-100, 0, 2]], device=device),
                 token_types=torch.zeros(1, 3, device=device),
                 split_index=3,
@@ -304,8 +305,8 @@ class _StubG05Tokenizer:
     def encode_inference(self, samples, device):
         return self._sequence(samples, device)
 
-    def encode_train(self, samples, device, action_codec):
-        del action_codec
+    def encode_train(self, samples, device, action_codec, proprio_dropout_p=0.0):
+        del action_codec, proprio_dropout_p
         return self._sequence(samples, device)
 
 
@@ -2008,6 +2009,36 @@ def test_training_sequences_encode_actions_in_one_batch_like_one_at_a_time():
         assert torch.equal(getattr(batched, name), getattr(one_at_a_time, name)), name
     assert batched.split_index == one_at_a_time.split_index
     assert (batched.token_types == G05TokenType.ACTION).sum(dim=1).tolist() == [3, 0, 3]
+
+
+def test_training_sequences_drop_the_state_token_with_proprio_dropout():
+    sample = {
+        "template": make_g05_prompt_template(1, predict_cot=False, flow_only=False),
+        "image0": (32, 32),
+        "embodiment": "omx",
+        "command": "task",
+        "proprio": {"value": torch.zeros(1, 6)},
+        "action": {"value": torch.ones(4, 6)},
+    }
+    tokenizer = _char_g05_tokenizer()
+    encode = partial(tokenizer.encode_train, device=torch.device("cpu"), action_codec=_BatchCountingCodec())
+
+    def state_tokens(sequence):
+        return (sequence.token_types == G05TokenType.PROPRIO).sum(dim=1).tolist()
+
+    assert state_tokens(encode([sample] * 4, proprio_dropout_p=0.0)) == [1, 1, 1, 1]
+    dropped = encode([sample] * 4, proprio_dropout_p=1.0)
+    assert state_tokens(dropped) == [0, 0, 0, 0]
+    # Only the state token goes: the action targets are untouched.
+    assert (dropped.token_types == G05TokenType.ACTION).sum(dim=1).tolist() == [3, 3, 3, 3]
+    torch.manual_seed(0)
+    mixed = state_tokens(encode([sample] * 200, proprio_dropout_p=0.2))
+    assert set(mixed) == {0, 1} and 20 < mixed.count(0) < 60
+
+
+def test_proprio_dropout_p_must_be_a_probability():
+    with pytest.raises(ValueError, match="proprio_dropout_p"):
+        G05Config(proprio_dropout_p=1.5)
 
 
 def test_mrope_positions_are_built_on_the_host_and_returned_on_the_token_device():
