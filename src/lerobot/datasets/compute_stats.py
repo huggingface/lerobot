@@ -26,6 +26,8 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .io_utils import load_image_as_numpy
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_QUANTILES = [0.01, 0.10, 0.50, 0.90, 0.99]
 
 
@@ -746,7 +748,7 @@ def compute_relative_action_stats(
     )
     relative_mask = np.array(mask_step._build_mask(action_dim), dtype=np.float32)
 
-    logging.info("Loading action/state data for relative action stats...")
+    logger.info("Loading action/state data for relative action stats...")
     all_actions = np.array(hf_dataset[ACTION], dtype=np.float32)
     all_states = np.array(hf_dataset[OBS_STATE], dtype=np.float32)
     episode_indices = np.array(hf_dataset["episode_index"])
@@ -758,7 +760,7 @@ def compute_relative_action_stats(
         )
 
     effective_workers = max(num_workers, 1)
-    logging.info(
+    logger.info(
         f"Computing relative action stats from {len(valid_starts)} chunks "
         f"(chunk_size={chunk_size}, workers={effective_workers})"
     )
@@ -795,7 +797,7 @@ def compute_relative_action_stats(
 
     excluded_dims = int(len(relative_mask) - relative_mask.sum())
     total_frames = len(valid_starts) * chunk_size
-    logging.info(
+    logger.info(
         f"Relative action stats ({len(valid_starts)} chunks, {total_frames} frames): "
         f"relative_dims={int(relative_mask.sum())}/{len(relative_mask)} (excluded={excluded_dims}), "
         f"mean={np.abs(stats['mean']).mean():.4f}, std={stats['std'].mean():.4f}, "

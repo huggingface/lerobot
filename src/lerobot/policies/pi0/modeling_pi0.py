@@ -18,7 +18,7 @@ import builtins
 import logging
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
+from typing import TYPE_CHECKING, Any, Literal, Unpack, cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -63,15 +63,9 @@ from ..common.vla_utils import (
     prepare_attention_masks_4d,
     resize_with_pad_torch,
 )
-from ..pretrained import PreTrainedPolicy, T
+from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs, T
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi0 import DEFAULT_IMAGE_SIZE, PI0Config
-
-
-class ActionSelectKwargs(TypedDict, total=False):
-    inference_delay: int | None
-    prev_chunk_left_over: Tensor | None
-    execution_horizon: int | None
 
 
 # Define the complete layer computation function for gradient checkpointing
@@ -313,12 +307,14 @@ class PaliGemmaWithExpertModel(
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         past_key_values: list[torch.FloatTensor] | None = None,
-        inputs_embeds: list[torch.FloatTensor] | None = None,
+        inputs_embeds: list[torch.Tensor | None] | None = None,
         use_cache: bool | None = None,
-        adarms_cond: list[torch.Tensor] | None = None,
+        adarms_cond: list[torch.Tensor | None] | None = None,
     ):
         if adarms_cond is None:
             adarms_cond = [None, None]
+        if inputs_embeds is None:
+            raise ValueError("inputs_embeds must be a [prefix, suffix] pair (either entry may be None)")
         if inputs_embeds[1] is None:
             prefix_output = self.paligemma.model.language_model.forward(
                 inputs_embeds=inputs_embeds[0],
@@ -431,7 +427,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             paligemma_config,
             action_expert_config,
             use_adarms=[False, False],
-            precision=config.dtype,
+            precision=cast(Literal["bfloat16", "float32"], config.dtype),
             image_size=config.image_resolution[0],
             freeze_vision_encoder=config.freeze_vision_encoder,
             train_expert_only=config.train_expert_only,
@@ -452,7 +448,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             torch.set_float32_matmul_precision("high")
             self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)
             # Also compile the main forward pass used during training
-            self.forward = torch.compile(self.forward, mode=config.compile_mode)
+            self.forward = torch.compile(self.forward, mode=config.compile_mode)  # type: ignore[method-assign]
 
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
@@ -669,7 +665,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         state,
         noise=None,
         num_steps=None,
-        **kwargs: Unpack[ActionSelectKwargs],
+        **kwargs: Unpack[RTCActionSelectKwargs],
     ) -> Tensor:
         """Do a full inference forward and compute the action."""
         if num_steps is None:
@@ -1092,7 +1088,9 @@ class PI0Policy(PreTrainedPolicy):
         return self._action_queue.popleft()
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+    def predict_action_chunk(
+        self, batch: dict[str, Tensor], **kwargs: Unpack[RTCActionSelectKwargs]
+    ) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         self.eval()
 
@@ -1105,6 +1103,8 @@ class PI0Policy(PreTrainedPolicy):
         actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, **kwargs)
 
         # Unpad actions to actual action dimension
+        if self.config.output_features is None:
+            raise ValueError("output_features must be set (validate_features) before predicting actions")
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]
 
@@ -1132,6 +1132,8 @@ class PI0Policy(PreTrainedPolicy):
         losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
 
         # Truncate losses to actual action dimensions
+        if self.config.output_features is None:
+            raise ValueError("output_features must be set (validate_features) before computing the loss")
         original_action_dim = self.config.output_features[ACTION].shape[0]
         losses = losses[:, :, :original_action_dim]
 
@@ -1150,7 +1152,7 @@ class PI0Policy(PreTrainedPolicy):
             loss_dict["loss"] = loss.item()
             return loss, loss_dict
 
-    def _get_default_peft_targets(self) -> dict[str, any]:
+    def _get_default_peft_targets(self) -> dict[str, Any]:
         """Return default PEFT target modules for PI0 fine-tuning."""
         common_projections = (
             "state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out"

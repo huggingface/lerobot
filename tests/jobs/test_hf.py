@@ -25,6 +25,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.jobs.hf import (
+    _build_resume_job,
     _pod_forwarded_args,
     _poll_until_done,
     build_remote_config_file,
@@ -164,6 +165,95 @@ def test_pod_forwarded_args_drops_host_only_flags():
         drop_prefixes=("--job.",),
     )
     assert forwarded == ["--steps=10"]
+
+
+def test_build_resume_job_requires_config_path(monkeypatch):
+    """Resuming without --config_path fails with a clear ValueError, not a TypeError from Path(None)."""
+    monkeypatch.setattr("lerobot.configs.parser.parse_arg", lambda *a, **k: None)
+    cfg = SimpleNamespace(checkpoint_path=None, job_name="j")
+    with pytest.raises(ValueError, match="config_path"):
+        _build_resume_job(cfg, "alice")
+
+
+def test_build_resume_job_local_checkpoint_requires_resolved_checkpoint_path(monkeypatch, tmp_path):
+    """A local --config_path whose checkpoint validate() never resolved (--policy.path given) is rejected.
+
+    `--policy.path` takes priority over `--resume` in TrainPipelineConfig, leaving `checkpoint_path`
+    None; the helper must name that clash instead of crashing, and must not upload anything.
+    """
+    local_cfg = tmp_path / "train_config.json"
+    local_cfg.write_text("{}")
+    monkeypatch.setattr("lerobot.configs.parser.parse_arg", lambda *a, **k: str(local_cfg))
+    monkeypatch.setattr("sys.argv", ["lerobot-train", "--resume=true", f"--config_path={local_cfg}"])
+
+    def _boom(*a, **kw):
+        raise AssertionError("must not upload a checkpoint that was never resolved")
+
+    monkeypatch.setattr("lerobot.jobs.hf.push_checkpoint_to_hub", _boom)
+    cfg = SimpleNamespace(checkpoint_path=None, job_name="j")
+    with pytest.raises(ValueError, match="policy.path"):
+        _build_resume_job(cfg, "alice")
+
+
+def test_submit_resume_dispatches_to_build_resume_job(monkeypatch):
+    """`--resume` takes the resume branch: no fresh repo or config staging, the checkpoint's repo is used."""
+    monkeypatch.setattr("lerobot.jobs.hf.get_token", lambda: "tok")
+
+    class FakeHfApi:
+        def __init__(self, token=None):
+            pass
+
+        def whoami(self, token=None):
+            return {"name": "alice"}
+
+    monkeypatch.setattr("lerobot.jobs.hf.HfApi", FakeHfApi)
+    monkeypatch.setattr("lerobot.jobs.hf.ensure_dataset_available", lambda *a, **kw: None)
+
+    def _boom(*a, **kw):
+        raise AssertionError("a resume must not stage a fresh config")
+
+    monkeypatch.setattr("lerobot.jobs.hf._stage_config_on_hub", _boom)
+    resume_command = ["lerobot-train", "--config_path=alice/ckpt", "--job.target=local"]
+    resume_calls = []
+
+    def fake_build_resume_job(cfg, username):
+        resume_calls.append((cfg, username))
+        return "alice/ckpt", resume_command
+
+    monkeypatch.setattr("lerobot.jobs.hf._build_resume_job", fake_build_resume_job)
+    run_job_calls = []
+
+    def fake_run_job(**kwargs):
+        run_job_calls.append(kwargs)
+        return SimpleNamespace(id="job-1", url=None)
+
+    monkeypatch.setattr("lerobot.jobs.hf.run_job", fake_run_job)
+
+    cfg = draccus.parse(
+        TrainPipelineConfig,
+        args=[
+            "--dataset.repo_id",
+            "u/d",
+            "--policy.type",
+            "act",
+            "--resume",
+            "true",
+            "--job.target",
+            "a10g-small",
+            "--job.detach",
+            "true",
+        ],
+    )
+    # validate() would look for --config_path on the real sys.argv; resolving the checkpoint is
+    # _build_resume_job's job here, so skip it (as test_submit_rejects_reward_model_training does).
+    monkeypatch.setattr(cfg, "validate", lambda: None)
+
+    submit_to_hf(cfg)
+
+    assert resume_calls == [(cfg, "alice")]
+    assert run_job_calls[0]["command"] == resume_command
+    # The fresh-run branch must not have run: no auto-assigned model repo on the policy.
+    assert cfg.policy.repo_id is None
 
 
 def _minimal_cfg():

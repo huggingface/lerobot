@@ -224,7 +224,8 @@ class Flux3Policy(PreTrainedPolicy):
     def get_optim_params(self) -> list[dict[str, Any]]:
         """Two groups: the trunk (and LoRA adapters), and the fresh embodiment heads at their own rate."""
         head_prefixes = tuple(f"{n}." for n in fresh_module_names(self.modality))
-        trunk, heads = [], []
+        trunk: list[nn.Parameter] = []
+        heads: list[nn.Parameter] = []
         for name, p in self.named_parameters():
             if not p.requires_grad:
                 continue
@@ -292,7 +293,7 @@ class Flux3Policy(PreTrainedPolicy):
             logger.info(
                 "flux3: ignoring %d tensors of content streams this policy is built without: %s",
                 len(foreign),
-                sorted({stream_of_key(k) for k in foreign}),
+                sorted(filter(None, {stream_of_key(k) for k in foreign})),
             )
         missing = [k for k in expected.keys() - state.keys() if (strict or not k.startswith(head_prefixes))]
         if missing:

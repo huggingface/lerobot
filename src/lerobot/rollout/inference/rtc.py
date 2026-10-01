@@ -28,7 +28,7 @@ import math
 import time
 import traceback
 from threading import Event, Lock, Thread
-from typing import Any
+from typing import Any, Protocol, cast
 
 import torch
 
@@ -71,6 +71,18 @@ class _TrainedRTCDelayExceededError(_FatalRTCInferenceError):
 # ---------------------------------------------------------------------------
 # RTC helpers
 # ---------------------------------------------------------------------------
+
+
+class _RTCPredictActionChunk(Protocol):
+    """Call shape of ``predict_action_chunk`` on an RTC-capable policy."""
+
+    def __call__(
+        self,
+        batch: dict[str, torch.Tensor],
+        *,
+        inference_delay: int | None,
+        prev_chunk_left_over: torch.Tensor | None,
+    ) -> torch.Tensor: ...
 
 
 def supports_rtc_inference(policy: PreTrainedPolicy) -> bool:
@@ -479,9 +491,9 @@ class RTCInferenceEngine(InferenceEngine):
                             # inference; with blending off the queue drains first.
                             logger.info("Task changed to '%s' — applied from the next merged chunk", task)
 
-                        obs_batch = build_dataset_frame(self._obs_features, obs, prefix="observation")
+                        obs_frame = build_dataset_frame(self._obs_features, obs, prefix="observation")
                         obs_batch = prepare_observation_for_inference(
-                            obs_batch, policy_device, task, self._robot.robot_type
+                            obs_frame, policy_device, task, self._robot.robot_type
                         )
                         obs_batch["task"] = [task]
 
@@ -512,7 +524,8 @@ class RTCInferenceEngine(InferenceEngine):
                             # is what the delay estimate above already assumed.
                             prev_actions = None
 
-                        actions = self._policy.predict_action_chunk(
+                        predict_action_chunk = cast(_RTCPredictActionChunk, self._policy.predict_action_chunk)
+                        actions = predict_action_chunk(
                             preprocessed, inference_delay=delay, prev_chunk_left_over=prev_actions
                         )
 
