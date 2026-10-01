@@ -248,7 +248,7 @@ from pathlib import Path
 
 import draccus
 from huggingface_hub import HfApi
-from huggingface_hub.errors import HfHubHTTPError, HFValidationError, OfflineModeIsEnabled
+from huggingface_hub.errors import HFValidationError, RepositoryNotFoundError
 
 from lerobot.configs import (
     DepthEncoderConfig,
@@ -370,6 +370,7 @@ class EditDatasetConfig:
     push_to_hub: bool = False
     # If True, upload as private; if False, upload as public. If None, upload as private when a source
     # dataset on the Hub is private, otherwise defer to the org default on the Hub (only affects orgs).
+    # If None and a source cannot be found on the Hub, stop and ask for an explicit value.
     private: bool | None = None
 
 
@@ -421,27 +422,60 @@ def get_output_path(
     return output_repo_id, output_path, backup_path
 
 
-def _resolve_private(cfg: EditDatasetConfig, source_repo_ids: list[str]) -> bool | None:
+def _resolve_private(
+    cfg: EditDatasetConfig, source_repo_ids: list[str], output_repo_ids: list[str]
+) -> bool | None:
     """Return the visibility to push with, so that editing a private dataset never publishes it.
 
+    Call it before editing, so that a problem stops the run before any work is done.
+
     An explicit ``--private`` wins. Otherwise the output is private when any source dataset on the Hub is
-    private. Sources that cannot be looked up (local only, offline, or not accessible) keep the default.
+    private. If a source cannot be found, the run stops: the Hub answers the same way for a dataset that
+    only exists locally and for a private dataset the token cannot see, so the visibility must be chosen
+    explicitly. Any other Hub error also stops the run.
     """
-    if cfg.private is not None:
-        return cfg.private
     api = HfApi()
-    for source_repo_id in source_repo_ids:
-        try:
-            is_private = api.repo_info(source_repo_id, repo_type="dataset").private
-        except (HfHubHTTPError, HFValidationError, OfflineModeIsEnabled):
-            continue
-        if is_private:
-            logging.info(
-                f"Source dataset {source_repo_id} is private, so the output is pushed as private. "
-                "Pass --private false to push it as public."
+    private = cfg.private
+    if private is None:
+        not_found = []
+        for source_repo_id in source_repo_ids:
+            try:
+                is_private = api.repo_info(source_repo_id, repo_type="dataset").private
+            except HFValidationError:
+                # Not a valid Hub identifier, so this source only exists locally.
+                continue
+            except RepositoryNotFoundError:
+                not_found.append(source_repo_id)
+                continue
+            if is_private:
+                logging.info(
+                    f"Source dataset {source_repo_id} is private, so the output is pushed as private. "
+                    "Pass --private false to push it as public."
+                )
+                private = True
+                break
+        if private is None and not_found:
+            raise ValueError(
+                f"Source dataset(s) {', '.join(not_found)} not found on the Hub. Either they only exist "
+                "locally, or they are private and your token cannot see them: the Hub answers both the "
+                "same way. Pass --private true or --private false to choose the visibility of the output."
             )
-            return True
-    return None
+
+    if private:
+        # The Hub keeps the visibility of an existing repository, so pushing to a public one would
+        # publish the output even though it should be private.
+        for output_repo_id in output_repo_ids:
+            try:
+                is_private = api.repo_info(output_repo_id, repo_type="dataset").private
+            except RepositoryNotFoundError:
+                continue
+            if not is_private:
+                raise ValueError(
+                    f"{output_repo_id} already exists on the Hub and is public, so pushing would publish "
+                    f"the output. Make {output_repo_id} private on the Hub, push to another "
+                    "--new_repo_id, or pass --private false to publish it."
+                )
+    return private
 
 
 def _require_repo_id(cfg: EditDatasetConfig) -> str:
@@ -468,6 +502,7 @@ def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
         raise ValueError("episode_indices must be specified for delete_episodes operation")
 
     repo_id = _require_repo_id(cfg)
+    private = _resolve_private(cfg, [repo_id], [cfg.new_repo_id or repo_id]) if cfg.push_to_hub else None
     dataset = LeRobotDataset(repo_id, root=cfg.root)
     output_repo_id, output_dir, backup_path = get_output_path(
         repo_id,
@@ -493,7 +528,7 @@ def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
 
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {output_repo_id}")
-        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub(private=_resolve_private(cfg, [repo_id]))
+        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub(private=private)
 
 
 def handle_split(cfg: EditDatasetConfig) -> None:
@@ -511,6 +546,8 @@ def handle_split(cfg: EditDatasetConfig) -> None:
         )
 
     repo_id = _require_repo_id(cfg)
+    split_repo_ids = [f"{repo_id}_{split_name}" for split_name in cfg.operation.splits]
+    private = _resolve_private(cfg, [repo_id], split_repo_ids) if cfg.push_to_hub else None
     dataset = LeRobotDataset(repo_id, root=cfg.root)
 
     logging.info(f"Splitting dataset {repo_id} with splits: {cfg.operation.splits}")
@@ -520,7 +557,6 @@ def handle_split(cfg: EditDatasetConfig) -> None:
         output_dir=cfg.new_root,
     )
 
-    private = _resolve_private(cfg, [repo_id]) if cfg.push_to_hub else None
     for split_name, split_ds in split_datasets.items():
         logging.info(
             f"{split_name}: {split_ds.meta.total_episodes} episodes, {split_ds.meta.total_frames} frames"
@@ -543,9 +579,12 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
             "merge uses --new_repo_id and --new_root for the merged dataset. The --repo_id and --root parameters are ignored."
         )
 
+    new_repo_id = _require_new_repo_id(cfg)
+    if cfg.operation.roots and len(cfg.operation.roots) != len(cfg.operation.repo_ids):
+        raise ValueError("repo_ids and roots must have the same length for merge operation")
+    private = _resolve_private(cfg, cfg.operation.repo_ids, [new_repo_id]) if cfg.push_to_hub else None
+
     if cfg.operation.roots:
-        if len(cfg.operation.roots) != len(cfg.operation.repo_ids):
-            raise ValueError("repo_ids and roots must have the same length for merge operation")
         logging.info(f"Loading {len(cfg.operation.roots)} datasets to merge")
         datasets = [
             LeRobotDataset(repo_id=repo_id, root=root)
@@ -555,7 +594,6 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
         logging.info(f"Loading {len(cfg.operation.repo_ids)} datasets to merge")
         datasets = [LeRobotDataset(repo_id) for repo_id in cfg.operation.repo_ids]
 
-    new_repo_id = _require_new_repo_id(cfg)
     output_dir = Path(cfg.new_root) if cfg.new_root else HF_LEROBOT_HOME / new_repo_id
 
     logging.info(f"Merging datasets into {new_repo_id}")
@@ -574,9 +612,7 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
 
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {cfg.new_repo_id}")
-        LeRobotDataset(merged_dataset.repo_id, root=output_dir).push_to_hub(
-            private=_resolve_private(cfg, cfg.operation.repo_ids)
-        )
+        LeRobotDataset(merged_dataset.repo_id, root=output_dir).push_to_hub(private=private)
 
 
 def handle_remove_feature(cfg: EditDatasetConfig) -> None:
@@ -587,6 +623,7 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
         raise ValueError("feature_names must be specified for remove_feature operation")
 
     repo_id = _require_repo_id(cfg)
+    private = _resolve_private(cfg, [repo_id], [cfg.new_repo_id or repo_id]) if cfg.push_to_hub else None
     dataset = LeRobotDataset(repo_id, root=cfg.root)
     output_repo_id, output_dir, backup_path = get_output_path(
         repo_id,
@@ -612,7 +649,7 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
 
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {output_repo_id}")
-        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub(private=_resolve_private(cfg, [repo_id]))
+        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub(private=private)
 
 
 def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
@@ -634,6 +671,7 @@ def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
         )
 
     repo_id = _require_repo_id(cfg)
+    private = _resolve_private(cfg, [repo_id], [repo_id]) if cfg.push_to_hub else None
     dataset = LeRobotDataset(repo_id, root=cfg.root)
     logging.warning(f"Modifying dataset in-place at {dataset.root}. Original data will be overwritten.")
 
@@ -662,7 +700,7 @@ def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
 
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {cfg.repo_id}")
-        modified_dataset.push_to_hub(private=_resolve_private(cfg, [repo_id]))
+        modified_dataset.push_to_hub(private=private)
 
 
 def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
@@ -697,6 +735,7 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
         output_dir = HF_LEROBOT_HOME / output_repo_id
         logging.info(f"Saving to auto-generated location: {output_dir} as {output_repo_id}")
 
+    private = _resolve_private(cfg, [repo_id], [output_repo_id]) if cfg.push_to_hub else None
     logging.info(f"Converting dataset {cfg.repo_id} to video format")
 
     new_dataset = convert_image_to_video_dataset(
@@ -718,7 +757,7 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
 
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {output_repo_id}...")
-        new_dataset.push_to_hub(private=_resolve_private(cfg, [repo_id]))
+        new_dataset.push_to_hub(private=private)
         logging.info("✓ Successfully pushed to hub!")
     else:
         logging.info("Dataset saved locally (not pushed to hub)")
@@ -746,6 +785,8 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
             "or use --new_repo_id / --new_root to write to a different location. "
             f"Default output repo_id when neither is set: '{cfg.repo_id}_recomputed_stats'."
         )
+
+    private = _resolve_private(cfg, [repo_id], [output_repo_id]) if cfg.push_to_hub else None
 
     if in_place:
         logging.warning(
@@ -783,7 +824,7 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
 
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {dataset.repo_id}...")
-        dataset.push_to_hub(private=_resolve_private(cfg, [repo_id]))
+        dataset.push_to_hub(private=private)
 
 
 def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
@@ -807,6 +848,8 @@ def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
             "or use --new_repo_id / --new_root to write to a different location. "
             f"Default output repo_id when neither is set: '{cfg.repo_id}_reencoded'."
         )
+
+    private = _resolve_private(cfg, [repo_id], [output_repo_id]) if cfg.push_to_hub else None
 
     if in_place:
         logging.warning(
@@ -840,7 +883,7 @@ def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
 
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {output_repo_id}...")
-        dataset.push_to_hub(private=_resolve_private(cfg, [repo_id]))
+        dataset.push_to_hub(private=private)
 
 
 def _get_dataset_size(repo_path):

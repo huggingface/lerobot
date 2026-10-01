@@ -279,7 +279,11 @@ lerobot-edit-dataset \
     --push_to_hub true
 ```
 
-Add `--private true` to create the Hub repository as private. Without the flag, the result is private when a source dataset on the Hub is private, so editing a private dataset never publishes it. Use `--private false` to push it as public. This only applies when the repository is created: it does not change the visibility of an existing one.
+Use `--private true` or `--private false` to choose the visibility of the Hub repository. Without the flag, editing a private dataset never publishes it:
+
+- If a source dataset on the Hub is private, the result is pushed as private.
+- If a source dataset is not found on the Hub, the command stops before doing any work and asks for `--private`. The Hub answers the same way for a dataset that only exists locally and for a private dataset your token cannot see.
+- If the result should be private but the target repository already exists and is public, the command stops. The Hub keeps the visibility of an existing repository, so pushing would publish the result.
 
 There is also a tool for adding features to a dataset that is not yet covered in `lerobot-edit-dataset`.
 
