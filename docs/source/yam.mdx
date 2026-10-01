@@ -5,7 +5,7 @@ The `bi_yam_follower` integration supports two standard YAM v1 arms with linear 
 ## Install and calibrate
 
 ```bash
-uv sync --locked --extra yam --extra molmoact2
+uv sync --locked --extra yam --extra molmoact2 --extra dataset
 ```
 
 Prepare the two SocketCAN interfaces at 1 Mbit/s using your adapter's instructions. Verify which physical arm each interface controls; `expected_adapter_serial` can guard against USB enumeration swapping the arms. Never run another robot controller on these interfaces at the same time.
