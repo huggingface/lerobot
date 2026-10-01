@@ -34,9 +34,11 @@ def load_complete_checkpoint(
     """Build `policy_cls` with its parameters on the meta device and stream `model_file` straight into them.
 
     This skips randomly initializing weights that the checkpoint replaces, and never holds a second full copy
-    of them. Returns None, before reading any weight, when the file cannot be read, its keys or shapes differ
-    from the policy's, or the policy shares a parameter or computed a buffer from one. `from_pretrained` then
-    builds the policy and calls `load_state_dict`. Errors while reading the weights raise.
+    of them. Returns None, before reading any weight, when the file cannot be read, it misses a key the policy
+    has or holds one with another shape, or the policy shares a parameter or computed a buffer from one.
+    `from_pretrained` then builds the policy and calls `load_state_dict`. Errors while reading the weights
+    raise. Weights the policy does not have are skipped. The regular path gives the same weights: it copies
+    every other weight, then catches the error about the extra ones.
 
     Only a class that sets `_supports_meta_load` in its own body takes this path, so a subclass has to opt in.
     That promises the constructor never reads, moves or holds on to a parameter, that
@@ -61,9 +63,12 @@ def load_complete_checkpoint(
 
         # A file key gives zero, one or two model names: the fixes drop some keys and copy lm_head.
         names = {key: remap(key, checkpoint.get_slice(key).get_shape()) for key in checkpoint.keys()}  # noqa: SIM118
+        expected = {name: tensor.shape for name, tensor in policy.state_dict().items()}
+        unexpected = sorted(name for fixed in names.values() for name in fixed if name not in expected)
+        names = {key: {n: s for n, s in fixed.items() if n in expected} for key, fixed in names.items()}
         shapes = {name: shape for fixed in names.values() for name, shape in fixed.items()}
         if (
-            shapes != {name: tensor.shape for name, tensor in policy.state_dict().items()}
+            shapes != expected
             or _shares_parameters(policy)
             or any(buffer.is_meta for buffer in policy.buffers())
         ):
@@ -72,5 +77,12 @@ def load_complete_checkpoint(
         _load_state_dict_into_meta_model(policy, tensors, config.device)
     # Buffers the constructor computed, like rotary tables, are not in the checkpoint and are still on the CPU.
     policy.model.to(config.device)
-    print("All keys loaded successfully!")
+    if unexpected:
+        print(f"Unexpected keys when loading state dict: {len(unexpected)} keys")
+        for name in unexpected[:5]:
+            print(f"  - {name}")
+        if len(unexpected) > 5:
+            print(f"  ... and {len(unexpected) - 5} more")
+    else:
+        print("All keys loaded successfully!")
     return policy
