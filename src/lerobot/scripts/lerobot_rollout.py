@@ -263,7 +263,7 @@ def rollout(cfg: RolloutConfig):
         else:
             logger.info("Rollout setup complete, starting rollout...")
             tick_hz = cfg.fps * cfg.interpolation_multiplier
-            with StatusLine(ctx.hardware.robot_wrapper, ctx.policy.inference, tick_hz):
+            with StatusLine(ctx.hardware.robot_wrapper, ctx.policy.inference, tick_hz, cfg.device):
                 strategy.run(ctx)
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
