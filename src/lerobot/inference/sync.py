@@ -124,7 +124,8 @@ class SyncInferenceEngine(InferenceEngine):
             action = self._postprocessor(transition_to_policy_action(transition))
         action_tensor = action.squeeze(0).cpu()
         if runs_inference:
-            self.inference_seconds.append(time.perf_counter() - start)
+            end = time.perf_counter()
+            self.inference_times.append((end, end - start))
 
         # ``task`` is the pre-inference snapshot: a /subtask landing mid-inference must
         # not relabel this action.
