@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import time
+from collections import deque
 from threading import Lock
 from typing import Any
 
@@ -36,12 +38,16 @@ class ThreadSafeRobot:
     def __init__(self, robot: Robot) -> None:
         self._robot = robot
         self._lock = Lock()
+        # When the latest observations were read: strategies read once per control tick, so this gives the loop rate.
+        self.observation_times: deque[float] = deque(maxlen=128)
 
     # -- Lock-protected I/O --------------------------------------------------
 
     def get_observation(self) -> dict[str, Any]:
         with self._lock:
-            return self._robot.get_observation()
+            observation = self._robot.get_observation()
+        self.observation_times.append(time.perf_counter())
+        return observation
 
     def send_action(self, action: dict[str, Any] | Any) -> Any:
         with self._lock:

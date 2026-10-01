@@ -17,13 +17,16 @@
 from __future__ import annotations
 
 import dataclasses
+import io
 import logging
 import sys
 import threading
+import time
+from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -1532,3 +1535,81 @@ def test_sync_engine_without_a_relative_step_binds_nothing():
     policy.config.use_amp = False
     assert bind_relative_anchor(policy, MagicMock(steps=[])) is None
     _build_sync_engine(policy, MagicMock(steps=[]), MagicMock())  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Live status line
+# ---------------------------------------------------------------------------
+
+
+def test_sync_engine_times_only_the_ticks_that_run_inference():
+    """``inference_seconds`` gets one entry per computed chunk, not one per served action."""
+    n = 4
+    chunk_rel = torch.zeros(n, _REL_ACTION_DIM)
+    pre, post, _ = _relative_pre_post()
+    policy = _fake_relative_policy(chunk_rel, n_action_steps=n)
+    engine = _build_sync_engine(policy, pre, post)
+
+    for _ in range(2 * n):
+        engine.get_action(_obs_frame([1.0, 2.0, 3.0, 4.0]))
+
+    assert policy._predict_state["predict_calls"] == 2
+    assert len(engine.inference_seconds) == 2
+
+
+class _FakeTerminal(io.StringIO):
+    def isatty(self):
+        return True
+
+
+def test_thread_safe_robot_records_when_each_observation_is_read():
+    from lerobot.rollout.robot_wrapper import ThreadSafeRobot
+    from tests.mocks.mock_robot import MockRobot, MockRobotConfig
+
+    robot = MockRobot(MockRobotConfig(n_motors=3))
+    robot.connect()
+    wrapper = ThreadSafeRobot(robot)
+    for _ in range(3):
+        wrapper.get_observation()
+    robot.disconnect()
+
+    times = list(wrapper.observation_times)
+    assert len(times) == 3
+    assert times == sorted(times)
+
+
+def test_status_line_redraws_in_place_and_steps_aside_for_log_records():
+    from lerobot.rollout.status_line import StatusLine
+
+    robot = SimpleNamespace(observation_times=deque())
+    engine = SimpleNamespace(inference_seconds=deque([0.020, 0.030]))
+    terminal = _FakeTerminal()
+    handler = logging.StreamHandler(terminal)
+    root = logging.getLogger()
+    root.addHandler(handler)
+    try:
+        with patch("lerobot.rollout.status_line.REFRESH_S", 0.01), StatusLine(robot, engine, 30, terminal):
+            for _ in range(3):
+                robot.observation_times.append(time.perf_counter())
+                time.sleep(0.02)
+            logging.getLogger("test").warning("a log record")
+            time.sleep(0.05)
+        assert handler.stream is terminal
+    finally:
+        root.removeHandler(handler)
+
+    output = terminal.getvalue()
+    assert "\r\033[2Kloop " in output
+    assert "infer  30.0 ms (worst  30.0)" in output
+    assert "\r\033[2Ka log record\n" in output
+    assert output.endswith("\n")
+
+
+def test_status_line_stays_silent_off_a_terminal():
+    from lerobot.rollout.status_line import StatusLine
+
+    stream = io.StringIO()
+    robot = SimpleNamespace(observation_times=deque([0.0, 1.0]))
+    with StatusLine(robot, SimpleNamespace(inference_seconds=deque([0.1])), 30, stream):
+        time.sleep(0.05)
+    assert stream.getvalue() == ""
