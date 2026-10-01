@@ -1,0 +1,154 @@
+# Direct VLM control with native tools
+
+`lerobot-rollout --inference.type=agent` lets a vision-language model directly control a LeRobot robot. No VLA checkpoint, action normalization statistics or RTC engine is used. This optional backend runs the **actual [inspect-robots agent](https://github.com/robocurve/inspect-robots/tree/main/plugins/inspect-robots-agent)** (agent 0.28.0, core 0.60.0), preserving its native tool protocol, system prompt, conversation history, execution feedback and motion interpolation.
+
+LeRobot owns the hardware connection, control thread, interactive session and dataset recording. The VLM worker receives copied RGB images and measured positions. It never has a robot handle or permission to run arbitrary Python.
+
+| Responsibility                                                      | Owner                |
+| ------------------------------------------------------------------- | -------------------- |
+| Provider clients, prompt, conversation and tool calls               | inspect-robots-agent |
+| Tool target to interpolated waypoints                               | inspect-robots       |
+| Native units, joint mapping, FK/IK and motion validation            | LeRobot              |
+| Cameras, robot drivers, calibration, start/stop/reset and recording | LeRobot              |
+
+## Install and configure
+
+```bash
+uv sync --extra dataset --extra agent
+# Add --extra agent-ik for Cartesian control, plus your robot's hardware extra.
+```
+
+Export the provider key in the terminal running rollout. Keys are read through `inference.api_key_env`; do not put them in command-line arguments or config files.
+
+```bash
+read -rsp 'OpenAI API key: ' OPENAI_API_KEY; echo
+export OPENAI_API_KEY
+```
+
+Copy an example and configure its **entire robot action contract** before starting:
+
+- [SO follower example](https://github.com/huggingface/lerobot/blob/main/examples/agent_rollout/so_follower.yaml): native degrees plus a 0–100 gripper.
+- [Bimanual YAM example](https://github.com/huggingface/lerobot/blob/main/examples/agent_rollout/yam.yaml): native radians plus calibrated 0–1 grippers. Requires the separate `bi_yam_follower` integration; this backend does not install a YAM driver.
+
+Every action needs finite `minimum`, `maximum`, `max_speed` (native units/second), `tracking_tolerance` (maximum measured-command discrepancy), `unit` and `description`. Bounds in the examples are starting templates, **not a calibration of your robot or workspace**. Supply camera placement and positive motion directions in `robot_notes`. Hardware limits still apply. `measurement_tolerance` (default 0.001 native units) permits small encoder residuals just outside a bound; measured observations stay unmodified, while commanded targets remain inside the bounds.
+
+```bash
+uv run lerobot-rollout --config_path=examples/agent_rollout/so_follower.yaml \
+  --robot.port=/dev/ttyACM0 \
+  --robot.cameras='{"top":{"type":"opencv","index_or_path":0,"width":640,"height":480,"fps":30}}' \
+  --task="Put all colored cubes in the green bin."
+```
+
+## Providers
+
+The backend forwards provider settings to upstream `LLMAgentPolicy`; it does not implement another API client. There is no default model, credential name, protocol or reasoning effort. Configure a **vision model with tool calling**; a provider's chat endpoint alone does not guarantee that a particular model supports images and tools together.
+
+| Provider                   | `wire`                                          | `base_url`                                                | `api_key_env`             |
+| -------------------------- | ----------------------------------------------- | --------------------------------------------------------- | ------------------------- |
+| OpenAI                     | `responses`                                     | `https://api.openai.com/v1`                               | `OPENAI_API_KEY`          |
+| Claude                     | `messages`                                      | `https://api.anthropic.com/v1`                            | `ANTHROPIC_API_KEY`       |
+| Gemini                     | `chat`                                          | `https://generativelanguage.googleapis.com/v1beta/openai` | `GEMINI_API_KEY`          |
+| HF Inference Providers     | `chat`                                          | `https://router.huggingface.co/v1`                        | `HF_TOKEN`                |
+| Other compatible endpoints | `chat`, `responses` or `messages`, as supported | Your endpoint                                             | Your environment variable |
+
+The checked-in robot examples explicitly select OpenAI. To use another provider, replace their provider fields, including clearing any inherited `effort` or `service_tier` that the provider does not support. For example, replace those fields with:
+
+```yaml
+inference:
+  type: agent
+  model: YOUR_VISION_MODEL:YOUR_PROVIDER
+  wire: chat
+  base_url: https://router.huggingface.co/v1
+  api_key_env: HF_TOKEN
+  effort: null
+  service_tier: null
+```
+
+Keep the robot-specific axes, cameras and optional Cartesian mapping from your rig config. HF tokens need Inference Providers permission. See [HF chat completion](https://huggingface.co/docs/inference-providers/tasks/chat-completion), [Gemini compatibility](https://ai.google.dev/gemini-api/docs/openai), and [Claude Messages](https://platform.claude.com/docs/en/api/messages) for provider requirements.
+
+`effort: null` omits the setting and preserves the provider's default; the string `"none"` explicitly requests no thinking where supported. `service_tier` is optional and only supported by upstream's Responses transport. No OpenAI-specific reasoning or tier options are injected into Claude, Gemini or HF requests. `max_retries` controls upstream retries; a successful request with your account is still required to verify model access. Offline provider tests validate serialization and conversation replay, not account access.
+
+**Model routing:** with an explicit `base_url=https://api.openai.com/v1`, use the bare model ID, e.g. `gpt-6.1-sol`. With no explicit endpoint, `openai/gpt-6.1-sol` lets the upstream client resolve the provider and remove its prefix. Mixing an explicit OpenAI endpoint with the prefixed ID sends that prefix literally and can produce a 404.
+
+## One agent turn
+
+1. `/start` supplies fresh camera images, measured state and the task. Merely initializing the engine does not request agent motion; robot connection may still perform that driver's normal setup/calibration.
+2. The model calls `move_joints` or, with Cartesian configuration, `move_to`. Each call names only the dimensions to change and includes a short human-readable `note` explaining the observation and intent.
+3. Inspect-robots generates the timed waypoints locally. The model does not choose an arbitrary duration or send motor packets. `max_speed_frac` follows upstream semantics; explicit axis `max_speed` supplies the per-step ceiling. Motion calls have the upstream ten-second cap.
+4. LeRobot validates the whole plan before queuing it, then sends one native command per tick through its robot action processor. While the API is thinking, the active control loop re-sends the last target. Measured tracking error and missing fresh observations stop dispatch.
+5. After the motion and `settle_s`, the agent receives new images and measured state. The upstream conversation reports the prior target, execution steps and residual; rejected/interrupted moves are reported as interventions.
+6. `done` and `give_up` end the control segment normally, with an explanation. They are model assessments, not verified task success. Interactive sessions remain open; `return_home_on_done=true` requests LeRobot's normal return-to-initial-position routine. Hardware faults are not overridden to force a return.
+
+Set `fps` to the command rate and keep `interpolation_multiplier=1`: the agent already interpolates its motion. For example, use `fps=30` for thirty commands per second. This is an observe → execute motion → observe controller, not a VLA/RTC action-chunk supervisor.
+
+```text
+/start
+/feedback The red cube is further left in the top image. Recheck the wrist camera.
+/subtask Pick up the blue cube and place it in the green bin.
+/reset
+/start
+/stop
+```
+
+`/feedback` interrupts queued motion and supplies guidance while keeping the conversation. `/subtask` starts a fresh conversation for the new goal. `/reset` stops the segment, restores the launch task and runs the existing LeRobot return routine. On this branch `/stop` ends the session and teardown uses `return_to_initial_position`; it is not the custom YAM pilot's keep-holding command. Pending replies, motions and completion results are discarded after reset, pause, feedback, task changes or shutdown. At most one provider call is in flight.
+
+`/vqa` and `/autosteer` belong to the VLA/text-planner path and are not enabled for this backend. Use `/feedback` for operator guidance. With `images=on_demand`, the upstream agent also has its `take_pic` tool; otherwise each turn carries all camera views.
+
+## Optional end-effector control
+
+Joint mode works with compatible LeRobot **position-commanding** robots without a kinematics model. Cartesian mode reuses LeRobot's existing `RobotKinematics` (Placo) with an accurate URDF, a tool link, explicit native-to-model joint mapping, Cartesian workspace bounds, and a frame description. No inspect-robots hardware driver or separate MuJoCo solver is installed. Velocity/torque actions and omitted mobile-base channels are rejected rather than silently ignored.
+
+Add `inference.cartesian` to your rig config, covering every arm joint and gripper. This fragment illustrates one arm; replace the path, joint names and bounds for your model:
+
+```yaml
+inference:
+  cartesian:
+    left:
+      urdf_path: /absolute/path/to/your_arm.urdf
+      target_frame_name: gripper_frame_link
+      joints:
+        left_joint_0.pos: joint1
+        left_joint_1.pos: joint2
+        left_joint_2.pos: joint3
+        left_joint_3.pos: joint4
+        left_joint_4.pos: joint5
+        left_joint_5.pos: joint6
+      gripper: left_gripper.pos
+      frame_description: "Arm-local base: +X forward, +Y left, +Z up. Verify against this model and rig."
+      position_low: [0.15, -0.25, 0.04]
+      position_high: [0.50, 0.25, 0.40]
+      angle_low: [-1.0, 0.0, 0.0]
+      angle_high: [1.0, 0.0, 0.0]
+      linear_speed: 0.03
+      angular_speed: 0.15
+```
+
+For bimanual control also map `right` with its own base frame. Both groups must be disjoint and together cover every native action. Each arm maps exactly the moving joints between its URDF root and tool link, in explicit order. The base and other branches (such as fingers) are held fixed during IK. Cartesian tool chains currently require independently actuated, limited **revolute** joints; prismatic, continuous, floating and mimic joints in that chain are rejected. Joint-only mode does not impose this URDF restriction.
+
+Native radians map directly by default. For degree-based joints provide `joint_scale: {joint.pos: 0.017453292519943295}` and, when needed, `joint_offset`; the conversion is `URDF_radians = native_position * scale + offset`. The adapter then converts radians to **degrees** at the `RobotKinematics` boundary and converts its result back to native units. Negative scales support inverted joint directions. Gripper values bypass IK and retain their explicitly declared native range and polarity. The tool link and joint zeros must match the hardware; the standalone I2RT MuJoCo XML is not a URDF substitute.
+
+The convention follows [inspect-robots-yam](https://github.com/robocurve/inspect-robots-yam): `x,y,z,yaw,pitch,roll,gripper` per arm, XYZ in that arm's base frame, metres and radians. The orientation reference is measured at each trial start:
+
+```text
+R_target = Rz(yaw) × Ry(-pitch) × Rx(roll) × R_start
+```
+
+Positive pitch is about **negative base Y**. Pitch and roll default to pinned zero targets; widen their bounds to permit orientation changes. Observations still report measured residual orientation. Upstream linearly interpolates XYZ and the relative Euler coordinates, without angle wrapping. LeRobot solves IK for **each Cartesian waypoint**, seeded from the preceding joint solution; it does not interpolate a single endpoint IK solution through joint space. `ik_max_iters` defaults to 50. The adapter applies the intersection of native and URDF joint limits and independently checks the resulting FK position and orientation against the target tolerances. A failed IK, joint limit or native speed check rejects the whole tool motion and lets the agent repair its proposal. Under-actuated arms may not reach the requested full pose and should use joint mode when necessary.
+
+This differs from the standalone YAM driver's incremental joint clamping/resynchronization. The adapter has no mesh collision checker or automatic camera-to-base calibration. FK describes the gripper in its base frame; it does not convert image pixels to a grasp position. Include measured calibration in `robot_notes` if available and retain its provenance.
+
+## Repeatable experiments and saved evidence
+
+Each launch writes a unique run under `inference.log_dir`. Each `/start` begins a fresh trial; arrange the scene while idle before starting the next attempt. Logs include the resolved agent/axis config, upstream versions, embodiment prompt notes, each turn's RGB frames and measured state, the native joint waypoints, accepted/discarded status, sanitized conversation, final reason, usage and upstream hindsight. A provider request still in flight may finish writing its final transcript after shutdown; earlier turn snapshots are already on disk.
+
+To record the continuous robot trajectory and videos in a LeRobot dataset, use the existing sentry strategy:
+
+```bash
+uv run lerobot-rollout --config_path=/path/to/your-rig.yaml \
+  --strategy.type=sentry --dataset.repo_id=local/rollout_direct_agent \
+  --task="Put all colored cubes in the green bin."
+```
+
+LeRobot dataset episode rotation follows sentry's existing rules; it is not the inspect-robots scorer or scene registry. Agent trial IDs live in the separate agent log. For ten attempts, perform ten attended `/start`/`/reset` cycles with the same layout protocol and record your outcome separately. `prior_learnings=/path/to/notes.txt` passes reviewed notes from an earlier trial into the next launch; the upstream prompt explicitly treats those notes as potentially stale.
+
+The core runtime is reused from [inspect-robots](https://github.com/robocurve/inspect-robots), rather than copying its prompt or inventing a JSON imitation. [GPT-as-Policy](https://github.com/anonymous-report-421/GPT-as-Policy) and [SE3 Labs' comparison](https://se3labs.ai/blog/agentic-vs-code-as-policy/) provide related context. This mode is direct tool-based VLM control; Pablo's external-planner path remains the separate option for steering a VLA.

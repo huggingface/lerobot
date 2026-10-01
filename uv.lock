@@ -2371,6 +2371,33 @@ wheels = [
 ]
 
 [[package]]
+name = "inspect-robots"
+version = "0.60.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1e/9c/13fdecffd484bbf51e3fd3342fd25267d770edd813d6c39d847c0a0b94a7/inspect_robots-0.60.0.tar.gz", hash = "sha256:5c06edadb535e02dc260802acb7f855ede7a4b05d7a142ba976e7db4ebdf93a8", size = 543531, upload-time = "2026-09-30T14:08:42.945Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/61/fb/56d80859452ba65fd17b5f7587b02dc493074c6b022df642fb915be69e5f/inspect_robots-0.60.0-py3-none-any.whl", hash = "sha256:64c29c35f4e961ad18dd411f87b1fb624c8c7935f59cfb140d11edb360a0092a", size = 206919, upload-time = "2026-09-30T14:08:41.383Z" },
+]
+
+[[package]]
+name = "inspect-robots-agent"
+version = "0.28.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "inspect-robots" },
+    { name = "numpy" },
+    { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d4/7b/695dbab3658434e18475a5ca119412952525b919191614a52ce3e1c93781/inspect_robots_agent-0.28.0.tar.gz", hash = "sha256:e3a25d114ed91b478ba7f58254bd4684e4a3133347e93ffe627cfca6bb8ebf1e", size = 149068, upload-time = "2026-09-30T14:08:40.387Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a5/97/12d187d0129e5b591459b29aa5cb489619a344fc6b4e28bc24017eabe599/inspect_robots_agent-0.28.0-py3-none-any.whl", hash = "sha256:234d223e54174d98e4fbf3aae96de57050d8532aa6b9cc850820710458160957", size = 72718, upload-time = "2026-09-30T14:08:39.063Z" },
+]
+
+[[package]]
 name = "ipykernel"
 version = "6.31.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3106,6 +3133,18 @@ dependencies = [
 accelerate-dep = [
     { name = "accelerate" },
 ]
+agent = [
+    { name = "inspect-robots" },
+    { name = "inspect-robots-agent" },
+]
+agent-ik = [
+    { name = "cmeel-tinyxml2" },
+    { name = "cmeel-urdfdom" },
+    { name = "inspect-robots" },
+    { name = "inspect-robots-agent" },
+    { name = "placo" },
+    { name = "scipy" },
+]
 all = [
     { name = "accelerate" },
     { name = "av" },
@@ -3132,6 +3171,8 @@ all = [
     { name = "hebi-py" },
     { name = "hf-libero", marker = "sys_platform == 'linux'" },
     { name = "hidapi" },
+    { name = "inspect-robots" },
+    { name = "inspect-robots-agent" },
     { name = "ipykernel" },
     { name = "jsonlines" },
     { name = "jupyter" },
@@ -3597,6 +3638,8 @@ requires-dist = [
     { name = "hf-libero", marker = "sys_platform == 'linux' and extra == 'libero'", specifier = ">=0.1.4,<0.2.0" },
     { name = "hidapi", marker = "extra == 'gamepad'", specifier = ">=0.14.0,<0.15.0" },
     { name = "huggingface-hub", specifier = ">=1.6.0,<2.0.0" },
+    { name = "inspect-robots", marker = "extra == 'agent'", specifier = "==0.60.0" },
+    { name = "inspect-robots-agent", marker = "extra == 'agent'", specifier = "==0.28.0" },
     { name = "ipykernel", marker = "extra == 'notebook'", specifier = ">=6.0.0,<7.0.0" },
     { name = "jsonlines", marker = "extra == 'dataset'", specifier = ">=4.0.0,<5.0.0" },
     { name = "jupyter", marker = "extra == 'notebook'", specifier = ">=1.0.0,<2.0.0" },
@@ -3604,6 +3647,8 @@ requires-dist = [
     { name = "lerobot", extras = ["accelerate-dep"], marker = "extra == 'lingbot-va'" },
     { name = "lerobot", extras = ["accelerate-dep"], marker = "extra == 'smolvla'" },
     { name = "lerobot", extras = ["accelerate-dep"], marker = "extra == 'training'" },
+    { name = "lerobot", extras = ["agent"], marker = "extra == 'agent-ik'" },
+    { name = "lerobot", extras = ["agent-ik"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["aloha"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["async"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["av-dep"], marker = "extra == 'dataset'" },
@@ -3653,6 +3698,7 @@ requires-dist = [
     { name = "lerobot", extras = ["hilserl"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["hopejr"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["intelrealsense"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["kinematics"], marker = "extra == 'agent-ik'" },
     { name = "lerobot", extras = ["kinematics"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["lancedb"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["lancedb"], marker = "extra == 'lancedb-convert'" },
@@ -3701,6 +3747,7 @@ requires-dist = [
     { name = "lerobot", extras = ["robometer"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["robstride"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["sarm"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'agent-ik'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'aloha'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'libero'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'metaworld'" },
@@ -3802,7 +3849,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'transformers-dep'", specifier = ">=5.4.0,<5.6.0" },
     { name = "wandb", marker = "extra == 'training'", specifier = ">=0.24.0,<0.28.0" },
 ]
-provides-extras = ["lancedb", "lancedb-convert", "dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "timm-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "fastwam", "flux3", "evo1", "hilserl", "vla-jepa", "lingbot-va", "lawam", "async", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
+provides-extras = ["agent", "agent-ik", "lancedb", "lancedb-convert", "dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "timm-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "fastwam", "flux3", "evo1", "hilserl", "vla-jepa", "lingbot-va", "lawam", "async", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
 
 [[package]]
 name = "lerobot-lancedb"
