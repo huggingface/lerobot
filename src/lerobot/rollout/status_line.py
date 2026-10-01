@@ -23,8 +23,10 @@ from __future__ import annotations
 
 import logging
 import os
+import statistics
 import sys
 import threading
+import time
 from typing import IO
 
 import torch
@@ -34,6 +36,8 @@ from lerobot.inference import InferenceEngine
 from .robot_wrapper import ThreadSafeRobot
 
 REFRESH_S = 0.25
+# Inference times older than this are not shown, so a stalled or finished policy does not look healthy.
+INFERENCE_WINDOW_S = 5.0
 CLEAR_LINE = "\r\033[2K"
 
 
@@ -60,11 +64,13 @@ class StatusLine:
         robot: ThreadSafeRobot,
         engine: InferenceEngine,
         tick_hz: float,
+        device: str | None = None,
         stream: IO[str] | None = None,
     ) -> None:
         self._robot = robot
         self._engine = engine
         self._tick_hz = tick_hz
+        self._device = torch.device(device) if device is not None else None
         self._stream = stream or sys.stderr
         self._enabled = self._stream.isatty()
         self._lock = threading.Lock()
@@ -113,18 +119,18 @@ class StatusLine:
 
     def _format(self) -> str:
         parts = []
-        # Copied in one call each, so the control thread appending meanwhile cannot change them mid-read.
-        ticks = list(self._robot.observation_times)[-int(self._tick_hz) - 1 :]
-        inferences = sorted(self._engine.inference_seconds)
-        if len(ticks) > 1:
-            parts.append(f"loop {(len(ticks) - 1) / (ticks[-1] - ticks[0]):4.1f}/{self._tick_hz:g} Hz")
+        now = time.perf_counter()
+        # Copied in one call each, so another thread appending meanwhile cannot change them mid-read.
+        ticks_last_second = sum(1 for tick in list(self._robot.observation_times) if now - tick <= 1.0)
+        inferences = [s for end, s in list(self._engine.inference_times) if now - end <= INFERENCE_WINDOW_S]
+        parts.append(f"loop {ticks_last_second:3d}/{self._tick_hz:g} Hz")
         if inferences:
-            median, worst = inferences[len(inferences) // 2], inferences[-1]
+            median, worst = statistics.median(inferences), max(inferences)
             parts.append(f"infer {median * 1000:5.1f} ms (worst {worst * 1000:5.1f})")
         rss = _process_rss_bytes()
         if rss:
             parts.append(f"process {rss / 2**30:4.2f} GiB")
-        if torch.cuda.is_initialized():
-            free, total = torch.cuda.mem_get_info()
+        if self._device is not None and self._device.type == "cuda" and torch.cuda.is_initialized():
+            free, total = torch.cuda.mem_get_info(self._device)
             parts.append(f"GPU {(total - free) / 2**30:4.2f}/{total / 2**30:4.1f} GiB")
         return " · ".join(parts)
