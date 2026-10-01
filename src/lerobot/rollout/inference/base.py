@@ -88,6 +88,8 @@ class QueryAnswer:
     completed: bool = False
     held: bool = False
     """A NEXT_SUBTASK answer that repeated the current instruction: nothing was sent."""
+    status_only: bool = False
+    """Progress notification, not a new instruction or a terminal query result."""
 
     @property
     def ok(self) -> bool:

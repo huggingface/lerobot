@@ -145,11 +145,76 @@ def test_late_accept_after_takeover_never_executes(proposal_rig, takeover):
     assert engine._approved_actions is None
 
 
-def test_moved_robot_rejects_reviewed_proposal(proposal_rig):
-    engine, _, _, proposal = proposal_rig
+def test_moved_robot_discards_approval_and_automatically_reviews_fresh_proposal(proposal_rig):
+    engine, delegate, clock, proposal = proposal_rig
+    epoch = engine._query_epoch
     engine.notify_observation({"a.pos": 0.1, "b.pos": 0.0})
-    assert apply_review(engine, proposal, review_decision()) is None
+    assert apply_review(engine, proposal, review_decision()).tolist() == [0, 0]
+    assert not engine.terminal and engine._mode == "settling"
+    assert engine._approved_actions is None and engine._proposal is None
+    assert engine._query_epoch > epoch
+    answer = engine._ready_answers.pop()
+    assert answer.status_only and not answer.completed and answer.ok
+    # A late reply from the discarded review cannot authorize its old actions.
+    engine._resolve_query(
+        PolicyQuery(QueryKind.NEXT_SUBTASK, engine.autosteer_goal),
+        proposal.observation,
+        lambda *args: review_decision(),
+        epoch=epoch,
+    )
+    assert engine._pending_decision is None
+    clock.now += engine.config.settle_s
+    fresh_pose = {"a.pos": 0.001, "b.pos": 0.0}
+    engine.notify_observation(fresh_pose)
+    fresh = ActionProposal(14, proposal.actions, fresh_pose, proposal.task, proposal.fps)
+    delegate.take_action_proposal.return_value = fresh
+    engine.get_action({})
+    delegate.request_action_proposal.assert_called_with(fresh_pose, proposal.task)
+    assert engine._mode == "review"
+    assert apply_review(engine, fresh, review_decision()).tolist() == pytest.approx([0.1, 0.15])
+    assert engine._mode == "approved" and not engine.terminal
+
+
+def test_drift_during_policy_inference_requests_new_snapshot(proposal_rig):
+    engine, delegate, clock, proposal = proposal_rig
+    engine._begin_review(retain_endpoint=True)
+    clock.now += engine.config.settle_s
+    engine.notify_observation({"a.pos": 0.1, "b.pos": 0.0})
+    delegate.take_action_proposal.return_value = proposal  # stale inference snapshot
+    engine.get_action({})
+    assert not engine.terminal and engine._mode == "settling"
+    assert engine._proposal is None
+    delegate.resume.assert_not_called()
+
+
+def test_nonfinite_review_snapshot_is_not_retried(proposal_rig):
+    engine, _, _, proposal = proposal_rig
+    invalid = ActionProposal(
+        proposal.proposal_id, proposal.actions, {"a.pos": float("nan"), "b.pos": 0}, proposal.task, 30
+    )
+    assert apply_review(engine, invalid, review_decision()) is None
     assert engine.terminal
+
+
+def test_refresh_preserves_http_single_flight_slot(proposal_rig):
+    engine, _, _, _ = proposal_rig
+    engine._query_in_flight = True
+    epoch = engine._query_epoch
+    engine._retry_drifted_review("Snapshot no longer current")
+    assert engine._query_in_flight and engine._query_epoch > epoch
+    assert not engine.terminal and engine.autosteer_goal
+
+
+def test_review_refresh_is_rendered_as_status_not_instruction():
+    from lerobot.rollout.inference.base import QueryAnswer
+    from lerobot.rollout.interactive import InteractiveSession
+
+    messages = []
+    InteractiveSession._report_answer(
+        SimpleNamespace(_print=messages.append),
+        QueryAnswer("Pick", answer="Review refreshed", kind=QueryKind.NEXT_SUBTASK, status_only=True),
+    )
+    assert messages == ["Review refreshed"]
 
 
 def test_proposal_id_mismatch_rejects_accept(proposal_rig):

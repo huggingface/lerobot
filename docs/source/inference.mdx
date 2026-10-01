@@ -595,7 +595,12 @@ After an approved prefix, the controller retains its final commanded target whil
 settling and reviewing. It does not cancel unfinished tracking motion by replacing
 that endpoint with lagging measured feedback. New inference and review still use
 fresh measured observations, and movement after the reviewed snapshot invalidates
-the decision when it exceeds the configured drift tolerance.
+the decision when it exceeds the configured drift tolerance. A finite pose change
+with fresh, valid feedback discards the stale decision and automatically starts a
+new settling/inference/review cycle, retaining the last authorized hold target.
+The session stays active and prints `Review refreshed`; it does not execute the
+discarded actions or return home. Reset and manual takeover still invalidate late
+replies. Stale/missing feedback, invalid targets and hardware faults remain errors.
 
 #### End-effector corrections
 

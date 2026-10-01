@@ -188,8 +188,9 @@ def test_drift_while_model_thinks_rejects_intervention(rig):
         lambda *args: decision("intervention", targets={"gripper.pos": 1}, duration_s=1),
         epoch=engine._query_epoch,
     )
-    assert engine.get_action({}) is None
-    assert engine.terminal
+    assert engine.get_action({}).tolist() == [0, 0.5]
+    assert not engine.terminal and engine._mode == "review"
+    assert engine._target is None
     delegate.resume.assert_not_called()
 
 

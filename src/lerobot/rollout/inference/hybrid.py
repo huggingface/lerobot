@@ -30,6 +30,10 @@ from ..hybrid import HybridConfig, PlannerDecision
 from .base import ActionProposal, InferenceEngine, QueryAnswer, QueryKind
 
 
+class ReviewDriftError(ValueError):
+    """Fresh feedback invalidates a review snapshot, but can seed another review."""
+
+
 class HybridInferenceEngine(InferenceEngine):
     """Wrap an inference engine; only the control thread applies planner decisions.
 
@@ -247,11 +251,30 @@ class HybridInferenceEngine(InferenceEngine):
             reference = float(observation[key])
             delta = abs(pose[key] - reference)
             tolerance = self.config.limits[key].tolerance
-            if not math.isfinite(reference) or delta > tolerance:
-                raise ValueError(
+            if not math.isfinite(reference):
+                raise ValueError(f"Non-finite planner observation: {key}")
+            if delta > tolerance:
+                raise ReviewDriftError(
                     f"Robot moved since planner observation: {key}, delta={delta:.5f}, "
                     f"tolerance={tolerance:.5f}; proposal discarded"
                 )
+
+    def _retry_drifted_review(self, error):
+        # Never apply a stale approval/correction. Invalidate its epoch and ask
+        # again from new images/joints, retaining the last authorized hold target.
+        # A query worker may still be exiting; do not free its single-flight slot.
+        self._query_epoch += 1
+        self._begin_review(retain_endpoint=True)
+        in_flight = self._query_in_flight
+        self._publish_answer(
+            QueryAnswer(
+                question=self._autosteer_goal or self.task,
+                answer=f"Review refreshed — {error}. Holding; requesting fresh prediction and review.",
+                kind=QueryKind.NEXT_SUBTASK,
+                status_only=True,
+            )
+        )
+        self._query_in_flight = in_flight
 
     def _start_policy(self, instruction, *, manual=False):
         if self.config.review_policy_chunks and not manual:
@@ -431,6 +454,9 @@ class HybridInferenceEngine(InferenceEngine):
                     return self._emit_position(target, "VLM intervention")
                 if self._hold is None:
                     self._hold = pose
+                return self._emit_position(self._hold, "VLM hold")
+            except ReviewDriftError as exc:
+                self._retry_drifted_review(exc)
                 return self._emit_position(self._hold, "VLM hold")
             except (ValueError, KeyError, TypeError) as exc:
                 self._finish(error=f"{type(exc).__name__}: {exc}")
