@@ -70,7 +70,8 @@ class StatusLine:
         self._device = torch.device(device) if device is not None else None
         self._stream = stream or sys.stderr
         self._enabled = self._stream.isatty()
-        self._lock = threading.Lock()
+        # Reentrant: a signal handler that logs, such as Ctrl-C's, can interrupt a write on the same thread.
+        self._lock = threading.RLock()
         self._shown = False
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._draw_loop, name="rollout-status", daemon=True)

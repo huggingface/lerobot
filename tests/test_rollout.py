@@ -1613,9 +1613,51 @@ def test_status_line_stays_silent_off_a_terminal():
 
     stream = io.StringIO()
     robot = SimpleNamespace(observation_times=deque([0.0, 1.0]))
-    with StatusLine(robot, SimpleNamespace(inference_seconds=deque([0.1])), 30, stream=stream):
+    with (
+        patch("lerobot.rollout.status_line.REFRESH_S", 0.01),
+        StatusLine(robot, SimpleNamespace(inference_seconds=deque([0.1])), 30, stream=stream),
+    ):
         time.sleep(0.05)
     assert stream.getvalue() == ""
+
+
+def _log_while_a_signal_arrives() -> None:
+    """In a child process: a signal whose handler logs, as Ctrl-C's does, lands inside a status-line write."""
+    import signal
+
+    from lerobot.rollout.status_line import StatusLine
+
+    class SlowTerminal(_FakeTerminal):
+        def write(self, text):
+            time.sleep(0.2)
+            return super().write(text)
+
+    terminal = SlowTerminal()
+    logging.basicConfig(level=logging.INFO, handlers=[logging.StreamHandler(terminal)], force=True)
+    signal.signal(signal.SIGALRM, lambda *_: logging.info("Shutdown signal received"))
+    with StatusLine(
+        SimpleNamespace(observation_times=deque()),
+        SimpleNamespace(inference_seconds=deque()),
+        30,
+        stream=terminal,
+    ):
+        signal.setitimer(signal.ITIMER_REAL, 0.1)
+        logging.info("a log record")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGALRM is POSIX only")
+def test_status_line_survives_a_signal_that_logs_during_a_write():
+    import multiprocessing
+
+    child = multiprocessing.get_context("fork").Process(target=_log_while_a_signal_arrives)
+    child.start()
+    child.join(10)
+    hung = child.is_alive()
+    if hung:
+        child.kill()
+        child.join()
+    assert not hung, "a signal handler that logs deadlocked the status line"
+    assert child.exitcode == 0
 
 
 def test_status_line_rate_counts_only_the_last_second():
