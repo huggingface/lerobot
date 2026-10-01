@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import nullcontext
 from copy import copy
 
@@ -97,6 +98,7 @@ class SyncInferenceEngine(InferenceEngine):
             else nullcontext()
         )
         task, task_changed = self._take_task()
+        start = time.perf_counter()
         with torch.inference_mode(), autocast_ctx:
             if task_changed:
                 # Chunking policies queue actions computed under the previous instruction,
@@ -104,11 +106,14 @@ class SyncInferenceEngine(InferenceEngine):
                 # than ``policy.reset``: observation history and other episode state stay.
                 logger.info("Task changed to '%s' — dropping precomputed actions", task)
                 self._policy.drop_queued_actions()
+            runs_inference = self._policy.count_queued_actions() == 0
             observation = prepare_observation_for_inference(observation, self._device, task, self._robot_type)
             observation = self._preprocessor(observation)
             action = self._policy.select_action(observation)
             action = self._postprocessor(action)
         action_tensor = action.squeeze(0).cpu()
+        if runs_inference:
+            self.inference_seconds.append(time.perf_counter() - start)
 
         # ``task`` is the pre-inference snapshot: a /subtask landing mid-inference must
         # not relabel this action.
