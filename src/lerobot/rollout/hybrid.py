@@ -267,6 +267,16 @@ class HybridPlanner(VlmPlanner):
             "Be patient with the policy: startup, reaching, grasp retries, and recovery can take time. "
             "An unfinished subtask, small motion, or unchanged images across reviews is not by itself a "
             "reason to stop. Continue the same policy instruction while it remains appropriate and safe; "
+            "Use supplied execution feedback to distinguish prediction from motor response and startup "
+            "from a sustained ineffective approach. Cumulative policy seconds exclude time spent waiting "
+            "for reviews. A failed grasp or contact obstruction is NOT required for recovery: repeated "
+            "executed trajectories that stay away from the selected object can be misaligned with the "
+            "pickup intent, even if they are collision-free. Do not label every repeated near-stationary "
+            "proposal as startup indefinitely. Compare commanded endpoint FK with measured FK; do not "
+            "mistake an unrealized predicted lift for observed progress. If the same instruction keeps "
+            "producing an ineffective approach, reconsider the subtask or choose a justified small "
+            "end-effector correction with visible clearance and known direction. Do not invent coordinates "
+            "or make an arbitrary lift solely to cause motion. "
             "do not impose a fixed attempt count or declare controller failure from slow visual progress. "
             "When repeated policy windows show little movement or the same failed approach, actively look "
             "for a small end-effector correction that can help the policy recover. If end-effector control "
@@ -323,10 +333,26 @@ class HybridPlanner(VlmPlanner):
                     f"Unexecuted policy proposal (robot-only FK, not object predictions): {json.dumps(self.proposal_context(obs_processed))}"
                 )
             )
+        if "_hybrid_execution" in obs_processed:
+            blocks.append(
+                text_block(
+                    f"Previous commanded versus measured execution: {json.dumps(self.execution_context(obs_processed))}"
+                )
+            )
         return blocks
+
+    def execution_context(self, obs):
+        feedback = dict(obs["_hybrid_execution"])
+        feedback["end_effector_poses"] = {
+            label: {name: solver.forward(feedback[label]) for name, solver in self.kinematics.items()}
+            for label in ("measured_start", "commanded_endpoint", "measured_after_settling")
+        }
+        return feedback
 
     def proposal_context(self, obs):
         proposal = dict(obs["_hybrid_proposal"])
+        if "_hybrid_execution" in obs:
+            proposal["previous_execution"] = self.execution_context(obs)
         proposal["end_effector_trajectory"] = [
             {
                 name: solver.forward(dict(zip(proposal["action_keys"], row, strict=True)))

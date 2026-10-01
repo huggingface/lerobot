@@ -104,7 +104,17 @@ def test_review_keeps_approved_endpoint_while_feedback_catches_up(proposal_rig):
     settled = {"a.pos": 0.399, "b.pos": 0.499}
     engine.notify_observation(settled)
     assert engine.get_action({}).tolist() == pytest.approx([0.4, 0.5])
-    delegate.request_action_proposal.assert_called_with(settled, proposal.task)
+    sent, task = delegate.request_action_proposal.call_args.args
+    assert task == proposal.task
+    assert {key: sent[key] for key in settled} == settled
+    feedback = sent["_hybrid_execution"]
+    assert feedback["measured_start"] == proposal.observation
+    assert feedback["commanded_endpoint"] == pytest.approx({"a.pos": 0.4, "b.pos": 0.5})
+    assert feedback["measured_after_settling"] == settled
+    assert feedback["cumulative_policy_steps"] == 2
+    assert feedback["cumulative_policy_seconds"] == pytest.approx(2 / 30)
+    engine.reset()
+    assert engine._last_execution is None and engine._executed_steps == 0
 
 
 def test_entire_chunk_is_reviewed_and_executed_when_configured(proposal_rig):
@@ -321,6 +331,12 @@ def test_planner_requires_structured_assessment_and_logs_proposal(tmp_path):
     )
     obs = {
         "a.pos": 0,
+        "_hybrid_execution": {
+            "measured_start": {"a.pos": 0},
+            "commanded_endpoint": {"a.pos": 0.1},
+            "measured_after_settling": {"a.pos": 0.01},
+            "cumulative_policy_seconds": 10,
+        },
         "_hybrid_proposal": {
             "id": 1,
             "action_keys": ["a.pos"],
@@ -333,6 +349,9 @@ def test_planner_requires_structured_assessment_and_logs_proposal(tmp_path):
     query = PolicyQuery(QueryKind.NEXT_SUBTASK, "Pick")
     assert planner(obs, query, "Pick").mode == "accept"
     assert '"event": "proposal_review"' in (tmp_path / "planner.jsonl").read_text()
+    assert '"previous_execution"' in (tmp_path / "planner.jsonl").read_text()
+    blocks = planner.observation_blocks("Current", obs)
+    assert any("Previous commanded versus measured execution" in b.get("text", "") for b in blocks)
     with pytest.raises(ValueError, match="requires execution_status"):
         planner.parse_reply(
             asdict(PlannerDecision("policy", "Scene", "Reason", "Pick", {}, 0)), query, "Pick"

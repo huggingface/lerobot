@@ -76,6 +76,10 @@ class HybridInferenceEngine(InferenceEngine):
         self._approved_actions: torch.Tensor | None = None
         self._approved_index = 0
         self._proposal_started = 0.0
+        self._execution_start: dict | None = None
+        self._last_execution: dict | None = None
+        self._executed_steps = 0
+        self._executed_seconds = 0.0
 
     @property
     def control_thread_owns_policy(self):
@@ -116,6 +120,7 @@ class HybridInferenceEngine(InferenceEngine):
     def resume(self):
         # Called only when the rollout starts, never during setup.
         with self._query_lock:
+            self._reset_execution_feedback()
             if self._autosteer_goal is None:
                 self.start_autosteer(self.task, self.config.policy_window_s)
             self._mode = "review_due"
@@ -129,6 +134,13 @@ class HybridInferenceEngine(InferenceEngine):
         self._consecutive = 0
         self._ee_targets = {}
         self.terminal = False
+        self._reset_execution_feedback()
+
+    def _reset_execution_feedback(self):
+        self._execution_start = None
+        self._last_execution = None
+        self._executed_steps = 0
+        self._executed_seconds = 0.0
 
     def start_autosteer(self, goal, interval_s):
         with self._query_lock:
@@ -201,7 +213,15 @@ class HybridInferenceEngine(InferenceEngine):
 
     def _poll_proposal(self):
         if self._mode == "settling" and time.perf_counter() >= self._autosteer_due_at:
-            self.delegate.request_action_proposal(self._obs, self.task)
+            observation = dict(self._obs)
+            if self._last_execution is not None:
+                observation["_hybrid_execution"] = self._last_execution | {
+                    "measured_after_settling": self._pose(),
+                    "cumulative_policy_steps": self._executed_steps,
+                    "cumulative_policy_seconds": self._executed_seconds,
+                    "time_basis": "Policy action time only; excludes inference, API reviews and settling",
+                }
+            self.delegate.request_action_proposal(observation, self.task)
             self._proposal_started = time.perf_counter()
             self._mode = "proposing"
         if self._mode != "proposing":
@@ -277,6 +297,8 @@ class HybridInferenceEngine(InferenceEngine):
         self._query_in_flight = in_flight
 
     def _start_policy(self, instruction, *, manual=False):
+        if instruction != self.task or manual:
+            self._reset_execution_feedback()
         if self.config.review_policy_chunks and not manual:
             InferenceEngine.set_task(self, instruction)
             self.delegate.set_task(instruction)
@@ -338,6 +360,7 @@ class HybridInferenceEngine(InferenceEngine):
             count = min(self.config.proposal_execution_steps, len(self._proposal.actions))
             self._approved_actions = self._proposal.actions[:count].clone()
             self._approved_index = 0
+            self._execution_start = self._pose()
             self.control_interpolator.reset()
             self.control_interpolator.add(torch.tensor([self._hold[key] for key in self.keys]))
             self.control_interpolator.get()  # Seed interpolation from the held pose, without dispatch.
@@ -346,6 +369,7 @@ class HybridInferenceEngine(InferenceEngine):
         elif decision.mode == "policy":
             self._start_policy(decision.instruction)
         elif decision.mode in {"intervention", "end_effector"}:
+            self._last_execution = None
             if (
                 self.config.review_policy_chunks
                 and decision.execution_status != "failed"
@@ -421,6 +445,16 @@ class HybridInferenceEngine(InferenceEngine):
                 if self._mode == "approved":
                     if self.control_interpolator.needs_new_action():
                         if self._approved_index >= len(self._approved_actions):
+                            count = len(self._approved_actions)
+                            self._executed_steps += count
+                            self._executed_seconds += count / self._proposal.fps
+                            self._last_execution = {
+                                "task": self._proposal.task,
+                                "proposal_id": self._proposal.proposal_id,
+                                "executed_steps": count,
+                                "measured_start": self._execution_start,
+                                "commanded_endpoint": dict(self._hold),
+                            }
                             self._begin_review(retain_endpoint=True)
                         else:
                             self.control_interpolator.add(self._approved_actions[self._approved_index])

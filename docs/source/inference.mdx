@@ -604,6 +604,15 @@ replies. Stale/missing feedback, invalid targets and hardware faults remain erro
 
 #### End-effector corrections
 
+Proposal reviews include feedback for the last completed execution: measured start,
+commanded endpoint, measured pose after settling, and their FK poses. Cumulative
+policy steps/seconds count dispatched policy action time, excluding settling,
+inference and API latency, and reset on a new subtask or session. This distinguishes
+predicted movement from motor response and repeated ineffective approaches from
+brief startup. Recovery does not require a failed contact, but still requires
+evidence of failed execution or misaligned intent and a geometrically justified
+correction; missing object depth is not replaced with guessed coordinates.
+
 For a camera rigidly attached to the tool, an end-effector config can optionally supply
 `camera_mounts`, keyed by observation camera name. Each `ToolCameraMount` contains
 `position_m`, `quaternion_wxyz` (camera optical frame expressed in the tool site),
