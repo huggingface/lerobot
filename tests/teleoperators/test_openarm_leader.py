@@ -98,7 +98,21 @@ def test_get_action_is_reported_in_degrees():
         assert action[f"{motor}.pos"] == pytest.approx(expected)
 
 
-def test_macos_uses_libusb_classic_backend():
-    with _connected(positions_deg=list(range(8)), macos=True) as (_teleop, _controller, controller_cls):
-        controller_cls.assert_called_once_with(channel="pcanfd:can0")
-        controller_cls.from_socketcanfd.assert_not_called()
+@pytest.mark.parametrize(
+    ("use_can_fd", "uses_fd"),
+    [(True, True), (False, False)],
+)
+def test_macos_transport(use_can_fd, uses_fd):
+    # On macOS, FD routes through from_socketcanfd (which reaches the libusb PCAN
+    # backend); classic CAN is prefixed with ``pcanfd:`` to hit that backend too.
+    with _connected(positions_deg=list(range(8)), use_can_fd=use_can_fd, macos=True) as (
+        _teleop,
+        _controller,
+        controller_cls,
+    ):
+        if uses_fd:
+            controller_cls.from_socketcanfd.assert_called_once_with("can0")
+            controller_cls.assert_not_called()
+        else:
+            controller_cls.assert_called_once_with(channel="pcanfd:can0")
+            controller_cls.from_socketcanfd.assert_not_called()
