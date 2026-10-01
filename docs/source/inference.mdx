@@ -593,6 +593,17 @@ Raw replies and latency are written to `planner.log_path`. Accepted decisions ap
 
 #### End-effector corrections
 
+For a camera rigidly attached to the tool, an end-effector config can optionally supply
+`camera_mounts`, keyed by observation camera name. Each `ToolCameraMount` contains
+`position_m`, `quaternion_wxyz` (camera optical frame expressed in the tool site),
+`provenance`, and `estimated` (defaults to `true`). Optical axes are +X image right,
++Y image down, +Z forward. The controller composes this mount with the observation's
+FK and supplies `T_base_from_camera` to the planner, separately for each arm.
+Keep measurements, CAD assumptions and empirical calibration clearly distinguished
+in `provenance`. An estimated transform supports approximate directional reasoning;
+it does not supply object depth, intrinsics or a shared inter-arm frame. Account for
+image rotation/mirroring before associating an optical frame with an image.
+
 Install `lerobot[hybrid-ik]` and configure `hybrid.end_effectors` with one `EndEffectorConfig` per arm: a local MJCF `model_path`, a tool-centre `site`, ordered `joint_names`, matching absolute-radian `action_keys`, and an explicit `frame_description`. Each chain must have a fixed base, bounded hinge joints and all joints contributing to that site. The model must use the same signs/zeros as measured robot positions. The planner receives current FK poses alongside the images and state. With `review_policy_chunks=true`, it also receives FK trajectories for the unexecuted policy proposal.
 
 `mode=end_effector` supplies `ee_targets` for exactly one configured arm, with `position_m: [x,y,z]` and a unit `quaternion_wxyz: [w,x,y,z]`. Poses are absolute in that arm's **model world/base frame**. Neither the solver nor the planner infers camera extrinsics, the table frame, or the transform between two independently mounted arms. For example, a 1 cm upward correction in a verified z-up model frame adds `0.01` to the current FK position's z component and copies its quaternion. `instruction` is empty and `duration_s` is positive. Other modes may omit `ee_targets` or supply `{}`.

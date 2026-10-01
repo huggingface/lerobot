@@ -308,6 +308,15 @@ class HybridPlanner(VlmPlanner):
         if self.kinematics:
             measured = {name: solver.forward(pose) for name, solver in self.kinematics.items()}
             blocks.append(text_block(f"Measured end-effector poses from FK: {json.dumps(measured)}"))
+            cameras = {
+                name: solver.camera_poses(pose)
+                for name, solver in self.kinematics.items()
+                if solver.config.camera_mounts
+            }
+            if cameras:
+                blocks.append(
+                    text_block(f"Tool-mounted camera poses in each arm's base: {json.dumps(cameras)}")
+                )
         if "_hybrid_proposal" in obs_processed:
             blocks.append(
                 text_block(
@@ -363,8 +372,11 @@ class HybridPlanner(VlmPlanner):
             "joints/grippers hold. instruction must be empty and duration_s positive. For all other modes "
             "ee_targets must be {}. IK rejects unreachable or excessive moves. Joint interpolation follows "
             "IK; it is not a straight Cartesian path or collision-aware plan. Do not propose motions near "
-            "obstacles, the other arm, or the table without visible clearance. Do not infer a camera-to-base "
-            "transform from this contract. Missing camera calibration does not forbid every correction: "
+            "obstacles, the other arm, or the table without visible clearance. Use a camera-to-base "
+            "transform only when explicitly supplied. An estimated mount gives approximate directions, "
+            "not calibrated object coordinates. Honour its provenance and assumptions; a pixel still "
+            "needs intrinsics and depth to become a metric 3D point. Camera axes rotate with the wrist. "
+            "Missing camera calibration does not forbid every correction: "
             "use documented base axes, current measured FK, and supplied policy FK trajectories to reason "
             "about a small recovery in that known frame when clearance and benefit are evident. For example, "
             "a small lift along a documented upward axis may be justified by a failed grasp and visible "

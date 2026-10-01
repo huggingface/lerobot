@@ -16,7 +16,7 @@ import draccus
 import numpy as np
 import pytest
 
-from lerobot.rollout.end_effector import EndEffectorConfig, EndEffectorKinematics, parse_pose
+from lerobot.rollout.end_effector import EndEffectorConfig, EndEffectorKinematics, ToolCameraMount, parse_pose
 from lerobot.rollout.hybrid import HybridConfig, HybridPlanner, InterventionLimit, PlannerDecision
 from lerobot.rollout.inference import PolicyQuery, QueryKind
 from lerobot.rollout.inference.hybrid import HybridInferenceEngine
@@ -68,6 +68,32 @@ def test_fk_matches_analytic_planar_chain_and_config_round_trip(arm):
     )
     assert rotation.as_rotvec() == pytest.approx([0, 0, angles[-1]])
     assert draccus.decode(HybridConfig, asdict(config)) == config
+
+
+def test_camera_mount_composes_translation_and_rotation_in_tool_frame(arm):
+    config, pose, solver = arm
+    solver.config.camera_mounts["wrist"] = ToolCameraMount([0.1, 0, 0], [1, 0, 0, 0], "Measured fixture")
+    pose.update({"a.pos": np.pi / 2, "b.pos": 0, "c.pos": 0})
+    result = solver.camera_poses(pose)["wrist"]
+    transform = np.asarray(result["T_base_from_camera"])
+    assert transform[:3, 3] == pytest.approx([0, 0.58, 0], abs=1e-10)
+    assert transform[:3, 0] == pytest.approx([0, 1, 0], abs=1e-10)
+    assert np.linalg.inv(transform) @ (transform @ [0.03, 0.02, 0.3, 1]) == pytest.approx(
+        [0.03, 0.02, 0.3, 1]
+    )
+    assert result["estimated"]
+    assert draccus.decode(HybridConfig, asdict(config)) == config
+    planner = HybridPlanner(PlannerConfig(), "mock", hybrid=config, client=MagicMock())
+    blocks = planner.observation_blocks("Current", pose)
+    assert any("T_base_from_camera" in block.get("text", "") for block in blocks)
+
+
+@pytest.mark.parametrize(
+    "position,quaternion", [([float("nan"), 0, 0], [1, 0, 0, 0]), ([0, 0, 0], [2, 0, 0, 0])]
+)
+def test_invalid_camera_mount_rejected(position, quaternion):
+    with pytest.raises(ValueError):
+        ToolCameraMount(position, quaternion, "Invalid fixture")
 
 
 def test_proposal_fk_uses_ordered_postprocessed_joint_targets(arm):

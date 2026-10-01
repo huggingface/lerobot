@@ -18,7 +18,7 @@ before accepting it. This is a kinematics check, not a collision checker.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -55,6 +55,28 @@ def parse_pose(value):
 
 
 @dataclass
+class ToolCameraMount:
+    """Optical camera frame expressed in the configured tool site, in metres.
+
+    Optical axes: +X image right, +Y image down, +Z forward. This is a rigid
+    mount transform, not pixel-to-3D calibration. Provenance travels to the VLM.
+    """
+
+    position_m: list[float]
+    quaternion_wxyz: list[float]
+    provenance: str
+    estimated: bool = True
+
+    def __post_init__(self):
+        vector(self.position_m, 3, "camera position_m")
+        quaternion = vector(self.quaternion_wxyz, 4, "camera quaternion_wxyz")
+        if abs(np.linalg.norm(quaternion) - 1) > 1e-3:
+            raise ValueError("Camera quaternion_wxyz must be unit length")
+        if not self.provenance.strip():
+            raise ValueError("Camera mount provenance is required")
+
+
+@dataclass
 class EndEffectorConfig:
     model_path: str
     site: str
@@ -67,6 +89,7 @@ class EndEffectorConfig:
     max_angular_speed_rad_s: float = 0.15
     position_tolerance_m: float = 0.001
     rotation_tolerance_rad: float = 0.01
+    camera_mounts: dict[str, ToolCameraMount] = field(default_factory=dict)
 
     def __post_init__(self):
         if not self.model_path or not self.site or not self.frame_description.strip():
@@ -129,6 +152,26 @@ class EndEffectorKinematics:
             np.linalg.norm(desired_p - measured_p) <= self.config.position_tolerance_m
             and (desired_r * measured_r.inv()).magnitude() <= self.config.rotation_tolerance_rad
         )
+
+    def camera_poses(self, pose):
+        """Compose base-from-tool FK with tool-from-camera, for this observation."""
+        tool_p, tool_r = parse_pose(self.forward(pose))
+        result = {}
+        for name, mount in self.config.camera_mounts.items():
+            mount_p, mount_r = parse_pose(
+                {"position_m": mount.position_m, "quaternion_wxyz": mount.quaternion_wxyz}
+            )
+            camera_p, camera_r = tool_p + tool_r.apply(mount_p), tool_r * mount_r
+            transform = np.eye(4)
+            transform[:3, :3] = camera_r.as_matrix()
+            transform[:3, 3] = camera_p
+            result[name] = {
+                "T_base_from_camera": transform.tolist(),
+                "estimated": mount.estimated,
+                "provenance": mount.provenance,
+                "optical_axes": "+X image right, +Y image down, +Z forward; metres",
+            }
+        return result
 
     def solve(self, requested, pose, limits, duration):
         """Seed from measured joints; reject unreachable, excessive or fast paths."""
