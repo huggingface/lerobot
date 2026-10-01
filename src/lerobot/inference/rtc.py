@@ -596,6 +596,7 @@ class RTCInferenceEngine(InferenceEngine):
                     self._robot.robot_type,
                 )
                 batch["task"] = [task]
+                started = time.perf_counter()
                 with chunk_inference_context(request.mode):
                     preprocessed = self._preprocessor(batch)
                     prediction = predict_chunk(
@@ -634,6 +635,7 @@ class RTCInferenceEngine(InferenceEngine):
                         warmup_previous = None
                         self._compile_warmup_done.set()
                     continue
+                self.inference_seconds.append(time.perf_counter() - started)
                 chunk = ActionChunk(
                     model_actions=original,
                     canonical_actions=processed,
