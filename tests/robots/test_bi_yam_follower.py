@@ -275,3 +275,55 @@ def test_installed_optional_dependencies_allow_construction(tmp_path):
     pytest.importorskip("can")
     bot = BiYamFollower(BiYamFollowerConfig(id="imports", calibration_dir=tmp_path))
     assert not bot.is_connected
+
+
+def test_servo_waits_for_async_reply_instead_of_rejecting_empty_cache(robot):
+    # A healthy reply appears only after the initial nonblocking receive. The old
+    # servo failed immediately even though the response met the existing deadline.
+    for side, cfg in (("left", robot.config.left_arm), ("right", robot.config.right_arm)):
+        arm = monitored_arm([])
+        arm.config = cfg
+        replies = deque([None, *[frame(i) for i in range(1, 8)], None])
+
+        def receive(timeout, replies=replies, side=side):
+            value = replies.popleft() if replies else None
+            if not replies and side == "right":
+                robot._stop.set()
+            return value
+
+        arm.monitor.recv = receive
+        robot.arms[side] = arm
+    robot._run()
+    assert robot._failure is None
+    assert all(arm.updated_at > 0 for arm in robot.arms.values())
+
+
+@pytest.mark.parametrize("enabled,preexisting", [(True, False), (True, True), (False, False)])
+def test_gc_freeze_is_shared_and_preserves_callers_state(monkeypatch, enabled, preexisting):
+    gc_mock = MagicMock()
+    gc_mock.isenabled.return_value = enabled
+    gc_mock.get_freeze_count.return_value = int(preexisting)
+    monkeypatch.setattr(robot_module, "gc", gc_mock)
+    guard = robot_module._ControlGC
+    assert guard._users == 0
+    guard.acquire()
+    guard.acquire()
+    guard.release()
+    gc_mock.unfreeze.assert_not_called()
+    guard.release()
+    assert gc_mock.collect.call_count == int(enabled)
+    assert gc_mock.freeze.call_count == int(enabled)
+    assert gc_mock.unfreeze.call_count == int(enabled and not preexisting)
+    assert guard._users == 0
+
+
+def test_connect_failure_releases_gc_freeze(robot, monkeypatch):
+    mock_arm_io(robot, monkeypatch)
+    robot.arms["right"].connect.side_effect = ConnectionError("no adapter")
+    guard = MagicMock()
+    monkeypatch.setattr(robot_module, "_ControlGC", guard)
+    with pytest.raises(ConnectionError, match="no adapter"):
+        robot.connect()
+    guard.acquire.assert_called_once()
+    guard.release.assert_called_once()
+    assert not robot._gc_acquired

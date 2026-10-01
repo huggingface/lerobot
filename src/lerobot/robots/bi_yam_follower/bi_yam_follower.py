@@ -16,6 +16,7 @@
 
 """Bimanual YAM v1 with motorbridge and a gravity-compensated impedance loop."""
 
+import gc
 import logging
 import threading
 import time
@@ -38,6 +39,37 @@ from .yam_arm import GravityCompensation, YamArm, decode_positions, validate_tar
 logger = logging.getLogger(__name__)
 
 
+class _ControlGC:
+    """Keep the preloaded model heap out of cyclic scans while servo threads run.
+
+    New objects still participate in normal collection. The process-wide freeze
+    is shared by connected YAM instances and restored only after the last one
+    disconnects. An existing caller-owned freeze is extended and left frozen;
+    its owner must unfreeze it. Disabled collection is left alone.
+    """
+
+    _lock = threading.Lock()
+    _users = 0
+    _owns_freeze = False
+
+    @classmethod
+    def acquire(cls) -> None:
+        with cls._lock:
+            if cls._users == 0 and gc.isenabled():
+                cls._owns_freeze = gc.get_freeze_count() == 0
+                gc.collect()
+                gc.freeze()
+            cls._users += 1
+
+    @classmethod
+    def release(cls) -> None:
+        with cls._lock:
+            cls._users -= 1
+            if cls._users == 0 and cls._owns_freeze:
+                gc.unfreeze()
+                cls._owns_freeze = False
+
+
 class BiYamFollower(Robot):
     """Left joints 0..5 + gripper, then right: radians and 0=closed / 1=open."""
 
@@ -58,6 +90,7 @@ class BiYamFollower(Robot):
         self._failure: Exception | None = None
         self._connected = False
         self._calibration_session = False
+        self._gc_acquired = False
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -84,6 +117,10 @@ class BiYamFollower(Robot):
         if calibrate and not self.is_calibrated:
             raise ValueError("Run lerobot-calibrate with this robot.id to measure both gripper endpoints")
         try:
+            if calibrate:
+                # Collect/freeze the preloaded model before any hardware is opened.
+                _ControlGC.acquire()
+                self._gc_acquired = True
             for arm in self.arms.values():
                 verify_adapter(arm.config)
             if calibrate:
@@ -140,11 +177,15 @@ class BiYamFollower(Robot):
 
     def _run(self) -> None:
         previous = time.monotonic()
+        max_cycle_gap = 0.0
         try:
             while not self._stop.is_set():
                 started = time.monotonic()
+                max_cycle_gap = max(max_cycle_gap, started - previous)
                 for arm in self.arms.values():
-                    states = arm.read(self.config.feedback_timeout_s)
+                    # Motorbridge requests are asynchronous: allow a fresh reply
+                    # within the existing deadline instead of rejecting the cache immediately.
+                    states = arm.read(self.config.feedback_timeout_s, wait=True)
                     position = decode_positions(arm.config, states)
                     validate_target(position, feedback=True)
                     with self._lock:
@@ -167,6 +208,10 @@ class BiYamFollower(Robot):
                 previous = started
                 self._stop.wait(max(0, 1 / self.config.control_frequency - (time.monotonic() - started)))
         except Exception as exc:
+            exc.add_note(
+                f"YAM maximum servo cycle gap: {max_cycle_gap * 1000:.1f} ms; "
+                f"current cycle elapsed: {(time.monotonic() - started) * 1000:.1f} ms"
+            )
             self._failure = exc
             self._stop.set()
         finally:
@@ -177,6 +222,12 @@ class BiYamFollower(Robot):
                         arm.enabled = False
                     except Exception:
                         logger.exception("Could not disable YAM torque; use the hardware e-stop")
+            if self._failure is not None:
+                logger.error(
+                    "YAM servo stopped: %s; %s",
+                    self._failure,
+                    "; ".join(getattr(self._failure, "__notes__", [])),
+                )
 
     def _check_feedback(self) -> None:
         if self._failure is not None or self._stop.is_set():
@@ -241,11 +292,16 @@ class BiYamFollower(Robot):
                 arm.close()
             except Exception:
                 logger.exception("Failed to close YAM arm")
-        for camera in self.cameras.values():
-            if camera.is_connected:
-                camera.disconnect()
-        self._connected = False
-        self._calibration_session = False
+        try:
+            for camera in self.cameras.values():
+                if camera.is_connected:
+                    camera.disconnect()
+        finally:
+            self._connected = False
+            self._calibration_session = False
+            if self._gc_acquired:
+                _ControlGC.release()
+                self._gc_acquired = False
 
     @check_if_not_connected
     def disconnect(self) -> None:
