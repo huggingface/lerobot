@@ -48,14 +48,14 @@ class PositionAxis:
 
 @dataclass
 class CartesianArm:
-    """Fixed-base MuJoCo model mapping, independent of the robot's motor transport.
+    """URDF mapping for LeRobot's fixed-base, revolute-joint kinematics.
 
-    Native commands convert to model coordinates as q = native * scale + offset.
+    Native commands convert to URDF radians as q = native * scale + offset.
     Angles are [yaw, pitch, roll], relative to the measured orientation at /start.
     """
 
-    model_path: str
-    site: str
+    urdf_path: str
+    target_frame_name: str
     joints: dict[str, str]  # LeRobot action key -> model joint name
     frame_description: str
     position_low: list[float]
@@ -69,12 +69,15 @@ class CartesianArm:
     angular_speed: float = 0.15
     position_tolerance: float = 0.0002
     rotation_tolerance: float = 0.002
+    ik_max_iters: int = 50
 
     def __post_init__(self):
         if not self.joints or len(set(self.joints.values())) != len(self.joints):
             raise ValueError("Cartesian joint mappings must be nonempty and unique")
-        if not self.model_path or not self.site or not self.frame_description.strip():
-            raise ValueError("Cartesian control needs a model, tool site and frame description")
+        if not self.urdf_path or not self.target_frame_name or not self.frame_description.strip():
+            raise ValueError("Cartesian control needs a URDF, tool link and frame description")
+        if self.ik_max_iters < 1:
+            raise ValueError("ik_max_iters must be positive")
         for low, high in ((self.position_low, self.position_high), (self.angle_low, self.angle_high)):
             if (
                 len(low) != 3
@@ -101,11 +104,11 @@ class CartesianArm:
 
 @dataclass
 class AgentSettings:
-    model: str = "openai/gpt-6.1-sol"
+    model: str | None = None
     base_url: str | None = None
-    api_key_env: str = "OPENAI_API_KEY"
-    wire: str = "responses"
-    effort: str = "low"
+    api_key_env: str | None = None
+    wire: str | None = None
+    effort: str | None = None
     service_tier: str | None = None
     max_llm_calls: int = 100
     max_retries: int = 3

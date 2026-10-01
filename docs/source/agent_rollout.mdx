@@ -4,6 +4,13 @@
 
 LeRobot owns the hardware connection, control thread, interactive session and dataset recording. The VLM worker receives copied RGB images and measured positions. It never has a robot handle or permission to run arbitrary Python.
 
+| Responsibility                                                      | Owner                |
+| ------------------------------------------------------------------- | -------------------- |
+| Provider clients, prompt, conversation and tool calls               | inspect-robots-agent |
+| Tool target to interpolated waypoints                               | inspect-robots       |
+| Native units, joint mapping, FK/IK and motion validation            | LeRobot              |
+| Cameras, robot drivers, calibration, start/stop/reset and recording | LeRobot              |
+
 ## Install and configure
 
 ```bash
@@ -32,7 +39,34 @@ uv run lerobot-rollout --config_path=examples/agent_rollout/so_follower.yaml \
   --task="Put all colored cubes in the green bin."
 ```
 
-The examples use `gpt-6.1-sol` through an explicit OpenAI endpoint. For an Astra model available to your API account, change `inference.model` to that endpoint's model ID. `wire=responses` enables native Responses function calls; `effort=low` reduces reasoning effort. `service_tier=fast` is optional and depends on provider/model availability. A successful API request with your account is the access check.
+## Providers
+
+The backend forwards provider settings to upstream `LLMAgentPolicy`; it does not implement another API client. There is no default model, credential name, protocol or reasoning effort. Configure a **vision model with tool calling**; a provider's chat endpoint alone does not guarantee that a particular model supports images and tools together.
+
+| Provider                   | `wire`                                          | `base_url`                                                | `api_key_env`             |
+| -------------------------- | ----------------------------------------------- | --------------------------------------------------------- | ------------------------- |
+| OpenAI                     | `responses`                                     | `https://api.openai.com/v1`                               | `OPENAI_API_KEY`          |
+| Claude                     | `messages`                                      | `https://api.anthropic.com/v1`                            | `ANTHROPIC_API_KEY`       |
+| Gemini                     | `chat`                                          | `https://generativelanguage.googleapis.com/v1beta/openai` | `GEMINI_API_KEY`          |
+| HF Inference Providers     | `chat`                                          | `https://router.huggingface.co/v1`                        | `HF_TOKEN`                |
+| Other compatible endpoints | `chat`, `responses` or `messages`, as supported | Your endpoint                                             | Your environment variable |
+
+The checked-in robot examples explicitly select OpenAI. To use another provider, replace their provider fields, including clearing any inherited `effort` or `service_tier` that the provider does not support. For example, replace those fields with:
+
+```yaml
+inference:
+  type: agent
+  model: YOUR_VISION_MODEL:YOUR_PROVIDER
+  wire: chat
+  base_url: https://router.huggingface.co/v1
+  api_key_env: HF_TOKEN
+  effort: null
+  service_tier: null
+```
+
+Keep the robot-specific axes, cameras and optional Cartesian mapping from your rig config. HF tokens need Inference Providers permission. See [HF chat completion](https://huggingface.co/docs/inference-providers/tasks/chat-completion), [Gemini compatibility](https://ai.google.dev/gemini-api/docs/openai), and [Claude Messages](https://platform.claude.com/docs/en/api/messages) for provider requirements.
+
+`effort: null` omits the setting and preserves the provider's default; the string `"none"` explicitly requests no thinking where supported. `service_tier` is optional and only supported by upstream's Responses transport. No OpenAI-specific reasoning or tier options are injected into Claude, Gemini or HF requests. `max_retries` controls upstream retries; a successful request with your account is still required to verify model access. Offline provider tests validate serialization and conversation replay, not account access.
 
 **Model routing:** with an explicit `base_url=https://api.openai.com/v1`, use the bare model ID, e.g. `gpt-6.1-sol`. With no explicit endpoint, `openai/gpt-6.1-sol` lets the upstream client resolve the provider and remove its prefix. Mixing an explicit OpenAI endpoint with the prefixed ID sends that prefix literally and can produce a 404.
 
@@ -62,7 +96,7 @@ Set `fps` to the command rate and keep `interpolation_multiplier=1`: the agent a
 
 ## Optional end-effector control
 
-Joint mode works with compatible LeRobot **position-commanding** robots without a kinematics model. Cartesian mode additionally needs an accurate fixed-base MuJoCo model, a tool site, explicit native-to-model joint mapping, Cartesian workspace bounds, and a frame description. Velocity/torque actions and omitted mobile-base channels are rejected rather than silently ignored.
+Joint mode works with compatible LeRobot **position-commanding** robots without a kinematics model. Cartesian mode reuses LeRobot's existing `RobotKinematics` (Placo) with an accurate URDF, a tool link, explicit native-to-model joint mapping, Cartesian workspace bounds, and a frame description. No inspect-robots hardware driver or separate MuJoCo solver is installed. Velocity/torque actions and omitted mobile-base channels are rejected rather than silently ignored.
 
 Add `inference.cartesian` to your rig config, covering every arm joint and gripper. This fragment illustrates one arm; replace the path, joint names and bounds for your model:
 
@@ -70,8 +104,8 @@ Add `inference.cartesian` to your rig config, covering every arm joint and gripp
 inference:
   cartesian:
     left:
-      model_path: /absolute/path/to/your_fixed_base_arm.xml
-      site: grasp_site
+      urdf_path: /absolute/path/to/your_arm.urdf
+      target_frame_name: gripper_frame_link
       joints:
         left_joint_0.pos: joint1
         left_joint_1.pos: joint2
@@ -89,7 +123,9 @@ inference:
       angular_speed: 0.15
 ```
 
-For bimanual control also map `right` with its own base frame. Both groups must be disjoint and together cover every native action. Native radians map directly by default. For degree-based joints provide `joint_scale: {joint.pos: 0.017453292519943295}` and, when needed, `joint_offset`; the conversion is `model_coordinate = native_position * scale + offset`. A model's coordinates, tool site and zeros must actually match the hardware.
+For bimanual control also map `right` with its own base frame. Both groups must be disjoint and together cover every native action. Each arm maps exactly the moving joints between its URDF root and tool link, in explicit order. The base and other branches (such as fingers) are held fixed during IK. Cartesian tool chains currently require independently actuated, limited **revolute** joints; prismatic, continuous, floating and mimic joints in that chain are rejected. Joint-only mode does not impose this URDF restriction.
+
+Native radians map directly by default. For degree-based joints provide `joint_scale: {joint.pos: 0.017453292519943295}` and, when needed, `joint_offset`; the conversion is `URDF_radians = native_position * scale + offset`. The adapter then converts radians to **degrees** at the `RobotKinematics` boundary and converts its result back to native units. Negative scales support inverted joint directions. Gripper values bypass IK and retain their explicitly declared native range and polarity. The tool link and joint zeros must match the hardware; the standalone I2RT MuJoCo XML is not a URDF substitute.
 
 The convention follows [inspect-robots-yam](https://github.com/robocurve/inspect-robots-yam): `x,y,z,yaw,pitch,roll,gripper` per arm, XYZ in that arm's base frame, metres and radians. The orientation reference is measured at each trial start:
 
@@ -97,7 +133,7 @@ The convention follows [inspect-robots-yam](https://github.com/robocurve/inspect
 R_target = Rz(yaw) × Ry(-pitch) × Rx(roll) × R_start
 ```
 
-Positive pitch is about **negative base Y**. Pitch and roll default to pinned zero targets; widen their bounds to permit orientation changes. Observations still report measured residual orientation. Upstream linearly interpolates XYZ and the relative Euler coordinates, without angle wrapping. LeRobot solves IK for **each Cartesian waypoint**, seeded from the preceding joint solution; it does not interpolate a single endpoint IK solution through joint space. A failed IK, joint limit or native speed check rejects the whole tool motion and lets the agent repair its proposal.
+Positive pitch is about **negative base Y**. Pitch and roll default to pinned zero targets; widen their bounds to permit orientation changes. Observations still report measured residual orientation. Upstream linearly interpolates XYZ and the relative Euler coordinates, without angle wrapping. LeRobot solves IK for **each Cartesian waypoint**, seeded from the preceding joint solution; it does not interpolate a single endpoint IK solution through joint space. `ik_max_iters` defaults to 50. The adapter applies the intersection of native and URDF joint limits and independently checks the resulting FK position and orientation against the target tolerances. A failed IK, joint limit or native speed check rejects the whole tool motion and lets the agent repair its proposal. Under-actuated arms may not reach the requested full pose and should use joint mode when necessary.
 
 This differs from the standalone YAM driver's incremental joint clamping/resynchronization. The adapter has no mesh collision checker or automatic camera-to-base calibration. FK describes the gripper in its base frame; it does not convert image pixels to a grasp position. Include measured calibration in `robot_notes` if available and retain its provenance.
 

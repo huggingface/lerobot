@@ -1,4 +1,7 @@
 # Template: verify bounds, units, directions, camera paths and calibration before use.
+# Joint mode needs no URDF. Optional Cartesian mode uses LeRobot RobotKinematics:
+# supply a verified YAM URDF/tool link per arm (not the standalone I2RT MuJoCo XML).
+# Provider fields below are one explicit example, not backend defaults.
 interactive: true
 fps: 10
 interpolation_multiplier: 1

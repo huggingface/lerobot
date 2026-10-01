@@ -66,12 +66,16 @@ class AgentInferenceEngine(InferenceEngine):
         require_package("inspect-robots-agent", extra="agent", import_name="inspect_robots_agent")
         self.config = config
         self.adapter = RobotAdapter(config, keys, features, robot_type, fps)
+        # Omit unset values: upstream distinguishes omitted effort from explicit
+        # None (which disables thinking), and chooses a protocol per provider.
+        provider_options = {
+            key: value for key in ("wire", "effort") if (value := getattr(config, key)) is not None
+        }
         self.agent = LLMAgentPolicy(
             model=config.model,
             base_url=config.base_url,
             api_key_env=config.api_key_env,
-            wire=config.wire,
-            effort=config.effort,
+            **provider_options,
             service_tier=config.service_tier,
             max_llm_calls=config.max_llm_calls,
             max_retries=config.max_retries,

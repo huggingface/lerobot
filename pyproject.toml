@@ -95,7 +95,7 @@ dependencies = [
 
 # Native-tool VLM policy, with reproducible upstream prompt and motion semantics.
 agent = ["inspect-robots-agent==0.28.0", "inspect-robots==0.60.0"]
-agent-ik = ["lerobot[agent]", "mujoco>=3.2.0,<4.0", "scipy>=1.14.0,<2.0"]
+agent-ik = ["lerobot[agent]", "lerobot[kinematics]", "lerobot[scipy-dep]"]
 
 # ── Feature-scoped extras ──────────────────────────────────
 lancedb = [
