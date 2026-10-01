@@ -29,6 +29,7 @@ from safetensors.torch import load_model as load_model_as_safetensor
 from torch import Tensor, nn
 
 from lerobot.configs import PreTrainedConfig
+from lerobot.optim.optimizers import OptimizerParams
 from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
@@ -58,13 +59,21 @@ class ActionSelectKwargs(TypedDict, total=False):
     noise: Tensor | None
 
 
+class RTCActionSelectKwargs(TypedDict, total=False):
+    """Keyword arguments Real-Time Chunking passes to `predict_action_chunk`."""
+
+    inference_delay: int | None
+    prev_chunk_left_over: Tensor | None
+    execution_horizon: int | None
+
+
 class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     """
     Base class for policy models.
     """
 
-    config_class: None
-    name: None
+    config_class: ClassVar[type[PreTrainedConfig]]
+    name: ClassVar[str]
 
     # --- declarative parallelism/acceleration surface ----------------------------------------
     # Module CLASS names forming the FSDP2 wrap units (and, once wired, the activation-
@@ -177,10 +186,14 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             )
         model_id = str(pretrained_name_or_path)
         instance = cls(config, **kwargs)
+        device = config.device
+        if device is None:
+            # PreTrainedConfig.__post_init__ always resolves a device; None here is a programming error.
+            raise ValueError(f"{type(config).__name__}.device is unset; cannot load the weights")
         if os.path.isdir(model_id):
             print("Loading weights from local directory")
             model_file = os.path.join(model_id, SAFETENSORS_SINGLE_FILE)
-            policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
+            policy = cls._load_as_safetensor(instance, model_file, device, strict)
         else:
             try:
                 model_file = hf_hub_download(
@@ -194,13 +207,13 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                     token=token,
                     local_files_only=local_files_only,
                 )
-                policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
+                policy = cls._load_as_safetensor(instance, model_file, device, strict)
             except HfHubHTTPError as e:
                 raise FileNotFoundError(
                     f"{SAFETENSORS_SINGLE_FILE} not found on the HuggingFace Hub in {model_id}"
                 ) from e
 
-        policy.to(config.device)
+        policy.to(device)
         policy.eval()
         return policy
 
@@ -213,9 +226,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         return model
 
     @abc.abstractmethod
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> OptimizerParams:
         """
-        Returns the policy-specific parameters dict to be passed on to the optimizer.
+        Returns the policy-specific parameters (parameters or param groups) to be passed on to the optimizer.
         """
         raise NotImplementedError
 
@@ -403,7 +416,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         logging.info(f"Wrapped {self.name} with PEFT ({type(final_config).__name__})")
         return peft_model
 
-    def _get_default_peft_targets(self) -> dict[str, any] | None:
+    def _get_default_peft_targets(self) -> dict[str, Any] | None:
         """
         Return default PEFT target modules for this policy.
 

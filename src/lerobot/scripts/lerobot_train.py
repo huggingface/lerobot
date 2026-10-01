@@ -33,7 +33,7 @@ import logging
 import sys
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager, nullcontext
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from pprint import pformat
 from typing import TYPE_CHECKING, Any
 
@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 import torch
 from termcolor import colored
 from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LRScheduler
 from tqdm import tqdm
 
 from lerobot.common.train_utils import (
@@ -58,9 +59,15 @@ from lerobot.common.train_utils import (
     update_last_checkpoint,
 )
 from lerobot.common.wandb_utils import WandBLogger
-from lerobot.configs import JobConfig, parser
+from lerobot.configs import EvalConfig, JobConfig, parser
+from lerobot.configs.rewards import RewardModelConfig
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
+from lerobot.datasets import (
+    EpisodeAwareSampler,
+    LeRobotDataset,
+    StreamingLeRobotDataset,
+    compute_sampler_state,
+)
 from lerobot.datasets.factory import make_train_eval_datasets
 from lerobot.distributed import (
     ParallelDims,
@@ -69,7 +76,7 @@ from lerobot.distributed import (
     make_accelerator,
     set_fsdp_wrap_modules,
 )
-from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
+from lerobot.envs import EnvConfig, close_envs, make_env, make_env_pre_post_processors
 from lerobot.jobs import submit_to_hf
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
@@ -81,6 +88,7 @@ from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR
 from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
+from lerobot.utils.sample_weighting import SampleWeighter
 from lerobot.utils.utils import (
     cycle,
     format_big_number,
@@ -119,12 +127,12 @@ def _ema_weights(ema: Any, policy: PreTrainedPolicy) -> Iterator[None]:
 
 
 @contextmanager
-def _make_eval_envs(cfg: TrainPipelineConfig) -> Iterator[dict[str, dict[int, Any]]]:
+def _make_eval_envs(env_cfg: EnvConfig, eval_cfg: EvalConfig) -> Iterator[dict[str, dict[int, Any]]]:
     """Create evaluation environments for one run and always dispose of them."""
     envs = make_env(
-        cfg.env,
-        n_envs=cfg.eval.batch_size,
-        use_async_envs=cfg.eval.use_async_envs,
+        env_cfg,
+        n_envs=eval_cfg.batch_size,
+        use_async_envs=eval_cfg.use_async_envs,
     )
     try:
         yield envs
@@ -153,9 +161,9 @@ def update_policy(
     optimizer: Optimizer,
     grad_clip_norm: float,
     accelerator: "Accelerator",
-    lr_scheduler=None,
-    lock=None,
-    sample_weighter=None,
+    lr_scheduler: LRScheduler | None = None,
+    lock: AbstractContextManager[Any] | None = None,
+    sample_weighter: SampleWeighter | None = None,
 ) -> tuple[MetricsTracker, dict | None]:
     """
     Performs a single training step to update the policy's weights.
@@ -179,7 +187,8 @@ def update_policy(
         accelerator (Accelerator): The Accelerator instance for distributed training and mixed precision.
         lr_scheduler (LRScheduler | None, optional): An optional learning rate scheduler, stepped once
             per micro-batch. Defaults to None.
-        lock (Lock | None, optional): An optional lock for thread-safe optimizer updates.
+        lock (AbstractContextManager | None, optional): An optional lock (entered around the optimizer
+            step) for thread-safe optimizer updates.
             Defaults to None.
         sample_weighter (SampleWeighter | None, optional): Optional SampleWeighter instance for
             per-sample loss weighting. Defaults to None.
@@ -196,7 +205,7 @@ def update_policy(
 
     # Compute sample weights if a weighter is provided
     sample_weights = None
-    weight_stats = None
+    weight_stats: dict[str, Any] = {}
     if sample_weighter is not None:
         sample_weights, weight_stats = sample_weighter.compute_batch_weights(batch)
 
@@ -288,8 +297,8 @@ def update_policy(
 
 def make_dataloaders(
     cfg: TrainPipelineConfig,
-    dataset,
-    eval_dataset,
+    dataset: LeRobotDataset | StreamingLeRobotDataset,
+    eval_dataset: LeRobotDataset | None,
     step: int,
     parallel_dims: ParallelDims,
 ) -> tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader | None]:
@@ -301,7 +310,7 @@ def make_dataloaders(
 
     Args:
         cfg (TrainPipelineConfig): The training config (batch size, workers, streaming, resume, seed).
-        dataset (LeRobotDataset | MultiLeRobotDataset): The training dataset.
+        dataset (LeRobotDataset | StreamingLeRobotDataset): The training dataset.
         eval_dataset (LeRobotDataset | None): Optional held-out split; when provided, an eval
             dataloader is built (subsampled per task when `cfg.max_eval_samples > 0`).
         step (int): The loop step to resume the sampler from (0 for a fresh run).
@@ -314,6 +323,10 @@ def make_dataloaders(
     """
     active_cfg = cfg.trainable_config
     if not cfg.dataset.streaming:
+        if isinstance(dataset, StreamingLeRobotDataset):
+            raise TypeError(
+                "EpisodeAwareSampler requires a map-style dataset, got a StreamingLeRobotDataset."
+            )
         # All non-streaming (map-style) datasets use EpisodeAwareSampler.
         # The order is a pure function of (seed, epoch), so every rank independently produces the
         # same permutation. accelerate then shards it disjointly across data-parallel ranks via
@@ -331,6 +344,10 @@ def make_dataloaders(
             absolute_to_relative_idx=dataset.absolute_to_relative_idx,
         )
         if cfg.resume and step > 0:
+            if cfg.checkpoint_path is None:
+                raise ValueError(
+                    "Resuming requires `checkpoint_path`; TrainPipelineConfig resolves it on --resume."
+                )
             # The resume offset depends on the (dp_world_size, batch_size) that produced `step`,
             # so use the values recorded in the checkpoint (falling back to the current ones for
             # older checkpoints that did not store them).
@@ -390,9 +407,9 @@ def make_dataloaders(
     if eval_dataset is not None:
         eval_ds = eval_dataset
         valid_frames = None
-        if not cfg.dataset.streaming and (
-            getattr(active_cfg, "drop_n_first_frames", 0) or getattr(active_cfg, "drop_n_last_frames", 0)
-        ):
+        drop_n_first_frames = getattr(active_cfg, "drop_n_first_frames", 0)
+        drop_n_last_frames = getattr(active_cfg, "drop_n_last_frames", 0)
+        if not cfg.dataset.streaming and (drop_n_first_frames or drop_n_last_frames):
             valid_frames = list(
                 EpisodeAwareSampler(
                     eval_dataset.meta.episodes["dataset_from_index"],
@@ -434,7 +451,7 @@ def make_dataloaders(
 
 
 @parser.wrap()
-def train(cfg: TrainPipelineConfig):
+def train(cfg: TrainPipelineConfig) -> None:
     """
     Main function to train a policy.
 
@@ -503,13 +520,15 @@ def train(cfg: TrainPipelineConfig):
     # IS the recorded value: DCP-bearing formats skip the safetensors load here and stream the
     # sharded weights in after prepare (resume_after_prepare).
     defer_weight_load = cfg.resume and cfg.checkpoint_format.wants_dcp
-    if cfg.is_reward_model_training:
+    # validate() guarantees exactly one of `policy` / `reward_model` is set.
+    active_cfg = cfg.trainable_config
+    if isinstance(active_cfg, RewardModelConfig):
         if is_main_process():
             logging.info("Creating reward model")
         from lerobot.rewards import make_reward_model
 
         policy = make_reward_model(
-            cfg=cfg.reward_model,
+            cfg=active_cfg,
             dataset_stats=dataset.meta.stats,
             dataset_meta=dataset.meta,
         )
@@ -522,7 +541,7 @@ def train(cfg: TrainPipelineConfig):
         if is_main_process():
             logging.info("Creating policy")
         policy = make_policy(
-            cfg=cfg.policy,
+            cfg=active_cfg,
             ds_meta=dataset.meta,
             rename_map=cfg.rename_map,
             defer_weight_load=defer_weight_load,
@@ -545,7 +564,6 @@ def train(cfg: TrainPipelineConfig):
     accelerator.wait_for_everyone()
 
     # --- processors (overrides built once, as one typed mapping) -------------------------------
-    active_cfg = cfg.trainable_config
     processor_pretrained_path = active_cfg.pretrained_path
     if not cfg.resume and getattr(active_cfg, "recipe", None) is not None:
         if processor_pretrained_path is not None and is_main_process():
@@ -595,16 +613,16 @@ def train(cfg: TrainPipelineConfig):
         processor_kwargs["preprocessor_overrides"] = preprocessor_overrides
         processor_kwargs["postprocessor_overrides"] = postprocessor_overrides
 
-    if cfg.is_reward_model_training:
+    if isinstance(active_cfg, RewardModelConfig):
         preprocessor, postprocessor = make_reward_pre_post_processors(
-            cfg.reward_model,
+            active_cfg,
             **processor_kwargs,
         )
     else:
         preprocessor, postprocessor = make_pre_post_processors(
-            policy_cfg=cfg.policy,
+            policy_cfg=active_cfg,
             pretrained_path=processor_pretrained_path,
-            pretrained_revision=getattr(cfg.policy, "pretrained_revision", None),
+            pretrained_revision=active_cfg.pretrained_revision,
             **processor_kwargs,
         )
 
@@ -613,6 +631,9 @@ def train(cfg: TrainPipelineConfig):
     if is_main_process():
         logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
+    if cfg.output_dir is None or cfg.optimizer is None:
+        # validate() resolves `output_dir` and make_optimizer_and_scheduler() rejects a missing optimizer.
+        raise ValueError("`output_dir` and `optimizer` must be resolved before training starts.")
 
     # --- resume phase 1 + dataloaders ----------------------------------------------------------
     step = 0  # number of loop steps (= micro-batches consumed per data-parallel worker)
@@ -827,7 +848,7 @@ def train(cfg: TrainPipelineConfig):
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
         is_saving_step = should_save_checkpoint(step, cfg.save_freq, cfg.steps)
         is_env_eval_step = cfg.env_eval_freq > 0 and step % cfg.env_eval_freq == 0
-        is_eval_step = cfg.eval_steps > 0 and eval_dataloader is not None and step % cfg.eval_steps == 0
+        is_eval_step = cfg.eval_steps > 0 and step % cfg.eval_steps == 0
 
         if is_log_step:
             # Collective reduce must run on every rank, before the main-process gate below.
@@ -851,7 +872,7 @@ def train(cfg: TrainPipelineConfig):
                     wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
-        if is_eval_step:
+        if is_eval_step and eval_dataloader is not None:
             policy.eval()
             eval_loss_sum = 0.0
             n_eval_batches = 0
@@ -905,6 +926,9 @@ def train(cfg: TrainPipelineConfig):
                         postprocessor.save_pretrained(ema_dir)
                 update_last_checkpoint(checkpoint_dir)
                 if cfg.save_checkpoint_to_hub:
+                    if cfg.policy is None or not cfg.policy.repo_id:
+                        # Already rejected by cfg.validate().
+                        raise ValueError("save_checkpoint_to_hub requires --policy.repo_id.")
                     push_checkpoint_to_hub(
                         checkpoint_dir,
                         cfg.policy.repo_id,
@@ -926,7 +950,12 @@ def train(cfg: TrainPipelineConfig):
                 if use_ema_for_eval:
                     logging.info("Evaluating the EMA weights")
                 weights_cm = _ema_weights(ema, eval_policy_model) if use_ema_for_eval else nullcontext()
-                with weights_cm, _make_eval_envs(cfg) as eval_env, torch.no_grad(), accelerator.autocast():
+                with (
+                    weights_cm,
+                    _make_eval_envs(cfg.env, cfg.eval) as eval_env,
+                    torch.no_grad(),
+                    accelerator.autocast(),
+                ):
                     eval_info = eval_policy_all(
                         envs=eval_env,  # dict[suite][task_id] -> vec_env
                         policy=eval_policy_model,

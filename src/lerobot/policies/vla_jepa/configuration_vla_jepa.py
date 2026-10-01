@@ -204,6 +204,8 @@ class VLAJEPAConfig(PreTrainedConfig):
         `observation.state` into `input_features` so it gets normalized.
         """
         if OBS_STATE in dataset_features:
+            if self.input_features is None:
+                raise ValueError("`input_features` must be resolved before `set_dataset_feature_metadata()`.")
             shape = tuple(dataset_features[OBS_STATE]["shape"])
             self.state_dim = shape[0]
             self.input_features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=shape)

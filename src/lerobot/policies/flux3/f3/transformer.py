@@ -236,7 +236,7 @@ class LastLayer(nn.Module):
     def forward(self, x: Tensor, vec: Tensor) -> Tensor:
         if vec.ndim == 2:
             vec = vec[:, None, :]
-        s = self.adaLN_modulation[0](vec)  # type: ignore
+        s = self.adaLN_modulation[0](vec)
         shift_w, scale_w = self.adaLN_modulation[1].weight.chunk(2)
 
         # x = (1 + scale) * self.norm_final(x) + shift
