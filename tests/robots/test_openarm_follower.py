@@ -115,13 +115,20 @@ def test_connect_selects_transport(use_can_fd, uses_fd):
             controller_cls.from_socketcanfd.assert_not_called()
 
 
-@pytest.mark.parametrize("use_can_fd", [True, False])
-def test_macos_uses_libusb_classic_backend(use_can_fd):
-    # On macOS, the libusb PCAN backend is selected via the ``pcanfd:`` channel
-    # prefix and classic CAN is forced regardless of the configured use_can_fd.
+@pytest.mark.parametrize(
+    ("use_can_fd", "uses_fd"),
+    [(True, True), (False, False)],
+)
+def test_macos_transport(use_can_fd, uses_fd):
+    # On macOS, FD routes through from_socketcanfd (which reaches the libusb PCAN
+    # backend); classic CAN is prefixed with ``pcanfd:`` to hit that backend too.
     with _connected(use_can_fd=use_can_fd, macos=True) as (_robot, _controller, controller_cls):
-        controller_cls.assert_called_once_with(channel="pcanfd:can0")
-        controller_cls.from_socketcanfd.assert_not_called()
+        if uses_fd:
+            controller_cls.from_socketcanfd.assert_called_once_with("can0")
+            controller_cls.assert_not_called()
+        else:
+            controller_cls.assert_called_once_with(channel="pcanfd:can0")
+            controller_cls.from_socketcanfd.assert_not_called()
 
 
 def test_observation_is_reported_in_degrees():
