@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from dataclasses import asdict
 
@@ -61,6 +62,7 @@ class HybridInferenceEngine(InferenceEngine):
         self._motion_duration = 0.0
         self._consecutive = 0
         self._ee_targets: dict[str, dict[str, list[float]]] = {}
+        self._motion_keys: set[str] = set()
         self.terminal = False
 
     @property
@@ -172,13 +174,19 @@ class HybridInferenceEngine(InferenceEngine):
         self._pending_decision = None
         self._autosteer_due_at = self._review_started + self.config.settle_s
 
-    def _check_hold(self):
+    def _check_hold(self, observation):
         pose = self._pose()
         if self._hold is None:
             raise ValueError("Hybrid has no held pose")
         for key in self.keys:
-            if abs(pose[key] - self._hold[key]) > self.config.limits[key].tolerance:
-                raise ValueError(f"Robot moved during planner review: {key}; proposal discarded")
+            reference = float(observation[key])
+            delta = abs(pose[key] - reference)
+            tolerance = self.config.limits[key].tolerance
+            if not math.isfinite(reference) or delta > tolerance:
+                raise ValueError(
+                    f"Robot moved since planner observation: {key}, delta={delta:.5f}, "
+                    f"tolerance={tolerance:.5f}; proposal discarded"
+                )
 
     def _start_policy(self, instruction, *, manual=False):
         self.delegate.pause()
@@ -224,7 +232,7 @@ class HybridInferenceEngine(InferenceEngine):
         if error is not None:
             self._finish(error=error)
             return
-        self._check_hold()
+        self._check_hold(observation)
         if time.perf_counter() - self._review_started > self.config.review_timeout_s:
             raise ValueError("Planner review deadline exceeded; proposal discarded")
         if decision.mode == "policy":
@@ -232,12 +240,24 @@ class HybridInferenceEngine(InferenceEngine):
         elif decision.mode in {"intervention", "end_effector"}:
             if self._consecutive >= self.config.max_consecutive_interventions:
                 raise ValueError("Consecutive intervention limit reached")
-            target = decision.resolve_motion(self.config, self._hold, self.kinematics)
+            # IK and correction deltas start from fresh measured joints, not the
+            # hold command (a loaded arm can settle at a small tracking offset).
+            motion_start = self._pose()
+            resolved = decision.resolve_motion(self.config, motion_start, self.kinematics)
+            motion_keys = set(decision.targets)
+            for name in decision.ee_targets:
+                motion_keys.update(self.config.end_effectors[name].action_keys)
+            target = dict(self._hold)
+            target.update({key: resolved[key] for key in motion_keys})
             # IK is bounded CPU work; reject if feedback aged or a deadline elapsed meanwhile.
-            self._check_hold()
+            self._check_hold(observation)
             if time.perf_counter() - self._review_started > self.config.review_timeout_s:
                 raise ValueError("Planner/IK deadline exceeded")
             self._target = target
+            self._motion_keys = motion_keys
+            # Keep uncommanded axes at their existing hold setpoints; re-anchoring
+            # those setpoints to each sagged measurement would cause repeated drift.
+            self._hold.update({key: motion_start[key] for key in motion_keys})
             self._ee_targets = decision.ee_targets
             self.control_interpolator.reset()
             self._motion_started = time.perf_counter()
@@ -292,7 +312,7 @@ class HybridInferenceEngine(InferenceEngine):
                     if elapsed >= self._motion_duration:
                         reached = all(
                             abs(pose[k] - self._target[k]) <= self.config.limits[k].tolerance
-                            for k in self.keys
+                            for k in self._motion_keys
                         )
                         reached = reached and all(
                             self.kinematics[name].reached(goal, pose)

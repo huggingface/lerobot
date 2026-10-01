@@ -184,3 +184,25 @@ def test_stale_cartesian_reply_after_reset_cannot_move(arm):
     engine._resolve_query(query, pose, lambda *args: proposal(solver.forward(pose)), epoch=epoch)
     assert engine._pending_decision is None
     assert engine._mode == "idle"
+
+
+def test_ik_starts_from_measured_snapshot_not_pre_settle_command(arm):
+    config, pose, solver = arm
+    delegate = MagicMock(task="Move", ready=True, failed=False)
+    engine = HybridInferenceEngine(delegate, config, list(config.limits), 1)
+    engine.resume()
+    engine.notify_observation(pose)
+    engine.get_action({})
+    engine._hold["a.pos"] += 0.1  # Commanded setpoint differs from settled measured position.
+    target = solver.forward(pose | {"b.pos": pose["b.pos"] + 0.025})
+    engine._resolve_query(
+        PolicyQuery(QueryKind.NEXT_SUBTASK, engine.autosteer_goal),
+        dict(pose),
+        lambda *args: proposal(target),
+        epoch=engine._query_epoch,
+    )
+    action = engine.get_action({})
+    assert not engine.terminal
+    assert engine._hold["a.pos"] == pose["a.pos"]
+    assert action.tolist() == pytest.approx(list(pose.values()), abs=0.003)
+    assert solver.reached(target, engine._target)

@@ -41,7 +41,8 @@ def test_bind_serve_port_leaves_explicit_port_untouched() -> None:
     assert _bind_serve_port(cmd, 8000) == cmd
 
 
-def test_responses_client_uses_env_key_and_vision_without_chat_parameters(monkeypatch):
+@pytest.mark.parametrize("tier", [None, "fast"])
+def test_responses_client_uses_env_key_and_vision_without_chat_parameters(monkeypatch, capsys, tier):
     import sys
     from types import SimpleNamespace
     from unittest.mock import MagicMock
@@ -53,12 +54,13 @@ def test_responses_client_uses_env_key_and_vision_without_chat_parameters(monkey
 
     sdk = MagicMock()
     sdk.return_value.responses.create.return_value = SimpleNamespace(
-        status="completed", output_text='{"answer":"ok"}'
+        status="completed", output_text='{"answer":"ok"}', service_tier="default"
     )
     monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=sdk))
     monkeypatch.setenv("TEST_VLM_KEY", "synthetic-key")
     cfg = VlmConfig(
         api_mode="responses",
+        service_tier=tier,
         api_key_env="TEST_VLM_KEY",
         api_base="https://api.openai.com/v1",
         auto_serve=False,
@@ -90,6 +92,11 @@ def test_responses_client_uses_env_key_and_vision_without_chat_parameters(monkey
     assert request["reasoning"] == {"effort": "low"}
     assert "temperature" not in request and "max_tokens" not in request and "extra_body" not in request
     assert not request["store"]
+    if tier is None:
+        assert "service_tier" not in request
+    else:
+        assert request["service_tier"] == tier
+        assert "service_tier requested=fast used=default" in capsys.readouterr().out
     assert cfg.api_key == "EMPTY"  # secret never copied into the logged dataclass
 
 

@@ -172,6 +172,8 @@ class VlmConfig:
     request_max_retries: int = 2
     # Responses supports hosted reasoning models without chat-template extensions.
     api_mode: str = "chat_completions"
+    # Omitted by default for compatibility with local/third-party endpoints.
+    service_tier: str | None = None
 
     # Spawn a server if none answers api_base; False = fail fast on a remote.
     auto_serve: bool = True

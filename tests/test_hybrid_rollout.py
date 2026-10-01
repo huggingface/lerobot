@@ -180,8 +180,15 @@ def test_deadline_and_drift_reject_proposal(rig):
 
 def test_drift_while_model_thinks_rejects_intervention(rig):
     engine, delegate, _ = rig
+    snapshot = dict(engine._obs)
     engine.notify_observation({"joint.pos": 0.1, "gripper.pos": 0.5})
-    assert accept(engine, decision("intervention", targets={"gripper.pos": 1}, duration_s=1)) is None
+    engine._resolve_query(
+        PolicyQuery(QueryKind.NEXT_SUBTASK, engine.autosteer_goal),
+        snapshot,
+        lambda *args: decision("intervention", targets={"gripper.pos": 1}, duration_s=1),
+        epoch=engine._query_epoch,
+    )
+    assert engine.get_action({}) is None
     assert engine.terminal
     delegate.resume.assert_not_called()
 
@@ -413,3 +420,29 @@ def test_takeover_during_format_repair_discards_corrected_motion(rig):
     assert engine._pending_decision is None
     assert engine._mode == "idle"
     delegate.resume.assert_not_called()
+
+
+@pytest.mark.parametrize("mode", ["policy", "intervention"])
+def test_settling_before_planner_snapshot_is_not_review_drift(rig, mode):
+    engine, delegate, clock = rig
+    # Reproduce the recorded wrist: hold -0.189, snapshot -0.260, reply -0.266.
+    engine._hold["joint.pos"] = -0.18902
+    snapshot = {"joint.pos": -0.25959, "gripper.pos": 0.5}
+    engine.notify_observation({"joint.pos": -0.26608, "gripper.pos": 0.5})
+    kwargs = {"targets": {"gripper.pos": 1}, "duration_s": 1} if mode == "intervention" else {}
+    engine._resolve_query(
+        PolicyQuery(QueryKind.NEXT_SUBTASK, engine.autosteer_goal),
+        snapshot,
+        lambda *args: decision(mode, **kwargs),
+        epoch=engine._query_epoch,
+    )
+    engine.get_action({})
+    assert not engine.terminal
+    assert engine._mode == mode
+    if mode == "intervention":
+        assert engine._hold["joint.pos"] == -0.18902
+        assert engine._target["joint.pos"] == -0.18902
+        clock.now += 1
+        engine.notify_observation({"joint.pos": -0.26608, "gripper.pos": 1})
+        engine.get_action({})
+        assert engine._mode == "review"

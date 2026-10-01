@@ -324,11 +324,27 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
             }
             if config.reasoning_effort:
                 response_kwargs["reasoning"] = {"effort": config.reasoning_effort}
+            if config.service_tier is not None:
+                response_kwargs["service_tier"] = config.service_tier
             response = chosen.responses.create(**response_kwargs)
+            if config.service_tier is not None:
+                print(
+                    f"[vlm] service_tier requested={config.service_tier} "
+                    f"used={getattr(response, 'service_tier', None) or 'not reported'}",
+                    flush=True,
+                )
             if response.status != "completed" or not response.output_text:
                 raise ValueError(f"VLM response did not complete: {response.status}")
             return response.output_text
+        if config.service_tier is not None:
+            kwargs["service_tier"] = config.service_tier
         response = chosen.chat.completions.create(**kwargs)
+        if config.service_tier is not None:
+            print(
+                f"[vlm] service_tier requested={config.service_tier} "
+                f"used={getattr(response, 'service_tier', None) or 'not reported'}",
+                flush=True,
+            )
         # Some OpenAI-compatible servers can return a choice with no message
         # (safety filter, or a "thinking" model that spends the whole budget
         # before emitting content). Treat that as an empty reply so the
