@@ -24,7 +24,7 @@ import torch
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import prepare_observation_for_inference
-from lerobot.processor import PolicyProcessorPipeline
+from lerobot.processor import PolicyProcessorPipeline, bind_relative_anchor
 from lerobot.utils.constants import OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
 
@@ -60,11 +60,17 @@ class SyncInferenceEngine(InferenceEngine):
         self._ordered_action_keys = ordered_action_keys
         self._device = torch.device(device or "cpu")
         self._robot_type = robot_type
+        bind_relative_anchor(policy, preprocessor)
         logger.info(
             "SyncInferenceEngine initialized (device=%s, action_keys=%d)",
             self._device,
             len(ordered_action_keys),
         )
+
+    @property
+    def action_names(self) -> tuple[str, ...]:
+        """Return the policy output order used to label scalar actions."""
+        return tuple(self._ordered_action_keys)
 
     def start(self) -> None:
         """No background resources to start."""

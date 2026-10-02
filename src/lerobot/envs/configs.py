@@ -81,6 +81,30 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     def gym_kwargs(self) -> dict:
         raise NotImplementedError()
 
+    def _ensure_gym_registered(self) -> None:
+        """Import the provider package when its Gym environment is not registered yet."""
+        if self.gym_id in gym_registry:
+            return
+
+        print(f"gym id '{self.gym_id}' not found, attempting to import '{self.package_name}'...")
+        try:
+            importlib.import_module(self.package_name)
+        except ModuleNotFoundError as e:
+            raise ModuleNotFoundError(
+                f"Package '{self.package_name}' required for env '{self.type}' not found. "
+                f"Please install it or check PYTHONPATH."
+            ) from e
+
+        if self.gym_id not in gym_registry:
+            raise gym.error.NameNotFound(
+                f"Environment '{self.gym_id}' not registered even after importing '{self.package_name}'."
+            )
+
+    def create_env(self) -> gym.Env:
+        """Create one scalar Gym environment for the shared interaction runtime."""
+        self._ensure_gym_registered()
+        return gym.make(self.gym_id, disable_env_checker=self.disable_env_checker, **self.gym_kwargs)
+
     def create_envs(
         self,
         n_envs: int,
@@ -93,23 +117,10 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         """
         env_cls = gym.vector.AsyncVectorEnv if (use_async_envs and n_envs > 1) else gym.vector.SyncVectorEnv
 
-        if self.gym_id not in gym_registry:
-            print(f"gym id '{self.gym_id}' not found, attempting to import '{self.package_name}'...")
-            try:
-                importlib.import_module(self.package_name)
-            except ModuleNotFoundError as e:
-                raise ModuleNotFoundError(
-                    f"Package '{self.package_name}' required for env '{self.type}' not found. "
-                    f"Please install it or check PYTHONPATH."
-                ) from e
-
-            if self.gym_id not in gym_registry:
-                raise gym.error.NameNotFound(
-                    f"Environment '{self.gym_id}' not registered even after importing '{self.package_name}'."
-                )
+        self._ensure_gym_registered()
 
         def _make_one():
-            return gym.make(self.gym_id, disable_env_checker=self.disable_env_checker, **self.gym_kwargs)
+            return self.create_env()
 
         extra_kwargs: dict = {}
         if env_cls is gym.vector.AsyncVectorEnv:

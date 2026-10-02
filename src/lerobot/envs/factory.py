@@ -120,3 +120,22 @@ def make_env(
         raise ValueError("`n_envs` must be at least 1")
 
     return cfg.create_envs(n_envs=n_envs, use_async_envs=use_async_envs)
+
+
+def make_scalar_env(cfg: EnvConfig) -> gym.Env:
+    """Create one non-vector Gym environment for ``GymEndpoint``.
+
+    Hub environments that only expose the legacy vector factory must first provide an
+    ``EnvConfig.create_env`` implementation. This keeps vector/GPU simulation out of
+    the scalar endpoint contract instead of silently unwrapping it.
+    """
+    if isinstance(cfg, HubEnvConfig) and cfg.hub_path:
+        raise NotImplementedError(
+            "Scalar Hub environments must be installed as EnvConfig plugins with create_env(); "
+            "the remote make_env vector API cannot be safely unwrapped"
+        )
+    env = cfg.create_env()
+    if isinstance(env, gym.vector.VectorEnv):
+        env.close()
+        raise TypeError("EnvConfig.create_env() must return a scalar gym.Env, not a VectorEnv")
+    return env

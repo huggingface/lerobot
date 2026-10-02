@@ -244,6 +244,57 @@ def test_cycle_timer_new_cycle_reanchors_pacing(clock):
     assert clock.now - reanchor == pytest.approx(0.05)
 
 
+def test_cycle_timer_cancelled_cycle_does_not_leak_deadline_or_gap(clock):
+    reported: list[str] = []
+    timer = CycleTimer(20.0, report=reported.append)  # 50 ms slots
+    _drive(timer, clock, ticks=3)
+    timer.tick()
+    clock.advance(0.06)  # inference fails after the old deadline
+    timer.cancel_cycle()
+    clock.advance(1.0)  # reset or other work between episodes
+
+    next_tick = clock.now
+    timer.tick()
+    timer.wait()
+    timer.log_run_summary()
+
+    assert clock.now - next_tick == pytest.approx(0.05)
+    assert "4 ticks" in reported[-1]
+    assert "effective cadence: 20.00 Hz" in reported[-1]
+
+
+def test_cycle_timer_cancelled_cycle_discards_partial_reporting_group(caplog, clock):
+    timer = CycleTimer(10.0, 2)  # 50 ms slots, 100 ms group budget
+    _drive(timer, clock, work=0.01, ticks=4, new_cycle=lambda i: i % 2 == 0)
+
+    # Leave 90 ms of a two-tick reporting group behind, then abort the next tick.
+    timer.tick(new_cycle=True)
+    clock.advance(0.09)
+    timer.wait()
+    timer.tick(new_cycle=False)
+    timer.cancel_cycle()
+    clock.advance(1.0)
+
+    with caplog.at_level(logging.DEBUG, logger=_TIMER_LOGGER):
+        _drive(timer, clock, work=0.09, ticks=2, new_cycle=lambda i: i == 0)
+
+    assert not _timer_warnings(caplog)
+    assert not any("went missing outside the loop body" in message for message in _debug_messages(caplog))
+
+
+def test_cycle_timer_cancel_is_idempotent_after_wait(clock):
+    timer = CycleTimer(20.0)
+    _drive(timer, clock)
+
+    timer.cancel_cycle()
+    timer.cancel_cycle()
+    next_tick = clock.now
+    timer.tick()
+    timer.wait()
+
+    assert clock.now - next_tick == pytest.approx(0.05)
+
+
 # ---------------------------------------------------------------------------
 # Cadence statistics and summaries
 # ---------------------------------------------------------------------------

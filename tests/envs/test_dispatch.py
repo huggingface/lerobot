@@ -12,7 +12,7 @@ from gymnasium.envs.registration import register, registry as gym_registry
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.envs.configs import EnvConfig, LiberoEnv
-from lerobot.envs.factory import make_env, make_env_config, make_env_pre_post_processors
+from lerobot.envs.factory import make_env, make_env_config, make_env_pre_post_processors, make_scalar_env
 from lerobot.processor import LiberoProcessorStep
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_PREFIX, OBS_STATE
 
@@ -154,6 +154,39 @@ def test_base_create_envs():
         env = envs["_dispatch_base_test"][0]
         assert isinstance(env, gym.vector.VectorEnv)
         assert env.num_envs == 2
+        env.close()
+    finally:
+        if gym_id in gym_registry:
+            del gym_registry[gym_id]
+
+
+def test_base_create_scalar_env():
+    """The interaction runtime can request one non-vector environment."""
+    gym_id = "_dispatch_scalar_test/CartPole-v99"
+    if gym_id not in gym_registry:
+        register(id=gym_id, entry_point="gymnasium.envs.classic_control:CartPoleEnv")
+
+    @EnvConfig.register_subclass("_dispatch_scalar_test")
+    @dataclass
+    class _Env(EnvConfig):
+        task: str = "CartPole-v99"
+
+        @property
+        def package_name(self):
+            return "_dispatch_scalar_test"
+
+        @property
+        def gym_id(self):
+            return gym_id
+
+        @property
+        def gym_kwargs(self):
+            return {}
+
+    try:
+        env = make_scalar_env(_Env())
+        assert isinstance(env, gym.Env)
+        assert not isinstance(env, gym.vector.VectorEnv)
         env.close()
     finally:
         if gym_id in gym_registry:

@@ -237,6 +237,9 @@ class CycleTimer:
         self._run = _CadenceStats()
         self._windows_closed = 0
         self._prev_tick_start: float | None = None
+        # Gap tentatively added by ``tick`` and committed only when ``wait`` starts.
+        # Keeping its window lets ``cancel_cycle`` roll it back after an aborted tick.
+        self._pending_span: tuple[_CadenceStats, float] | None = None
         # Boundary effects take hold at the next ``tick()`` — see :meth:`tick`.
         self._pending_close: str | None = None
         self._drop_next_gap = False
@@ -262,6 +265,27 @@ class CycleTimer:
         self._group_start = None
         self._last_group_work = 0.0
         self._drop_next_gap = True
+
+    def cancel_cycle(self) -> None:
+        """Abandon an unfinished pacing cycle and re-anchor the next tick.
+
+        Use this when a loop exits after :meth:`tick` but before :meth:`wait`, for
+        example when policy inference raises. Completed cadence statistics are
+        preserved. The incomplete tick's tentative gap and partial reporting group
+        are discarded so a later loop cannot inherit a stale deadline, inactive gap,
+        or half of an earlier interpolation group.
+        """
+        if self._pending_span is not None:
+            stats, elapsed = self._pending_span
+            stats.span -= elapsed
+            stats.span_ticks -= 1
+            self._pending_span = None
+        self.restart()
+        self._cycle_start = None
+        self._tick_start = None
+        self._ticks_done = 0
+        self._prev_tick_start = None
+        self._drop_next_gap = False
 
     @contextlib.contextmanager
     def section(self, name: str) -> Iterator[None]:
@@ -341,9 +365,12 @@ class CycleTimer:
             self._drop_next_gap = True
         # Elapsed time is measured tick-start to tick-start, summed per gap rather
         # than taken from a first/last pair so that dropping one is possible at all.
+        self._pending_span = None
         if self._prev_tick_start is not None and not self._drop_next_gap:
-            self._window.span += self._tick_start - self._prev_tick_start
+            elapsed = self._tick_start - self._prev_tick_start
+            self._window.span += elapsed
             self._window.span_ticks += 1
+            self._pending_span = (self._window, elapsed)
         self._drop_next_gap = False
         self._prev_tick_start = self._tick_start
         if new_cycle or self._cycle_start is None:
@@ -360,6 +387,7 @@ class CycleTimer:
         now = time.perf_counter()
         if self._cycle_start is None or self._tick_start is None:
             return
+        self._pending_span = None
         tick_start = self._tick_start
         tick_dt = now - tick_start
         if self._group_ticks == 0:
