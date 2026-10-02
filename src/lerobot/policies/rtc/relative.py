@@ -43,6 +43,10 @@ def reanchor_relative_rtc_prefix(
     helper re-expresses those actions relative to the robot's current joint state
     and optionally normalizes them so the policy receives correctly scaled inputs.
     """
+    if relative_step.mode == "pose":
+        raise NotImplementedError(
+            "RTC is not supported yet with pose relative actions (relative_action_mode='pose')."
+        )
     state = current_state.detach().cpu()
     if state.dim() == 1:
         state = state.unsqueeze(0)

@@ -14,6 +14,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
 import torch
 
 from lerobot.configs.types import (
@@ -487,6 +488,17 @@ class TestRTCReanchoringWithStateNormalizer:
             f"Raw and normalized state produced near-identical outputs (max diff {max_abs_diff:.4f}); "
             "OBS_STATE stats are too close to identity to be sensitive."
         )
+
+    def test_reanchor_rejects_pose_mode(self):
+        relative_step = RelativeActionsProcessorStep(enabled=True, mode="pose")
+        with pytest.raises(NotImplementedError):
+            reanchor_relative_rtc_prefix(
+                prev_actions_absolute=torch.zeros(5, ACTION_DIM),
+                current_state=torch.zeros(1, ACTION_DIM),
+                relative_step=relative_step,
+                normalizer_step=None,
+                policy_device="cpu",
+            )
 
     def test_engine_pipeline_cached_state_is_raw_after_full_preprocess(self):
         """``get_cached_state()`` returns raw OBS_STATE after the full preprocessor pipeline runs."""

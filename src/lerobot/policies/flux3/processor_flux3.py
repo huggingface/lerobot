@@ -150,6 +150,11 @@ def make_flux3_pre_post_processors(
         enabled=config.use_relative_actions,
         exclude_joints=list(config.relative_exclude_joints),
         action_names=config.action_feature_names,
+        mode=config.relative_action_mode,
+        position_names=config.relative_pose_position_names,
+        rotation_names=config.relative_pose_rotation_names,
+        rotation_format=config.relative_pose_rotation_format,
+        reference_key=config.relative_reference_key,
     )
     input_steps: list[ProcessorStep] = [
         steps.rename_observations,
