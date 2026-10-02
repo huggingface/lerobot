@@ -41,6 +41,18 @@ from lerobot.processor.converters import create_transition, identity_transition
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, REWARD, TRUNCATED
 from tests.conftest import assert_contract_is_typed
 
+TRANSITION_KEYS = frozenset(
+    {
+        TransitionKey.OBSERVATION,
+        TransitionKey.ACTION,
+        TransitionKey.REWARD,
+        TransitionKey.DONE,
+        TransitionKey.TRUNCATED,
+        TransitionKey.INFO,
+        TransitionKey.COMPLEMENTARY_DATA,
+    }
+)
+
 
 @dataclass
 class MockStep(ProcessorStep):
@@ -293,10 +305,10 @@ def test_step_through():
     assert "step1_counter" in results[1][TransitionKey.COMPLEMENTARY_DATA]  # After step1
     assert "step2_counter" in results[2][TransitionKey.COMPLEMENTARY_DATA]  # After step2
 
-    # Ensure all results are dicts (same format as input)
+    # Ensure all results are dicts keyed by the (string) transition keys
     for result in results:
         assert isinstance(result, dict)
-        assert all(isinstance(k, TransitionKey) for k in result)
+        assert all(isinstance(k, str) and k in TRANSITION_KEYS for k in result)
 
 
 def test_step_through_with_dict():
@@ -321,17 +333,9 @@ def test_step_through_with_dict():
     # Ensure all results are EnvTransition dicts (regardless of input format)
     for result in results:
         assert isinstance(result, dict)
-        # Check that keys are TransitionKey enums or at least valid transition keys
+        # Check that keys are valid transition keys
         for key in result:
-            assert key in [
-                TransitionKey.OBSERVATION,
-                TransitionKey.ACTION,
-                TransitionKey.REWARD,
-                TransitionKey.DONE,
-                TransitionKey.TRUNCATED,
-                TransitionKey.INFO,
-                TransitionKey.COMPLEMENTARY_DATA,
-            ]
+            assert key in TRANSITION_KEYS
 
     # Check that the processing worked - verify step counters in complementary_data
     assert results[1].get(TransitionKey.COMPLEMENTARY_DATA, {}).get("step1_counter") == 0
@@ -2370,14 +2374,32 @@ def test_aggregate_images_when_use_videos_false():
     out = aggregate_pipeline_dataset_features(
         pipeline=rp,
         initial_features={PipelineFeatureType.ACTION: {}, PipelineFeatureType.OBSERVATION: initial},
-        use_videos=False,  # expect "image" dtype
+        use_videos=False,  # images kept, stored as "image" dtype
         patterns=None,
     )
 
     key = f"{OBS_IMAGES}.back"
     key_front = f"{OBS_IMAGES}.front"
-    assert key not in out
-    assert key_front not in out
+    assert key in out
+    assert key_front in out
+    assert out[key]["dtype"] == "image"
+    assert out[key_front]["dtype"] == "image"
+    assert out[key]["shape"] == initial["back"]
+
+
+def test_aggregate_images_excluded():
+    rp = DataProcessorPipeline([AddObservationStateFeatures(add_front_image=True)])
+    initial = {"back": (480, 640, 3)}
+
+    out = aggregate_pipeline_dataset_features(
+        pipeline=rp,
+        initial_features={PipelineFeatureType.ACTION: {}, PipelineFeatureType.OBSERVATION: initial},
+        exclude_images=True,
+        patterns=None,
+    )
+
+    assert f"{OBS_IMAGES}.back" not in out
+    assert f"{OBS_IMAGES}.front" not in out
 
 
 def test_aggregate_images_when_use_videos_true():

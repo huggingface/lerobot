@@ -23,7 +23,7 @@ from ..openarm_leader import OpenArmLeaderConfigBase
 @TeleoperatorConfig.register_subclass("bi_openarm_leader")
 @dataclass
 class BiOpenArmLeaderConfig(TeleoperatorConfig):
-    """Configuration class for Bi OpenArm Follower robots."""
+    """Configuration class for Bi OpenArm Leader teleoperators."""
 
     left_arm_config: OpenArmLeaderConfigBase
     right_arm_config: OpenArmLeaderConfigBase

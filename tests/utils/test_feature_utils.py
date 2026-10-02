@@ -14,20 +14,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from copy import deepcopy
+
+import pytest
+
 from lerobot.configs.types import FeatureType
 from lerobot.utils.feature_utils import dataset_to_policy_features
 
 
-def test_dataset_to_policy_features_handles_visual_names_none_hwc():
+@pytest.mark.parametrize("dtype", ["image", "video"])
+@pytest.mark.parametrize(
+    "shape,names,expected_shape",
+    [
+        ((480, 640, 1), None, (1, 480, 640)),
+        ((480, 640, 3), None, (3, 480, 640)),
+        ((480, 640, 4), None, (4, 480, 640)),
+        ((3, 480, 640), None, (3, 480, 640)),
+        ((480, 640, 3), ["height", "width", "channel"], (3, 480, 640)),
+        ((480, 640, 3), ["height", "width", "channels"], (3, 480, 640)),
+        ((3, 480, 640), ["channels", "height", "width"], (3, 480, 640)),
+    ],
+)
+def test_dataset_to_policy_features_visual_layouts(dtype, shape, names, expected_shape):
     features = {
         "observation.images.front": {
-            "dtype": "video",
-            "shape": (480, 640, 3),
-            "names": None,
+            "dtype": dtype,
+            "shape": shape,
+            "names": names,
         },
     }
 
+    original_features = deepcopy(features)
     policy_features = dataset_to_policy_features(features)
 
     assert policy_features["observation.images.front"].type is FeatureType.VISUAL
-    assert policy_features["observation.images.front"].shape == (3, 480, 640)
+    assert policy_features["observation.images.front"].shape == expected_shape
+    assert features == original_features

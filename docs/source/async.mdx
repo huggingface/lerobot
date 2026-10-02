@@ -65,7 +65,7 @@ In summary, you need to specify instructions for:
 Importantly,
 
 - `actions_per_chunk` and `chunk_size_threshold` are key parameters to tune for your setup.
-- `aggregate_fn_name` is the function to aggregate actions on overlapping portions. You can either add a new one to a registry of functions, or add your own in `robot_client.py` (see [here](NOTE:addlinktoLOC))
+- `aggregate_fn_name` is the function to aggregate actions on overlapping portions. You can either add a new one to a registry of functions, or add your own in `robot_client.py` (see [here](https://github.com/huggingface/lerobot/blob/main/src/lerobot/async_inference/robot_client.py#L224))
 - `debug_visualize_queue_size` is a useful tool to tune the `CLIENT` parameters.
 
 ## Done! You should see your robot moving around by now 😉

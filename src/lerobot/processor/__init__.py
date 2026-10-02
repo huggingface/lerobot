@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.types import (
+from lerobot.lerobot_types import (
     EnvAction,
     EnvTransition,
     PolicyAction,
@@ -42,10 +42,15 @@ from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorTo
 from .device_processor import DeviceProcessorStep
 from .env_processor import IsaaclabArenaProcessorStep, LiberoProcessorStep
 from .factory import (
+    DefaultPolicyProcessorSteps,
+    load_pretrained_policy_processors,
+    make_default_policy_processor_steps,
+    make_default_pre_post_processors,
     make_default_processors,
     make_default_robot_action_processor,
     make_default_robot_observation_processor,
     make_default_teleop_action_processor,
+    make_policy_processor_pipelines,
 )
 from .gym_action_processor import (
     Numpy2TorchActionProcessorStep,
@@ -89,18 +94,13 @@ from .policy_robot_bridge import (
 from .relative_action_processor import (
     AbsoluteActionsProcessorStep,
     RelativeActionsProcessorStep,
+    bind_relative_anchor,
     to_absolute_actions,
     to_relative_actions,
 )
 from .rename_processor import RenameObservationsProcessorStep, rename_stats
+from .render_messages_processor import RenderRuntimeMessagesStep, RenderTrainingMessagesStep
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
-
-# RenderMessagesStep is intentionally NOT re-exported here: it pulls in
-# `lerobot.datasets.language`, which requires the `[dataset]` extra
-# (`datasets`, `pyarrow`). Importing it from the processor package would
-# break every base-install consumer of `lerobot.processor`. Users that
-# need it import directly:
-#   from lerobot.processor.render_messages_processor import RenderMessagesStep
 
 __all__ = [
     "ActionProcessorStep",
@@ -129,12 +129,18 @@ __all__ = [
     "ImageCropResizeProcessorStep",
     "InfoProcessorStep",
     "InterventionActionProcessorStep",
+    "DefaultPolicyProcessorSteps",
+    "load_pretrained_policy_processors",
+    "make_default_policy_processor_steps",
+    "make_default_pre_post_processors",
     "make_default_processors",
     "make_default_teleop_action_processor",
     "make_default_robot_action_processor",
     "make_default_robot_observation_processor",
+    "make_policy_processor_pipelines",
     "AbsoluteActionsProcessorStep",
     "RelativeActionsProcessorStep",
+    "bind_relative_anchor",
     "MapDeltaActionToRobotActionStep",
     "MapTensorToDeltaActionDictStep",
     "NewLineTaskProcessorStep",
@@ -152,6 +158,8 @@ __all__ = [
     "RobotObservation",
     "rename_stats",
     "RenameObservationsProcessorStep",
+    "RenderRuntimeMessagesStep",
+    "RenderTrainingMessagesStep",
     "RewardClassifierProcessorStep",
     "RewardProcessorStep",
     "DataProcessorPipeline",

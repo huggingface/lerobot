@@ -22,12 +22,15 @@ and :class:`DatasetContext` — assembled into :class:`RolloutContext`.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from copy import copy
 from dataclasses import dataclass, field
 from threading import Event
+from typing import TYPE_CHECKING
 
 import torch
 
-from lerobot.configs import FeatureType
+from lerobot.configs import FeatureType, PreTrainedConfig
 from lerobot.datasets import (
     LeRobotDataset,
     aggregate_pipeline_dataset_features,
@@ -40,44 +43,154 @@ from lerobot.processor import (
     RobotAction,
     RobotObservation,
     RobotProcessorPipeline,
+    bind_relative_anchor,
     make_default_processors,
     rename_stats,
 )
-from lerobot.processor.relative_action_processor import RelativeActionsProcessorStep
 from lerobot.robots import make_robot_from_config
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
+from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
+from lerobot.utils.import_utils import _peft_available, require_package
 
-from .configs import BaseStrategyConfig, DAggerStrategyConfig, RolloutConfig
+from .configs import RolloutConfig
 from .inference import (
     InferenceEngine,
     RTCInferenceConfig,
-    SyncInferenceConfig,
     create_inference_engine,
 )
+from .inference.rtc import supports_rtc_inference
 from .robot_wrapper import ThreadSafeRobot
+
+if TYPE_CHECKING or _peft_available:
+    from peft import PeftConfig, PeftModel
+else:
+    PeftConfig = None
+    PeftModel = None
 
 logger = logging.getLogger(__name__)
 
 
-def _resolve_action_key_order(
-    policy_action_names: list[str] | None, dataset_action_names: list[str]
-) -> list[str]:
-    """Choose action name ordering for mapping policy tensor outputs to robot action dicts."""
-    if not policy_action_names:
-        return dataset_action_names
-    policy_action_names = list(policy_action_names)
-    if len(policy_action_names) != len(dataset_action_names):
-        logger.warning(
-            "policy.action_feature_names length (%d) != dataset action dim (%d); using dataset order",
-            len(policy_action_names),
-            len(dataset_action_names),
+def _wrap_predict_action_chunk_with_torch_compile(
+    policy: PreTrainedPolicy,
+    *,
+    backend: str,
+    mode: str,
+) -> bool:
+    """Install the JIT wrapper and report whether it was configured successfully.
+
+    ``torch.compile`` compiles lazily on the first invocation, so success here
+    does not guarantee that backend compilation will succeed during warm-up.
+    """
+    if not hasattr(torch, "compile"):
+        logger.warning("torch.compile is not available in this PyTorch build")
+        return False
+
+    try:
+        policy.predict_action_chunk = torch.compile(  # type: ignore[method-assign]
+            policy.predict_action_chunk,
+            backend=backend,
+            mode=mode,
         )
-        return dataset_action_names
-    if set(dataset_action_names) != set(policy_action_names):
-        logger.warning("policy.action_feature_names keys don't match dataset; using dataset order")
-        return dataset_action_names
-    return policy_action_names
+    except Exception as exc:
+        logger.warning("Failed to configure torch.compile: %s", exc)
+        return False
+
+    logger.info("torch.compile configured for predict_action_chunk")
+    return True
+
+
+def _validate_trained_rtc_rollout_config(policy_config, inference_config: RTCInferenceConfig) -> None:
+    """Fail fast when rollout cannot retain every trained RTC prefix."""
+    rtc = inference_config.rtc
+    if not rtc.enabled or rtc.mode != "trained":
+        return
+    if policy_config.type != "pi05":
+        raise ValueError(
+            "--inference.rtc.mode=trained currently requires a PI05 checkpoint; "
+            f"got policy type {policy_config.type!r}."
+        )
+
+    training_max_delay = int(getattr(policy_config, "rtc_training_max_delay", 0))
+    if training_max_delay <= 0:
+        raise ValueError(
+            "--inference.rtc.mode=trained requires a checkpoint trained with "
+            "--policy.rtc_training_max_delay > 0."
+        )
+    if rtc.execution_horizon < training_max_delay:
+        raise ValueError(
+            f"--inference.rtc.execution_horizon ({rtc.execution_horizon}) must be at least the "
+            f"checkpoint's rtc_training_max_delay ({training_max_delay})."
+        )
+    if inference_config.queue_threshold < training_max_delay:
+        raise ValueError(
+            f"--inference.queue_threshold ({inference_config.queue_threshold}) must be at least the "
+            f"checkpoint's rtc_training_max_delay ({training_max_delay})."
+        )
+
+    # RTC requires d <= s <= H - d (arXiv 2506.07339): an execution horizon past H - d would
+    # commit actions the next chunk can no longer re-plan, so the overlap never closes.
+    chunk_size = int(getattr(policy_config, "chunk_size", 0))
+    if chunk_size and rtc.execution_horizon > chunk_size - training_max_delay:
+        raise ValueError(
+            f"--inference.rtc.execution_horizon ({rtc.execution_horizon}) must be at most "
+            f"chunk_size - rtc_training_max_delay ({chunk_size} - {training_max_delay} = "
+            f"{chunk_size - training_max_delay})."
+        )
+
+
+def _align_to_checkpoint_order(
+    features: dict[str, type | tuple], policy_action_names: list[str] | None, *, what: str
+) -> dict[str, type | tuple]:
+    """Order ``features`` so its motor entries follow the checkpoint's joint order.
+
+    One rule for both sides: the policy emits and consumes tensors in the order it was
+    trained on, so whichever dict is about to be flattened into a tensor has to match it.
+    Only the scalar motor entries take part; anything else (camera shapes, on the state
+    side) keeps its relative order at the end.
+
+    A set mismatch is left alone rather than forced: extra ``.vel`` channels or an
+    uncommanded base mean the two describe different things, and the robot's own order is
+    the only meaningful one. ``what`` names the side being aligned, so the warning says
+    which of the two reordered.
+    """
+    if not policy_action_names:
+        return features
+
+    motor_names = [name for name, feature in features.items() if not isinstance(feature, tuple)]
+    if set(motor_names) != set(policy_action_names) or motor_names == policy_action_names:
+        return features
+
+    logger.warning(
+        "Robot %s order %s differs from checkpoint joint order %s; reordering %s",
+        what,
+        motor_names,
+        policy_action_names,
+        what,
+    )
+    reordered = {name: features[name] for name in policy_action_names}
+    reordered.update({name: feature for name, feature in features.items() if name not in reordered})
+    return reordered
+
+
+def _assert_state_matches_action_order(dataset_features: dict, ordered_action_keys: list[str]) -> None:
+    """Reject a state layout that is a permutation of the action dispatch order.
+
+    ``send_next_action`` labels the action tensor positionally with ``ordered_action_keys``,
+    so a permuted ``observation.state`` commands every joint with another joint's value.
+    Differing *sets* are legitimate (extra ``.vel`` channels, an uncommanded base) and pass.
+    """
+    state_ft = dataset_features.get(OBS_STATE)
+    if state_ft is None or not ordered_action_keys:
+        return
+    state_names = list(state_ft.get("names") or [])
+    if state_names == ordered_action_keys or set(state_names) != set(ordered_action_keys):
+        return
+    raise ValueError(
+        f"observation.state order {state_names} is a permutation of the action dispatch order "
+        f"{ordered_action_keys}; every joint would be commanded with another joint's value. "
+        "Check policy.action_feature_names against the checkpoint's training dataset."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +204,11 @@ class RuntimeContext:
 
     cfg: RolloutConfig
     shutdown_event: Event
+    # Where the control loop's ``CycleTimer`` sends its cadence summaries; None
+    # leaves them on ``logger.info``.  A strategy declaring ``supports_interactive``
+    # must forward it to the timer it builds in ``run()``, since a session mutes
+    # everything below ERROR.
+    cadence_report: Callable[[str], None] | None = None
 
 
 @dataclass
@@ -108,7 +226,7 @@ class HardwareContext:
 
     robot_wrapper: ThreadSafeRobot
     teleop: Teleoperator | None
-    initial_position: dict | None = None
+    initial_position: dict[str, float] | None = None
 
 
 @dataclass
@@ -159,6 +277,37 @@ class RolloutContext:
 # ---------------------------------------------------------------------------
 
 
+def _load_pretrained_policy(policy_config: PreTrainedConfig) -> PreTrainedPolicy:
+    """Load policy weights, keeping adapter and base-model revisions independent."""
+    pretrained_path = policy_config.pretrained_path
+    if pretrained_path is None:
+        raise ValueError("--policy.path is required for rollout")
+    pretrained_revision = policy_config.pretrained_revision
+    policy_class = get_policy_class(policy_config.type)
+
+    if not policy_config.use_peft:
+        return policy_class.from_pretrained(
+            pretrained_path,
+            config=policy_config,
+            revision=pretrained_revision,
+        )
+
+    require_package("peft", extra="peft")
+
+    peft_config = PeftConfig.from_pretrained(pretrained_path, revision=pretrained_revision)
+    policy = policy_class.from_pretrained(
+        pretrained_name_or_path=peft_config.base_model_name_or_path,
+        config=policy_config,
+        revision=peft_config.revision,
+    )
+    return PeftModel.from_pretrained(
+        policy,
+        pretrained_path,
+        config=peft_config,
+        revision=pretrained_revision,
+    )
+
+
 def build_rollout_context(
     cfg: RolloutConfig,
     shutdown_event: Event,
@@ -169,14 +318,21 @@ def build_rollout_context(
     """Wire up policy, processors, hardware, dataset, and inference engine.
 
     The order is policy-first / hardware-last so a bad ``--policy.path``
-    fails fast without touching the robot.
+    fails fast without touching the robot. A missing policy configuration raises
+    ``ValueError`` before any policy access.
     """
     is_rtc = isinstance(cfg.inference, RTCInferenceConfig)
 
     # --- 1. Policy (heavy I/O, but no hardware yet) -------------------
-    logger.info("Loading policy from '%s'...", cfg.policy.pretrained_path)
     policy_config = cfg.policy
-    policy_class = get_policy_class(policy_config.type)
+    if policy_config is None:
+        raise ValueError("--policy.path is required for rollout")
+    logger.info("Loading policy from '%s'...", policy_config.pretrained_path)
+    # Policy constructors and custom processors must use the resolved rollout device too.
+    policy_config.device = cfg.device
+
+    if is_rtc:
+        _validate_trained_rtc_rollout_config(policy_config, cfg.inference)
 
     if hasattr(policy_config, "compile_model"):
         policy_config.compile_model = cfg.use_torch_compile
@@ -187,19 +343,15 @@ def build_rollout_context(
             "Please use `cpu` or `cuda` backend."
         )
 
-    if policy_config.use_peft:
-        from peft import PeftConfig, PeftModel
-
-        peft_path = policy_config.pretrained_path
-        peft_config = PeftConfig.from_pretrained(peft_path)
-        policy = policy_class.from_pretrained(
-            pretrained_name_or_path=peft_config.base_model_name_or_path, config=policy_config
-        )
-        policy = PeftModel.from_pretrained(policy, peft_path, config=peft_config)
-    else:
-        policy = policy_class.from_pretrained(policy_config.pretrained_path, config=policy_config)
+    policy = _load_pretrained_policy(policy_config)
 
     if is_rtc:
+        if not supports_rtc_inference(policy):
+            raise ValueError(
+                f"RTC inference is not supported by policy type '{policy_config.type}': "
+                "the policy must implement RTC semantics and predict_action_chunk must accept "
+                "inference_delay and prev_chunk_left_over. Use '--inference.type=sync' instead."
+            )
         policy.config.rtc_config = cfg.inference.rtc
         if hasattr(policy, "init_rtc_processor"):
             policy.init_rtc_processor()
@@ -208,18 +360,19 @@ def build_rollout_context(
     policy.eval()
     logger.info("Policy loaded: type=%s, device=%s", policy_config.type, cfg.device)
 
+    torch_compile_active = cfg.use_torch_compile
     if cfg.use_torch_compile and policy.type not in ("pi0", "pi05"):
-        try:
-            if hasattr(torch, "compile"):
-                compile_kwargs = {
-                    "backend": cfg.torch_compile_backend,
-                    "mode": cfg.torch_compile_mode,
-                    "options": {"triton.cudagraphs": False},
-                }
-                policy.predict_action_chunk = torch.compile(policy.predict_action_chunk, **compile_kwargs)
-                logger.info("torch.compile applied to predict_action_chunk")
-        except Exception as e:
-            logger.warning("Failed to apply torch.compile: %s", e)
+        torch_compile_active = _wrap_predict_action_chunk_with_torch_compile(
+            policy,
+            backend=cfg.torch_compile_backend,
+            mode=cfg.torch_compile_mode,
+        )
+
+    if cfg.use_torch_compile and not torch_compile_active:
+        # RolloutConfig.__post_init__ reloads the policy configuration, so avoid
+        # dataclasses.replace when carrying the effective state downstream.
+        cfg = copy(cfg)
+        cfg.use_torch_compile = False
 
     # --- 2. Robot-side processors (user-supplied or defaults) --------
     if (
@@ -233,8 +386,11 @@ def build_rollout_context(
         robot_observation_processor = robot_observation_processor or _o
 
     # --- 3. Hardware (heaviest side-effect, deferred) -----------------
-    logger.info("Connecting robot (%s)...", cfg.robot.type if cfg.robot else "?")
-    robot = make_robot_from_config(cfg.robot)
+    robot_config = cfg.robot
+    if robot_config is None:
+        raise ValueError("--robot.type is required for rollout")
+    logger.info("Connecting robot (%s)...", robot_config.type)
+    robot = make_robot_from_config(robot_config)
     robot.connect()
     logger.info("Robot connected: %s", robot.name)
 
@@ -247,7 +403,7 @@ def build_rollout_context(
 
     teleop = None
     if cfg.teleop is not None:
-        logger.info("Connecting teleoperator (%s)...", cfg.teleop.type if cfg.teleop else "?")
+        logger.info("Connecting teleoperator (%s)...", cfg.teleop.type)
         teleop = make_teleoperator_from_config(cfg.teleop)
         teleop.connect()
         logger.info("Teleoperator connected")
@@ -276,12 +432,28 @@ def build_rollout_context(
     # ``observation_features`` values are either a tuple (camera shape) or the
     # ``float`` type itself used as a sentinel for scalar motor features —
     # see ``dict[str, type | tuple]`` annotation on ``Robot.observation_features``.
-    observation_features_hw = {
+    # Keep cameras (tuple) plus both joint-position (.pos) and base-velocity (.vel)
+    # scalar state features. LeKiwi's observation.state is 9-dim (6 arm .pos +
+    # x/y/theta.vel) and the policy was trained/normalized on all 9; the old .pos-only
+    # filter fed a 6-dim state into a 9-dim normalizer → RuntimeError (size 6 vs 9).
+    # Pure-arm robots have no .vel state keys, so this is a no-op for them.
+    observation_features_hw: dict[str, type | tuple] = {
         k: v
         for k, v in all_obs_features.items()
-        if isinstance(v, tuple) or (v is float and k.endswith(".pos"))
+        if isinstance(v, tuple) or (v is float and k.endswith((".pos", ".vel")))
     }
-    action_features_hw = {k: v for k, v in robot.action_features.items() if k.endswith(".pos")}
+    policy_action_names = getattr(policy_config, "action_feature_names", None)
+    checkpoint_order = list(policy_action_names) if policy_action_names else None
+    observation_features_hw = _align_to_checkpoint_order(
+        observation_features_hw, checkpoint_order, what="state"
+    )
+    # Keep both joint-position (.pos) and base-velocity (.vel) action features so
+    # mobile manipulators command the base too (e.g. LeKiwi: 6 arm .pos +
+    # x/y/theta.vel = 9-dim action). Pure-arm robots have no .vel keys, so this is
+    # a no-op for them. Without the .vel keys the base velocities are silently
+    # dropped from dataset_features[ACTION]/ordered_action_keys and the base never moves.
+    action_features_hw = {k: v for k, v in robot.action_features.items() if k.endswith((".pos", ".vel"))}
+    action_features_hw = _align_to_checkpoint_order(action_features_hw, checkpoint_order, what="action")
 
     # The action side is always needed: sync inference reads action names from
     # ``dataset_features[ACTION]`` to map policy tensors back to robot actions.
@@ -298,18 +470,15 @@ def build_rollout_context(
     )
     dataset_features = combine_feature_dicts(action_dataset_features, observation_dataset_features)
     hw_features = hw_to_dataset_features(observation_features_hw, "observation")
-    raw_action_keys = list(action_features_hw.keys())
-    policy_action_names = getattr(policy_config, "action_feature_names", None)
-    ordered_action_keys = _resolve_action_key_order(
-        list(policy_action_names) if policy_action_names else None,
-        raw_action_keys,
-    )
+    # ``action_features_hw`` is already in checkpoint order, so it *is* the dispatch order.
+    ordered_action_keys = list(action_features_hw)
+    _assert_state_matches_action_order(dataset_features, ordered_action_keys)
 
     # Validate visual features if no rename_map is active
     rename_map = cfg.rename_map
     if not rename_map:
         expected_visuals = {
-            k for k, v in policy_config.input_features.items() if v.type == FeatureType.VISUAL
+            k for k, v in (policy_config.input_features or {}).items() if v.type == FeatureType.VISUAL
         }
         provided_visuals = {
             f"observation.images.{k}" for k, v in robot.observation_features.items() if isinstance(v, tuple)
@@ -320,19 +489,25 @@ def build_rollout_context(
             raise ValueError(
                 f"Visual feature mismatch between policy and robot hardware.\n"
                 f"Policy expects: {expected_visuals}\n"
-                f"Robot provides: {provided_visuals}"
+                f"Robot provides: {provided_visuals}\n"
+                f"Use --rename_map to map camera names, e.g. "
+                f"""--rename_map='{{"observation.images.top": "observation.images.cam0"}}'"""
             )
 
     # --- 5. Dataset -------------
     dataset = None
-    if cfg.dataset is not None and not isinstance(cfg.strategy, BaseStrategyConfig):
+    if cfg.dataset is not None:
         logger.info("Setting up dataset (repo_id=%s)...", cfg.dataset.repo_id)
+        # Strategy-owned columns join the robot/policy features above the resume/create
+        # split, so ``ctx.data.dataset_features`` describes the same schema on both paths.
+        dataset_features.update(cfg.strategy.extra_dataset_features())
         if cfg.resume:
             dataset = LeRobotDataset.resume(
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
-                camera_encoder=cfg.dataset.camera_encoder,
+                rgb_encoder=cfg.dataset.rgb_encoder,
+                depth_encoder=cfg.dataset.depth_encoder,
                 streaming_encoding=cfg.dataset.streaming_encoding,
                 encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
                 encoder_threads=cfg.dataset.encoder_threads,
@@ -341,13 +516,6 @@ def build_rollout_context(
                 * len(robot.cameras if hasattr(robot, "cameras") else []),
             )
         else:
-            if isinstance(cfg.strategy, DAggerStrategyConfig):
-                dataset_features["intervention"] = {
-                    "dtype": "bool",
-                    "shape": (1,),
-                    "names": None,
-                }
-
             repo_name = cfg.dataset.repo_id.split("/", 1)[-1]
             if not repo_name.startswith("rollout_"):
                 raise ValueError(
@@ -367,7 +535,8 @@ def build_rollout_context(
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera
                 * len(robot.cameras if hasattr(robot, "cameras") else []),
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
-                camera_encoder=cfg.dataset.camera_encoder,
+                rgb_encoder=cfg.dataset.rgb_encoder,
+                depth_encoder=cfg.dataset.depth_encoder,
                 streaming_encoding=cfg.dataset.streaming_encoding,
                 encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
                 encoder_threads=cfg.dataset.encoder_threads,
@@ -387,7 +556,8 @@ def build_rollout_context(
 
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=policy_config,
-        pretrained_path=cfg.policy.pretrained_path,
+        pretrained_path=policy_config.pretrained_path,
+        pretrained_revision=policy_config.pretrained_revision,
         dataset_stats=dataset_stats,
         preprocessor_overrides={
             "device_processor": {"device": cfg.device},
@@ -395,14 +565,11 @@ def build_rollout_context(
         },
     )
 
-    if isinstance(cfg.inference, SyncInferenceConfig) and any(
-        isinstance(step, RelativeActionsProcessorStep) and step.enabled
-        for step in getattr(preprocessor, "steps", ())
-    ):
-        raise NotImplementedError(
-            "SyncInferenceEngine does not support policies with relative actions for now."
-            "Use --inference.type=rtc or remove relative action processor steps from the policy pipeline."
-        )
+    # A relative-action chunk is anchored to the state it was predicted from, and the engines
+    # below rerun the preprocessor once per tick. Hand the step the policy's queue depth so it
+    # holds that anchor until the chunk drains, instead of following the moving arm. Harmless
+    # for the chunk-at-once engines (RTC), whose policy queue is always empty.
+    bind_relative_anchor(policy, preprocessor)
 
     # --- 7. Inference strategy (needs policy + pre/post + hardware) --
     logger.info(
@@ -416,13 +583,12 @@ def build_rollout_context(
         preprocessor=preprocessor,
         postprocessor=postprocessor,
         robot_wrapper=robot_wrapper,
-        hw_features=hw_features,
         dataset_features=dataset_features,
         ordered_action_keys=ordered_action_keys,
         task=task_str,
         fps=cfg.fps,
         device=cfg.device,
-        use_torch_compile=cfg.use_torch_compile,
+        use_torch_compile=torch_compile_active,
         compile_warmup_inferences=cfg.compile_warmup_inferences,
         shutdown_event=shutdown_event,
     )

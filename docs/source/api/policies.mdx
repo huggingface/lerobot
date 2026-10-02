@@ -1,0 +1,20 @@
+# Policies
+
+Every policy inherits [`PreTrainedPolicy`], which combines a `torch.nn.Module` with the Hub mixin, so any
+policy can be pushed to and loaded from the Hugging Face Hub with the same two calls.
+
+Each policy has its own guide with training recipes and results — [ACT](../act), [SmolVLA](../smolvla),
+[π₀](../pi0), [π₀.₅](../pi05) and the rest are listed under Policies. To add one, see
+[Adding a Policy](../bring_your_own_policies).
+
+## PreTrainedPolicy
+
+[[autodoc]] lerobot.policies.pretrained.PreTrainedPolicy
+
+## PreTrainedConfig
+
+[[autodoc]] lerobot.configs.PreTrainedConfig
+
+## make_policy
+
+[[autodoc]] lerobot.policies.factory.make_policy

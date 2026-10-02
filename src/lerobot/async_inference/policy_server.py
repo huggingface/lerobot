@@ -38,14 +38,12 @@ import draccus
 import grpc
 import torch
 
-from lerobot.policies import get_policy_class, make_pre_post_processors
+from lerobot.configs import PolicyFeature
+from lerobot.lerobot_types import PolicyAction
+from lerobot.policies import PreTrainedPolicy, get_policy_class, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline
-from lerobot.transport import (
-    services_pb2,  # type: ignore
-    services_pb2_grpc,  # type: ignore
-)
+from lerobot.transport import services_pb2, services_pb2_grpc
 from lerobot.transport.utils import receive_bytes_in_chunks
-from lerobot.types import PolicyAction
 
 from .configs import PolicyServerConfig
 from .constants import SUPPORTED_POLICIES
@@ -60,31 +58,33 @@ from .helpers import (
     raw_observation_to_observation,
 )
 
+_POLICY_NOT_LOADED = "No policy loaded: SendPolicyInstructions must be received before running inference"
+
 
 class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
     prefix = "policy_server"
     logger = get_logger(prefix)
 
-    def __init__(self, config: PolicyServerConfig):
+    def __init__(self, config: PolicyServerConfig) -> None:
         self.config = config
         self.shutdown_event = threading.Event()
 
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=config.fps)
 
-        self.observation_queue = Queue(maxsize=1)
+        self.observation_queue: Queue[TimedObservation] = Queue(maxsize=1)
 
         self._predicted_timesteps_lock = threading.Lock()
-        self._predicted_timesteps = set()
+        self._predicted_timesteps: set[int] = set()
 
-        self.last_processed_obs = None
+        self.last_processed_obs: TimedObservation | None = None
 
         # Attributes will be set by SendPolicyInstructions
-        self.device = None
-        self.policy_type = None
-        self.lerobot_features = None
-        self.actions_per_chunk = None
-        self.policy = None
+        self.device: str | None = None
+        self.policy_type: str | None = None
+        self.lerobot_features: dict[str, dict] | None = None
+        self.actions_per_chunk: int | None = None
+        self.policy: PreTrainedPolicy | None = None
         self.preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None
         self.postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None
 
@@ -93,7 +93,9 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         return not self.shutdown_event.is_set()
 
     @property
-    def policy_image_features(self):
+    def policy_image_features(self) -> dict[str, PolicyFeature]:
+        if self.policy is None:
+            raise RuntimeError(_POLICY_NOT_LOADED)
         return self.policy.config.image_features
 
     def _reset_server(self) -> None:
@@ -205,7 +207,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         )
 
         if not self._enqueue_observation(
-            timed_observation  # wrapping a RawObservation
+            timed_observation  # wrapping a RobotObservation
         ):
             self.logger.debug(f"Observation #{obs_timestep} has been filtered out")
 
@@ -274,14 +276,16 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             self.logger.debug(f"Skipping observation #{obs.get_timestep()} - Timestep predicted already!")
             return False
 
-        elif observations_similar(obs, previous_obs, lerobot_features=self.lerobot_features):
+        if self.lerobot_features is None:
+            raise RuntimeError(_POLICY_NOT_LOADED)
+
+        if observations_similar(obs, previous_obs, lerobot_features=self.lerobot_features):
             self.logger.debug(
                 f"Skipping observation #{obs.get_timestep()} - Observation too similar to last obs predicted!"
             )
             return False
 
-        else:
-            return True
+        return True
 
     def _enqueue_observation(self, obs: TimedObservation) -> bool:
         """Enqueue an observation if it must go through processing, otherwise skip it.
@@ -319,8 +323,10 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             for i, action in enumerate(action_chunk)
         ]
 
-    def _get_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
-        """Get an action chunk from the policy. The chunk contains only"""
+    def _get_action_chunk(self, observation: Observation) -> torch.Tensor:
+        """Get an action chunk from the policy, keeping only the first `actions_per_chunk` actions."""
+        if self.policy is None or self.actions_per_chunk is None:
+            raise RuntimeError(_POLICY_NOT_LOADED)
         chunk = self.policy.predict_action_chunk(observation)
         if chunk.ndim != 3:
             chunk = chunk.unsqueeze(0)  # adding batch dimension, now shape is (B, chunk_size, action_dim)
@@ -337,6 +343,9 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         4. Apply postprocessor (unnormalization, device movement)
         5. Convert to TimedAction list
         """
+        if self.lerobot_features is None or self.preprocessor is None or self.postprocessor is None:
+            raise RuntimeError(_POLICY_NOT_LOADED)
+
         """1. Prepare observation"""
         start_prepare = time.perf_counter()
         observation: Observation = raw_observation_to_observation(
@@ -349,7 +358,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         """2. Apply preprocessor"""
         start_preprocess = time.perf_counter()
         observation = self.preprocessor(observation)
-        self.last_processed_obs: TimedObservation = observation_t
+        self.last_processed_obs = observation_t
         preprocessing_time = time.perf_counter() - start_preprocess
 
         """3. Get action chunk"""

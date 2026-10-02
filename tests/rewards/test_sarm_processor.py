@@ -25,7 +25,7 @@ import pandas as pd
 import pytest
 import torch
 
-from lerobot.types import TransitionKey
+from lerobot.lerobot_types import TransitionKey
 
 
 class MockDatasetMeta:
@@ -692,3 +692,140 @@ class TestSARMEncodingProcessorStepEndToEnd:
             assert abs(actual_dense - expected_dense) < 0.01, (
                 f"Frame {frame}: dense mismatch {actual_dense:.3f} vs expected {expected_dense:.3f}"
             )
+
+    def test_rejects_missing_dense_annotation_columns(self, mock_clip_model):
+        """A multi-stage dense head must reject metadata with no annotation columns."""
+        from lerobot.rewards.sarm.processor_sarm import SARMEncodingProcessorStep
+
+        config = MockConfig(
+            annotation_mode="dense_only",
+            dense_subtask_names=["d1", "d2", "d3", "d4"],
+            dense_temporal_proportions=[0.25, 0.25, 0.25, 0.25],
+        )
+        # episodes metadata WITHOUT any dense_subtask_* columns
+        episodes = [
+            {"dataset_from_index": 0, "dataset_to_index": 100, "task": "t"},
+            {"dataset_from_index": 100, "dataset_to_index": 200, "task": "t"},
+        ]
+        dataset_meta = MockDatasetMeta(episodes)
+
+        with pytest.raises(ValueError, match="Training would produce all-zero targets"):
+            SARMEncodingProcessorStep(config=config, dataset_meta=dataset_meta)
+
+    def test_rejects_dense_annotations_when_all_null(self, mock_clip_model):
+        """Present-but-null annotation columns must also fail before training."""
+        from lerobot.rewards.sarm.processor_sarm import SARMEncodingProcessorStep
+
+        config = MockConfig(
+            annotation_mode="dense_only",
+            dense_subtask_names=["d1", "d2", "d3", "d4"],
+            dense_temporal_proportions=[0.25, 0.25, 0.25, 0.25],
+        )
+        episodes = [
+            {
+                "dataset_from_index": 0,
+                "dataset_to_index": 100,
+                "task": "t",
+                "dense_subtask_names": None,
+                "dense_subtask_start_frames": None,
+                "dense_subtask_end_frames": None,
+            },
+            {
+                "dataset_from_index": 100,
+                "dataset_to_index": 200,
+                "task": "t",
+                "dense_subtask_names": None,
+                "dense_subtask_start_frames": None,
+                "dense_subtask_end_frames": None,
+            },
+        ]
+        dataset_meta = MockDatasetMeta(episodes)
+
+        with pytest.raises(ValueError, match="none of the 2 episodes have usable annotations"):
+            SARMEncodingProcessorStep(config=config, dataset_meta=dataset_meta)
+
+    def test_rejects_dense_annotations_with_missing_frame_column(self, mock_clip_model):
+        """Names alone are not usable when a required frame-boundary column is absent."""
+        from lerobot.rewards.sarm.processor_sarm import SARMEncodingProcessorStep
+
+        config = MockConfig(
+            annotation_mode="dense_only",
+            dense_subtask_names=["d1", "d2"],
+            dense_temporal_proportions=[0.5, 0.5],
+        )
+        episodes = [
+            {
+                "dataset_from_index": 0,
+                "dataset_to_index": 100,
+                "task": "t",
+                "dense_subtask_names": ["d1", "d2"],
+                "dense_subtask_start_frames": [0, 50],
+            }
+        ]
+
+        with pytest.raises(ValueError, match="Missing required columns: subtask_end_frames"):
+            SARMEncodingProcessorStep(config=config, dataset_meta=MockDatasetMeta(episodes))
+
+    def test_warns_when_dense_annotations_are_partial(self, mock_clip_model, caplog):
+        """Partially annotated datasets remain supported but report exact coverage."""
+        import logging
+
+        from lerobot.rewards.sarm.processor_sarm import SARMEncodingProcessorStep
+
+        config = MockConfig(
+            annotation_mode="dense_only",
+            dense_subtask_names=["d1", "d2"],
+            dense_temporal_proportions=[0.5, 0.5],
+        )
+        episodes = [
+            {
+                "dataset_from_index": 0,
+                "dataset_to_index": 100,
+                "task": "t",
+                "dense_subtask_names": ["d1", "d2"],
+                "dense_subtask_start_frames": [0, 50],
+                "dense_subtask_end_frames": [49, 99],
+            },
+            {
+                "dataset_from_index": 100,
+                "dataset_to_index": 200,
+                "task": "t",
+                "dense_subtask_names": None,
+                "dense_subtask_start_frames": None,
+                "dense_subtask_end_frames": None,
+            },
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="lerobot.rewards.sarm.processor_sarm"):
+            SARMEncodingProcessorStep(config=config, dataset_meta=MockDatasetMeta(episodes))
+
+        assert "1/2 episodes have unusable annotations" in caplog.text
+        assert "only the 1 annotated episodes will train the head" in caplog.text
+
+    def test_no_warning_when_dense_annotations_present(self, mock_clip_model, caplog):
+        """A fully annotated dataset must not emit an annotation-coverage warning."""
+        import logging
+
+        from lerobot.rewards.sarm.processor_sarm import SARMEncodingProcessorStep
+
+        config = MockConfig(
+            annotation_mode="dense_only",
+            dense_subtask_names=["d1", "d2", "d3", "d4"],
+            dense_temporal_proportions=[0.25, 0.25, 0.25, 0.25],
+        )
+        episodes = [
+            {
+                "dataset_from_index": 0,
+                "dataset_to_index": 100,
+                "task": "t",
+                "dense_subtask_names": ["d1", "d2", "d3", "d4"],
+                "dense_subtask_start_frames": [0, 25, 50, 75],
+                "dense_subtask_end_frames": [25, 50, 75, 100],
+            }
+        ]
+        dataset_meta = MockDatasetMeta(episodes)
+
+        with caplog.at_level(logging.WARNING, logger="lerobot.rewards.sarm.processor_sarm"):
+            SARMEncodingProcessorStep(config=config, dataset_meta=dataset_meta)
+
+        assert not any("unusable annotations" in m for m in caplog.messages)

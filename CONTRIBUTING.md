@@ -50,6 +50,10 @@ To run checks manually on all files:
 pre-commit run --all-files
 ```
 
+### Docstrings
+
+The API reference is generated from the docstrings in `src/lerobot/`. If you add or change anything public, follow the [docstring standard](https://huggingface.co/docs/lerobot/writing_docstrings) — the format is parsed by the renderer and checked in CI.
+
 ### Running Tests
 
 We use `pytest`. First, ensure you have test artifacts by installing **git-lfs**:

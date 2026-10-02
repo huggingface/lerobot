@@ -19,15 +19,16 @@ Tests for the TokenizerProcessorStep class.
 """
 
 import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.processor import DataProcessorPipeline, TokenizerProcessorStep
+from lerobot.lerobot_types import TransitionKey
+from lerobot.processor import ActionTokenizerProcessorStep, DataProcessorPipeline, TokenizerProcessorStep
 from lerobot.processor.converters import create_transition, identity_transition
-from lerobot.types import TransitionKey
 from lerobot.utils.constants import (
     ACTION,
     OBS_IMAGE,
@@ -86,6 +87,51 @@ class MockTokenizer:
             result = {k: v.squeeze(0) for k, v in result.items()}
 
         return result
+
+    def save_pretrained(self, save_directory: str | Path) -> None:
+        save_directory = Path(save_directory)
+        save_directory.mkdir(parents=True, exist_ok=True)
+        (save_directory / "tokenizer_config.json").write_text("{}")
+
+
+def test_action_tokenizer_config_preserves_token_mapping():
+    processor = object.__new__(ActionTokenizerProcessorStep)
+    processor.trust_remote_code = True
+    processor.max_action_tokens = 384
+    processor.fast_skip_tokens = 64
+    processor.paligemma_tokenizer_name = "custom/paligemma"
+    processor.allow_truncation = False
+    processor.action_tokenizer_name = "custom/fast"
+    processor.action_tokenizer_input_object = None
+
+    assert processor.get_config() == {
+        "trust_remote_code": True,
+        "max_action_tokens": 384,
+        "fast_skip_tokens": 64,
+        "paligemma_tokenizer_name": "custom/paligemma",
+        "allow_truncation": False,
+        "action_tokenizer_name": "custom/fast",
+    }
+
+
+def test_action_tokenizer_can_reject_truncated_sequences():
+    processor = object.__new__(ActionTokenizerProcessorStep)
+    processor.max_action_tokens = 4
+    processor.fast_skip_tokens = 128
+    processor.allow_truncation = False
+    processor.action_tokenizer = lambda _actions: [1, 2, 3]
+    processor._paligemma_tokenizer = type(
+        "Tokenizer",
+        (),
+        {
+            "vocab_size": 1000,
+            "bos_token_id": 2,
+            "encode": lambda _self, text, **_kwargs: [10, 11] if text == "Action: " else [12, 1],
+        },
+    )()
+
+    with pytest.raises(ValueError, match="max_action_tokens=4"):
+        processor._tokenize_action(torch.zeros(1, 2, 1))
 
 
 @pytest.fixture
@@ -490,9 +536,11 @@ def test_save_and_load_pretrained_with_tokenizer_name(mock_auto_tokenizer):
 
 
 @skip_if_package_missing("transformers")
-def test_save_and_load_pretrained_with_tokenizer_object():
-    """Test saving and loading processor with tokenizer object using overrides."""
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_save_and_load_pretrained_with_tokenizer_object(mock_auto_tokenizer):
+    """Test that a tokenizer object is saved and reloads from its local artifact."""
     mock_tokenizer = MockTokenizer(vocab_size=100)
+    mock_auto_tokenizer.from_pretrained.return_value = mock_tokenizer
 
     original_processor = TokenizerProcessorStep(
         tokenizer=mock_tokenizer, max_length=32, task_key="instruction"
@@ -506,11 +554,12 @@ def test_save_and_load_pretrained_with_tokenizer_object():
         # Save processor
         robot_processor.save_pretrained(temp_dir)
 
-        # Load processor with tokenizer override (since tokenizer object wasn't saved)
+        assert (Path(temp_dir) / "tokenizer" / "tokenizer_config.json").is_file()
+
+        # Load processor without an object override: the saved artifact is portable.
         loaded_processor = DataProcessorPipeline.from_pretrained(
             temp_dir,
             config_filename="dataprocessorpipeline.json",
-            overrides={"tokenizer_processor": {"tokenizer": mock_tokenizer}},
             to_transition=identity_transition,
             to_output=identity_transition,
         )

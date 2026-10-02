@@ -23,6 +23,7 @@ import torch
 from torch import Tensor
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -37,7 +38,6 @@ from lerobot.rewards.topreward.configuration_topreward import (
     DEFAULT_PROMPT_SUFFIX_TEMPLATE,
     TOPRewardConfig,
 )
-from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     OBS_IMAGES,
     OBS_PREFIX,
@@ -144,6 +144,8 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         observation = transition.get(TransitionKey.OBSERVATION)
+        if observation is None:
+            raise ValueError("TOPRewardEncoderProcessorStep requires an observation in the transition")
         complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
         if self.image_key not in observation:
             raise KeyError(f"TOPReward expected image key {self.image_key!r} in observation")

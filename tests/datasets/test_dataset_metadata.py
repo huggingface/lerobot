@@ -59,11 +59,13 @@ def _make_dummy_stats(features: dict) -> dict:
     stats = {}
     for key, ft in features.items():
         if ft["dtype"] in ("image", "video"):
+            channels = ft["shape"][-1]
+            stat_shape = (channels, 1, 1)
             stats[key] = {
-                "max": np.ones((3, 1, 1), dtype=np.float32),
-                "mean": np.full((3, 1, 1), 0.5, dtype=np.float32),
-                "min": np.zeros((3, 1, 1), dtype=np.float32),
-                "std": np.full((3, 1, 1), 0.25, dtype=np.float32),
+                "max": np.ones(stat_shape, dtype=np.float32),
+                "mean": np.full(stat_shape, 0.5, dtype=np.float32),
+                "min": np.zeros(stat_shape, dtype=np.float32),
+                "std": np.full(stat_shape, 0.25, dtype=np.float32),
                 "count": np.array([5]),
             }
         elif ft["dtype"] in ("float32", "float64", "int64"):
@@ -140,6 +142,45 @@ def test_create_without_videos_has_no_video_path(tmp_path):
 
     assert meta.video_path is None
     assert meta.video_keys == []
+
+
+@pytest.mark.parametrize(
+    ("marker_field", "marker_key"),
+    [
+        ("info", "is_depth_map"),
+        ("info", "video.is_depth_map"),
+        ("video_info", "video.is_depth_map"),
+    ],
+    ids=["info.is_depth_map", "info.video.is_depth_map_legacy", "video_info.video.is_depth_map_legacy"],
+)
+def test_depth_keys_property_filters_by_marker(tmp_path, marker_field, marker_key):
+    """``depth_keys`` recognises the canonical and the two legacy marker variants."""
+    depth_feature = {
+        "dtype": "video",
+        "shape": (64, 96, 1),
+        "names": ["height", "width", "channels"],
+        marker_field: {marker_key: True},
+    }
+    features = {
+        **VIDEO_FEATURES,
+        "observation.images.laptop_depth": depth_feature,
+    }
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/depth_keys",
+        fps=DEFAULT_FPS,
+        features=features,
+        root=tmp_path / f"depth_keys_{marker_field}_{marker_key.replace('.', '_')}",
+    )
+
+    assert set(meta.video_keys) == {"observation.images.laptop", "observation.images.laptop_depth"}
+    assert meta.depth_keys == ["observation.images.laptop_depth"]
+
+
+def test_depth_keys_empty_when_no_marker(tmp_path):
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/no_depth", fps=DEFAULT_FPS, features=VIDEO_FEATURES, root=tmp_path / "no_depth"
+    )
+    assert meta.depth_keys == []
 
 
 def test_create_raises_on_existing_directory(tmp_path):

@@ -17,6 +17,7 @@
 import time
 
 from lerobot.datasets import LeRobotDataset
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
     RobotProcessorPipeline,
@@ -27,7 +28,6 @@ from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
 from lerobot.robots.so_follower.robot_kinematic_processor import (
     InverseKinematicsEEToJoints,
 )
-from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say

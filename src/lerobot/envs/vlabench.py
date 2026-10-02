@@ -37,7 +37,7 @@ import numpy as np
 from gymnasium import spaces
 from scipy.spatial.transform import Rotation
 
-from lerobot.types import RobotObservation
+from lerobot.lerobot_types import RobotObservation
 
 from .utils import _LazyAsyncVectorEnv
 
@@ -215,10 +215,10 @@ class VLABenchEnv(gym.Env):
         if self._env is not None:
             return
 
-        import VLABench.robots  # noqa: F401  # type: ignore[import-untyped]
-        import VLABench.tasks  # noqa: F401  # type: ignore[import-untyped]
-        from dm_control.rl.control import PhysicsError  # type: ignore[import-untyped]
-        from VLABench.envs import load_env  # type: ignore[import-untyped]
+        import VLABench.robots  # noqa: F401
+        import VLABench.tasks  # noqa: F401
+        from dm_control.rl.control import PhysicsError
+        from VLABench.envs import load_env
 
         h, w = self.render_resolution
         last_exc: PhysicsError | None = None
@@ -373,7 +373,7 @@ class VLABenchEnv(gym.Env):
 
         if action.shape[0] != 7:
             # Unknown layout — fall back to zero-pad so the sim doesn't crash.
-            padded = np.zeros(ctrl_dim, dtype=np.float64)
+            padded: np.ndarray = np.zeros(ctrl_dim, dtype=np.float64)
             padded[: min(action.shape[0], ctrl_dim)] = action[:ctrl_dim]
             return padded
 
@@ -449,7 +449,7 @@ class VLABenchEnv(gym.Env):
                 rng_seed(seed)
 
     def step(self, action: np.ndarray) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
-        from dm_control.rl.control import PhysicsError  # type: ignore[import-untyped]
+        from dm_control.rl.control import PhysicsError
 
         self._ensure_env()
         assert self._env is not None

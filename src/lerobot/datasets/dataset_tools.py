@@ -25,8 +25,9 @@ This module provides utilities for:
 
 import logging
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from copy import deepcopy
 from pathlib import Path
 
 import datasets
@@ -36,7 +37,15 @@ import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
 
-from lerobot.configs import VideoEncoderConfig, camera_encoder_defaults
+from lerobot.configs import (
+    DepthEncoderConfig,
+    RGBEncoderConfig,
+    VideoEncoderConfig,
+    depth_encoder_defaults,
+    encoder_config_from_video_info,
+    rgb_encoder_defaults,
+)
+from lerobot.configs.video import DEPTH_ENCODER_INFO_FIELD_NAMES
 from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME, OBS_IMAGE, OBS_STATE
 from lerobot.utils.utils import flatten_dict
 
@@ -47,6 +56,7 @@ from .compute_stats import (
     compute_relative_action_stats,
 )
 from .dataset_metadata import LeRobotDatasetMetadata
+from .image_writer import write_image
 from .io_utils import (
     get_parquet_file_size_in_mb,
     load_episodes,
@@ -61,14 +71,17 @@ from .utils import (
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
     DEFAULT_EPISODES_PATH,
+    DEPTH_FILE_PATTERN,
+    IMAGE_FILE_PATTERN,
     VIDEO_DIR,
     update_chunk_file_indices,
 )
 from .video_utils import (
     encode_video_frames,
-    get_video_info,
     reencode_video,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> dict:
@@ -120,7 +133,7 @@ def delete_episodes(
     if invalid:
         raise ValueError(f"Invalid episode indices: {invalid}")
 
-    logging.info(f"Deleting {len(episode_indices)} episodes from dataset")
+    logger.info(f"Deleting {len(episode_indices)} episodes from dataset")
 
     if repo_id is None:
         repo_id = f"{dataset.repo_id}_modified"
@@ -157,7 +170,7 @@ def delete_episodes(
         tolerance_s=dataset.tolerance_s,
     )
 
-    logging.info(f"Created new dataset with {len(episodes_to_keep)} episodes")
+    logger.info(f"Created new dataset with {len(episodes_to_keep)} episodes")
     return new_dataset
 
 
@@ -191,11 +204,16 @@ def split_dataset(
     if not splits:
         raise ValueError("No splits provided")
 
-    if all(isinstance(v, float) for v in splits.values()):
-        splits = _fractions_to_episode_indices(dataset.meta.total_episodes, splits)
+    fractions = {name: value for name, value in splits.items() if isinstance(value, float)}
+    if len(fractions) == len(splits):
+        episode_splits = _fractions_to_episode_indices(dataset.meta.total_episodes, fractions)
+    elif fractions:
+        raise ValueError("splits must map every name to a fraction, or every name to episode indices")
+    else:
+        episode_splits = {name: value for name, value in splits.items() if not isinstance(value, float)}
 
-    all_episodes = set()
-    for split_name, episodes in splits.items():
+    all_episodes: set[int] = set()
+    for split_name, episodes in episode_splits.items():
         if not episodes:
             raise ValueError(f"Split '{split_name}' has no episodes")
         episode_set = set(episodes)
@@ -213,8 +231,8 @@ def split_dataset(
 
     result_datasets = {}
 
-    for split_name, episodes in splits.items():
-        logging.info(f"Creating split '{split_name}' with {len(episodes)} episodes")
+    for split_name, episodes in episode_splits.items():
+        logger.info(f"Creating split '{split_name}' with {len(episodes)} episodes")
 
         split_repo_id = f"{dataset.repo_id}_{split_name}"
 
@@ -477,23 +495,46 @@ def _fractions_to_episode_indices(
     total_episodes: int,
     splits: dict[str, float],
 ) -> dict[str, list[int]]:
-    """Convert split fractions to episode indices."""
+    """Convert split fractions to episode indices.
+
+    Every episode is assigned to exactly one split, and every split with a positive
+    fraction receives at least one episode, so a small fraction can no longer round
+    down to zero and drop both its split and its episodes.
+    """
+    for name, fraction in splits.items():
+        if fraction < 0:
+            raise ValueError(f"Split fraction for '{name}' must be non-negative, got {fraction}.")
     if sum(splits.values()) > 1.0:
         raise ValueError("Split fractions must sum to <= 1.0")
+
+    for name, fraction in splits.items():
+        if fraction == 0:
+            logger.warning(f"Split '{name}' has a fraction of 0 and will be skipped.")
+
+    positive_splits = [name for name, fraction in splits.items() if fraction > 0]
+    if not positive_splits:
+        raise ValueError("At least one split must have a positive fraction.")
+    if total_episodes < len(positive_splits):
+        raise ValueError(
+            f"Cannot split {total_episodes} episodes into {len(positive_splits)} non-empty splits: "
+            "there are fewer episodes than requested splits."
+        )
+
+    counts = {name: int(total_episodes * fraction) for name, fraction in splits.items()}
+    counts[positive_splits[-1]] += total_episodes - sum(counts.values())
+
+    for name in positive_splits:
+        if counts[name] == 0:
+            donor = max(positive_splits, key=lambda n: counts[n])
+            counts[donor] -= 1
+            counts[name] = 1
 
     indices = list(range(total_episodes))
     result = {}
     start_idx = 0
-
-    for split_name, fraction in splits.items():
-        num_episodes = int(total_episodes * fraction)
-        if num_episodes == 0:
-            logging.warning(f"Split '{split_name}' has no episodes, skipping...")
-            continue
-        end_idx = start_idx + num_episodes
-        if split_name == list(splits.keys())[-1]:
-            end_idx = total_episodes
-        result[split_name] = indices[start_idx:end_idx]
+    for name in positive_splits:
+        end_idx = start_idx + counts[name]
+        result[name] = indices[start_idx:end_idx]
         start_idx = end_idx
 
     return result
@@ -600,7 +641,7 @@ def _keep_episodes_from_video_with_av(
     output_path: Path,
     episodes_to_keep: list[tuple[int, int]],
     fps: float,
-    camera_encoder: VideoEncoderConfig,
+    video_encoder: VideoEncoderConfig,
 ) -> None:
     """Keep only specified episodes from a video file using PyAV.
 
@@ -614,7 +655,7 @@ def _keep_episodes_from_video_with_av(
             Ranges are half-open intervals: [start_frame, end_frame), where start_frame
             is inclusive and end_frame is exclusive.
         fps: Frame rate of the video.
-        camera_encoder: Video encoder settings used to re-encode the kept frames.
+        video_encoder: Video encoder settings used to re-encode the kept frames.
     """
     from fractions import Fraction
 
@@ -639,13 +680,13 @@ def _keep_episodes_from_video_with_av(
 
     # Convert fps to Fraction for PyAV compatibility.
     fps_fraction = Fraction(fps).limit_denominator(1000)
-    codec_options = camera_encoder.get_codec_options(as_strings=True)
-    v_out = out.add_stream(camera_encoder.vcodec, rate=fps_fraction, options=codec_options)
+    codec_options = video_encoder.get_codec_options(as_strings=True)
+    v_out = out.add_stream(video_encoder.vcodec, rate=fps_fraction, options=codec_options)
 
     # PyAV type stubs don't distinguish video streams from audio/subtitle streams.
     v_out.width = v_in.codec_context.width
     v_out.height = v_in.codec_context.height
-    v_out.pix_fmt = camera_encoder.pix_fmt
+    v_out.pix_fmt = video_encoder.pix_fmt
 
     # Set time_base to match the frame rate for proper timestamp handling.
     v_out.time_base = Fraction(1, int(fps))
@@ -731,8 +772,8 @@ def _copy_and_reindex_videos(
     episodes_video_metadata: dict[int, dict] = {new_idx: {} for new_idx in episode_mapping.values()}
 
     for video_key in src_dataset.meta.video_keys:
-        logging.info(f"Processing videos for {video_key}")
-        camera_encoder = VideoEncoderConfig.from_video_info(
+        logger.info(f"Processing videos for {video_key}")
+        video_encoder = encoder_config_from_video_info(
             src_dataset.meta.info.features.get(video_key, {}).get("info")
         )
 
@@ -807,7 +848,7 @@ def _copy_and_reindex_videos(
                 )
                 dst_video_path.parent.mkdir(parents=True, exist_ok=True)
 
-                logging.info(
+                logger.info(
                     f"Re-encoding {video_key} (chunk {src_chunk_idx}, file {src_file_idx}) "
                     f"with {len(episodes_to_keep_ranges)} episodes"
                 )
@@ -816,7 +857,7 @@ def _copy_and_reindex_videos(
                     dst_video_path,
                     episodes_to_keep_ranges,
                     src_dataset.meta.fps,
-                    camera_encoder,
+                    video_encoder,
                 )
 
                 cumulative_ts = 0.0
@@ -873,12 +914,12 @@ def _copy_and_reindex_episodes_metadata(
             episode_meta.update(video_metadata[new_idx])
 
         # Extract episode statistics from parquet metadata.
-        # Note (maractingi): When pandas/pyarrow serializes numpy arrays with shape (3, 1, 1) to parquet,
+        # When pandas/pyarrow serializes numpy arrays with shape (C, 1, 1) to parquet,
         # they are being deserialized as nested object arrays like:
         #   array([array([array([0.])]), array([array([0.])]), array([array([0.])])])
         # This happens particularly with image/video statistics. We need to detect and flatten
-        # these nested structures back to proper (3, 1, 1) arrays so aggregate_stats can process them.
-        episode_stats = {}
+        # these nested structures back to proper (C, 1, 1) arrays so aggregate_stats can process them.
+        episode_stats: dict[str, dict[str, np.ndarray]] = {}
         for key in src_episode_full:
             if key.startswith("stats/"):
                 stat_key = key.replace("stats/", "")
@@ -893,15 +934,16 @@ def _copy_and_reindex_episodes_metadata(
                     if feature_name in src_dataset.meta.features:
                         feature_dtype = src_dataset.meta.features[feature_name]["dtype"]
                         if feature_dtype in ["image", "video"] and stat_name != "count":
+                            # Stats are channel-first (C, 1, 1)
                             if isinstance(value, np.ndarray) and value.dtype == object:
                                 flat_values = []
                                 for item in value:
                                     while isinstance(item, np.ndarray):
                                         item = item.flatten()[0]
                                     flat_values.append(item)
-                                value = np.array(flat_values, dtype=np.float64).reshape(3, 1, 1)
-                            elif isinstance(value, np.ndarray) and value.shape == (3,):
-                                value = value.reshape(3, 1, 1)
+                                value = np.array(flat_values, dtype=np.float64).reshape(-1, 1, 1)
+                            elif isinstance(value, np.ndarray) and value.ndim == 1:
+                                value = value.reshape(-1, 1, 1)
 
                     episode_stats[feature_name][stat_name] = value
 
@@ -927,10 +969,10 @@ def _copy_and_reindex_episodes_metadata(
     write_info(dst_meta.info, dst_meta.root)
 
     if not all_stats:
-        logging.warning("No statistics found to aggregate")
+        logger.warning("No statistics found to aggregate")
         return
 
-    logging.info(f"Aggregating statistics for {len(all_stats)} episodes")
+    logger.info(f"Aggregating statistics for {len(all_stats)} episodes")
     aggregated_stats = aggregate_stats(all_stats)
     filtered_stats = {k: v for k, v in aggregated_stats.items() if k in dst_meta.features}
     write_stats(filtered_stats, dst_meta.root)
@@ -1033,10 +1075,12 @@ def _copy_data_with_feature_changes(
                     df[feature_name] = feature_values
                 else:
                     feature_slice = values[frame_idx:end_idx]
-                    if len(feature_slice.shape) > 1 and feature_slice.shape[1] == 1:
+                    if feature_slice.ndim == 1:
+                        df[feature_name] = feature_slice
+                    elif feature_slice.ndim == 2 and feature_slice.shape[1] == 1:
                         df[feature_name] = feature_slice.flatten()
                     else:
-                        df[feature_name] = feature_slice
+                        df[feature_name] = list(feature_slice)
             frame_idx = end_idx
 
         # Write using the same chunk/file structure as source
@@ -1101,12 +1145,14 @@ def _copy_episodes_metadata_and_stats(
     if dst_meta.video_keys and src_dataset.meta.video_keys:
         for key in dst_meta.video_keys:
             if key in src_dataset.meta.features:
-                dst_meta.info.features[key]["info"] = src_dataset.meta.info.features[key].get("info", {})
+                dst_meta.info.features[key]["info"] = deepcopy(
+                    src_dataset.meta.info.features[key].get("info", {})
+                )
 
     write_info(dst_meta.info, dst_meta.root)
 
     if set(dst_meta.features.keys()) != set(src_dataset.meta.features.keys()):
-        logging.info("Recalculating dataset statistics...")
+        logger.info("Recalculating dataset statistics...")
         if src_dataset.meta.stats:
             new_stats = {}
             for key in dst_meta.features:
@@ -1150,15 +1196,15 @@ def _save_episode_images_for_video(
     # Get all items for this episode
     episode_dataset = imgs_dataset.select(range(from_idx, to_idx))
 
+    is_depth = img_key in dataset.meta.depth_keys
+    frame_pattern = DEPTH_FILE_PATTERN if is_depth else IMAGE_FILE_PATTERN
+
     # Define function to save a single image
     def save_single_image(i_item_tuple):
         i, item = i_item_tuple
-        img = item[img_key]
-        # Use frame-XXXXXX.png format to match encode_video_frames expectations
-        img.save(str(imgs_dir / f"frame-{i:06d}.png"), quality=100)
+        write_image(item[img_key], imgs_dir / frame_pattern.format(frame_index=i))
         return i
 
-    # Save images with proper naming convention for encode_video_frames (frame-XXXXXX.png)
     items = list(enumerate(episode_dataset))
 
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
@@ -1190,13 +1236,14 @@ def _save_batch_episodes_images(
     hf_dataset = dataset.hf_dataset.with_format(None)
     imgs_dataset = hf_dataset.select_columns(img_key)
 
+    is_depth = img_key in dataset.meta.depth_keys
+    frame_pattern = DEPTH_FILE_PATTERN if is_depth else IMAGE_FILE_PATTERN
+
     # Define function to save a single image with global frame index
     # Defined once outside the loop to avoid repeated closure creation
     def save_single_image(i_item_tuple, base_frame_idx, img_key_param):
         i, item = i_item_tuple
-        img = item[img_key_param]
-        # Use global frame index for naming
-        img.save(str(imgs_dir / f"frame-{base_frame_idx + i:06d}.png"), quality=100)
+        write_image(item[img_key_param], imgs_dir / frame_pattern.format(frame_index=base_frame_idx + i))
         return i
 
     episode_durations = []
@@ -1231,7 +1278,7 @@ def _iter_episode_batches(
     video_file_size_limit: float,
     max_episodes: int | None,
     max_frames: int | None,
-):
+) -> Iterator[list[int]]:
     """Generator that yields batches of episode indices for video encoding.
 
     Groups episodes into batches that respect size and memory constraints:
@@ -1250,7 +1297,7 @@ def _iter_episode_batches(
     Yields:
         List of episode indices for each batch
     """
-    batch_episodes = []
+    batch_episodes: list[int] = []
     estimated_size = 0.0
     total_frames = 0
 
@@ -1287,7 +1334,7 @@ def _estimate_frame_size_via_calibration(
     episode_indices: list[int],
     temp_dir: Path,
     fps: int,
-    camera_encoder: VideoEncoderConfig,
+    video_encoder: VideoEncoderConfig,
     num_calibration_frames: int = 30,
 ) -> float:
     """Estimate MB per frame by encoding a small calibration sample.
@@ -1301,7 +1348,7 @@ def _estimate_frame_size_via_calibration(
         episode_indices: List of episode indices being processed.
         temp_dir: Temporary directory for calibration files.
         fps: Frames per second for video encoding.
-        camera_encoder: Video encoder settings used for calibration encoding.
+        video_encoder: Video encoder settings used for calibration encoding.
         num_calibration_frames: Number of frames to use for calibration (default: 30).
 
     Returns:
@@ -1326,10 +1373,11 @@ def _estimate_frame_size_via_calibration(
         hf_dataset = dataset.hf_dataset.with_format(None)
         sample_indices = range(from_idx, from_idx + num_frames)
 
-        # Save calibration frames
+        # Save calibration frames using the suffix/format the encoder expects.
+        is_depth = img_key in dataset.meta.depth_keys
+        frame_pattern = DEPTH_FILE_PATTERN if is_depth else IMAGE_FILE_PATTERN
         for i, idx in enumerate(sample_indices):
-            img = hf_dataset[idx][img_key]
-            img.save(str(calibration_dir / f"frame-{i:06d}.png"), quality=100)
+            write_image(hf_dataset[idx][img_key], calibration_dir / frame_pattern.format(frame_index=i))
 
         # Encode calibration video
         calibration_video_path = calibration_dir / "calibration.mp4"
@@ -1337,7 +1385,7 @@ def _estimate_frame_size_via_calibration(
             imgs_dir=calibration_dir,
             video_path=calibration_video_path,
             fps=fps,
-            camera_encoder=camera_encoder,
+            video_encoder=video_encoder,
             overwrite=True,
         )
 
@@ -1346,7 +1394,7 @@ def _estimate_frame_size_via_calibration(
         video_size_mb = video_size_bytes / BYTES_PER_MIB
         size_per_frame_mb = video_size_mb / num_frames
 
-        logging.info(
+        logger.info(
             f"  Calibration: {num_frames} frames -> {video_size_mb:.2f} MB "
             f"= {size_per_frame_mb:.4f} MB/frame for {img_key}"
         )
@@ -1419,15 +1467,18 @@ def modify_tasks(
     dataset: LeRobotDataset,
     new_task: str | None = None,
     episode_tasks: dict[int, str] | None = None,
+    task_replacements: dict[str, str] | None = None,
 ) -> LeRobotDataset:
     """Modify tasks in a LeRobotDataset.
 
     This function allows you to either:
     1. Set a single task for the entire dataset (using `new_task`)
     2. Set specific tasks for specific episodes (using `episode_tasks`)
+    3. Replace existing task strings wherever they appear (using `task_replacements`)
 
-    You can combine both: `new_task` sets the default, and `episode_tasks` overrides
-    specific episodes.
+    Per episode, the task is resolved with precedence:
+    `episode_tasks` > `task_replacements` > `new_task` > original task. An episode that ends
+    up with no task (none of the above apply and it had no original task) raises an error.
 
     The dataset is modified in-place, updating only the task-related files:
     - meta/tasks.parquet
@@ -1437,11 +1488,14 @@ def modify_tasks(
 
     Args:
         dataset: The source LeRobotDataset to modify.
-        new_task: A single task string to apply to all episodes. If None and episode_tasks
-            is also None, raises an error.
-        episode_tasks: Optional dict mapping episode indices to their task strings.
-            Overrides `new_task` for specific episodes.
+        new_task: Default task applied to any episode not covered by `episode_tasks` or a
+            matching `task_replacements` entry.
+        episode_tasks: Optional dict mapping episode indices to task strings. Takes precedence
+            over both `task_replacements` and `new_task`.
+        task_replacements: Optional dict mapping existing task strings to new ones. Applied to
+            episodes whose current task matches a key. Every key must be an existing task.
 
+    At least one of `new_task`, `episode_tasks`, or `task_replacements` must be provided.
 
     Examples:
         Set a single task for all episodes:
@@ -1459,11 +1513,17 @@ def modify_tasks(
                 new_task="Default task",
                 episode_tasks={5: "Special task for episode 5"}
             )
-    """
-    if new_task is None and episode_tasks is None:
-        raise ValueError("Must specify at least one of new_task or episode_tasks")
 
-    if episode_tasks is not None:
+        Replace existing task strings in-place:
+            dataset = modify_tasks(
+                dataset,
+                task_replacements={"Pick up the cube": "Lift the cube"}
+            )
+    """
+    if not new_task and not episode_tasks and not task_replacements:
+        raise ValueError("Must specify at least one of new_task, episode_tasks, or task_replacements")
+
+    if episode_tasks:
         valid_indices = set(range(dataset.meta.total_episodes))
         invalid = set(episode_tasks.keys()) - valid_indices
         if invalid:
@@ -1473,19 +1533,29 @@ def modify_tasks(
     if dataset.meta.episodes is None:
         dataset.meta.episodes = load_episodes(dataset.root)
 
+    if task_replacements:
+        current_tasks = set(dataset.meta.tasks.index)
+        invalid_tasks = set(task_replacements) - current_tasks
+        if invalid_tasks:
+            raise ValueError(f"Task replacements reference unknown tasks: {sorted(invalid_tasks)}")
+
     # Build the mapping from episode index to task string
     episode_to_task: dict[int, str] = {}
     for ep_idx in range(dataset.meta.total_episodes):
+        original_tasks = dataset.meta.episodes[ep_idx]["tasks"]
+        original_task = original_tasks[0] if original_tasks else None
+
         if episode_tasks and ep_idx in episode_tasks:
             episode_to_task[ep_idx] = episode_tasks[ep_idx]
-        elif new_task is not None:
+        elif task_replacements and original_task in task_replacements:
+            episode_to_task[ep_idx] = task_replacements[original_task]
+        elif new_task:
             episode_to_task[ep_idx] = new_task
-        else:
+        elif original_task:
             # Keep original task if not overridden and no default provided
-            original_tasks = dataset.meta.episodes[ep_idx]["tasks"]
-            if not original_tasks:
-                raise ValueError(f"Episode {ep_idx} has no tasks and no default task was provided")
-            episode_to_task[ep_idx] = original_tasks[0]
+            episode_to_task[ep_idx] = original_task
+        else:
+            raise ValueError(f"Episode {ep_idx} has no task; provide new_task or episode_tasks")
 
     # Collect all unique tasks and create new task mapping
     unique_tasks = sorted(set(episode_to_task.values()))
@@ -1494,13 +1564,13 @@ def modify_tasks(
     )
     task_to_index = {task: idx for idx, task in enumerate(unique_tasks)}
 
-    logging.info(f"Modifying tasks in {dataset.repo_id}")
-    logging.info(f"New tasks: {unique_tasks}")
+    logger.info(f"Modifying tasks in {dataset.repo_id}")
+    logger.info(f"New tasks: {unique_tasks}")
 
     root = dataset.root
 
     # Update data files - modify task_index column
-    logging.info("Updating data files...")
+    logger.info("Updating data files...")
     data_dir = root / DATA_DIR
 
     for parquet_path in tqdm(sorted(data_dir.rglob("*.parquet")), desc="Updating data"):
@@ -1517,7 +1587,7 @@ def modify_tasks(
         df.to_parquet(parquet_path, index=False)
 
     # Update episodes metadata - modify tasks column
-    logging.info("Updating episodes metadata...")
+    logger.info("Updating episodes metadata...")
     episodes_dir = root / "meta" / "episodes"
 
     for parquet_path in tqdm(sorted(episodes_dir.rglob("*.parquet")), desc="Updating episodes"):
@@ -1538,7 +1608,7 @@ def modify_tasks(
     dataset.meta.tasks = new_task_df
     dataset.meta.episodes = load_episodes(root)
 
-    logging.info(f"Tasks: {unique_tasks}")
+    logger.info(f"Tasks: {unique_tasks}")
 
     return dataset
 
@@ -1602,7 +1672,7 @@ def recompute_stats(
         )
         features_to_compute.pop(ACTION, None)
 
-    logging.info(f"Recomputing stats for features: {list(features_to_compute.keys())}")
+    logger.info(f"Recomputing stats for features: {list(features_to_compute.keys())}")
 
     data_dir = dataset.root / DATA_DIR
     parquet_files = sorted(data_dir.glob("*/*.parquet"))
@@ -1610,6 +1680,7 @@ def recompute_stats(
         raise ValueError(f"No parquet files found in {data_dir}")
 
     all_episode_stats = []
+    # TODO: enable image and video stats re-computation
     numeric_keys = [k for k, v in features_to_compute.items() if v["dtype"] not in ["image", "video"]]
 
     for parquet_path in tqdm(parquet_files, desc="Computing stats from data files"):
@@ -1630,7 +1701,7 @@ def recompute_stats(
             all_episode_stats.append(ep_stats)
 
     if features_to_compute and not all_episode_stats:
-        logging.warning("No episode stats computed")
+        logger.warning("No episode stats computed")
         return dataset
 
     new_stats = aggregate_stats(all_episode_stats) if all_episode_stats else {}
@@ -1647,7 +1718,7 @@ def recompute_stats(
     write_stats(new_stats, dataset.root)
     dataset.meta.stats = new_stats
 
-    logging.info("Stats recomputed successfully")
+    logger.info("Stats recomputed successfully")
     return dataset
 
 
@@ -1655,7 +1726,8 @@ def convert_image_to_video_dataset(
     dataset: LeRobotDataset,
     output_dir: Path | None = None,
     repo_id: str | None = None,
-    camera_encoder: VideoEncoderConfig | None = None,
+    rgb_encoder: RGBEncoderConfig | None = None,
+    depth_encoder: DepthEncoderConfig | None = None,
     episode_indices: list[int] | None = None,
     num_workers: int = 4,
     max_episodes_per_batch: int | None = None,
@@ -1667,21 +1739,32 @@ def convert_image_to_video_dataset(
     LeRobot dataset structure with videos stored in chunked MP4 files.
 
     Args:
-        dataset: The source LeRobot dataset with images
-        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
-        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
-        camera_encoder: Video encoder settings
-            (``None`` uses :func:`~lerobot.configs.camera_encoder_defaults`).
-        episode_indices: List of episode indices to convert (None = all episodes)
-        num_workers: Number of threads for parallel processing (default: 4)
-        max_episodes_per_batch: Maximum episodes per video batch to avoid memory issues (None = no limit)
-        max_frames_per_batch: Maximum frames per video batch to avoid memory issues (None = no limit)
+        dataset: The source LeRobot dataset with images.
+        output_dir: Root directory where the converted dataset will be stored. When
+            ``None``, defaults to ``$HF_LEROBOT_HOME/repo_id``. Equivalent to
+            ``new_root`` in ``EditDatasetConfig``.
+        repo_id: Converted dataset identifier. Equivalent to ``new_repo_id`` in
+            ``EditDatasetConfig``.
+        rgb_encoder: Video encoder settings applied to RGB cameras. When ``None``,
+            :func:`~lerobot.configs.video.rgb_encoder_defaults` is used.
+        depth_encoder: Video encoder settings applied to depth-map cameras, including
+            the quantization parameters persisted to the dataset metadata. When
+            ``None``, :func:`~lerobot.configs.video.depth_encoder_defaults` is used.
+        episode_indices: Episode indices to convert. When ``None``, all episodes are
+            converted.
+        num_workers: Number of threads for parallel processing.
+        max_episodes_per_batch: Maximum episodes per video batch, to bound memory use.
+            ``None`` means no limit.
+        max_frames_per_batch: Maximum frames per video batch, to bound memory use.
+            ``None`` means no limit.
 
     Returns:
-        New LeRobotDataset with images encoded as videos
+        A new :class:`LeRobotDataset` with images encoded as videos.
     """
-    if camera_encoder is None:
-        camera_encoder = camera_encoder_defaults()
+    if rgb_encoder is None:
+        rgb_encoder = rgb_encoder_defaults()
+    if depth_encoder is None:
+        depth_encoder = depth_encoder_defaults()
 
     # Check that it's an image dataset
     if len(dataset.meta.video_keys) > 0:
@@ -1703,13 +1786,10 @@ def convert_image_to_video_dataset(
     if repo_id is None:
         repo_id = f"{dataset.repo_id}_video"
 
-    logging.info(
+    logger.info(
         f"Converting {len(episode_indices)} episodes with {len(img_keys)} cameras from {dataset.repo_id}"
     )
-    logging.info(
-        f"Video codec: {camera_encoder.vcodec}, pixel format: {camera_encoder.pix_fmt}, "
-        f"GOP: {camera_encoder.g}, CRF: {camera_encoder.crf}"
-    )
+    logger.info(f"RGB video encoder: {rgb_encoder}, depth video encoder: {depth_encoder}")
 
     # Create new features dict, converting image features to video features
     new_features = {}
@@ -1735,6 +1815,9 @@ def convert_image_to_video_dataset(
         data_files_size_in_mb=dataset.meta.data_files_size_in_mb,
         video_files_size_in_mb=dataset.meta.video_files_size_in_mb,
     )
+    video_path_template = new_meta.video_path
+    if video_path_template is None:
+        raise ValueError("Destination metadata has no video_path defined")
 
     # Create temporary directory for image extraction
     temp_dir = output_dir / "temp_images"
@@ -1747,7 +1830,7 @@ def convert_image_to_video_dataset(
 
     try:
         # Build episode metadata entries first
-        logging.info("Building episode metadata...")
+        logger.info("Building episode metadata...")
         cumulative_frame_idx = 0
         for ep_idx in episode_indices:
             src_episode = dataset.meta.episodes[ep_idx]
@@ -1771,6 +1854,8 @@ def convert_image_to_video_dataset(
         episode_lengths = {ep_idx: dataset.meta.episodes["length"][ep_idx] for ep_idx in episode_indices}
 
         for img_key in tqdm(img_keys, desc="Processing cameras"):
+            target_encoder = depth_encoder if img_key in dataset.meta.depth_keys else rgb_encoder
+
             # Estimate size per frame by encoding a small calibration sample
             # This provides accurate compression ratio for the specific codec parameters
             size_per_frame_mb = _estimate_frame_size_via_calibration(
@@ -1779,10 +1864,10 @@ def convert_image_to_video_dataset(
                 episode_indices=episode_indices,
                 temp_dir=temp_dir,
                 fps=fps,
-                camera_encoder=camera_encoder,
+                video_encoder=target_encoder,
             )
 
-            logging.info(f"Processing camera: {img_key}")
+            logger.info(f"Processing camera: {img_key}")
             chunk_idx, file_idx = 0, 0
             cumulative_timestamp = 0.0
 
@@ -1796,7 +1881,7 @@ def convert_image_to_video_dataset(
                 max_frames=max_frames_per_batch,
             ):
                 total_frames_in_batch = sum(episode_lengths[idx] for idx in batch_episodes)
-                logging.info(
+                logger.info(
                     f"  Encoding batch of {len(batch_episodes)} episodes "
                     f"({batch_episodes[0]}-{batch_episodes[-1]}) = {total_frames_in_batch} frames"
                 )
@@ -1812,7 +1897,7 @@ def convert_image_to_video_dataset(
                 )
 
                 # Encode all batched episodes into single video
-                video_path = new_meta.root / new_meta.video_path.format(
+                video_path = new_meta.root / video_path_template.format(
                     video_key=img_key, chunk_index=chunk_idx, file_index=file_idx
                 )
                 video_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1821,7 +1906,7 @@ def convert_image_to_video_dataset(
                     imgs_dir=imgs_dir,
                     video_path=video_path,
                     fps=fps,
-                    camera_encoder=camera_encoder,
+                    video_encoder=target_encoder,
                     overwrite=True,
                 )
 
@@ -1860,16 +1945,11 @@ def convert_image_to_video_dataset(
         new_meta.info.total_tasks = dataset.meta.total_tasks
         new_meta.info.splits = {"train": f"0:{len(episode_indices)}"}
 
-        # Update video info for all image keys (now videos)
-        # We need to manually set video info since update_video_info() checks video_keys first
+        # Update video info for all image keys (now videos). They are registered as
+        # video features above, so update_video_info populates their (still-empty) info.
         for img_key in img_keys:
-            if not new_meta.features[img_key].get("info", None):
-                video_path = new_meta.root / new_meta.video_path.format(
-                    video_key=img_key, chunk_index=0, file_index=0
-                )
-                new_meta.info.features[img_key]["info"] = get_video_info(
-                    video_path, camera_encoder=camera_encoder
-                )
+            target_encoder = depth_encoder if img_key in dataset.meta.depth_keys else rgb_encoder
+            new_meta.update_video_info(video_key=img_key, video_encoder=target_encoder)
 
         write_info(new_meta.info, new_meta.root)
 
@@ -1887,8 +1967,8 @@ def convert_image_to_video_dataset(
         if temp_dir.exists():
             shutil.rmtree(temp_dir)
 
-    logging.info(f"Completed converting {dataset.repo_id} to video format")
-    logging.info(f"New dataset saved to: {output_dir}")
+    logger.info(f"Completed converting {dataset.repo_id} to video format")
+    logger.info(f"New dataset saved to: {output_dir}")
 
     # Return new dataset
     return LeRobotDataset(repo_id=repo_id, root=output_dir)
@@ -1896,11 +1976,11 @@ def convert_image_to_video_dataset(
 
 def _reencode_video_worker(args: tuple) -> Path:
     """Picklable worker for :func:`reencode_dataset`'s process pool."""
-    video_path, camera_encoder, encoder_threads = args
+    video_path, video_encoder, encoder_threads = args
     reencode_video(
         input_video_path=video_path,
         output_video_path=video_path,
-        camera_encoder=camera_encoder,
+        video_encoder=video_encoder,
         encoder_threads=encoder_threads,
         overwrite=True,
     )
@@ -1909,7 +1989,8 @@ def _reencode_video_worker(args: tuple) -> Path:
 
 def reencode_dataset(
     dataset: LeRobotDataset,
-    camera_encoder: VideoEncoderConfig,
+    rgb_encoder: RGBEncoderConfig | None = None,
+    depth_encoder: DepthEncoderConfig | None = None,
     encoder_threads: int | None = None,
     num_workers: int | None = None,
 ) -> LeRobotDataset:
@@ -1920,8 +2001,11 @@ def reencode_dataset(
     Args:
         dataset: An existing :class:`LeRobotDataset` whose videos will be
             re-encoded.
-        camera_encoder: Target encoder configuration applied to every video
-            file.
+        rgb_encoder: Target encoder configuration applied to every RGB video
+            file. If ``None``, re-encoding is skipped for RGB videos.
+        depth_encoder: Target encoder configuration applied to every depth video
+            file. If ``None``, re-encoding is skipped for depth videos.
+            Quantization parameters will not override the ones in the current dataset.
         encoder_threads: Per-encoder thread count forwarded to
             :func:`reencode_video`. ``None`` lets the codec decide.
         num_workers: Number of parallel processes. ``None`` or ``0`` means
@@ -1933,23 +2017,35 @@ def reencode_dataset(
         on disk.
     """
     meta = dataset.meta
-    video_paths_list = []
+    video_keys_encoders_dict = {}
+    video_keys_paths_dict = {}
+
+    if rgb_encoder is None and depth_encoder is None:
+        raise ValueError("Either rgb_encoder or depth_encoder must be provided")
 
     # Only re-encode if the videos are not already encoded with the given video encoding parameters
     for video_key in meta.video_keys:
         current_info = meta.info.features[video_key].get("info", {})
-        current_encoder = VideoEncoderConfig.from_video_info(current_info)
-        if current_encoder != camera_encoder:
-            video_paths_list.extend((meta.root / VIDEO_DIR / video_key).rglob("*.mp4"))
+        current_encoder = encoder_config_from_video_info(current_info)
+        target_encoder = depth_encoder if video_key in meta.depth_keys else rgb_encoder
+        if target_encoder is None:
+            logger.info(f"No encoder provided for {video_key} video. Skipping re-encoding.")
+        elif current_encoder != target_encoder:
+            video_keys_paths_dict[video_key] = list((meta.root / VIDEO_DIR / video_key).rglob("*.mp4"))
+            video_keys_encoders_dict[video_key] = target_encoder
         else:
-            logging.info(f"{video_key} videos are already encoded with {camera_encoder}. Nothing to do.")
+            logger.info(f"{video_key} videos are already encoded with {target_encoder}. Nothing to do.")
 
-    if len(video_paths_list) == 0:
-        logging.warning("Dataset has no videos to re-encode.")
+    if len(video_keys_paths_dict) == 0:
+        logger.warning("Dataset has no videos to re-encode.")
         return dataset
-    logging.info(f"Re-encoding {len(video_paths_list)} video file(s) with {camera_encoder}")
+    logger.info(f"Re-encoding {sum(len(paths) for paths in video_keys_paths_dict.values())} video file(s).")
 
-    worker_args = [(vp, camera_encoder, encoder_threads) for vp in video_paths_list]
+    worker_args = [
+        (path, encoder, encoder_threads)
+        for video_key, encoder in video_keys_encoders_dict.items()
+        for path in video_keys_paths_dict[video_key]
+    ]
     if num_workers and num_workers > 1:
         with ProcessPoolExecutor(max_workers=num_workers) as pool:
             futures = [pool.submit(_reencode_video_worker, args) for args in worker_args]
@@ -1963,12 +2059,17 @@ def reencode_dataset(
         for args in tqdm(worker_args, desc="Re-encoding videos"):
             _reencode_video_worker(args)
 
-    # Refresh video info in metadata for every video key.
-    for vid_key in meta.video_keys:
-        video_path = meta.root / meta.get_video_file_path(0, vid_key)
-        meta.info.features[vid_key]["info"] = get_video_info(video_path, camera_encoder=camera_encoder)
+    # Refresh video info in metadata for every re-encoded key. Re-encoding only
+    # changes codec/container params, so for depth videos we preserve ``is_depth_map``
+    # and the depth quantization params (``video.depth_min`` / ``video.depth_max`` /
+    # ...), which describe the data rather than the codec and must survive a transcode.
+    # RGB videos pass an empty set: still a refresh, but nothing to preserve.
+    depth_preserve_keys = {"is_depth_map", *(f"video.{n}" for n in DEPTH_ENCODER_INFO_FIELD_NAMES)}
+    for video_key, encoder in video_keys_encoders_dict.items():
+        preserve_keys = depth_preserve_keys if video_key in meta.depth_keys else set()
+        meta.update_video_info(video_key=video_key, video_encoder=encoder, preserve_keys=preserve_keys)
 
     write_info(meta.info, meta.root)
-    logging.info("Dataset metadata updated.")
+    logger.info("Dataset metadata updated.")
 
     return dataset

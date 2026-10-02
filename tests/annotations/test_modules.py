@@ -85,7 +85,7 @@ def _spy_responder(captured: list[list[dict[str, Any]]], reply: Any):
 def test_module1_plan_memory_subtask_smoke(fixture_dataset_root: Path, tmp_path: Path) -> None:
     vlm = make_canned_responder(
         {
-            "atomic subtasks": {
+            "COMPLETED manipulation events": {
                 "subtasks": [
                     {"text": "grasp the handle of the sponge", "start": 0.0, "end": 0.4},
                     {"text": "wipe the counter from left to right", "start": 0.4, "end": 0.8},
@@ -126,7 +126,7 @@ def test_module1_emit_memory_false_skips_memory_keeps_subtasks_and_plan(
     leaving subtask + plan generation intact — symmetric to ``emit_plan``."""
     vlm = make_canned_responder(
         {
-            "atomic subtasks": {
+            "COMPLETED manipulation events": {
                 "subtasks": [
                     {"text": "grasp the handle of the sponge", "start": 0.0, "end": 0.4},
                     {"text": "wipe the counter from left to right", "start": 0.4, "end": 0.8},
@@ -318,7 +318,7 @@ def test_module1_attaches_contact_sheets_to_subtask_prompt(
                     return block.get("text", "")
         return ""
 
-    subtask_calls = [m for m in captured if "atomic subtasks" in _prompt_text(m)]
+    subtask_calls = [m for m in captured if "COMPLETED manipulation events" in _prompt_text(m)]
     assert len(subtask_calls) == 1, "expected exactly one subtask-prompt VLM call"
     content = subtask_calls[0][0]["content"]
     video_blocks = [b for b in content if isinstance(b, dict) and b.get("type") == "video"]
@@ -366,6 +366,49 @@ def test_module3_attaches_frame_image_block_to_prompt(single_episode_root: Path,
         assert len(ts_tuple) == 1
         assert ts_tuple[0] in record.frame_timestamps
         assert camera in provider.cameras
+
+
+@pytest.mark.parametrize(
+    ("coordinate_scale", "answer", "stored"),
+    [
+        # 0-1000 grid answers (Qwen3-VL convention) are stored as [0, 1] fractions.
+        (
+            1000.0,
+            {"detections": [{"label": "cup", "bbox_format": "xyxy", "bbox": [100, 200, 300, 1004]}]},
+            {"detections": [{"label": "cup", "bbox_format": "xyxy", "bbox": [0.1, 0.2, 0.3, 1.0]}]},
+        ),
+        (
+            1000.0,
+            {"label": "gripper", "point_format": "xy", "point": [868, 568]},
+            {"label": "gripper", "point_format": "xy", "point": [0.868, 0.568]},
+        ),
+        # Pixel answers are divided by the 640x480 frame size.
+        (
+            None,
+            {"label": "gripper", "point_format": "xy", "point": [320, 120]},
+            {"label": "gripper", "point_format": "xy", "point": [0.5, 0.25]},
+        ),
+        (1000.0, {"label": "cup", "count": 2}, None),
+    ],
+)
+def test_module3_stores_unit_coordinates(
+    single_episode_root: Path, tmp_path: Path, coordinate_scale, answer, stored
+) -> None:
+    captured: list[list[dict[str, Any]]] = []
+    module = GeneralVqaModule(
+        vlm=_spy_responder(captured, {"question": "Where is it?", "answer": answer}),
+        config=VqaConfig(vqa_emission_hz=1.0, coordinate_scale=coordinate_scale),
+        seed=0,
+        frame_provider=_StubFrameProvider(sentinel=PIL.Image.new("RGB", (640, 480))),
+    )
+    record = next(iter_episodes(single_episode_root))
+    staging = EpisodeStaging(tmp_path / "stage", record.episode_index)
+    module.run_episode(record, staging)
+
+    answers = [json.loads(r["content"]) for r in staging.read("vqa") if r["role"] == "assistant"]
+    assert answers and all(a == (stored or answer) for a in answers)
+    prompt = captured[0][0]["content"][-1]["text"]
+    assert ("0-1000 grid" in prompt) == (coordinate_scale is not None)
 
 
 def test_module3_assistant_content_is_valid_json(single_episode_root: Path, tmp_path: Path) -> None:

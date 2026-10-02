@@ -17,7 +17,7 @@
 import logging
 import time
 
-from lerobot.common.control_utils import init_keyboard_listener, predict_action
+from lerobot.common.control_utils import predict_action
 from lerobot.datasets import LeRobotDataset
 from lerobot.policies import make_pre_post_processors
 from lerobot.policies.act import ACTPolicy
@@ -26,6 +26,7 @@ from lerobot.processor import make_default_processors
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_features
+from lerobot.utils.keyboard_input import init_keyboard_listener
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data

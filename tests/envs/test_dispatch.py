@@ -7,11 +7,14 @@ from dataclasses import dataclass, field
 
 import gymnasium as gym
 import pytest
+import torch
 from gymnasium.envs.registration import register, registry as gym_registry
 
-from lerobot.configs.types import PolicyFeature
-from lerobot.envs.configs import EnvConfig
+from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.envs.configs import EnvConfig, LiberoEnv
 from lerobot.envs.factory import make_env, make_env_config, make_env_pre_post_processors
+from lerobot.processor import LiberoProcessorStep
+from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_PREFIX, OBS_STATE
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +33,17 @@ def test_registry_all_types():
 def test_unknown_type():
     with pytest.raises(ValueError, match="not registered"):
         make_env_config("nonexistent")
+
+
+def test_libero_fps_controls_simulator_frequency():
+    cfg = LiberoEnv(fps=17)
+
+    assert cfg.gym_kwargs["control_freq"] == 17
+
+
+def test_libero_rejects_nonpositive_fps():
+    with pytest.raises(ValueError, match="fps must be positive"):
+        LiberoEnv(fps=0)
 
 
 def test_identity_processors():
@@ -59,6 +73,54 @@ def test_processors_delegation():
     cfg = make_env_config("aloha")
     pre, post = make_env_pre_post_processors(cfg, policy_cfg=None)
     assert len(pre.steps) == 0
+
+
+def test_libero_processors_are_policy_agnostic():
+    cfg = LiberoEnv()
+    pre, post = make_env_pre_post_processors(cfg, policy_cfg=object())
+
+    assert isinstance(pre.steps[0], LiberoProcessorStep)
+    assert len(post.steps) == 0
+
+
+def test_libero_processor_transform_features_replaces_state_components():
+    step = LiberoProcessorStep()
+    image = PolicyFeature(type=FeatureType.VISUAL, shape=(256, 256, 3))
+    action = {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,))}
+    features = {
+        PipelineFeatureType.OBSERVATION: {
+            f"{OBS_IMAGES}.image": image,
+            f"{OBS_STATE}.eef_pos": PolicyFeature(type=FeatureType.STATE, shape=(3,)),
+            f"{OBS_STATE}.gripper_qpos": PolicyFeature(type=FeatureType.STATE, shape=(2,)),
+        },
+        PipelineFeatureType.ACTION: action,
+    }
+
+    out = step.transform_features(features)
+
+    assert set(out) == {PipelineFeatureType.OBSERVATION, PipelineFeatureType.ACTION}
+    assert out[PipelineFeatureType.OBSERVATION] == {
+        f"{OBS_IMAGES}.image": image,
+        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(8,)),
+    }
+    assert out[PipelineFeatureType.ACTION] == action
+
+
+def test_libero_processor_flattens_state_to_raw_8_dim():
+    step = LiberoProcessorStep()
+    observation = {
+        OBS_PREFIX + "robot_state": {
+            "eef": {
+                "pos": torch.tensor([[1.0, 2.0, 3.0]]),
+                "quat": torch.tensor([[0.0, 0.0, 0.0, 1.0]]),
+            },
+            "gripper": {"qpos": torch.tensor([[4.0, 5.0]])},
+        }
+    }
+
+    state = step.observation(observation)[OBS_STATE]
+    assert state.shape == (1, 8)
+    assert torch.allclose(state, torch.tensor([[1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 4.0, 5.0]]))
 
 
 def test_base_create_envs():

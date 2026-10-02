@@ -1,112 +1,68 @@
-You are labeling a teleoperated robot demonstration.
+You are annotating a teleoperated robot demonstration shown as
+timestamped contact sheets (each tile has its time in seconds burned
+into the top-left corner). The operator's goal was: "{episode_task}"
 
-The user originally asked: "{episode_task}"
+{observation_block}Reconstruct the sequence of COMPLETED manipulation events the robot
+performs, in chronological order. Output one segment per event with a
+[start, end] time in seconds and a short action label.
 
-You are shown the entire demonstration as a single video. Watch the
-whole clip, then segment it into a list of consecutive atomic subtasks
-the robot performs.
+GROUNDING — read first, it overrides everything below:
+- Label ONLY events you can SEE in the frames. The instruction is the
+  goal; the VIDEO is the ground truth for what actually happened.
+- Do NOT invent, anticipate, or pad steps that are not shown.
 
-{observation_block}GROUNDING — read this first, it overrides everything below:
-- Label ONLY what the robot actually does in the video. Every subtask
-  you emit must correspond to motion you can SEE in specific frames.
-- Do NOT invent, anticipate, or pad. If the robot only does one thing
-  (e.g. it just navigates to a location and the clip ends), emit
-  EXACTLY ONE subtask. Many demonstrations are a single atomic skill.
-- ``max_steps`` below is a hard CEILING, not a target. Emitting fewer
-  subtasks than the ceiling is not just allowed, it is expected for
-  short / atomic demonstrations. One correct subtask is far better
-  than several invented ones.
-- If the video does not clearly show the action implied by the task,
-  describe what you actually see — do NOT fabricate the task's steps
-  from the instruction text. The instruction tells you the goal; the
-  VIDEO is the ground truth for what happened.
+Granularity — segment by completed events, not by motion:
+- Start a NEW segment whenever the world state changes: an object is
+  grasped, lifted, transported, placed, or released; a held object
+  changes; a drawer/door/lid/container opens or closes; contents move
+  between containers (poured); a tool starts or stops acting on a
+  surface. Watch the gripper open/close transitions — they usually mark
+  boundaries.
+- Do NOT split approach, reach, grasp adjustment, small repositioning,
+  hesitation, or retreat into their own segments. Fold each into the
+  event it belongs to (the approach is part of the pick; the retreat is
+  part of the place).
+- Do NOT merge separate completed events. Each distinct pick, place,
+  open, close, pour, push, wipe, or insert is its own segment, even when
+  they repeat on different objects or locations.
+- Most segments last 2-10 seconds. Shorter segments are okay ONLY for
+  fast pick / place / open / close / release events. Never emit a
+  segment shorter than {min_subtask_seconds} seconds; merge a too-short
+  candidate into its neighbour instead.
+- Skip idle time, pure camera motion, and tiny hand jitter.
 
-Authoring rules — Hi Robot atom granularity, pi0.7-style short prompts:
+Labels — short imperative phrases:
+- One concise command naming the action and the manipulated object, e.g.
+  "pick up the red cup", "put the cup on the shelf", "open the top
+  drawer", "pour water into the glass", "insert the plug into the
+  socket".
+- Include source, destination, side, direction, or the final
+  open/closed state when it is visible and central to the event.
+- Prefer these verbs (extend only when none fits): pick up, put, place,
+  push, pull, turn, press, open, close, pour, insert, wipe, stack.
+  Disambiguate by what you SEE:
+    * STACK vs PUT: object placed ON TOP OF another object -> "stack".
+    * INSERT vs PUT: object pushed INTO a fitted slot/hole/socket -> "insert".
+    * PICK UP vs PUT (direction): gripper CLOSES and object moves WITH
+      the hand -> "pick up"; gripper OPENS and object stays -> "put".
+    * POUR vs PUT: source is tilted and contents flow -> "pour".
+- Use the exact object nouns implied by the task; stay consistent across
+  the episode (don't switch "cube" to "block").
+- Write imperative commands, never third person ("the robot ..."), and
+  drop articles/adverbs.
 
-- Each subtask = one COMPOSITE atomic skill the low-level policy can
-  execute end-to-end. A "skill" bundles its own approach motion with
-  its terminal action — do NOT split the approach off as its own
-  subtask. The whole-arm policy already learns to reach as part of
-  every manipulation primitive.
-- Write each subtask as an IMPERATIVE COMMAND, starting with one of
-  these verbs (extend only when none fits):
-    pick up <obj>           — approach + grasp + lift in one subtask
-    put <obj> on/in <loc>   — transport + release in one subtask
-    place <obj> on/in <loc> — synonym of "put"; pick one and stay consistent
-    push <obj>              — contact + linear shove
-    pull <obj>              — contact + linear retract
-    turn <knob/dial/handle> — rotary actuation
-    press <button>          — single-press contact
-    open <drawer/door/lid>  — full open motion
-    close <drawer/door/lid> — full close motion
-    pour <src> into <dst>   — tilt + flow
-    insert <obj> into <slot>— alignment + push-fit
-    go to <loc>             — ONLY when no grasp / actuation follows
-                             (e.g. a pure relocation between phases).
-                             If the next subtask grasps something at
-                             that location, drop "go to ..." and just
-                             write "pick up ..." instead.
-- Forbidden ultra-fine splits — the VLM is NOT allowed to emit these
-  as standalone subtasks; fold them into the parent composite:
-    "move to X"   → fold into "pick up X" (or whatever follows)
-    "reach for X" → fold into "pick up X"
-    "grasp X"     → fold into "pick up X"
-    "lift X"      → fold into "pick up X" (or "put X on Y" if it's
-                    the transport phase of a place)
-    "release X"   → fold into "put X on Y" (or "place X in Y")
-- Keep it SHORT — a verb phrase, not a sentence. Drop articles
-  ("the", "a") and adverbs ("carefully", "slowly"). Add a "how"
-  detail (which hand, which grasp point) ONLY when it is needed to
-  disambiguate. Every subtask must begin with one of the verbs
-  above (no leading nouns, no "then", no "first").
-- NEVER use third person. Never write "the robot", "the arm", "the
-  gripper moves", "it picks up" — the robot is implied. Command it,
-  do not describe it.
-- Use the exact object nouns from the task above. If the task says
-  "cube", every subtask says "cube" — never switch to "block". If it
-  says "box", never switch to "bin"/"container". Keep vocabulary
-  consistent across the whole episode.
-- Good: "pick up blue cube", "put blue cube in box", "open drawer",
-  "turn red knob", "press start button", "go to sink".
-- Bad: "move to blue cube" (approach as its own subtask — forbidden,
-  must be folded into "pick up blue cube"); "the robot arm moves
-  towards the blue cube" (third person, too long); "carefully pick
-  up the cube" (adverb, article); "release the yellow block"
-  ("block" when the task said "cube", and "release" must be folded
-  into a "put"/"place" subtask).
-- Subtasks are non-overlapping and cover the full episode in order.
-  Choose the cut points yourself based on what you see in the video
-  (gripper open/close events, contact, regrasps, transitions).
-- Each subtask spans at least {min_subtask_seconds} seconds. If a
-  candidate span would be shorter, merge it into its neighbour
-  rather than emitting it.
-- Do not exceed {max_steps} subtasks total. Fewer, larger composites
-  are preferred over many micro-steps.
-- Every subtask's [start_time, end_time] must lie within
-  [0.0, {episode_duration}] seconds.
-
-SPECIAL CASES — verb disambiguation (each rule is narrowly visual and
-fires ONLY on the spatial situation it names; it must not change how you
-label any other situation):
-- STACK vs PUT: if an object is placed ON TOP OF another specific object
-  (not on a flat table / shelf / counter), use "stack ... on ...", not
-  "put". "stack blue book on green book", NOT "put blue book on table".
-- INSERT vs PUT: if an object goes INTO a fitted slot / hole / socket /
-  receptacle (push-fit), use "insert ... into ...", not "put".
-- RETRIEVE/PICK-UP vs PUT (direction): watch the gripper. If it CLOSES
-  on the object and the object moves WITH the hand, it is "pick up" /
-  "retrieve" (object leaves its location). If the gripper OPENS and the
-  object stays where the hand left it, it is "put" / "place" (object
-  arrives at a location). Decide by which way the object moves, not by
-  where the hand ends up.
-- POUR vs PUT: only use "pour" when the source is tilted and contents
-  flow out; moving a full container without tilting is "put"/"place".
+Timing:
+- Use the burned-in timestamps to set start and end. Boundaries should
+  land on or near a printed time, and every [start, end] must lie within
+  [0.0, {episode_duration}] seconds, be non-overlapping, and cover the
+  episode in order.
+- Emit at most {max_steps} segments.
 
 Output strictly valid JSON of shape:
 
   {{
     "subtasks": [
-      {{"text": "<short imperative verb phrase>", "start": <float>, "end": <float>}},
+      {{"text": "<short imperative action label>", "start": <float>, "end": <float>}},
       ...
     ]
   }}

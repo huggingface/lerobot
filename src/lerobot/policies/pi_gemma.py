@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch import nn
@@ -87,6 +87,11 @@ class PiGemmaRMSNorm(nn.Module):
     Adaptive RMSNorm for PI Gemma (AdaRMS).
     When cond_dim is set, uses cond to modulate scale/shift/gate; otherwise behaves like standard GemmaRMSNorm.
     forward(x, cond=None) returns (output, gate) for use with _gated_residual.
+
+    ``cond`` may be ``(batch_size, cond_dim)`` — one modulation shared by every token — or
+    ``(batch_size, seq_len, cond_dim)``, which lets scale/shift/gate differ per token. The
+    per-token form is what training-time RTC needs to mark the clean action prefix with its
+    own flow timestep (arXiv 2512.05964); it adds no parameters.
     """
 
     def __init__(self, dim: int, eps: float = 1e-6, cond_dim: int | None = None):
@@ -120,8 +125,16 @@ class PiGemmaRMSNorm(nn.Module):
             return normed.type_as(x), None
         if cond.shape[-1] != self.cond_dim:
             raise ValueError(f"Expected cond dim {self.cond_dim}, got {cond.shape[-1]}")
+        if cond.ndim not in (2, 3):
+            raise ValueError(f"cond must be (B, cond_dim) or (B, T, cond_dim), got {tuple(cond.shape)}")
+        if x.ndim == 3 and cond.ndim == 3 and cond.shape[1] != x.shape[1]:
+            raise ValueError(
+                f"Per-token cond has {cond.shape[1]} tokens but x has {x.shape[1]}; shapes must match."
+            )
         modulation = self.dense(cond)
-        if len(x.shape) == 3:
+        if x.ndim == 3 and modulation.ndim == 2:
+            # Scalar-per-sample cond: add the token axis so one modulation broadcasts over
+            # all tokens. A per-token cond already carries that axis and must not gain another.
             modulation = modulation.unsqueeze(1)
         scale, shift, gate = modulation.chunk(3, dim=-1)
         normed = normed * (1 + scale.float()) + shift.float()
@@ -190,12 +203,12 @@ def _get_pi_gemma_decoder_layer_base():
     return _PiGemmaDecoderLayerBase
 
 
-class PiGemmaModel(GemmaModel):  # type: ignore[misc]
+class PiGemmaModel(GemmaModel):
     """
     GemmaModel extended with AdaRMS (adaptive RMSNorm) and gated residuals when config.use_adarms is True.
     """
 
-    def __init__(self, config: GemmaConfig, **kwargs):
+    def __init__(self, config: GemmaConfig, **kwargs: Any) -> None:
         super().__init__(config, **kwargs)
         # Free parent-allocated layers/norm before replacing to avoid ~2x peak memory.
         del self.layers
@@ -204,10 +217,12 @@ class PiGemmaModel(GemmaModel):  # type: ignore[misc]
         #     return
         cond_dim = getattr(config, "adarms_cond_dim", None)
         pi_gemma_decoder_layer_base = _get_pi_gemma_decoder_layer_base()
-        self.layers = nn.ModuleList(
+        self.layers: nn.ModuleList = nn.ModuleList(
             [pi_gemma_decoder_layer_base(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
-        self.norm = PiGemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps, cond_dim=cond_dim)
+        self.norm: PiGemmaRMSNorm = PiGemmaRMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps, cond_dim=cond_dim
+        )
 
     def forward(
         self,
@@ -224,8 +239,9 @@ class PiGemmaModel(GemmaModel):  # type: ignore[misc]
         **kwargs,
     ) -> BaseModelOutputWithPast:
         """
-        adarms_cond (`torch.Tensor` of shape `(batch_size, cond_dim)`, *optional*):
-            Condition for ADARMS.
+        adarms_cond (`torch.Tensor` of shape `(batch_size, cond_dim)` or
+            `(batch_size, seq_len, cond_dim)`, *optional*):
+            Condition for ADARMS. The per-token form drives training-time RTC.
         """
         output_attentions = (
             output_attentions if output_attentions is not None else self.config.output_attentions
@@ -284,11 +300,11 @@ class PiGemmaModel(GemmaModel):  # type: ignore[misc]
         # See https://github.com/huggingface/transformers/pull/29402
 
         # decoder layers
-        all_hidden_states = () if output_hidden_states else None
-        all_self_attns = () if output_attentions else None
+        all_hidden_states: tuple[torch.Tensor, ...] | None = () if output_hidden_states else None
+        all_self_attns: tuple[torch.Tensor, ...] | None = () if output_attentions else None
 
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
-            if output_hidden_states:
+            if all_hidden_states is not None:
                 all_hidden_states += (hidden_states,)
 
             layer_outputs = decoder_layer(
@@ -306,13 +322,13 @@ class PiGemmaModel(GemmaModel):  # type: ignore[misc]
 
             hidden_states = layer_outputs
 
-            if output_attentions:
+            if all_self_attns is not None:
                 all_self_attns += (layer_outputs[1],)
 
         hidden_states, _ = self.norm(hidden_states, adarms_cond)
 
         # add hidden states from the last decoder layer
-        if output_hidden_states:
+        if all_hidden_states is not None:
             all_hidden_states += (hidden_states,)
 
         return BaseModelOutputWithPast(
@@ -323,16 +339,16 @@ class PiGemmaModel(GemmaModel):  # type: ignore[misc]
         )
 
 
-class PiGemmaForCausalLM(GemmaForCausalLM):  # type: ignore[misc]
+class PiGemmaForCausalLM(GemmaForCausalLM):
     """
     Causal LM wrapper using PiGemmaModel as the backbone, for consistency with GemmaForCausalLM
     and the language model used in pi0_fast. Use this for the action expert in pi0/pi05.
     """
 
-    def __init__(self, config: GemmaConfig, **kwargs):
+    def __init__(self, config: GemmaConfig, **kwargs: Any) -> None:
         super().__init__(config, **kwargs)
         del self.model
-        self.model = PiGemmaModel(config)
+        self.model: PiGemmaModel = PiGemmaModel(config)
 
 
 class PaliGemmaModelWithPiGemma(PaliGemmaModel):

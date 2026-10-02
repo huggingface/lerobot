@@ -23,6 +23,7 @@ import math
 from collections import deque
 from collections.abc import Callable
 from itertools import chain
+from typing import Any
 
 import einops
 import numpy as np
@@ -47,6 +48,8 @@ class ACTPolicy(PreTrainedPolicy):
 
     config_class = ACTConfig
     name = "act"
+    # FSDP2 wrap units: one unit per transformer layer of both stacks.
+    _fsdp_wrap_modules = ["ACTEncoderLayer", "ACTDecoderLayer"]
 
     def __init__(
         self,
@@ -69,7 +72,7 @@ class ACTPolicy(PreTrainedPolicy):
 
         self.reset()
 
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> list[dict[str, Any]]:
         # TODO(aliberts, rcadene): As of now, lr_backbone == lr
         # Should we remove this and just `return self.parameters()`?
         return [
@@ -148,7 +151,7 @@ class ACTPolicy(PreTrainedPolicy):
         l1_loss = (abs_err * valid_mask).sum() / num_valid.clamp_min(1)
 
         loss_dict = {"l1_loss": l1_loss.item()}
-        if self.config.use_vae:
+        if self.config.use_vae and log_sigma_x2_hat is not None:
             # Calculate Dₖₗ(latent_pdf || standard_normal). Note: After computing the KL-divergence for
             # each dimension independently, we sum over the latent dimension to get the total
             # KL-divergence per batch element, then take the mean over the batch.
@@ -290,11 +293,17 @@ class ACT(nn.Module):
                                 └───────────────────────┘
     """
 
-    def __init__(self, config: ACTConfig):
+    def __init__(self, config: ACTConfig) -> None:
         # BERT style VAE encoder with input tokens [cls, robot_state, *action_sequence].
         # The cls token forms parameters of the latent's distribution (like this [*means, *log_variances]).
         super().__init__()
         self.config = config
+
+        action_feature = config.action_feature
+        if action_feature is None:
+            raise ValueError(
+                "ACT requires an action output feature (FeatureType.ACTION) in `output_features`."
+            )
 
         if self.config.use_vae:
             self.vae_encoder = ACTEncoder(config, is_vae_encoder=True)
@@ -306,7 +315,7 @@ class ACT(nn.Module):
                 )
             # Projection layer for action (joint-space target) to hidden dimension.
             self.vae_encoder_action_input_proj = nn.Linear(
-                self.config.action_feature.shape[0],
+                action_feature.shape[0],
                 config.dim_model,
             )
             # Projection layer from the VAE encoder's output to the latent distribution's parameter space.
@@ -367,7 +376,7 @@ class ACT(nn.Module):
         self.decoder_pos_embed = nn.Embedding(config.chunk_size, config.dim_model)
 
         # Final action regression head on the output of the transformer's decoder.
-        self.action_head = nn.Linear(config.dim_model, self.config.action_feature.shape[0])
+        self.action_head = nn.Linear(config.dim_model, action_feature.shape[0])
 
         self._reset_parameters()
 

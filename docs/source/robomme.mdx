@@ -35,14 +35,11 @@ pip install --override <(printf 'gymnasium==0.29.1\nnumpy==1.26.4\n') \
 ### Docker (recommended)
 
 ```bash
-# Build base image first (from repo root)
-docker build -f docker/Dockerfile.eval-base -t lerobot-eval-base .
-
-# Build RoboMME eval image (applies gymnasium + numpy pin overrides)
-docker build -f docker/Dockerfile.benchmark.robomme -t lerobot-robomme .
+# Build the RoboMME evaluation image from the repo root
+docker build -f docker/Dockerfile.benchmark.robomme -t lerobot-benchmark-robomme .
 ```
 
-The `docker/Dockerfile.benchmark.robomme` image overrides `gymnasium==0.29.1` and `numpy==1.26.4` after lerobot's install. Both versions are runtime-safe for lerobot's actual API usage.
+The benchmark Dockerfile extends the published `huggingface/lerobot-gpu:latest` image, then overrides `gymnasium==0.29.1` and `numpy==1.26.4`. Both versions are runtime-safe for lerobot's actual API usage.
 
 ## Running Evaluation
 
@@ -109,9 +106,15 @@ dataset = LeRobotDataset("lerobot/robomme")
 
 ### Feature key alignment (training)
 
-The env wrapper exposes `pixels/image` and `pixels/wrist_image` as observation keys. The `features_map` in `RoboMMEEnv` maps these to `observation.images.image` and `observation.images.wrist_image` for the policy. State is exposed as `agent_pos` and maps to `observation.state`.
+The env wrapper exposes its cameras under `pixels/<camera_name>`, named by `RoboMMEEnv.front_camera_name` and `RoboMMEEnv.wrist_camera_name` (`camera1` and `camera2` by default). The `features_map` in `RoboMMEEnv` maps these to `observation.images.camera1` and `observation.images.camera2` for the policy. State is exposed as `agent_pos` and maps to `observation.state`.
 
-The dataset's `image` and `wrist_image` columns already align with the policy input keys, so no renaming is needed when fine-tuning.
+The dataset's raw columns do not match those policy keys, so pass a `--rename_map` when fine-tuning:
+
+```bash
+--rename_map='{"image": "observation.images.camera1", "wrist_image": "observation.images.camera2", "state": "observation.state", "actions": "action"}'
+```
+
+Override `--env.front_camera_name` / `--env.wrist_camera_name` if you train against different key names, so evaluation observations match the keys the policy was trained on.
 
 ## Action Spaces
 

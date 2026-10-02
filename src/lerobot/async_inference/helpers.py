@@ -18,11 +18,12 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
+import numpy as np
 import torch
 
 from lerobot.configs import PolicyFeature
+from lerobot.lerobot_types import PolicyAction, RobotObservation
 
 # NOTE: Configs need to be loaded for the client to be able to instantiate the policy config
 from lerobot.policies import (  # noqa: F401
@@ -38,16 +39,11 @@ from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_features
 from lerobot.utils.utils import init_logging
 
-Action = torch.Tensor
-
-# observation as received from the robot (can be numpy arrays, floats, etc.)
-RawObservation = dict[str, Any]
-
 # observation as those recorded in LeRobot dataset (keys are different)
-LeRobotObservation = dict[str, torch.Tensor]
+LeRobotObservation = dict[str, np.ndarray]
 
 # observation, ready for policy inference (image keys resized)
-Observation = dict[str, torch.Tensor]
+Observation = dict[str, torch.Tensor | str]
 
 
 def visualize_action_queue_size(action_queue_size: list[int]) -> None:
@@ -71,7 +67,8 @@ def is_image_key(k: str) -> bool:
     return k.startswith(OBS_IMAGES)
 
 
-def resize_robot_observation_image(image: torch.tensor, resize_dims: tuple[int, int, int]) -> torch.tensor:
+def resize_robot_observation_image(image: torch.Tensor, resize_dims: tuple[int, ...]) -> torch.Tensor:
+    """Resize a robot image to the policy image feature shape `resize_dims` (C, H, W); only H and W are used."""
     assert image.ndim == 3, f"Image must be (C, H, W)! Received {image.shape}"
     # (H, W, C) -> (C, H, W) for resizing from robot obsevation resolution to policy image resolution
     image = image.permute(2, 0, 1)
@@ -86,7 +83,7 @@ def resize_robot_observation_image(image: torch.tensor, resize_dims: tuple[int, 
 
 # TODO(Steven): Consider implementing a pipeline step for this
 def raw_observation_to_observation(
-    raw_observation: RawObservation,
+    raw_observation: RobotObservation,
     lerobot_features: dict[str, dict],
     policy_image_features: dict[str, PolicyFeature],
 ) -> Observation:
@@ -105,15 +102,16 @@ def raw_observation_to_observation(
 
 
 def prepare_image(image: torch.Tensor) -> torch.Tensor:
-    """Minimal preprocessing to turn int8 images to float32 in [0, 1], and create a memory-contiguous tensor"""
-    image = image.type(torch.float32) / 255
+    """Minimal preprocessing to turn RGB uint8 images to float32 in [0, 1], and create a memory-contiguous tensor"""
+    if image.dtype == torch.uint8:
+        image = image.type(torch.float32) / 255
     image = image.contiguous()
 
     return image
 
 
 def extract_state_from_raw_observation(
-    lerobot_obs: RawObservation,
+    lerobot_obs: LeRobotObservation,
 ) -> torch.Tensor:
     """Extract the state from a raw observation."""
     state = torch.tensor(lerobot_obs[OBS_STATE])
@@ -125,15 +123,15 @@ def extract_state_from_raw_observation(
 
 
 def extract_images_from_raw_observation(
-    lerobot_obs: RawObservation,
+    lerobot_obs: LeRobotObservation,
     camera_key: str,
-) -> dict[str, torch.Tensor]:
+) -> torch.Tensor:
     """Extract the images from a raw observation."""
     return torch.tensor(lerobot_obs[camera_key])
 
 
 def make_lerobot_observation(
-    robot_obs: RawObservation,
+    robot_obs: RobotObservation,
     lerobot_features: dict[str, dict],
 ) -> LeRobotObservation:
     """Make a lerobot observation from a raw observation."""
@@ -141,7 +139,7 @@ def make_lerobot_observation(
 
 
 def prepare_raw_observation(
-    robot_obs: RawObservation,
+    robot_obs: RobotObservation,
     lerobot_features: dict[str, dict],
     policy_image_features: dict[str, PolicyFeature],
 ) -> Observation:
@@ -210,27 +208,27 @@ class TimedData:
     timestamp: float
     timestep: int
 
-    def get_timestamp(self):
+    def get_timestamp(self) -> float:
         return self.timestamp
 
-    def get_timestep(self):
+    def get_timestep(self) -> int:
         return self.timestep
 
 
 @dataclass
 class TimedAction(TimedData):
-    action: Action
+    action: PolicyAction
 
-    def get_action(self):
+    def get_action(self) -> PolicyAction:
         return self.action
 
 
 @dataclass
 class TimedObservation(TimedData):
-    observation: RawObservation
+    observation: RobotObservation
     must_go: bool = False
 
-    def get_observation(self):
+    def get_observation(self) -> RobotObservation:
         return self.observation
 
 
@@ -239,7 +237,7 @@ class FPSTracker:
     """Utility class to track FPS metrics over time."""
 
     target_fps: float
-    first_timestamp: float = None
+    first_timestamp: float | None = None
     total_obs_count: int = 0
 
     def calculate_fps_metrics(self, current_timestamp: float) -> dict[str, float]:
@@ -256,7 +254,7 @@ class FPSTracker:
 
         return {"avg_fps": avg_fps, "target_fps": self.target_fps}
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset the FPS tracker state"""
         self.first_timestamp = None
         self.total_obs_count = 0
@@ -266,7 +264,7 @@ class FPSTracker:
 class RemotePolicyConfig:
     policy_type: str
     pretrained_name_or_path: str
-    lerobot_features: dict[str, PolicyFeature]
+    lerobot_features: dict[str, dict]
     actions_per_chunk: int
     device: str = "cpu"
     rename_map: dict[str, str] = field(default_factory=dict)

@@ -23,7 +23,8 @@ import cv2
 import numpy as np
 import requests
 
-from lerobot.types import RobotAction, RobotObservation
+from lerobot.cameras import Camera
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.errors import DeviceNotConnectedError
 
@@ -84,13 +85,14 @@ class EarthRoverMiniPlus(Robot):
 
     Attributes:
         config: Robot configuration
-        sdk_base_url: URL of the Frodobots SDK server (default: http://localhost:8000)
+        sdk_base_url: Base URL of the Frodobots SDK server, taken from
+            ``config.sdk_url`` (default: http://localhost:8000)
     """
 
     config_class = EarthRoverMiniPlusConfig
     name = "earthrover_mini_plus"
 
-    def __init__(self, config: EarthRoverMiniPlusConfig):
+    def __init__(self, config: EarthRoverMiniPlusConfig) -> None:
         """Initialize EarthRover Mini Plus robot.
 
         Args:
@@ -98,11 +100,11 @@ class EarthRoverMiniPlus(Robot):
         """
         super().__init__(config)
         self.config = config
-        self.sdk_base_url = "http://localhost:8000"
+        self.sdk_base_url = config.sdk_url
 
         # Empty cameras dict for compatibility with recording script
         # Cameras are accessed directly via SDK, not through Camera objects
-        self.cameras = {}
+        self.cameras: dict[str, Camera] = {}
         self._is_connected = False
 
         # Cache for camera frames (fallback when requests fail)
@@ -281,7 +283,7 @@ class EarthRoverMiniPlus(Robot):
             All SDK values are normalized to appropriate ranges for dataset recording.
         """
 
-        observation = {}
+        observation: RobotObservation = {}
 
         # Get camera images from SDK
         frames = self._get_camera_frames()

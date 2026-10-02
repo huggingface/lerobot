@@ -294,6 +294,19 @@ def test__sync_read(addr, length, ids_values, mock_motors, dummy_motors):
     assert read_values == ids_values
 
 
+def test__sync_read_retries_after_transient_failure(mock_motors, dummy_motors):
+    addr, length, ids_values = (10, 4, {1: 1337})
+    stub = mock_motors.build_sync_read_stub(addr, length, ids_values, num_invalid_try=1)
+    bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
+    bus.connect(handshake=False)
+
+    read_values, read_comm = bus._sync_read(addr, length, list(ids_values), num_retry=1)
+
+    assert read_comm == scs.COMM_SUCCESS
+    assert read_values == ids_values
+    assert mock_motors.stubs[stub].calls == 2
+
+
 @pytest.mark.parametrize("raise_on_error", (True, False))
 def test__sync_read_comm(raise_on_error, mock_motors, dummy_motors):
     addr, length, ids_values = (10, 4, {1: 1337})
@@ -509,12 +522,18 @@ def test_record_ranges_of_motion(mock_motors, dummy_motors):
     stub = mock_motors.build_sequential_sync_read_stub(
         *STS_SMS_SERIES_CONTROL_TABLE["Present_Position"], positions
     )
-    with patch("lerobot.motors.motors_bus.enter_pressed", side_effect=[False, True]):
-        bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
-        bus.connect(handshake=False)
+    bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
+    bus.connect(handshake=False)
 
+    with (
+        patch("lerobot.motors.motors_bus.enter_pressed", side_effect=[False, True]),
+        patch("lerobot.motors.motors_bus.time.sleep") as mock_sleep,
+        patch.object(bus, "sync_read", wraps=bus.sync_read) as mock_sync_read,
+    ):
         mins, maxes = bus.record_ranges_of_motion(display_values=False)
 
     assert mock_motors.stubs[stub].calls == 3
+    assert all(call.kwargs["num_retry"] == 5 for call in mock_sync_read.call_args_list)
+    mock_sleep.assert_called_once_with(0.02)
     assert mins == expected_mins
     assert maxes == expected_maxes

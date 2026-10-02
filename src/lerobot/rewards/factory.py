@@ -124,6 +124,7 @@ def make_reward_model(cfg: RewardModelConfig, **kwargs) -> PreTrainedRewardModel
 
     if cfg.pretrained_path:
         kwargs["pretrained_name_or_path"] = cfg.pretrained_path
+        kwargs["revision"] = cfg.pretrained_revision
         reward_model = reward_cls.from_pretrained(**kwargs)
     else:
         reward_model = reward_cls(**kwargs)

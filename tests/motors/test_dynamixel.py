@@ -405,12 +405,18 @@ def test_record_ranges_of_motion(mock_motors, dummy_motors):
     read_pos_stub = mock_motors.build_sequential_sync_read_stub(
         *X_SERIES_CONTROL_TABLE["Present_Position"], positions
     )
-    with patch("lerobot.motors.motors_bus.enter_pressed", side_effect=[False, True]):
-        bus = DynamixelMotorsBus(port=mock_motors.port, motors=dummy_motors)
-        bus.connect(handshake=False)
+    bus = DynamixelMotorsBus(port=mock_motors.port, motors=dummy_motors)
+    bus.connect(handshake=False)
 
+    with (
+        patch("lerobot.motors.motors_bus.enter_pressed", side_effect=[False, True]),
+        patch("lerobot.motors.motors_bus.time.sleep") as mock_sleep,
+        patch.object(bus, "sync_read", wraps=bus.sync_read) as mock_sync_read,
+    ):
         mins, maxes = bus.record_ranges_of_motion(display_values=False)
 
     assert mock_motors.stubs[read_pos_stub].calls == 3
+    assert all(call.kwargs["num_retry"] == 5 for call in mock_sync_read.call_args_list)
+    mock_sleep.assert_called_once_with(0.02)
     assert mins == expected_mins
     assert maxes == expected_maxes

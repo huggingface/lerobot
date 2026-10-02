@@ -24,11 +24,40 @@ import logging
 from typing import Any
 
 import av
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
 FFMPEG_NUMERIC_OPTION_TYPES = ("INT", "INT64", "UINT64", "FLOAT", "DOUBLE")
 FFMPEG_INTEGER_OPTION_TYPES = ("INT", "INT64", "UINT64")
+
+
+def write_u16_plane(plane: av.video.plane.VideoPlane, src: np.ndarray, fill_value: int | None = None) -> None:
+    """Copy a 2D ``uint16`` image into the plane's memory buffer, row by row.
+
+    For speed, each row is padded to a wider size than ``width``, so the true row width in
+    memory is ``plane.line_size`` (bytes), not ``width``. Copying as one straight stream
+    would skew the image, so we write only the first ``width`` columns of each row and
+    leave the padding untouched.
+
+    Args:
+        plane: Destination 16-bit plane.
+        src: Source image, shape ``(height, width)``, dtype ``uint16``.
+        fill_value: If given, every pixel (padding included) is set to this first, so the
+            padding holds clean data instead of garbage.
+    """
+    height, width = src.shape
+    stride_u16 = plane.line_size // np.dtype(np.uint16).itemsize
+    dst = np.frombuffer(plane, dtype=np.uint16).reshape(height, stride_u16)
+    if fill_value is not None:
+        dst.fill(fill_value)
+    dst[:, :width] = src
+
+
+@functools.cache
+def get_pix_fmt_channels(pix_fmt: str) -> int:
+    """Return the number of components (channels) for *pix_fmt*."""
+    return len(av.VideoFormat(pix_fmt).components)
 
 
 @functools.cache
@@ -92,7 +121,7 @@ def _check_option_value(vcodec: str, label: str, value: Any, opt: av.option.Opti
                     f"{label}={value!r} is not numeric; codec {vcodec!r} expects a number for this option."
                 ) from e
         elif isinstance(value, (float, int)):
-            num_val = value
+            num_val = float(value)
         else:
             raise ValueError(
                 f"{label}={value!r} is not numeric; codec {vcodec!r} expects a number for this option."
@@ -142,6 +171,16 @@ def _check_pixel_format(vcodec: str, pix_fmt: str) -> None:
         )
 
 
+def _check_pix_fmt_channels(pix_fmt: str, channels: int) -> None:
+    """Ensure *pix_fmt* can carry at least *channels* components."""
+    pix_fmt_channels = get_pix_fmt_channels(pix_fmt)
+    if pix_fmt_channels < channels:
+        raise ValueError(
+            f"pix_fmt={pix_fmt!r} carries only {pix_fmt_channels} component(s) "
+            f"but the source data has {channels} channel(s)."
+        )
+
+
 def _check_codec_options(vcodec: str, codec_options: dict[str, Any]) -> None:
     """Validate merged encoder options (typed) against the codec's published AVOptions."""
     supported_options = _get_codec_options_by_name(vcodec)
@@ -156,12 +195,18 @@ def _check_codec_options(vcodec: str, codec_options: dict[str, Any]) -> None:
         _check_option_value(vcodec, key, value, supported_options[key])
 
 
-def check_video_encoder_parameters_pyav(vcodec: str, pix_fmt: str, codec_options: dict[str, Any]) -> None:
+def check_video_encoder_parameters_pyav(
+    vcodec: str,
+    pix_fmt: str,
+    codec_options: dict[str, Any],
+    channels: int | None = None,
+) -> None:
     """Verify *config* is compatible with the bundled FFmpeg build.
 
     Checks pixel format, abstract tuning-field compatibility, and each merged
     encoder option from :meth:`~lerobot.configs.video.VideoEncoderConfig.get_codec_options`
     against PyAV (including numeric ``extra_options`` present in that dict).
+    When given, additionally verify that *pix_fmt* carries as many components as the source data channels.
     No-op when ``config.vcodec`` isn't in the local FFmpeg build.
 
     Raises:
@@ -171,4 +216,6 @@ def check_video_encoder_parameters_pyav(vcodec: str, pix_fmt: str, codec_options
     if not options:
         raise ValueError(f"Codec {vcodec!r} is not available in the bundled FFmpeg build")
     _check_pixel_format(vcodec, pix_fmt)
+    if channels is not None:
+        _check_pix_fmt_channels(pix_fmt, channels)
     _check_codec_options(vcodec, codec_options)
