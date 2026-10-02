@@ -172,6 +172,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 max_num_shards=cfg.num_workers,
                 tolerance_s=cfg.tolerance_s,
                 return_uint8=True,
+                depth_output_unit=cfg.dataset.depth_output_unit,
                 repo_type=repo_type,
             )
     else:
