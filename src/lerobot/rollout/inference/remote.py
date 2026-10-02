@@ -8,8 +8,10 @@ from __future__ import annotations
 import logging
 import time
 import traceback
+from collections import deque
 from dataclasses import asdict, replace
 from pathlib import Path
+from queue import Empty, Full, Queue
 from threading import Event, RLock, Thread
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -83,6 +85,16 @@ class RemoteInferenceEngine(InferenceEngine):
         self._refill_horizon_warned = False
         # Bounded scalar history for cadence diagnostics; do not retain captures.
         self._last_request: tuple[int, float, int, int] | None = None
+        # Console handlers may block. Control-thread events only enter this bounded
+        # handoff; the network worker formats and writes all console diagnostics.
+        self._log_events: Queue[dict] = Queue(maxsize=128)
+        self._dropped_log_events = 0
+        self._fault_logged = False
+        self._last_summary_at = time.monotonic()
+        self._recent_results: deque[tuple[float, float | None]] = deque(maxlen=100)
+        self._accepted_since_summary = 0
+        self._rejected_since_summary = 0
+        self._request_diagnostics: dict = {}
 
     def configure_event_log(self, path: Path) -> None:
         self._event_writer = EventWriter(path)
@@ -101,7 +113,112 @@ class RemoteInferenceEngine(InferenceEngine):
         if self._event_writer is not None:
             self._event_writer.write(event)
         if name != "dispatch":
-            logger.info("Remote inference %s", event)
+            try:
+                self._log_events.put_nowait(event)
+            except Full:
+                self._dropped_log_events += 1
+
+    def _drain_log_events(self) -> None:
+        """Worker-only console output; dropping diagnostics never changes execution."""
+        # Limit work even if the control thread keeps producing new events.
+        for _ in range(self._log_events.maxsize):
+            try:
+                event = self._log_events.get_nowait()
+            except Empty:
+                break
+            logger.debug("Remote inference %s", event)
+            name = event["event"]
+            if name == "scheduling":
+                logger.info(
+                    "Remote execution: mode=%s merge=%s blend_steps=%s incoming_weight=%.2f; "
+                    "action_rate=%.1f Hz horizon=%.3fs refill=%.3fs (effective=%.3fs); "
+                    "max_source_age=%.3fs action_timeout=%.3fs startup_timeout=%.3fs",
+                    self.config.mode,
+                    self.config.chunk_merge,
+                    self.config.blend_steps,
+                    self.config.blend_weight,
+                    1 / self.runtime.interval,
+                    event["execution_horizon_s"],
+                    event["configured_refill_s"],
+                    event["effective_refill_s"],
+                    self.config.max_observation_age_s,
+                    self.config.action_timeout_s,
+                    self.config.startup_timeout_s,
+                )
+            elif name == "planned_hold":
+                logger.info("Remote language query: requesting a local hold before text inference")
+            elif name == "language_result":
+                logger.info(
+                    "Remote language query completed (%s, %.3fs); action resumption requires a fresh observation",
+                    event["kind"],
+                    event["duration_s"],
+                )
+            elif name == "task":
+                logger.info("Remote instruction updated (version=%s)", event["task_version"])
+            elif name == "reset":
+                logger.info("Remote session reset requested; previous motion is invalidated")
+            elif name == "request":
+                self._request_diagnostics = event
+            elif name == "result":
+                self._recent_results.append((event["turnaround_s"], event["timing_margin_s"]))
+                self._accepted_since_summary += bool(event["accepted"])
+                self._rejected_since_summary += not event["accepted"]
+        if self.runtime.failure is not None and not self._fault_logged:
+            self._fault_logged = True
+            self._log_fault(self.runtime.failure)
+        now = time.monotonic()
+        if now - self._last_summary_at >= 5 and (
+            self._accepted_since_summary or self._rejected_since_summary
+        ):
+            turnarounds = [sample[0] for sample in self._recent_results]
+            margins = [sample[1] for sample in self._recent_results if sample[1] is not None]
+            logger.info(
+                "Remote progress: accepted=%d rejected=%d; turnaround mean/max=%.3f/%.3fs "
+                "(last %d results), estimated submission headroom min=%s; "
+                "queued playback=%.3fs effective_refill=%.3fs; diagnostic_events_dropped=%d",
+                self._accepted_since_summary,
+                self._rejected_since_summary,
+                sum(turnarounds) / len(turnarounds),
+                max(turnarounds),
+                len(turnarounds),
+                f"{min(margins):.3f}s" if margins else "unavailable (no buffered submission)",
+                self.runtime.queue.qsize() * self.runtime.interval,
+                self.runtime.effective_refill,
+                self._dropped_log_events,
+            )
+            self._last_summary_at = now
+            self._accepted_since_summary = self._rejected_since_summary = 0
+
+    def _log_fault(self, reason: str) -> None:
+        """Explain a terminal failure without implying that requested motion completed."""
+        if "exhaust" in reason.lower() or "continuation horizon" in reason.lower():
+            hint = (
+                "Check server completion/connection, turnaround tails and the usable suffix after trimming; "
+                "compare refill headroom with that delay before changing the setting."
+            )
+        elif "observation" in reason.lower() or "stale" in reason.lower():
+            hint = "Check observation acquisition age, processing/queue delay and oldest blended-contributor age."
+        elif "deadline" in reason.lower() or "timeout" in reason.lower():
+            hint = "Check server completion and connectivity; increasing a timeout cannot replenish an empty buffer."
+        else:
+            hint = "Check the client/server error details and loaded contract before starting a new rollout."
+        playback = self._request_diagnostics.get("playback_at_submission_s")
+        logger.error(
+            "Remote inference stopped: %s. Policy motion is revoked; rollout requests a local hold "
+            "and follows its configured shutdown/return procedure. Last submission playback=%s; "
+            "recent completed turnaround max=%s; refill configured/effective=%.3f/%.3fs. %s "
+            "Request details: --inference.log_level=DEBUG; deployment=%s session=%s",
+            reason,
+            f"{playback:.3f}s" if playback is not None else "unavailable",
+            f"{max(sample[0] for sample in self._recent_results):.3f}s"
+            if self._recent_results
+            else "unavailable",
+            self.runtime.refill_seconds,
+            self.runtime.effective_refill,
+            hint,
+            self.config.deployment,
+            self.client.session_id,
+        )
 
     @property
     def control_thread_owns_policy(self) -> bool:
@@ -316,6 +433,7 @@ class RemoteInferenceEngine(InferenceEngine):
             raise RuntimeError("Language requires a fresh held observation")
         if generation != self.runtime.generation or not self.runtime.active:
             raise RequestCancelled("Query superseded before submission")
+        started = time.monotonic()
         try:
             answer = self.client.query_language(
                 observation,
@@ -345,7 +463,12 @@ class RemoteInferenceEngine(InferenceEngine):
             )
         ):
             raise RequestCancelled("Query superseded by newer operator intent")
-        self._event("language_result", intent_generation=query.intent_generation, kind=query.kind.value)
+        self._event(
+            "language_result",
+            intent_generation=query.intent_generation,
+            kind=query.kind.value,
+            duration_s=time.monotonic() - started,
+        )
         return answer
 
     def _query_fault(self, query: PolicyQuery, error: Exception) -> None:
@@ -374,6 +497,7 @@ class RemoteInferenceEngine(InferenceEngine):
     def _loop(self) -> None:
         try:
             while not self._stop_event.is_set() and not self.failed:
+                self._drain_log_events()
                 # Control-thread dispatch only queues bounded diagnostics. Log
                 # from this worker so first-dispatch reporting adds no motor I/O.
                 with self.runtime.lock:
@@ -481,6 +605,7 @@ class RemoteInferenceEngine(InferenceEngine):
                     request.continuation.cursor,
                     observation.task_version,
                 )
+                self._drain_log_events()
                 try:
                     request_generation = request.generation
 
@@ -498,11 +623,17 @@ class RemoteInferenceEngine(InferenceEngine):
                 with self._task_lock:
                     accepted = self.runtime.accept(request, result, task_version=self._task_version)
                 self._warn_refill_horizon()
+                turnaround = time.monotonic() - request.submitted_at
                 self._event(
                     "result",
                     request_id=request.request_id,
                     accepted=accepted,
-                    turnaround_s=time.monotonic() - request.submitted_at,
+                    turnaround_s=turnaround,
+                    # Diagnostic estimate only: the committed interpolation endpoint
+                    # is excluded, and cursor trimming can further reduce usable work.
+                    timing_margin_s=request.playback_at_submission - turnaround
+                    if request.playback_at_submission > 0
+                    else None,
                     source_age_s=time.monotonic() - observation.capture_time,
                     queue_playback_s=self.runtime.queue.qsize() * self.runtime.interval,
                     server_durations=result.server_durations,
@@ -515,8 +646,17 @@ class RemoteInferenceEngine(InferenceEngine):
         finally:
             if self.runtime.failure is not None:
                 self._fault(self.runtime.failure)
+            self._drain_log_events()
             try:
                 self.client.close()
+                logger.info("Remote session closed; server acknowledged session release")
+            except (TimeoutError, ProtocolError) as exc:
+                logger.warning(
+                    "Remote session close was not acknowledged (%s); transport was closed and server "
+                    "presence/idle cleanup will release ownership after pending model work completes",
+                    exc,
+                )
+                logger.debug("Remote session close details", exc_info=True)
             except Exception:
                 logger.exception("Remote session close failed; presence/idle cleanup will release it")
 

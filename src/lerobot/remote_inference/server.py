@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import math
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from concurrent.futures import Future
 from dataclasses import asdict, dataclass, field
 from queue import Empty, Full, Queue
@@ -123,6 +123,9 @@ class SessionWorker:
         self._seen: OrderedDict[str, None] = OrderedDict()
         self._controls: OrderedDict[str, Future[Envelope]] = OrderedDict()
         self._closed_controls: OrderedDict[tuple[str, str], Future[Envelope]] = OrderedDict()
+        self._recent_operations: deque[tuple[float, float]] = deque(maxlen=100)
+        self._last_summary_at = time.monotonic()
+        self._actions_since_summary = self._language_since_summary = 0
         self._stopping = Event()
         self._thread = Thread(target=self._run, name="PolicyWorker", daemon=True)
         self._thread.start()
@@ -438,6 +441,9 @@ class SessionWorker:
         if message.message_type is MessageType.OPEN:
             self.runner.reset(full=True)
             session.ready = True
+            self._recent_operations.clear()
+            self._actions_since_summary = self._language_since_summary = 0
+            self._last_summary_at = time.monotonic()
             logger.info("Session admitted instance=%s session=%s", self.instance_id, session.identity)
             return Envelope(
                 MessageType.ACCEPTED,
@@ -582,7 +588,7 @@ class SessionWorker:
                         "queue": started - queued_at,
                         "worker": finished - started,
                     }
-                logger.info(
+                logger.debug(
                     "Policy operation deployment=%s instance=%s session=%s generation=%s request=%s type=%s queue_s=%.6f worker_s=%.6f",
                     self.deployment,
                     self.instance_id,
@@ -593,6 +599,38 @@ class SessionWorker:
                     started - queued_at,
                     finished - started,
                 )
+                self._recent_operations.append((started - queued_at, finished - started))
+                self._actions_since_summary += message.message_type is MessageType.OBSERVATION
+                self._language_since_summary += message.message_type is MessageType.LANGUAGE_REQUEST
+                if finished - self._last_summary_at >= 5:
+                    count = len(self._recent_operations)
+                    logger.info(
+                        "Policy progress: deployment=%s actions=%d text_queries=%d; "
+                        "queue mean/max=%.3f/%.3fs worker mean/max=%.3f/%.3fs (last %d calls); "
+                        "client logs include transport delay and playback headroom",
+                        self.deployment,
+                        self._actions_since_summary,
+                        self._language_since_summary,
+                        sum(sample[0] for sample in self._recent_operations) / count,
+                        max(sample[0] for sample in self._recent_operations),
+                        sum(sample[1] for sample in self._recent_operations) / count,
+                        max(sample[1] for sample in self._recent_operations),
+                        count,
+                    )
+                    self._last_summary_at = finished
+                    self._actions_since_summary = self._language_since_summary = 0
+                if (
+                    response.message_type is MessageType.ERROR
+                    and response.body.get("code") != ErrorCode.STALE
+                ):
+                    logger.warning(
+                        "Policy operation rejected: deployment=%s code=%s reason=%s request=%s; "
+                        "check client logs for the local motion outcome",
+                        self.deployment,
+                        response.body.get("code"),
+                        response.body.get("message"),
+                        message.request_id,
+                    )
             with self._lock:
                 if self._session is not None and message.message_type in {
                     MessageType.OBSERVATION,
@@ -688,6 +726,11 @@ class PolicyServer:
         describe = transport.declare_queryable(deployment_prefix(worker.deployment) + "/describe", capacity=4)
         opening = transport.declare_queryable(prefix + "/open", capacity=4)
         transport.declare_token(prefix + "/alive")
+        logger.info(
+            "Policy server ready: deployment=%s instance=%s; awaiting one client",
+            worker.deployment,
+            worker.instance_id,
+        )
         resources: list[Any] = []
         session_id = None
         session_present = False

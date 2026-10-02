@@ -173,7 +173,7 @@ from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.configs import parser
-from lerobot.remote_inference.protocol import AdmissionDeniedError
+from lerobot.remote_inference.protocol import AdmissionDeniedError, ErrorCode, ProtocolError
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -198,6 +198,7 @@ from lerobot.rollout import (
     build_rollout_context,
     create_strategy,
 )
+from lerobot.rollout.inference.factory import RemoteInferenceConfig
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -226,7 +227,9 @@ logger = logging.getLogger(__name__)
 @parser.wrap()
 def rollout(cfg: RolloutConfig):
     """Main entry point for policy deployment."""
-    init_logging()
+    init_logging(
+        console_level=cfg.inference.log_level if isinstance(cfg.inference, RemoteInferenceConfig) else "INFO"
+    )
 
     if cfg.display_data:
         logger.info(
@@ -320,6 +323,17 @@ def main() -> None:
         logger.error("%s", _admission_denial_message(exc))
         logger.debug("Remote admission server diagnostic: %s", exc)
         raise SystemExit(1) from None
+    except ProtocolError as exc:
+        if exc.code in {ErrorCode.INCOMPATIBLE, ErrorCode.UNSUPPORTED, ErrorCode.PROTOCOL}:
+            logger.error(
+                "Remote compatibility check failed (%s): %s. Compare loaded client/server builds, "
+                "protocol and requested modes/schemas; resolve the mismatch before another rollout. "
+                "Use --inference.log_level=DEBUG and server --log_level=DEBUG for contract details.",
+                exc.code,
+                exc,
+            )
+        # Keep the original exception and traceback, including unexpected wire failures.
+        raise
 
 
 if __name__ == "__main__":

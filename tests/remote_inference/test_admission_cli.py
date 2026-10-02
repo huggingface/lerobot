@@ -128,7 +128,7 @@ def test_older_error_without_details_remains_readable():
         RuntimeError("unexpected failure"),
     ],
 )
-def test_cli_does_not_swallow_other_failures(error, monkeypatch):
+def test_cli_does_not_swallow_other_failures(error, monkeypatch, caplog):
     def failed():
         raise error
 
@@ -137,3 +137,7 @@ def test_cli_does_not_swallow_other_failures(error, monkeypatch):
     with pytest.raises(type(error)) as raised:
         lerobot_rollout.main()
     assert raised.value is error
+    if isinstance(error, ProtocolError) and error.code is ErrorCode.INCOMPATIBLE:
+        assert "Remote compatibility check failed" in caplog.text
+        assert "schema differs" in caplog.text
+        assert "loaded client/server builds" in caplog.text

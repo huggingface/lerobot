@@ -1,10 +1,8 @@
 """XVLA input compatibility and canonical preparation without model downloads."""
 
 from dataclasses import replace
-from pathlib import Path
 from types import SimpleNamespace
 
-import draccus
 import numpy as np
 import pytest
 import torch
@@ -22,14 +20,13 @@ from lerobot.policies.xvla.processor_xvla import (
     XVLAImageToFloatProcessorStep,
 )
 from lerobot.processor import NormalizerProcessorStep, make_policy_processor_pipelines
-from lerobot.remote_inference.configs import ServerConfig
 from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_STATE
+from tests.inference.fixtures import omx_contract
 
 
 @pytest.fixture
 def setup():
-    path = Path(__file__).resolve().parents[2] / "examples/remote_inference/omx_xvla_local.yaml"
-    server = draccus.parse(ServerConfig, config_path=path, args=[])
+    server = omx_contract((("image", "rgb-front-v1"), ("image2", "rgb-wrist-v1")))
     config = XVLAConfig(
         device="cpu",
         chunk_size=30,

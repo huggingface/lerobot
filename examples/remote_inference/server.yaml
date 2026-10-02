@@ -1,13 +1,16 @@
-# Copy and adapt to the checkpoint, calibration, cameras and conventions you validated.
+# Generic schema example, not a tested checkpoint/robot profile.
+# Copy and adapt the checkpoint, calibration, camera names/views and units together.
+# Nested CLI flags override this file; see docs/source/remote_inference.mdx.
 deployment: manipulation
 model:
   repo_or_path: /absolute/path/to/checkpoint
+  revision: null  # For Hub checkpoints, pin a commit before validating a deployment.
   device: cuda
 execution:
   supported_modes: [chunk]
   action_fps: 30.0
   action_deadline_s: 5.0
-  idle_timeout_s: 10.0
+  idle_timeout_s: 10.0  # Absent-client ownership grace, not a robot motion timeout.
   # Explicit continuous canonical coordinates permitted for optional client blending.
   # Leave empty for append/alignment-only. Do not include gripper/discrete controls by default.
   blendable_components: []

@@ -36,6 +36,8 @@ def test_server_loads_saved_act_and_processors_warms_and_resets(tmp_path):
     changed, changed_identity = load_deployment(replace(server, semantics="degrees-v1"))
     assert changed_identity != identity
     assert changed.capabilities.execution_steps == 3
+    _, debug_identity = load_deployment(replace(server, log_level="DEBUG"))
+    assert debug_identity == identity, "console verbosity must not invalidate a pinned artifact"
 
 
 def test_content_identity_changes_with_processor_statistics_and_effective_settings(tmp_path):

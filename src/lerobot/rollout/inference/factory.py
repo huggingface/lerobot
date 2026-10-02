@@ -114,8 +114,12 @@ class RemoteInferenceConfig(InferenceEngineConfig):
     jpeg_quality: int = 90
     zenoh_config_path: str | None = None
     zenoh_mode: Literal["peer", "client"] = "peer"
+    # INFO summarizes operation; DEBUG includes request-level diagnostics.
+    log_level: Literal["INFO", "DEBUG"] = "INFO"
 
     def __post_init__(self) -> None:
+        if self.log_level not in {"INFO", "DEBUG"}:
+            raise ValueError("Remote log_level must be INFO or DEBUG")
         if self.zenoh_mode not in {"peer", "client"}:
             raise ValueError("zenoh_mode must be peer (direct) or client (router)")
         if not self.deployment or not self.semantics:

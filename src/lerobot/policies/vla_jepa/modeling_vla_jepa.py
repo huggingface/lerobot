@@ -23,6 +23,8 @@ import torch.nn.functional as F  # noqa: N812
 from safetensors.torch import load_file
 from torch import Tensor, nn
 
+from lerobot.configs.types import FeatureType
+from lerobot.inference.contracts import ChunkPolicySpec, FeatureSpec
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.utils import log_model_loading_keys, populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE
@@ -398,6 +400,37 @@ class VLAJEPAPolicy(PreTrainedPolicy):
 
     def reset(self) -> None:
         self._queues: dict[str, deque[Tensor]] = {ACTION: deque(maxlen=self.config.n_action_steps)}
+
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Serve current frames; future video observations are training targets only.
+
+        The world model stays configured as trained. ``_prepare_model_inputs``
+        builds its video targets only for training, while direct prediction uses
+        current images, language and state without reading the playback queue.
+        """
+        if self.config.n_obs_steps != 1:
+            raise ValueError("VLA-JEPA chunk serving requires n_obs_steps=1.")
+        return ChunkPolicySpec(
+            prediction_steps=self.config.chunk_size,
+            execution_steps=self.config.n_action_steps,
+        )
+
+    def validate_chunk_input_features(self, features: tuple[FeatureSpec, ...]) -> None:
+        """Allow the same configured image resizing as direct local inference."""
+        expected = self.config.input_features or {}
+        supplied = {feature.name: feature for feature in features}
+        if supplied.keys() != expected.keys():
+            raise ValueError("Canonical feature names must exactly match policy input_features.")
+        for name, policy_feature in expected.items():
+            feature = supplied[name]
+            if policy_feature.type == FeatureType.VISUAL:
+                shape = policy_feature.shape
+                if len(shape) != 3 or shape[0] != 3 or feature.kind != "rgb":
+                    raise ValueError(f"VLA-JEPA requires RGB camera inputs: {name}.")
+                if not self.config.resize_images_to and feature.shape != (shape[1], shape[2], shape[0]):
+                    raise ValueError(f"RGB feature shape differs from checkpoint: {name}.")
+            elif feature.kind != "tensor" or feature.shape != tuple(policy_feature.shape):
+                raise ValueError(f"Tensor feature shape differs from checkpoint: {name}.")
 
     # ---- Format Conversion: LeRobot → Native ----
 

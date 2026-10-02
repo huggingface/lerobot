@@ -1,9 +1,7 @@
 """LaWAM serving contracts without downloading the model or tokenizer."""
 
 from dataclasses import replace
-from pathlib import Path
 
-import draccus
 import numpy as np
 import pytest
 import torch
@@ -18,8 +16,8 @@ from lerobot.policies.lawam.processor_lawam import LaWAMResizeImagesProcessorSte
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import prepare_observation_for_inference
 from lerobot.processor import make_policy_processor_pipelines
-from lerobot.remote_inference.configs import ServerConfig
 from lerobot.utils.constants import OBS_STATE
+from tests.inference.fixtures import omx_contract
 
 
 class FixedBackend(nn.Module):
@@ -29,8 +27,7 @@ class FixedBackend(nn.Module):
 
 @pytest.fixture
 def setup():
-    path = Path(__file__).resolve().parents[2] / "examples/remote_inference/omx_lawam_lan.yaml"
-    server = draccus.parse(ServerConfig, config_path=path, args=[])
+    server = omx_contract((("image", "rgb-front-v1"), ("image2", "rgb-wrist-v1")))
     config = LaWAMConfig(
         device="cpu",
         chunk_size=50,

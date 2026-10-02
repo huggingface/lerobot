@@ -83,6 +83,24 @@ def control_request(worker, session, generation, operation):
     )
 
 
+def test_policy_progress_is_bounded_and_per_request_timings_require_debug(worker, caplog):
+    caplog.set_level("INFO", logger="lerobot.remote_inference.server")
+    session = admit(worker)
+    worker._last_summary_at -= 5
+    result = worker.submit(action_request(worker, session)).result(2)
+    assert result.message_type is MessageType.ACTION
+    assert "Policy progress: deployment=test actions=1 text_queries=0" in caplog.text
+    assert "client logs include transport delay" in caplog.text
+    assert "Policy operation deployment=" not in caplog.text
+    worker.submit(action_request(worker, session)).result(2)
+    assert caplog.text.count("Policy progress:") == 1
+    caplog.set_level("DEBUG", logger="lerobot.remote_inference.server")
+    request = action_request(worker, session)
+    worker.submit(request).result(2)
+    assert f"request={request.request_id}" in caplog.text
+    assert "queue_s=" in caplog.text and "worker_s=" in caplog.text
+
+
 def block_predict(worker):
     entered, release = Event(), Event()
     original = worker.runner.policy.predict_action_chunk

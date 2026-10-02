@@ -5,6 +5,7 @@
 
 import math
 from dataclasses import dataclass, field
+from typing import Literal
 
 from lerobot.inference.contracts import FeatureSpec
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
@@ -61,9 +62,13 @@ class ServerConfig:
     robot_type: str = ""
     features: list[FeatureSpec] = field(default_factory=list)
     action_feature: FeatureSpec | None = None
+    # INFO summarizes operation; DEBUG includes request-level diagnostics.
+    log_level: Literal["INFO", "DEBUG"] = "INFO"
 
     def __post_init__(self) -> None:
         """Reject incomplete semantics and unsupported serving behavior before loading."""
+        if self.log_level not in {"INFO", "DEBUG"}:
+            raise ValueError("Server log_level must be INFO or DEBUG")
         if not self.deployment or not self.model.repo_or_path or not self.semantics:
             raise ValueError("Deployment, model.repo_or_path and explicit semantics are required")
         if not self.features or self.action_feature is None:

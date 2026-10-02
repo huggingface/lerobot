@@ -105,7 +105,11 @@ def load_deployment(cfg: ServerConfig) -> tuple[PolicyRunner, str]:
         max_text_input=cfg.language.max_input_chars,
         max_text_output=cfg.language.max_output_chars,
     )
-    identity = artifact_identity(artifacts, {"serving": asdict(cfg), "policy": asdict(policy_cfg)})
+    serving_identity = asdict(cfg)
+    # Console verbosity is not a serving contract and must not change an
+    # existing --inference.expected_artifact pin, including its default value.
+    serving_identity.pop("log_level")
+    identity = artifact_identity(artifacts, {"serving": serving_identity, "policy": asdict(policy_cfg)})
     warmup = ObservationSnapshot(
         {feature.name: np.zeros(feature.shape, dtype=feature.dtype) for feature in cfg.features},
         0.0,
@@ -139,8 +143,15 @@ def load_deployment(cfg: ServerConfig) -> tuple[PolicyRunner, str]:
 @parser.wrap()
 def serve(cfg: ServerConfig) -> None:
     """Serve the configured deployment until an operator terminates the process."""
-    init_logging()
+    init_logging(console_level=cfg.log_level)
     logger.info("Policy server software=%s protocol=%s", asdict(SOFTWARE_BUILD), PROTOCOL_VERSION)
+    logger.info(
+        "Loading deployment=%s model=%s revision=%s device=%s; readiness follows model warmup",
+        cfg.deployment,
+        cfg.model.repo_or_path,
+        cfg.model.revision or "default",
+        cfg.model.device,
+    )
     runner, identity = load_deployment(cfg)
     worker = SessionWorker(
         runner,
@@ -158,12 +169,16 @@ def serve(cfg: ServerConfig) -> None:
     signal.signal(signal.SIGTERM, lambda *_: server.stop())
     signal.signal(signal.SIGINT, lambda *_: server.stop())
     logger.info(
-        "Deployment warmed: name=%s instance=%s artifact=%s capabilities=%s",
+        "Deployment warmed: name=%s instance=%s modes=%s action_rate=%.1f Hz horizon=%.3fs "
+        "language=%s; waiting for transport readiness",
         cfg.deployment,
         worker.instance_id,
-        identity,
-        runner.capabilities,
+        ",".join(mode.value for mode in runner.capabilities.modes),
+        1 / runner.capabilities.action_interval,
+        runner.capabilities.execution_steps * runner.capabilities.action_interval,
+        runner.capabilities.language,
     )
+    logger.debug("Deployment artifact=%s capabilities=%s", identity, runner.capabilities)
     server.serve()
 
 

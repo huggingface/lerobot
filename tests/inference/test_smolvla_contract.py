@@ -1,9 +1,7 @@
 """SmolVLA's real camera preparation contract, without downloading model weights."""
 
 from dataclasses import replace
-from pathlib import Path
 
-import draccus
 import numpy as np
 import pytest
 import torch
@@ -15,13 +13,12 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 from lerobot.processor import PolicyProcessorPipeline
-from lerobot.remote_inference.configs import ServerConfig
+from tests.inference.fixtures import omx_contract
 
 
 @pytest.fixture
 def setup():
-    path = Path(__file__).resolve().parents[2] / "examples/remote_inference/omx_smolvla_local.yaml"
-    server = draccus.parse(ServerConfig, config_path=path, args=[])
+    server = omx_contract((("camera1", "rgb-wrist-v1"), ("camera2", "rgb-front-v1")))
     config = SmolVLAConfig(
         device="cpu",
         empty_cameras=1,

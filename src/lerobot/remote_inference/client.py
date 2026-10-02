@@ -277,17 +277,22 @@ class RemoteClient:
         self.transport.wait_for_subscriber(self._key + "/obs", self.config.handshake_timeout_s)
         self.transport.wait_for_subscriber(self._key + "/language/request", self.config.handshake_timeout_s)
         logger.info(
-            "Remote admission deployment=%s instance=%s session=%s artifact=%s mode=%s interval=%s limits=%s",
+            "Remote session ready: deployment=%s instance=%s session=%s mode=%s merge=%s "
+            "action_rate=%.1f Hz horizon=%.3fs; contract verified",
             self.config.deployment,
             self.instance_id,
             self.session_id,
-            self.artifact_identity,
             mode,
-            caps.action_interval,
-            accepted.body.get("limits"),
+            self.config.chunk_merge,
+            1 / caps.action_interval,
+            caps.execution_steps * caps.action_interval,
         )
-        logger.info(
-            "Remote chunk execution settings=%s blend_indices=%s", self.chunk_settings, self.blend_indices
+        logger.debug(
+            "Remote admission artifact=%s limits=%s chunk_settings=%s blend_indices=%s",
+            self.artifact_identity,
+            accepted.body.get("limits"),
+            self.chunk_settings,
+            self.blend_indices,
         )
 
     @property

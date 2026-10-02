@@ -30,8 +30,6 @@ repos:
     hooks:
       - id: check-added-large-files
         args: ['--maxkb=1024']
-        # Preserve the self-contained remote-inference learning presentation.
-        exclude: ^remote_inference_docs/learning/async_remote_inference_walkthrough\.html$
       - id: debug-statements
       - id: check-merge-conflict
       - id: check-case-conflict

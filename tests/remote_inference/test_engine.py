@@ -347,7 +347,7 @@ def test_retarget_and_result_acceptance_have_one_order(session, monkeypatch):
 
 def test_refill_wait_selects_latest_capture_and_reports_request_progress(session, caplog):
     engine, client = session
-    caplog.set_level(logging.INFO, logger="lerobot.rollout.inference.remote")
+    caplog.set_level(logging.DEBUG, logger="lerobot.rollout.inference.remote")
     engine.resume()
     capture(engine)
     engine.start()
@@ -422,3 +422,91 @@ def test_aligned_full_horizon_warning_is_bounded_and_does_not_change_settings(se
     assert len(warnings) == (1 if engine.config.chunk_merge == "aligned" else 0)
     assert engine.runtime.refill_seconds == before
     assert engine.runtime.effective_refill == pytest.approx(0.4)
+
+
+def test_default_logs_are_concise_and_debug_keeps_request_identity(session, caplog):
+    engine, client = session
+    caplog.set_level(logging.INFO, logger="lerobot.rollout.inference.remote")
+    engine.resume()
+    capture(engine)
+    engine.start()
+    assert wait_for(lambda: engine.runtime.queue.qsize() == 4)
+    assert "Remote execution: mode=chunk" in caplog.text
+    assert "horizon=0.400s" in caplog.text
+    assert "Remote inference {" not in caplog.text
+    caplog.set_level(logging.DEBUG, logger="lerobot.rollout.inference.remote")
+    client.action_started.clear()
+    assert engine.runtime.pop() is not None
+    assert engine.runtime.pop() is not None
+    capture(engine)
+    assert client.action_started.wait(2)
+    records = [record for record in caplog.records if record.msg == "Remote inference %s"]
+    request = next(record.args for record in records if record.args["event"] == "request")
+    assert request["deployment"] == "test"
+    assert request["session"] == "session"
+    assert request["request_id"] == client.requests[-1].request_id
+
+
+def test_progress_is_rate_limited_and_labels_estimated_headroom(session, caplog):
+    engine, _ = session
+    caplog.set_level(logging.INFO, logger="lerobot.rollout.inference.remote")
+    engine._event("result", turnaround_s=0.3, timing_margin_s=None, accepted=True)
+    engine._event("result", turnaround_s=0.2, timing_margin_s=-0.1, accepted=False)
+    engine._drain_log_events()
+    assert "Remote progress" not in caplog.text
+    engine._last_summary_at -= 5
+    engine._drain_log_events()
+    assert "accepted=1 rejected=1" in caplog.text
+    assert "mean/max=0.250/0.300s" in caplog.text
+    assert "estimated submission headroom min=-0.100s" in caplog.text
+    engine._drain_log_events()
+    assert caplog.text.count("Remote progress") == 1
+
+
+def test_fault_diagnostics_are_bounded_and_do_not_log_on_control_thread(session, caplog):
+    engine, _ = session
+    caplog.set_level(logging.INFO, logger="lerobot.rollout.inference.remote")
+    # A full diagnostics handoff must not hide a fault or block its producer.
+    for _ in range(130):
+        engine._event("first_dispatch")
+    engine._fault("Active motion buffer exhausted")
+    assert engine.failed
+    assert not caplog.records
+    assert engine._log_events.qsize() == 128
+    engine._drain_log_events()
+    assert "Active motion buffer exhausted" in caplog.text
+    assert "configured shutdown/return procedure" in caplog.text
+    assert "Last submission playback=unavailable" in caplog.text
+    assert "turnaround max=unavailable" in caplog.text
+    assert "usable suffix after trimming" in caplog.text
+    engine._drain_log_events()
+    assert caplog.text.count("Remote inference stopped") == 1
+
+
+def test_slow_console_does_not_block_local_motion_permission(session, monkeypatch):
+    engine, client = session
+    entered, release, control_completed = Event(), Event(), Event()
+
+    def slow_console(*args, **kwargs):
+        entered.set()
+        assert release.wait(2)
+
+    monkeypatch.setattr("lerobot.rollout.inference.remote.logger.info", slow_console)
+    engine.resume()
+    capture(engine)
+    engine.start()
+    try:
+        assert entered.wait(2)
+
+        def control_tick():
+            engine.dispatch_allowed()
+            engine.runtime.pop()
+            control_completed.set()
+
+        control = Thread(target=control_tick)
+        control.start()
+        assert control_completed.wait(0.2), "console output acquired a motor-thread lock"
+        control.join(2)
+    finally:
+        release.set()
+    assert client.action_started.wait(2)
