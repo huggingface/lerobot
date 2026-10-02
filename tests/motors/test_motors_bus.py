@@ -15,7 +15,7 @@
 # limitations under the License.
 
 import re
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 
@@ -109,6 +109,100 @@ def test__serialize_data_large_number():
     bus = MockMotorsBus("", {})
     with pytest.raises(ValueError):
         bus._serialize_data(2**32, 4)  # 4-byte max is 0xFFFFFFFF
+
+
+def test_disconnect_disables_torque_on_every_motor_before_closing(dummy_motors):
+    bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
+    bus.connect(handshake=False)
+
+    with (
+        patch.object(bus, "disable_torque") as mock_disable_torque,
+        patch.object(bus.port_handler, "closePort", wraps=bus.port_handler.closePort) as mock_close_port,
+    ):
+        bus.disconnect()
+
+    assert mock_disable_torque.call_args_list == [
+        call("dummy_1", num_retry=5),
+        call("dummy_2", num_retry=5),
+        call("dummy_3", num_retry=5),
+    ]
+    mock_close_port.assert_called_once_with()
+    assert not bus.is_connected
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, ConnectionError])
+def test_disconnect_continues_after_motor_failure_and_reraises(error_type, dummy_motors):
+    bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
+    bus.connect(handshake=False)
+    failure = error_type("dummy_2 failed")
+    attempted_motors = []
+
+    def disable_torque(motors=None, num_retry=0):
+        assert num_retry == 5
+        for motor in bus._get_motors_list(motors):
+            attempted_motors.append(motor)
+            if motor == "dummy_2":
+                raise failure
+
+    with (
+        patch.object(bus, "disable_torque", side_effect=disable_torque),
+        patch.object(bus.port_handler, "closePort", wraps=bus.port_handler.closePort) as mock_close_port,
+        pytest.raises(error_type) as exc_info,
+    ):
+        bus.disconnect()
+
+    assert attempted_motors == ["dummy_1", "dummy_2", "dummy_3"]
+    assert exc_info.value is failure
+    mock_close_port.assert_called_once_with()
+    assert not bus.is_connected
+
+
+def test_disconnect_logs_all_motor_failures_and_reraises_first(dummy_motors, caplog):
+    bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
+    bus.connect(handshake=False)
+    first_failure = RuntimeError("dummy_1 failed")
+    second_failure = ConnectionError("dummy_3 failed")
+    failures = {"dummy_1": first_failure, "dummy_3": second_failure}
+    attempted_motors = []
+
+    def disable_torque(motors=None, num_retry=0):
+        assert num_retry == 5
+        for motor in bus._get_motors_list(motors):
+            attempted_motors.append(motor)
+            if motor in failures:
+                raise failures[motor]
+
+    with (
+        patch.object(bus, "disable_torque", side_effect=disable_torque),
+        patch.object(bus.port_handler, "closePort", wraps=bus.port_handler.closePort) as mock_close_port,
+        caplog.at_level("ERROR", logger="lerobot.motors.motors_bus"),
+        pytest.raises(RuntimeError) as exc_info,
+    ):
+        bus.disconnect()
+
+    assert attempted_motors == ["dummy_1", "dummy_2", "dummy_3"]
+    assert exc_info.value is first_failure
+    assert "dummy_1" in caplog.text
+    assert str(first_failure) in caplog.text
+    assert "dummy_3" in caplog.text
+    assert str(second_failure) in caplog.text
+    mock_close_port.assert_called_once_with()
+    assert not bus.is_connected
+
+
+def test_disconnect_without_disabling_torque_only_closes_port(dummy_motors):
+    bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
+    bus.connect(handshake=False)
+
+    with (
+        patch.object(bus, "disable_torque") as mock_disable_torque,
+        patch.object(bus.port_handler, "closePort", wraps=bus.port_handler.closePort) as mock_close_port,
+    ):
+        bus.disconnect(disable_torque=False)
+
+    mock_disable_torque.assert_not_called()
+    mock_close_port.assert_called_once_with()
+    assert not bus.is_connected
 
 
 @pytest.mark.parametrize(
