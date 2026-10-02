@@ -59,8 +59,8 @@ keywords = ["lerobot", "huggingface", "robotics",  "machine learning", "artifici
 
 dependencies = [
     # Core ML
-    "torch>=2.7,<2.12.0",
-    "torchvision>=0.22.0,<0.27.0",
+    "torch>=2.7,<2.15.0",
+    "torchvision>=0.22.0,<0.30",
     "numpy>=2.0.0,<2.3.0", # NOTE: Explicitly listing numpy helps the resolver converge faster. Upper bound imposed by opencv-python-headless.
     "opencv-python-headless>=4.9.0,<4.14.0",
     "Pillow>=10.0.0,<13.0.0",
@@ -115,10 +115,10 @@ dataset = [
     #   - macOS x86_64 (Intel) and linux armv7l: no wheels in any released version -> fall through to the PyAV decoder.
     # Each platform gets its own line so the resolver picks the minimum version that has a wheel for it.
 
-    # Other torch/torchcodec pairings (informational): 0.8.1 = ffmpeg>=8 support, 0.10 = system-wide ffmpeg support, 0.12 needs torch==2.12.
-    "torchcodec>=0.3.0,<0.12.0; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')) or (sys_platform == 'darwin' and platform_machine == 'arm64')",
-    "torchcodec>=0.7.0,<0.12.0; sys_platform == 'win32'",
-    "torchcodec>=0.11.0,<0.12.0; sys_platform == 'linux' and (platform_machine == 'aarch64' or platform_machine == 'arm64')",
+    # Other torch/torchcodec pairings (informational): 0.8.1 = ffmpeg>=8 support, 0.10 = system-wide ffmpeg support, 0.12 needs torch>=2.11.
+    "torchcodec>=0.3.0,<0.13.0; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')) or (sys_platform == 'darwin' and platform_machine == 'arm64')",
+    "torchcodec>=0.7.0,<0.13.0; sys_platform == 'win32'",
+    "torchcodec>=0.12.0,<0.13.0; sys_platform == 'linux' and (platform_machine == 'aarch64' or platform_machine == 'arm64')",
     "jsonlines>=4.0.0,<5.0.0",
 ]
 training = [
@@ -382,18 +382,18 @@ lerobot-rollout="lerobot.scripts.lerobot_rollout:main"
 
 # ---------------- Tool Configurations ----------------
 
-# cu128 wheels keep broad hardware reach; the driver floor is 570.86.
-# To use a different CUDA variant, reinstall torch with an explicit index, e.g.:
+# cu130 wheels cover Turing through Blackwell and ship torch>=2.9; the driver floor is 580.65.
+# To use a different CUDA variant (e.g. cu126 for older drivers or pre-Turing GPUs), reinstall torch:
 #   uv pip install --force-reinstall torch torchvision \
-#       --index-url https://download.pytorch.org/whl/cu130
+#       --index-url https://download.pytorch.org/whl/cu126
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 [tool.uv.sources]
-torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
-torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
+torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cu130", marker = "sys_platform == 'linux'" }]
 
 [tool.setuptools.package-data]
 lerobot = ["envs/*.json", "annotations/steerable_pipeline/prompts/*.txt"]
