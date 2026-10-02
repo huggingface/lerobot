@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for torch.compile support in policies."""
+"""Tests for torch.compile support in the ACT policy."""
 
 import pytest
 import torch
