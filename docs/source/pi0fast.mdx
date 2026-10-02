@@ -62,7 +62,7 @@ lerobot-train-tokenizer \
     --scale 10.0 \
     --normalization_mode QUANTILES \
     --output_dir "./my_fast_tokenizer" \
-    --push_to_hub \
+    --push_to_hub true \
     --hub_repo_id "username/my-action-tokenizer"
 ```
 
@@ -200,7 +200,7 @@ lerobot-train \
   --policy.chunk_size=10 \
   --policy.n_action_steps=10 \
   --policy.max_action_tokens=256 \
-  --policy.empty_cameras=1 \
+  --policy.empty_cameras=1
 ```
 
 We then evaluate the finetuned model using the LeRobot LIBERO implementation, by running the following command:

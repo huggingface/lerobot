@@ -32,7 +32,7 @@ LeRobot = **datasets + policies + envs + robot control**, unified by a small set
 - **Policies** (`ACT`, `Diffusion`, `SmolVLA`, `π0`, `π0.5`, `Wall-X`, `X-VLA`, `VQ-BeT`, `TD-MPC`, …) — all inherit `PreTrainedPolicy` and can be pushed/pulled from the Hub.
 - **Processors** — small composable transforms between dataset → policy → robot.
 - **Envs** (sim) and **Robots** (real) — same action/observation contract so code swaps cleanly.
-- **CLI** — `lerobot-record`, `lerobot-train`, `lerobot-eval`, `lerobot-teleoperate`, `lerobot-calibrate`, `lerobot-find-port`, `lerobot-setup-motors`, `lerobot-replay`.
+- **CLI** — `lerobot-record`, `lerobot-train`, `lerobot-rollout` (run a policy on a real robot), `lerobot-eval` (evaluate in simulation), `lerobot-teleoperate`, `lerobot-calibrate`, `lerobot-find-port`, `lerobot-setup-motors`, `lerobot-replay`.
 
 See [`AGENTS.md`](./AGENTS.md) for repo architecture.
 
@@ -62,16 +62,16 @@ Full details in [`docs/source/so101.mdx`](./docs/source/so101.mdx) and [`docs/so
 
 ```bash
 # uv (recommended — see AGENTS.md and CLAUDE.md)
-uv sync --locked --extra feetech          # SO-100/SO-101 motor stack
+uv sync --locked --extra core_scripts --extra feetech --extra training   # record + train with SO-100/SO-101
 # uv sync --locked --extra all            # everything
 # uv sync --locked --extra smolvla        # add SmolVLA deps
 
 # pip (alternative, e.g. when not working from source)
-# pip install 'lerobot[feetech]'
+# pip install 'lerobot[core_scripts,feetech,training]'
 # pip install 'lerobot[all]'
 # pip install 'lerobot[smolvla]'
 
-git lfs install && git lfs pull
+# git lfs install && git lfs pull         # contributors only: test artifacts
 hf auth login                             # required to push datasets/policies
 ```
 
@@ -132,21 +132,23 @@ lerobot-record \
   --display_data=true
 ```
 
+`lerobot-record` appends the session's date and time to the repo id, so the dataset is saved as `${HF_USER}/my_task_YYYYMMDD_HHMMSS`. Find the full name on the user's Hub profile or with `ls ~/.cache/huggingface/lerobot/${HF_USER}`, and use it in the steps below (or pass `--dataset.no_stamp=true` to keep the exact name).
+
 **4.7 Visualize** — **always** do this before training. Look for missing frames, camera blur, unreachable targets, inconsistent object positions.
-After upload: https://huggingface.co/spaces/lerobot/visualize_dataset → paste `${HF_USER}/my_task`. Works for **any LeRobot-formatted Hub dataset** — use it to scout other datasets, inspect episode quality, or debug your own data before retraining.
+After upload: https://huggingface.co/spaces/lerobot/visualize_dataset → paste `${HF_USER}/my_task_YYYYMMDD_HHMMSS`. Works for **any LeRobot-formatted Hub dataset** — use it to scout other datasets, inspect episode quality, or debug your own data before retraining.
 
 **4.8 Replay an episode** (sanity check)
 
 ```bash
 lerobot-replay --robot.type=so101_follower --robot.port=<FOLLOWER_PORT> --robot.id=my_follower \
-  --dataset.repo_id=${HF_USER}/my_task --dataset.episode=0
+  --dataset.repo_id=${HF_USER}/my_task_YYYYMMDD_HHMMSS --dataset.episode=0
 ```
 
 **4.9 Train** (default: ACT — fastest, lowest memory). Apple silicon: `--policy.device=mps`. No local GPU? Add `--job.target=<flavor>` (e.g. `a10g-small`, list them with `hf jobs hardware`) to run on Hugging Face Jobs instead. See §6/§7 for policy and duration.
 
 ```bash
 lerobot-train \
-  --dataset.repo_id=${HF_USER}/my_task \
+  --dataset.repo_id=${HF_USER}/my_task_YYYYMMDD_HHMMSS \
   --policy.type=act \
   --policy.device=cuda \
   --output_dir=outputs/train/act_my_task \
@@ -156,17 +158,19 @@ lerobot-train \
   --policy.repo_id=${HF_USER}/act_my_task
 ```
 
-**4.10 Evaluate on the real robot** — compare success rate to a teleoperated baseline.
+**4.10 Run the policy on the robot** — a quick check that the trained policy works. Nothing is recorded.
 
 ```bash
-lerobot-record \
+lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=${HF_USER}/act_my_task \
   --robot.type=so101_follower --robot.port=<FOLLOWER_PORT> --robot.id=my_follower \
   --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
-  --dataset.repo_id=${HF_USER}/eval_my_task \
-  --dataset.single_task="<same task description as training>" \
-  --dataset.num_episodes=10 \
-  --policy.path=${HF_USER}/act_my_task
+  --task="<same task description as training>" \
+  --duration=0
 ```
+
+`--duration=0` is the default, so you can also leave it out: the policy runs until you stop it with **Ctrl+C**, and the arm then moves back to its starting position. Set a duration in seconds (e.g. `--duration=60`) to stop automatically. Use the same `--robot.id`, cameras and task description as when recording. To measure a success rate over recorded episodes, see §8.1.
 
 ---
 
@@ -179,7 +183,7 @@ Good data beats clever models. Adopt these defaults and deviate only with eviden
 - **Fix the rig and cameras** before touching the software. If the rig vibrates or the operator gets frustrated, fix that first — more bad data won't help.
 - **Lighting matters more than resolution.** Diffuse, consistent light. Avoid moving shadows.
 - **"Can you do the task from the camera view alone?"** If no, your cameras are wrong. Fix before recording.
-- Enable **action interpolation** for rollouts when available for smoother trajectories.
+- Enable **action interpolation** for rollouts when available for smoother trajectories (`lerobot-rollout --interpolation_multiplier=2`).
 
 ### 5.2 Practice before you record
 
@@ -342,17 +346,24 @@ Two flavors of evaluation:
 
 ### 8.1 Real-robot eval (SO-101, etc.)
 
-Reuse `lerobot-record` with `--policy.path` to run the trained policy on-robot and save the run as an eval dataset. Convention: prefix the dataset with `eval_`.
+For a quick unrecorded check, see §4.10. For a scored evaluation, use `lerobot-rollout --strategy.type=episodic`: it runs the policy for a fixed number of episodes, with a reset phase between them, and saves every episode as a dataset you can review later. Rollout dataset names must start with `rollout_` (`lerobot-record` no longer runs policies and rejects `eval_` names).
 
 ```bash
-lerobot-record \
+lerobot-rollout \
+  --strategy.type=episodic \
+  --policy.path=${HF_USER}/act_my_task \
   --robot.type=so101_follower --robot.port=<FOLLOWER_PORT> --robot.id=my_follower \
   --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
-  --dataset.repo_id=${HF_USER}/eval_my_task \
+  --dataset.repo_id=${HF_USER}/rollout_my_task \
   --dataset.single_task="<same task description used during training>" \
   --dataset.num_episodes=10 \
-  --policy.path=${HF_USER}/act_my_task
+  --dataset.episode_time_s=30 \
+  --dataset.reset_time_s=10
 ```
+
+Keys during the run: **→** ends the current episode early, **←** discards it and re-records, **ESC** stops the session.
+
+During the reset phase between episodes the arm returns to its starting position; add `--teleop.type=so101_leader --teleop.port=<LEADER_PORT> --teleop.id=my_leader` to move it with the leader arm instead. Full options: [`docs/source/inference.mdx`](./docs/source/inference.mdx).
 
 Report success rate across episodes. Compare to a teleoperated baseline and to an earlier checkpoint to catch regressions.
 
