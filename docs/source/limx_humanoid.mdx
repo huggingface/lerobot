@@ -1,0 +1,238 @@
+# LimX Humanoid
+
+The [LimX Dynamics](https://www.limxdynamics.com/) full-size humanoid (Oli) is supported in LeRobot.
+The robot exposes 31 actuated joints — two 6-DoF legs, a 3-DoF waist, a 2-DoF head and two 7-DoF arms
+— and LeRobot drives all of them as a single `limx_humanoid` robot.
+
+<Tip>
+  This integration talks to the robot's own control process through the vendor
+  low-level SDK, which is published on PyPI as prebuilt wheels (`limxsdk`). It
+  is imported lazily, on `connect()`, so `--robot.type=limx_humanoid` stays
+  discoverable even when the extra is not installed.
+</Tip>
+
+## Supported Hardware
+
+| Component | Description                                        |
+| --------- | -------------------------------------------------- |
+| Legs      | 2 × 6 DoF, commanded as joint positions in radians |
+| Waist     | 3 DoF (yaw, roll, pitch)                           |
+| Head      | 2 DoF (yaw, pitch)                                 |
+| Arms      | 2 × 7 DoF, commanded as joint positions in radians |
+| Transport | Vendor low-level SDK over IP, robot control port   |
+
+The robot build is the **Oli** (`HU_D04_01`). The older `HU_D03` build is discontinued, and the
+Luna humanoid (`HU_L04`) is a separate build with a different joint count — not covered by this
+robot type.
+
+## Install
+
+Humanoid support is an optional extra, because it pulls in the vendor SDK:
+
+```bash
+pip install -e '.[limx_humanoid]'
+```
+
+If the extra is not installed, connecting fails with an error telling you to install it.
+
+<Warning>
+  The vendor publishes a different newest build per platform: `4.1.1` ships
+  Linux wheels only, while `4.1.0` is the newest Windows one. The extra
+  therefore asks for `limxsdk>=4.1.0` so that Windows resolves at all; a Linux
+  install picks up `4.1.1`.
+</Warning>
+
+## The `ROBOT_TYPE` Variable
+
+The vendor package picks its joint table from the `ROBOT_TYPE` environment variable, which it reads
+**when it is first imported**. Two consequences shape this integration:
+
+- The driver exports `ROBOT_TYPE` from `robot_type` immediately before it imports the package, so
+  the variable is in place in time.
+- A process cannot switch robot builds once the package has loaded. Run a separate process per
+  build.
+
+On the humanoid build the vendor package does not validate the value, so a wrong `robot_type` is
+**not** reported as an error — it silently selects the wrong table. For the Oli, set `robot_type`
+to `"HU_D04_01"` (the value the vendor's own deployment exports); leave it `None` only if your
+environment already exports `ROBOT_TYPE`.
+
+## Connecting to a Real Robot
+
+The vendor documents the bring-up procedure for a real humanoid. In short:
+
+1. Connect the development computer to the robot's external network port and set its own IP to
+   `10.192.1.200`; the robot is at `10.192.1.2` (verify with `ping 10.192.1.2`).
+2. Suspend the robot from the shoulder hooks, power it on, then press the right joystick button on
+   the remote control to enable the motors.
+3. Press `R1 + DOWN` to enter developer mode — this is what lets your own code command the robot.
+   It persists across reboots; exit with `R1 + LEFT`.
+
+With the robot in developer mode, `connect()` targets `10.192.1.2` (the default `robot_ip`). The
+vendor also ships a MuJoCo simulator (`humanoid-mujoco-sim`) you can run first, without the robot.
+
+## Verify the Connection
+
+```python
+from lerobot.robots.limx_humanoid import LimxHumanoid, LimxHumanoidConfig
+
+robot = LimxHumanoid(LimxHumanoidConfig(robot_ip="10.192.1.2"))
+robot.connect()
+print(robot.get_observation())
+robot.disconnect()
+```
+
+`get_observation()` returns one `"<joint>.pos"` entry per joint, in radians, keyed by the joint
+names in the configuration (see [Joint Names](#joint-names)).
+
+## Send Actions
+
+`send_action()` consumes exactly the keys that `get_observation()` produces, so a policy trained on
+recorded observations can be replayed without a translation layer:
+
+```python
+obs = robot.get_observation()
+robot.send_action({key: value for key, value in obs.items()})  # holds the measured pose
+```
+
+Actions are joint positions in radians. The driver republishes the latest target at `publish_rate`
+while connected, so the controller keeps receiving setpoints between `send_action()` calls, and
+interpolates towards them rather than applying them instantly.
+
+Nothing is published until either `start_pose` or a first action provides a target, so connecting
+alone does not move the robot.
+
+## Default Standing Pose
+
+The vendor's standing controller holds Oli in this pose (`stand_pos` from
+`humanoid-rl-deploy-python`), in `joint_names` order — legs, waist, head, arms:
+
+```
+-0.15   0.00  -0.05  0.30  -0.16  0.00      # left leg
+-0.15   0.00   0.05  0.30  -0.16  0.00      # right leg
+ 0.00   0.00   0.00                          # waist
+ 0.00   0.00                                 # head
+ 0.10   0.10  -0.20 -0.20   0.00  0.00  0.00 # left arm
+ 0.10  -0.10   0.20 -0.20   0.00  0.00  0.00 # right arm
+```
+
+Pass it as `start_pose` to hold that pose on connect, or send it as a first action. `start_pose`
+defaults to `None` (leaves the robot where it is) rather than this pose, because auto-standing on
+connect is unsafe unless the robot is in a position to stand.
+
+## Configuration
+
+| Field                 | Default               | Description                                                                                       |
+| --------------------- | --------------------- | ------------------------------------------------------------------------------------------------- |
+| `robot_ip`            | `10.192.1.2`          | Address of the robot's own control process                                                        |
+| `robot_type`          | `None`                | Robot build exported as `ROBOT_TYPE`. For Oli use `"HU_D04_01"`; `None` leaves the vendor default |
+| `kp`                  | vendor standing gains | 31 position gains, in `joint_names` order                                                         |
+| `kd`                  | vendor standing gains | 31 derivative gains, matching `kp` joint for joint                                                |
+| `joint_names`         | vendor PR-space names | 31 names, in SDK vector order. Override to match an existing dataset                              |
+| `publish_rate`        | `1000.0`              | Command publish rate in Hz                                                                        |
+| `start_pose`          | `None`                | 31-value pose to hold once connected. `None` leaves the robot where it is                         |
+| `observation_timeout` | `1.0`                 | Seconds to wait for a fresh state sample                                                          |
+| `state_max_age`       | `None`                | Reject state older than this many seconds. `None` disables the check; on hardware prefer `~0.5`   |
+
+Example:
+
+```bash
+lerobot-record \
+  --robot.type=limx_humanoid \
+  --robot.robot_ip=10.192.1.2
+```
+
+## Joint Names
+
+The vendor SDK addresses joints positionally, so this integration uses the vendor's own PR-space
+joint names (from the `humanoid-mujoco-sim` kinematic-projection table for `HU_D04_01`):
+
+```
+left_hip_pitch_joint    left_hip_roll_joint     left_hip_yaw_joint      left_knee_joint
+left_ankle_pitch_joint  left_ankle_roll_joint
+right_hip_pitch_joint   right_hip_roll_joint    right_hip_yaw_joint     right_knee_joint
+right_ankle_pitch_joint right_ankle_roll_joint
+waist_yaw_joint         waist_roll_joint        waist_pitch_joint
+head_yaw_joint          head_pitch_joint
+left_shoulder_pitch_joint   left_shoulder_roll_joint   left_shoulder_yaw_joint
+left_elbow_joint            left_wrist_yaw_joint       left_wrist_pitch_joint
+left_wrist_roll_joint
+right_shoulder_pitch_joint  right_shoulder_roll_joint  right_shoulder_yaw_joint
+right_elbow_joint           right_wrist_yaw_joint      right_wrist_pitch_joint
+right_wrist_roll_joint
+```
+
+<Warning>
+  If you already have a dataset or policy checkpoint that uses different joint
+  names, pass your own table via `--robot.joint_names=[...]` (31 entries, in the
+  order above) rather than renaming inside the dataset. No translation is done
+  for you.
+</Warning>
+
+## Gains
+
+`kp` and `kd` default to the gains of the vendor's own standing controller for Oli
+(`humanoid-rl-deploy-python`, `stand_controller/joint_params.yaml`) — the values the vendor ships to
+hold a real Oli upright. They are controller-specific, not universal: the vendor's walk and mimic
+controllers use different gains, and its damping controller sets only `kd` (a soft, zero-stiffness
+mode used to bring the robot down). Override `kp`/`kd` for those modes.
+
+## Joint Limits
+
+The vendor's kinematic-projection table gives each PR-space joint a position limit (radians), in
+`joint_names` order:
+
+| Group     | Lower                                                    | Upper                                             |
+| --------- | -------------------------------------------------------- | ------------------------------------------------- |
+| Left leg  | `-2.618, -0.873, -2.618, -0.087, -1.012, -0.436`         | `2.618, 2.094, 2.618, 2.583, 0.611, 0.436`        |
+| Right leg | `-2.618, -2.094, -2.618, -0.087, -1.012, -0.436`         | `2.618, 0.873, 2.618, 2.583, 0.611, 0.436`        |
+| Waist     | `-2.618, -0.524, -0.524`                                 | `2.618, 0.524, 0.785`                             |
+| Head      | `-0.785, -0.524`                                         | `0.785, 0.785`                                    |
+| Left arm  | `-2.792, -0.087, -3.403, -2.443, -2.356, -1.571, -1.571` | `2.792, 3.229, 1.571, 1.571, 0.785, 1.571, 1.571` |
+| Right arm | `-2.792, -3.229, -1.571, -2.443, -0.785, -1.571, -1.571` | `2.792, 0.087, 3.403, 1.571, 2.356, 1.571, 1.571` |
+
+The driver does not clamp targets to these limits — it passes actions through and lets the robot's
+own controller enforce them. Keep them in mind when authoring actions.
+
+## Control Mode
+
+Commands are sent in the SDK's **mode 0** (torque-position hybrid) with a position target, zero
+desired velocity and **zero feedforward torque**, which reduces it to pure PD position tracking.
+This is exactly what the vendor's own standing controller ships on the real robot (`mode` 0, `tau` 0,
+`dq` 0), so it is the vendor-validated choice rather than an assumption.
+
+The command's motor-name field uses the vendor's PR-space joint names. At connect time the driver
+reads the real names the SDK reports (`getMotorNames()`); when that returns a usable 31-entry set it
+is used verbatim, otherwise the [table above](#joint-names) is sent. The vendor's own standing
+controller copies `robot_state.motor_names` into every command the same way.
+
+## Safety
+
+- `start_pose` is only published once a target exists, so connecting does not command a motion.
+- `state_max_age` is disabled by default. On hardware, set it (for example `0.5`) so a stale state
+  sample is rejected instead of being fed to a policy.
+- The robot's own controller owns calibration and zeroing; `calibrate()` is a no-op here and
+  `is_calibrated` reports `True`.
+- The driver publishes pure position commands: velocity and torque terms are sent as zero, with the
+  configured `kp`/`kd` doing the work.
+
+## Network Security Boundary
+
+The vendor control channel is plaintext and unauthenticated. It is intended for a trusted, local
+robot network only — do not expose the control port beyond that boundary.
+
+## Troubleshooting
+
+| Symptom                                   | Likely cause                                                                         |
+| ----------------------------------------- | ------------------------------------------------------------------------------------ |
+| `'limxsdk' is required but not installed` | Install it with `pip install -e '.[limx_humanoid]'`                                  |
+| `failed to initialise against 10.192.1.2` | The robot-side control process is not running, or `robot_ip` is wrong                |
+| `no fresh state sample within 1.0s`       | No state is arriving: the control process is not publishing, or `robot_ip` is wrong  |
+| The robot follows the wrong joint table   | `robot_type` does not match the robot build; the vendor package does not validate it |
+| Observation keys do not match a dataset   | Pass a matching `joint_names` table; see [Joint Names](#joint-names)                 |
+
+## Out of Scope
+
+- **Cameras.** This integration exposes joint positions only. Image observations are not part of it,
+  so it does not accept a `cameras` configuration.
+- **Simulation environments.** No LeRobot environment ships with this robot.

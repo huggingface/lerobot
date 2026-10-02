@@ -44,6 +44,7 @@ from lerobot.robots import (  # noqa: F401
     hope_jr,
     koch_follower,
     lekiwi,
+    limx_humanoid,
     make_robot_from_config,
     omx_follower,
     openarm_follower,
