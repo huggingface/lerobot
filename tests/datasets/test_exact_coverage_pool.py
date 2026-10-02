@@ -214,5 +214,5 @@ def test_round_robin_empty_pool() -> None:
 
 
 def test_invalid_sampling_strategy() -> None:
-    with pytest.raises(ValueError, match="sampling_strategy"):
+    with pytest.raises(ValueError, match="StreamingSamplingStrategy"):
         ExactCoveragePool(EPISODES, 3, seed=0, sampling_strategy="invalid")

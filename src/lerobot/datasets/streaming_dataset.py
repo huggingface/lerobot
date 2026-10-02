@@ -32,7 +32,7 @@ import torch
 from lerobot.configs import DEFAULT_DEPTH_UNIT, DEPTH_METER_UNIT, DepthEncoderConfig
 from lerobot.streaming.episode_cache import EpisodeByteCache
 from lerobot.streaming.episode_parquet import EpisodeParquetReader
-from lerobot.streaming.episode_pool import ExactCoveragePool
+from lerobot.streaming.episode_pool import ExactCoveragePool, StreamingSamplingStrategy
 from lerobot.streaming.manifest import EpisodeVideoManifest
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.import_utils import get_safe_default_video_backend
@@ -42,12 +42,13 @@ from .depth_utils import MM_PER_METRE, dequantize_depth
 from .feature_utils import check_delta_timestamps, get_delta_indices, get_hf_features_from_features
 from .io_utils import hf_transform_to_torch
 from .language import LANGUAGE_COLUMNS
+from .storage import is_bucket_root
 from .streaming_sidecar import (
     ensure_dataset_mp4_sidecar,
     range_backend_for_root,
     streaming_data_root,
 )
-from .utils import check_version_compatibility
+from .utils import check_version_compatibility, resolve_episode_indices
 from .video_utils import decode_video_frames_pyav
 
 
@@ -156,10 +157,10 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         token: str | bool | None = None,
         decode_threads: int = 2,
         decoded_queue_size: int = 8,
-        max_open_decoders: int | None = None,
+        video_decoder_cache_size: int | None = None,
         native_http_connections: int | None = None,
         native_http_subranges: int = 1,
-        sampling_strategy: Literal["remaining", "round_robin"] = "remaining",
+        sampling_strategy: StreamingSamplingStrategy | str = StreamingSamplingStrategy.REMAINING,
     ) -> None:
         """Initialize an episode-scoped streaming reader.
 
@@ -167,7 +168,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             repo_id (`str`):
                 Hub dataset or bucket identifier.
             root (`str | Path | None`, *optional*):
-                Local dataset directory, or local metadata cache in bucket mode.
+                Local dataset directory, or local metadata cache in bucket mode. An
+                ``hf://buckets/OWNER/BUCKET`` URI selects bucket mode for that bucket.
             episodes (`list[int] | None`, *optional*):
                 Episode indices to select; None selects the complete dataset.
             image_transforms (`Callable[[torch.Tensor], torch.Tensor] | None`, *optional*):
@@ -186,6 +188,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 Legacy setting used to derive the pool size when episode_pool_size is omitted.
             max_num_shards (`int`, *optional*, defaults to `16`):
                 Maximum internal episode-fetch concurrency, not DataLoader process count.
+                ``lerobot-train`` sets it from ``--num_workers``.
             seed (`int`, *optional*, defaults to `42`):
                 Seed for deterministic episode admission and anchor sampling.
             rng (`np.random.Generator | None`, *optional*):
@@ -217,17 +220,20 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 Parallel sample-assembly and video-decode workers.
             decoded_queue_size (`int`, *optional*, defaults to `8`):
                 Maximum samples prepared ahead, delivered in planner order.
-            max_open_decoders (`int | None`, *optional*):
-                Decoder-count cap; None allows one per active episode-camera pair.
+            video_decoder_cache_size (`int | None`, *optional*):
+                Open video decoder cap per rank; None allows one per active episode-camera pair.
             native_http_connections (`int | None`, *optional*):
                 Per-rank HTTP connection limit; None derives it from fetch concurrency.
             native_http_subranges (`int`, *optional*, defaults to `1`):
                 Maximum concurrent subrequests for one sufficiently large byte range.
-            sampling_strategy (`Literal["remaining", "round_robin"]`, *optional*, defaults to `"remaining"`):
+            sampling_strategy (`StreamingSamplingStrategy | str`, *optional*, defaults to `"remaining"`):
                 Weight episodes by remaining anchors, or draw one anchor per episode each
                 shuffled round. Neither strategy is a global uniform shuffle.
         """
         super().__init__()
+        if is_bucket_root(repo_id, root):
+            # Metadata then uses the regular bucket cache, as with repo_type="bucket".
+            root, repo_type = None, "bucket"
         if repo_type not in ("dataset", "bucket"):
             raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {repo_type!r}")
         self.repo_id = repo_id
@@ -260,34 +266,13 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             self._video_backend = "pyav"
         if self._video_backend not in {"torchcodec", "pyav"}:
             raise ValueError(f"Unsupported video backend: {self._video_backend}")
-        if buffer_size <= 0:
-            raise ValueError("buffer_size must be positive")
-        if max_num_shards <= 0:
-            raise ValueError("max_num_shards must be positive")
-        if episode_pool_size is not None and episode_pool_size <= 0:
-            raise ValueError("episode_pool_size must be positive")
-        if prefetch_episodes < 0:
-            raise ValueError("prefetch_episodes must be non-negative")
-        if byte_budget_gb <= 0:
-            raise ValueError("byte_budget_gb must be positive")
-        if decode_threads <= 0:
-            raise ValueError("decode_threads must be positive")
-        if decoded_queue_size <= 0:
-            raise ValueError("decoded_queue_size must be positive")
-        if max_open_decoders is not None and max_open_decoders <= 0:
-            raise ValueError("max_open_decoders must be positive")
-        if native_http_connections is not None and native_http_connections <= 0:
-            raise ValueError("native_http_connections must be positive")
-        if native_http_subranges <= 0:
-            raise ValueError("native_http_subranges must be positive")
-        if sampling_strategy not in ("remaining", "round_robin"):
-            raise ValueError("sampling_strategy must be 'remaining' or 'round_robin'")
-        self.sampling_strategy = sampling_strategy
+        self.sampling_strategy = StreamingSamplingStrategy(sampling_strategy)
         self.episode_pool_size = episode_pool_size or min(buffer_size, 32)
         self.prefetch_episodes = prefetch_episodes
         self.byte_budget = int(byte_budget_gb * 1024**3)
         self.decode_threads = decode_threads
-        self.decoded_queue_size = decoded_queue_size
+        # An empty queue could never hold a sample, so at least one is always prepared ahead.
+        self.decoded_queue_size = max(1, decoded_queue_size)
         self.native_http_connections = native_http_connections
         self.native_http_subranges = native_http_subranges
         self.repeat = repeat
@@ -314,9 +299,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         self.meta.rescale_depth_stats(self._depth_output_unit)
         # Check version
         check_version_compatibility(self.repo_id, self.meta._version, CODEBASE_VERSION)
-        self.max_open_decoders = (
-            max_open_decoders
-            if max_open_decoders is not None
+        self.video_decoder_cache_size = (
+            video_decoder_cache_size
+            if video_decoder_cache_size is not None
             else max(1, self.episode_pool_size * len(self.meta.video_keys))
         )
 
@@ -332,18 +317,13 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             if key in self.meta.image_keys
         }
 
-        selected_episodes = list(range(self.meta.total_episodes)) if episodes is None else list(episodes)
-        if len(set(selected_episodes)) != len(selected_episodes):
-            raise ValueError("episodes must not contain duplicates")
-        invalid_episodes = [
-            episode for episode in selected_episodes if episode < 0 or episode >= self.meta.total_episodes
-        ]
-        if invalid_episodes:
-            raise ValueError(
-                f"Episode indices out of range for dataset with {self.meta.total_episodes} episodes: "
-                f"{invalid_episodes}"
-            )
-        self._selected_episodes = selected_episodes
+        resolved_episodes = resolve_episode_indices(episodes, self.meta.total_episodes)
+        # Each episode is owned once: duplicates would double-count frames in the coverage plan.
+        self._selected_episodes = (
+            list(range(self.meta.total_episodes))
+            if resolved_episodes is None
+            else list(dict.fromkeys(resolved_episodes))
+        )
 
         self.delta_timestamps: dict[str, list[float]] | None = None
         self.delta_indices: dict[str, list[int]] | None = None
@@ -659,8 +639,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 continue
             values = dataset.select_columns(key).with_format(None)[:][key]
             try:
-                # Match hf_transform_to_torch's Python-value dtype inference, not the
-                # Arrow storage dtype. Keep nullable columns on the original feature path.
+                # Same values and dtypes as torch.stack(hf_transform_to_torch(...)[key]) (both infer
+                # from Python values, not the Arrow dtype), but one tensor per episode column
+                # instead of one per row. Nullable columns stay on the hf_transform_to_torch path.
                 numeric[key] = torch.tensor(values)
             except (TypeError, ValueError, RuntimeError):
                 continue
@@ -709,7 +690,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             range_backend=range_backend,
             native_http_connections=self.native_http_connections,
             native_http_subranges=self.native_http_subranges,
-            max_open_decoders=self.max_open_decoders,
+            max_open_decoders=self.video_decoder_cache_size,
             video_backend=self._video_backend,
             tolerance_s=self.tolerance_s,
             token=self._streaming_io_token,

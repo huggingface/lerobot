@@ -23,12 +23,36 @@ rank-local coverage epoch. Parquet columns and compressed MP4 byte ranges are pr
 same byte-aware admission frontier. Temporal history and future windows are resolved inside the
 complete episode, including the same boundary padding masks as map-style loading.
 
-When `--num_workers` is nonzero, training uses one dedicated DataLoader process per rank. Its
-bounded result queue holds decoded batches while the policy trains. The configured worker count is
-instead used as internal Parquet and byte-range fetch concurrency, so increasing it does not create
-independent samplers or multiply the cache budget.
-
 The default map-style `LeRobotDataset` behavior is unchanged when `--dataset.streaming=false`.
+
+## Workers, shards and concurrency
+
+Streaming does not use "classical" DataLoader workers. With a map-style dataset, each DataLoader
+worker process samples and decodes its own items. With streaming, the DataLoader runs at most
+**one worker process per rank**; all concurrency happens inside that process, behind the
+DataLoader, in thread pools owned by the dataset:
+
+| Stage                      | Concurrency                                    | Setting                                    |
+| -------------------------- | ---------------------------------------------- | ------------------------------------------ |
+| Rank sharding              | One disjoint whole-episode shard per rank      | Distributed world size                     |
+| Episode fetch              | Parquet rows and MP4 byte ranges, in parallel  | `max_num_shards`, set from `--num_workers` |
+| Sample assembly and decode | Temporal windows and video frames, in parallel | `--dataset.streaming_decode_threads`       |
+| Ordered sample buffer      | Decoded samples kept ahead, in planner order   | `--dataset.streaming_decoded_queue_size`   |
+| DataLoader worker (0 or 1) | Collates batches off the training process      | `--prefetch_factor`                        |
+
+**Shards and workers.** Each rank owns a frame-balanced shard of complete episodes, so the number
+of episodes bounds the useful world size: a rank with no episode fails at startup. Inside a
+rank, `--num_workers` no longer means "N processes". In `lerobot-train` it sets
+`max_num_shards`, the number of episodes fetched concurrently (also capped by
+`streaming_episode_pool_size + streaming_prefetch_episodes`). Raising it speeds up episode
+admission. It does not split episodes further, add samplers, or multiply the byte budget.
+`--num_workers=0` keeps the dataset in the training process, and any positive value moves it
+into a single DataLoader worker.
+
+One worker per rank keeps a single episode pool, byte budget and decoder cache per rank, so
+memory stays bounded, episode mixing uses the whole pool, and the exactly-once order is
+deterministic and resumable from a single sample offset. Video decoding mostly releases the GIL, so
+decode threads scale within that process.
 
 ## MP4 sidecars and the first run
 
@@ -102,9 +126,13 @@ The production defaults are:
 | `streaming_byte_budget_gb`          |              8 | Maximum synthesized MP4 bytes per rank              |
 | `streaming_decode_threads`          |              2 | Parallel sample assembly and video decode workers   |
 | `streaming_decoded_queue_size`      |              8 | Decoded samples buffered ahead, in planner order    |
-| `streaming_max_open_decoders`       | pool × cameras | Independent open-decoder LRU cap per rank           |
+| `video_decoder_cache_size`          | pool × cameras | Open video decoder LRU cap per rank                 |
 | `streaming_native_http_connections` |          unset | Native HTTP connection cap per rank                 |
 | `streaming_native_http_subranges`   |              1 | Concurrent subranges per native HTTP range read     |
+| `max_num_shards` (`--num_workers`)  |             16 | Episodes fetched concurrently per rank              |
+
+All options except `max_num_shards` are `--dataset.*` flags. `max_num_shards` is a
+`StreamingLeRobotDataset` argument; `lerobot-train` sets it from `--num_workers` (at least 1).
 
 For more even episode mixing, opt in with `--dataset.streaming_sampling_strategy=round_robin`.
 Each round shuffles the currently resident episodes and samples one shuffled frame from each;
@@ -140,7 +168,8 @@ lerobot-train \
 ```
 
 For a complete dataset stored in an HF Storage Bucket, use the bucket's identifier and repository
-type. Metadata (`meta/`), Parquet and video files must all be present in that bucket:
+type, or pass the bucket URI as `--dataset.root=hf://buckets/OWNER/BUCKET`. Metadata (`meta/`),
+Parquet and video files must all be present at the root of that bucket:
 
 ```bash
 lerobot-train \
@@ -170,15 +199,11 @@ The resume guarantee concerns anchor order, not bitwise replay of stochastic ima
 
 ## Troubleshooting
 
-- **The first batch takes a long time:** check logs for a sidecar build. Reuse a shared cache or
-  publish a validated complete sidecar explicitly.
-- **A sidecar lock times out:** another process may still be indexing the same revision. Confirm it
-  is healthy before removing a stale lock.
-- **A rank owns no data:** reduce the number of ranks so every rank owns at least one selected
-  episode.
-- **The byte budget is exceeded:** lower the episode pool, increase the per-rank byte budget, or
-  use an explicitly prepared payload layout with smaller episode ranges.
-- **Remote reads cannot authenticate:** verify the normal Hugging Face token or fsspec credentials
-  are available in every worker environment. Credentials are never embedded in the sidecar.
-- **Refill stalls are high:** compare p95/p99 batch wait, reduce network contention, raise prefetch
-  gradually, and verify that the dataset sidecar matches the exact revision.
+| Symptom                           | What to do                                                                                                           |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| The first batch takes a long time | Check the logs for a sidecar build. Reuse a shared cache or explicitly publish a validated complete sidecar.         |
+| A sidecar lock times out          | Another process may still be indexing the same revision. Confirm it is healthy before removing a stale lock.         |
+| A rank owns no data               | Reduce the number of ranks so every rank owns at least one selected episode.                                         |
+| The byte budget is exceeded       | Lower the episode pool, raise the per-rank byte budget, or use a payload layout with smaller episode ranges.         |
+| Remote reads cannot authenticate  | Make the Hugging Face token or fsspec credentials available to every worker. Sidecars never embed credentials.       |
+| Refill stalls are high            | Compare p95/p99 batch wait, reduce network contention, raise prefetch gradually, check the sidecar matches revision. |

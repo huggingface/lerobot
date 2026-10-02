@@ -28,7 +28,7 @@ import numpy as np
 import pytest
 from filelock import FileLock
 
-from lerobot.streaming import _mapped_index
+from lerobot.streaming import sidecar_utils
 from lerobot.streaming.manifest import EpisodeVideoManifest, VideoFileRecord
 from lerobot.streaming.mp4 import Mp4Index
 from lerobot.streaming.sidecar import (
@@ -342,7 +342,7 @@ def test_sidecar_payload_does_not_reuse_stale_path_generation(
     path = tmp_path / "index.npz"
     _write_valid(path, _spec("old"))
     stale_stat = path.stat()
-    _mapped_index.mapped_sidecar(path)
+    sidecar_utils.mapped_sidecar(path)
     _write_valid(path, _spec("new"))
     original_stat = Path.stat
 
@@ -350,7 +350,7 @@ def test_sidecar_payload_does_not_reuse_stale_path_generation(
         return stale_stat if self == path else original_stat(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "stat", stale_path_stat)
-    assert _mapped_index.sidecar_payload(path)["sidecar"]["revision"] == "new"
+    assert sidecar_utils.sidecar_payload(path)["sidecar"]["revision"] == "new"
 
 
 def test_source_change_during_conversion_is_not_published(
@@ -358,7 +358,7 @@ def test_source_change_during_conversion_is_not_published(
 ) -> None:
     path = tmp_path / "index.npz"
     _write_valid(path, _spec())
-    validate = _mapped_index._validate_arrays
+    validate = sidecar_utils._validate_arrays
 
     def change_after_array_read(arrays: dict[str, np.ndarray]) -> None:
         validate(arrays)
@@ -366,9 +366,9 @@ def test_source_change_during_conversion_is_not_published(
         with path.open("ab") as changed:
             changed.write(b"concurrent mutation")
 
-    monkeypatch.setattr(_mapped_index, "_validate_arrays", change_after_array_read)
+    monkeypatch.setattr(sidecar_utils, "_validate_arrays", change_after_array_read)
     with pytest.raises(OSError, match="changed during index conversion"):
-        _mapped_index.mapped_sidecar(path)
+        sidecar_utils.mapped_sidecar(path)
     cache = tmp_path / "cache-home" / "streaming-indexes"
     assert not list(cache.glob("*.bin"))
     assert not list(cache.glob("*.index.tmp"))
@@ -403,7 +403,7 @@ def test_concurrent_index_conversion_runs_once(tmp_path: Path, monkeypatch: pyte
 def test_invalid_derived_index_is_recreated(tmp_path: Path) -> None:
     path = tmp_path / "index.npz"
     _write_valid(path, _spec())
-    cache_path, _ = _mapped_index.mapped_sidecar(path)
+    cache_path, _ = sidecar_utils.mapped_sidecar(path)
     cache_path.write_bytes(b"interrupted")
     records = EpisodeVideoManifest.load_file_sidecar(path)
     np.testing.assert_array_equal(next(iter(records.values())).mp4.sample_pts, [0.0])
@@ -413,7 +413,7 @@ def test_invalid_derived_index_is_recreated(tmp_path: Path) -> None:
 def test_invalid_derived_metadata_is_recreated(tmp_path: Path, corruption: str) -> None:
     path = tmp_path / "index.npz"
     _write_valid(path, _spec())
-    cache_path, payload = _mapped_index.mapped_sidecar(path)
+    cache_path, payload = sidecar_utils.mapped_sidecar(path)
     raw = cache_path.read_bytes()
     old_length = int.from_bytes(raw[-16:-8], "little")
     if corruption == "non-object":
@@ -480,7 +480,7 @@ def test_full_index_cache_does_not_rebuild_valid_source(
     def unexpected_build(*args: object) -> None:
         pytest.fail("A full derived cache is not an invalid source sidecar")
 
-    monkeypatch.setattr(_mapped_index.tempfile, "NamedTemporaryFile", full_disk)
+    monkeypatch.setattr(sidecar_utils.tempfile, "NamedTemporaryFile", full_disk)
     with pytest.raises(OSError, match="free space in HF_LEROBOT_HOME"):
         ensure_mp4_sidecar(spec, tmp_path, build=unexpected_build)
 
@@ -520,7 +520,7 @@ def test_sidecar_rejects_object_arrays_without_publication(tmp_path: Path, prepa
 def test_resolved_sidecar_decompresses_each_array_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, published: bool
 ) -> None:
-    original = _mapped_index._read_arrays
+    original = sidecar_utils._read_arrays
     reads = []
 
     def counted_read(archive: ZipFile, index: int, item: dict[str, Any]) -> dict[str, np.ndarray]:
@@ -531,7 +531,7 @@ def test_resolved_sidecar_decompresses_each_array_once(
         _write_valid(path, spec)
         return True
 
-    monkeypatch.setattr(_mapped_index, "_read_arrays", counted_read)
+    monkeypatch.setattr(sidecar_utils, "_read_arrays", counted_read)
     path = ensure_mp4_sidecar(_spec(), tmp_path, build=_write_valid, download=download if published else None)
     assert EpisodeVideoManifest.validate_file_sidecar(path, _spec())
     records = EpisodeVideoManifest.load_file_sidecar(path)
@@ -567,7 +567,7 @@ def test_parallel_mapping_protects_legacy_zip_relative_seeks(
     """Older Python ZIP readers must not seek relative to another worker's position."""
     path = tmp_path / "index.npz"
     EpisodeVideoManifest.save_file_sidecar(path, [_record(f"{i}.mp4") for i in range(12)], spec=_spec())
-    serial, _ = _mapped_index.mapped_sidecar(path, workers=1)
+    serial, _ = sidecar_utils.mapped_sidecar(path, workers=1)
     original_seek = zipfile._SharedFile.seek
     relative_seeks = []
 
@@ -586,7 +586,7 @@ def test_parallel_mapping_protects_legacy_zip_relative_seeks(
 
     monkeypatch.setattr(zipfile._SharedFile, "seek", legacy_seek)
     monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path / "parallel"))
-    parallel, _ = _mapped_index.mapped_sidecar(path, workers=4)
+    parallel, _ = sidecar_utils.mapped_sidecar(path, workers=4)
     assert relative_seeks
     assert parallel.read_bytes() == serial.read_bytes()
 
@@ -597,7 +597,7 @@ def test_parallel_mapping_decompresses_outside_source_lock(
     """Protect header reads without serializing independent array decompression."""
     path = tmp_path / "index.npz"
     EpisodeVideoManifest.save_file_sidecar(path, [_record(f"{i}.mp4") for i in range(2)], spec=_spec())
-    serial, _ = _mapped_index.mapped_sidecar(path, workers=1)
+    serial, _ = sidecar_utils.mapped_sidecar(path, workers=1)
     original_read = np.lib.format.read_array
     overlap = threading.Barrier(2)
 
@@ -608,7 +608,7 @@ def test_parallel_mapping_decompresses_outside_source_lock(
 
     monkeypatch.setattr(np.lib.format, "read_array", read_array)
     monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path / "parallel"))
-    parallel, _ = _mapped_index.mapped_sidecar(path, workers=2)
+    parallel, _ = sidecar_utils.mapped_sidecar(path, workers=2)
     assert parallel.read_bytes() == serial.read_bytes()
 
 
@@ -620,8 +620,8 @@ def test_parallel_mapping_is_ordered_and_matches_serial_bytes(
     for index, record in enumerate(records):
         record.mp4.sample_pts[0] = index
     EpisodeVideoManifest.save_file_sidecar(path, records, spec=_spec())
-    serial, _ = _mapped_index.mapped_sidecar(path, workers=1)
-    original = _mapped_index._read_arrays
+    serial, _ = sidecar_utils.mapped_sidecar(path, workers=1)
+    original = sidecar_utils._read_arrays
     second_started = threading.Event()
 
     def reversed_read(archive: ZipFile, index: int, item: dict[str, Any]) -> dict[str, np.ndarray]:
@@ -631,9 +631,9 @@ def test_parallel_mapping_is_ordered_and_matches_serial_bytes(
             second_started.set()
         return original(archive, index, item)
 
-    monkeypatch.setattr(_mapped_index, "_read_arrays", reversed_read)
+    monkeypatch.setattr(sidecar_utils, "_read_arrays", reversed_read)
     monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path / "parallel"))
-    parallel, _ = _mapped_index.mapped_sidecar(path, workers=4)
+    parallel, _ = sidecar_utils.mapped_sidecar(path, workers=4)
     assert parallel.read_bytes() == serial.read_bytes()
     mapped = EpisodeVideoManifest.load_file_sidecar(path)
     for index in range(12):
@@ -646,8 +646,8 @@ def test_parallel_read_ahead_obeys_count_and_byte_bounds(
 ) -> None:
     path = tmp_path / "index.npz"
     EpisodeVideoManifest.save_file_sidecar(path, [_record(f"{i}.mp4") for i in range(12)], spec=_spec())
-    payload = _mapped_index.sidecar_payload(path)
-    original = _mapped_index._read_arrays
+    payload = sidecar_utils.sidecar_payload(path)
+    original = sidecar_utils._read_arrays
     started = []
     lock = threading.Lock()
 
@@ -656,10 +656,10 @@ def test_parallel_read_ahead_obeys_count_and_byte_bounds(
             started.append(index)
         return original(archive, index, item)
 
-    monkeypatch.setattr(_mapped_index, "_read_arrays", counted_read)
+    monkeypatch.setattr(sidecar_utils, "_read_arrays", counted_read)
     with ZipFile(path) as archive:
-        size = sum(archive.getinfo(f"0/{name}.npy").file_size for name in _mapped_index.ARRAY_NAMES)
-        iterator = _mapped_index._iter_arrays(
+        size = sum(archive.getinfo(f"0/{name}.npy").file_size for name in sidecar_utils.ARRAY_NAMES)
+        iterator = sidecar_utils._iter_arrays(
             archive, payload["files"], workers=4, max_pending_bytes=byte_limit
         )
         first = next(iterator)
@@ -673,7 +673,7 @@ def test_parallel_failure_drains_workers_and_removes_partial_index(
 ) -> None:
     path = tmp_path / "index.npz"
     EpisodeVideoManifest.save_file_sidecar(path, [_record(f"{i}.mp4") for i in range(12)], spec=_spec())
-    original = _mapped_index._read_arrays
+    original = sidecar_utils._read_arrays
     active = 0
     lock = threading.Lock()
 
@@ -689,9 +689,9 @@ def test_parallel_failure_drains_workers_and_removes_partial_index(
             with lock:
                 active -= 1
 
-    monkeypatch.setattr(_mapped_index, "_read_arrays", failed_read)
+    monkeypatch.setattr(sidecar_utils, "_read_arrays", failed_read)
     with pytest.raises(ValueError, match="injected decompression failure"):
-        _mapped_index.mapped_sidecar(path, workers=4)
+        sidecar_utils.mapped_sidecar(path, workers=4)
     assert active == 0
     assert not list((tmp_path / "cache-home").glob("**/*.bin"))
     assert not list((tmp_path / "cache-home").glob("**/*.index.tmp"))
@@ -701,7 +701,7 @@ def test_mapping_rejects_invalid_worker_count(tmp_path: Path) -> None:
     path = tmp_path / "index.npz"
     _write_valid(path, _spec())
     with pytest.raises(ValueError, match="workers"):
-        _mapped_index.mapped_sidecar(path, workers=0)
+        sidecar_utils.mapped_sidecar(path, workers=0)
 
 
 def test_parallel_writer_releases_oversized_record_before_next_read(
@@ -709,8 +709,8 @@ def test_parallel_writer_releases_oversized_record_before_next_read(
 ) -> None:
     path = tmp_path / "index.npz"
     EpisodeVideoManifest.save_file_sidecar(path, [_record(f"{i}.mp4") for i in range(3)], spec=_spec())
-    original_read = _mapped_index._read_arrays
-    original_iter = _mapped_index._iter_arrays
+    original_read = sidecar_utils._read_arrays
+    original_iter = sidecar_utils._iter_arrays
     references = []
 
     def read(archive: ZipFile, index: int, item: dict[str, Any]) -> dict[str, np.ndarray]:
@@ -724,9 +724,9 @@ def test_parallel_writer_releases_oversized_record_before_next_read(
     ) -> Iterator[dict[str, np.ndarray]]:
         return original_iter(archive, files, workers=workers, max_pending_bytes=1)
 
-    monkeypatch.setattr(_mapped_index, "_read_arrays", read)
-    monkeypatch.setattr(_mapped_index, "_iter_arrays", small_budget)
-    _mapped_index.mapped_sidecar(path, workers=4)
+    monkeypatch.setattr(sidecar_utils, "_read_arrays", read)
+    monkeypatch.setattr(sidecar_utils, "_iter_arrays", small_budget)
+    sidecar_utils.mapped_sidecar(path, workers=4)
     assert all(reference() is None for reference in references)
 
 
@@ -738,7 +738,7 @@ def test_parallel_write_failure_preserves_old_index_and_drains_workers(
     _write_valid(path, _spec("old"))
     old_bytes = path.read_bytes()
     old_records = EpisodeVideoManifest.load_file_sidecar(path)
-    original = _mapped_index._read_arrays
+    original = sidecar_utils._read_arrays
     active = 0
     lock = threading.Lock()
 
@@ -767,7 +767,7 @@ def test_parallel_write_failure_preserves_old_index_and_drains_workers(
     spec = replace(spec, source_files=tuple((f"{i}.mp4", 128) for i in range(12)))
     new_path = sidecar_cache_path(tmp_path, spec)
     assert new_path == path
-    monkeypatch.setattr(_mapped_index, "_read_arrays", read)
+    monkeypatch.setattr(sidecar_utils, "_read_arrays", read)
     with pytest.raises(OSError, match="free space"):
         ensure_mp4_sidecar(spec, tmp_path, build=build)
     assert active == 0

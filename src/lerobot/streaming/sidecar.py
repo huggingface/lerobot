@@ -22,8 +22,8 @@ from uuid import uuid4
 
 from filelock import FileLock, Timeout
 
-from lerobot.streaming._mapped_index import install_sidecar
 from lerobot.streaming.manifest import EpisodeVideoManifest
+from lerobot.streaming.sidecar_utils import install_sidecar
 
 SIDECAR_SCHEMA_VERSION = 3
 

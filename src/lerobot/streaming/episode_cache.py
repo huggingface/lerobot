@@ -74,17 +74,11 @@ class EpisodeByteCache:
         tolerance_s: float = 1e-4,
         token: str | bool | None = None,
     ) -> None:
-        """Configure byte fetching, synthesis, decoder limits, and backend selection."""
-        if byte_budget <= 0:
-            raise ValueError("byte_budget must be positive")
-        if max_open_decoders <= 0:
-            raise ValueError("max_open_decoders must be positive")
-        if video_backend == "video_reader":
-            video_backend = "pyav"
-        if video_backend not in {"torchcodec", "pyav"}:
-            raise ValueError(f"Unsupported video backend: {video_backend}")
-        if tolerance_s <= 0:
-            raise ValueError("tolerance_s must be positive")
+        """Configure byte fetching, synthesis, decoder limits, and backend selection.
+
+        Arguments are not re-validated: ``StreamingLeRobotDataset``, the only production caller,
+        passes resolved values (e.g. ``video_reader`` is already mapped to ``pyav``).
+        """
         self.manifest = manifest
         self.fetcher = make_range_fetcher(
             data_root,

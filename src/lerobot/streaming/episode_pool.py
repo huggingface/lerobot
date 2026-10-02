@@ -11,10 +11,19 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Literal
+from enum import Enum
 
 import numpy as np
 from numpy.typing import NDArray
+
+
+class StreamingSamplingStrategy(str, Enum):
+    """How the episode pool picks the next anchor among resident episodes."""
+
+    # Pick an episode proportionally to its remaining anchors.
+    REMAINING = "remaining"
+    # Shuffle resident episodes each round and draw one anchor from each.
+    ROUND_ROBIN = "round_robin"
 
 
 class ExactCoveragePool:
@@ -56,7 +65,7 @@ class ExactCoveragePool:
         epoch: int = 0,
         episode_byte_sizes: Mapping[int, int] | None = None,
         byte_budget: int | None = None,
-        sampling_strategy: Literal["remaining", "round_robin"] = "remaining",
+        sampling_strategy: StreamingSamplingStrategy | str = StreamingSamplingStrategy.REMAINING,
     ) -> None:
         """Build a seeded admission plan under optional compressed-byte limits.
 
@@ -73,15 +82,13 @@ class ExactCoveragePool:
                 Indexed compressed-video sizes; required when byte_budget is set.
             byte_budget (`int | None`, *optional*):
                 Maximum summed bytes of resident episodes, or None for a slot-only bound.
-            sampling_strategy (`Literal["remaining", "round_robin"]`, *optional*, defaults to `"remaining"`):
+            sampling_strategy (`StreamingSamplingStrategy | str`, *optional*, defaults to `"remaining"`):
                 Remaining-anchor weighting or one anchor per episode in each shuffled round.
 
         Raises:
             ValueError: If the strategy or byte limits are invalid, or an episode exceeds the budget.
         """
-        if sampling_strategy not in ("remaining", "round_robin"):
-            raise ValueError("sampling_strategy must be 'remaining' or 'round_robin'")
-        self.sampling_strategy = sampling_strategy
+        self.sampling_strategy = StreamingSamplingStrategy(sampling_strategy)
         self._round: list[int] = []
         self._counts = {int(ep): int(n) for ep, n in episode_frame_counts if int(n) > 0}
         self._rng = np.random.default_rng([seed, epoch])
@@ -171,7 +178,7 @@ class ExactCoveragePool:
         """Emit the next episode and frame index in the coverage plan."""
         if self._remaining_total == 0:
             raise StopIteration
-        if self.sampling_strategy == "round_robin":
+        if self.sampling_strategy is StreamingSamplingStrategy.ROUND_ROBIN:
             if not self._round:
                 self._round = list(self._remaining)
                 self._rng.shuffle(self._round)

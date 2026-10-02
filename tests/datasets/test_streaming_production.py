@@ -144,15 +144,15 @@ def test_default_decoder_limit_covers_the_configured_episode_pool(
         episode_pool_size=7,
     )
 
-    assert streaming.max_open_decoders == 7 * len(streaming.meta.video_keys)
+    assert streaming.video_decoder_cache_size == 7 * len(streaming.meta.video_keys)
 
     overridden = StreamingLeRobotDataset(
         DUMMY_REPO_ID,
         root=root,
         episode_pool_size=7,
-        max_open_decoders=5,
+        video_decoder_cache_size=5,
     )
-    assert overridden.max_open_decoders == 5
+    assert overridden.video_decoder_cache_size == 5
 
 
 @pytest.mark.parametrize("video_backend", ["torchcodec", "pyav"])

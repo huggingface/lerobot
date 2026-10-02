@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from .dataset_reader import BaseDatasetReader
 
 DEFAULT_STORAGE_FORMAT = "lerobot"
+_BUCKET_URI_PREFIX = "hf://buckets/"
 
 # Supported non-default storage formats and the module implementing each.
 # Modules are imported lazily so their optional dependencies stay optional;
@@ -51,6 +52,25 @@ register_dataset_reader("lance", "lerobot.datasets.lance_backend")
 def is_remote_uri(root: str | Path) -> bool:
     """True for object-store style roots (``hf://…``, ``file://…``, …)."""
     return "://" in str(root)
+
+
+def is_bucket_root(repo_id: str, root: str | Path | None) -> bool:
+    """True when ``root`` is the ``hf://buckets/OWNER/BUCKET`` URI of ``repo_id``'s bucket.
+
+    The inverse of ``LeRobotDataset`` deriving ``hf://buckets/{repo_id}`` from
+    ``repo_type="bucket"``: streaming readers treat such a root as bucket mode.
+    """
+    if root is None or not str(root).startswith(_BUCKET_URI_PREFIX):
+        return False
+    bucket_id = str(root).removeprefix(_BUCKET_URI_PREFIX).rstrip("/")
+    if bucket_id.count("/") != 1:
+        raise ValueError(
+            f"Expected a bucket root of the form {_BUCKET_URI_PREFIX}OWNER/BUCKET, got {str(root)!r}. "
+            "Datasets stored under a bucket sub-directory are not supported yet."
+        )
+    if bucket_id != repo_id:
+        raise ValueError(f"Bucket root {str(root)!r} does not match repo_id {repo_id!r}.")
+    return True
 
 
 def _reader_module(storage_format: str):

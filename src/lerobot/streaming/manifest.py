@@ -24,12 +24,6 @@ from zipfile import BadZipFile
 import numpy as np
 from numpy.typing import NDArray
 
-from lerobot.streaming._mapped_index import (
-    mapped_arrays,
-    mapped_sidecar,
-    sidecar_payload,
-    validate_source_arrays,
-)
 from lerobot.streaming.mp4 import (
     Mp4Index,
     Mp4SampleSlice,
@@ -37,6 +31,12 @@ from lerobot.streaming.mp4 import (
     synthesized_mp4_size,
 )
 from lerobot.streaming.range_fetch import make_range_fetcher
+from lerobot.streaming.sidecar_utils import (
+    mapped_arrays,
+    mapped_sidecar,
+    sidecar_payload,
+    validate_source_arrays,
+)
 
 if TYPE_CHECKING:
     from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata

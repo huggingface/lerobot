@@ -29,7 +29,7 @@ from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_IMAGE, OBS_PREFI
 from .dataset_metadata import LeRobotDatasetMetadata
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
-from .storage import DEFAULT_STORAGE_FORMAT, load_dataset_metadata
+from .storage import DEFAULT_STORAGE_FORMAT, is_bucket_root, load_dataset_metadata
 from .streaming_dataset import StreamingLeRobotDataset
 from .utils import resolve_episode_indices
 
@@ -122,12 +122,17 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
     )
 
     if isinstance(cfg.dataset.repo_id, str):
-        repo_type = cast(Literal["dataset", "bucket"], cfg.dataset.repo_type)
+        root, repo_type_name = cfg.dataset.root, cfg.dataset.repo_type
+        if cfg.dataset.streaming and is_bucket_root(cfg.dataset.repo_id, root):
+            # Streaming reads default-format buckets directly, so a bucket URI root selects
+            # bucket mode instead of the object-store localization used by other formats.
+            root, repo_type_name = None, "bucket"
+        repo_type = cast(Literal["dataset", "bucket"], repo_type_name)
         # Storage-aware loader: same as LeRobotDatasetMetadata(...), plus support
         # for datasets whose root is an object-store URI (e.g. ``hf://``).
         ds_meta = load_dataset_metadata(
             cfg.dataset.repo_id,
-            root=cfg.dataset.root,
+            root=root,
             revision=cfg.dataset.revision,
             repo_type=repo_type,
         )
@@ -160,11 +165,12 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 depth_output_unit=cfg.dataset.depth_output_unit,
                 tolerance_s=cfg.tolerance_s,
                 repo_type=repo_type,
+                video_decoder_cache_size=cfg.dataset.video_decoder_cache_size,
             )
         else:
             dataset = StreamingLeRobotDataset(
                 cfg.dataset.repo_id,
-                root=cfg.dataset.root,
+                root=root,
                 episodes=episodes,
                 delta_timestamps=delta_timestamps,
                 image_transforms=image_transforms,
@@ -180,7 +186,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 byte_budget_gb=cfg.dataset.streaming_byte_budget_gb,
                 decode_threads=cfg.dataset.streaming_decode_threads,
                 decoded_queue_size=cfg.dataset.streaming_decoded_queue_size,
-                max_open_decoders=cfg.dataset.streaming_max_open_decoders,
+                video_decoder_cache_size=cfg.dataset.video_decoder_cache_size,
                 native_http_connections=cfg.dataset.streaming_native_http_connections,
                 native_http_subranges=cfg.dataset.streaming_native_http_subranges,
                 repeat=True,
@@ -268,6 +274,7 @@ def make_train_eval_datasets(
         return_uint8=True,
         tolerance_s=cfg.tolerance_s,
         repo_type=cfg.dataset.repo_type,
+        video_decoder_cache_size=cfg.dataset.video_decoder_cache_size,
     )
 
     eval_dataset = LeRobotDataset(
@@ -282,6 +289,7 @@ def make_train_eval_datasets(
         return_uint8=True,
         tolerance_s=cfg.tolerance_s,
         repo_type=cfg.dataset.repo_type,
+        video_decoder_cache_size=cfg.dataset.video_decoder_cache_size,
     )
 
     if cfg.dataset.use_imagenet_stats:
