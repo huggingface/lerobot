@@ -59,6 +59,8 @@ class _EpisodeData:
     columns: dict[str, datasets.Dataset]
     numeric: dict[str, torch.Tensor]
     other: datasets.Dataset | None
+    dataset_from_index: int
+    video_from_timestamps: dict[str, float]
 
     def get_item(self, index: int) -> dict[str, Any]:
         """Return an independently owned row without reformatting prepared numeric columns."""
@@ -663,6 +665,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             except (TypeError, ValueError, RuntimeError):
                 continue
         other_keys = [key for key in dataset.column_names if key not in numeric]
+        episode = self.meta.episodes[episode_index]
         # Zero-copy views share the episode's lifetime and fixed HF transform. Project
         # before row lookup so action/state windows cannot decode unrelated images.
         column_keys = set(self.delta_indices or ()) - set(self.meta.video_keys)
@@ -673,6 +676,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             columns={key: dataset.select_columns(key) for key in sorted(column_keys) if key not in numeric},
             numeric=numeric,
             other=dataset.select_columns(other_keys) if other_keys else None,
+            # Read once per resident episode: a metadata row lookup formats every stats column.
+            dataset_from_index=int(episode["dataset_from_index"]),
+            video_from_timestamps={
+                key: float(episode[f"videos/{key}/from_timestamp"]) for key in self.meta.video_keys
+            },
         )
 
     def _make_video_cache(
@@ -719,8 +727,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         """Assemble an anchor's temporal windows, padding masks and decoded camera frames."""
         episode_dataset = episode_data.dataset
         item = episode_data.get_item(frame_index)
-        episode = self.meta.episodes[episode_index]
-        episode_start = int(episode["dataset_from_index"])
+        episode_start = episode_data.dataset_from_index
 
         if self.delta_indices is not None:
             for key, delta_indices in self.delta_indices.items():
@@ -739,7 +746,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         if self.meta.video_keys:
             if video_cache is None:
                 raise RuntimeError("Video dataset streaming requires an episode byte cache")
-            episode_metadata = self.meta.episodes[episode_index]
             for video_key in self.meta.video_keys:
                 if self.delta_indices is not None and video_key in self.delta_indices:
                     target_indices = [
@@ -752,7 +758,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                     float(timestamp.item())
                     for timestamp in episode_data.get_column("timestamp", target_indices)
                 ]
-                from_timestamp = float(episode_metadata[f"videos/{video_key}/from_timestamp"])
+                from_timestamp = episode_data.video_from_timestamps[video_key]
                 query_timestamps = [from_timestamp + timestamp for timestamp in local_timestamps]
                 if video_key in self.meta.depth_keys:
                     source_start = video_cache.manifest.lookup(episode_index, video_key).source_start_pts

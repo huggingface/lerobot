@@ -354,9 +354,10 @@ class EpisodeByteCache:
                 frames = decoder.get_frames_at(indices=indices)
                 # Estimated indices and approximate seeking can drift on variable-rate videos.
                 # Check the actual PTS in request order, including clamped and repeated frames.
-                query_ts = torch.tensor(local_ts, dtype=torch.float64)
-                decoded_ts = frames.pts_seconds.to(torch.float64)
-                if not ((query_ts - decoded_ts).abs() <= self.tolerance_s).all():
+                # Plain floats: a few scalars per camera are cheaper than building small tensors.
+                query_ts = [float(ts) for ts in local_ts]
+                decoded_ts = frames.pts_seconds.tolist()
+                if not all(abs(q - d) <= self.tolerance_s for q, d in zip(query_ts, decoded_ts, strict=True)):
                     raise ValueError(
                         f"TorchCodec frame timestamps exceed tolerance {self.tolerance_s}: "
                         f"episode={episode_index}, camera={camera_key}, "
