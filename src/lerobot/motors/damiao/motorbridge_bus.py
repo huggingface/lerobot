@@ -27,7 +27,7 @@ import logging
 import math
 import platform
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.import_utils import _motorbridge_available, require_package
@@ -156,10 +156,12 @@ class MotorBridgeDamiaoBus(MotorsBusBase):
 
     @check_if_not_connected
     def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+        assert self._controller is not None
         self._controller.enable_all()
 
     @check_if_not_connected
     def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+        assert self._controller is not None
         self._controller.disable_all()
 
     @contextmanager
@@ -178,6 +180,7 @@ class MotorBridgeDamiaoBus(MotorsBusBase):
 
     def _read_states(self, motors: list[str]) -> dict[str, dict[str, float]]:
         """Refresh and decode motor feedback in one CAN cycle (degrees)."""
+        assert self._controller is not None
         for name in motors:
             self._handles[name].request_feedback()
         self._controller.poll_feedback_once()
@@ -233,7 +236,7 @@ class MotorBridgeDamiaoBus(MotorsBusBase):
                 ``(kp, kd, position_deg, velocity_deg_per_sec, torque)``.
         """
         for motor, (kp, kd, position_degrees, velocity_deg_per_sec, torque) in commands.items():
-            self._handles[motor].send_mit(
+            self._handles[cast(str, motor)].send_mit(
                 math.radians(position_degrees),
                 math.radians(velocity_deg_per_sec),
                 kp,
