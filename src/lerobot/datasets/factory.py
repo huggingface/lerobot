@@ -176,7 +176,8 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
             )
     else:
         raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")
-        dataset = MultiLeRobotDataset(
+        # Kept as scaffolding for TODO(aliberts) below; dead until that lands.
+        dataset = MultiLeRobotDataset(  # type: ignore[unreachable]
             cfg.dataset.repo_id,
             # TODO(aliberts): add proper support for multi dataset
             # delta_timestamps=delta_timestamps,
