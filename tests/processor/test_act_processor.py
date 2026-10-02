@@ -24,10 +24,12 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.processor_act import make_act_pre_post_processors
 from lerobot.processor import (
+    AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
     DataProcessorPipeline,
     DeviceProcessorStep,
     NormalizerProcessorStep,
+    RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
     TransitionKey,
     UnnormalizerProcessorStep,
@@ -73,16 +75,39 @@ def test_make_act_processor_basic():
     assert postprocessor.name == "policy_postprocessor"
 
     # Check steps in preprocessor
-    assert len(preprocessor.steps) == 4
+    assert len(preprocessor.steps) == 5
     assert isinstance(preprocessor.steps[0], RenameObservationsProcessorStep)
     assert isinstance(preprocessor.steps[1], AddBatchDimensionProcessorStep)
-    assert isinstance(preprocessor.steps[2], DeviceProcessorStep)
-    assert isinstance(preprocessor.steps[3], NormalizerProcessorStep)
+    assert isinstance(preprocessor.steps[2], RelativeActionsProcessorStep)
+    assert not preprocessor.steps[2].enabled
+    assert isinstance(preprocessor.steps[3], DeviceProcessorStep)
+    assert isinstance(preprocessor.steps[4], NormalizerProcessorStep)
 
     # Check steps in postprocessor
-    assert len(postprocessor.steps) == 2
+    assert len(postprocessor.steps) == 3
     assert isinstance(postprocessor.steps[0], UnnormalizerProcessorStep)
-    assert isinstance(postprocessor.steps[1], DeviceProcessorStep)
+    assert isinstance(postprocessor.steps[1], AbsoluteActionsProcessorStep)
+    assert isinstance(postprocessor.steps[2], DeviceProcessorStep)
+
+
+def test_act_relative_actions_roundtrip():
+    config = create_default_config()
+    config.use_relative_actions = True
+    config.relative_exclude_joints = []
+    preprocessor, postprocessor = make_act_pre_post_processors(config, create_default_stats())
+
+    state = torch.randn(1, 7)
+    actions = torch.randn(1, config.chunk_size, 4)
+    processed = preprocessor({OBS_STATE: state, ACTION: actions})
+    torch.testing.assert_close(processed[ACTION], actions - state[:, None, :4])
+
+    recovered = postprocessor(processed[ACTION])
+    torch.testing.assert_close(recovered, actions, atol=1e-5, rtol=1e-5)
+
+
+def test_act_relative_actions_reject_temporal_ensembling():
+    with pytest.raises(NotImplementedError):
+        ACTConfig(use_relative_actions=True, temporal_ensemble_coeff=0.01, n_action_steps=1)
 
 
 def test_act_processor_normalization():
@@ -390,7 +415,7 @@ def test_act_processor_bfloat16_device_float32_normalizer():
     preprocessor.steps = modified_steps
 
     # Verify initial normalizer configuration
-    normalizer_step = preprocessor.steps[3]  # NormalizerProcessorStep
+    normalizer_step = preprocessor.steps[4]  # NormalizerProcessorStep
     assert normalizer_step.dtype == torch.float32
 
     # Create test data
