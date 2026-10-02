@@ -41,7 +41,9 @@ from lerobot.utils.constants import (
 
 def _make_tiny_vlm_config():
     """Create a tiny Qwen3-VL config for testing (2 layers, small dims)."""
-    config = AutoConfig.from_pretrained("Qwen/Qwen3-VL-4B-Instruct")
+    from transformers.models.qwen3_vl import Qwen3VLConfig
+
+    config = Qwen3VLConfig()  # Local construction, no download
     config.text_config.num_hidden_layers = 2
     config.text_config.hidden_size = 128
     config.text_config.intermediate_size = 256
