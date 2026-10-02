@@ -22,6 +22,8 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
+from lerobot.streaming.location import StorageLocation
+
 
 class EpisodeParquetReader:
     """Read complete episodes with column projection from local or fsspec roots."""
@@ -49,9 +51,11 @@ class EpisodeParquetReader:
             raise ValueError("retry_backoff_s must be non-negative")
         self._max_retries = max_retries
         self._retry_backoff_s = retry_backoff_s
-        self._open_lock = threading.Lock() if data_root_str.startswith("hf://") else None
-        storage_options = {"token": token} if token is not None and data_root_str.startswith("hf://") else {}
-        self._filesystem, self._root_path = fsspec.core.url_to_fs(data_root_str, **storage_options)
+        location = StorageLocation.parse(data_root_str)
+        self._open_lock = threading.Lock() if location.is_hf else None
+        self._filesystem, self._root_path = fsspec.core.url_to_fs(
+            data_root_str, **location.storage_options(token)
+        )
 
     def read_episode(
         self,

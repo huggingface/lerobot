@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 import fsspec
 from huggingface_hub import HfApi
 
+from lerobot.streaming.location import LocationKind, StorageLocation
 from lerobot.streaming.sidecar import SidecarSpec
 from lerobot.utils.import_utils import _datasets_available, require_package
 
@@ -30,7 +31,6 @@ if TYPE_CHECKING or _datasets_available:
         build_mp4_sidecar,
         make_sidecar_spec,
         published_sidecar_url,
-        range_backend_for_root,
     )
 
 
@@ -57,19 +57,20 @@ def parse_args() -> argparse.Namespace:
 def push_sidecar(local_path: str, spec: SidecarSpec) -> list[str]:
     """Explicitly publish an index without advancing the pinned dataset's source branch."""
     require_package("datasets", "dataset")
-    if not spec.data_root.startswith("hf://"):
+    location = StorageLocation.parse(spec.data_root)
+    if not location.is_hf:
         raise ValueError("--push currently supports only hf:// data roots")
 
     fs = fsspec.filesystem("hf")
     remote = published_sidecar_url(spec)
-    if spec.data_root.startswith("hf://datasets/"):
-        source = fs.resolve_path(spec.data_root)
+    if location.kind is LocationKind.HF_DATASET and location.repo_id is not None:
         # Keep source commits immutable. Index publication advances only this separate branch.
+        # published_sidecar_url above already required the root to be pinned to a commit.
         HfApi().create_branch(
-            repo_id=source.repo_id,
+            repo_id=location.repo_id,
             repo_type="dataset",
             branch=SIDECAR_REPO_BRANCH,
-            revision=source.revision,
+            revision=location.pinned_commit,
             exist_ok=True,
         )
     fs.put(str(Path(local_path)), remote)
@@ -103,7 +104,7 @@ def main() -> None:
     build_mp4_sidecar(
         args.output,
         spec,
-        range_backend=args.range_backend or range_backend_for_root(args.data_root),
+        range_backend=args.range_backend or StorageLocation.parse(args.data_root).range_backend,
         workers=args.workers,
         max_probe_bytes=args.max_probe_mb * 1024 * 1024,
     )

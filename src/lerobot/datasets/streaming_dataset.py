@@ -33,6 +33,7 @@ from lerobot.configs import DEFAULT_DEPTH_UNIT, DEPTH_METER_UNIT, DepthEncoderCo
 from lerobot.streaming.episode_cache import EpisodeByteCache
 from lerobot.streaming.episode_parquet import EpisodeParquetReader
 from lerobot.streaming.episode_pool import ExactCoveragePool, StreamingSamplingStrategy
+from lerobot.streaming.location import StorageLocation
 from lerobot.streaming.manifest import EpisodeVideoManifest
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.import_utils import get_safe_default_video_backend
@@ -45,7 +46,6 @@ from .language import LANGUAGE_COLUMNS
 from .storage import is_bucket_root
 from .streaming_sidecar import (
     ensure_dataset_mp4_sidecar,
-    range_backend_for_root,
     streaming_data_root,
 )
 from .utils import check_version_compatibility, resolve_episode_indices
@@ -339,7 +339,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             configured_data_root=str(data_root) if data_root is not None else None,
             token=self._streaming_io_token,
         )
-        sidecar_backend = range_backend_for_root(self._data_root)
+        sidecar_backend = StorageLocation.parse(self._data_root).range_backend
         self._sidecar_path = ensure_dataset_mp4_sidecar(
             self.meta,
             self._data_root,
@@ -672,7 +672,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         """Build the rank-local video manifest and its bounded byte cache."""
         if self._sidecar_path is None or not episode_indices:
             return None
-        range_backend = range_backend_for_root(self._data_root)
+        range_backend = StorageLocation.parse(self._data_root).range_backend
         manifest = EpisodeVideoManifest.build(
             self.meta,
             self._data_root,

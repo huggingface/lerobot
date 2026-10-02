@@ -23,10 +23,10 @@ from lerobot.datasets.streaming_sidecar import (
     download_published_sidecar,
     make_sidecar_spec,
     published_sidecar_url,
-    range_backend_for_root,
     streaming_data_root,
 )
 from lerobot.scripts.lerobot_build_mp4_sidecar import push_sidecar
+from lerobot.streaming.location import StorageLocation
 from lerobot.streaming.manifest import EpisodeVideoManifest
 from lerobot.streaming.sidecar import SidecarSpec, ensure_mp4_sidecar
 from tests.test_streaming_sidecar import _write_valid
@@ -38,7 +38,7 @@ def test_hub_data_root_is_revision_qualified() -> None:
     root = streaming_data_root(meta, requested_root=None, configured_data_root=None)
 
     assert root == f"hf://datasets/owner/dataset@{'a' * 40}"
-    assert range_backend_for_root(root) == "native-http"
+    assert StorageLocation.parse(root).range_backend == "native-http"
 
 
 def test_explicit_bucket_root_is_preserved() -> None:
@@ -48,7 +48,7 @@ def test_explicit_bucket_root_is_preserved() -> None:
     root = streaming_data_root(meta, requested_root=None, configured_data_root=bucket)
 
     assert root == bucket.rstrip("/")
-    assert range_backend_for_root(root) == "native-http"
+    assert StorageLocation.parse(root).range_backend == "native-http"
 
 
 def test_bucket_root_is_derived_without_an_override() -> None:
@@ -59,7 +59,7 @@ def test_bucket_root_is_derived_without_an_override() -> None:
     root = streaming_data_root(meta, requested_root=None, configured_data_root=None)
 
     assert root == "hf://buckets/owner/bucket"
-    assert range_backend_for_root(root) == "native-http"
+    assert StorageLocation.parse(root).range_backend == "native-http"
 
 
 def test_local_and_generic_remote_roots_use_fsspec(tmp_path: Path) -> None:
@@ -68,8 +68,8 @@ def test_local_and_generic_remote_roots_use_fsspec(tmp_path: Path) -> None:
     local = streaming_data_root(meta, requested_root=tmp_path, configured_data_root=None)
 
     assert local == str(tmp_path)
-    assert range_backend_for_root(local) == "fsspec"
-    assert range_backend_for_root("memory://dataset") == "fsspec"
+    assert StorageLocation.parse(local).range_backend == "fsspec"
+    assert StorageLocation.parse("memory://dataset").range_backend == "fsspec"
 
 
 def test_bucket_replacement_invalidates_sidecar_even_at_same_size(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -128,8 +128,8 @@ def test_explicit_hub_branch_is_pinned_and_token_forwarded(monkeypatch: pytest.M
         calls.append(token)
         return SimpleNamespace(dataset_info=lambda repo_id, revision: SimpleNamespace(sha=sha))
 
-    monkeypatch.setattr("lerobot.datasets.streaming_sidecar.HfFileSystem", filesystem)
-    monkeypatch.setattr("lerobot.datasets.streaming_sidecar.HfApi", api)
+    monkeypatch.setattr("lerobot.streaming.location.HfFileSystem", filesystem)
+    monkeypatch.setattr("lerobot.streaming.location.HfApi", api)
     root = streaming_data_root(
         SimpleNamespace(),
         requested_root=None,

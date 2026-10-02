@@ -30,6 +30,8 @@ import httpx
 from huggingface_hub import HfApi, HfFileSystem, constants
 from huggingface_hub.utils import hf_raise_for_status
 
+from lerobot.streaming.location import LocationKind, StorageLocation
+
 _HTTP_FAILURE_LOG_LOCK = threading.Lock()
 
 
@@ -125,7 +127,7 @@ class ThreadLocalRangeFetcher:
             raise ValueError("max_open_files must be positive")
         self.max_open_files = max_open_files
         self.data_root = str(data_root).rstrip("/")
-        storage_options = {"token": token} if token is not None and self.data_root.startswith("hf://") else {}
+        storage_options = StorageLocation.parse(self.data_root).storage_options(token)
         self.fs, self._root_path = fsspec.core.url_to_fs(self.data_root, **storage_options)
         self._is_local = self.fs.protocol in ("file", "local") or (
             isinstance(self.fs.protocol, tuple) and "file" in self.fs.protocol
@@ -248,7 +250,8 @@ class NativeHTTPRangeFetcher:
     ) -> None:
         """Configure direct pooled range requests for an HF object-store root."""
         self.data_root = str(data_root).rstrip("/")
-        if not self.data_root.startswith("hf://"):
+        location = StorageLocation.parse(self.data_root)
+        if not location.is_hf:
             raise ValueError("NativeHTTPRangeFetcher only supports hf:// roots")
         self.max_retries = max_retries
         # Sub-range parallelism: split one large GET into `subrange_parts` concurrent GETs.
@@ -266,13 +269,9 @@ class NativeHTTPRangeFetcher:
         self.fs: HfFileSystem | None = None
         self._bucket_id: str | None = None
         self._bucket_prefix = ""
-        if self.data_root.startswith("hf://buckets/"):
-            bucket_root = self.data_root.removeprefix("hf://buckets/")
-            parts = bucket_root.split("/", 2)
-            if len(parts) < 2:
-                raise ValueError(f"Invalid bucket root: {self.data_root}")
-            self._bucket_id = f"{parts[0]}/{parts[1]}"
-            self._bucket_prefix = parts[2].strip("/") if len(parts) == 3 else ""
+        if location.kind is LocationKind.HF_BUCKET:
+            self._bucket_id = location.repo_id
+            self._bucket_prefix = location.path_in_repo
         else:
             self.fs = HfFileSystem(token=token)
         self.client = httpx.Client(

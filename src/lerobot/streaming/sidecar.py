@@ -22,6 +22,7 @@ from uuid import uuid4
 
 from filelock import FileLock, Timeout
 
+from lerobot.streaming.location import StorageLocation
 from lerobot.streaming.manifest import EpisodeVideoManifest
 from lerobot.streaming.sidecar_utils import install_sidecar
 
@@ -114,7 +115,7 @@ class SidecarSpec:
         """Return whether a candidate satisfies this expected specification."""
         # Tags/branches may name the same immutable payload snapshot. Other roots still
         # require the metadata revision to match; source paths/sizes/fingerprints always do.
-        pinned_repository = re.match(r"^hf://datasets/[^/]+/[^/@]+@[0-9a-f]{40}(?:/|$)", self.data_root)
+        pinned_repository = StorageLocation.parse(self.data_root).pinned_commit is not None
         if (
             self.schema_version != candidate.schema_version
             or self.repo_id != candidate.repo_id

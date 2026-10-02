@@ -72,6 +72,7 @@ from .lance_utils import (  # noqa: F401
     resolve_lance_root,
     to_lance_column,
 )
+from .storage import hf_dataset_uri
 from .utils import resolve_episode_indices
 from .video_utils import FrameTimestampError, decode_video_frames_pyav
 
@@ -144,7 +145,7 @@ class LanceDatasetReader(BaseDatasetReader):
         self._token = token
 
         self._db_uri, _ = resolve_lance_root(self.repo_id, root, self._storage_options, revision, token)
-        self._hub_revision = meta.revision if self._db_uri == f"hf://datasets/{self.repo_id}" else None
+        self._hub_revision = meta.revision if self._db_uri == hf_dataset_uri(self.repo_id) else None
 
         if self.meta.image_keys:
             raise NotImplementedError(

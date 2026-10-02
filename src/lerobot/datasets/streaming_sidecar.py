@@ -11,27 +11,22 @@
 from __future__ import annotations
 
 import logging
-import re
 import shutil
 from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
 
 import fsspec
-from huggingface_hub import HfApi, HfFileSystem
+from huggingface_hub import HfApi
 
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+from lerobot.streaming.location import LocationKind, StorageLocation, hf_dataset_uri
 from lerobot.streaming.manifest import EpisodeVideoManifest, video_file_groups
 from lerobot.streaming.sidecar import SidecarSpec, ensure_mp4_sidecar, sidecar_cache_path
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
 DEFAULT_SIDECAR_CACHE = HF_LEROBOT_HOME / "streaming-sidecars"
 SIDECAR_REPO_BRANCH = "lerobot-sidecars"
-
-
-def range_backend_for_root(data_root: str) -> str:
-    """Use direct HTTP only for HF roots; all local and other fsspec protocols stay generic."""
-    return "native-http" if data_root.startswith("hf://") else "fsspec"
 
 
 def streaming_data_root(
@@ -57,7 +52,7 @@ def streaming_data_root(
         `str`: Local path, pinned Hub dataset URL or bucket URL used for payload reads.
     """
     if configured_data_root is not None:
-        return _pin_hub_root(configured_data_root.rstrip("/"), token=token)
+        return StorageLocation.parse(configured_data_root.rstrip("/")).pinned(token=token).uri
     if requested_root is not None:
         return str(Path(requested_root).expanduser())
     if getattr(meta, "repo_type", "dataset") == "bucket":
@@ -66,21 +61,9 @@ def streaming_data_root(
     metadata_root = Path(meta.root) if hasattr(meta, "root") else None
     if metadata_root is not None and metadata_root.parent.name == "snapshots":
         revision = metadata_root.name
-    return _pin_hub_root(
-        f"{getattr(meta, 'url_root', f'hf://datasets/{meta.repo_id}')}@{revision}", token=token
-    )
-
-
-def _pin_hub_root(data_root: str, *, token: str | bool | None = None) -> str:
-    """Use immutable dataset commits for both sidecar identity and payload reads."""
-    if not data_root.startswith("hf://datasets/"):
-        return data_root
-    if re.match(r"^hf://datasets/[^/]+/[^/@]+@[0-9a-f]{40}(?:/|$)", data_root):
-        return data_root
-    resolved = HfFileSystem(token=token).resolve_path(data_root)
-    sha = HfApi(token=token).dataset_info(resolved.repo_id, revision=resolved.revision).sha
-    suffix = f"/{resolved.path_in_repo}" if resolved.path_in_repo else ""
-    return f"hf://datasets/{resolved.repo_id}@{sha}{suffix}"
+    # Pin to an immutable commit for both sidecar identity and payload reads.
+    url_root = getattr(meta, "url_root", hf_dataset_uri(meta.repo_id))
+    return StorageLocation.parse(f"{url_root}@{revision}").pinned(token=token).uri
 
 
 def make_sidecar_spec(
@@ -99,15 +82,14 @@ def make_sidecar_spec(
     Returns:
         `SidecarSpec`: Source identity used to validate and key the local sidecar cache.
     """
-    data_root = _pin_hub_root(data_root.rstrip("/"), token=token)
+    location = StorageLocation.parse(data_root.rstrip("/")).pinned(token=token)
+    data_root = location.uri
     relative_paths = sorted(video_file_groups(meta))
-    root = Path(data_root).expanduser()
     source_files: tuple[tuple[str, int | None], ...]
     fingerprints: tuple[tuple[str, str], ...] = ()
-    if data_root.startswith("hf://buckets/"):
-        parts = data_root.removeprefix("hf://buckets/").split("/", 2)
-        bucket_id = "/".join(parts[:2])
-        prefix = parts[2].rstrip("/") + "/" if len(parts) == 3 else ""
+    if location.kind is LocationKind.HF_BUCKET:
+        bucket_id = location.repo_id
+        prefix = f"{location.path_in_repo}/" if location.path_in_repo else ""
         wanted = {prefix + path: path for path in relative_paths}
         # One paginated listing, not one HEAD per video. Xet hashes detect even
         # same-size replacements; no payloads are downloaded for validation.
@@ -121,13 +103,13 @@ def make_sidecar_spec(
             raise FileNotFoundError(f"Bucket is missing source video: {min(missing)}")
         source_files = tuple((path, files[path].size) for path in relative_paths)
         fingerprints = tuple((path, files[path].xet_hash) for path in relative_paths)
-    elif root.is_dir():
+    elif location.kind is LocationKind.LOCAL and (root := location.local_path).is_dir():
         stats = {path: (root / path).stat() for path in relative_paths}
         source_files = tuple((path, stats[path].st_size) for path in relative_paths)
         fingerprints = tuple(
             (path, f"{stats[path].st_mtime_ns}:{stats[path].st_ctime_ns}") for path in relative_paths
         )
-    elif not data_root.startswith("hf://datasets/"):
+    elif location.kind is not LocationKind.HF_DATASET:
         filesystem, fs_root = fsspec.core.url_to_fs(data_root, skip_instance_cache=True)
         infos = {path: filesystem.info(f"{fs_root.rstrip('/')}/{path}") for path in relative_paths}
         source_files = tuple((path, int(infos[path]["size"])) for path in relative_paths)
@@ -196,15 +178,17 @@ def build_mp4_sidecar(
 
 def published_sidecar_url(spec: SidecarSpec, cache_root: str | Path = DEFAULT_SIDECAR_CACHE) -> str:
     """Locate indexes separately from immutable repository payloads, or inside a bucket."""
-    root = spec.data_root
-    if root.startswith("hf://datasets/"):
+    location = StorageLocation.parse(spec.data_root)
+    root = location.uri
+    if location.kind is LocationKind.HF_DATASET:
         # Publication uses the source commit rather than its caller's tag/branch alias.
         # Keep local cache keys unchanged so existing validated indexes remain reusable.
-        source = re.fullmatch(r"(hf://datasets/[^/]+/[^/@]+)@([0-9a-f]{40})(/.*)?", root)
-        if source is None:
+        commit = location.pinned_commit
+        if commit is None or location.repo_id is None:
             raise ValueError("Repository sidecar publication requires a pinned source commit")
-        spec = replace(spec, revision=source[2])
-        root = f"{source[1]}@{SIDECAR_REPO_BRANCH}{source[3] or ''}"
+        spec = replace(spec, revision=commit)
+        suffix = f"/{location.path_in_repo}" if location.path_in_repo else ""
+        root = f"{hf_dataset_uri(location.repo_id, SIDECAR_REPO_BRANCH)}{suffix}"
     return f"{root}/meta/mp4-sidecars/{sidecar_cache_path(cache_root, spec).name}"
 
 
@@ -216,10 +200,11 @@ def download_published_sidecar(
     token: str | bool | None = None,
 ) -> bool:
     """Copy a published sidecar for later validation, returning False when absent."""
-    if Path(spec.data_root).expanduser().is_dir():
+    location = StorageLocation.parse(spec.data_root)
+    if location.kind is LocationKind.LOCAL and location.local_path.is_dir():
         return False
     source_url = published_sidecar_url(spec, cache_root)
-    storage_options = {"token": token} if token is not None and source_url.startswith("hf://") else {}
+    storage_options = StorageLocation.parse(source_url).storage_options(token)
     filesystem, source = fsspec.core.url_to_fs(source_url, **storage_options)
     if not filesystem.exists(source):
         return False
