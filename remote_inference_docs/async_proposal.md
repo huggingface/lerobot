@@ -299,7 +299,7 @@ This resumption completes an operator-authorized query within a healthy run; it 
 
 A completed language call returning an invalid/empty answer produces a query error and can resume healthy action execution under the existing instruction. An uncertain timed-out or hung policy call faults the session: cancellation does not prove a running GPU call has stopped. The server must not start another model call concurrently to work around it.
 
-The shared runtime exposes the planned-hold mechanism so this behavior does not become a remote-only implementation. Existing synchronous inference remains unchanged. Continuous motion during language generation is a future capability requiring separately validated concurrency or compute separation.
+The shared runtime exposes the planned-hold mechanism so this behavior does not become a remote-only implementation. Existing synchronous inference remains unchanged. Executing already accepted valid actions while text generation runs does not require concurrent GPU inference. Replenishing actions throughout an arbitrarily long text call would require additional scheduling or compute separation. Both remain outside current behavior; the bounded-overlap direction below is deferred.
 
 ### 7.3 Task changes and stale answers
 
@@ -308,6 +308,27 @@ The client is the authority for operator intent. Action requests carry the actua
 A normal instruction change allows the already accepted buffer to provide continuity while the next request uses the new instruction. A response for an older task that was still in flight at the change is discarded. RTC may condition the new result on the remaining committed trajectory; plain playback finishes only the already accepted slice. Explicit stop/intervention invalidates motion immediately.
 
 An autosteer turn carries a separate intent generation. Stopping or retargeting autosteering, manual re-instruction, reset, and run termination invalidate obsolete next-subtask results. String equality alone is insufficient: changing away from and back to the same text must not revive an earlier response. Superseded VQA results are also discarded or explicitly reported as cancelled; they cannot affect motion.
+
+### 7.4 Deferred: buffered VQA overlap and bounded starvation hold — 2026-10-02
+
+**Future direction only.** Keep the implemented immediate planned hold for language and terminal fault on active action exhaustion unchanged for now. The operator prefers conservative behavior until a later, explicitly scoped implementation and validation pass. No new CLI setting is available from this discussion.
+
+Explore allowing informational VQA to run on the existing serialized policy worker while the client continues its already accepted, still-valid buffered motion. To avoid a pause, usable remaining playback must cover text turnaround plus the next action turnaround and margin. The shared model still cannot supply action predictions during its text call; processor isolation alone does not establish concurrent model safety. Next-subtask/autosteering results need separate consideration because they can change intent while the robot progresses.
+
+Pair this with a shared, bounded **action-starvation hold** so ordinary action delays and VQA-caused starvation can have the same local motion response:
+
+1. Continue eligible buffered/interpolated motion. Queue length reaching zero is not itself the transition: a committed endpoint may still be interpolating.
+2. When active execution actually needs another endpoint and none is available, command the supported local hold and start one client-monotonic grace deadline. Keep observing and processing operator commands. Initial startup retains its separate deadline.
+3. Resume within that deadline only through a validated action-resumption path in the same healthy session. Prefer a post-hold capture and fresh prediction, with no stale interpolation or continuation carried across the hold. Receipt of any packet, text answer or unusable chunk must not grant motion permission or restart the grace timer.
+4. If usable resumption cannot complete before the grace expires, latch the existing terminal fault and follow configured local shutdown/return behavior. Existing terminal errors and operation deadlines can end the wait sooner. Never clear a fault because a late result or connection appears.
+
+An illustrative future client setting is `action_starvation_grace_s`, with zero preserving immediate exhaustion faults. This name/default is a design suggestion, not a shipped interface. It is distinct from server `idle_timeout_s`, which releases absent-client ownership. Selecting a positive default or profile value requires measured task/robot behavior; a shared grace also limits how long a slow VQA may keep a starved run waiting, even if its language deadline is longer.
+
+The grace covers missing actions, not invalid or over-age action dispatch, known hardware I/O failure, operator stop, or uncertain/timed-out policy execution. Applicable deadlines remain absolute: the earliest terminal condition wins. The current client latches observed server-presence loss and stops new requests; merely adding a grace does not provide reconnection or permit adoption of a restarted server. No worker takeover or concurrent replacement call may bypass a still-running model operation.
+
+This can centralize the motor response around action availability rather than query kind, but it does not eliminate query state. Scheduling, response routing, cancellation, task/intent validity and model ownership still distinguish text from actions. In particular, the current `held` flag suppresses action scheduling/deadlines, while language holds also invalidate generation and pending motion. A future starvation state must allow the work needed for fresh resumption while keeping its independent grace bounded. Separate query lifetime from motion invalidation carefully; do not implement this by broadly suppressing existing fault checks.
+
+Before implementation, settle the held-to-active freshness/epoch transition, VQA versus autosteering scope, and whether repeated brief recoveries need an additional bound to avoid indefinite stop/start behavior. Focus validation on late action recovery, slow VQA with and without enough playback, grace expiry, stale replies and reset/stop races, followed by one physical hold/resume check. This is a deferred extension to healthy execution, not automatic recovery from a terminal fault or an immediate prerequisite for current acceptance.
 
 ## 8. Zenoh protocol
 
@@ -332,6 +353,8 @@ S/alive
 `describe`, `open`, and `control` are queryables with explicit timeouts. Observations, actions, and language requests/results use correlated pub/sub messages. Presence uses liveliness tokens. Keys follow Zenoh's hierarchical key-expression rules; deployment identifiers are validated single segments, not raw Hub IDs or task strings. [Zenoh abstractions](https://zenoh.io/docs/manual/abstractions/).
 
 Each server boot has a new random instance ID; each admitted session has a new random session ID. Discovering multiple instances without explicitly selecting one is an ambiguity error in this release. After selection, all work addresses exactly one instance/session. Tasks belong in messages, not routing keys.
+
+Addressing decision (2026-10-02): use the existing configurable deployment name as the experiment namespace; do not add a configurable root prefix. For example, server `deployment: steven-act-test` pairs with client `--inference.deployment=steven-act-test`; a separate experiment uses a different deployment name. The `lerobot/inference/v1` root stays fixed. Document a two-deployment example and explicit `--inference.instance` selection for intentionally duplicated deployment names. Instance/session identities prevent stale cross-session traffic; distinct deployment names avoid discovery ambiguity between experiments. Neither is authorization. Router ACL key expressions must match the chosen deployment names; the shipped ACL example is scoped to `manipulation` and must be adapted when naming changes.
 
 Direct mode connects the client to a listening server. Router mode has both processes connect to a configured Zenoh router. Use explicit endpoints; do not rely on multicast discovery for private remote networks.
 
@@ -414,6 +437,8 @@ Distinguish invalidating motion continuation from a full policy reset. A planned
 
 Keep a small lifecycle: `CONNECTING -> ACTIVE -> FAULTED -> CLOSED`. Planned language holds and operator pauses are execution conditions within a healthy session, not an automatic reconnection state machine.
 
+The table below describes implemented behavior. Section 7.4 records a deferred bounded starvation hold and buffered VQA overlap; it does not change these current fault rules.
+
 | Condition | Required behavior |
 | --- | --- |
 | Startup/handshake failure | Report failure before policy motion; do not start a retrying autonomous run |
@@ -466,6 +491,8 @@ Client configuration covers endpoint, deployment/optional instance, optional exp
 
 Existing server YAML fields already accept nested CLI overrides, for example `--execution.idle_timeout_s=30`, `--model.device=cuda` and `--zenoh.listen_endpoints='[tcp/127.0.0.1:7447]'`. Document CLI-over-YAML precedence and structured-value quoting; no second configuration parser is needed. This does not imply arbitrary `--policy.*` checkpoint overrides are supported by the server. New alignment/blending settings belong to the explicit execution contract and must be validated and reported consistently for loopback and LAN use.
 
+Approved documentation consolidation (2026-10-02; pending): retain one maintained generic server YAML, `examples/remote_inference/server.yaml`, and show common CLI overrides plus complete copyable configurations in collapsible user-guide blocks. Explain camera mapping, ordered feature/action schemas, units/semantics and blending permissions rather than reducing examples to scalar flags. Move checkpoint/machine-specific YAML profiles to the preserved experiment branch during cleanup. This single-YAML decision concerns deployment presets; retain the three router/security JSON5 examples or equivalent maintained test fixtures. Validate documented overrides against the actual parser; no new configuration mechanism is proposed.
+
 Support authenticated encrypted Zenoh connections for private remote deployments, with a documented mTLS/router ACL example. TCP without authentication is an explicit trusted-lab configuration, not the private-remote recommendation. A session ID or key prefix is not authentication. Router policy must restrict which participants can publish action/control traffic and access observations. Zenoh ACL enforcement depends on topology and configured subjects, so validate the actual example end to end. [Zenoh access control](https://zenoh.io/docs/manual/access-control/).
 
 Provide a new `remote` extra for the Zenoh binding and codec dependencies. Model extras are installed server-side as required; the client is permitted to retain normal LeRobot/PyTorch dependencies. Use existing optional-dependency flags and `require_package(...)` conventions.
@@ -492,6 +519,17 @@ Explain the freshness/continuity tradeoff with measured examples, distinguishing
 Recording stays with rollout. Preserve existing dataset semantics and use the task associated with the dispatched action. Add a bounded/asynchronously written inference-event sidecar keyed to dataset episode/frame or control-tick IDs, so requests, task changes, holds, and faults can be correlated without forcing dataset schema changes.
 
 Distinguish predicted canonical actions, dispatched commands after robot processing, and measured robot state. A recorded command is not proof the hardware achieved it. Do not claim exact physical replay or deterministic robot execution.
+
+### Approved logging UX follow-up — 2026-10-02 (pending)
+
+Keep ordinary server/client output readable without losing developer diagnostics:
+
+- At INFO, show concise startup/readiness/admission summaries: selected deployment/model/build, negotiated mode, action rate/horizon and effective timing/merge settings. Retain identity information sufficient to locate the detailed trace.
+- During execution, provide compact, rate-limited summaries of available turnaround and playback-headroom measurements. Move verbose per-request event dictionaries, full capability dumps and routine per-operation timings to DEBUG. Do not emit a line for every control tick or add blocking work to dispatch.
+- At a failure, identify the cause, relevant measured timing/state, expected local robot shutdown behavior and a useful next check. Distinguish exhaustion, freshness rejection, timeout, ownership denial and compatibility failure; do not prescribe a universal refill adjustment. State unavailable measurements honestly.
+- Preserve meaningful session/hold/fault/shutdown transitions, structured correlation details and unexpected-failure tracebacks. Report requested versus completed local return/cleanup accurately; log messages do not prove achieved physical motion.
+
+Acceptance: one ordinary run is understandable at default verbosity; DEBUG retains request-level diagnosis; exhaustion and admission denial explain the next step without hiding the underlying cause. Reuse existing bounded telemetry and sidecar behavior. A standalone diagnostics exporter, metrics service, dashboard or automatic tuning system is outside this batch.
 
 ## 13. Proposed code organization
 
@@ -605,7 +643,32 @@ Do not put a broad backward-compatibility audit ahead of cleanup, alignment/blen
 
 Use deterministic fake clocks and executors for timing/race tests, direct/router loopback integration for transport behavior, and a small real-policy/real-robot matrix for release validation. Do not make universal performance or safety claims from mock tests.
 
+### Near-term upstream branch cleanup — approved planning step, 2026-10-02
+
+Prepare `feat/remote_inference` for review against the intended mainline base. This is a packaging/documentation step, not permission to remove validated behavior or start another feature. Schedule it soon; no branch creation, file removal or history rewriting is performed by recording this plan.
+
+1. Preserve the complete current state, including uncommitted/untracked learning resources and documentation, on a separate research/experimentation branch before pruning the review branch. Existing test-branch history alone does not preserve newer work. Record the preservation commit and verify its contents.
+2. Produce a file-level keep/move inventory against the review base. Keep the implementation, required dependencies/entry points, focused regression tests, validated policy/robot adaptations, legacy retirement and concise user/integration documentation. A correctness fix does not become disposable because it originated during hardware tests.
+3. Retain one generic server YAML and move experiment deployment YAML files, machine-specific commands/profiles, learning HTML/PPTX/PDF, and internal experiment/design/progress material that does not belong upstream to the preserved branch. Consolidate essential configuration, limitations, policy support and tuning guidance into the mainline user docs before removing their source material. Use CLI overrides and complete copyable configurations in collapsible documentation blocks, as agreed in section 11, without changing configuration semantics.
+4. Audit dependencies before moving examples. Router/security tests currently read `examples/remote_inference/zenoh/{router,server,robot}.json5`; retain the necessary configurations as maintained examples or test fixtures with updated references. Preserve those tests. Update documentation links, commands, navigation and the exact-path large-file-hook exception for the old learning HTML when that artifact leaves the branch.
+5. Review the resulting diff for accidental runtime changes, then run relevant checks for any adjusted test/config paths, documentation references and packaging. Confirm preserved material is recoverable on its branch, mainline instructions are self-contained, and no test depends on a removed research file. Report actual checks and skips; do not treat this cleanup as new hardware or language acceptance.
+
+This supersedes retaining all research/learning artifacts in the eventual upstream diff. Their retention during feature integration was intentional; this subsequent step separates research history from the contribution intended for main. The focused logging UX batch is now approved separately in section 12; keep its runtime changes reviewable independently of file cleanup. Checkpoint-specific adaptations require demonstrated conformance, and execution extensions still require separate scope alignment.
+
 ## 15. Extension path
+
+### Near-term router deployment guide and experiment — approved 2026-10-02
+
+Document a small set of useful topologies, with diagrams, configuration, ownership limits and failure implications:
+
+| Deployment | Benefit and boundary |
+| --- | --- |
+| Shared LAN GPU host | Several robot clients reach separate policy-server processes through one router. Distinct deployment names isolate experiments; each process still owns its own model and admits one client. This is not shared-weight serving. |
+| Private-network remote GPU | Both sides connect to a reachable router instead of requiring a direct robot-to-server connection. Network reachability and authenticated routing must be configured; a router does not automatically provide a VPN or traverse every firewall. |
+| Shared experiment router | Independent deployments reuse routing infrastructure with distinct names and matching access rules. Explain addressing separately from authorization and resource contention. |
+| Dedicated GPU Space | Both client and Space connect outward to a separately hosted secured router. Follow the connectivity feasibility and readiness checks below before claiming support. |
+
+First run one previously validated checkpoint/task through a LAN router, checking admission, task execution, turnaround tails/playback margin and the existing terminal behavior on router loss. Reuse automated routing/ACL coverage; report historical versus newly run evidence separately. Then attempt private connectivity or the single-client Space experiment as the setup permits. JPEG remains a separate bandwidth follow-up, not a prerequisite or another full motion sweep. Label documentation recipes as verified or proposed, and retain one-client ownership, freshness/deadline gates and local dispatch/shutdown throughout. No automatic failover, motion recovery, policy selection, batching or multi-tenant scheduler is added by this work.
 
 ### Multiple robots sharing one loaded model
 
@@ -657,6 +720,8 @@ Core transport, policy contracts, shared execution and the approved post-LAN eng
 - Validate metadata completeness for feature semantics and define explicit configuration where checkpoint metadata is insufficient.
 
 The dated [policy support audit](policy_support_audit.md) inventories all 21 built-in families, separating physical evidence, conditional candidates, targeted contract/preparation adaptations and larger history/execution extensions. A family name or inherited declaration alone is not proof of support. Future training-frame indices must not be confused with actual inference-history requirements, and the runner currently requires equal declared model/canonical action shapes. The audit authorizes no blanket policy relaxation or adapter framework.
+
+Checkpoint follow-up approved on 2026-10-02: the user supplied WALL-X, EVO1, GR00T, VLA-JEPA, FastWAM and frame-conditioned FLUX checkpoints, plus a VLA-JEPA bi-OpenArm command and a separate SO-101 command using a local checkpoint. Exact links, commands and unresolved mapping are preserved in the progress record under “Approved deployment, UX and checkpoint follow-ups”. These are validation inputs, not new support claims. For each, pin the tested revision, inspect saved configuration/processors, establish the corresponding synchronous baseline, check canonical input/output equivalence and repeated prediction/reset behavior, then run one representative remote task. Validate robot hold/stop conformance for newly used embodiments. Add only focused declarations/preparation fixes supported by that evidence; do not weaken guards, alter trained history or infer support from the family name. WALL-X is the first supplied language candidate, but this checkpoint's useful VQA/autosteering behavior remains to be established separately from action success. EVO1 is not EO1 and does not satisfy that language check merely by its name. Exact checkpoint audit, model loads and physical checks remain pending.
 
 If an investigation finds a policy or robot configuration incompatible, report the restriction and reject that configuration. Do not hide the mismatch through implicit preprocessing, execution-mode changes, or weaker fault handling.
 

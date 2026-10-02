@@ -102,6 +102,10 @@ The compatibility concern is about accurately representing existing preparation 
 
 ## Remaining work / handoff
 
+**Near-term addition (2026-10-02): upstream branch cleanup.** Preserve all current tracked and untracked work on a separate research/experimentation branch, then prepare a minimal mainline diff containing the implementation, required tests and concise user docs. Move experiment YAML profiles and learning resources off the review branch; classify internal design/progress/evidence documents as part of the same inventory. Preserve validated policy/robot fixes and test-required router configurations. See the proposal's near-term cleanup step and the dated entry below. This is planned, not executed.
+
+**Approved follow-ups (2026-10-02):** improve default logging UX while retaining DEBUG detail; retain one generic server YAML with CLI overrides and collapsible documentation examples; document deployment-name isolation and router topologies, then validate a representative LAN router run before Spaces feasibility. No additional namespace option. Six supplied checkpoints and two baseline commands are recorded in the dated “Approved deployment, UX and checkpoint follow-ups” entry below; exact checkpoint conformance and hardware validation are pending. Keep runtime logging changes separate from branch cleanup, and preserve all experiment material before moving it.
+
 1. **Focused physical lifecycle checks complete:** test 4 passed and revised test 5 passed by operator report (server loss → exhaustion → smooth configured return → clean exit). The client exited before server restart, so a live-client restart race was not exercised; do not add an artificial delay or require another run for this focused check. The true/false setting, failure distinction and cleanup ordering have software coverage. Broader operator intervention/task-change cases remain distinct where not already observed, especially in the real-language workflow.
 2. **Real language workflow (deferred):** choose a compatible text-capable checkpoint when available, then validate instruction changes, VQA hold/fresh resumption and autosteering. Controlled text tests do not constitute real-language acceptance; this no longer blocks integration/removal.
 3. **Deployment/performance experiments (queued):** one representative run for client turnaround/tails and playback margin, then routed Zenoh, JPEG comparison and private/explicitly secured public-network experiments when available. No broad tuning matrix. Router/security tests require an external zenohd binary and must be reported skipped if unavailable.
@@ -534,3 +538,115 @@ HF_HUB_OFFLINE=1 UV_CACHE_DIR=/private/tmp/lerobot-uv-cache uv run --no-sync pyt
 ```
 
 Documentation checks: `git diff --check` passed; an AST-based inventory confirmed all 21 registered built-in config families appear in the audit; all local links in the audit resolve. The audit does not claim fresh checkpoint warmups, new physical evidence, RTC compatibility for every declared family, or real language validation. Broad integration results remain historical. Next actions are the existing router check, then Spaces connectivity feasibility; obtain a suitable language checkpoint; select targeted policy conformance work only when a concrete checkpoint motivates it. Hardware hardening, automatic recovery and broad policy rewrites remain outside scope.
+
+## Code-review learning companion — 2026-09-30
+
+Added a deeper companion to the original high-level walkthrough, based on source commit `c73a3f0403046f669326ca896755b00cbef415fa`. This is documentation-only learning material; no runtime behavior, scope decisions or acceptance status changed.
+
+- [Browser presentation](learning/async_remote_inference_code_walkthrough.html): 26 slides in five chapters, with optional explanations, 76 verified source excerpts, review questions, and interactive alignment/timing examples. Covers ownership, one complete request, canonical data, commitment, merge/scheduling behavior, RTC, lifecycle/language and a focused code-reading route. The timing calculator is explicitly an idealized relationship, not a runtime simulator or tuning guarantee.
+- [Editable PowerPoint](learning/async_remote_inference_code_walkthrough.pptx): matching diagrams and full explanations/source excerpts in speaker notes; browser interactivity is represented by static examples.
+- [Learning index](learning/README.md): suggested reading order and source/evidence limitations. The original HTML now points to the current companion and identifies its own pre-correction timing content as historical. The original PowerPoint remains unchanged and is similarly identified in the index.
+
+Validation actually performed: source tracing and independent review of client/execution and server/lifecycle explanations; all 76 embedded excerpts compared with their exact source lines; local index links resolved. All 26 PowerPoint slides rendered and visually inspected, with package/layout/font/import validation passing. Browser checks exercised all slides, code selection, answer reveal, keyboard navigation, slide deep links, empty aligned suffix, measured-refill floor, full-horizon threshold and calculator reset. No browser JavaScript errors or slide-boundary overflow were detected; the narrow viewport had no document-level horizontal overflow (the slide itself is scrollable). `git diff --check` passed. No inference, hardware, model-weight or runtime regression tests were run for this documentation change.
+
+Next implementation/validation work remains the existing deferred language and deployment experiments above. The companion prepares a code review; it does not claim that review has been completed.
+
+## Deferred VQA overlap and starvation grace — 2026-10-02
+
+The operator chose to retain current conservative language holds for now and document a possible improvement. Added proposal section 7.4; no runtime, CLI, tests or learning artifacts were changed for this discussion.
+
+- Executing accepted valid buffered motion during VQA does not need concurrent GPU calls. The existing serialized worker could remain; uninterrupted replenishment during a long text call is a different, larger extension.
+- Explore a common bounded action-starvation hold for ordinary inference delays and VQA overlap: hold when the next endpoint is actually needed, resume only through a valid fresh action path within one monotonic grace, otherwise use existing terminal shutdown. An empty queue during an already committed interpolation is not yet starvation.
+- Tentative configuration concept: `action_starvation_grace_s`, with zero preserving current exhaustion behavior. Neither name nor a positive default is finalized or implemented. Keep this distinct from the server's absent-client cleanup grace.
+- Preserve independent deadlines and terminal error gates. A packet or text answer does not renew grace or authorize motion; a latched fault/server loss cannot be undone. Current `held` state blocks action requests and skips ordinary action deadline checks, so it cannot simply be reused without redesigning the recovery transition.
+- Common motor behavior can reduce VQA-specific dispatch handling, but query scheduling/context/cancellation remain necessary. Before implementation, resolve fresh post-hold observation/epoch handling, informational VQA versus autosteering scope and repeated-starvation behavior. Retain serialized mutable-model ownership and explicit operator stop/reset precedence.
+
+Future validation: late-action resume and grace expiry; VQA fitting/exceeding available playback; stale results, exhausted operation deadlines and stop/reset races; one physical hold/resume check. These are deferred criteria, not new test results or blockers for the current validated action path. This update used read-only inspection of proposal, runtime, remote query/presence handling and the dispatch gate; `git diff --check` passed. No runtime or hardware tests were run for this documentation-only change.
+
+## Upstream cleanup planning — 2026-10-02
+
+The user requested a near-term step to keep only the intended mainline contribution on the feature/review branch, preserving experiment YAML files, learning resources and other research material on a separate branch. Added that step to the proposal and current handoff. No branch was created or pruned, no commits/history were changed, and no implementation/test/configuration files were edited.
+
+Completion criteria: verified preservation of current committed and uncommitted/untracked work; reviewed keep/move inventory; retained runtime fixes/regressions and concise self-contained public guidance; moved experiment/learning material; repaired references and artifact-specific hook configuration; appropriate documentation/test-path/package checks. The existing router ACL tests load the three JSON5 configurations in `examples/remote_inference/zenoh`, so those must remain available as maintained examples or test fixtures even if experiment YAMLs move. Essential canonical feature/action schemas must remain copyable in public docs; CLI availability does not eliminate the need to document them.
+
+Other discussion topics (router use, logging UX, checkpoint priorities, repeated blending and configuration presentation) are being reviewed with the user, not silently promoted into implementation requirements. Source inspection and `git diff --check` only; no tests, checkpoint loads, network services or physical experiments run for this planning update.
+
+## Approved deployment, UX and checkpoint follow-ups — 2026-10-02
+
+The user approved the follow-ups below and supplied concrete validation inputs. This supersedes the preceding entry's pending scope alignment for these topics. This update records decisions only: no runtime/configuration changes, branch cleanup or model experiments were performed.
+
+| Follow-up | Decision and completion criteria | Status |
+| --- | --- | --- |
+| Router deployment guide | Diagram shared-LAN GPU processes, private-network GPU access, a shared experiment router and the dedicated GPU Space topology. Explain benefits, failure implications and one-client-per-server ownership; distinguish proposed recipes from verified ones. | Pending; proposal section 15 |
+| Addressing | Existing `deployment` is sufficient as the configurable experiment namespace. Document exact keys, matching server/client names, two distinct deployments and ambiguity handling via optional instance selection. Explain deployment-scoped ACL changes; no new root-prefix option. | Decision settled; public guidance pending; proposal section 8.1 |
+| Default logging UX | Concise startup/admission/settings, rate-limited operating summaries, actionable faults and accurate shutdown outcome at default verbosity. Verbose event/capability/per-request detail moves to DEBUG; preserve correlation and unexpected-failure diagnostics. Validate normal output plus representative exhaustion/denial cases without adding blocking dispatch work. | Implementation pending; proposal section 12 |
+| Configuration presentation | Keep one generic `examples/remote_inference/server.yaml`; document CLI overrides/precedence and complete copyable examples in collapsible blocks. Preserve feature/action semantics. Move experiment YAMLs with the planned cleanup; keep router JSON5 examples/fixtures and their tests. | Pending; proposal sections 11 and 14 |
+| Checkpoint conformance | Inspect each supplied checkpoint and saved processors against the audit, establish its synchronous baseline, then test the remote path. Use targeted adaptations only when justified; report action, RTC and language support separately. | Inputs received below; validation pending |
+
+Suggested execution order: logging UX and documentation consolidation first (preserve all material before branch pruning), then one representative LAN-router experiment with a known-good checkpoint, then Spaces transport feasibility. Checkpoint inspection/validation can progress independently when dependencies, devices and baseline mappings are available. No broad tuning matrix or history-aware serving framework is authorized. Standalone telemetry export, new namespaces, repeated-blend limits, automatic tuning/recovery and hardware-cleanup hardening remain outside this batch. Add a short tuning explanation of repeated blending of still-uncommitted targets; no merge behavior change is needed.
+
+### Supplied checkpoint queue
+
+These links identify user-provided candidates. The questions below come from the existing source audit, not a fresh configuration/weights audit of these exact revisions. Resolve and record revisions when testing; do not relabel candidates as supported based on a model card or successful download.
+
+| Checkpoint | First useful conformance question / baseline |
+| --- | --- |
+| [imstevenpmwork/wall_x_super_chatton](https://huggingface.co/imstevenpmwork/wall_x_super_chatton) | Check saved multimodal processors, image schema, prediction/action widths and action behavior on the Super Chatton setup. Then assess whether this checkpoint is useful for real VQA/hold/fresh-resumption and autosteering checks. Family text capability alone is insufficient. Exact synchronous command still to be recorded. |
+| [imstevenpmwork/super_chatton_evo1_stage1_pro](https://huggingface.co/imstevenpmwork/super_chatton_evo1_stage1_pro) | Check padded model action width versus canonical robot width and postprocessor normalization/cropping order. Validate chunk behavior before any separate RTC assessment. EVO1 is distinct from language-capable EO1. Exact synchronous command still to be recorded. |
+| [imstevenpmwork/super_chatton_groot](https://huggingface.co/imstevenpmwork/super_chatton_groot) | Check embodiment mappings, native/configured/postprocessed horizon and width, and paired processor state for relative actions. Exact synchronous command still to be recorded. |
+| [maximellerbach/folding_vla_jepa](https://huggingface.co/maximellerbach/folding_vla_jepa) | Use the supplied bi-OpenArm command below. Inspect actual world-model configuration and distinguish training future-frame targets from inference history; do not disable a trained component just to pass admission. Check camera preparation and robot hold/stop conformance. |
+| [maximellerbach/folding_fastwam](https://huggingface.co/maximellerbach/folding_fastwam) | Audit `action_horizon`, current-frame preparation and training-only future indices; likely targeted declaration/conformance work per the source audit. The supplied folding command explicitly names VLA-JEPA, so verify the FastWAM baseline rather than assuming an identical camera/schema configuration. |
+| [CarolinePascal/flux_sample](https://huggingface.co/CarolinePascal/flux_sample) | User identifies this as frame conditioned. Verify the saved conditioning configuration and processor feedback/history behavior; keep history-mode execution extensions out of scope. The separate local SO-101 checkpoint below has not been established as this Hub checkpoint. |
+
+For each candidate: preserve preprocessing and trained semantics, compare deterministic stages or control randomness when comparing local versus runner outputs, verify canonical names/order/units and actual returned horizon, exercise repeated calls/reset, then run one representative remote task. Establish synchronous task quality before attributing remote task failures to transport or scheduling. Unsupported RTC/text remains rejected. Warmup/conformance success and physical task success are separate evidence. Language acceptance remains open until a suitable checkpoint performs useful text operations and fresh action resumption on the real setup.
+
+### User-supplied synchronous baseline commands
+
+Preserved with shell formatting normalized; neither command was executed here. These are experiment records, not portable upstream defaults. This computer is not the hardware test host.
+
+**VLA-JEPA / bi-OpenArm folding:**
+
+```bash
+uv run lerobot-rollout \
+  --policy.path=maximellerbach/folding_vla_jepa \
+  --robot.type=bi_openarm_follower \
+  --robot.cameras='{left_wrist: {type: opencv, index_or_path: "/dev/video0", width: 1280, height: 720, fps: 30}, base: {type: opencv, index_or_path: "/dev/video2", width: 640, height: 480, fps: 30}, right_wrist: {type: opencv, index_or_path: "/dev/video4", width: 1280, height: 720, fps: 30}}' \
+  --robot.left_arm_config.port=can1 \
+  --robot.left_arm_config.side=left \
+  --robot.left_arm_config.can_interface=socketcan \
+  --robot.left_arm_config.disable_torque_on_disconnect=true \
+  --robot.left_arm_config.max_relative_target=16.0 \
+  --robot.right_arm_config.port=can0 \
+  --robot.right_arm_config.side=right \
+  --robot.right_arm_config.can_interface=socketcan \
+  --robot.right_arm_config.disable_torque_on_disconnect=true \
+  --robot.right_arm_config.max_relative_target=16.0 \
+  --task="Fold the T-shirt properly" \
+  --fps=30 \
+  --duration=2000 \
+  --device=cuda \
+  --display_data=true
+```
+
+**SO-101 / local checkpoint (Hub mapping unresolved):**
+
+```bash
+lerobot-rollout \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM0 \
+  --robot.id=my_so101 \
+  --robot.cameras='{"scene": {"type": "opencv", "index_or_path": "/dev/video4", "width": 640, "height": 480, "fps": 30}, "wrist": {"type": "opencv", "index_or_path": "/dev/video2", "width": 640, "height": 480, "fps": 30}}' \
+  --policy.path="$HOME/Downloads/yellow_on_purple_lora_last" \
+  --policy.device=cuda \
+  --inference.type=sync \
+  --strategy.type=base \
+  --task="Put the yellow cube on the purple square" \
+  --fps=15 \
+  --display_data=false \
+  --policy.compile_model=true \
+  --interpolation_multiplier=2
+```
+
+Do not translate `--policy.compile_model` into an unsupported server CLI override or substitute a Hub model without verifying the saved configuration. Checkpoint-specific Super Chatton commands, the local SO-101 checkpoint's identity and any other baseline commands can be added later; these missing mappings do not block logging/documentation or router work.
+
+Validation for this documentation update: inspected existing proposal/progress, policy audit and key construction/configuration paths; opened supplied Hub pages (three Super Chatton cards readable; the other three page fetches failed, so no configuration facts were inferred from them). No weights or checkpoint configurations were downloaded, and no servers, robot connections or runtime tests were run. `git diff --check` and local documentation consistency checks passed. The supplied links and commands remain validation inputs, not results.
