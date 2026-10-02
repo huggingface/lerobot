@@ -92,3 +92,16 @@ def test_act_compile_training_forward():
     loss, loss_dict = policy.forward(batch)
     assert loss.requires_grad
     assert "l1_loss" in loss_dict
+
+
+def test_act_compile_checkpoint_roundtrip(tmp_path):
+    """Compiled and non-compiled ACT checkpoints must be interchangeable (no `_orig_mod.` keys)."""
+    torch.manual_seed(0)
+    compiled = ACTPolicy(_make_act_config(compile_model=True))
+    plain = ACTPolicy(_make_act_config(compile_model=False))
+    assert compiled.state_dict().keys() == plain.state_dict().keys()
+
+    compiled.save_pretrained(tmp_path)
+    loaded = ACTPolicy.from_pretrained(tmp_path, config=_make_act_config(compile_model=False))
+    for key, value in compiled.state_dict().items():
+        torch.testing.assert_close(loaded.state_dict()[key], value)
