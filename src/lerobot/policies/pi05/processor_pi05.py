@@ -138,6 +138,11 @@ def make_pi05_pre_post_processors(
         enabled=config.use_relative_actions,
         exclude_joints=getattr(config, "relative_exclude_joints", []),
         action_names=getattr(config, "action_feature_names", None),
+        mode=config.relative_action_mode,
+        position_names=config.relative_pose_position_names,
+        rotation_names=config.relative_pose_rotation_names,
+        rotation_format=config.relative_pose_rotation_format,
+        reference_key=config.relative_reference_key,
     )
 
     steps = make_default_policy_processor_steps(config, dataset_stats)

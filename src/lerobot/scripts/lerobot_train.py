@@ -70,6 +70,7 @@ from lerobot.datasets import (
 )
 from lerobot.datasets.factory import make_train_eval_datasets
 from lerobot.datasets.multi_dataset import MultiLeRobotDataset
+from lerobot.datasets.utils import RELATIVE_ACTION_PATH
 from lerobot.distributed import (
     ParallelDims,
     finalize_sharded_policy,
@@ -82,7 +83,7 @@ from lerobot.jobs import submit_to_hf
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.policies.factory import ProcessorConfigKwargs
-from lerobot.processor import ImageAugmentationProcessorStep
+from lerobot.processor import ImageAugmentationProcessorStep, RelativeActionsProcessorStep
 from lerobot.processor.rename_processor import rename_batch_keys, rename_stats
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
@@ -93,6 +94,7 @@ from lerobot.utils.import_utils import (
     register_third_party_plugins,
     require_package,
 )
+from lerobot.utils.io_utils import load_json
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.sample_weighting import SampleWeighter
@@ -706,6 +708,11 @@ def train(cfg: TrainPipelineConfig) -> None:
                 "enabled": True,
                 "exclude_joints": getattr(active_cfg, "relative_exclude_joints", []),
                 "action_names": getattr(active_cfg, "action_feature_names", None),
+                "mode": getattr(active_cfg, "relative_action_mode", "subtract"),
+                "position_names": getattr(active_cfg, "relative_pose_position_names", ["x", "y", "z"]),
+                "rotation_names": getattr(active_cfg, "relative_pose_rotation_names", None),
+                "rotation_format": getattr(active_cfg, "relative_pose_rotation_format", "axis_angle"),
+                "reference_key": getattr(active_cfg, "relative_reference_key", None),
             }
             postprocessor_overrides["absolute_actions_processor"] = {"enabled": True}
         processor_kwargs["preprocessor_overrides"] = preprocessor_overrides
@@ -723,6 +730,19 @@ def train(cfg: TrainPipelineConfig) -> None:
             pretrained_revision=active_cfg.pretrained_revision,
             **processor_kwargs,
         )
+        relative_step = next(
+            (s for s in preprocessor.steps if isinstance(s, RelativeActionsProcessorStep) and s.enabled), None
+        )
+        marker_path = dataset.meta.root / RELATIVE_ACTION_PATH
+        if relative_step is not None and (marker_path.exists() or relative_step.mode == "pose"):
+            expected = relative_step.stats_signature(active_cfg.chunk_size)
+            found = load_json(marker_path) if marker_path.exists() else None
+            if found != expected:
+                raise ValueError(
+                    f"Relative action stats in {marker_path} were computed with {found}, but the policy "
+                    f"expects {expected}. Recompute them with `lerobot-edit-dataset --operation.type "
+                    "recompute_stats --operation.relative_action true` and matching settings."
+                )
 
     image_augmentation = _make_image_augmentation(cfg, dataset, device, accelerator.process_index)
     if image_augmentation is not None and is_main_process():
