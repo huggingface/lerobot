@@ -239,18 +239,20 @@ To teleoperate, SSH into your Raspberry Pi, and run `conda activate lerobot` and
 python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi
 ```
 
+The host stops after `--host.connection_time_s` seconds (30 by default). For longer sessions, such as recording a dataset, increase it, e.g. `--host.connection_time_s=600`.
+
 Then on your laptop, also run `conda activate lerobot` and run the API example, make sure you set the correct `remote_ip` and `port` in `examples/lekiwi/teleoperate.py`.
 
 ```bash
 python examples/lekiwi/teleoperate.py
 ```
 
-You should see on your laptop something like this: `[INFO] Connected to remote robot at tcp://172.17.133.91:5555 and video stream at tcp://172.17.133.91:5556.` Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward, left, backwards, right. And use (z,x) to turn left or turn right. You can use (r,f) to increase and decrease the speed of the mobile robot. There are three speed modes, see the table below:
+Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward, left, backwards, right. And use (z,x) to turn left or turn right. You can use (r,f) to increase and decrease the speed of the mobile robot. There are three speed modes, see the table below:
 
 | Speed Mode | Linear Speed (m/s) | Rotation Speed (deg/s) |
 | ---------- | ------------------ | ---------------------- |
-| Fast       | 0.4                | 90                     |
-| Medium     | 0.25               | 60                     |
+| Fast       | 0.3                | 90                     |
+| Medium     | 0.2                | 60                     |
 | Slow       | 0.1                | 30                     |
 
 | Key | Action         |
@@ -286,11 +288,11 @@ hf auth login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 Then store your Hugging Face repository name in a variable:
 
 ```bash
-HF_USER=$(hf auth whoami | awk -F': *' 'NR==1 {print $2}')
+HF_USER=$(hf auth whoami --quiet)
 echo $HF_USER
 ```
 
-Now you can record a dataset. To record episodes and upload your dataset to the hub, execute this API example tailored for LeKiwi. Make sure to first adapt the `remote_ip`, `repo_id`, `port` and `task` in the script. If you would like to run the script for longer you can increase `NB_CYCLES_CLIENT_CONNECTION`.
+Now you can record a dataset. To record episodes and upload your dataset to the hub, execute this API example tailored for LeKiwi. Make sure to first adapt the `remote_ip`, `HF_REPO_ID`, the leader arm `port` and `TASK_DESCRIPTION` in the script. To record more or longer episodes, change `NUM_EPISODES`, `EPISODE_TIME_SEC` and `RESET_TIME_SEC`, and start the host with a `--host.connection_time_s` that covers the whole session.
 
 ```bash
 python examples/lekiwi/record.py
@@ -298,7 +300,7 @@ python examples/lekiwi/record.py
 
 #### Dataset upload
 
-Locally, your dataset is stored in this folder: `~/.cache/huggingface/lerobot/{repo-id}`. At the end of data recording, your dataset will be uploaded on your Hugging Face page (e.g. https://huggingface.co/datasets/cadene/so101_test) that you can obtain by running:
+Locally, your dataset is stored in this folder: `~/.cache/huggingface/lerobot/{repo-id}`. At the end of data recording, your dataset will be uploaded on your Hugging Face page under the `HF_REPO_ID` you set in the script (e.g. `https://huggingface.co/datasets/${HF_USER}/lekiwi_test`), that you can obtain by running:
 
 ```bash
 echo https://huggingface.co/datasets/${HF_USER}/lekiwi_test
