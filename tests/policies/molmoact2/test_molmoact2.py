@@ -3152,6 +3152,109 @@ def test_saved_continuous_checkpoint_forwards_outer_mask_to_hf_generation():
     assert "encoder_attention_mask" not in backbone.calls[1]
 
 
+class _NoiseTestActionExpert(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.action_embed = torch.nn.Linear(1, 1, bias=False)
+
+    def prepare_context(self, **kwargs):
+        del kwargs
+        return SimpleNamespace()
+
+    def get_or_prepare_modulation_cache(self, timesteps, *, cache_key=None):
+        del cache_key
+        return [SimpleNamespace(conditioning=timestep) for timestep in timesteps]
+
+    def forward_with_context(self, actions, timesteps, *, context, modulation=None):
+        del context, modulation
+        return torch.sin(3 * actions) + timesteps[:, None, None]
+
+
+class _NoiseTestBackbone(hf_molmoact2_modeling.MolmoAct2Model):
+    """Runs the real vendored continuous generation loop with a tiny action expert."""
+
+    def __init__(self):
+        torch.nn.Module.__init__(self)
+        self.config = SimpleNamespace(
+            action_mode="continuous",
+            action_expert_config=SimpleNamespace(num_layers=1),
+            action_expert_depth_gate=False,
+            action_start_token_id=None,
+            action_end_token_id=None,
+            eos_token_id=None,
+            flow_matching_num_steps=2,
+            mask_action_dim_padding=False,
+            max_action_dim=3,
+            max_action_horizon=2,
+        )
+        self.action_expert = _NoiseTestActionExpert()
+        self.action_expert_depth_gate = None
+        self.action_cuda_graph_manager = None
+
+    def forward(self, **kwargs):
+        self.batch_size = int(kwargs["input_ids"].shape[0])
+        return SimpleNamespace(past_key_values=object())
+
+    def _extract_kv_states(self, past_key_values):
+        del past_key_values
+        kv = torch.zeros(self.batch_size, 1, 1)
+        return [(kv, kv)]
+
+
+def _make_noise_test_policy(rtc_enabled):
+    policy = object.__new__(MolmoAct2Policy)
+    torch.nn.Module.__init__(policy)
+    policy.model = torch.nn.Module()
+    policy.model.model = _NoiseTestBackbone()
+    policy.config = MolmoAct2Config(
+        action_mode="continuous",
+        inference_action_mode="continuous",
+        dtype=torch.float32,
+        chunk_size=2,
+        n_action_steps=2,
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,))},
+    )
+    policy._checkpoint_action_mode = None
+    policy._rollout_action_generator = None
+    policy._rollout_task_key = None
+    policy._rollout_index_for_task = -1
+    policy.rtc_processor = None
+    if rtc_enabled:
+        policy.config.rtc_config = RTCConfig(enabled=True, execution_horizon=2)
+        policy.init_rtc_processor()
+    batch = {
+        "input_ids": torch.tensor([[1, 2, 3], [4, 5, 6]]),
+        "attention_mask": torch.ones(2, 3, dtype=torch.long),
+    }
+    return policy, batch
+
+
+@pytest.mark.parametrize("rtc_enabled", [False, True])
+def test_predict_action_chunk_uses_given_noise(rtc_enabled):
+    policy, batch = _make_noise_test_policy(rtc_enabled)
+    noise = torch.randn(2, 2, 3)
+    noise_before = noise.clone()
+
+    actions_1 = policy.predict_action_chunk(batch, noise=noise)
+    actions_2 = policy.predict_action_chunk(batch, noise=noise)
+    other_actions = policy.predict_action_chunk(batch, noise=torch.randn_like(noise))
+
+    assert actions_1.shape == (2, 2, 2)
+    assert torch.equal(actions_1, actions_2)
+    assert torch.equal(noise, noise_before)
+    assert not torch.allclose(actions_1, other_actions)
+
+
+@pytest.mark.parametrize("rtc_enabled", [False, True])
+def test_predict_action_chunk_default_noise_matches_generator_draw(rtc_enabled):
+    policy, batch = _make_noise_test_policy(rtc_enabled)
+
+    default_actions = policy.predict_action_chunk(batch, generator=torch.Generator().manual_seed(0))
+    noise = torch.randn(2, 2, 3, dtype=torch.float32, generator=torch.Generator().manual_seed(0))
+
+    assert torch.equal(default_actions, policy.predict_action_chunk(batch, noise=noise))
+
+
 def test_both_action_expert_mask_retains_checkpoint_span_masking():
     class DummyBackbone(torch.nn.Module):
         def __init__(self):
