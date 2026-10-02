@@ -46,7 +46,9 @@ from lerobot.configs import (
     rgb_encoder_defaults,
 )
 from lerobot.configs.video import DEPTH_ENCODER_INFO_FIELD_NAMES
+from lerobot.processor import RelativeActionsProcessorStep
 from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME, OBS_IMAGE, OBS_STATE
+from lerobot.utils.io_utils import write_json
 from lerobot.utils.utils import flatten_dict
 
 from .aggregate import aggregate_datasets
@@ -73,6 +75,7 @@ from .utils import (
     DEFAULT_EPISODES_PATH,
     DEPTH_FILE_PATTERN,
     IMAGE_FILE_PATTERN,
+    RELATIVE_ACTION_PATH,
     VIDEO_DIR,
     update_chunk_file_indices,
 )
@@ -1620,6 +1623,11 @@ def recompute_stats(
     relative_exclude_joints: list[str] | None = None,
     chunk_size: int = 50,
     num_workers: int = 0,
+    relative_action_mode: str = "subtract",
+    relative_pose_position_names: list[str] | None = None,
+    relative_pose_rotation_names: list[str] | None = None,
+    relative_pose_rotation_format: str = "axis_angle",
+    relative_reference_key: str | None = None,
 ) -> LeRobotDataset:
     """Recompute stats.json from scratch by iterating all episodes.
 
@@ -1637,6 +1645,9 @@ def recompute_stats(
             ``policy.chunk_size``. Only used when ``relative_action=True``.
         num_workers: Number of parallel threads for relative action stats computation.
             Values ≤1 mean single-threaded. Only used when ``relative_action=True``.
+        relative_action_mode, relative_pose_*, relative_reference_key: pose-mode settings,
+            see ``RelativeActionsProcessorStep``. The settings are recorded in
+            ``meta/relative_action.json`` so training can check they match the policy.
 
     Returns:
         The same dataset with updated stats.
@@ -1660,16 +1671,29 @@ def recompute_stats(
     # (matching what the model sees during training) and skip action in the
     # per-episode pass below.
     relative_action_stats = None
-    if relative_action and ACTION in features and OBS_STATE in features:
+    relative_signature = None
+    is_pose = relative_action_mode == "pose"
+    if relative_action and ACTION in features and (OBS_STATE in features or is_pose):
         if relative_exclude_joints is None:
             relative_exclude_joints = ["gripper"]
+        pose_kwargs = {
+            "position_names": relative_pose_position_names or ["x", "y", "z"],
+            "rotation_names": relative_pose_rotation_names,
+            "rotation_format": relative_pose_rotation_format,
+            "reference_key": relative_reference_key,
+        }
         relative_action_stats = compute_relative_action_stats(
             hf_dataset=dataset.hf_dataset,
             features=features,
             chunk_size=chunk_size,
             exclude_joints=relative_exclude_joints,
             num_workers=num_workers,
+            mode=relative_action_mode,
+            **pose_kwargs,
         )
+        relative_signature = RelativeActionsProcessorStep(
+            exclude_joints=relative_exclude_joints, mode=relative_action_mode, **pose_kwargs
+        ).stats_signature(chunk_size)
         features_to_compute.pop(ACTION, None)
 
     logger.info(f"Recomputing stats for features: {list(features_to_compute.keys())}")
@@ -1685,17 +1709,17 @@ def recompute_stats(
 
     for parquet_path in tqdm(parquet_files, desc="Computing stats from data files"):
         df = pd.read_parquet(parquet_path)
+        episode_indices = df["episode_index"].to_numpy()
+        # Slice numpy arrays rather than the dataframe: pandas row filtering fails on the
+        # integer Array2D/3D extension columns (e.g. int16 tactile grids).
+        columns = {key: df[key].to_numpy() for key in numeric_keys if key in df.columns}
 
-        for ep_idx in sorted(df["episode_index"].unique()):
-            ep_df = df[df["episode_index"] == ep_idx]
+        for ep_idx in sorted(np.unique(episode_indices)):
+            mask = episode_indices == ep_idx
             episode_data = {}
-            for key in numeric_keys:
-                if key in ep_df.columns:
-                    values = ep_df[key].values
-                    if hasattr(values[0], "__len__"):
-                        episode_data[key] = np.stack(values)
-                    else:
-                        episode_data[key] = np.array(values)
+            for key, column in columns.items():
+                values = column[mask]
+                episode_data[key] = np.stack(values) if values.dtype == object else values
 
             ep_stats = compute_episode_stats(episode_data, features_to_compute)
             all_episode_stats.append(ep_stats)
@@ -1717,6 +1741,11 @@ def recompute_stats(
 
     write_stats(new_stats, dataset.root)
     dataset.meta.stats = new_stats
+    relative_path = dataset.root / RELATIVE_ACTION_PATH
+    if relative_signature is not None:
+        write_json(relative_signature, relative_path)
+    else:
+        relative_path.unlink(missing_ok=True)
 
     logger.info("Stats recomputed successfully")
     return dataset

@@ -143,7 +143,9 @@ model output → unnormalize → AbsoluteActionsProcessorStep → robot
 
 The `AbsoluteActionsProcessorStep` reads the cached current state from its paired `RelativeActionsProcessorStep`, so the two must be wired together (handled automatically by the policy factory).
 
-### Enabling relative actions for the pi family (pi0, pi0.5, pi0_fast)
+### Enabling relative actions for the pi family (pi0, pi0.5, pi0_fast) and ACT
+
+ACT takes the same `--policy.use_relative_actions` / `relative_*` options, but not together with `temporal_ensemble_coeff`: ensembling averages chunks anchored on different states.
 
 **Step 1**: Precompute relative action statistics for your dataset:
 
@@ -195,6 +197,52 @@ relative_ee_chunk = [
     [0.03,  0.03, 0.03, 0.0],   # offset from current EE pose
 ]
 ```
+
+### Cartesian pose relative actions
+
+Element-wise subtraction is only meaningful for positions and joints: rotations cannot be subtracted, and world-frame offsets depend on where the world origin is. With `relative_action_mode="pose"`, the named pose dims are instead expressed in the reference frame:
+
+```
+p_rel = R_refᵀ (p - p_ref)
+R_rel = R_refᵀ R
+```
+
+Every other action dim (gripper, ...) stays absolute, and the rotation keeps the dataset's encoding, so the action dimension is unchanged.
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `relative_action_mode` | `"subtract"` | `"pose"` enables SE(3) composition |
+| `relative_pose_position_names` | `["x", "y", "z"]` | Position dims (exact, case-insensitive name match) |
+| `relative_pose_rotation_format` | `"axis_angle"` | `"axis_angle"` (3 dims) or `"rot6d"` (first two rotation-matrix rows, 6 dims) |
+| `relative_pose_rotation_names` | `None` | Rotation dims; `None` = `["ax", "ay", "az"]` or `["r6d_0", ..., "r6d_5"]` |
+| `relative_reference_key` | `None` | Feature holding the reference pose. `None` = the chunk's first action |
+
+The reference comes from one of two places:
+
+- **A reference feature** (`relative_reference_key`, e.g. `observation.ee_pose`), laid out as `[position, rotation]` in the same encoding as the actions. It is removed from the policy inputs. At inference the robot must report it, and predictions are composed back into absolute poses.
+- **The chunk's first action** (`relative_reference_key=None`). This needs no pose from the robot: the first predicted action is the identity, and the postprocessor returns relative poses. The robot side chains consecutive steps (`R_{k-1}ᵀ R_k`, `R_{k-1}ᵀ (p_k - p_{k-1})`) into deltas.
+
+Stats must be computed with the same settings and chunk size:
+
+```bash
+lerobot-edit-dataset \
+    --repo_id your_ee_dataset \
+    --operation.type recompute_stats \
+    --operation.relative_action true \
+    --operation.relative_action_mode pose \
+    --operation.relative_pose_rotation_format rot6d \
+    --operation.chunk_size 50
+
+lerobot-train \
+    --dataset.repo_id=your_ee_dataset \
+    --policy.type=pi05 \
+    --policy.use_relative_actions=true \
+    --policy.relative_action_mode=pose \
+    --policy.relative_pose_rotation_format=rot6d \
+    --policy.chunk_size=50
+```
+
+`recompute_stats` records its settings in `meta/relative_action.json`, and `lerobot-train` refuses to start if they do not match the policy (the file is required in pose mode). RTC is not supported yet in pose mode.
 
 ## Processing Pipeline Summary
 

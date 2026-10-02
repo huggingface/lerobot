@@ -37,6 +37,7 @@ from lerobot.processor import (
 )
 from lerobot.utils.constants import (
     ACTION,
+    OBS_STATE,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
@@ -294,6 +295,10 @@ def make_policy(
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     if not cfg.input_features:
         cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
+    reference_key = getattr(cfg, "relative_reference_key", None)
+    if getattr(cfg, "relative_action_mode", "subtract") == "pose" and reference_key != OBS_STATE:
+        # The pose reference anchors the actions but must not reach the model.
+        cfg.input_features.pop(reference_key, None)
 
     # Store action feature names for relative_exclude_joints support
     if ds_meta is not None and hasattr(cfg, "action_feature_names"):

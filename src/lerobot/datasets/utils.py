@@ -92,6 +92,7 @@ DEFAULT_VIDEO_FILE_SIZE_IN_MB = 200  # Max size per file
 
 INFO_PATH = "meta/info.json"
 STATS_PATH = "meta/stats.json"
+RELATIVE_ACTION_PATH = "meta/relative_action.json"
 
 EPISODES_DIR = "meta/episodes"
 DATA_DIR = "data"

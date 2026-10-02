@@ -19,9 +19,11 @@ import logging
 from collections.abc import Sequence
 
 import numpy as np
+import torch
 
 from lerobot.configs import is_depth_map
 from lerobot.processor import RelativeActionsProcessorStep
+from lerobot.processor.relative_action_processor import to_relative_poses
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .io_utils import load_image_as_numpy
@@ -685,12 +687,14 @@ def _get_valid_chunk_starts(episode_indices: np.ndarray, chunk_size: int) -> np.
 def _compute_relative_chunk_batch(
     start_indices: np.ndarray,
     all_actions: np.ndarray,
-    all_states: np.ndarray,
+    all_states: np.ndarray | None,
     chunk_size: int,
     relative_mask: np.ndarray,
+    pose_step: RelativeActionsProcessorStep | None = None,
 ) -> np.ndarray:
     """Vectorised relative-action computation for a batch of start indices.
 
+    With ``pose_step``, ``all_states`` holds the reference poses (None = each chunk's first action).
     Returns an ``(N * chunk_size, action_dim)`` float32 array.
     """
     if len(start_indices) == 0:
@@ -698,6 +702,15 @@ def _compute_relative_chunk_batch(
     offsets = np.arange(chunk_size)
     frame_idx = start_indices[:, None] + offsets[None, :]
     chunks = all_actions[frame_idx].copy()
+    if pose_step is not None:
+        pos_idx, rot_idx = pose_step._pose_indices()
+        chunks_t = torch.from_numpy(chunks)
+        if all_states is None:
+            reference = chunks_t[:, 0, pos_idx + rot_idx]
+        else:
+            reference = pose_step._pose_reference(torch.from_numpy(all_states[start_indices]))
+        relative = to_relative_poses(chunks_t, reference, pos_idx, rot_idx, pose_step.rotation_format)
+        return relative.numpy().reshape(-1, all_actions.shape[1])
     states = all_states[start_indices]
     mask_dim = len(relative_mask)
     chunks[:, :, :mask_dim] -= states[:, None, :mask_dim] * relative_mask[None, None, :]
@@ -710,6 +723,11 @@ def compute_relative_action_stats(
     chunk_size: int,
     exclude_joints: list[str] | None = None,
     num_workers: int = 0,
+    mode: str = "subtract",
+    position_names: list[str] | None = None,
+    rotation_names: list[str] | None = None,
+    rotation_format: str = "axis_angle",
+    reference_key: str | None = None,
 ) -> dict[str, np.ndarray]:
     """Compute normalization statistics for relative actions over the full dataset.
 
@@ -728,6 +746,9 @@ def compute_relative_action_stats(
         num_workers: Number of parallel threads for computation. Values ≤1
             mean single-threaded. Numpy releases the GIL so threads give
             real parallelism here.
+        mode, position_names, rotation_names, rotation_format, reference_key: see
+            ``RelativeActionsProcessorStep``. In pose mode "observation.state" is not
+            required and the reference is ``reference_key`` (or each chunk's first action).
 
     Returns:
         Statistics dict with keys "mean", "std", "min", "max", "q01", …, "q99".
@@ -745,12 +766,19 @@ def compute_relative_action_stats(
         enabled=True,
         exclude_joints=exclude_joints,
         action_names=action_names,
+        mode=mode,
+        position_names=position_names or ["x", "y", "z"],
+        rotation_names=rotation_names,
+        rotation_format=rotation_format,
+        reference_key=reference_key,
     )
     relative_mask = np.array(mask_step._build_mask(action_dim), dtype=np.float32)
+    pose_step = mask_step if mode == "pose" else None
+    state_key = reference_key if pose_step is not None else OBS_STATE
 
     logger.info("Loading action/state data for relative action stats...")
     all_actions = np.array(hf_dataset[ACTION], dtype=np.float32)
-    all_states = np.array(hf_dataset[OBS_STATE], dtype=np.float32)
+    all_states = np.array(hf_dataset[state_key], dtype=np.float32) if state_key else None
     episode_indices = np.array(hf_dataset["episode_index"])
 
     valid_starts = _get_valid_chunk_starts(episode_indices, chunk_size)
@@ -782,6 +810,7 @@ def compute_relative_action_stats(
                     all_states,
                     chunk_size,
                     relative_mask,
+                    pose_step,
                 )
                 for batch in batches
             ]
@@ -790,7 +819,9 @@ def compute_relative_action_stats(
     else:
         for batch in batches:
             running_stats.update(
-                _compute_relative_chunk_batch(batch, all_actions, all_states, chunk_size, relative_mask)
+                _compute_relative_chunk_batch(
+                    batch, all_actions, all_states, chunk_size, relative_mask, pose_step
+                )
             )
 
     stats = running_stats.get_statistics()
