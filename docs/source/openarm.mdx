@@ -20,8 +20,8 @@ To get your OpenArm, assembled or DIY, and join the global community, browse ver
 
 <Tip warning={true}>
   **Linux and macOS**: OpenArm runs on Linux (SocketCAN, CAN FD) and on macOS
-  through a PEAK PCAN adapter. Windows has not been tested. See
-  [macOS CAN Bus Setup](#macos-can-bus-setup) below for the macOS instructions.
+  through a PEAK PCAN adapter. Windows has not been tested. See [macOS CAN Bus
+  Setup](#macos-can-bus-setup) below for the macOS instructions.
 </Tip>
 
 ## Safety Guide
@@ -67,10 +67,11 @@ lerobot-setup-can --mode=test --interfaces=can0,can1
 ```
 
 <Tip warning={true}>
-  With the `motorbridge` backend the CAN interface bitrate is configured at the OS level, so the
-  interface must be brought up **before** connecting (the command above handles this). The
-  `can_bitrate` / `can_data_bitrate` config fields are informational and are not passed to the
-  controller. When `use_can_fd=True` (the default), OpenArm opens the channel with CAN FD via
+  With the `motorbridge` backend the CAN interface bitrate is configured at the
+  OS level, so the interface must be brought up **before** connecting (the
+  command above handles this). The `can_bitrate` / `can_data_bitrate` config
+  fields are informational and are not passed to the controller. When
+  `use_can_fd=True` (the default), OpenArm opens the channel with CAN FD via
   `motorbridge`'s `from_socketcanfd`.
 </Tip>
 
