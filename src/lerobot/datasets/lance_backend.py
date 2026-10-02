@@ -75,6 +75,12 @@ from .lance_utils import (  # noqa: F401
 from .utils import resolve_episode_indices
 from .video_utils import FrameTimestampError, decode_video_frames_pyav
 
+_DEPTH_DECODE_MAX_SPAN_FRAMES = 64
+_DEPTH_DECODE_MAX_BYTES = 64 << 20
+# PyAV retains decoded uint16 frames while dequantization creates float32 output.
+# Leave extra headroom for the selected-frame stack and allocator overhead.
+_DEPTH_DECODE_BYTES_PER_VALUE = 8
+
 
 class _SamplePlan(TypedDict):
     """Frames-table rows one sample needs, plus its per-key delta windows and padding masks."""
@@ -477,8 +483,8 @@ class LanceDatasetReader(BaseDatasetReader):
             key, chunk_idx, file_idx = file_key
             decoder, source = entries[file_key]
             if key in self.meta.depth_keys:
-                for sample_idx, shifted_ts in file_requests:
-                    results[sample_idx][key] = self._decode_depth_window(source, shifted_ts, file_key)
+                for sample_idx, frames in self._decode_depth_file_requests(source, file_requests, file_key):
+                    results[sample_idx][key] = frames
                 return
             fps = decoder.metadata.average_fps
             for sample_idx, shifted_ts in file_requests:
@@ -609,6 +615,10 @@ class LanceDatasetReader(BaseDatasetReader):
 
     def _decode_depth_window(self, source, shifted_ts: list[float], file_key: tuple) -> torch.Tensor:
         """Decode one depth window with upstream's pyav decoder over our sparse source."""
+        return self._decode_depth_frames(source, shifted_ts, file_key).squeeze(0)
+
+    def _decode_depth_frames(self, source, shifted_ts: list[float], file_key: tuple) -> torch.Tensor:
+        """Decode and dequantize a depth timestamp batch, preserving its timestamp order."""
         source.seek(0)
         frames = decode_video_frames_pyav(
             source, shifted_ts, self.tolerance_s, return_uint8=False, is_depth=True
@@ -621,7 +631,59 @@ class LanceDatasetReader(BaseDatasetReader):
             shift=config.shift,
             use_log=config.use_log,
             output_unit=self._depth_output_unit,
-        ).squeeze(0)
+        )
+
+    def _decode_depth_file_requests(
+        self, source, file_requests: list[tuple[int, list[float]]], file_key: tuple
+    ) -> list[tuple[int, torch.Tensor]]:
+        """Merge nearby sample windows so each depth span opens and seeks PyAV once."""
+        if len(file_requests) == 1:
+            sample_idx, shifted_ts = file_requests[0]
+            return [(sample_idx, self._decode_depth_window(source, shifted_ts, file_key))]
+
+        fps = float(self.meta.fps)
+        shape = self.meta.features[file_key[0]].get("shape") or ()
+        frame_values = int(np.prod(shape)) if shape else 0
+        byte_limited_frames = (
+            max(1, _DEPTH_DECODE_MAX_BYTES // (frame_values * _DEPTH_DECODE_BYTES_PER_VALUE))
+            if frame_values
+            else _DEPTH_DECODE_MAX_SPAN_FRAMES
+        )
+        max_span_frames = min(_DEPTH_DECODE_MAX_SPAN_FRAMES, byte_limited_frames)
+        merge_gap_s = 1.0 / fps + self.tolerance_s
+
+        ordered = sorted(file_requests, key=lambda request: min(request[1]))
+        groups: list[list[tuple[int, list[float]]]] = []
+        group: list[tuple[int, list[float]]] = []
+        group_start = group_end = 0.0
+        for request in ordered:
+            start, end = min(request[1]), max(request[1])
+            merged_end = max(group_end, end)
+            merged_span_frames = int(np.ceil((merged_end - group_start) * fps)) + 1
+            if group and start <= group_end + merge_gap_s and merged_span_frames <= max_span_frames:
+                group.append(request)
+                group_end = merged_end
+            else:
+                if group:
+                    groups.append(group)
+                group = [request]
+                group_start, group_end = start, end
+        groups.append(group)
+
+        decoded: list[tuple[int, torch.Tensor]] = []
+        for group in groups:
+            if len(group) == 1:
+                sample_idx, timestamps = group[0]
+                decoded.append((sample_idx, self._decode_depth_window(source, timestamps, file_key)))
+                continue
+            unique_ts = sorted({timestamp for _, timestamps in group for timestamp in timestamps})
+            frames = self._decode_depth_frames(source, unique_ts, file_key)
+            positions = {timestamp: position for position, timestamp in enumerate(unique_ts)}
+            for sample_idx, timestamps in group:
+                decoded.append(
+                    (sample_idx, frames[[positions[timestamp] for timestamp in timestamps]].squeeze(0))
+                )
+        return decoded
 
     def _fetch_spans(
         self, spans_by_key: dict[tuple, list[tuple[int, int]]], sources: dict[tuple, _SparseBlobSource]
