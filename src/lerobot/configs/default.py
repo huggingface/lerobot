@@ -97,7 +97,7 @@ class WandBConfig:
     notes: str | None = None
     run_id: str | None = None
     resume: str | None = None  # Allowed values: 'allow', 'must', 'never', or 'auto'.
-    mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
+    mode: str | None = None  # 'online', 'offline' or 'disabled'. Unset: WANDB_MODE, else 'online'.
     console: str = "wrap"
     console_multipart: bool = False
     console_chunk_max_seconds: int = 0
