@@ -80,7 +80,9 @@ class PolicyServerConfig:
 
     @classmethod
     def from_dict(cls, config_dict: dict) -> "PolicyServerConfig":
-        """Create a PolicyServerConfig from a dictionary."""
+        """Create a PolicyServerConfig, deriving environment_dt from fps if exported."""
+        config_dict = config_dict.copy()
+        config_dict.pop("environment_dt", None)
         return cls(**config_dict)
 
     @property
@@ -96,6 +98,7 @@ class PolicyServerConfig:
             "fps": self.fps,
             "environment_dt": self.environment_dt,
             "inference_latency": self.inference_latency,
+            "obs_queue_timeout": self.obs_queue_timeout,
         }
 
 
