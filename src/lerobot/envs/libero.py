@@ -15,6 +15,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import logging
 import os
 import re
 from collections import defaultdict
@@ -33,6 +34,8 @@ from libero.libero.envs import OffScreenRenderEnv
 from lerobot.lerobot_types import RobotObservation
 
 from .utils import _LazyAsyncVectorEnv, parse_camera_names
+
+logger = logging.getLogger(__name__)
 
 
 def _get_suite(name: str) -> benchmark.Benchmark:
@@ -133,6 +136,14 @@ class LiberoEnv(gym.Env):
         super().__init__()
         if control_freq <= 0:
             raise ValueError(f"control_freq must be positive, got {control_freq}")
+        if control_freq != 20:
+            logger.warning(
+                "LiberoEnv control_freq=%s differs from the standard 20 Hz rate. "
+                "LIBERO uses delta actions, so a different rate changes how far each "
+                "action moves the arm and can severely hurt success rates. Prefer fps/control_freq=20 "
+                "unless you intentionally retarget control frequency.",
+                control_freq,
+            )
         if not hard_reset and not init_states:
             raise ValueError("hard_reset=False requires init_states=True")
         self.task_id = task_id
