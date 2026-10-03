@@ -33,7 +33,11 @@ from lerobot.policies.wall_x import (
     WallXConfig,  # noqa: E402
 )
 from lerobot.policies.wall_x.constant import WALL_X_PROMPT_SEGMENTS  # noqa: E402
-from lerobot.policies.wall_x.modeling_wall_x import Qwen2_5_VLMoEForAction, WallXPolicy  # noqa: E402
+from lerobot.policies.wall_x.modeling_wall_x import (  # noqa: E402
+    ActionHead,
+    Qwen2_5_VLMoEForAction,
+    WallXPolicy,
+)
 from lerobot.policies.wall_x.processor_wall_x import (  # noqa: E402
     WallXPromptProcessorStep,
     make_wall_x_pre_post_processors,
@@ -46,7 +50,7 @@ from lerobot.processor import (  # noqa: E402
     batch_to_transition,
     transition_to_batch,
 )
-from lerobot.utils.constants import MESSAGES_RENDERED, QUERY_KIND, QUERY_TEXT  # noqa: E402
+from lerobot.utils.constants import ACTION, MESSAGES_RENDERED, QUERY_KIND, QUERY_TEXT  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 from tests.utils import require_cuda, require_hf_token  # noqa: E402
 
@@ -259,6 +263,73 @@ def test_policy_preserves_original_action_only_loss(monkeypatch):
     loss, _ = policy.forward(_model_inputs())
 
     assert loss.item() == 9.0
+
+
+class _TinyDiffusionModel:
+    """Runs the real `Qwen2_5_VLMoEForAction.predict` diffusion path with a tiny action head."""
+
+    action_token_id = 7
+
+    def __init__(self):
+        self.config = SimpleNamespace(
+            output_attentions=False, output_hidden_states=False, use_return_dict=True
+        )
+        self.action_token_id_set = {"action_token_id": self.action_token_id}
+        self.action_preprocessor = ActionHead(
+            SimpleNamespace(dof_config={"arm": 3}, agent_pos_config={"arm": 3}, hidden_size=8)
+        )
+        self.model = lambda **kwargs: SimpleNamespace(last_hidden_state=torch.tanh(kwargs["inputs_embeds"]))
+
+    def __call__(self, mode, predict_mode, **kwargs):
+        assert mode == "predict"
+        return Qwen2_5_VLMoEForAction.predict(self, predict_mode=predict_mode, **kwargs)
+
+
+def _make_diffusion_policy(monkeypatch):
+    policy = _make_unloaded_policy(
+        prediction_mode="diffusion",
+        max_action_dim=3,
+        n_action_steps=3,
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,))},
+    )
+    policy.reset()
+    policy.model = _TinyDiffusionModel()
+    monkeypatch.setattr(policy, "_pretokenized_inputs", lambda batch, **kwargs: batch)
+    input_ids = torch.tensor([[1, 7, 7, 7, 2], [1, 7, 7, 7, 2]])
+    batch = {
+        "input_ids": input_ids,
+        "inputs_embeds": torch.randn(2, 5, 8),
+        "attention_mask": torch.ones(2, 5, dtype=torch.long),
+        "position_ids": torch.arange(5).expand(3, 2, 5),
+        "dof_mask": torch.ones(2, 3, 3),
+    }
+    return policy, batch
+
+
+def test_predict_action_chunk_uses_given_noise(monkeypatch):
+    policy, batch = _make_diffusion_policy(monkeypatch)
+    noise = torch.randn(2, 3, 3)
+    noise_before = noise.clone()
+
+    actions_1 = policy.predict_action_chunk(batch, noise=noise)
+    actions_2 = policy.predict_action_chunk(batch, noise=noise)
+    other_actions = policy.predict_action_chunk(batch, noise=torch.randn_like(noise))
+
+    assert actions_1.shape == (2, 3, 2)
+    assert torch.equal(actions_1, actions_2)
+    assert torch.equal(noise, noise_before)
+    assert not torch.allclose(actions_1, other_actions)
+
+
+def test_predict_action_chunk_default_noise_unchanged(monkeypatch):
+    policy, batch = _make_diffusion_policy(monkeypatch)
+
+    torch.manual_seed(0)
+    default_actions = policy.predict_action_chunk(batch)
+    torch.manual_seed(0)
+    noise = torch.randn(size=(2, 3, 3), dtype=torch.float32, device=torch.device("cpu"))
+
+    assert torch.equal(default_actions, policy.predict_action_chunk(batch, noise=noise))
 
 
 def test_generation_preparation_synthesizes_cache_positions():

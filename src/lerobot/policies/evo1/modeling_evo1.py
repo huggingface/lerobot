@@ -480,8 +480,17 @@ class Evo1Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(
-        self, batch: dict[str, Tensor], **kwargs: Unpack[RTCActionSelectKwargs]
+        self,
+        batch: dict[str, Tensor],
+        *,
+        noise: Tensor | None = None,
+        **kwargs: Unpack[RTCActionSelectKwargs],
     ) -> Tensor:
+        """Predict a chunk of actions.
+
+        `noise` is the optional starting sample of the flow, shape
+        `(batch_size, chunk_size * max_action_dim)`. When it is None, it is drawn uniformly from [-1, 1).
+        """
         inference_delay = kwargs.get("inference_delay")
         prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
         execution_horizon = kwargs.get("execution_horizon")
@@ -512,6 +521,7 @@ class Evo1Policy(PreTrainedPolicy):
                 inference_delay=inference_delay,
                 prev_chunk_left_over=prev_chunk_left_over,
                 execution_horizon=execution_horizon,
+                noise=noise,
             )
         actions = actions.view(states.shape[0], self.config.chunk_size, self.config.max_action_dim)
         return actions.to(dtype=torch.float32)

@@ -1070,6 +1070,8 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
         agent_pos_mask: torch.FloatTensor | None = None,
         generation_prompt_ids: torch.LongTensor | None = None,
         re_generate: bool = False,
+        *,
+        noise: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """
@@ -1108,6 +1110,8 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
             dof_mask (torch.FloatTensor, optional): Degrees of freedom mask
             agent_pos_mask (torch.FloatTensor, optional): Agent position mask
             re_generate (bool, optional): Whether to use sampling for regeneration
+            noise (torch.Tensor, optional): Starting sample for diffusion mode, shape
+                (batch_size, pred_horizon, action_dim). Drawn from a standard normal when None.
             **kwargs: Additional keyword arguments
 
         Returns:
@@ -1363,11 +1367,13 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
             if dof_mask is None:
                 raise ValueError("Diffusion action prediction requires dof_mask.")
             # Initialize with random noise
-            noisy_action = torch.randn(
-                size=(batch_size, pred_horizon, action_dim),
-                dtype=torch.float32,
-                device=inputs_embeds.device,
-            )
+            if noise is None:
+                noise = torch.randn(
+                    size=(batch_size, pred_horizon, action_dim),
+                    dtype=torch.float32,
+                    device=inputs_embeds.device,
+                )
+            noisy_action = noise
             dof_mask = dof_mask.to(inputs_embeds.device).to(torch.float32)
 
             def step(timestep, noisy_action):
@@ -1953,8 +1959,12 @@ class WallXPolicy(PreTrainedPolicy):
         return require_single_text_output(outputs, policy_name="WALL-X")
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        """Predict action chunk for evaluation."""
+    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
+        """Predict action chunk for evaluation.
+
+        `noise` is the optional starting sample of the diffusion mode, shape
+        `(batch_size, chunk_size, max_action_dim)`. It is not used by the fast mode.
+        """
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
@@ -1972,6 +1982,7 @@ class WallXPolicy(PreTrainedPolicy):
                 pred_horizon=self.config.chunk_size,
                 mode="predict",
                 predict_mode="diffusion",
+                noise=noise,
             )
         elif self.config.prediction_mode == "fast":
             if not isinstance(generation_prompt_ids, Tensor):

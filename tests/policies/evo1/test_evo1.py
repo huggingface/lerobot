@@ -636,6 +636,44 @@ def test_evo1_rtc_processor_wiring(monkeypatch):
         policy.select_action(make_batch(include_action=False))
 
 
+class FixedTokenEmbedder(FakeEmbedder):
+    def get_fused_image_text_embedding_batched(
+        self, camera_images, image_masks, text_prompts, return_cls_only
+    ):
+        batch_size = camera_images[0].shape[0]
+        return torch.ones(batch_size, 4, EMBED_DIM), torch.ones(batch_size, 4, dtype=torch.bool)
+
+
+def test_evo1_predict_action_chunk_uses_given_noise(monkeypatch):
+    monkeypatch.setattr(evo1_model, "InternVL3Embedder", FixedTokenEmbedder)
+    policy = modeling_evo1.Evo1Policy(make_config())
+    batch = make_batch(include_action=False)
+    noise = torch.rand(2, CHUNK_SIZE * MAX_ACTION_DIM) * 2 - 1
+    noise_before = noise.clone()
+
+    actions_1 = policy.predict_action_chunk(batch, noise=noise)
+    actions_2 = policy.predict_action_chunk(batch, noise=noise)
+    other_actions = policy.predict_action_chunk(batch, noise=torch.rand_like(noise) * 2 - 1)
+
+    assert actions_1.shape == (2, CHUNK_SIZE, MAX_ACTION_DIM)
+    assert torch.equal(actions_1, actions_2)
+    assert torch.equal(noise, noise_before)
+    assert not torch.allclose(actions_1, other_actions)
+
+
+def test_evo1_predict_action_chunk_default_noise_unchanged(monkeypatch):
+    monkeypatch.setattr(evo1_model, "InternVL3Embedder", FixedTokenEmbedder)
+    policy = modeling_evo1.Evo1Policy(make_config())
+    batch = make_batch(include_action=False)
+
+    torch.manual_seed(0)
+    default_actions = policy.predict_action_chunk(batch)
+    torch.manual_seed(0)
+    noise = torch.rand(2, CHUNK_SIZE * MAX_ACTION_DIM, dtype=torch.float32) * 2 - 1
+
+    assert torch.equal(default_actions, policy.predict_action_chunk(batch, noise=noise))
+
+
 def test_flowmatching_rtc_guidance_pulls_prefix_toward_previous_chunk():
     head = make_flowmatching_head(num_inference_timesteps=16)
     processor = RTCProcessor(RTCConfig(execution_horizon=CHUNK_SIZE))
