@@ -167,3 +167,92 @@ def test_action_head_loss_none_matches_no_padding() -> None:
     loss_zeros = head.forward(conditioning, actions, state, action_is_pad=no_pad)
 
     assert torch.isclose(loss_none, loss_zeros)
+
+
+# Pre-refactor code, kept verbatim to pin bit-identical outputs.
+def _historical_forward_loss(head, conditioning_tokens, actions, state):
+    noise = torch.randn_like(actions)
+    t = head.sample_time(actions.shape[0], actions.device, actions.dtype)
+    noisy_actions = (1 - t[:, None, None]) * noise + t[:, None, None] * actions
+    velocity = actions - noise
+    t_discretized = (t * head.config.action_num_timestep_buckets).long()
+
+    hidden_states = head._build_inputs(noisy_actions, state, t_discretized)
+    pred = head.model(
+        hidden_states=hidden_states,
+        encoder_hidden_states=conditioning_tokens,
+        timestep=t_discretized,
+    )
+    pred_actions = head.action_decoder(pred[:, -actions.shape[1] :])
+    action_is_pad = torch.zeros(actions.shape[:2], dtype=torch.bool, device=actions.device)
+    loss = torch.nn.functional.mse_loss(pred_actions, velocity, reduction="none")
+    valid_mask = ~action_is_pad.unsqueeze(-1)
+    num_valid = valid_mask.sum() * loss.shape[-1]
+    return (loss * valid_mask).sum() / num_valid.clamp_min(1)
+
+
+def _historical_predict_action(head, conditioning_tokens, state):
+    batch_size = conditioning_tokens.shape[0]
+    actions = torch.randn(
+        batch_size,
+        head.action_horizon,
+        head.config.action_dim,
+        dtype=conditioning_tokens.dtype,
+        device=conditioning_tokens.device,
+    )
+    dt = 1.0 / max(head.num_inference_timesteps, 1)
+    for step in range(head.num_inference_timesteps):
+        t_cont = step / float(max(head.num_inference_timesteps, 1))
+        t_value = int(t_cont * head.config.action_num_timestep_buckets)
+        timesteps = torch.full((batch_size,), t_value, device=conditioning_tokens.device, dtype=torch.long)
+        hidden_states = head._build_inputs(actions, state, timesteps)
+        pred = head.model(
+            hidden_states=hidden_states,
+            encoder_hidden_states=conditioning_tokens,
+            timestep=timesteps,
+        )
+        pred_velocity = head.action_decoder(pred[:, -head.action_horizon :])
+        actions = actions + dt * pred_velocity
+    return actions
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+@pytest.mark.parametrize("state_dim", [STATE_DIM, 0])
+def test_action_head_forward_matches_historical_loss(dtype: torch.dtype, state_dim: int) -> None:
+    set_seed_all(42)
+    config = make_config(state_dim=state_dim)
+    head = VLAJEPAActionHead(config, cross_attention_dim=QWEN_HIDDEN_SIZE).to(dtype).eval()
+    conditioning = torch.randn(BATCH_SIZE, 4, QWEN_HIDDEN_SIZE, dtype=dtype)
+    actions = torch.randn(BATCH_SIZE, ACTION_HORIZON, ACTION_DIM, dtype=dtype)
+    state = torch.randn(BATCH_SIZE, state_dim, dtype=dtype) if state_dim > 0 else None
+
+    with torch.no_grad():
+        set_seed_all(0)
+        reference = _historical_forward_loss(head, conditioning, actions, state)
+        set_seed_all(0)
+        migrated = head.forward(conditioning, actions, state)
+
+    assert torch.equal(migrated, reference)
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+@pytest.mark.parametrize("num_inference_timesteps", [1, 3, 4, 10])
+@pytest.mark.parametrize("state_dim", [STATE_DIM, 0])
+def test_action_head_predict_action_matches_historical_loop(
+    dtype: torch.dtype, num_inference_timesteps: int, state_dim: int
+) -> None:
+    set_seed_all(42)
+    config = make_config(state_dim=state_dim)
+    config.num_inference_timesteps = num_inference_timesteps
+    head = VLAJEPAActionHead(config, cross_attention_dim=QWEN_HIDDEN_SIZE).to(dtype).eval()
+    conditioning = torch.randn(BATCH_SIZE, 4, QWEN_HIDDEN_SIZE, dtype=dtype)
+    state = torch.randn(BATCH_SIZE, state_dim, dtype=dtype) if state_dim > 0 else None
+
+    with torch.no_grad():
+        set_seed_all(0)
+        reference = _historical_predict_action(head, conditioning, state)
+        set_seed_all(0)
+        migrated = head.predict_action(conditioning, state)
+
+    assert migrated.dtype == dtype
+    assert torch.equal(migrated, reference)
