@@ -120,6 +120,8 @@ class InferenceEngine(abc.ABC):
         self._task_changed = False
         self._dispatched_task = task
         self._task_lock = Lock()
+        # Seconds each of the latest inference calls took, read by the live status line.
+        self.inference_seconds: deque[float] = deque(maxlen=30)
 
         # Text-query channel.  Its own lock, never held across a text generation.
         self._query_lock = Lock()

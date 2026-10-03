@@ -17,13 +17,16 @@
 from __future__ import annotations
 
 import dataclasses
+import io
 import logging
 import sys
 import threading
+import time
+from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -1532,3 +1535,139 @@ def test_sync_engine_without_a_relative_step_binds_nothing():
     policy.config.use_amp = False
     assert bind_relative_anchor(policy, MagicMock(steps=[])) is None
     _build_sync_engine(policy, MagicMock(steps=[]), MagicMock())  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Live status line
+# ---------------------------------------------------------------------------
+
+
+def test_sync_engine_times_only_the_ticks_that_run_inference():
+    """``inference_seconds`` gets one entry per computed chunk, not one per served action."""
+    n = 4
+    chunk_rel = torch.zeros(n, _REL_ACTION_DIM)
+    pre, post, _ = _relative_pre_post()
+    policy = _fake_relative_policy(chunk_rel, n_action_steps=n)
+    engine = _build_sync_engine(policy, pre, post)
+
+    for _ in range(2 * n):
+        engine.get_action(_obs_frame([1.0, 2.0, 3.0, 4.0]))
+
+    assert policy._predict_state["predict_calls"] == 2
+    assert len(engine.inference_seconds) == 2
+
+
+class _FakeTerminal(io.StringIO):
+    def isatty(self):
+        return True
+
+
+def test_thread_safe_robot_records_when_each_observation_is_read():
+    from lerobot.rollout.robot_wrapper import ThreadSafeRobot
+    from tests.mocks.mock_robot import MockRobot, MockRobotConfig
+
+    robot = MockRobot(MockRobotConfig(n_motors=3))
+    robot.connect()
+    wrapper = ThreadSafeRobot(robot)
+    for _ in range(3):
+        wrapper.get_observation()
+    robot.disconnect()
+
+    times = list(wrapper.observation_times)
+    assert len(times) == 3
+    assert times == sorted(times)
+
+
+def test_status_line_redraws_in_place_and_steps_aside_for_log_records():
+    from lerobot.rollout.status_line import StatusLine
+
+    robot = SimpleNamespace(observation_times=deque())
+    engine = SimpleNamespace(inference_seconds=deque([0.020, 0.030]))
+    terminal = _FakeTerminal()
+    handler = logging.StreamHandler(terminal)
+    root = logging.getLogger()
+    root.addHandler(handler)
+    try:
+        with (
+            patch("lerobot.rollout.status_line.REFRESH_S", 0.01),
+            StatusLine(robot, engine, 30, stream=terminal),
+        ):
+            for _ in range(3):
+                robot.observation_times.append(time.perf_counter())
+                time.sleep(0.02)
+            logging.getLogger("test").warning("a log record")
+            time.sleep(0.05)
+        assert handler.stream is terminal
+    finally:
+        root.removeHandler(handler)
+
+    output = terminal.getvalue()
+    assert "\r\033[2Kloop " in output
+    assert "infer  25.0 ms (worst  30.0)" in output
+    assert "\r\033[2Ka log record\n" in output
+    assert output.endswith("\n")
+
+
+def test_status_line_stays_silent_off_a_terminal():
+    from lerobot.rollout.status_line import StatusLine
+
+    stream = io.StringIO()
+    robot = SimpleNamespace(observation_times=deque([0.0, 1.0]))
+    with (
+        patch("lerobot.rollout.status_line.REFRESH_S", 0.01),
+        StatusLine(robot, SimpleNamespace(inference_seconds=deque([0.1])), 30, stream=stream),
+    ):
+        time.sleep(0.05)
+    assert stream.getvalue() == ""
+
+
+def _log_while_a_signal_arrives() -> None:
+    """In a child process: a signal whose handler logs, as Ctrl-C's does, lands inside a status-line write."""
+    import signal
+
+    from lerobot.rollout.status_line import StatusLine
+
+    class SlowTerminal(_FakeTerminal):
+        def write(self, text):
+            time.sleep(0.2)
+            return super().write(text)
+
+    terminal = SlowTerminal()
+    logging.basicConfig(level=logging.INFO, handlers=[logging.StreamHandler(terminal)], force=True)
+    signal.signal(signal.SIGALRM, lambda *_: logging.info("Shutdown signal received"))
+    with StatusLine(
+        SimpleNamespace(observation_times=deque()),
+        SimpleNamespace(inference_seconds=deque()),
+        30,
+        stream=terminal,
+    ):
+        signal.setitimer(signal.ITIMER_REAL, 0.1)
+        logging.info("a log record")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGALRM is POSIX only")
+def test_status_line_survives_a_signal_that_logs_during_a_write():
+    import multiprocessing
+
+    child = multiprocessing.get_context("fork").Process(target=_log_while_a_signal_arrives)
+    child.start()
+    child.join(10)
+    hung = child.is_alive()
+    if hung:
+        child.kill()
+        child.join()
+    assert not hung, "a signal handler that logs deadlocked the status line"
+    assert child.exitcode == 0
+
+
+def test_status_line_rate_counts_only_the_last_second():
+    """A loop that stopped reading the robot shows 0 Hz, not the rate it last had."""
+    from lerobot.rollout.status_line import StatusLine
+
+    now = time.perf_counter()
+    running = SimpleNamespace(observation_times=deque(now - i / 30 for i in range(60)))
+    stalled = SimpleNamespace(observation_times=deque(now - 5 - i / 30 for i in range(60)))
+    engine = SimpleNamespace(inference_seconds=deque())
+
+    assert StatusLine(running, engine, 30, stream=io.StringIO())._format().startswith("loop  30/30 Hz")
+    assert StatusLine(stalled, engine, 30, stream=io.StringIO())._format().startswith("loop   0/30 Hz")
