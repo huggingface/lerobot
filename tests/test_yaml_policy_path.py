@@ -6,6 +6,7 @@ import tempfile
 from dataclasses import dataclass, field
 from unittest.mock import patch
 
+import draccus
 import yaml
 
 from lerobot.configs import parser
@@ -230,6 +231,62 @@ def test_flatten_nested_with_bools():
     args = _flatten_to_cli_args(d)
     assert "--optimizer.use_warmup=true" in args
     assert "--optimizer.lr=0.01" in args
+
+
+@dataclass
+class _DummyPolicy:
+    down_dims: tuple[int, ...] = (512, 1024, 2048)
+    crop_shape: tuple[int, int] | None = None
+    image_keys: list[str] = field(default_factory=list)
+    n_obs_steps: int = 2
+
+
+def test_flatten_list_values_are_kept():
+    """Regression: list-valued YAML fields were dropped instead of forwarded.
+
+    Policy configs expose plenty of sequence fields (down_dims, crop_shape,
+    image_size, ...). Writing them next to `policy.path` in a YAML config used
+    to be silently ignored, while scalar siblings were applied.
+    """
+    d = {"down_dims": [256, 512, 1024], "image_keys": ["cam_high", "cam_low"], "n_obs_steps": 3}
+    args = _flatten_to_cli_args(d)
+
+    assert "--n_obs_steps=3" in args
+    assert any(a.startswith("--down_dims=") for a in args), f"down_dims dropped from {args}"
+    assert any(a.startswith("--image_keys=") for a in args), f"image_keys dropped from {args}"
+
+    # The emitted args must be consumable by draccus, not merely present.
+    cfg = draccus.parse(config_class=_DummyPolicy, args=args)
+    assert cfg.down_dims == (256, 512, 1024)
+    assert cfg.image_keys == ["cam_high", "cam_low"]
+    assert cfg.n_obs_steps == 3
+
+
+def test_yaml_list_override_survives_to_from_pretrained():
+    """A list field written next to `policy.path` must reach the loaded config."""
+    config = {
+        "policy": {
+            "path": "lerobot/diffusion_pusht",
+            "crop_shape": [76, 76],
+            "n_obs_steps": 3,
+        },
+    }
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        yaml.dump(config, f)
+        config_path = f.name
+
+    _config_path_args.clear()
+    _config_yaml_overrides.clear()
+    extract_path_fields_from_config(config_path, ["policy"])
+
+    overrides = get_yaml_overrides("policy")
+    # `overrides` is what train.py/eval.py hand to PreTrainedConfig.from_pretrained.
+    cfg = draccus.parse(config_class=_DummyPolicy, args=overrides)
+    assert cfg.n_obs_steps == 3
+    assert cfg.crop_shape == (76, 76)
+
+    _config_path_args.clear()
+    _config_yaml_overrides.clear()
 
 
 def test_extract_removes_field_with_siblings_and_no_type():
