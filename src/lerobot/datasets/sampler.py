@@ -59,7 +59,8 @@ class EpisodeAwareSampler:
         Args:
             dataset_from_indices: Start index of each episode in the dataset.
             dataset_to_indices: End index of each episode in the dataset.
-            episode_indices_to_use: Episode indices to use; None means all.
+            episode_indices_to_use: Nonnegative integer episode indices to use; None means all.
+                Invalid indices raise ValueError instead of selecting a different episode.
             drop_n_first_frames: Frames to drop from the start of each episode.
             drop_n_last_frames: Frames to drop from the end of each episode.
             shuffle: Whether to shuffle the indices.
@@ -78,10 +79,19 @@ class EpisodeAwareSampler:
                 f"got {len(from_indices)} and {len(to_indices)}"
             )
 
-        used = np.ones(len(from_indices), dtype=bool)
+        used: np.ndarray = np.ones(len(from_indices), dtype=bool)
         if episode_indices_to_use is not None:
+            selected = np.asarray(episode_indices_to_use)
+            if selected.ndim != 1 or (selected.size and not np.issubdtype(selected.dtype, np.integer)):
+                raise ValueError(
+                    "episode_indices_to_use must be a one-dimensional sequence of integer indices"
+                )
+            if np.any(selected < 0) or np.any(selected >= len(from_indices)):
+                raise ValueError(
+                    f"episode_indices_to_use must contain indices in [0, {len(from_indices)}), got {selected}"
+                )
             used = np.zeros(len(from_indices), dtype=bool)
-            used[np.asarray(episode_indices_to_use, dtype=np.int64)] = True
+            used[selected.astype(np.int64)] = True
 
         starts = from_indices + drop_n_first_frames
         lengths = to_indices - drop_n_last_frames - starts
