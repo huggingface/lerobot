@@ -28,32 +28,54 @@ from lerobot.scripts.lerobot_imgtransform_viz import (
     save_each_transform,
 )
 from lerobot.transforms import (
-    CoarseDropout,
-    GammaCorrection,
-    GaussianNoise,
-    GaussianPatchBrightness,
+    BatchedCoarseDropout,
+    BatchedGammaCorrection,
+    BatchedGaussianNoise,
+    BatchedGaussianPatchBrightness,
+    BatchedIdentity,
+    BatchedMotionBlur,
+    BatchedPlanckianJitter,
+    BatchedRandomAffine,
+    BatchedRandomShadow,
+    BatchedRandomSubsetApply,
+    BatchedSharpnessJitter,
+    BatchedTransform,
     ImageTransformConfig,
     ImageTransforms,
     ImageTransformsConfig,
     JPEGCompression,
-    MotionBlur,
-    PlanckianJitter,
-    RandomShadow,
-    RandomSubsetApply,
-    SharpnessJitter,
-    make_transform_from_config,
+    PerSampleTransform,
+    make_batched_transform_from_config,
 )
 from lerobot.utils.random_utils import seeded_context
 from tests.artifacts.image_transforms.save_image_transforms_to_safetensors import ARTIFACT_DIR
 from tests.utils import require_x86_64_kernel
 
+CPU = torch.device("cpu")
+
+
+def _single(tf_cfg: ImageTransformConfig) -> ImageTransforms:
+    """`ImageTransforms` that always applies exactly the one configured transform."""
+    return ImageTransforms(ImageTransformsConfig(enable=True, max_num_transforms=1, tfs={"only": tf_cfg}))
+
+
+def _one(transform: BatchedTransform, img: torch.Tensor, generator: torch.Generator | None = None):
+    """Run a batched transform on a single `(C, H, W)` image."""
+    return transform(img[None, None], generator=generator)[0, 0]
+
 
 @pytest.fixture
 def color_jitters():
     return [
-        v2.ColorJitter(brightness=0.5),
-        v2.ColorJitter(contrast=0.5),
-        v2.ColorJitter(saturation=0.5),
+        make_batched_transform_from_config(
+            ImageTransformConfig(type="ColorJitter", kwargs={"brightness": 0.5})
+        ),
+        make_batched_transform_from_config(
+            ImageTransformConfig(type="ColorJitter", kwargs={"contrast": 0.5})
+        ),
+        make_batched_transform_from_config(
+            ImageTransformConfig(type="ColorJitter", kwargs={"saturation": 0.5})
+        ),
     ]
 
 
@@ -140,8 +162,7 @@ def test_get_image_transforms_sharpness(img_tensor_factory, min_max):
         tfs={"sharpness": ImageTransformConfig(type="SharpnessJitter", kwargs={"sharpness": min_max})},
     )
     tf_actual = ImageTransforms(tf_cfg)
-    tf_expected = SharpnessJitter(sharpness=min_max)
-    torch.testing.assert_close(tf_actual(img_tensor), tf_expected(img_tensor))
+    torch.testing.assert_close(tf_actual(img_tensor), F.adjust_sharpness(img_tensor, min_max[0]))
 
 
 @pytest.mark.parametrize("degrees, translate", [((-5.0, 5.0), (0.05, 0.05)), ((10.0, 10.0), (0.1, 0.1))])
@@ -160,7 +181,7 @@ def test_get_image_transforms_affine(img_tensor_factory, degrees, translate):
     # Verify output shape is preserved
     assert output.shape == img_tensor.shape
     # Verify transform is type RandomAffine
-    assert isinstance(tf.transforms["affine"], v2.RandomAffine)
+    assert isinstance(tf.transforms["affine"], BatchedRandomAffine)
 
 
 def test_get_image_transforms_max_num_transforms(img_tensor_factory):
@@ -203,58 +224,32 @@ def test_get_image_transforms_max_num_transforms(img_tensor_factory):
             v2.ColorJitter(contrast=(0.5, 0.5)),
             v2.ColorJitter(saturation=(0.5, 0.5)),
             v2.ColorJitter(hue=(0.5, 0.5)),
-            SharpnessJitter(sharpness=(0.5, 0.5)),
+            v2.RandomAdjustSharpness(sharpness_factor=0.5, p=1.0),
         ]
     )
     torch.testing.assert_close(tf_actual(img_tensor), tf_expected(img_tensor))
 
 
-@require_x86_64_kernel
 def test_get_image_transforms_random_order(img_tensor_factory):
-    out_imgs = []
+    """With `random_order`, the same seed gives the same result and different draws give different orders."""
     img_tensor = img_tensor_factory()
     tf_cfg = ImageTransformsConfig(
         enable=True,
         random_order=True,
+        max_num_transforms=2,
         tfs={
-            "brightness": ImageTransformConfig(
-                weight=1.0,
-                type="ColorJitter",
-                kwargs={"brightness": (0.5, 0.5)},
-            ),
-            "contrast": ImageTransformConfig(
-                weight=1.0,
-                type="ColorJitter",
-                kwargs={"contrast": (0.5, 0.5)},
-            ),
-            "saturation": ImageTransformConfig(
-                weight=1.0,
-                type="ColorJitter",
-                kwargs={"saturation": (0.5, 0.5)},
-            ),
-            "hue": ImageTransformConfig(
-                weight=1.0,
-                type="ColorJitter",
-                kwargs={"hue": (0.5, 0.5)},
-            ),
-            "sharpness": ImageTransformConfig(
-                weight=1.0,
-                type="SharpnessJitter",
-                kwargs={"sharpness": (0.5, 0.5)},
-            ),
+            "brightness": ImageTransformConfig(type="ColorJitter", kwargs={"brightness": (0.5, 0.5)}),
+            "contrast": ImageTransformConfig(type="ColorJitter", kwargs={"contrast": (0.5, 0.5)}),
+            "saturation": ImageTransformConfig(type="ColorJitter", kwargs={"saturation": (0.5, 0.5)}),
+            "hue": ImageTransformConfig(type="ColorJitter", kwargs={"hue": (0.5, 0.5)}),
+            "sharpness": ImageTransformConfig(type="SharpnessJitter", kwargs={"sharpness": (0.5, 0.5)}),
         },
     )
     tf = ImageTransforms(tf_cfg)
+    first = tf(img_tensor, generator=torch.Generator().manual_seed(1338))
+    torch.testing.assert_close(first, tf(img_tensor, generator=torch.Generator().manual_seed(1338)))
 
-    with seeded_context(1338):
-        for _ in range(10):
-            out_imgs.append(tf(img_tensor))
-
-            tmp_img_tensor = img_tensor
-            for sub_tf in tf.tf.selected_transforms:
-                tmp_img_tensor = sub_tf(tmp_img_tensor)
-            torch.testing.assert_close(tmp_img_tensor, out_imgs[-1])
-
+    out_imgs = [tf(img_tensor, generator=torch.Generator().manual_seed(seed)) for seed in range(10)]
     for i in range(1, len(out_imgs)):
         with pytest.raises(AssertionError):
             torch.testing.assert_close(out_imgs[0], out_imgs[i])
@@ -275,8 +270,7 @@ def test_backward_compatibility_single_transforms(
 ):
     for min_max in min_max_values:
         tf_cfg = ImageTransformConfig(type=tf_type, kwargs={tf_name: min_max})
-        tf = make_transform_from_config(tf_cfg)
-        actual = tf(img_tensor)
+        actual = _single(tf_cfg)(img_tensor)
         key = f"{tf_name}_{min_max[0]}_{min_max[1]}"
         expected = single_transforms[key]
         torch.testing.assert_close(actual, expected)
@@ -335,9 +329,9 @@ def test_backward_compatibility_default_config(img_tensor, default_transforms):
 @pytest.mark.parametrize("p", [[0, 1], [1, 0]])
 def test_random_subset_apply_single_choice(img_tensor_factory, p):
     img_tensor = img_tensor_factory()
-    flips = [v2.RandomHorizontalFlip(p=1), v2.RandomVerticalFlip(p=1)]
-    random_choice = RandomSubsetApply(flips, p=p, n_subset=1, random_order=False)
-    actual = random_choice(img_tensor)
+    flips = [PerSampleTransform(v2.RandomHorizontalFlip(p=1)), PerSampleTransform(v2.RandomVerticalFlip(p=1))]
+    random_choice = BatchedRandomSubsetApply(flips, p=p, n_subset=1, random_order=False)
+    actual = _one(random_choice, img_tensor)
 
     p_horz, _ = p
     if p_horz:
@@ -348,80 +342,96 @@ def test_random_subset_apply_single_choice(img_tensor_factory, p):
 
 def test_random_subset_apply_random_order(img_tensor_factory):
     img_tensor = img_tensor_factory()
-    flips = [v2.RandomHorizontalFlip(p=1), v2.RandomVerticalFlip(p=1)]
-    random_order = RandomSubsetApply(flips, p=[0.5, 0.5], n_subset=2, random_order=True)
+    flips = [PerSampleTransform(v2.RandomHorizontalFlip(p=1)), PerSampleTransform(v2.RandomVerticalFlip(p=1))]
+    random_order = BatchedRandomSubsetApply(flips, p=[0.5, 0.5], n_subset=2, random_order=True)
     # We can't really check whether the transforms are actually applied in random order. However,
     # horizontal and vertical flip are commutative. Meaning, even under the assumption that the transform
     # applies them in random order, we can use a fixed order to compute the expected value.
-    actual = random_order(img_tensor)
-    expected = v2.Compose(flips)(img_tensor)
+    actual = _one(random_order, img_tensor)
+    expected = F.vertical_flip(F.horizontal_flip(img_tensor))
     torch.testing.assert_close(actual, expected)
 
 
 def test_random_subset_apply_valid_transforms(img_tensor_factory, color_jitters):
     img_tensor = img_tensor_factory()
-    transform = RandomSubsetApply(color_jitters)
-    output = transform(img_tensor)
+    transform = BatchedRandomSubsetApply(color_jitters)
+    output = _one(transform, img_tensor)
     assert output.shape == img_tensor.shape
 
 
 def test_random_subset_apply_probability_length_mismatch(color_jitters):
     with pytest.raises(ValueError):
-        RandomSubsetApply(color_jitters, p=[0.5, 0.5])
+        BatchedRandomSubsetApply(color_jitters, p=[0.5, 0.5])
 
 
 @pytest.mark.parametrize("n_subset", [0, 5])
 def test_random_subset_apply_invalid_n_subset(color_jitters, n_subset):
     with pytest.raises(ValueError):
-        RandomSubsetApply(color_jitters, n_subset=n_subset)
+        BatchedRandomSubsetApply(color_jitters, n_subset=n_subset)
 
 
 def test_sharpness_jitter_valid_range_tuple(img_tensor_factory):
     img_tensor = img_tensor_factory()
-    tf = SharpnessJitter((0.1, 2.0))
-    output = tf(img_tensor)
+    tf = BatchedSharpnessJitter((0.1, 2.0))
+    output = _one(tf, img_tensor)
     assert output.shape == img_tensor.shape
 
 
 def test_sharpness_jitter_valid_range_float(img_tensor_factory):
     img_tensor = img_tensor_factory()
-    tf = SharpnessJitter(0.5)
-    output = tf(img_tensor)
+    tf = BatchedSharpnessJitter(0.5)
+    assert tf.sharpness == (0.5, 1.5)
+    output = _one(tf, img_tensor)
     assert output.shape == img_tensor.shape
 
 
 def test_sharpness_jitter_invalid_range_min_negative():
     with pytest.raises(ValueError):
-        SharpnessJitter((-0.1, 2.0))
+        BatchedSharpnessJitter((-0.1, 2.0))
 
 
 def test_sharpness_jitter_invalid_range_max_smaller():
     with pytest.raises(ValueError):
-        SharpnessJitter((2.0, 0.1))
+        BatchedSharpnessJitter((2.0, 0.1))
 
 
-def test_make_transform_from_config_with_v2_resize(img_tensor_factory):
+def test_make_batched_transform_from_config_with_v2_resize(img_tensor_factory):
     img_tensor = img_tensor_factory()
     tf_cfg = ImageTransformConfig(type="Resize", kwargs={"size": (32, 32)})
-    tf = make_transform_from_config(tf_cfg)
-    assert isinstance(tf, v2.Resize)
-    output = tf(img_tensor)
+    tf = make_batched_transform_from_config(tf_cfg)
+    assert isinstance(tf, PerSampleTransform) and isinstance(tf.per_sample, v2.Resize)
+    output = _single(tf_cfg)(img_tensor)
     assert output.shape[-2:] == (32, 32)
 
 
-def test_make_transform_from_config_with_v2_identity(img_tensor_factory):
+def test_make_batched_transform_from_config_with_v2_identity(img_tensor_factory):
     img_tensor = img_tensor_factory()
     tf_cfg = ImageTransformConfig(type="Identity", kwargs={})
-    tf = make_transform_from_config(tf_cfg)
-    assert isinstance(tf, v2.Identity)
-    output = tf(img_tensor)
-    assert output.shape == img_tensor.shape
+    tf = make_batched_transform_from_config(tf_cfg)
+    assert isinstance(tf, BatchedIdentity)
+    output = _single(tf_cfg)(img_tensor)
+    assert torch.equal(output, img_tensor)
 
 
-def test_make_transform_from_config_invalid_type():
+def test_make_batched_transform_from_config_invalid_type():
     tf_cfg = ImageTransformConfig(type="NotARealTransform", kwargs={})
     with pytest.raises(ValueError, match="not valid"):
-        make_transform_from_config(tf_cfg)
+        make_batched_transform_from_config(tf_cfg)
+
+
+@pytest.mark.parametrize("shape", [(3, 24, 32), (2, 3, 24, 32)])
+def test_image_transforms_accept_uint8_and_frame_stacks(shape):
+    """The dataloader backend sees uint8 frames and `(T, C, H, W)` stacks; both are transformed in place."""
+    img = torch.randint(0, 256, shape, dtype=torch.uint8)
+    tf = ImageTransforms(ImageTransformsConfig(enable=True, max_num_transforms=2))
+    out = tf(img)
+    assert out.shape == img.shape and out.dtype == torch.uint8
+    assert not torch.equal(out, img)
+
+
+def test_image_transforms_reject_unexpected_ranks():
+    with pytest.raises(ValueError, match="Expected"):
+        ImageTransforms(ImageTransformsConfig(enable=True))(torch.rand(1, 2, 3, 8, 8))
 
 
 def test_save_all_transforms(img_tensor_factory, tmp_path):
@@ -468,30 +478,28 @@ def test_save_each_transform(img_tensor_factory, tmp_path):
 # --- Tests for robotics-relevant augmentations ---
 
 ROBOTICS_TRANSFORMS = [
-    ("GaussianNoise", GaussianNoise, {"std": (5.0, 25.0)}),
-    ("MotionBlur", MotionBlur, {"kernel_size": (3, 11)}),
-    ("JPEGCompression", JPEGCompression, {"quality": (15, 75)}),
-    ("GaussianPatchBrightness", GaussianPatchBrightness, {}),
-    ("RandomShadow", RandomShadow, {"opacity": (0.3, 0.6)}),
-    ("CoarseDropout", CoarseDropout, {"max_holes": 8}),
-    ("GammaCorrection", GammaCorrection, {"gamma": (0.5, 2.0)}),
-    ("PlanckianJitter", PlanckianJitter, {"temperature": (3_000, 15_000)}),
+    ("GaussianNoise", BatchedGaussianNoise, {"std": (5.0, 25.0)}),
+    ("MotionBlur", BatchedMotionBlur, {"kernel_size": (3, 11)}),
+    ("JPEGCompression", PerSampleTransform, {"quality": (15, 75)}),
+    ("GaussianPatchBrightness", BatchedGaussianPatchBrightness, {}),
+    ("RandomShadow", BatchedRandomShadow, {"opacity": (0.3, 0.6)}),
+    ("CoarseDropout", BatchedCoarseDropout, {"max_holes": 8}),
+    ("GammaCorrection", BatchedGammaCorrection, {"gamma": (0.5, 2.0)}),
+    ("PlanckianJitter", BatchedPlanckianJitter, {"temperature": (3_000, 15_000)}),
 ]
 
 
 @pytest.mark.parametrize("name,cls,kwargs", ROBOTICS_TRANSFORMS, ids=[t[0] for t in ROBOTICS_TRANSFORMS])
 def test_robotics_transform_shape_preserved(name, cls, kwargs, img_tensor_factory):
     img = img_tensor_factory()
-    tf = cls(**kwargs)
-    out = tf(img)
+    out = _single(ImageTransformConfig(type=name, kwargs=kwargs))(img)
     assert out.shape == img.shape, f"{name} changed shape: {img.shape} -> {out.shape}"
 
 
 @pytest.mark.parametrize("name,cls,kwargs", ROBOTICS_TRANSFORMS, ids=[t[0] for t in ROBOTICS_TRANSFORMS])
 def test_robotics_transform_output_range(name, cls, kwargs, img_tensor_factory):
     img = img_tensor_factory()
-    tf = cls(**kwargs)
-    out = tf(img)
+    out = _single(ImageTransformConfig(type=name, kwargs=kwargs))(img)
     assert out.min() >= -0.01, f"{name} min below range: {out.min():.4f}"
     assert out.max() <= 1.01, f"{name} max above range: {out.max():.4f}"
 
@@ -499,37 +507,43 @@ def test_robotics_transform_output_range(name, cls, kwargs, img_tensor_factory):
 @pytest.mark.parametrize("name,cls,kwargs", ROBOTICS_TRANSFORMS, ids=[t[0] for t in ROBOTICS_TRANSFORMS])
 def test_robotics_transform_float_output(name, cls, kwargs, img_tensor_factory):
     img = img_tensor_factory()
-    tf = cls(**kwargs)
-    out = tf(img)
+    out = _single(ImageTransformConfig(type=name, kwargs=kwargs))(img)
     assert out.is_floating_point(), f"{name} output dtype={out.dtype}"
 
 
 @pytest.mark.parametrize("name,cls,kwargs", ROBOTICS_TRANSFORMS, ids=[t[0] for t in ROBOTICS_TRANSFORMS])
-def test_robotics_transform_non_float_passthrough(name, cls, kwargs):
+def test_robotics_transform_applies_to_uint8(name, cls, kwargs):
+    """uint8 frames, as the DataLoader workers see them, are transformed and handed back as uint8."""
     int_img = torch.randint(0, 255, (3, 32, 32), dtype=torch.uint8)
-    tf = cls(**kwargs)
-    out = tf(int_img)
-    assert torch.equal(out, int_img), f"{name} modified non-float input"
+    out = _single(ImageTransformConfig(type=name, kwargs=kwargs))(int_img)
+    assert out.dtype == torch.uint8 and out.shape == int_img.shape
+    assert not torch.equal(out, int_img), f"{name} left uint8 input untouched"
 
 
 @pytest.mark.parametrize("name,cls,kwargs", ROBOTICS_TRANSFORMS, ids=[t[0] for t in ROBOTICS_TRANSFORMS])
 def test_robotics_transform_via_config(name, cls, kwargs):
     cfg = ImageTransformConfig(type=name, kwargs=kwargs)
-    tf = make_transform_from_config(cfg)
+    tf = make_batched_transform_from_config(cfg)
     assert isinstance(tf, cls), f"Config produced {type(tf)}, expected {cls}"
+
+
+def test_jpeg_compression_goes_through_the_per_sample_adapter():
+    tf = make_batched_transform_from_config(ImageTransformConfig(type="JPEGCompression", kwargs={}))
+    assert isinstance(tf, PerSampleTransform) and isinstance(tf.per_sample, JPEGCompression)
 
 
 def test_make_transform_error_message_includes_custom():
     """Error message should list all registered custom transforms."""
     with pytest.raises(ValueError, match="GaussianNoise"):
-        make_transform_from_config(ImageTransformConfig(type="NonExistent"))
+        make_batched_transform_from_config(ImageTransformConfig(type="NonExistent"))
 
 
 @pytest.mark.parametrize("name,cls,kwargs", ROBOTICS_TRANSFORMS, ids=[t[0] for t in ROBOTICS_TRANSFORMS])
 @pytest.mark.parametrize("shape", [(4, 3, 32, 32), (2, 4, 3, 16, 16)])
 def test_robotics_transform_supports_temporal_batches(name, cls, kwargs, shape):
     img = torch.rand(shape)
-    out = cls(**kwargs)(img)
+    cfg = ImageTransformsConfig(enable=True, tfs={name: ImageTransformConfig(type=name, kwargs=kwargs)})
+    out = ImageTransforms(cfg).batched(img)
     assert out.shape == img.shape, f"{name} changed shape: {img.shape} -> {out.shape}"
     assert out.min() >= 0
     assert out.max() <= 1
@@ -538,78 +552,109 @@ def test_robotics_transform_supports_temporal_batches(name, cls, kwargs, shape):
 @pytest.mark.parametrize(
     "cls,kwargs",
     [
-        (GaussianNoise, {"std": (25.0, 25.0)}),
-        (MotionBlur, {"kernel_size": 5}),
-        (JPEGCompression, {"quality": 10}),
+        (BatchedGaussianNoise, {"std": (25.0, 25.0)}),
+        (BatchedMotionBlur, {"kernel_size": 5}),
         (
-            GaussianPatchBrightness,
+            BatchedGaussianPatchBrightness,
             {"num_patches": 1, "sigma_range": (0.2, 0.2), "factor_range": (0.5, 0.5)},
         ),
-        (RandomShadow, {"opacity": 0.5}),
-        (CoarseDropout, {"max_holes": 1, "fill_value": 0.0}),
-        (GammaCorrection, {"gamma": (2.0, 2.0)}),
-        (PlanckianJitter, {"temperature": 3_000}),
+        (BatchedRandomShadow, {"opacity": 0.5}),
+        (BatchedCoarseDropout, {"max_holes": 1, "fill_value": 0.0}),
+        (BatchedGammaCorrection, {"gamma": (2.0, 2.0)}),
+        (BatchedPlanckianJitter, {"temperature": 3_000}),
     ],
 )
 def test_robotics_transform_is_not_silent_noop(cls, kwargs):
     img = torch.rand(3, 32, 32)
-    out = cls(**kwargs)(img)
+    out = _one(cls(**kwargs), img)
+    assert not torch.equal(out, img)
+
+
+def test_jpeg_compression_is_not_silent_noop():
+    img = torch.rand(3, 32, 32)
+    out = _one(PerSampleTransform(JPEGCompression(quality=10)), img)
     assert not torch.equal(out, img)
 
 
 @pytest.mark.parametrize(
     "transform",
     [
-        GaussianNoise(std=25),
-        RandomShadow(opacity=0.5),
-        CoarseDropout(max_holes=4),
+        BatchedGaussianNoise(std=25),
+        BatchedRandomShadow(opacity=0.5),
+        BatchedCoarseDropout(max_holes=4),
+        PerSampleTransform(JPEGCompression(quality=(5, 95))),
     ],
 )
 def test_robotics_transform_random_params_are_reused(transform):
-    img = torch.rand(3, 32, 32)
-    params = transform.make_params([img])
-    torch.testing.assert_close(transform.transform(img, params), transform.transform(img, params))
+    frames = torch.rand(1, 1, 3, 32, 32)
+    params = transform.make_params(frames.shape, CPU)
+    torch.testing.assert_close(transform.transform(frames, params), transform.transform(frames, params))
 
 
 def test_motion_blur_kernel_size_stays_in_configured_range():
-    transform = MotionBlur(kernel_size=(4, 10))
-    sampled_sizes = {transform.make_params([])["kernel_size"] for _ in range(100)}
+    transform = BatchedMotionBlur(kernel_size=(4, 10))
+    sampled_sizes = set(transform.make_params(torch.Size((200, 1, 3, 8, 8)), CPU)["kernel_size"].tolist())
     assert sampled_sizes <= {5, 7, 9}
     assert sampled_sizes
 
 
+def test_motion_blur_rejects_a_range_without_an_odd_size():
+    with pytest.raises(ValueError, match="odd"):
+        BatchedMotionBlur(kernel_size=(4, 4))
+
+
 def test_gamma_correction_scalar_below_one_defines_symmetric_range():
-    transform = GammaCorrection(gamma=0.5)
+    transform = BatchedGammaCorrection(gamma=0.5)
     assert transform.gamma == (0.5, 2.0)
-    assert transform(torch.rand(3, 8, 8)).shape == (3, 8, 8)
+    assert _one(transform, torch.rand(3, 8, 8)).shape == (3, 8, 8)
 
 
 def test_planckian_jitter_uses_correlated_temperature_coefficients():
-    img = torch.full((2, 3, 8, 8), 0.25)
-    out = PlanckianJitter(temperature=3_000)(img)
-    torch.testing.assert_close(out[:, 1], img[:, 1])
+    frames = torch.full((1, 2, 3, 8, 8), 0.25)
+    out = BatchedPlanckianJitter(temperature=3_000)(frames)[0]
+    torch.testing.assert_close(out[:, 1], frames[0, :, 1])
     assert torch.all(out[:, 0] > out[:, 1])
     assert torch.all(out[:, 2] < out[:, 1])
 
 
 def test_random_shadow_supports_small_images():
     img = torch.rand(3, 7, 7)
-    assert RandomShadow()(img).shape == img.shape
+    assert _one(BatchedRandomShadow(), img).shape == img.shape
 
 
 @pytest.mark.parametrize(
     "cls,kwargs",
     [
-        (GaussianNoise, {"std": (-1.0, 1.0)}),
-        (MotionBlur, {"kernel_size": 4}),
+        (BatchedGaussianNoise, {"std": (-1.0, 1.0)}),
+        (BatchedMotionBlur, {"kernel_size": 4}),
         (JPEGCompression, {"quality": (0, 75)}),
-        (GaussianPatchBrightness, {"sigma_range": (0.0, 0.25)}),
-        (RandomShadow, {"opacity": (0.3, 1.1)}),
-        (CoarseDropout, {"max_holes": 0}),
-        (GammaCorrection, {"gamma": 0.0}),
-        (PlanckianJitter, {"temperature": (2_000, 6_500)}),
+        (BatchedGaussianPatchBrightness, {"sigma_range": (0.0, 0.25)}),
+        (BatchedGaussianPatchBrightness, {"num_patches": (3, 1)}),
+        (BatchedRandomShadow, {"opacity": (0.3, 1.1)}),
+        (BatchedCoarseDropout, {"max_holes": 0}),
+        (BatchedCoarseDropout, {"max_height_frac": 1.5}),
+        (BatchedGammaCorrection, {"gamma": 0.0}),
+        (BatchedGammaCorrection, {"gamma": (2.0, 0.5)}),
+        (BatchedPlanckianJitter, {"temperature": (2_000, 6_500)}),
     ],
 )
 def test_robotics_transform_rejects_invalid_config(cls, kwargs):
     with pytest.raises(ValueError):
+        cls(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "cls,kwargs",
+    [
+        (BatchedGaussianNoise, {"std": (1.0, 2.0, 3.0)}),
+        (BatchedMotionBlur, {"kernel_size": "5"}),
+        (BatchedGaussianPatchBrightness, {"sigma_range": 0.1}),
+        (BatchedRandomShadow, {"opacity": "dark"}),
+        (BatchedCoarseDropout, {"max_holes": 2.0}),
+        (BatchedGammaCorrection, {"gamma": None}),
+        (BatchedPlanckianJitter, {"temperature": 3_000.0}),
+    ],
+)
+def test_robotics_transform_rejects_wrong_argument_types(cls, kwargs):
+    with pytest.raises(TypeError):
         cls(**kwargs)
