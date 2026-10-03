@@ -470,3 +470,88 @@ def test_vae_adapter_empty_build_encode_decode_shapes():
 
     # list input is accepted and equals the batched path
     assert torch.equal(vae.encode([video[0]]), latents)
+
+
+def _tiny_fastwam_core() -> FastWAM:
+    expert_kwargs = {
+        "hidden_dim": 8,
+        "action_dim": 3,
+        "ffn_dim": 16,
+        "text_dim": 8,
+        "freq_dim": 8,
+        "eps": 1.0e-6,
+        "num_heads": 2,
+        "attn_head_dim": 4,
+        "num_layers": 1,
+        "fp32_attention": False,
+    }
+    video_expert = ActionDiT(**expert_kwargs)
+    action_expert = ActionDiT(**expert_kwargs)
+    mot = MoT(mixtures={"video": video_expert, "action": action_expert}, mot_checkpoint_mixed_attn=False)
+    return FastWAM(
+        video_expert=video_expert, action_expert=action_expert, mot=mot, vae=nn.Identity(), text_dim=8
+    )
+
+
+def test_make_action_latents_uses_given_noise():
+    model = _tiny_fastwam_core()
+    noise = torch.randn(1, 4, 3)
+    noise_before = noise.clone()
+
+    latents = model._make_action_latents(4, 42, "cpu", noise=noise)
+
+    assert torch.equal(latents, model._make_action_latents(4, 42, "cpu", noise=noise))
+    assert torch.equal(latents, noise)
+    assert torch.equal(noise, noise_before)
+    assert not torch.equal(latents, model._make_action_latents(4, 42, "cpu", noise=torch.randn(1, 4, 3)))
+
+
+def test_make_action_latents_default_matches_seeded_draw():
+    model = _tiny_fastwam_core()
+
+    latents = model._make_action_latents(4, 42, "cpu")
+    noise = torch.randn(
+        (1, 4, 3), generator=torch.Generator(device="cpu").manual_seed(42), device="cpu", dtype=torch.float32
+    )
+
+    assert torch.equal(latents, model._make_action_latents(4, 42, "cpu", noise=noise))
+
+
+def test_predict_action_chunk_forwards_noise_per_sample(monkeypatch):
+    captured = []
+
+    class NoiseCapturingCore(FakeFastWAMCore):
+        def infer_action(self, **kwargs):
+            captured.append(kwargs["noise"])
+            return {"action": torch.ones(1, kwargs["action_horizon"], 3)}
+
+    monkeypatch.setattr(FastWAMPolicy, "_build_core_model", lambda self, config: NoiseCapturingCore())
+    cfg = FastWAMConfig(
+        action_dim=3,
+        proprio_dim=2,
+        action_horizon=4,
+        n_action_steps=2,
+        num_video_frames=5,
+        action_video_freq_ratio=1,
+        image_size=(16, 16),
+        input_features={
+            "observation.images.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 16, 16)),
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(2,)),
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
+        base_model_id=None,
+    )
+    policy = FastWAMPolicy(cfg)
+    batch = {
+        "observation.images.image": torch.zeros(2, 3, 16, 16),
+        OBS_STATE: torch.zeros(2, 2),
+        "task": ["task 0", "task 1"],
+    }
+    noise = torch.randn(2, 4, 3)
+
+    policy.predict_action_chunk(batch, noise=noise)
+    policy.predict_action_chunk(batch)
+
+    assert torch.equal(captured[0], noise[0:1])
+    assert torch.equal(captured[1], noise[1:2])
+    assert captured[2:] == [None, None]
