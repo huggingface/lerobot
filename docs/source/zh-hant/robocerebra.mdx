@@ -1,0 +1,99 @@
+# RoboCerebra
+
+[RoboCerebra](https://robocerebra-project.github.io/) 是一個長水平操作基準測試（long-horizon manipulation benchmark），用於評估（evaluates） VLAs 的**高階推理（high-level reasoning）、規劃與記憶（planning and memory）**能力。每個回合（episode）串接多個子目標（multiple sub-goals），搭配以語言為基礎的中間指令（language-grounded intermediate instructions），建構於 LIBERO 的模擬器堆疊（simulator stack，MuJoCo + robosuite，Franka Panda 7 自由度）之上。
+
+- 論文：[RoboCerebra: A Large-scale Benchmark for Long-horizon Robotic Manipulation Evaluation](https://arxiv.org/abs/2506.06677)
+- 專案網站：[robocerebra-project.github.io](https://robocerebra-project.github.io/)
+- 資料集（dataset）：[`lerobot/robocerebra_unified`](https://huggingface.co/datasets/lerobot/robocerebra_unified) — LeRobot v3.0，6,660 個回合（episode） / 571,116 影格（frames），20 fps，1,728 個語言為基礎的子任務（language-grounded sub-tasks）。
+- 預訓練策略（pretrained policy）：[`lerobot/smolvla_robocerebra`](https://huggingface.co/lerobot/smolvla_robocerebra)
+
+## 可用任務（available tasks）
+
+RoboCerebra 複用 LIBERO 的模擬器（simulator），因此評估（evaluation）針對 LIBERO `libero_10` 長水平套件（long-horizon suite）進行：
+
+| 套件（suite） | CLI 名稱（name） | 任務數（tasks） | 描述（description）                                                                                     |
+| ------------- | ---------------- | --------------- | ------------------------------------------------------------------------------------------------------- |
+| LIBERO-10     | `libero_10`      | 10              | 串接 3–6 個子目標的廚房/客廳長水平任務（Long-horizon kitchen/living room tasks chaining 3–6 sub-goals） |
+
+資料集（dataset）中每個 RoboCerebra 回合（episode）被分割為多個子任務（multiple sub-tasks），各附有自然語言指令（natural-language instructions），統一資料集（unified dataset）將這些指令作為獨立的監督訊號（independent supervision signals）呈現。
+
+## 安裝（installation）
+
+RoboCerebra 依附（piggybacks）於 LIBERO，因此只需安裝 `libero` 額外套件（extra）即可：
+
+```bash
+pip install -e ".[libero]"
+```
+
+<Tip>
+RoboCerebra 需要 Linux 環境（MuJoCo / robosuite）。在訓練（training）或評估（evaluation）前請設定渲染後端（rendering backend）：
+
+```bash
+export MUJOCO_GL=egl  # 適用於無螢幕伺服器（HPC、雲端）
+```
+
+</Tip>
+
+## 評估（evaluation）
+
+RoboCerebra 的評估（eval）針對 LIBERO 的 `libero_10` 套件（suite）執行，使用 RoboCerebra 的攝影機命名方式（camera naming，`image` + `wrist_image`），並額外配置一個空攝影機插槽（extra empty-camera slot），以確保以三視角訓練的策略（three-view-trained policy）能接收預期的輸入配置（input layout）：
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/smolvla_robocerebra \
+  --env.type=libero \
+  --env.task=libero_10 \
+  --env.fps=20 \
+  --env.obs_type=pixels_agent_pos \
+  --env.observation_height=256 \
+  --env.observation_width=256 \
+  '--env.camera_name_mapping={"agentview_image": "image", "robot0_eye_in_hand_image": "wrist_image"}' \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  '--rename_map={"observation.images.image": "observation.images.camera1", "observation.images.wrist_image": "observation.images.camera2"}' \
+  --policy.empty_cameras=1
+```
+
+### 建議評估回合數（recommended evaluation episodes）
+
+在 `libero_10` 套件中**每個任務 10 個回合**（10 episodes per task，共 100 個），以確保可重現的基準測試（reproducible benchmarking）結果。此設定與 RoboCerebra 論文中使用的協定（protocol）一致。
+
+## 策略的輸入與輸出（policy inputs and outputs）
+
+**觀測（observations）：**
+
+- `observation.state` — 8 維本體感覺狀態（8-dim proprioceptive state，7 個關節位置 joint positions + 夾爪 gripper）
+- `observation.images.image` — 第三人稱視角（third-person view），256×256 HWC uint8
+- `observation.images.wrist_image` — 腕部攝影機視角（wrist-mounted camera view），256×256 HWC uint8
+
+**動作（actions）：**
+
+- 在 `Box(-1, 1, shape=(7,))` 中連續控制（continuous control） — 末端執行器增量（end-effector delta, 6D）+ 夾爪（gripper, 1D）
+
+## 訓練（training）
+
+位於 [`lerobot/robocerebra_unified`](https://huggingface.co/datasets/lerobot/robocerebra_unified) 的統一資料集（unified dataset）提供兩個 RGB 影像串流（RGB streams）及語言為基礎的子任務註解（ language-grounded sub-task annotations）：
+
+| 特徵（feature）                  | 形狀（shape） | 描述（description）                           |
+| -------------------------------- | ------------- | --------------------------------------------- |
+| `observation.images.image`       | (256, 256, 3) | 第三人稱視角（third-person view）             |
+| `observation.images.wrist_image` | (256, 256, 3) | 腕部攝影機（wrist-mounted camera）            |
+| `observation.state`              | (8,)          | 關節位置（joint pos） + 夾爪（gripper）       |
+| `action`                         | (7,)          | 末端執行器增量（EEF delta） + 夾爪（gripper） |
+
+在此資料集（dataset）上微調（fine-tune） SmolVLA ：
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/smolvla_base \
+  --dataset.repo_id=lerobot/robocerebra_unified \
+  --env.type=libero \
+  --env.task=libero_10 \
+  --output_dir=outputs/smolvla_robocerebra
+```
+
+## 重現已發布的結果（reproducing published results）
+
+已釋出的檢查點（released checkpoint） [`lerobot/smolvla_robocerebra`](https://huggingface.co/lerobot/smolvla_robocerebra) 使用 `lerobot/robocerebra_unified` 進行訓練（training），並以[評估（evaluation）](#%E8%A9%95%E4%BC%B0evaluation)章節中的指令進行評估。CI 在每個涉及此基準測試（benchmark）的 PR 上使用 `--eval.n_episodes=1` 執行相同指令作為冒煙測試（smoke test）。

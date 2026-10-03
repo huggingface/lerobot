@@ -1,0 +1,134 @@
+# LaWAM[[lawam]]
+
+`lawam` 是 [LaWAM](https://github.com/RLinf/LaWAM) 的 LeRobot 適配器，這是一種用於動態感知機器人策略（dynamics-aware robot policies）的潛在世界動作模型（latent world action model）。它結合了 Qwen3-VL 主幹、潛在動作/世界模型，以及流匹配動作頭（flow-matching action head），同時對外提供標準的 LeRobot 策略、訓練與評估介面。
+
+資源：
+
+| 資源            | 連結                                                                                                         | 用途                 |
+| --------------- | ------------------------------------------------------------------------------------------------------------ | -------------------- |
+| 專案頁面        | [rlinf.github.io/LaWAM](https://rlinf.github.io/LaWAM/)                                                      | 方法總覽             |
+| 論文            | [arXiv:2606.15768](https://arxiv.org/abs/2606.15768)                                                         | 引用與方法細節       |
+| 程式碼          | [RLinf/LaWAM](https://github.com/RLinf/LaWAM)                                                                | 原始訓練與評估程式碼 |
+| 原生預訓練      | [lawam-pretrain-lerobot](https://huggingface.co/jialei02/lawam-pretrain-lerobot)                             | LeRobot 微調初始化   |
+| 原生 LIBERO SFT | [lawam-libero-sft-lerobot](https://huggingface.co/jialei02/lawam-libero-sft-lerobot)                         | LIBERO 評估          |
+| 原始檢查點      | [lawam-checkpoints](https://huggingface.co/collections/jialei02/lawam-checkpoints)                           | 原始 LaWAM 發布產物  |
+| LIBERO 資料集   | [jialei02/libero_merged_no_noops_20hz](https://huggingface.co/datasets/jialei02/libero_merged_no_noops_20hz) | LIBERO SFT           |
+
+## 安裝[[installation]]
+
+使用 LaWAM extra 安裝 LeRobot：
+
+```bash
+pip install -e ".[lawam]"
+```
+
+重現已發布的 LaWAM LIBERO 評估時，請安裝 LIBERO 基準測試的相依套件，並將 MuJoCo 固定為 3.3.2：
+
+```bash
+pip install -e ".[lawam,libero]" "mujoco==3.3.2"
+```
+
+LIBERO 基準測試的成功率對 MuJoCo 模擬器版本很敏感。較新的 MuJoCo 版本可能會大幅降低量測到的 LIBERO 成功率，包括 LaWAM 以外的策略。這是評估環境相容性問題，而不是 LaWAM 適配器（adapter）問題。請使用 `mujoco==3.3.2` 來精確重現已發布的 LaWAM LIBERO 與論文結果。
+
+LaWAM 檢查點使用 LeRobot 原生的 `model.safetensors` 格式。完整的 LAM、VLM 適配器與 flow-head 狀態會透過 `policy.path` 還原；原始 LaWAM `.pt` 檔案不會由適配器載入。LAM 與 DINOv3 架構由 `LaWAMConfig` 直接表示，不需要另外下載檢查點。
+
+請將 `policy.base_vlm` 設為可攜式 Hub 模型 ID。Hugging Face 的標準快取設定（例如 `HF_HOME`）會控制 Qwen 檔案在本機的儲存位置，而不會將特定機器的路徑加入策略或處理器設定中。
+
+## 微調[[fine-tuning]]
+
+從原生預訓練 LaWAM 策略進行微調：
+
+```bash
+lerobot-train \
+  --policy.path=jialei02/lawam-pretrain-lerobot \
+  --dataset.repo_id=jialei02/libero_merged_no_noops_20hz \
+  --dataset.image_transforms.enable=false \
+  --rename_map='{"observation.images.wrist_image":"observation.images.image2"}' \
+  --policy.action_horizon=8 \
+  --policy.n_action_steps=8 \
+  --policy.clip_normalized_actions=true \
+  --policy.pre_snap_gripper_action=true \
+  --policy.binarize_gripper_action=true \
+  --policy.repo_id=your_org/lawam_sft
+```
+
+此適配器在建立 LaWAM 訓練批次之前，會使用 LeRobot 資料集的統計資料來進行動作與狀態正規化（action and state normalization）。姿態動作用最小-最大正規化（min-max normalization），而 LIBERO 配方會明確將夾爪通道對齊為二元 `0/1` 值，以符合原生 LaWAM 訓練契約。這會將 `-1/+1` 與 `0/1` 兩種資料集慣例對應到相同的模型目標。預訓練檢查點保留其預訓練值 `action_horizon=24` 與 `n_action_steps=24`；LIBERO SFT 配方會將兩者覆寫為 `8`，同時保留 `chunk_size=50` 作為填充後的 Flow 序列長度。訓練會使用目前資料集的 FPS 進行 LaWAM 的自然時間編碼（natural-time encoding），而處理器會保存該頻率作為評估的備援機制（fallback）。`policy.num_video_frames` 控制觀測影格的視窗（observation frame window）。
+
+已發布的 LaWAM 預訓練與 LIBERO SFT 配方不使用隨機影像擴增（random image augmentation）。策略處理器（policy processor）僅套用 Qwen 與 LAM 主幹（backbones）所需的確定性縮放（deterministic resize）與 ImageNet 正規化（normalization）。LeRobot 的資料集層級影像轉換仍可供另行設計的訓練配方使用。
+
+已發布的 LaWAM 檢查點在內部使用 32 維填充動作/狀態空間。除非你訓練了具有不同 Flow 維度的檢查點，否則請保持 `policy.flow_action_dim=32` 與 `policy.flow_state_dim=32`。
+
+## 評估[[evaluation]]
+
+透過標準評估器評估原生 LIBERO SFT 檢查點：
+
+```bash
+lerobot-eval \
+  --policy.path=jialei02/lawam-libero-sft-lerobot \
+  --env.type=libero \
+  --env.task=libero_object \
+  --eval.n_episodes=10
+```
+
+Hub 儲存庫包含策略設定（policy config），以及完整的前處理器與後處理器管線（preprocessor and postprocessor pipelines），包括正規化張量（normalization tensors）與 LIBERO 夾爪處理（gripper processing）。
+
+若要在已發布的 LIBERO SFT 檢查點上進行可重現的 LIBERO 基準測試執行，請在一次呼叫中，評估所有套件與任務 ID：
+
+```bash
+lerobot-eval \
+  --policy.path=jialei02/lawam-libero-sft-lerobot \
+  --policy.device=cuda \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --env.task_ids=[0,1,2,3,4,5,6,7,8,9] \
+  --eval.n_episodes=50 \
+  --output_dir=outputs/lawam_libero
+```
+
+回報每個套件中全部 10 個任務（tasks）的成功率（success rates）。回報基準測試數字時，每個任務至少使用 50 個回合（episodes）。
+
+已發布 LIBERO SFT 檢查點在每個任務 50 個回合下的參考結果。這些數字是以 MuJoCo 3.3.2 產生的。作為環境檢查，`libero_spatial` 任務 5 從 MuJoCo 3.8.1 的 18/50 次成功提升至 MuJoCo 3.3.2 的 47/50 次成功。
+
+| 套件             | 成功數 | 回合數 | 成功率 |
+| ---------------- | -----: | -----: | -----: |
+| `libero_spatial` |    492 |    500 |  98.4% |
+| `libero_object`  |    498 |    500 |  99.6% |
+| `libero_goal`    |    490 |    500 |  98.0% |
+| `libero_10`      |    490 |    500 |  98.0% |
+| `整體`           |   1970 |   2000 |  98.5% |
+
+## 相機選擇[[camera-selection]]
+
+LaWAM 檢查點會明確儲存主要相機與手腕相機角色，而不是從 `image2` 這類名稱推斷語意。建立新的多相機 LaWAM 策略時，請設定這兩個角色：
+
+```bash
+--policy.primary_image_features='["observation.images.front"]' \
+--policy.wrist_image_features='["observation.images.wrist"]'
+```
+
+`policy.lam_image_feature` 會選擇主要相機，其時間影格（temporal frames）會由潛在動作模型（latent action model）取用。此欄位預設為第一個設定的主要相機，並在儲存策略設定時明確寫入。
+
+## 執行階段欄位[[runtime-fields]]
+
+常見的 LaWAM 專用策略欄位（policy fields）：
+
+| 欄位              | 說明                                                                         |
+| ----------------- | ---------------------------------------------------------------------------- |
+| `base_vlm`        | 儲存於已發布策略設定中的可攜式 Qwen/Qwen3-VL Hub 模型 ID。                   |
+| `action_horizon`  | 每個區塊（chunk）預測的動作數量，最多至 `chunk_size`。                       |
+| `flow_action_dim` | LaWAM flow head 使用的內部填充動作維度（internal padded action dimension）。 |
+| `flow_state_dim`  | LaWAM flow head 使用的內部填充狀態維度（internal padded state dimension）。  |
+| `embodiment_id`   | 當 LeRobot 資料集未提供具身（embodiment）ID 時所使用的 LaWAM 具身 ID。       |
+
+## 引用[[citation]]
+
+```bibtex
+@misc{chen2026lawam,
+  title = {LaWAM: Latent World Action Models for Efficient Dynamics-Aware Robot Policies},
+  author = {Chen, Jialei and Wang, Kai and Chen, Kang and Chen, Shuaihang and Gao, Feng and Tang, Wenhao and Li, Zhiyuan and Liu, Weilin and Yao, Zhuyu and Li, Boxun and Xu, Yuanbo and Yu, Chao},
+  journal = {arXiv preprint arXiv:2606.15768},
+  year = {2026},
+  archiveprefix = {arXiv},
+  primaryclass = {cs.RO},
+}
+```

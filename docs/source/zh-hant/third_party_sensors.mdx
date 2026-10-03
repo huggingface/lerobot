@@ -1,0 +1,99 @@
+# 第三方相機與感測器[[third-party-cameras-sensors]]
+
+LeRobot 生態系統遠遠超出其原生支援的相機（OpenCV、Intel RealSense、ZMQ、Reachy 2）。拜 LeRobot 的外掛（plugin）架構所賜，社群已打造出即插即用的相機與感測器整合——從深度相機到視覺式觸覺感測器。本頁展示社群維護的相機與感測器整合，可用於遙操作、資料收集與策略部署。
+
+> [!IMPORTANT]
+> 這些專案由第三方開發與維護。請參閱各個儲存庫以取得安裝說明、硬體需求與支援。
+
+即插即用的外掛會依套件名稱自動探索：LeRobot 會匯入任何以 `lerobot_camera_` 為前綴的已安裝套件。安裝後，即可在任何 LeRobot 指令中直接參照外掛所註冊的相機 `type`（請參閱其 README——它可能與套件名稱不同）：
+
+```bash
+pip install lerobot_camera_<name>
+
+lerobot-record \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras="{ front: {type: <name>, width: 640, height: 480, fps: 30} }" \
+    --dataset.repo_id=${HF_USER}/my-dataset \
+    --dataset.num_episodes=5
+```
+
+## 觸覺感測器[[tactile-sensors]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>專案</th><th>說明</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/xensedyl/lerobot-camera-xense">lerobot-camera-xense</a></td>
+      <td>用於 <a href="https://www.xenserobotics.com/">Xense</a> 視覺式觸覺感測器的外掛，可輸出已校正／差分影像（rectified/difference images）、深度與 2D 標記。</td>
+    </tr>
+  </tbody>
+</table>
+
+## 深度相機[[depth-cameras]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>專案</th><th>說明</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/hexfellow/hex_lerobot_drivers/tree/main/lerobot_camera_berxel">lerobot_camera_berxel</a></td>
+      <td>用於 <a href="https://www.berxel.com/">Berxel</a> 深度相機的外掛，屬於更廣泛的 <a href="https://hexfellow.com/">HEXFELLOW</a> 驅動程式套件的一部分。</td>
+    </tr>
+  </tbody>
+</table>
+
+## 網路相機[[networked-cameras]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>專案</th><th>說明</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/F-Fer/lerobot_ur5e_gello">lerobot_camera_zmq</a></td>
+      <td>外掛可透過網路從 Raspberry Pi 串流 <a href="https://www.stereolabs.com/">Stereolabs ZED</a> 與 USB 相機的影格。</td>
+    </tr>
+  </tbody>
+</table>
+
+## 虛擬相機[[virtual-cameras]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>專案</th><th>說明</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/hexfellow/hex_lerobot_drivers/tree/main/lerobot_camera_dummy">lerobot_camera_dummy</a></td>
+      <td>外掛可模擬相機，以便在沒有硬體的情況下進行錄製。對除錯很有幫助！</td>
+    </tr>
+  </tbody>
+</table>
+
+## 貢獻[[contributing]]
+
+打造了自己的 LeRobot 相機或感測器整合嗎？將其封裝為可安裝的 `lerobot_camera_<name>` 外掛，LeRobot CLI 就會自動探索到它——請參閱[自備硬體](./integrate_hardware)指南與[相機](./cameras)參考資料以開始使用，然後與社群分享你的專案！

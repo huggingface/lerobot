@@ -1,0 +1,25 @@
+# 設定（Configuration）[[configuration]]
+
+LeRobot 的設定是由 [draccus](https://github.com/dlwh/draccus) 解析的一般 dataclass，因此每個欄位都可以從 CLI 設定。[`TrainPipelineConfig`] 是 `lerobot-train` 的頂層物件。
+
+多型設定（polymorphic configs，例如策略、機器人與環境）使用 `draccus.ChoiceRegistry`：子類透過 `@register_subclass("name")` 註冊自己，之後就能在命令列上以該名稱選用。
+
+## TrainPipelineConfig
+
+[[autodoc]] lerobot.configs.train.TrainPipelineConfig
+
+## PreTrainedConfig
+
+[[autodoc]] lerobot.configs.PreTrainedConfig
+
+## DatasetConfig
+
+[[autodoc]] lerobot.configs.DatasetConfig
+
+## EvalConfig
+
+[[autodoc]] lerobot.configs.EvalConfig
+
+## WandBConfig
+
+[[autodoc]] lerobot.configs.WandBConfig

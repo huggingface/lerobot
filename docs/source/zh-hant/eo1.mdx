@@ -1,0 +1,245 @@
+# EO-1
+
+EO-1 是一個**用於機器人控制的視覺-語言-動作策略（Vision-Language-Action policy for robot control）**。LeRobot 的實作將 EO-1 整合進標準的 LeRobot 訓練（training）、評估（evaluation）與處理器介面（processor interface）。
+
+## 模型概覽（model overview）
+
+EO-1 使用 Qwen2.5-VL 骨幹網路（backbone）進行視覺與語言理解（vision-language understanding），並加入一個連續的流匹配動作頭（continuous flow-matching action head）來控制機器人。此策略（policy）將每個機器人控制樣本（robot-control sample ）格式化為一段多模態對話（multimodal conversation）：攝影機影像（camera images）會傳入 Qwen2.5-VL，機器人狀態（robot state）以 EO-1 狀態 token （state tokens）表示，而未來的動作區塊（future action chunk）則以 EO-1 動作 token （action tokens）表示。
+
+<img
+  src="https://huggingface.co/datasets/HaomingSong/lerobot-documentation-images/resolve/main/lerobot/eo_pipeline.png"
+  alt="An overview of EO-1"
+  width="85%"
+/>
+
+在訓練（training）期間，EO-1 學習在動作 token 的位置（action-token positions）對連續動作區塊（continuous action chunks）進行去噪（denoise）。在推論（inference）期間，它會取樣一個動作區塊（samples an action chunk）、回傳連續動作（returns continuous actions），並在再次取樣（sampling）前先執行該區塊（chunk）中的 `n_action_steps` 個動作。
+
+### LeRobot 整合涵蓋的範圍（what the lerobot integration covers）
+
+- 透過 LeRobot 的標準 `policy.type=eo1` 設定（configuration）
+- 透過策略處理器（policy processors）進行 Qwen2.5-VL 影像（image）與文字預處理（text preprocessing）
+- 連續流匹配動作預測（continuous flow-matching action prediction）
+- 透過 LeRobot 策略（policy） API 進行檢查點（checkpoint）的儲存與載入
+- 使用 `lerobot-train` 訓練（training），並以 `lerobot-eval` 評估（evaluation）
+
+更廣義的 EO-1 專案也包含交錯式的視覺-文字-動作預訓練（interleaved vision-text-action pretraining），以及多模態推理工作流程（multimodal reasoning workflows）。本頁聚焦於 LeRobot 的機器人控制策略路徑（robot-control policy path）。
+
+## 安裝需求（installation requirements）
+
+1. 依照[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
+2. 執行以下指令安裝 EO-1 相依套件（dependencies）：
+
+   ```bash
+   pip install -e ".[eo1]"
+   ```
+
+3. 如果您想在 LIBERO 上訓練（training）或評估，也請安裝 LIBERO 相依套件（dependencies）：
+
+   ```bash
+   pip install -e ".[eo1,libero]"
+   ```
+
+EO-1 可以透過 `policy.attn_implementation=sdpa` 使用標準的 PyTorch scaled-dot-product attention 後端（backend）。如果您的環境已安裝相容的 `flash_attn`，可以指定 `policy.attn_implementation=flash_attention_2`。
+
+## 資料需求（data requirements）
+
+EO-1 需要一個包含以下內容的 LeRobot 資料集（dataset）：
+
+- 至少一個視覺觀測（visual observation），例如 `observation.images.image`
+- `observation.state`
+- `action`
+- 透過資料集（dataset） `task` 欄位（field）提供的語言任務指令（language task instruction）
+
+如果您的資料集（dataset）使用不同的觀測名稱（observation names），請使用 `rename_map` 將它們對齊到您的訓練或評估設定（training or evaluation setup）所預期的名稱（names）。
+
+## 使用方式（usage）
+
+若要在 LeRobot 設定中使用 EO-1，請將策略類型（policy type）指定為：
+
+```python
+policy.type=eo1
+```
+
+使用轉換後的發行版檢查點（release checkpoint），
+即可從 EO-1 的交錯式視覺-文字-動作預訓練（interleaved vision-text-action pretraining）開始：
+
+```bash
+--policy.path=lerobot/eo1-base
+```
+
+`lerobot/eo1-base` 是
+[`IPEC-COMMUNITY/EO-1-3B`](https://huggingface.co/IPEC-COMMUNITY/EO-1-3B) 的原生 LeRobot 轉換版本。
+它保留了已發布的 Qwen 視覺語言權重（vision-language weights）與訓練好的
+流匹配動作頭（flow-matching action head）。其動作區塊大小（action chunk size）為 16，與上游
+檢查點（upstream checkpoint）一致。若只想改從原始的 Qwen 骨幹網路（backbone）初始化，請省略
+`policy.path` 並設定 `policy.vlm_base=Qwen/Qwen2.5-VL-3B-Instruct`。
+
+以下列方式載入其他微調過的 LeRobot 格式 EO-1 檢查點（checkpoint）：
+
+```python
+policy.path=your-org/your-eo1-checkpoint
+```
+
+### 文字生成與互動控制（text generation and interactive control）[[text-generation-and-interactive-control]]
+
+EO-1 透過共用的策略文字契約（policy text contract）公開其 Qwen 骨幹網路。執行階段（runtime）
+會加入 `query_kind` 與 `text`，接著執行一般的 EO-1 輸入處理器（input processor）：
+
+```python
+request = {
+    **observation,
+    "query_kind": "vqa",
+    "text": "Which object is closest to the gripper?",
+}
+processed_batch = preprocessor(request)
+answer = policy.generate_text(processed_batch)
+```
+
+`vqa` 會保留呼叫端的問題（caller’s question）。`next_subtask` 會套用儲存在
+EO-1 策略設定中的配方（recipe）。EO-1 繼承 `generate_text(processed_batch)`，並
+覆寫 `supports_text_generation` 與 `generate_text`；不會另外載入 VLM。
+
+搭配互動式語言執行環境（interactive language runtime）時，EO-1 可以生成子任務（subtask），
+並根據目前的子任務重新建構其動作提示（action prompt）：
+
+```bash
+lerobot-rollout \
+  --policy.path=your-org/your-eo1-checkpoint \
+  --policy.device=cuda \
+  --task="clear the table" \
+  --interactive=true
+```
+
+執行 `/start` 之後，使用 `/vqa <question>`、`/autosteer <goal>` 或
+`/subtask <text>`。
+
+## 訓練（training）
+
+### 訓練指令範例（training command example）
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your_org/your_dataset \
+  --policy.path=lerobot/eo1-base \
+  --policy.dtype=bfloat16 \
+  --policy.attn_implementation=sdpa \
+  --policy.gradient_checkpointing=false \
+  --output_dir=./outputs/eo1_training \
+  --job_name=eo1_training \
+  --steps=300000 \
+  --batch_size=16 \
+  --policy.device=cuda
+```
+
+### 使用語言標註訓練（train with language annotations）[[train-with-language-annotations]]
+
+`EO1Config` 內含一個配方（recipe），可從 LeRobot 的選用
+語言欄位（optional language columns）進行訓練。內建的聯合配方（built-in joint recipe）會在同一個序列中
+監督選定的助理回應（assistant response）及其連續動作區塊（continuous action chunk）：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your_org/your_language_annotated_dataset \
+  --policy.type=eo1 \
+  --policy.text_loss_weight=0.01 \
+  --policy.flow_loss_weight=1.0 \
+  --policy.device=cuda \
+  --batch_size=1 \
+  --steps=20000
+```
+
+目標助理回合（targeted assistant turns）會接收下一個 token 的交叉熵（next-token cross-entropy），而 `low_level`
+配方串流則接收 flow 動作監督（flow-action supervision）。一筆資料列可能接收其中一種
+目標（objective），或兩者皆有。使用者提示（user prompts）、影像、狀態 token（state tokens）、動作 token（action tokens）與
+填充（padding）都不計入文字損失（text loss）。設定 `policy.recipe=null` 即可停用配方渲染（recipe rendering），改用原本
+僅含動作的訓練路徑。
+
+標註結構描述（annotation schema）與配方結構請參閱[語言欄位與配方](./language_and_recipes)。
+`recipe_path` 可以指向明確的外部
+YAML 覆寫檔；LeRobot 不提供共用的預設配方檔案（default recipe files）。
+預設的系統提示（system prompt）是 EO1 配方的一部分，可以用自訂的
+系統回合（custom system turn）取代。沒有系統回合的渲染輸入（包括 VQA 提示）
+仍不會有系統回合。沒有渲染訊息（rendered messages）的純動作路徑則會保留
+預設的系統提示。`EO1PrepareModelMessagesStep` 會在 Qwen 格式化與 tokenization 之前，
+將影像與狀態/動作 token 加入渲染後的訊息。
+
+### 主要訓練參數（key training parameters）
+
+| 參數（parameter）                      | 預設值（default）             | 描述（description）                                                                              |
+| -------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------ |
+| `policy.path`                          | `lerobot/eo1-base`            | 已轉換為原生 LeRobot 格式的 EO-1 發布權重（released EO-1 weights）                               |
+| `policy.vlm_base`                      | `Qwen/Qwen2.5-VL-3B-Instruct` | 僅在不使用 `policy.path` 訓練時使用的 Qwen 處理器/骨幹網路（processor/backbone）                 |
+| `policy.dtype`                         | `auto`                        | 骨幹網路（backbone）的 dtype 設定：`auto`、`bfloat16` 或 `float32`                               |
+| `policy.attn_implementation`           | `None`                        | 選用的 Qwen attention 後端（backend），例如 `sdpa`                                               |
+| `policy.gradient_checkpointing`        | `false`                       | 降低訓練期間的記憶體用量                                                                         |
+| `policy.chunk_size`                    | `8`                           | 每個區塊預測的未來動作數量（number of future actions predicted per chunk）                       |
+| `policy.n_action_steps`                | `8`                           | 從取樣區塊中實際採用的動作數量（number of actions consumed from a sampled chunk）                |
+| `policy.num_denoise_steps`             | `10`                          | 取樣期間使用的流匹配去噪步數（number of flow-matching denoising steps used during sampling）     |
+| `policy.max_state_dim`                 | `32`                          | 狀態填充維度（state padding dimension）                                                          |
+| `policy.max_action_dim`                | `32`                          | 動作填充維度（action padding dimension）                                                         |
+| `policy.force_fp32_autocast`           | `true`                        | 即使骨幹網路（backbone）使用混合精度（mixed precision），仍將 flow 頭（flow head）保持在 fp32    |
+| `policy.supervise_padding_action_dims` | `true`                        | 控制是否對填充的動作維度進行監督（controls whether padded action dimensions are supervised）     |
+| `policy.supervise_padding_actions`     | `true`                        | 控制是否對填充的未來動作列進行監督（controls whether padded future action rows are supervised）  |
+| `policy.recipe_path`                   | `None`                        | 啟用由配方驅動的文字監督與逐樣本動作監督（recipe-driven text and per-sample action supervision） |
+| `policy.text_loss_weight`              | `0.01`                        | 受監督的助理 token 交叉熵權重（weight for supervised assistant-token cross-entropy）             |
+| `policy.flow_loss_weight`              | `1.0`                         | 連續 flow 動作損失的權重（weight for continuous flow-action loss）                               |
+| `policy.tokenizer_max_length`          | `1000`                        | 視覺-語言-動作聯合序列的最大長度（maximum joint vision-language-action sequence length）         |
+
+## 評估（evaluation）
+
+有了 LeRobot 格式的檢查點（checkpoint）後，即可透過 `lerobot-eval` 評估（evaluate） EO-1：
+
+```bash
+lerobot-eval \
+  --policy.path=your-org/your-eo1-checkpoint \
+  --env.type=libero \
+  --env.task=libero_object \
+  --eval.batch_size=1 \
+  --eval.n_episodes=20
+```
+
+若資料集（dataset）或環境（environments）的攝影機名稱（camera names）與檢查點設定（checkpoint configuration）不同，請傳入 `rename_map`：
+
+```bash
+lerobot-eval \
+  --policy.path=your-org/your-eo1-checkpoint \
+  --env.type=libero \
+  --env.task=libero_object \
+  --rename_map='{"observation.images.image2":"observation.images.wrist_image"}'
+```
+
+## 設定注意事項（configuration notes）
+
+### 影像處理（image processing）
+
+EO-1 使用 Qwen2.5-VL 處理器（processor）。`policy.image_min_pixels` 與 `policy.image_max_pixels` 設定會控制在視覺 token （visual tokens）傳入骨幹網路（backbone）前的影像縮放範圍（image resizing bounds）。
+
+### 狀態與動作維度（state and action dimensions）
+
+此策略（policy）會在進入 EO-1 flow 頭（flow head）之前，將狀態與動作向量（state and action vectors）填充（pads）至 `policy.max_state_dim` 與 `policy.max_action_dim`。策略（policy）回傳預測結果前，會將其裁剪回（cropped back）原本的動作維度（original action dimension）。
+
+### Attention 後端（attention Backend）
+
+若要可攜性佳的設定（portable setup），請使用 `policy.attn_implementation=sdpa`。只有在 `flash_attn` 已安裝且與您的環境相容時，才使用 `flash_attention_2`。
+
+## 參考資料
+
+- [EO-1 專案](https://github.com/EO-Robotics/EO1)
+- [EO-1 論文](https://arxiv.org/abs/2508.21112)
+- [Qwen2.5-VL-3B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct)
+
+## 引用
+
+```bibtex
+@article{eo1,
+  title={EO-1: Interleaved Vision-Text-Action Pretraining for General Robot Control},
+  author={Delin Qu and Haoming Song and Qizhi Chen and Zhaoqing Chen and Xianqiang Gao and Xinyi Ye and Qi Lv and Modi Shi and Guanghui Ren and Cheng Ruan and Maoqing Yao and Haoran Yang and Jiacheng Bao and Bin Zhao and Dong Wang},
+  journal={arXiv preprint},
+  year={2025},
+  url={https://arxiv.org/abs/2508.21112}
+}
+```
+
+## 授權
+
+此 LeRobot 整合遵循 LeRobot 所採用的 **Apache 2.0 授權**。已發布的 EO-1 檢查點與資料的授權，請查看上游 EO-1 模型與資料集頁面。
