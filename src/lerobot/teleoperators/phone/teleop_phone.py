@@ -42,12 +42,39 @@ else:
     Teleop = None
 
 if TYPE_CHECKING:
+    from hebi._internal.ffi._message_types import GroupFeedback as HebiGroupFeedback
     from hebi._internal.group import Group as HebiGroup
 
 from ..teleoperator import Teleoperator
 from .config_phone import PhoneConfig, PhoneOS
 
 logger = logging.getLogger(__name__)
+
+_PHONE_ORIENTATION_DIAGRAM = r"""
+  ── Calibration pose: hold the phone flat, screen up, top edge pointing FORWARD ──
+
+    seen from above: +x forward is up the page, +y left is to the left
+
+      robot                          phone (screen faces the ceiling)
+
+          +x forward                     ╭───────────────╮
+              ▲                          │▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔│ ← top edge, pointing
+              │                          │               │   the same way as
+       ╭──────┴──────╮                   │   screen up   │   the gripper (+x)
+  ◄────┤   base ◉    │                   │               │
+  +y   ╰─────────────╯                   ╰───────────────╯
+  left
+
+      +z is up, away from the table
+"""
+
+# The Mobile I/O app does not put every pin in every feedback packet, for the analog sliders as well
+# as the buttons, so a pin's value is latched between the packets that carry it.
+_PIN_STALE_AFTER_S = 0.5
+
+# HEBI Mobile I/O pins: "B1" is the dead-man switch, "A3" the gripper slider.
+_ENABLE_BUTTON_PIN = 1
+_GRIPPER_SLIDER_PIN = 3
 
 
 class BasePhone:
@@ -69,6 +96,7 @@ class BasePhone:
             "phone.rot": Rotation,  # scipy.spatial.transform.Rotation
             "phone.raw_inputs": dict,  # analogs/buttons or webXR meta
             "phone.enabled": bool,
+            "phone.gripper_vel": float,  # normalized gripper velocity, negative closes
         }
 
     @property
@@ -102,6 +130,11 @@ class IOSPhone(BasePhone, Teleoperator):
         super().__init__(config)
         self.config = config
         self._group: HebiGroup | None = None
+        self._feedback: HebiGroupFeedback | None = None
+        self._digital_state: dict[int, int] = {}
+        self._digital_seen_at: dict[int, float] = {}
+        self._analog_state: dict[int, float] = {}
+        self._analog_seen_at: dict[int, float] = {}
 
     @property
     def is_connected(self) -> bool:
@@ -116,29 +149,37 @@ class IOSPhone(BasePhone, Teleoperator):
         if group is None:
             raise RuntimeError("Mobile I/O not found — check name/family settings in the app.")
         self._group = group
+        # Reuse one feedback object across polls, as the HEBI SDK recommends for repetitive reads.
+        self._feedback = hebi.GroupFeedback(group.size)
         logger.info(f"{self} connected to HEBI group with {group.size} module(s).")
 
         if calibrate:
             self.calibrate()
 
     def calibrate(self) -> None:
+        enable_control = f"B{_ENABLE_BUTTON_PIN}"
+        gripper_slider = f"A{_GRIPPER_SLIDER_PIN}"
+        print(_PHONE_ORIENTATION_DIAGRAM)
         print(
-            "Hold the phone so that: top edge points forward in same direction as the robot (robot +x) and screen points up (robot +z)"
+            f"  {enable_control}  hold to move the arm, release to freeze it\n"
+            f"  {gripper_slider}  slider drives the gripper: up opens, down closes\n"
+            f"  both hands: one thumb on {enable_control}, the other on {gripper_slider}\n"
         )
-        print("Press and hold B1 in the HEBI Mobile I/O app to capture this pose...\n")
+        print(f"Hold the phone as shown, then press and hold {enable_control} to capture it...")
+
         position, rotation = self._wait_for_capture_trigger()
         self._calib_pos = position.copy()
         self._calib_rot_inv = rotation.inv()
         self._enabled = False
-        print("Calibration done\n")
+        print(f"Calibrated. Hold {enable_control} to move the robot.\n")
 
     def _wait_for_capture_trigger(self) -> tuple[np.ndarray, Rotation]:
         """
         Blocks execution until the calibration trigger is detected from the iOS device.
 
-        This method enters a loop, continuously reading the phone's state. It waits for the user to press
-        and hold the 'B1' button in the HEBI Mobile I/O app. Once B1 is pressed, the loop breaks and
-        returns the phone's pose at that exact moment.
+        This method enters a loop, continuously reading the phone's state. It waits for the user to
+        press and hold B1 in the HEBI Mobile I/O app. Once it is pressed, the loop breaks and returns
+        the phone's pose at that moment.
 
         Returns:
             A tuple containing the position (np.ndarray) and rotation (Rotation) of the phone at the
@@ -151,15 +192,63 @@ class IOSPhone(BasePhone, Teleoperator):
                 continue
             position, rotation, fb_pose = pose
 
-            io = getattr(fb_pose, "io", None)
-            button_b = getattr(io, "b", None) if io is not None else None
-            button_b1_pressed = False
-            if button_b is not None:
-                button_b1_pressed = bool(button_b.get_int(1))
-            if button_b1_pressed:
+            enabled, _, _ = self._enable_signal(fb_pose)
+            if enabled:
                 return position, rotation
 
             time.sleep(0.01)
+
+    def _enable_signal(self, fb_pose: object) -> tuple[bool, dict[int, int], dict[int, float]]:
+        """Returns whether the dead-man switch is held, plus the latched digital and analog states."""
+        digital = self._latched_digital_inputs(fb_pose)
+        analog = self._latched_analog_inputs(fb_pose)
+        return bool(digital.get(_ENABLE_BUTTON_PIN, 0)), digital, analog
+
+    def _latched_analog_inputs(self, fb_pose: object) -> dict[int, float]:
+        """Returns every analog pin's value (bank A), carried across packets that omit it.
+
+        A slider unreported for longer than `_PIN_STALE_AFTER_S` reads as 0.0 rather than keeping
+        its last value: a stale gripper velocity would keep driving the jaws after you let go.
+        """
+        io = getattr(fb_pose, "io", None)
+        bank_a = getattr(io, "a", None) if io is not None else None
+        now = time.perf_counter()
+
+        if bank_a:
+            for ch in range(1, 9):
+                if bank_a.has_float(ch):
+                    self._analog_state[ch] = float(bank_a.get_float(ch))
+                    self._analog_seen_at[ch] = now
+
+        return {
+            ch: (value if now - self._analog_seen_at[ch] <= _PIN_STALE_AFTER_S else 0.0)
+            for ch, value in self._analog_state.items()
+        }
+
+    def _latched_digital_inputs(self, fb_pose: object) -> dict[int, int]:
+        """Returns every digital pin's state (bank B), carried across packets that omit it.
+
+        The app sends a different subset of pins in each packet, so reading one packet in isolation
+        makes a held button look released most of the time. Pins present in this packet update the
+        latch; pins unreported for longer than `_PIN_STALE_AFTER_S` read as released.
+        """
+        io = getattr(fb_pose, "io", None)
+        bank_b = getattr(io, "b", None) if io is not None else None
+        now = time.perf_counter()
+
+        if bank_b:
+            for ch in range(1, 9):
+                if bank_b.has_int(ch):
+                    self._digital_state[ch] = int(bank_b.get_int(ch))
+                    self._digital_seen_at[ch] = now
+                elif hasattr(bank_b, "has_bool") and bank_b.has_bool(ch):
+                    self._digital_state[ch] = int(bank_b.get_bool(ch))
+                    self._digital_seen_at[ch] = now
+
+        return {
+            ch: (value if now - self._digital_seen_at[ch] <= _PIN_STALE_AFTER_S else 0)
+            for ch, value in self._digital_state.items()
+        }
 
     def _read_current_pose(self) -> tuple[np.ndarray, Rotation, object] | None:
         """
@@ -178,7 +267,12 @@ class IOSPhone(BasePhone, Teleoperator):
         """
         if self._group is None:
             raise DeviceNotConnectedError(f"{self} is not connected. Run `.connect()` first.")
-        fbk = self._group.get_next_feedback()
+
+        fbk = self._group.get_next_feedback(reuse_fbk=self._feedback)
+        if fbk is None:
+            # No packet arrived before the timeout; degrade like a missing pose.
+            return None
+
         pose = fbk[0]
         ar_pos = getattr(pose, "ar_position", None)
         ar_quat = getattr(pose, "ar_orientation", None)
@@ -204,23 +298,12 @@ class IOSPhone(BasePhone, Teleoperator):
             return {}
         raw_position, raw_rotation, fb_pose = pose
 
-        # Collect raw inputs (B1 / analogs on iOS, move/scale on Android)
-        raw_inputs: dict[str, float | int | bool] = {}
-        io = getattr(fb_pose, "io", None)
-        if io is not None:
-            bank_a, bank_b = io.a, io.b
-            if bank_a:
-                for ch in range(1, 9):
-                    if bank_a.has_float(ch):
-                        raw_inputs[f"a{ch}"] = float(bank_a.get_float(ch))
-            if bank_b:
-                for ch in range(1, 9):
-                    if bank_b.has_int(ch):
-                        raw_inputs[f"b{ch}"] = int(bank_b.get_int(ch))
-                    elif hasattr(bank_b, "has_bool") and bank_b.has_bool(ch):
-                        raw_inputs[f"b{ch}"] = int(bank_b.get_bool(ch))
+        # Collect raw inputs (buttons / analogs on iOS, move/scale on Android)
+        enable, digital, analog = self._enable_signal(fb_pose)
+        raw_inputs: dict[str, float | int | bool] = {f"a{ch}": value for ch, value in analog.items()}
+        raw_inputs.update({f"b{ch}": value for ch, value in digital.items()})
 
-        enable = bool(raw_inputs.get("b1", 0))
+        gripper_vel = float(analog.get(_GRIPPER_SLIDER_PIN, 0.0))
 
         # Rising edge then re-capture calibration immediately from current raw pose
         if enable and not self._enabled:
@@ -235,11 +318,17 @@ class IOSPhone(BasePhone, Teleoperator):
             "phone.rot": rot_cal,
             "phone.raw_inputs": raw_inputs,
             "phone.enabled": self._enabled,
+            "phone.gripper_vel": gripper_vel,
         }
 
     @check_if_not_connected
     def disconnect(self) -> None:
         self._group = None
+        self._feedback = None
+        self._digital_state.clear()
+        self._digital_seen_at.clear()
+        self._analog_state.clear()
+        self._analog_seen_at.clear()
 
 
 class AndroidPhone(BasePhone, Teleoperator):
@@ -273,16 +362,18 @@ class AndroidPhone(BasePhone, Teleoperator):
             self.calibrate()
 
     def calibrate(self) -> None:
+        print(_PHONE_ORIENTATION_DIAGRAM)
         print(
-            "Hold the phone so that: top edge points forward in same direction as the robot (robot +x) and screen points up (robot +z)"
+            "  Move   hold to move the arm, release to freeze it\n"
+            "  A / B  buttons drive the gripper: A opens, B closes\n"
         )
-        print("Touch and move on the WebXR page to capture this pose...\n")
+        print("Hold the phone as shown, then touch and move on the WebXR page to capture it...")
 
         pos, rot = self._wait_for_capture_trigger()
         self._calib_pos = pos.copy()
         self._calib_rot_inv = rot.inv()
         self._enabled = False
-        print("Calibration done\n")
+        print("Calibrated. Hold Move to drive the robot.\n")
 
     def _wait_for_capture_trigger(self) -> tuple[np.ndarray, Rotation]:
         """
@@ -357,7 +448,7 @@ class AndroidPhone(BasePhone, Teleoperator):
             return {}
         raw_pos, raw_rot, _raw_pose = pose
 
-        # Collect raw inputs (B1 / analogs on iOS, move/scale on Android)
+        # Collect raw inputs (buttons / analogs on iOS, move/scale on Android)
         raw_inputs: dict[str, float | int | bool] = {}
         msg = self._latest_message or {}
         raw_inputs["move"] = bool(msg.get("move", False))
@@ -366,6 +457,8 @@ class AndroidPhone(BasePhone, Teleoperator):
         raw_inputs["reservedButtonB"] = bool(msg.get("reservedButtonB", False))
 
         enable = bool(raw_inputs.get("move", False))
+        # Positive if A is pressed, negative if B is pressed, 0 if both or neither are pressed.
+        gripper_vel = float(raw_inputs["reservedButtonA"]) - float(raw_inputs["reservedButtonB"])
 
         # Rising edge then re-capture calibration immediately from current raw pose
         if enable and not self._enabled:
@@ -380,6 +473,7 @@ class AndroidPhone(BasePhone, Teleoperator):
             "phone.rot": rot_cal,
             "phone.raw_inputs": raw_inputs,
             "phone.enabled": self._enabled,
+            "phone.gripper_vel": gripper_vel,
         }
 
     @check_if_not_connected
@@ -396,8 +490,11 @@ class Phone(Teleoperator):
     Phone-based teleoperator using ARKit (iOS via HEBI Mobile I/O App) or the teleop Python package (Android via WebXR API).
     For HEBI Mobile I/O we also expose 8 analog (a1-a8) and 8 digital (b1-b8) inputs.
 
-    Press and hold **B1** to enable teleoperation. While enabled, the first B1 press
-    captures a reference pose and rotation, when disabled and pressed again the position is reapplied.
+    Teleoperation is gated by a switch that has to be **held down** for the whole
+    motion: B1 on iOS, `Move` on Android. Releasing it
+    freezes the robot; pressing again re-anchors the phone to the arm's current pose. The gripper
+    runs off A3 on iOS and the reserved A/B buttons on
+    Android, and stays live while the dead-man switch is released.
     """
 
     config_class = PhoneConfig
