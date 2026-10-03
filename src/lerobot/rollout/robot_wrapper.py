@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import math
+import time
 from threading import Lock
 from typing import Any
 
@@ -36,16 +38,93 @@ class ThreadSafeRobot:
     def __init__(self, robot: Robot) -> None:
         self._robot = robot
         self._lock = Lock()
+        self._position_hold_enabled = False
+        self._observed_positions: dict[str, float] = {}
+        self._held_action: dict[str, float] | None = None
+        self._observation_time: float | None = None
+        self._hardware_failure: str | None = None
 
     # -- Lock-protected I/O --------------------------------------------------
 
     def get_observation(self) -> dict[str, Any]:
         with self._lock:
-            return self._robot.get_observation()
+            sampled_at = time.monotonic()
+            try:
+                observation = self._robot.get_observation()
+                self._observed_positions = {
+                    key: float(observation[key])
+                    for key in self.action_features
+                    if key.endswith(".pos") and key in observation
+                }
+            except Exception as exc:
+                self._record_hardware_failure("get_observation", exc)
+                raise
+            self._observation_time = sampled_at
+            return observation
+
+    @property
+    def observation_time(self) -> float | None:
+        """Client monotonic sample bound for the last read, before hardware/camera waits."""
+        with self._lock:
+            return self._observation_time
 
     def send_action(self, action: dict[str, Any] | Any) -> Any:
         with self._lock:
-            return self._robot.send_action(action)
+            self._held_action = None
+            try:
+                return self._robot.send_action(action)
+            except Exception as exc:
+                self._record_hardware_failure("send_action", exc)
+                raise
+
+    def _record_hardware_failure(self, operation: str, error: Exception) -> None:
+        # Caller owns the I/O lock. Preserve the first failure, including camera
+        # errors during observation, so shutdown never assumes healthy hardware.
+        if self._hardware_failure is None:
+            self._hardware_failure = f"{operation}: {type(error).__name__}: {error}"
+
+    @property
+    def hardware_failure(self) -> str | None:
+        """First failed local I/O operation; not cleared by an inference reset."""
+        with self._lock:
+            return self._hardware_failure
+
+    def configure_position_hold(self) -> None:
+        """Enable the explicit, robot-supported position hold; reject mixed control modes."""
+        if (
+            not self._robot.supports_position_hold
+            or not self.action_features
+            or any(not key.endswith(".pos") for key in self.action_features)
+        ):
+            raise ValueError(f"{self.robot_type} has no supported local position-hold contract")
+        self._position_hold_enabled = True
+
+    @property
+    def supports_hold(self) -> bool:
+        return self._position_hold_enabled
+
+    def hold(self) -> None:
+        """Hold the last observed pose without camera reads, network waits, or inference.
+
+        The first held pose stays fixed until ordinary dispatch resumes. This is an
+        actuator command, not a guarantee that hardware has stopped or achieved it.
+        """
+        with self._lock:
+            if not self._position_hold_enabled:
+                raise RuntimeError("Local hold was not configured for this robot")
+            try:
+                if self._held_action is None:
+                    if set(self._observed_positions) != set(self.action_features) or not all(
+                        math.isfinite(value) for value in self._observed_positions.values()
+                    ):
+                        raise RuntimeError(
+                            "Cannot hold without a finite observed position for every actuator"
+                        )
+                    self._held_action = self._observed_positions.copy()
+                self._robot.send_action(self._held_action)
+            except Exception as exc:
+                self._record_hardware_failure("hold", exc)
+                raise
 
     # -- Read-only proxies (no lock needed) -----------------------------------
 

@@ -38,6 +38,7 @@ from lerobot.datasets import (
 )
 from lerobot.policies import get_policy_class, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.rtc.configuration_rtc import validate_trained_rtc_horizon
 from lerobot.processor import (
     PolicyProcessorPipeline,
     RobotAction,
@@ -47,7 +48,7 @@ from lerobot.processor import (
     make_default_processors,
     rename_stats,
 )
-from lerobot.robots import make_robot_from_config
+from lerobot.robots import Robot, make_robot_from_config
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
@@ -56,6 +57,7 @@ from lerobot.utils.import_utils import _peft_available, require_package
 from .configs import RolloutConfig
 from .inference import (
     InferenceEngine,
+    RemoteInferenceConfig,
     RTCInferenceConfig,
     create_inference_engine,
 )
@@ -105,37 +107,14 @@ def _validate_trained_rtc_rollout_config(policy_config, inference_config: RTCInf
     rtc = inference_config.rtc
     if not rtc.enabled or rtc.mode != "trained":
         return
-    if policy_config.type != "pi05":
-        raise ValueError(
-            "--inference.rtc.mode=trained currently requires a PI05 checkpoint; "
-            f"got policy type {policy_config.type!r}."
-        )
-
     training_max_delay = int(getattr(policy_config, "rtc_training_max_delay", 0))
-    if training_max_delay <= 0:
-        raise ValueError(
-            "--inference.rtc.mode=trained requires a checkpoint trained with "
-            "--policy.rtc_training_max_delay > 0."
-        )
-    if rtc.execution_horizon < training_max_delay:
-        raise ValueError(
-            f"--inference.rtc.execution_horizon ({rtc.execution_horizon}) must be at least the "
-            f"checkpoint's rtc_training_max_delay ({training_max_delay})."
-        )
+    validate_trained_rtc_horizon(
+        rtc.execution_horizon, int(getattr(policy_config, "chunk_size", 0)), training_max_delay
+    )
     if inference_config.queue_threshold < training_max_delay:
         raise ValueError(
             f"--inference.queue_threshold ({inference_config.queue_threshold}) must be at least the "
             f"checkpoint's rtc_training_max_delay ({training_max_delay})."
-        )
-
-    # RTC requires d <= s <= H - d (arXiv 2506.07339): an execution horizon past H - d would
-    # commit actions the next chunk can no longer re-plan, so the overlap never closes.
-    chunk_size = int(getattr(policy_config, "chunk_size", 0))
-    if chunk_size and rtc.execution_horizon > chunk_size - training_max_delay:
-        raise ValueError(
-            f"--inference.rtc.execution_horizon ({rtc.execution_horizon}) must be at most "
-            f"chunk_size - rtc_training_max_delay ({chunk_size} - {training_max_delay} = "
-            f"{chunk_size - training_max_delay})."
         )
 
 
@@ -231,11 +210,16 @@ class HardwareContext:
 
 @dataclass
 class PolicyContext:
-    """Loaded policy and its inference engine."""
+    """Inference engine and optional local policy resources.
 
-    policy: PreTrainedPolicy
-    preprocessor: PolicyProcessorPipeline
-    postprocessor: PolicyProcessorPipeline
+    Remote inference leaves ``policy``, ``preprocessor`` and ``postprocessor``
+    as ``None``: those resources live on the server. Strategies use ``inference``
+    for policy work and ``ProcessorContext`` for robot-side processing.
+    """
+
+    policy: PreTrainedPolicy | None
+    preprocessor: PolicyProcessorPipeline | None
+    postprocessor: PolicyProcessorPipeline | None
     inference: InferenceEngine
 
 
@@ -308,6 +292,63 @@ def _load_pretrained_policy(policy_config: PreTrainedConfig) -> PreTrainedPolicy
     )
 
 
+def _build_rollout_dataset(cfg: RolloutConfig, robot: Robot, dataset_features: dict) -> LeRobotDataset | None:
+    """Create the local recording destination independently of policy placement."""
+    # --- 5. Dataset -------------
+    dataset = None
+    if cfg.dataset is not None:
+        logger.info("Setting up dataset (repo_id=%s)...", cfg.dataset.repo_id)
+        # Strategy-owned columns join the robot/policy features above the resume/create
+        # split, so ``ctx.data.dataset_features`` describes the same schema on both paths.
+        dataset_features.update(cfg.strategy.extra_dataset_features())
+        if cfg.resume:
+            dataset = LeRobotDataset.resume(
+                cfg.dataset.repo_id,
+                root=cfg.dataset.root,
+                batch_encoding_size=cfg.dataset.video_encoding_batch_size,
+                rgb_encoder=cfg.dataset.rgb_encoder,
+                depth_encoder=cfg.dataset.depth_encoder,
+                streaming_encoding=cfg.dataset.streaming_encoding,
+                encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
+                encoder_threads=cfg.dataset.encoder_threads,
+                image_writer_processes=cfg.dataset.num_image_writer_processes,
+                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera
+                * len(robot.cameras if hasattr(robot, "cameras") else []),
+            )
+        else:
+            repo_name = cfg.dataset.repo_id.split("/", 1)[-1]
+            if not repo_name.startswith("rollout_"):
+                raise ValueError(
+                    "Dataset names for rollout must start with 'rollout_'. "
+                    "Use --dataset.repo_id=<user>/rollout_<name> for policy deployment datasets."
+                )
+            cfg.dataset.stamp_repo_id()
+            target_video_mb = getattr(cfg.strategy, "target_video_file_size_mb", None)
+            dataset = LeRobotDataset.create(
+                cfg.dataset.repo_id,
+                cfg.dataset.fps,
+                root=cfg.dataset.root,
+                robot_type=robot.name,
+                features=dataset_features,
+                use_videos=cfg.dataset.video,
+                image_writer_processes=cfg.dataset.num_image_writer_processes,
+                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera
+                * len(robot.cameras if hasattr(robot, "cameras") else []),
+                batch_encoding_size=cfg.dataset.video_encoding_batch_size,
+                rgb_encoder=cfg.dataset.rgb_encoder,
+                depth_encoder=cfg.dataset.depth_encoder,
+                streaming_encoding=cfg.dataset.streaming_encoding,
+                encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
+                encoder_threads=cfg.dataset.encoder_threads,
+                video_files_size_in_mb=target_video_mb,
+            )
+
+    if dataset is not None:
+        logger.info("Dataset ready: %s (%d existing episodes)", dataset.repo_id, dataset.num_episodes)
+
+    return dataset
+
+
 def build_rollout_context(
     cfg: RolloutConfig,
     shutdown_event: Event,
@@ -321,6 +362,12 @@ def build_rollout_context(
     fails fast without touching the robot. A missing policy configuration raises
     ``ValueError`` before any policy access.
     """
+    if isinstance(cfg.inference, RemoteInferenceConfig):
+        from .remote_context import build_remote_rollout_context
+
+        return build_remote_rollout_context(
+            cfg, shutdown_event, teleop_action_processor, robot_action_processor, robot_observation_processor
+        )
     is_rtc = isinstance(cfg.inference, RTCInferenceConfig)
 
     # --- 1. Policy (heavy I/O, but no hardware yet) -------------------
@@ -346,6 +393,9 @@ def build_rollout_context(
     policy = _load_pretrained_policy(policy_config)
 
     if is_rtc:
+        policy.chunk_inference_spec()
+
+    if is_rtc and cfg.inference.rtc.enabled:
         if not supports_rtc_inference(policy):
             raise ValueError(
                 f"RTC inference is not supported by policy type '{policy_config.type}': "
@@ -395,11 +445,12 @@ def build_rollout_context(
     logger.info("Robot connected: %s", robot.name)
 
     # Store the initial joint positions so we can return to a safe pose on shutdown.
-    initial_obs = robot.get_observation()
+    robot_wrapper = ThreadSafeRobot(robot)
+    if is_rtc and robot.supports_position_hold:
+        robot_wrapper.configure_position_hold()
+    initial_obs = robot_wrapper.get_observation()
     initial_position = {k: v for k, v in initial_obs.items() if k.endswith(".pos")}
     logger.info("Captured initial robot position (%d keys)", len(initial_position))
-
-    robot_wrapper = ThreadSafeRobot(robot)
 
     teleop = None
     if cfg.teleop is not None:
@@ -494,57 +545,7 @@ def build_rollout_context(
                 f"""--rename_map='{{"observation.images.top": "observation.images.cam0"}}'"""
             )
 
-    # --- 5. Dataset -------------
-    dataset = None
-    if cfg.dataset is not None:
-        logger.info("Setting up dataset (repo_id=%s)...", cfg.dataset.repo_id)
-        # Strategy-owned columns join the robot/policy features above the resume/create
-        # split, so ``ctx.data.dataset_features`` describes the same schema on both paths.
-        dataset_features.update(cfg.strategy.extra_dataset_features())
-        if cfg.resume:
-            dataset = LeRobotDataset.resume(
-                cfg.dataset.repo_id,
-                root=cfg.dataset.root,
-                batch_encoding_size=cfg.dataset.video_encoding_batch_size,
-                rgb_encoder=cfg.dataset.rgb_encoder,
-                depth_encoder=cfg.dataset.depth_encoder,
-                streaming_encoding=cfg.dataset.streaming_encoding,
-                encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
-                encoder_threads=cfg.dataset.encoder_threads,
-                image_writer_processes=cfg.dataset.num_image_writer_processes,
-                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera
-                * len(robot.cameras if hasattr(robot, "cameras") else []),
-            )
-        else:
-            repo_name = cfg.dataset.repo_id.split("/", 1)[-1]
-            if not repo_name.startswith("rollout_"):
-                raise ValueError(
-                    "Dataset names for rollout must start with 'rollout_'. "
-                    "Use --dataset.repo_id=<user>/rollout_<name> for policy deployment datasets."
-                )
-            cfg.dataset.stamp_repo_id()
-            target_video_mb = getattr(cfg.strategy, "target_video_file_size_mb", None)
-            dataset = LeRobotDataset.create(
-                cfg.dataset.repo_id,
-                cfg.dataset.fps,
-                root=cfg.dataset.root,
-                robot_type=robot.name,
-                features=dataset_features,
-                use_videos=cfg.dataset.video,
-                image_writer_processes=cfg.dataset.num_image_writer_processes,
-                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera
-                * len(robot.cameras if hasattr(robot, "cameras") else []),
-                batch_encoding_size=cfg.dataset.video_encoding_batch_size,
-                rgb_encoder=cfg.dataset.rgb_encoder,
-                depth_encoder=cfg.dataset.depth_encoder,
-                streaming_encoding=cfg.dataset.streaming_encoding,
-                encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
-                encoder_threads=cfg.dataset.encoder_threads,
-                video_files_size_in_mb=target_video_mb,
-            )
-
-    if dataset is not None:
-        logger.info("Dataset ready: %s (%d existing episodes)", dataset.repo_id, dataset.num_episodes)
+    dataset = _build_rollout_dataset(cfg, robot, dataset_features)
 
     # --- 6. Policy pre/post processors (needs dataset stats if any) ---
     dataset_stats = None
@@ -577,21 +578,33 @@ def build_rollout_context(
         cfg.inference.type if hasattr(cfg.inference, "type") else "sync",
     )
     task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
-    inference_strategy = create_inference_engine(
-        cfg.inference,
-        policy=policy,
-        preprocessor=preprocessor,
-        postprocessor=postprocessor,
-        robot_wrapper=robot_wrapper,
-        dataset_features=dataset_features,
-        ordered_action_keys=ordered_action_keys,
-        task=task_str,
-        fps=cfg.fps,
-        device=cfg.device,
-        use_torch_compile=torch_compile_active,
-        compile_warmup_inferences=cfg.compile_warmup_inferences,
-        shutdown_event=shutdown_event,
-    )
+    try:
+        inference_strategy = create_inference_engine(
+            cfg.inference,
+            policy=policy,
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            robot_wrapper=robot_wrapper,
+            dataset_features=dataset_features,
+            ordered_action_keys=ordered_action_keys,
+            task=task_str,
+            fps=cfg.fps,
+            device=cfg.device,
+            use_torch_compile=torch_compile_active,
+            compile_warmup_inferences=cfg.compile_warmup_inferences,
+            shutdown_event=shutdown_event,
+        )
+    except BaseException:
+        # Context construction precedes the CLI's strategy teardown guard. A
+        # rejected engine must release the devices it already connected without
+        # masking the original contract/configuration error.
+        for device in (teleop, robot):
+            if device is not None and device.is_connected:
+                try:
+                    device.disconnect()
+                except Exception:
+                    logger.exception("Device cleanup failed after inference engine construction failed")
+        raise
 
     # --- 8. Assemble ---------------------------------------------------
     logger.info("Rollout context assembled successfully")

@@ -14,23 +14,28 @@
 
 """Inference engine configs and factory.
 
-Selection is explicit via ``--inference.type=sync|rtc``.  Adding a new
-backend requires registering its config subclass and dispatching it in
-:func:`create_inference_engine`.
+Selection is explicit via ``--inference.type=sync|rtc|remote``. This factory builds
+local backends with an already loaded policy. Remote inference is dispatched by
+``build_rollout_context`` to ``build_remote_rollout_context``, which establishes
+the remote session instead of loading a local policy.
 """
 
 from __future__ import annotations
 
 import abc
 import logging
+import math
 from dataclasses import dataclass, field
 from threading import Event
+from typing import Literal
 
 import draccus
 
+from lerobot.inference.contracts import ExecutionMode
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.processor import PolicyProcessorPipeline
+from lerobot.remote_inference.chunk_contract import chunk_settings
 
 from ..robot_wrapper import ThreadSafeRobot
 from .base import InferenceEngine
@@ -72,6 +77,80 @@ class RTCInferenceConfig(InferenceEngineConfig):
     # (e.g. ``--inference.rtc.execution_horizon=...``).
     rtc: RTCConfig = field(default_factory=RTCConfig)
     queue_threshold: int = 30
+    max_observation_age_s: float = 5.0
+    action_timeout_s: float = 10.0
+    startup_timeout_s: float = 120.0
+    language_timeout_s: float = 120.0
+
+
+@InferenceEngineConfig.register_subclass("remote")
+@dataclass
+class RemoteInferenceConfig(InferenceEngineConfig):
+    """Exclusive remote deployment, with explicit robot semantics and local hold consent.
+
+    Timing defaults are conservative starting values for lab validation; operators must
+    measure their deployment's turnaround and choose a usable playback/age budget.
+    """
+
+    endpoint: str = "tcp/127.0.0.1:7447"
+    deployment: str = ""
+    instance: str | None = None
+    expected_artifact: str | None = None
+    mode: str = "chunk"
+    semantics: str = ""
+    hold_mode: str = ""
+    # Request when remaining playback reaches this threshold (append, aligned and RTC).
+    # Effective floor: recent maximum turnaround + one policy action interval.
+    # Smaller values allow more aligned follow-through; aligned task changes bypass this gate.
+    refill_seconds: float = 0.5
+    chunk_merge: Literal["append", "aligned"] = "append"
+    blend_steps: int = 0
+    blend_weight: float = 0.5
+    blend_components: list[str] = field(default_factory=list)
+    max_observation_age_s: float = 5.0
+    handshake_timeout_s: float = 10.0
+    action_timeout_s: float = 5.0
+    language_timeout_s: float = 60.0
+    startup_timeout_s: float = 10.0
+    encoding: Literal["raw", "jpeg"] = "raw"
+    jpeg_quality: int = 90
+    zenoh_config_path: str | None = None
+    zenoh_mode: Literal["peer", "client"] = "peer"
+    # INFO summarizes operation; DEBUG includes request-level diagnostics.
+    log_level: Literal["INFO", "DEBUG"] = "INFO"
+
+    def __post_init__(self) -> None:
+        if self.log_level not in {"INFO", "DEBUG"}:
+            raise ValueError("Remote log_level must be INFO or DEBUG")
+        if self.zenoh_mode not in {"peer", "client"}:
+            raise ValueError("zenoh_mode must be peer (direct) or client (router)")
+        if not self.deployment or not self.semantics:
+            raise ValueError(
+                "Remote inference requires --inference.deployment and explicit robot/action "
+                "semantics via --inference.semantics"
+            )
+        if self.hold_mode != "position":
+            raise ValueError("Remote inference requires --inference.hold_mode=position on a supported robot")
+        try:
+            ExecutionMode(self.mode)
+        except ValueError as exc:
+            raise ValueError(f"Unsupported remote execution mode: {self.mode!r}") from exc
+        chunk_settings(self.chunk_merge, self.blend_steps, self.blend_weight, self.blend_components)
+        if self.mode != "chunk" and self.chunk_merge != "append":
+            raise ValueError("chunk_merge=aligned is available only with mode=chunk")
+        if self.encoding not in {"raw", "jpeg"} or not 1 <= self.jpeg_quality <= 100:
+            raise ValueError("Remote encoding must be raw or jpeg, with jpeg_quality in [1, 100]")
+        for name in (
+            "refill_seconds",
+            "max_observation_age_s",
+            "handshake_timeout_s",
+            "action_timeout_s",
+            "language_timeout_s",
+            "startup_timeout_s",
+        ):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"Remote {name} must be finite and positive")
 
 
 # ---------------------------------------------------------------------------
@@ -95,8 +174,13 @@ def create_inference_engine(
     compile_warmup_inferences: int = 2,
     shutdown_event: Event | None = None,
 ) -> InferenceEngine:
-    """Instantiate the appropriate inference engine from a config object."""
+    """Build a local engine; remote sessions are built by ``build_rollout_context``."""
     logger.info("Creating inference engine: %s", config.type)
+    if isinstance(config, RemoteInferenceConfig):
+        raise ValueError(
+            "Remote inference requires a connected RemoteClient; use build_rollout_context "
+            "(which delegates to build_remote_rollout_context) instead of create_inference_engine"
+        )
     if isinstance(config, SyncInferenceConfig):
         return SyncInferenceEngine(
             policy=policy,
@@ -122,6 +206,10 @@ def create_inference_engine(
             use_torch_compile=use_torch_compile,
             compile_warmup_inferences=compile_warmup_inferences,
             rtc_queue_threshold=config.queue_threshold,
+            max_observation_age_s=config.max_observation_age_s,
+            action_timeout_s=config.action_timeout_s,
+            startup_timeout_s=config.startup_timeout_s,
+            language_timeout_s=config.language_timeout_s,
             shutdown_event=shutdown_event,
         )
     raise ValueError(f"Unknown inference engine type: {type(config).__name__}")

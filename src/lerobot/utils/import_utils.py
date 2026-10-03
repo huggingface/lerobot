@@ -162,6 +162,8 @@ _hidapi_available = is_package_available("hidapi", import_name="hid")
 _datasets_available = is_package_available("datasets")
 _pandas_available = is_package_available("pandas")
 _faker_available = is_package_available("faker")
+_msgpack_available = is_package_available("msgpack")
+_zenoh_available = is_package_available("eclipse-zenoh", import_name="zenoh")
 
 # Video encoding / decoding
 _av_available = is_package_available("av")

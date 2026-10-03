@@ -109,6 +109,7 @@ class _StubRelativePolicy:
     def __init__(self, action_dim: int = 16):
         self.action_dim = action_dim
         self.config = SimpleNamespace(
+            n_obs_steps=1,
             action_feature_names=list(CKPT_ORDER),
             use_amp=False,
             chunk_size=30,
@@ -134,6 +135,10 @@ class _StubRelativePolicy:
     _action_queue_attrs = PreTrainedPolicy._action_queue_attrs
     drop_queued_actions = PreTrainedPolicy.drop_queued_actions
     count_queued_actions = PreTrainedPolicy.count_queued_actions
+    chunk_inference_spec = PreTrainedPolicy.chunk_inference_spec
+
+    def supports_rtc(self):
+        return True
 
     def supports_text_generation(self):
         return False
@@ -462,7 +467,7 @@ def test_sync_anchor_is_pinned_across_a_chunk():
 
 def _seed_rtc_engine(dataset_features, state_names):
     """An RTC engine whose queue holds the chunk this variant's postprocessor would emit."""
-    from lerobot.policies.rtc import ActionQueue
+    from lerobot.inference.contracts import ActionProvenance
     from lerobot.policies.rtc.configuration_rtc import RTCConfig
     from lerobot.rollout.inference import RTCInferenceEngine
 
@@ -489,8 +494,9 @@ def _seed_rtc_engine(dataset_features, state_names):
         ],
         dtype=torch.float32,
     )
-    engine._action_queue = ActionQueue(RTCConfig(enabled=True, execution_horizon=8))
-    engine._action_queue.merge(absolute.clone(), absolute.clone(), 0, None, task="fold the t-shirt")
+    engine._runtime.activate()
+    provenance = ActionProvenance(engine._runtime.clock(), "fold the t-shirt")
+    engine.action_queue.replace_future(absolute, [provenance], snapshot=engine.action_queue.snapshot())
     return engine
 
 

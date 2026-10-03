@@ -28,7 +28,8 @@ from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_model as load_model_as_safetensor
 from torch import Tensor, nn
 
-from lerobot.configs import PreTrainedConfig
+from lerobot.configs import FeatureType, PreTrainedConfig
+from lerobot.inference.contracts import ChunkPolicySpec, ExecutionMode, FeatureSpec
 from lerobot.optim.optimizers import OptimizerParams
 from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import resolve_safetensors_device
@@ -278,6 +279,81 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     def supports_rtc(self) -> bool:
         """Whether this policy implements Real-Time Chunking inference semantics."""
         return False
+
+    def validate_chunk_input_features(self, features: tuple[FeatureSpec, ...]) -> None:
+        """Validate canonical inputs before serving, with exact shapes by default.
+
+        Policies that explicitly resize or mask missing inputs may override this
+        contract. Such exceptions belong with the policy, never the transport.
+        The negotiated wire schema still fixes every supplied feature's shape.
+        """
+        expected = self.config.input_features or {}
+        supplied = {feature.name: feature for feature in features}
+        if supplied.keys() != expected.keys():
+            raise ValueError("Canonical feature names must exactly match policy input_features.")
+        for name, policy_feature in expected.items():
+            feature = supplied[name]
+            if policy_feature.type == FeatureType.VISUAL:
+                shape = policy_feature.shape
+                if (
+                    len(shape) != 3
+                    or feature.kind != "rgb"
+                    or feature.shape != (shape[1], shape[2], shape[0])
+                ):
+                    raise ValueError(f"RGB feature shape differs from checkpoint: {name}.")
+            elif feature.kind != "tensor" or feature.shape != tuple(policy_feature.shape):
+                raise ValueError(f"Tensor feature shape differs from checkpoint: {name}.")
+
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Declare the default current-observation chunk-serving author contract.
+
+        Inheriting this implementation declares that ``predict_action_chunk`` does
+        every preparation needed by direct callers, accepts the complete current
+        observation, and returns ``[B, chunk_size, A]`` in model coordinates. Its
+        canonical processor pair must support whole chunks. ``n_action_steps`` is
+        the ordinary playback slice; RTC retains the full prediction horizon.
+
+        A policy requiring select_action-only preparation, other action layouts,
+        or temporal sampling must override this method and reject unsupported
+        configurations or provide a custom runner. Method presence or a successful
+        warmup is not evidence for this contract. Policy/processor state is allowed
+        only within an exclusive session and reset() must clear it for a new run.
+        """
+        config = self.config
+        if config.n_obs_steps != 1:
+            raise ValueError("Chunk serving requires n_obs_steps=1; observation history is unsupported.")
+        for field_name in (
+            "observation_delta_indices",
+            "image_observation_delta_indices",
+            "state_observation_delta_indices",
+        ):
+            indices = getattr(config, field_name, None)
+            if indices is not None and list(indices) != [0]:
+                raise ValueError(f"Chunk serving cannot sample temporal history ({field_name}).")
+        if getattr(config, "temporal_ensemble_coeff", None) is not None:
+            raise ValueError("Chunk serving does not support temporal ensembling.")
+        if getattr(config, "use_visual_memory", False) or getattr(config, "use_proprioceptive_memory", False):
+            raise ValueError(
+                "Chunk serving cannot sample observation memory at the required control cadence."
+            )
+        prediction_steps = getattr(config, "chunk_size", None)
+        if not isinstance(prediction_steps, int) or prediction_steps <= 0:
+            raise ValueError(
+                "The default chunk runner requires a positive chunk_size; provide a custom runner."
+            )
+        execution_steps = getattr(config, "n_action_steps", prediction_steps)
+        modes = [ExecutionMode.CHUNK]
+        training_max_delay = int(getattr(config, "rtc_training_max_delay", 0))
+        if self.supports_rtc():
+            modes.append(ExecutionMode.RTC_GUIDED)
+            if training_max_delay > 0:
+                modes.append(ExecutionMode.RTC_TRAINED)
+        return ChunkPolicySpec(
+            prediction_steps=prediction_steps,
+            execution_steps=execution_steps,
+            modes=tuple(modes),
+            training_max_delay=training_max_delay,
+        )
 
     def supports_text_generation(self) -> bool:
         """Whether this policy implements :meth:`generate_text` (override both together)."""

@@ -26,25 +26,15 @@ import logging
 import time
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
-from enum import Enum
+from dataclasses import dataclass, replace
 from threading import Lock
 
 import torch
 
+from lerobot.inference.contracts import QueryKind as QueryKind
 from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT
 
 logger = logging.getLogger(__name__)
-
-
-class QueryKind(Enum):
-    """What the policy's text head is being asked for."""
-
-    VQA = "vqa"
-    """A free-form question about the current scene; the reply goes to the operator."""
-
-    NEXT_SUBTASK = "next_subtask"
-    """A high-level goal; the reply is the next subtask and is fed to ``set_task``."""
 
 
 @dataclass(frozen=True)
@@ -53,6 +43,8 @@ class PolicyQuery:
 
     kind: QueryKind
     text: str
+    task_version: int = 0
+    intent_generation: int = 0
 
 
 @dataclass(frozen=True)
@@ -112,12 +104,22 @@ class InferenceEngine(abc.ABC):
     ``notify_observation`` / ``pause`` / ``resume`` have a no-op default
     so rollout strategies can invoke them unconditionally.
 
+    Safe dispatch
+    -------------
+    ``get_action`` alone is not a safe motor-dispatch API. Custom strategies should use
+    ``rollout.strategies.core.send_next_action``: it invokes ``begin_control_tick``, checks
+    ``dispatch_allowed`` before pulling and sending actions, invalidates interpolation
+    on transitions, applies a supported hold and acknowledges it, and calls
+    ``record_dispatch`` after a send. Hooks with no-op defaults must still be invoked so
+    asynchronous backends can enforce their lifecycle and freshness guarantees.
+
     Subclasses must call ``super().__init__(task=...)``.
     """
 
     def __init__(self, task: str = "") -> None:
         self._task = task
         self._task_changed = False
+        self._task_version = 0
         self._dispatched_task = task
         self._task_lock = Lock()
 
@@ -127,6 +129,9 @@ class InferenceEngine(abc.ABC):
         # Set from the claim (``_take_query``) until the answer is published or the turn
         # is discarded, so the autosteer poll cannot queue a duplicate turn meanwhile.
         self._query_in_flight = False
+        # Kept separately from the busy flag: a controller can report cancellation
+        # before a blocked worker finishes, without allowing another query to run.
+        self._claimed_query: PolicyQuery | None = None
         # Answers awaiting delivery; a queue so an undelivered one is never overwritten.
         self._ready_answers: deque[QueryAnswer] = deque()
         self._answer_observer: Callable[[QueryAnswer], None] | None = None
@@ -135,6 +140,8 @@ class InferenceEngine(abc.ABC):
         self._autosteer_goal: str | None = None
         self._autosteer_interval_s: float = 0.0
         self._autosteer_due_at: float = 0.0
+        self._autosteer_generation = 0
+        self._autosteer_waiting_for_motion = False
 
     # ------------------------------------------------------------------
     # Task (language instruction)
@@ -156,8 +163,20 @@ class InferenceEngine(abc.ABC):
                 return False
             previous, self._task = self._task, task
             self._task_changed = True
+            self._task_version += 1
         logger.info("Task changed: '%s' -> '%s'", previous, task)
         return True
+
+    @property
+    def task_version(self) -> int:
+        """Monotonic instruction identity, including changes back to the same text."""
+        with self._task_lock:
+            return self._task_version
+
+    @property
+    def query_intent_generation(self) -> int:
+        with self._query_lock:
+            return self._autosteer_generation
 
     def _take_task(self) -> tuple[str, bool]:
         """Read the task and consume the "changed" edge.  Call from the inference thread."""
@@ -191,6 +210,8 @@ class InferenceEngine(abc.ABC):
         with self._task_lock:
             self._task_changed = False
             self._dispatched_task = self._task
+        with self._query_lock:
+            self._autosteer_waiting_for_motion = False
 
     # ------------------------------------------------------------------
     # Text queries (VQA)
@@ -228,7 +249,25 @@ class InferenceEngine(abc.ABC):
         Callable from any thread.  Returns ``False`` when one is already pending: the
         channel holds a single query at a time.
         """
-        return self._queue_query(PolicyQuery(kind=QueryKind.VQA, text=question))
+        if self.text_input_error(question) is not None:
+            return False
+        return self._queue_query(
+            PolicyQuery(kind=QueryKind.VQA, text=question, task_version=self.task_version)
+        )
+
+    def text_input_error(self, text: str, *, instruction: bool = False) -> str | None:
+        """Return an operator-facing rejection reason, or ``None`` for valid input.
+
+        Local task instructions retain their existing unrestricted length; text queries
+        require 1–4096 characters. Remote backends use the deployment's advertised limit
+        for both instructions and queries. Validation must not change task or query state.
+        """
+        if not instruction:
+            if not text.strip():
+                return "Enter a non-empty question or goal."
+            if len(text) > 4096:
+                return f"Text contains {len(text)} characters; the limit is 4096. Shorten it and try again."
+        return None
 
     def start_autosteer(self, goal: str, interval_s: float) -> None:
         """Drive the task from ``goal``, re-planning every ``interval_s`` seconds.
@@ -238,8 +277,14 @@ class InferenceEngine(abc.ABC):
         progress lives in the policy.  The interval is measured from when a subtask is
         *applied*, so a slow generation cannot starve the robot of motion.
         """
+        if error := self.text_input_error(goal):
+            raise ValueError(error)
         with self._query_lock:
+            self._autosteer_generation += 1
+            if self._pending_query is not None and self._pending_query.kind is QueryKind.NEXT_SUBTASK:
+                self._pending_query = None
             self._autosteer_goal = goal
+            self._autosteer_waiting_for_motion = False
             self._autosteer_interval_s = max(0.0, interval_s)
             # Due immediately: first subtask requested on the next control tick.
             self._autosteer_due_at = time.perf_counter()
@@ -248,20 +293,59 @@ class InferenceEngine(abc.ABC):
     def stop_autosteer(self) -> str | None:
         """Stop the sequencer, returning the goal it was driving (or ``None``)."""
         with self._query_lock:
+            self._autosteer_generation += 1
             goal, self._autosteer_goal = self._autosteer_goal, None
+            self._autosteer_waiting_for_motion = False
+            if self._pending_query is not None and self._pending_query.kind is QueryKind.NEXT_SUBTASK:
+                self._pending_query = None
         if goal is not None:
             logger.info("Autosteer stopped (goal was '%s')", goal)
         return goal
 
     def drop_pending_query(self) -> PolicyQuery | None:
-        """Discard an unserved query, returning it (or ``None``).
+        """Discard an unserved query and queue one VQA cancellation notice.
 
-        Called when a run segment ends, so the query is not served against a completely
-        different scene the next time the robot starts.
+        Returns the dropped query (or ``None``). Called when a run context ends, so
+        the query is not served against a different scene the next time the robot
+        starts. The control-thread pump delivers the notice; autosteer stays silent.
         """
         with self._query_lock:
             dropped, self._pending_query = self._pending_query, None
+            if dropped is not None and dropped.kind is QueryKind.VQA:
+                self._ready_answers.append(
+                    QueryAnswer(
+                        question=dropped.text,
+                        error="cancelled: the run changed before it could be answered",
+                        kind=dropped.kind,
+                    )
+                )
         return dropped
+
+    def report_cancelled_query(self) -> None:
+        """Queue one cancellation notice for a claimed VQA whose run context ended.
+
+        Callable from the controller or policy worker after invalidation. The worker
+        retains the busy slot until it finishes; observers still run only from the
+        control-thread pump. Obsolete autosteer turns produce no announcement.
+        """
+        with self._query_lock:
+            query = self._claimed_query
+            if query is not None and query.kind is QueryKind.VQA:
+                self._claimed_query = None
+                self._ready_answers.append(
+                    QueryAnswer(
+                        question=query.text,
+                        error="cancelled: the instruction or run changed while it was being answered",
+                        kind=query.kind,
+                    )
+                )
+
+    def _discard_invalid_query(self) -> None:
+        """Finish an obsolete worker turn, reporting only an unanswered operator VQA."""
+        self.report_cancelled_query()
+        with self._query_lock:
+            self._query_in_flight = False
+            self._claimed_query = None
 
     @property
     @abc.abstractmethod
@@ -293,8 +377,12 @@ class InferenceEngine(abc.ABC):
 
     def _queue_query(self, query: PolicyQuery) -> bool:
         with self._query_lock:
-            if self._pending_query is not None:
+            if self._pending_query is not None or self._query_in_flight or len(self._ready_answers) >= 16:
                 return False
+            if query.kind is QueryKind.VQA:
+                query = replace(
+                    query, task_version=self.task_version, intent_generation=self._autosteer_generation
+                )
             self._pending_query = query
         return True
 
@@ -303,7 +391,7 @@ class InferenceEngine(abc.ABC):
         if obs_processed is None:
             return
         with self._query_lock:
-            if self._autosteer_goal is None:
+            if self._autosteer_goal is None or self._autosteer_waiting_for_motion:
                 return
             if time.perf_counter() < self._autosteer_due_at:
                 return
@@ -311,7 +399,12 @@ class InferenceEngine(abc.ABC):
                 # A /vqa (or our own previous query) is still queued or being generated.
                 # The deadline stays in the past, so the next tick retries this turn.
                 return
-            self._pending_query = PolicyQuery(kind=QueryKind.NEXT_SUBTASK, text=self._autosteer_goal)
+            self._pending_query = PolicyQuery(
+                kind=QueryKind.NEXT_SUBTASK,
+                text=self._autosteer_goal,
+                task_version=self.task_version,
+                intent_generation=self._autosteer_generation,
+            )
 
     def _take_query(self) -> PolicyQuery | None:
         """Claim the pending query.  Call from the policy-owning thread."""
@@ -319,6 +412,7 @@ class InferenceEngine(abc.ABC):
             query, self._pending_query = self._pending_query, None
             if query is not None:
                 self._query_in_flight = True
+                self._claimed_query = query
             return query
 
     def _service_query(self, obs_processed: dict | None) -> bool:
@@ -334,6 +428,9 @@ class InferenceEngine(abc.ABC):
             return False
         try:
             text = self._generate_text(obs_processed, query)
+            if not self._query_context_valid(query):
+                self._discard_invalid_query()
+                return True
             if not isinstance(text, str) or not text.strip():
                 # Fail here so garbage becomes an error answer instead of steering the
                 # robot and labeling recorded frames.
@@ -341,6 +438,9 @@ class InferenceEngine(abc.ABC):
                     f"generate_text() must return a non-empty str, got {text!r} ({type(text).__name__})"
                 )
         except Exception as e:
+            if not self._query_context_valid(query):
+                self._discard_invalid_query()
+                return True
             logger.exception("Policy text query failed (%s) for %r", query.kind.value, query.text)
             if query.kind is QueryKind.NEXT_SUBTASK and not self._fail_subtask(query):
                 return True  # the sequencer this turn belonged to is gone; discard
@@ -355,6 +455,15 @@ class InferenceEngine(abc.ABC):
         self._publish_answer(QueryAnswer(question=query.text, answer=text, kind=query.kind))
         return True
 
+    def _query_context_valid(self, query: PolicyQuery) -> bool:
+        """Whether a completed query may be applied or published by this backend.
+
+        Async engines additionally validate execution generation, instruction, and
+        operator intent. Obsolete success and error payloads are discarded; VQA
+        cancellation is reported once without exposing the old answer.
+        """
+        return True
+
     def _fail_subtask(self, query: PolicyQuery) -> bool:
         """Stop the sequencer after a failed turn — unless it stopped or retargeted meanwhile.
 
@@ -363,11 +472,16 @@ class InferenceEngine(abc.ABC):
         ``True`` when the failure answer should be published.
         """
         with self._query_lock:
-            live = self._autosteer_goal == query.text
+            live = (
+                self._autosteer_goal == query.text
+                and self._autosteer_generation == query.intent_generation
+                and self.task_version == query.task_version
+            )
             if live:
                 self._autosteer_goal = None
             else:
                 self._query_in_flight = False  # no answer will be published
+                self._claimed_query = None
         if live:
             logger.info("Autosteer stopped (goal was '%s') — planning failed", query.text)
         else:
@@ -386,13 +500,21 @@ class InferenceEngine(abc.ABC):
         stale plan could overwrite a newer instruction.  Returns ``True`` when applied.
         """
         with self._query_lock:
-            live = self._autosteer_goal == query.text
+            live = (
+                self._autosteer_goal == query.text
+                and self._autosteer_generation == query.intent_generation
+                and self.task_version == query.task_version
+            )
             if live:
                 self.set_task(subtask)
                 # Armed only now, so the interval measures motion between subtasks.
                 self._autosteer_due_at = time.perf_counter() + self._autosteer_interval_s
+                # Even interval=0 must let a fresh action reach the robot before
+                # another planned language hold can consume the run.
+                self._autosteer_waiting_for_motion = True
             else:
                 self._query_in_flight = False  # no answer will be published
+                self._claimed_query = None
         if not live:
             logger.info(
                 "Discarding autosteer subtask %r — the sequencer stopped while it was being generated",
@@ -439,8 +561,11 @@ class InferenceEngine(abc.ABC):
 
     def _publish_answer(self, answer: QueryAnswer) -> None:
         with self._query_lock:
+            cancelled = self._query_in_flight and self._claimed_query is None
             self._query_in_flight = False
-            self._ready_answers.append(answer)
+            self._claimed_query = None
+            if not cancelled:
+                self._ready_answers.append(answer)
 
     def _deliver_answer(self) -> None:
         with self._query_lock:
@@ -479,6 +604,21 @@ class InferenceEngine(abc.ABC):
 
     def resume(self) -> None:  # noqa: B027
         """Resume background inference.  Default: no-op."""
+
+    def dispatch_allowed(self) -> bool:
+        """Control-thread gate, checked on every motor tick, including interpolation."""
+        return True
+
+    def acknowledge_hold(self) -> None:  # noqa: B027
+        """Confirm that the control thread invalidated interpolation and applied a local hold."""
+
+    def record_dispatch(self, canonical: dict, command: dict, measured: dict) -> None:
+        """Observe an actual robot command and allow the next due autosteer turn."""
+        with self._query_lock:
+            self._autosteer_waiting_for_motion = False
+
+    def begin_control_tick(self) -> None:  # noqa: B027
+        """Advance optional provenance for a motor tick, including held ticks."""
 
     @property
     def ready(self) -> bool:

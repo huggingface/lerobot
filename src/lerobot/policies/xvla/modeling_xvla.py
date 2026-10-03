@@ -29,7 +29,8 @@ from typing import TYPE_CHECKING
 import torch
 from torch import Tensor, nn
 
-from lerobot.configs import PreTrainedConfig
+from lerobot.configs import FeatureType, NormalizationMode, PreTrainedConfig
+from lerobot.inference.contracts import FeatureSpec
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 
@@ -284,6 +285,45 @@ class XVLAPolicy(PreTrainedPolicy):
         self._queues: dict[str, deque[Tensor]] = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
+
+    def validate_chunk_input_features(self, features: tuple[FeatureSpec, ...]) -> None:
+        """Declare XVLA's existing image masks/resizing and state zero-padding.
+
+        Deployments name the physical cameras and state coordinates explicitly.
+        A different state width is accepted only with identity normalization; truncating
+        supplied coordinates or guessing normalization statistics is unsupported.
+        """
+        expected = self.config.input_features or {}
+        supplied = {feature.name: feature for feature in features}
+        required = {name for name, feature in expected.items() if feature.type != FeatureType.VISUAL}
+        if not required <= supplied.keys() or not supplied.keys() <= expected.keys():
+            raise ValueError("XVLA requires all nonvisual inputs and only known camera features.")
+        if not any(expected[name].type == FeatureType.VISUAL for name in supplied):
+            raise ValueError("XVLA requires at least one camera.")
+        for name, feature in supplied.items():
+            policy_feature = expected[name]
+            if policy_feature.type == FeatureType.VISUAL:
+                shape = policy_feature.shape
+                if len(shape) != 3 or shape[0] != 3 or feature.kind != "rgb":
+                    raise ValueError(f"XVLA requires RGB camera inputs: {name}.")
+                if self.config.resize_imgs_with_padding is None and feature.shape != (
+                    shape[1],
+                    shape[2],
+                    shape[0],
+                ):
+                    raise ValueError(f"RGB feature shape differs without policy resizing: {name}.")
+            elif name == OBS_STATE and self.config.use_proprio:
+                if feature.kind != "tensor" or len(feature.shape) != 1:
+                    raise ValueError("XVLA requires a one-dimensional state tensor.")
+                if feature.shape[0] > self.config.max_state_dim:
+                    raise ValueError("XVLA chunk serving cannot truncate supplied state coordinates.")
+                if (
+                    feature.shape != tuple(policy_feature.shape)
+                    and self.config.normalization_mapping.get("STATE") != NormalizationMode.IDENTITY
+                ):
+                    raise ValueError("XVLA state shape flexibility requires identity normalization.")
+            elif feature.kind != "tensor" or feature.shape != tuple(policy_feature.shape):
+                raise ValueError(f"Tensor feature shape differs from checkpoint: {name}.")
 
     def get_optim_params(self) -> dict:
         """Return trainable named parameters for optimization.

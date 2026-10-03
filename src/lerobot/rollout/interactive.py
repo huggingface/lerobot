@@ -263,6 +263,9 @@ class InteractiveSession:
         if not task:
             self._print(f"Current task: {_format_task(self.controller.task)}")
             return
+        if error := self.controller.text_input_error(task, instruction=True):
+            self._print(f"Task rejected — {error}")
+            return
         previous = self.controller.task
         steering = self.controller.autosteer_goal
         if steering is not None:
@@ -294,6 +297,8 @@ class InteractiveSession:
         elif result is AskResult.BUSY:
             # Could be a previous /vqa or an autosteer query — the channel does not say which.
             self._print("The policy is busy with another query — try again in a moment.")
+        elif result is AskResult.INVALID:
+            self._print(f"Question rejected — {self.controller.text_input_error(question)}")
         else:  # a future AskResult variant must not be mislabeled as busy
             logger.error("Unhandled AskResult %r for /vqa", result)
             self._print(f"Could not queue the question ({result.value}).")
@@ -319,6 +324,8 @@ class InteractiveSession:
             self._print("This policy has no text head — it cannot plan subtasks.")
         elif result is AskResult.NOT_RUNNING:
             self._print("Not running — /start first so the policy has a live view to plan from.")
+        elif result is AskResult.INVALID:
+            self._print(f"Autosteer goal rejected — {self.controller.text_input_error(goal)}")
         elif result is AskResult.QUEUED:
             self._print(
                 f"Autosteer on — goal {goal!r}. The policy picks its own subtasks; "

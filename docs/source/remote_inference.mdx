@@ -1,0 +1,495 @@
+# Asynchronous remote inference
+
+Remote inference keeps observation capture, robot commands, operator interaction and recording on the robot computer. A separate process loads one checkpoint and its policy processors. `lerobot-rollout --inference.type=remote` obtains the serving contract without loading policy weights on the client.
+
+The action path has physical localhost/LAN evidence with specific ACT, SmolVLA, XVLA and LaWAM checkpoints, including aligned playback, optional blending and focused shutdown/reconnection checks. This is not blanket support for every checkpoint in those families. Real-language task behavior, routed robot operation, JPEG and wider-area deployments still need representative validation.
+
+## Supported execution
+
+The server uses each checkpoint's saved preprocessor, direct chunk prediction and postprocessor to return canonical robot actions. It does not call `select_action()` for every robot tick. A compatible deployment therefore needs:
+
+- Current-observation inputs, with an explicit schema matching the policy's input contract.
+- A declared prediction/execution horizon and canonical output width, order and units.
+- Processor and policy state that can be reset for the exclusive session.
+- A robot with a defined local position-hold contract and position-only action fields.
+
+ACT without temporal ensembling uses the default current-observation contract. SmolVLA, XVLA and LaWAM include targeted declarations for their existing camera preparation or execution horizon. SmolVLA has also been physically exercised with guided RTC; XVLA and LaWAM use chunk mode. Other families need checkpoint-specific validation. Temporal-history policies, state normally updated only inside `select_action()`, and unsupported model/canonical output layouts need an adapter; they are not made compatible by changing a deployment name or relaxing the schema.
+
+VLA-JEPA declares its current-frame prediction path separately from future-frame training targets and permits its existing configured image resize. GR00T declares the cropped prediction horizon used by its native wrapper. Both have focused conformance tests; real checkpoint warmup and robot task validation remain necessary. A policy contract does not add hold support to a new robot embodiment.
+
+Keep a successful synchronous command as the reference when validating a new checkpoint. Check saved processors, actual returned action horizon/width, repeated prediction/reset and useful task behavior separately. A successful download or warmup does not establish physical task quality, RTC support or useful language output.
+
+## Install and configure a deployment
+
+Both computers need the `remote` extra. The robot computer also needs its ordinary rollout and hardware dependencies; the server needs the selected policy's dependencies.
+
+```bash
+uv sync --locked --extra remote --extra core_scripts --extra feetech
+# On the server, add the policy's extra when required, for example --extra pi.
+```
+
+The extra pins `eclipse-zenoh==1.9.0`; the lockfile currently selects MessagePack 1.2.2. Router validation uses `zenohd` 1.9.0. A successful transport test does not establish an adequate robot latency budget.
+
+Copy [`examples/remote_inference/server.yaml`](https://github.com/huggingface/lerobot/blob/main/examples/remote_inference/server.yaml) to a working configuration. It describes a candidate six-actuator SO-101 deployment with one front camera. **Adapt it to the actual checkpoint and robot before running.** The provided values are not a hardware-tested profile.
+
+The example listens on localhost. To use a trusted LAN, explicitly override `--zenoh.listen_endpoints='[tcp/0.0.0.0:7447]'` and connect the robot to the server's address. Direct TCP has no authentication: every reachable peer can access deployment traffic. Use the secured router configuration below when that trust assumption does not hold.
+
+<details>
+<summary>Complete generic server configuration</summary>
+
+```yaml
+# Generic schema example, not a tested checkpoint/robot profile.
+# Copy and adapt the checkpoint, calibration, camera names/views and units together.
+# Nested CLI flags override this file; see docs/source/remote_inference.mdx.
+deployment: manipulation
+model:
+  repo_or_path: /absolute/path/to/checkpoint
+  revision: null # For Hub checkpoints, pin a commit before validating a deployment.
+  device: cuda
+execution:
+  supported_modes: [chunk]
+  action_fps: 30.0
+  action_deadline_s: 5.0
+  idle_timeout_s: 10.0 # Absent-client ownership grace, not a robot motion timeout.
+  # Explicit continuous canonical coordinates permitted for optional client blending.
+  # Leave empty for append/alignment-only. Do not include gripper/discrete controls by default.
+  blendable_components: []
+  warmup_calls: 2
+language:
+  enabled: false
+  deadline_s: 60.0
+zenoh:
+  mode: peer
+  listen_endpoints: [tcp/127.0.0.1:7447]
+semantics: so101-degrees-gripper-percent-v1
+robot_type: so101_follower
+features:
+  - name: observation.state
+    shape: [6]
+    dtype: float32
+    names:
+      [
+        shoulder_pan.pos,
+        shoulder_lift.pos,
+        elbow_flex.pos,
+        wrist_flex.pos,
+        wrist_roll.pos,
+        gripper.pos,
+      ]
+    semantics: so101-degrees-gripper-percent-v1
+  - name: observation.images.front
+    shape: [480, 640, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: rgb-front-table-v1
+action_feature:
+  name: action
+  shape: [6]
+  dtype: float32
+  names:
+    [
+      shoulder_pan.pos,
+      shoulder_lift.pos,
+      elbow_flex.pos,
+      wrist_flex.pos,
+      wrist_roll.pos,
+      gripper.pos,
+    ]
+  semantics: so101-degrees-gripper-percent-v1
+```
+
+</details>
+
+`features` and `action_feature` are required. Each declares a name, shape, dtype, modality (`tensor` or `rgb`) and explicit semantic convention. State/action vectors also need their ordered component names. RGB uses height × width × 3, `uint8`, RGB channel order. The example's SO-101 convention means body joints in degrees and the gripper in the calibrated 0–100 range. Camera placement and calibration must also match the checkpoint. Matching dimensions alone does not verify these conventions.
+
+Use checkpoint-facing observation names in the deployment schema. If the physical camera is named `scene` but that same view is declared as `observation.images.front`, configure the client with `--rename_map='{"observation.images.scene":"observation.images.front"}'`. Renaming changes a key, not the camera's view, resolution or image preparation. Do not rename an unrelated view to make admission pass. Policy-specific resizing, padding and missing-camera masks remain the policy's responsibility and must be explicitly supported by its input contract.
+
+A local artifact is identified by its relevant file contents and effective inference configuration. For Hub models, configure `model.revision` with a pinned commit; the server resolves the artifact before loading. The client can require the resulting identity with `--inference.expected_artifact=...`. A deployment name is a routing name, not a checkpoint identity. Deployment identifiers must be single alphanumeric/underscore/dot/hyphen key segments; Hub IDs belong in `model.repo_or_path`.
+
+Known checkpoint component ordering is checked even when relative actions are disabled. Additional robot cameras may remain available for local recording; only observations required by the negotiated contract are sent. Artifact pins exclude host paths, device placement, endpoints, deployment names and operational timeouts. Updating from an older implementation of the identity calculation requires recording the new pin once.
+
+When recording, the initial policy instruction comes from `--dataset.single_task`, as with local rollout. `--task` is used when no dataset is configured; if only one of these is supplied, rollout propagates it to the other. Prefer supplying one instruction to avoid conflicting configuration.
+
+Start the server after adapting the complete configuration:
+
+```bash
+uv run --no-sync lerobot-policy-server --config_path=server.yaml
+```
+
+The server validates the contract, warms the enabled action/text paths, resets warmup state, and then advertises readiness. It admits one active robot session. A second session receives `BUSY`; restarting the client does not replace the first session. Clients cannot ask the server to download arbitrary models. If a policy reset fails, the deployment becomes unavailable and requires a server restart; it cannot admit another client against uncertain model state.
+
+Server YAML fields accept nested CLI overrides; CLI values take precedence. For example:
+
+```bash
+uv run --no-sync lerobot-policy-server --config_path=server.yaml \
+  --model.device=cuda \
+  --execution.idle_timeout_s=10 \
+  --zenoh.listen_endpoints='[tcp/127.0.0.1:7447]'
+```
+
+Quote lists and mappings as one shell argument. These are server configuration fields, not arbitrary `--policy.*` checkpoint overrides.
+
+For a chunk-only deployment, `--execution.n_action_steps=30` can shorten the saved execution slice when the policy supports that setting. The value must fit the policy's prediction horizon and agree with its actual declared execution length. This does not edit checkpoint files and is rejected for deployments advertising RTC, whose continuation settings are separate.
+
+The former `lerobot[async]` extra and `lerobot.async_inference` commands have been replaced by `lerobot[remote]`, `lerobot-policy-server` and `lerobot-rollout --inference.type=remote`. Move checkpoint/device configuration to the server. Tune `refill_seconds` in seconds of remaining playback, and choose alignment/blending explicitly; legacy thresholds and aggregation weights are not behaviorally interchangeable with the new scheduler.
+
+Clean close releases ownership after the worker resets the policy. After an abrupt disconnect, the default allows **10 seconds from observed client absence**, then queues cleanup behind any running model call. A live paused client retains its session. A client that never announces its initial presence also receives bounded cleanup; startup logs distinguish this from loss of an established client. Rejected replacement attempts do not extend the grace. Expected occupied-deployment denials print a concise explanation and approximate remaining grace when known. Cleanup waiting for a model call has no guaranteed completion time. A hung call retains ownership even after the grace ends; cleanup does not cancel GPU execution or resume old motion.
+
+This grace controls server ownership, not how long the robot can move without new actions. The client's action deadlines, freshness limits and buffer exhaustion remain independent. A new client process needs a new session; a client that has observed server-presence loss cannot automatically recover it.
+
+Both processes log their LeRobot version and available source revision captured at startup; the server includes that snapshot in discovery. A dirty checkout is reported as such. Wheels/source archives without Git report an unknown revision. Build labels help identify an outdated running server; protocol, required capabilities and exact execution settings determine compatibility. Artifact identity covers deployed model/processor content and settings, not implementation code.
+
+## Run the robot client
+
+For two processes on the same machine, connect to `tcp/127.0.0.1:7447`. For direct LAN use, substitute the policy server's reachable address. Use the same schema and semantic profile on both sides. The model device is configured on the server.
+
+This direct TCP example assumes a trusted laboratory network. Configure the hardware port, camera, checkpoint profile and budgets for your setup:
+
+```bash
+uv run --no-sync lerobot-rollout \
+    --inference.type=remote \
+    --inference.endpoint=tcp/127.0.0.1:7447 \
+    --inference.deployment=manipulation \
+    --inference.mode=chunk \
+    --inference.semantics=so101-degrees-gripper-percent-v1 \
+    --inference.hold_mode=position \
+    --inference.max_observation_age_s=5.0 \
+    --inference.refill_seconds=0.5 \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.use_degrees=true \
+    --robot.cameras='{front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}' \
+    --fps=30 \
+    --task="pick up the cube" \
+    --interactive=true
+```
+
+Do not pass `--policy.path`, local device overrides or compilation options with the remote backend. Negotiation checks ordered features, semantic profile, mode, artifact identity and policy action interval before policy motion. `--fps` is the policy action frequency; a higher interpolated motor frequency is a separate setting. Unsupported mismatches are errors. Use `--rename_map` only for the explicit observation mapping; the mapping is applied once.
+
+Remote rollout currently requires a robot implementation declaring a position-hold contract and position-only action fields. Other actuator modes, including mixed position/velocity robots, are rejected. This software hold has automated boundary tests; its actual hardware behavior still needs validation. It commands the last measured pose rather than retaining the last commanded target. On proportional position servos, reducing that position error can reduce holding torque: an arm may sag under gravity or a gripper may lose grip. The hold cannot certify physical immobility or retained grip.
+
+| Required client flag             | Purpose                                                                                          |
+| -------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `--inference.deployment`         | Match the server's deployment name.                                                              |
+| `--inference.semantics`          | Match the explicitly validated robot/action semantic profile.                                    |
+| `--inference.hold_mode=position` | Explicit operator consent to the supported measured-position hold; it is not enabled by default. |
+
+## Chunks, timing and faults
+
+The server returns canonical, postprocessed actions; robot-side action processors and interpolation remain local. Ordinary chunks honor the policy's execution slice. Default append playback permits at most one pending request or one accepted successor beyond the executing chunk. Aligned playback replaces the uncommitted future and keeps one request in flight.
+
+Choose `chunk`, `rtc_guided` or `rtc_trained` explicitly. A requested unsupported mode fails instead of silently changing behavior. Effective RTC settings belong to the deployment. Guided/trained modes additionally validate actual consumed overlap; trained RTC enforces checkpoint delay limits. Policies needing temporal observation history, temporal ensembling or unsupported `select_action()` preparation require a conforming adapter or are rejected.
+
+Plain prefetch uses an observation captured before the previous chunk finishes. This creates a **freshness/continuity tradeoff**: early requests provide latency headroom, but the resulting prediction can wait behind older actions; later requests reduce that waiting while leaving less protection against latency spikes. Measure source age and full encode/network/inference/decode turnaround on the intended machine, then choose:
+
+- `refill_seconds`: remaining playback at which to request another chunk, for append and aligned modes.
+- `max_observation_age_s`: maximum age of the source observation at dispatch.
+- `handshake_timeout_s`, `startup_timeout_s`, `action_timeout_s`, `language_timeout_s`: bounded operation deadlines.
+
+The current numerical defaults are starting values for validation, not measured performance guarantees. Warmup time, action turnaround and text-generation time are separate quantities. Client monotonic time controls deadlines; server reports contain durations rather than timestamps to compare across hosts.
+
+The effective refill is `max(refill_seconds, recent_max_turnaround + 1 / fps)`. Until a steady-state sample exists, the first accepted turnaround provides the initial floor; it is then replaced by the maximum of up to 100 steady-state samples. In steady state, both append and aligned plain chunks request when remaining playback is at or below this threshold, provided their other request gates permit it. Append also requires a free successor slot; aligned replacement does not. Two configured thresholds can produce the same trigger when the measured floor dominates. With `N` executed actions at policy rate `f`, playback is `N / f` seconds; interpolation does not extend it. A longer request timeout cannot supply actions to an empty buffer.
+
+For aligned chunks and RTC, inspect **usable playback after trimming consumed actions**, not only the nominal prediction horizon. That remaining playback must cover another full request and its latency variation. If inference consumes a second of a 1.67-second prediction, only about 0.67 seconds remain; increasing refill cannot make another one-second request fit. Reduce turnaround or validate a longer supported horizon or a different action rate. Ordinary buffer exhaustion is terminal; only explicit planned holds have bounded waiting paths.
+
+The default source-age budget is **5 seconds**, measured from the original capture through every motor dispatch. It must accommodate playback as well as inference. For append, allow approximately `execution_horizon + effective_refill`, plus capture, startup-inference and scheduling margin. A 100-step chunk at 30 Hz already spans 3.33 seconds before that margin. Aligned replacement usually reduces age by replacing the future earlier, but initial playback and repeated blending can still retain older sources. Check first-dispatch/source-age diagnostics and the oldest blended contributor. The client warns when the negotiated horizon and refill leave insufficient age margin; it does not silently increase an operator's budget. Shorten the execution slice or choose an explicit appropriate age bound instead of measuring age from response arrival.
+
+### Compare append, alignment and blending
+
+All three choices use `--inference.mode=chunk`, including policies without RTC. They work with separate processes on one host or over LAN:
+
+| Client options                                                   | Behavior                                                         |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `--inference.chunk_merge=append` (default)                       | Append the full execution slice after the old future             |
+| `--inference.chunk_merge=aligned`                                | Trim already committed steps and replace the uncommitted future  |
+| Aligned plus `--inference.blend_steps=N` and explicit components | Blend matching future steps over at most `N` overlapping targets |
+
+An observation is anchored to the next uncommitted policy endpoint on the control thread. If three endpoints are committed between sampling and result acceptance, aligned execution removes the incoming first three actions, even if some progress happened before submission. A target already popped into interpolation is committed and cannot be revised. Alignment uses this cursor, not server/client clock synchronization or request sequence numbers. Request sequence numbers still protect ordering and duplicates; client monotonic age checks remain mandatory.
+
+Aligned scheduling waits until remaining playback reaches the effective refill threshold, then requests from the latest eligible fresh capture after policy-step advancement. It does not reserve an observation while waiting for playback to drain. This applies with or without blending. A new task version may request promptly from a fresh capture at the same step, including after an obsolete startup result, without waiting for playback to drain. Empty startup, reset/resume and planned-language resumption can also request promptly; all existing hold, fault and freshness gates remain authoritative. Storage stays bounded by the execution slice. A result with no usable suffix is rejected; normal buffer/deadline/age faults still apply. This mode cannot compensate for inference consistently consuming the entire usable horizon.
+
+For aligned mode, a larger refill generally requests earlier, while more of the old plan remains; a smaller refill allows more of it to execute before replacement, subject to the measured latency floor. This extends the freshness/continuity tradeoff to trajectory follow-through: very frequent replacements can interrupt useful progress even when their observations are fresh. The threshold controls buffer coverage, not a fixed request period or a guaranteed minimum number of executed actions. Near the usable post-trim horizon it can still permit frequent requests. The client warns when the effective threshold covers the entire negotiated execution horizon; it does not clamp the threshold or increase the execution slice. Inspect configured/effective refill and usable playback together before adjusting it.
+
+Blending is disabled by default (`blend_steps=0`). First declare the continuous canonical coordinates that the server permits. For the generic six-actuator schema above, an example excluding the gripper is:
+
+```bash
+# Add to the policy-server command after --config_path=...:
+--execution.blendable_components='[shoulder_pan.pos, shoulder_lift.pos, elbow_flex.pos, wrist_flex.pos, wrist_roll.pos]'
+```
+
+Then add these options to the matching remote rollout command:
+
+```bash
+--inference.mode=chunk \
+--inference.chunk_merge=aligned \
+--inference.blend_steps=5 \
+--inference.blend_weight=0.5 \
+--inference.blend_components='[shoulder_pan.pos, shoulder_lift.pos, elbow_flex.pos, wrist_flex.pos, wrist_roll.pos]'
+```
+
+Five steps and weight 0.5 are comparison settings, not a hardware-tuned recommendation. `blend_steps` cannot exceed the configured execution slice. Weight is the incoming fraction: `target = (1 - weight) * old + weight * new`, with `0 < weight <= 1`. Selected components must be an explicit subset of the deployment's whitelist; no components are selected automatically. Non-selected components, such as this example's gripper, use the incoming target. Outside the overlap window, or with no overlap, incoming targets replace the future. Weight 1 is exact replacement.
+
+Blending happens after canonical postprocessing, including relative-to-absolute action conversion. It never combines different task versions, generations or sessions, or incorporates expired targets. Each blended target retains the oldest contributor's capture time, original identity, a contributor count and a bounded digest of the history. An uncommitted future target can be blended more than once: each result replaces the future, and the next result can overlap that already-blended future. At weight 0.5, two such updates produce `0.25 * original + 0.25 * first_prediction + 0.5 * second_prediction` on an eligible coordinate. A target already committed to interpolation cannot be reblended. One request remains in flight and ordinary same-task requests require cursor advancement; a fast server does not create an unbounded stack of chunks. There is no separate blend-count limit. Repeated blending does not refresh old data, so its oldest-contributor age can still cause a fault even when the latest inference was fast.
+
+Alignment/blending require advertised execution capabilities and an exact admission acknowledgment. An older server that lacks them fails before motion, with no fallback to append. Compare startup build metadata when diagnosing processes running different code. Alignment trims outdated assigned steps; blending averages eligible predictions; interpolation connects committed endpoints over motor ticks; RTC conditions inference on continuation. They solve different parts of continuity, and none guarantees smooth motion or task success.
+
+### A practical tuning starting point
+
+Aim first for **useful task progress with long enough trajectory execution and no inference pauses**. Then explore whether faster replanning improves the task. A faster server can buy more latency headroom without spending every available cycle on new predictions.
+
+1. **Keep a working reference.** Use the same checkpoint, task, camera views, robot settings and policy FPS as a successful rollout. Keep interpolation fixed initially. Assess task completion, grasp/release and visible motion separately.
+2. **Establish aligned playback before tuning blending.** Start with `chunk_merge=aligned` and `blend_steps=0`. Check the negotiated execution horizon and full client turnaround, including its slower requests. Choose refill coverage that leaves latency headroom while allowing a substantial part of each trajectory to execute. There is no universal refill value: a consistently slow executor may leave no usable budget within a short horizon.
+3. **Add a short transition blend at the same timing.** Select eligible continuous arm components explicitly and leave contact-sensitive components such as the gripper out unless their semantics have been validated. Compare task success as well as smoothness; averaging two different approaches can produce a poor grasp even when motion looks smooth.
+4. **Replan more often only for a task benefit.** Increase refill to request while more old playback remains. This creates more opportunities to react to changes, but can also interrupt useful trajectories. Predictions that agree can remain smooth; frequent replacement is not inherently better or worse. If task progress degrades, return to the working cadence before changing several blend settings.
+5. **Keep the simplest setting that works.** Change one parameter at a time and retain the logs. Buffer exhaustion calls for inspecting turnaround and coverage, not blindly reducing refill. Longer deadlines do not supply missing actions, and strong blending does not repair an unsuitable plan.
+
+The directions of the settings matter:
+
+| Change                              | Effect in aligned mode                                                     | Tradeoff to observe                                                                |
+| ----------------------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Increase `refill_seconds`           | Generally request earlier and more often                                   | More latency coverage and correction opportunities, less trajectory follow-through |
+| Decrease `refill_seconds`           | Generally request later and less often, until the measured floor dominates | More follow-through, less protection against turnaround spikes                     |
+| Increase `blend_steps`              | Mix more matching old/new future steps, capped by actual overlap           | Longer transition, potentially more influence from an older plan                   |
+| Decrease `blend_weight`             | Retain more of the old target; the weight is the incoming fraction         | Gentler change when plans differ, potentially slower correction                    |
+| Increase `interpolation_multiplier` | Emit more intermediate motor commands between policy endpoints             | Finer command steps, with no extra policy decisions or playback coverage           |
+
+These describe implementation behavior, not guarantees about physical smoothness or task success. The robot need not have reached a committed endpoint, and a learned policy need not predict mutually consistent trajectories on successive calls.
+
+#### Example: a 0.8-second execution horizon
+
+`refill_seconds` is **remaining playback**, not time between requests. Under approximately steady action consumption and turnaround, fresh captures near submission, and successful aligned replacements, request spacing is roughly `execution_horizon - effective_refill`:
+
+| Effective refill | Approximate request spacing |
+| ---------------- | --------------------------- |
+| 0.2 s            | 0.6 s                       |
+| 0.4 s            | 0.4 s                       |
+| 0.6 s            | 0.2 s                       |
+
+This estimate excludes startup, task/hold exceptions, control-tick quantization and saturation. Use logged spacing rather than treating it as a fixed timer; the measured floor can override the configured value. For synchronous execution, 0.8 seconds is nominal playback; blocking inference adds to its wall-clock cycle.
+
+Overlap available for blending is what remains **when the reply arrives**, not at submission. For example, 0.2 seconds of playback at submission and 0.1 seconds of full turnaround leave roughly 0.1 seconds (three actions at 30 Hz) to blend. These are illustrative full-turnaround numbers, not a budget based solely on server inference time. A ten-step blend window cannot create extra overlap. Even a short blend can materially affect the transition. Repeated blending can delay corrections and retain older contributors under the existing age bound.
+
+Append remains useful as a simple reference and for deployments where preserving the whole configured prediction slice works well. Alignment removes already-committed temporal indices but does not prove the robot reached the state assumed by the remaining prediction, so it is not universally equivalent or superior. The reported ACT/LaWAM results support aligned playback and optional blending for those tested setups, without changing the append default.
+
+### Diagnose and tune from logs
+
+At the default INFO level, startup/admission reports the deployment, software identity and negotiated execution settings. During action activity, a compact summary about every five seconds reports accepted/rejected results since the previous summary, mean/maximum turnaround over up to 100 recent results, estimated minimum submission headroom and current queued playback. Queued playback excludes any endpoint already committed to interpolation; headroom is a timing estimate, not measured physical progress. Failures explain their cause, expected local shutdown path and a relevant next check. Session, hold and shutdown transitions remain visible.
+
+For request-level diagnosis, add `--log_level=DEBUG` to the policy-server command and `--inference.log_level=DEBUG` to remote rollout. These expose correlation IDs, capability details, server operation timings and client event dictionaries through application logs. Remote inference does not create diagnostic files inside recorded datasets or add logs to dataset/model uploads.
+
+<details>
+<summary>Reading detailed timing and motion diagnostics</summary>
+
+Request events show configured/effective refill, remaining playback, source age and observation/submission cursors. `request_spacing_s` and `committed_actions_since_request` compare successive submissions within one generation; they are absent on its first request, and count committed endpoints rather than measured physical progress. `task_changed_since_request` identifies retargets that can bypass aligned playback gating.
+
+Result events include complete turnaround, playback-minus-turnaround margin (absent at startup), old playback remaining, estimated first-dispatch age, trimming, overlap and blended counts. First-dispatch events report measured source age and endpoint transition deltas in canonical units. A blended action's age is its oldest contributor's age. Estimates exclude unknown hardware progress and interpolation phase; endpoint deltas are not measured robot displacement. The motor thread queues these diagnostics for the worker through bounded in-memory queues.
+
+</details>
+
+| Symptom                                                                    | Inspect and act                                                                                                                                                                                                                                                                       |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bumps with accepted append results                                         | Compare first-dispatch source age with turnaround and old playback. Reduce early refill within measured headroom, or compare aligned replacement and then blending.                                                                                                                   |
+| Aligned motion is fresher or smoother but task performance worsens         | Compare request spacing, cursor advance, usable playback and configured/effective refill. Check whether replacements interrupt the trajectory too frequently. Compare alignment without blending first; do not tune blend weights until task progress recovers.                       |
+| Refill covers the execution horizon                                        | Check whether configured refill or the measured latency floor caused the warning. Frequent requests remain possible despite the playback gate. Reducing the configured value helps only if turnaround leaves enough usable horizon; a longer timeout does not create more actions.    |
+| `Active motion buffer exhausted`                                           | Check playback at submission, timing margin, turnaround tails and server completion. In aligned mode inspect trimmed/usable actions. Add headroom where possible or diagnose delayed/lost/stalled work. Lowering refill is not a general fix.                                         |
+| Request timeout / stale source                                             | Correlate request IDs and server durations; inspect capture age and queue delay. A larger timeout cannot repair starvation or make old data fresh.                                                                                                                                    |
+| Server presence lost, or startup deadline after a paused link interruption | Restart rollout to establish a new session. A locally observed server-liveliness loss is retained even if the link returns or the server logs restored client presence. Check the network and Zenoh transport lease; the server's absent-client grace does not restore client motion. |
+| Reconnect returns `BUSY`                                                   | Read owner, presence, remaining grace and pending cleanup/inference. Wait for worker cleanup; an unfinished call cannot be taken over by a new client.                                                                                                                                |
+| Unsupported execution contract                                             | Compare requested capabilities and startup software metadata. Update/restart the mismatched process before motion.                                                                                                                                                                    |
+
+In append mode, requesting with one second of old playback remaining and receiving the response in 100 ms leaves roughly 900 ms before the successor starts. A quick response does not make the observation fresh at dispatch. Interpolation makes finer motor steps but does not reconcile independent predicted trajectories. Compare alignment and then blending, or RTC when the checkpoint supports it.
+
+<details>
+<summary>Guided RTC configuration for a compatible checkpoint</summary>
+
+The checkpoint must declare guided RTC support; enabling this configuration does not add it. Keep the validated schema in `server.yaml`, then run:
+
+```bash
+uv run --no-sync lerobot-policy-server --config_path=server.yaml \
+  --execution.supported_modes='[rtc_guided]' \
+  --execution.rtc.enabled=true \
+  --execution.rtc.mode=guided \
+  --execution.rtc.execution_horizon=15
+```
+
+On the matching client use `--inference.mode=rtc_guided` and retain `--inference.chunk_merge=append`. Measure turnaround again because guidance adds work. At 30 Hz the 15-action guidance horizon covers 0.5 seconds; that is an example, not a tuned setting. RTC consumes the remaining trajectory as inference conditioning, while chunk blending averages already predicted canonical targets.
+
+</details>
+
+Raw RGB is the default lossless transport. `--inference.encoding=jpeg --inference.jpeg_quality=90` reduces bandwidth at the cost of image information. Validate policy behavior after enabling JPEG. Arbitrary tensors and depth data are never silently JPEG encoded. Typed MessagePack decoding bounds payloads, dimensions, dtype, image size and strings before tensor/image allocation. Non-finite actions and mismatched results are rejected.
+
+A late response can only be used while its request, session, server instance, generation and source age remain valid. Buffered actions may continue within the local limits; starvation, stale actions, malformed active replies or request expiry latch a fault. The dispatch gate checks every motor tick, including interpolation-only ticks. A returning network connection cannot resume policy motion: restart rollout to establish a new session.
+
+Server presence means the server instance's Zenoh liveliness token as observed by this client. Zenoh can report its removal after an explicit shutdown or when a broken link expires under its transport lease. The client retains any observed removal; a later token announcement does not recover the session. This also applies to a loss queued while paused or before `/start`: checking presence on subsequent work still observes that loss. Fault reporting can then occur through a control/request failure or a local action deadline; it need not occur at the instant the network link breaks.
+
+While awaiting a language result, the client also checks that retained presence state. Once it observes server loss, the query faults without waiting for the remaining language timeout. Transport lease expiry can still delay detection of a broken link. This check applies to language waits; the action path still drains valid buffered motion within its existing buffer, freshness and request limits. Neither path automatically recovers a lost session.
+
+The server observes client presence separately. Its `presence restored` message means its ownership cleanup was cancelled, not that the client recovered its session. Pausing retains ownership only while the server continues to see the client as present. Transport lease settings are Zenoh configuration, distinct from `execution.idle_timeout_s` and the rollout action/startup deadlines. To tune `transport/link/tx/lease`, use the JSON5 supplied through `--inference.zenoh_config_path` (and the matching server transport configuration); no dedicated rollout lease flag is provided. Check the settings for your installed Zenoh version and topology. Observation publications use DROP congestion control, so a short stall can lose observations even without a liveliness-loss event; action deadlines and buffer exhaustion remain the backstops.
+
+After a terminal inference fault, rollout invalidates policy actions/interpolation, commands a temporary local hold and stops inference. With usable local hardware, it then honors `--return_to_initial_position=true` (the default), performing the local return movement before disconnecting. This movement does not need the server. `--return_to_initial_position=false` skips the movement. Normal Ctrl+C and `/stop` honor the same setting. A failed robot observation, action write or hold is latched for the session; shutdown skips further hold/homing attempts through that failed interface. An interrupted/failed return is not retried automatically.
+
+Terminal inference faults exit with a nonzero status after cleanup. Shutdown cancels a pending control wait; cancellation does not cancel GPU computation or release server ownership. Session close skips an absent server and otherwise waits at most one second for acknowledgment before closing transport. Startup timing for fresh motion begins after the current reset/invalidation acknowledgment, which has its own bounded control deadline. Known blocking recording operations, including Sentry/DAgger saves and Highlight ring-buffer drains/saves, pause asynchronous inference and invalidate queued/interpolated motion before blocking, then resume from fresh observations only if the run remains active and healthy.
+
+Disconnect is separate from holding. OMX defaults to `--robot.disable_torque_on_disconnect=true`, releasing torque on disconnect; the arm may move under gravity even after a hold command or completed return commands. Setting `return_to_initial_position=false` does not request a persistent powered hold. Logs report the return/skip reason and the driver's torque setting where available. Recoverable pauses and planned language holds keep hardware connected. A forcibly killed client or powered-off host cannot guarantee software cleanup. Configured return followed by clean exit has been physically checked on a SmolVLA/OMX setup. This does not certify another robot's hold, return or torque behavior.
+
+## Live instructions and language
+
+The existing interactive commands remain the operator interface: `/start`, `/subtask ...`, `/vqa ...`, `/autosteer ...`, `/autosteer off`, `/stop` and `/reset`. See [interactive rollout](./inference#interactive-sessions).
+
+If `/subtask` changes the instruction while an action request is in flight, the client requests a local hold, discards that obsolete prediction and resumes using a post-hold capture after ordered invalidation. A change between requests can retain already accepted actions for continuity. This planned operator transition has a bounded deadline; it does not recover an exhausted or faulted run.
+
+Invalid `/vqa`, `/autosteer` or `/subtask` input reports the applicable text limit and leaves the current task and sequencer unchanged. If a generated subtask fits the output limit but exceeds the deployment's instruction limit, it becomes a query error and stops autosteering. The current task remains in force, and a healthy active run resumes only from a fresh capture. This completed-answer validation does not convert into a terminal transport fault.
+
+Enable `language.enabled: true` only for a checkpoint implementing the policy language capability interface. The server validates and warms that path. Unsupported language capabilities are reported before accepting a query. A real language-capable checkpoint remains a required end-to-end release check; mock text tests are insufficient.
+
+Text generation does not necessarily include trained subtask generation. If a saved message renderer has no recipe or no assistant `${subtask}` target, the server warms actions and VQA and warns to leave autosteering off; use a checkpoint with a saved subtask-supervising recipe for `/autosteer`. Requesting an unsupported subtask still returns a bounded query error. Other warmup failures remain startup errors instead of silently disabling language support.
+
+A text query creates a planned local hold before submission; there is no configurable moving-during-query mode. The control loop keeps observing and serving operator input, while the single server worker serializes generation changes and policy calls. The answer is delivered through the control-thread observer path. A healthy active run resumes only after obtaining a fresh action chunk; a paused, stopped, reset or intervened run stays inactive. An empty/invalid completed answer is a query error; an uncertain timed-out model call faults the session. Live instructions remain message content and never change deployment routing keys.
+
+An instruction change or execution-context change that invalidates an outstanding VQA question produces one cancellation notice rather than the obsolete answer. Ending a run also reports unanswered questions. This notice does not cancel model computation or free the query slot before the outstanding call finishes; autosteering results invalidated by a stop or task change are not applied.
+
+Recording stays local and uses the normal dataset format. Task labels follow the action actually dispatched; inference events are not dataset records or extra dataset files. Request/task/generation/hold/fault diagnostics go to application logs through bounded in-memory queues, with dropped diagnostic counts reported. Logged or recorded commands do not prove physical execution. Existing `inference_events/` files from earlier builds are not automatically deleted; remove or relocate them explicitly before uploading an older recording if needed.
+
+## Deployment names and Zenoh addressing
+
+Use a different deployment name for independent experiments. For example, pair server `--deployment=arm-a` with client `--inference.deployment=arm-a`; use `arm-b` on the other pair. Both can reach the same router. Each policy-server process still owns one model and admits one active client.
+
+The fixed protocol root and configurable deployment name form these keys:
+
+```text
+lerobot/inference/v1/deployments/{deployment}
+├── describe
+└── instances/{instance}
+    ├── open
+    ├── alive
+    └── sessions/{session}
+        ├── control
+        ├── obs
+        ├── act
+        ├── language/request
+        ├── language/result
+        └── alive
+```
+
+The instance identifies a server process lifetime; the session identifies one admission. New instance/session IDs separate traffic across restarts. If multiple ready servers advertise the same deployment, the client rejects ambiguous discovery unless `--inference.instance=...` selects one explicitly. A single named deployment can serve successive clients after ownership cleanup, but cannot serve them concurrently.
+
+| Zenoh mechanism                       | Use here                                                                    |
+| ------------------------------------- | --------------------------------------------------------------------------- |
+| Query/reply                           | Deployment description, session admission and control acknowledgments       |
+| Publish/subscribe                     | Correlated observations, action results and language requests/results       |
+| Liveliness tokens                     | Server presence and client-absence cleanup                                  |
+| Matching status                       | Wait for relevant subscribers/queryables during setup                       |
+| Explicit endpoints and bounded queues | Discovery is disabled; congestion drops rather than blocking motor dispatch |
+
+Messages also carry instance/session/generation/request identities. Sequence checks and the robot's committed-action cursor govern ordering/alignment; client monotonic time governs freshness/deadlines. No synchronized server clock, stored-action replay or automatic inference retry is used. A namespace prevents accidental overlap; authentication and ACLs control access.
+
+## Private connections through a router
+
+A router provides a reachable rendezvous for the two processes. It adds a hop and a shared failure point; it does not supply a VPN, automatic firewall traversal, model scheduling or motion recovery. Each client and policy server connects explicitly to it. Router loss leaves the existing local buffer, freshness and operation limits in force; reconnecting cannot undo a terminal fault.
+
+Use authenticated encrypted connections for private remote deployments. Bare TCP and a session ID provide no authentication. The example uses Zenoh 1.9.0 with TLS-only links, mutual certificate verification, disabled discovery and certificate-role ACLs. These controls depend on the actual topology: participants connect in client mode without direct peer links. See the official [TLS configuration](https://zenoh.io/docs/manual/tls/) and [ACL semantics](https://zenoh.io/docs/manual/access-control/).
+
+The complete configurations are in [`examples/remote_inference/zenoh`](https://github.com/huggingface/lerobot/tree/main/examples/remote_inference/zenoh):
+
+| File           | Purpose                                                                  |
+| -------------- | ------------------------------------------------------------------------ |
+| `router.json5` | TLS listener and default-deny ACL for deployment `manipulation`          |
+| `server.json5` | Policy-server connection using a `policy-server` certificate common name |
+| `robot.json5`  | Robot connection using a `robot-client` certificate common name          |
+
+Provision a private CA and distinct role certificates/keys under `./certs`, or replace the example paths with absolute paths. Only the router needs `router-key.pem`, only the server needs `policy-server-key.pem`, and only the robot needs `robot-client-key.pem`. All participants need the CA certificate. The router certificate must cover the DNS name used by the clients; replace `localhost` consistently for an actual network deployment. Keep the CA private key out of these runtime directories.
+
+<details>
+<summary>Router startup and complete server/client transport overrides</summary>
+
+Run the router from a directory where the certificate paths resolve:
+
+```bash
+zenohd --config examples/remote_inference/zenoh/router.json5
+```
+
+Keep the validated checkpoint and full schemas in `server.yaml`; override its transport fields together. The empty listener list is necessary because router clients cannot listen:
+
+```bash
+uv run --no-sync lerobot-policy-server --config_path=server.yaml \
+  --zenoh.mode=client \
+  --zenoh.listen_endpoints='[]' \
+  --zenoh.connect_endpoints='[tls/localhost:7447]' \
+  --zenoh.config_file=examples/remote_inference/zenoh/server.json5
+```
+
+Equivalently, replace the entire server YAML `zenoh` block with:
+
+```yaml
+zenoh:
+  mode: client
+  listen_endpoints: []
+  connect_endpoints: [tls/localhost:7447]
+  config_file: examples/remote_inference/zenoh/server.json5
+```
+
+Use these client options with the ordinary rollout hardware/task arguments:
+
+```bash
+--inference.endpoint=tls/localhost:7447 \
+--inference.zenoh_mode=client \
+--inference.zenoh_config_path=examples/remote_inference/zenoh/robot.json5
+```
+
+Transport configuration preserves the JSON5 TLS/ACL settings and sets explicit endpoints, with multicast/gossip discovery and shared memory disabled.
+
+</details>
+
+The ACL permits robot observation/control traffic and server action/text replies. It prevents a separate participant using the robot role from forging server actions, and an unrecognized certificate role from subscribing to observations or querying the deployment. Change the deployment path in the ACL together with `deployment`; changing a name does not authorize access. Router ACLs cannot govern a process's own local publication/subscription delivery or defend a compromised robot process. For distinct trust groups, use separately authorized identities and deployment-scoped rules; sharing the example role certificates would share their permissions.
+
+### Deployment patterns and validation status
+
+The routed transport and checked-in mTLS/ACL configurations have automated exchange/security coverage. The patterns below are deployment recipes to validate with a real task; they do not claim routed hardware or cloud acceptance.
+
+**Shared LAN GPU host.** Separate server processes can use one router and the same GPU host. Each loads its own checkpoint and retains exclusive client ownership. GPU contention can increase turnaround even when network latency is low.
+
+```text
+Robot A ─┐               ┌─ Server A, deployment=arm-a ─┐
+         ├─ LAN router ──┤                             ├─ GPU host
+Robot B ─┘               └─ Server B, deployment=arm-b ─┘
+```
+
+**Private-network remote GPU.** Both sides make outbound connections to a secured router reachable over the configured private network. This removes the requirement for the robot to connect directly to the GPU host. Reachability, certificates and sufficient latency headroom still need validation.
+
+```text
+Robot client ──outbound──> Private router <──outbound── Remote GPU server
+```
+
+**Shared experiment router.** Independent teams or experiments can reuse routing infrastructure while keeping distinct deployment names and access rules. The router does not isolate GPU resources or automatically select a policy.
+
+```text
+Robot A ── arm-a ──┐                  ┌── arm-a ── GPU host A
+                  ├─ Secured router ┤
+Robot B ── arm-b ──┘                  └── arm-b ── GPU host B
+```
+
+**Dedicated Hugging Face GPU Space — proposed.** Run one policy server in a dedicated GPU Docker Space and connect it outward to a separately hosted secured router. First verify actual authenticated Zenoh connectivity from the Space. Its HTTP application endpoint is not automatically a raw Zenoh listener, and a permitted outbound port alone does not prove protocol compatibility.
+
+```text
+Robot client ──outbound──> Secured router <──outbound── GPU Space server
+```
+
+Only after transport feasibility succeeds, validate model startup/warmup/readiness, secret handling, one known-good robot task and terminal disconnect behavior. Sleep/wake delays, ownership and internet latency limit availability. Recheck current [Docker Spaces](https://huggingface.co/docs/hub/spaces-sdks-docker), [networking](https://huggingface.co/docs/hub/spaces-overview#networking) and [GPU lifecycle](https://huggingface.co/docs/hub/spaces-gpus) requirements when preparing this experiment. This is not a supported public multi-tenant service or a guarantee of operation from any network.
+
+## Validate a deployment
+
+1. Establish one working synchronous checkpoint/task and verify canonical schemas and local hold/return behavior.
+2. Run separate client/server processes on one host or a trusted LAN, then tune remaining playback and blending using full turnaround and task progress.
+3. For the router, repeat that same task through the secured path. Check admission, turnaround tails, available playback and expected terminal shutdown on router loss. A broad model/tuning sweep is unnecessary.
+4. Evaluate JPEG separately if bandwidth matters; compare encoding cost, payload size, turnaround and task behavior. For a cloud deployment, prove transport feasibility before scheduling a robot run.
+5. For language-capable checkpoints, validate useful VQA/autosteering answers, planned holds and fresh action resumption on the actual setup. Action success alone does not validate language behavior.
+
+Run the focused transport suites with the remote dependencies installed:
+
+```bash
+uv run --no-sync pytest tests/remote_inference/test_codec.py tests/remote_inference/test_zenoh.py -q
+LEROBOT_ZENOHD=/absolute/path/to/zenohd \
+  uv run --no-sync pytest tests/remote_inference/test_zenoh.py -q
+```
+
+The optional router test creates ephemeral certificates and runs the checked-in configurations with Zenoh 1.9.0. It verifies encrypted action/observation/text/control exchange, presence and rejected unauthorized operations. If a matching `LEROBOT_ZENOHD` or an `openssl` executable on PATH is missing, those router tests are skipped. Use `pytest -rs` to see skip reasons. These tests do not run a real model or establish a usable hardware/WAN latency budget.

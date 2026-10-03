@@ -30,7 +30,7 @@ from enum import Enum
 from threading import Event, Lock
 from typing import TYPE_CHECKING
 
-from .inference import QueryAnswer, QueryKind
+from .inference import QueryAnswer
 
 if TYPE_CHECKING:
     from .context import RolloutContext
@@ -81,6 +81,9 @@ class AskResult(Enum):
 
     UNSUPPORTED = "unsupported"
     """Rejected: the policy has no text head; unlike the others, permanent for the session."""
+
+    INVALID = "invalid"
+    """Rejected: invalid text; :meth:`RolloutController.text_input_error` explains how to fix it."""
 
 
 class RolloutEvent(Enum):
@@ -258,6 +261,7 @@ class RolloutController:
             # Restore here, not later on the serve thread, so a following set_task() survives.
             restored = self._ctx.policy.inference.set_task(self._initial_task)
             self._reset_requested.set()
+            self._ctx.policy.inference.pause()
             self._segment_stop.set()
             self._wake.set()
             return restored
@@ -269,6 +273,7 @@ class RolloutController:
                 return
             self._start_requested.clear()  # last command wins, see reset()
             self._stop_requested.set()
+            self._ctx.policy.inference.pause()
             self._segment_stop.set()
             self._wake.set()
 
@@ -281,10 +286,18 @@ class RolloutController:
         controller is stopping or stopped.  Stops :meth:`autosteer`, which would overwrite this instruction.
         """
         with self._control_lock:
-            if self._stopped.is_set() or self._stop_requested.is_set():
+            if (
+                self._stopped.is_set()
+                or self._stop_requested.is_set()
+                or self.text_input_error(task, instruction=True) is not None
+            ):
                 return False
             self._ctx.policy.inference.stop_autosteer()
             return self._ctx.policy.inference.set_task(task)
+
+    def text_input_error(self, text: str, *, instruction: bool = False) -> str | None:
+        """Return the active engine's text rejection reason without changing its state."""
+        return self._ctx.policy.inference.text_input_error(text, instruction=instruction)
 
     def ask(self, question: str) -> AskResult:
         """Queue a question about what the robot currently sees.
@@ -292,11 +305,14 @@ class RolloutController:
         Returns immediately; the answer arrives as a :attr:`RolloutEvent.QUERY_ANSWERED` event, and
         the policy is never touched on the caller's thread.  Rejected with
         :attr:`AskResult.UNSUPPORTED` (no text head), :attr:`AskResult.NOT_RUNNING` (no segment
-        running, so no observation to answer from), or :attr:`AskResult.BUSY` (channel taken).
+        running, so no observation to answer from), :attr:`AskResult.INVALID` (text fails
+        validation), or :attr:`AskResult.BUSY` (channel taken).
         """
         # A static capability: checked first, and outside the control lock.
         if not self._ctx.policy.inference.supports_text_queries:
             return AskResult.UNSUPPORTED
+        if self.text_input_error(question) is not None:
+            return AskResult.INVALID
         with self._control_lock:
             # Same lock _run_segment clears _running under, so a question is never left orphaned.
             if not self._running.is_set():
@@ -320,6 +336,8 @@ class RolloutController:
         """
         if not self._ctx.policy.inference.supports_text_queries:
             return AskResult.UNSUPPORTED
+        if self.text_input_error(goal) is not None:
+            return AskResult.INVALID
         with self._control_lock:
             if not self._running.is_set():
                 return AskResult.NOT_RUNNING
@@ -412,6 +430,14 @@ class RolloutController:
                 logger.exception("Rollout strategy failed mid-segment")
             finally:
                 engine.pause()
+                try:
+                    self._strategy.hold_control_state(self._ctx.hardware)
+                except Exception:
+                    # A failed final hold must end the session, but must not hide
+                    # the original strategy/I/O failure that prompted teardown.
+                    if self._strategy_failure_traceback is None:
+                        self._strategy_failure_traceback = traceback.format_exc()
+                    logger.exception("Could not apply segment-end hold; skipping further shutdown movement")
         finally:
             # Clear and drop together under the control lock: ask() gates on _running under the same
             # lock, so a question either lands before this and is dropped, or is rejected outright.
@@ -419,15 +445,13 @@ class RolloutController:
                 self._running.clear()
                 # The sequencer cannot outlive the segment: its plan progress lives in the policy.
                 engine.stop_autosteer()
-                dropped = engine.drop_pending_query()
+                engine.drop_pending_query()
                 # Else the idle pump would announce a subtask after the sequencer ended; VQA stays.
                 engine.drop_ready_subtask_answers()
-            # Only an operator question is worth reporting.
-            if dropped is not None and dropped.kind is QueryKind.VQA:
-                self._emit(
-                    RolloutEvent.QUERY_ANSWERED,
-                    QueryAnswer(question=dropped.text, error="the run ended before it could be answered"),
-                )
+                engine.report_cancelled_query()
+            # Deliver before a terminal /stop leaves the serve loop, including a
+            # claimed VQA whose model call has not returned yet.
+            engine.pump_query()
         if engine.failed or self._strategy_failure_traceback is not None:
             return  # the serve loop emits the failure event and shuts down
         if not (

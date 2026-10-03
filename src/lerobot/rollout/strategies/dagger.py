@@ -158,6 +158,15 @@ class DAggerEvents:
             self._phase = new_phase
             return old_phase, new_phase
 
+    def permits_autonomous_motion(self) -> bool:
+        """Do not resume a recording pause over a queued operator transition."""
+        with self._lock:
+            return (
+                self._phase == DAggerPhase.AUTONOMOUS
+                and self._pending_transition is None
+                and not self.stop_recording.is_set()
+            )
+
     def reset(self) -> None:
         """Reset all transient state for a fresh session."""
         with self._lock:
@@ -445,7 +454,10 @@ class DAggerStrategy(RolloutStrategy):
                     elif phase == DAggerPhase.PAUSED:
                         if last_action:
                             with timer.section("send"):
-                                robot.send_action(last_action)
+                                if robot.supports_hold:
+                                    robot.hold()
+                                else:
+                                    robot.send_action(last_action)
 
                     # --- AUTONOMOUS: policy control ---
                     else:
@@ -467,17 +479,22 @@ class DAggerStrategy(RolloutStrategy):
                                     frame = {
                                         **obs_frame,
                                         **action_frame,
-                                        "task": task_str,
+                                        "task": engine.dispatched_task,
                                         "intervention": np.array([False], dtype=bool),
                                     }
                                     dataset.add_frame(frame)
+
+                        engine.pump_query(obs_processed)
 
                     # Episode rotation derived from the video file-size target.
                     # Saving is deferred while a correction is ongoing so the
                     # episode boundary lands on a clean autonomous frame.
                     elapsed = time.perf_counter() - episode_start
                     if elapsed >= episode_duration_s and phase != DAggerPhase.CORRECTING:
-                        with self._episode_lock:
+                        with (
+                            self._pause_for_recording(ctx, resume_allowed=events.permits_autonomous_motion),
+                            self._episode_lock,
+                        ):
                             dataset.save_episode()
                         episodes_since_push += 1
                         self._needs_push.set()
@@ -589,7 +606,12 @@ class DAggerStrategy(RolloutStrategy):
 
                         # Correction ended -> save episode (blocking if not streaming)
                         if old_phase == DAggerPhase.CORRECTING and new_phase == DAggerPhase.PAUSED:
-                            with self._episode_lock:
+                            with (
+                                self._pause_for_recording(
+                                    ctx, resume_allowed=events.permits_autonomous_motion
+                                ),
+                                self._episode_lock,
+                            ):
                                 dataset.save_episode()
                             recorded += 1
                             self._needs_push.set()
@@ -648,7 +670,10 @@ class DAggerStrategy(RolloutStrategy):
                     elif phase == DAggerPhase.PAUSED:
                         if last_action:
                             with timer.section("send"):
-                                robot.send_action(last_action)
+                                if robot.supports_hold:
+                                    robot.hold()
+                                else:
+                                    robot.send_action(last_action)
 
                     # --- AUTONOMOUS: policy control (no recording) ---
                     else:
@@ -663,6 +688,8 @@ class DAggerStrategy(RolloutStrategy):
                             with timer.section("telemetry"):
                                 self._log_telemetry(obs_processed, action_dict, ctx.runtime)
                             last_action = ctx.processors.robot_action_processor((action_dict, obs))
+
+                        engine.pump_query(obs_processed)
 
                     timer.wait()
 
@@ -718,6 +745,10 @@ class DAggerStrategy(RolloutStrategy):
         if old_phase == DAggerPhase.AUTONOMOUS and new_phase == DAggerPhase.PAUSED:
             logger.info("Pausing engine - robot holds position")
             engine.pause()
+            interpolator.reset()
+            if robot.supports_hold:
+                robot.hold()
+                engine.acknowledge_hold()
 
             if self.config.smooth_handover and teleop_supports_feedback(teleop) and prev_action is not None:
                 # TODO(Maxime): prev_action is in robot action key space (output of robot_action_processor).
