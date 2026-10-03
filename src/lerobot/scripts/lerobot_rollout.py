@@ -180,6 +180,7 @@ from lerobot.robots import (  # noqa: F401
     hope_jr,
     koch_follower,
     lekiwi,
+    limx_tron2,
     omx_follower,
     openarm_follower,
     reachy2,
