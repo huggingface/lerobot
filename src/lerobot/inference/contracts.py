@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum, StrEnum
 from types import MappingProxyType
 
 import numpy as np
@@ -28,6 +28,16 @@ class ExecutionMode(StrEnum):
     CHUNK = "chunk"
     RTC_GUIDED = "rtc_guided"
     RTC_TRAINED = "rtc_trained"
+
+
+class QueryKind(Enum):
+    """What the policy's text head is being asked for."""
+
+    VQA = "vqa"
+    """A free-form question about the current scene; the reply goes to the operator."""
+
+    NEXT_SUBTASK = "next_subtask"
+    """A high-level goal; the reply is the next subtask and is fed to ``set_task``."""
 
 
 @dataclass(frozen=True)

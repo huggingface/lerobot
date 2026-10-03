@@ -10,6 +10,7 @@ from enum import StrEnum
 from typing import Any
 
 PROTOCOL_VERSION = 1
+IDENTITY_KEYS = ("artifact_identity", "observation_id", "capture_time", "task", "task_version")
 _MAX_IDENTIFIER = 128
 _SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 

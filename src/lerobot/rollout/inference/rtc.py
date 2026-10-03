@@ -206,7 +206,6 @@ class RTCInferenceEngine(InferenceEngine):
         if isinstance(robot_wrapper, ThreadSafeRobot) and robot_wrapper.inner.supports_position_hold:
             robot_wrapper.configure_position_hold()
 
-        self._action_queue: ActionQueue | None = None
         self._obs_holder: dict[str, Any] = {}
         self._obs_lock = Lock()
         # Bumped by reset() under _obs_lock, so a chunk whose inference started before a
@@ -273,16 +272,15 @@ class RTCInferenceEngine(InferenceEngine):
         return self._failure_traceback or self._runtime.failure
 
     @property
-    def action_queue(self) -> ActionQueue | None:
+    def action_queue(self) -> ActionQueue:
         """The shared action queue between the RTC thread and the main loop."""
-        return self._action_queue
+        return self._runtime.queue
 
     def start(self) -> None:
         """Launch the RTC background thread."""
         if self._started:
             raise RuntimeError("RTC inference engines cannot be restarted; create a new session")
         self._started = True
-        self._action_queue = self._runtime.queue
         self._runtime.invalidate()
         self._obs_holder = {
             "obs": None,
@@ -388,26 +386,11 @@ class RTCInferenceEngine(InferenceEngine):
 
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
         """Pop the next action from the RTC queue (ignores ``obs_frame``)."""
-        if self._action_queue is None:
-            return None
-        if self._action_queue is self._runtime.queue:
-            queued_action = self._runtime.pop()
-            if queued_action is None:
-                return None
-            action, provenance = queued_action
-            self._set_dispatched_task(provenance.task)
-            return action
-        queued = self._action_queue.get_with_task()
+        queued = self._runtime.pop()
         if queued is None:
             return None
-        # The queue pairs each action with its chunk's task under the queue lock, so a
-        # concurrent merge cannot cross labels between chunks.
-        action, task = queued
-        if task is None:
-            # Every merge here labels its chunk, so a missing label means a foreign
-            # writer: fail loudly rather than corrupt dispatched_task and frame labels.
-            raise RuntimeError("RTC action queue returned an action without task provenance")
-        self._set_dispatched_task(task)
+        action, provenance = queued
+        self._set_dispatched_task(provenance.task)
         return action
 
     def notify_observation(self, obs: dict) -> None:

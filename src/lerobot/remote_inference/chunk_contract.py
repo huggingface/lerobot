@@ -14,6 +14,11 @@ CHUNK_BLENDING = "chunk_blending_v1"
 RTC_MODEL_SPACE = "rtc_model_space_v1"
 
 
+def default_chunk_settings() -> dict[str, Any]:
+    """Return fresh settings for peers that omit the optional chunk contract."""
+    return chunk_settings("append", 0, 0.5, [])
+
+
 def chunk_settings(
     chunk_merge: str, blend_steps: int, blend_weight: float, blend_components: list[str]
 ) -> dict[str, Any]:

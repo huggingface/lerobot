@@ -64,9 +64,7 @@ class RemoteInferenceEngine(InferenceEngine):
             chunk_merge=config.chunk_merge,
             blend_steps=config.blend_steps,
             blend_weight=config.blend_weight,
-            blend_indices=tuple(
-                client.capabilities.action_feature.names.index(name) for name in config.blend_components
-            ),
+            blend_indices=client.blend_indices,
         )
         self._lock = RLock()
         self._observation: ObservationSnapshot | None = None

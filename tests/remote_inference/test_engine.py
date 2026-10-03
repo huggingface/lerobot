@@ -39,6 +39,7 @@ class ControlledClient:
             (ExecutionMode.CHUNK,), 4, 4, 0.1, (feature,), action, language=True
         )
         self.descriptor = {"limits": {"max_input_chars": 4096}}
+        self.blend_indices = ()
         self.instance_id = "instance"
         self.session_id = "session"
         self.action_started, self.text_started, self.control_started = Event(), Event(), Event()
@@ -116,6 +117,9 @@ def session(request):
         blend_steps=request.param[1],
         blend_components=["a.pos"] if request.param[1] else [],
     )
+    client.blend_indices = tuple(
+        client.capabilities.action_feature.names.index(name) for name in config.blend_components
+    )
     wrapper = SimpleNamespace(observation_time=None)
     engine = RemoteInferenceEngine(
         client,
@@ -156,6 +160,24 @@ def start_query(engine, client):
     engine.acknowledge_hold()
     capture(engine)
     assert client.text_started.wait(2)
+
+
+def test_remote_engine_refuses_restart_while_running_and_after_stop(session):
+    engine, client = session
+    engine.start()
+    worker = engine._thread
+    try:
+        with pytest.raises(RuntimeError, match="already started"):
+            engine.start()
+        assert engine._thread is worker
+        assert worker.is_alive()
+    finally:
+        engine.stop()
+
+    assert client.closed.is_set()
+    assert not worker.is_alive()
+    with pytest.raises(RuntimeError, match="already started"):
+        engine.start()
 
 
 def test_query_waits_for_hold_acknowledgment_and_new_capture(session):

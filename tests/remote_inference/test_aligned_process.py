@@ -100,13 +100,14 @@ def process_server():
     process = context.Process(target=serve_in_child, args=(endpoint, ready, stopped, entered, release))
     process.start()
     try:
-        assert ready.wait(15), f"server did not start; exitcode={process.exitcode}"
+        # Spawn imports torch and the policy stack afresh; allow cold/loaded CI runners.
+        assert ready.wait(60), f"server did not start; exitcode={process.exitcode}"
         assert process.is_alive()
         yield endpoint, entered, release
     finally:
         release.set()
         stopped.set()
-        process.join(5)
+        process.join(10)
         if process.is_alive():
             process.terminate()
             process.join(2)

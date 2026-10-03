@@ -467,7 +467,7 @@ def test_sync_anchor_is_pinned_across_a_chunk():
 
 def _seed_rtc_engine(dataset_features, state_names):
     """An RTC engine whose queue holds the chunk this variant's postprocessor would emit."""
-    from lerobot.policies.rtc import ActionQueue
+    from lerobot.inference.contracts import ActionProvenance
     from lerobot.policies.rtc.configuration_rtc import RTCConfig
     from lerobot.rollout.inference import RTCInferenceEngine
 
@@ -494,8 +494,9 @@ def _seed_rtc_engine(dataset_features, state_names):
         ],
         dtype=torch.float32,
     )
-    engine._action_queue = ActionQueue(RTCConfig(enabled=True, execution_horizon=8))
-    engine._action_queue.merge(absolute.clone(), absolute.clone(), 0, None, task="fold the t-shirt")
+    engine._runtime.activate()
+    provenance = ActionProvenance(engine._runtime.clock(), "fold the t-shirt")
+    engine.action_queue.replace_future(absolute, [provenance], snapshot=engine.action_queue.snapshot())
     return engine
 
 

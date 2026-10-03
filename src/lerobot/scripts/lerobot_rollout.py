@@ -33,6 +33,7 @@ Inference backends
 ------------------
     --inference.type=sync      One policy call per control tick (default)
     --inference.type=rtc       Real-Time Chunking for slow VLA models
+    --inference.type=remote    Policy served by lerobot-policy-server (see remote inference docs)
 
 Usage examples
 --------------

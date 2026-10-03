@@ -5,6 +5,7 @@
 
 import json
 import socket
+import sys
 import time
 from dataclasses import replace
 from threading import Event, Thread
@@ -81,22 +82,46 @@ def remote_server(request):
 
     transport.declare_token = declare_token
     thread = Thread(target=server.serve, daemon=True)
-    thread.start()
-    assert ready.wait(3), "server did not advertise readiness"
-    config = RemoteInferenceConfig(
-        endpoint=endpoint,
-        deployment="loopback",
-        semantics="radians-v1",
-        hold_mode="position",
-        handshake_timeout_s=2,
-        action_timeout_s=2,
-    )
     try:
+        thread.start()
+        assert ready.wait(10), "server did not advertise readiness"
+        config = RemoteInferenceConfig(
+            endpoint=endpoint,
+            deployment="loopback",
+            semantics="radians-v1",
+            hold_mode="position",
+            handshake_timeout_s=2,
+            action_timeout_s=2,
+        )
         yield worker, config
     finally:
         server.stop()
-        thread.join(3)
+        if thread.ident is not None:
+            thread.join(10)
         assert not thread.is_alive()
+        # serve() may fail before entering its resource-management block.
+        transport.close()
+        worker.close()
+
+
+def test_remote_server_fixture_cleans_up_when_readiness_times_out(monkeypatch):
+    module = sys.modules[__name__]
+    servers = []
+    original_server = PolicyServer
+
+    def create_server(worker, transport):
+        server = original_server(worker, transport)
+        servers.append(server)
+        return server
+
+    monkeypatch.setattr(module, "PolicyServer", create_server)
+    monkeypatch.setattr(module, "Event", lambda: SimpleNamespace(set=lambda: None, wait=lambda _: False))
+    fixture = remote_server.__wrapped__(SimpleNamespace())
+    with pytest.raises(AssertionError, match="server did not advertise readiness"):
+        next(fixture)
+    assert len(servers) == 1
+    assert servers[0].transport._session is None
+    assert not servers[0].worker._thread.is_alive()
 
 
 def admit(client):

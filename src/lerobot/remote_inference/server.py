@@ -24,7 +24,7 @@ from uuid import uuid4
 import numpy as np
 import torch
 
-from lerobot.inference.contracts import ExecutionMode, FeatureSpec, ObservationSnapshot
+from lerobot.inference.contracts import ExecutionMode, FeatureSpec, ObservationSnapshot, QueryKind
 from lerobot.inference.policy_runner import PolicyRunner
 from lerobot.transport.zenoh import PendingQuery, ZenohTransport
 
@@ -33,13 +33,14 @@ from .chunk_contract import (
     CHUNK_ALIGNMENT,
     CHUNK_BLENDING,
     RTC_MODEL_SPACE,
-    chunk_settings,
+    default_chunk_settings,
     required_chunk_capabilities,
     validate_blendable_components,
     validate_chunk_contract,
 )
 from .codec import CodecLimits, decode_message, encode_message
 from .protocol import (
+    IDENTITY_KEYS,
     Envelope,
     ErrorCode,
     MessageType,
@@ -63,7 +64,7 @@ class _Session:
     identity: str
     generation: int = 0
     mode: ExecutionMode = ExecutionMode.CHUNK
-    chunk_settings: dict[str, Any] = field(default_factory=lambda: chunk_settings("append", 0, 0.5, []))
+    chunk_settings: dict[str, Any] = field(default_factory=default_chunk_settings)
     busy: bool = False
     ready: bool = False
     closing: bool = False
@@ -269,9 +270,7 @@ class SessionWorker:
                     self._session = _Session(
                         uuid4().hex,
                         mode=ExecutionMode(message.body["mode"]),
-                        chunk_settings=message.body.get(
-                            "chunk_settings", chunk_settings("append", 0, 0.5, [])
-                        ),
+                        chunk_settings=message.body.get("chunk_settings", default_chunk_settings()),
                     )
                     self._seen.clear()
                     self._controls.clear()
@@ -365,7 +364,7 @@ class SessionWorker:
             not isinstance(name, str) or name not in self.execution_contracts for name in required
         ):
             raise ProtocolError(ErrorCode.UNSUPPORTED, "Unknown required protocol capabilities")
-        settings = body.get("chunk_settings", chunk_settings("append", 0, 0.5, []))
+        settings = body.get("chunk_settings", default_chunk_settings())
         try:
             validate_chunk_contract(settings, caps, self.blendable_components)
         except ValueError as exc:
@@ -426,8 +425,10 @@ class SessionWorker:
         if message.message_type is MessageType.LANGUAGE_REQUEST:
             if not caps.language:
                 raise ProtocolError(ErrorCode.UNSUPPORTED, "Deployment has no text capability")
-            if body.get("kind") not in {"vqa", "next_subtask"}:
-                raise ProtocolError(ErrorCode.UNSUPPORTED, "Unknown query kind")
+            try:
+                QueryKind(body.get("kind"))
+            except (ValueError, TypeError) as exc:
+                raise ProtocolError(ErrorCode.UNSUPPORTED, "Unknown query kind") from exc
             if not isinstance(body.get("text"), str) or not 0 < len(body["text"]) <= self.max_input_chars:
                 raise ProtocolError(ErrorCode.MALFORMED, "Invalid or oversized query")
             if type(body.get("intent_generation")) is not int or body["intent_generation"] < 0:
@@ -531,10 +532,7 @@ class SessionWorker:
             body["features"], body["capture_time"], body["task"], body["task_version"], body["observation_id"]
         )
         started = time.monotonic()
-        identity = {
-            key: body[key]
-            for key in ("artifact_identity", "observation_id", "capture_time", "task", "task_version")
-        }
+        identity = {key: body[key] for key in IDENTITY_KEYS}
         if (
             message.message_type is MessageType.OBSERVATION
             and session.chunk_settings["chunk_merge"] == "aligned"

@@ -437,7 +437,7 @@ class RolloutController:
                     # the original strategy/I/O failure that prompted teardown.
                     if self._strategy_failure_traceback is None:
                         self._strategy_failure_traceback = traceback.format_exc()
-                    logger.exception("Could not apply segment-end hold")
+                    logger.exception("Could not apply segment-end hold; skipping further shutdown movement")
         finally:
             # Clear and drop together under the control lock: ask() gates on _running under the same
             # lock, so a question either lands before this and is dropped, or is rejected outright.

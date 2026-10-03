@@ -116,6 +116,46 @@ def test_hold_clears_interpolation_on_a_tick_without_a_queue_pull():
     assert engine.holds == 1
 
 
+def test_control_tick_begins_once_before_dispatch_on_action_interpolation_and_held_ticks():
+    events = []
+
+    class TickEngine(GateEngine):
+        def __init__(self):
+            super().__init__()
+            self.tick = 0
+
+        def begin_control_tick(self):
+            self.tick += 1
+            events.append((self.tick, "begin"))
+
+        def dispatch_allowed(self):
+            events.append((self.tick, "permission"))
+            return super().dispatch_allowed()
+
+        def get_action(self, obs_frame):
+            events.append((self.tick, "pull"))
+            return super().get_action(obs_frame)
+
+    engine = TickEngine()
+    ctx, _robot = make_dispatch_context(engine)
+    interpolator = ActionInterpolator(multiplier=3)
+    obs = {"joint.pos": 7.0}
+    for tick in range(1, 6):
+        engine.allowed = tick not in (4, 5)
+        start = len(events)
+        send_next_action(obs, obs, ctx, interpolator)
+        current = events[start:]
+        assert current[0] == (tick, "begin")
+        assert current.count((tick, "begin")) == 1
+        assert all(event_tick == tick for event_tick, _ in current)
+
+    # Two pulls prime interpolation; the third tick uses its buffered endpoint.
+    # The last two ticks are held and still advance diagnostics exactly once.
+    assert [tick for tick, kind in events if kind == "pull"] == [1, 2]
+    assert engine.holds == 2
+    assert engine.tick == 5
+
+
 def test_permission_revoked_during_pull_cannot_dispatch_returned_action():
     engine = GateEngine()
     engine.stop_during_pull = True

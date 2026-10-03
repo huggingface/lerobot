@@ -173,12 +173,19 @@ def _encode_value(value: Any, budget: _Budget, depth: int = 0) -> Any:
         budget.allocate(size)
         if value.dtype.kind == "f" and not np.isfinite(value).all():
             raise _malformed("Tensor contains non-finite values")
+        # NumPy bool arrays may contain any nonzero backing byte for True. Emit
+        # canonical 0/1 bytes even for such valid local arrays or strided views.
+        data = (
+            np.where(value, np.uint8(1), np.uint8(0)).tobytes(order="C")
+            if dtype.kind == "b"
+            else value.astype(dtype, copy=False).tobytes(order="C")
+        )
         return {
             _MARKER: "tensor",
             "dtype": dtype.name,
             "shape": list(shape),
             "endianness": "little",
-            "data": value.astype(dtype, copy=False).tobytes(order="C"),
+            "data": data,
         }
     if value is None or isinstance(value, bool):
         return value
@@ -221,6 +228,8 @@ def _decode_record(record: dict[str, Any], budget: _Budget) -> np.ndarray:
         if len(data) != size:
             raise _malformed("Tensor payload size does not match dtype and shape")
         budget.allocate(size)
+        if dtype.kind == "b" and np.any(np.frombuffer(data, dtype=np.uint8) > 1):
+            raise _malformed("Boolean tensor bytes must be 0 or 1")
         array = np.frombuffer(data, dtype=dtype).reshape(shape)
         if dtype.kind == "f" and not np.isfinite(array).all():
             raise _malformed("Tensor contains non-finite values")

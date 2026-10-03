@@ -16,6 +16,7 @@ from lerobot.remote_inference.chunk_contract import (
     CHUNK_ALIGNMENT,
     CHUNK_BLENDING,
     chunk_settings,
+    default_chunk_settings,
     required_chunk_capabilities,
     validate_chunk_contract,
 )
@@ -30,6 +31,17 @@ from tests.remote_inference.test_session import action_request, assert_error, op
 
 def client_config(**kwargs):
     return RemoteInferenceConfig(deployment="test", semantics="test-radians", hold_mode="position", **kwargs)
+
+
+def test_client_defaults_match_implicit_legacy_chunk_contract():
+    config = client_config()
+    assert (
+        chunk_settings(config.chunk_merge, config.blend_steps, config.blend_weight, config.blend_components)
+        == default_chunk_settings()
+    )
+    altered = default_chunk_settings()
+    altered["blend_components"].append("shoulder.pos")
+    assert not default_chunk_settings()["blend_components"]
 
 
 @pytest.fixture

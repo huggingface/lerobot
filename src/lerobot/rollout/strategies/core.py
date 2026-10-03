@@ -169,11 +169,7 @@ class RolloutStrategy(abc.ABC):
             self._interpolator.reset()
         self._cached_obs_processed = None
         if hw.robot_wrapper.supports_hold and hw.robot_wrapper.hardware_failure is None:
-            try:
-                hw.robot_wrapper.hold()
-            except Exception:
-                logger.exception("Segment-end hold failed; skipping further shutdown movement")
-                raise
+            hw.robot_wrapper.hold()
             self._require_engine().acknowledge_hold()
 
     @contextlib.contextmanager

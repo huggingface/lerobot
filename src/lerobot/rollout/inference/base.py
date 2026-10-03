@@ -27,24 +27,14 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from enum import Enum
 from threading import Lock
 
 import torch
 
+from lerobot.inference.contracts import QueryKind as QueryKind
 from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT
 
 logger = logging.getLogger(__name__)
-
-
-class QueryKind(Enum):
-    """What the policy's text head is being asked for."""
-
-    VQA = "vqa"
-    """A free-form question about the current scene; the reply goes to the operator."""
-
-    NEXT_SUBTASK = "next_subtask"
-    """A high-level goal; the reply is the next subtask and is fed to ``set_task``."""
 
 
 @dataclass(frozen=True)

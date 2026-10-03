@@ -43,6 +43,7 @@ from .chunk_contract import (
 )
 from .codec import RGBImage, decode_message, encode_message, peek_envelope
 from .protocol import (
+    IDENTITY_KEYS,
     PROTOCOL_VERSION,
     AdmissionDeniedError,
     Envelope,
@@ -553,7 +554,7 @@ class RemoteClient:
         )
 
     def _validate_context(self, response: Envelope, body: dict, expected: MessageType) -> None:
-        context_keys = ["artifact_identity", "observation_id", "capture_time", "task", "task_version"]
+        context_keys = list(IDENTITY_KEYS)
         if expected is MessageType.ACTION and self.chunk_settings["chunk_merge"] == "aligned":
             context_keys.extend(["observation_cursor", "cursor"])
             if any(type(response.body.get(key)) is not int for key in ("observation_cursor", "cursor")):

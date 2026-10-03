@@ -148,7 +148,7 @@ def test_trained_rtc_clamps_prefix_to_checkpoint_and_queue():
     [
         (3, 4, "execution_horizon"),
         (4, 3, "queue_threshold"),
-        # RTC needs d <= s <= H - d; s = 17 exceeds chunk_size - max_delay = 16.
+        # Preserve the conservative admission bound on configured prefix capacity.
         (17, 20, "at most"),
     ],
 )
@@ -611,6 +611,26 @@ def test_create_inference_engine_sync():
         device="cpu",
     )
     assert isinstance(engine, SyncInferenceEngine)
+
+
+def test_create_inference_engine_remote_explains_session_construction():
+    from lerobot.rollout import create_inference_engine
+    from lerobot.rollout.inference.factory import RemoteInferenceConfig
+
+    config = RemoteInferenceConfig(deployment="test", semantics="radians-v1", hold_mode="position")
+    with pytest.raises(ValueError, match="connected RemoteClient; use build_rollout_context"):
+        create_inference_engine(
+            config,
+            policy=MagicMock(),
+            preprocessor=MagicMock(),
+            postprocessor=MagicMock(),
+            robot_wrapper=MagicMock(),
+            dataset_features={},
+            ordered_action_keys=[],
+            task="test",
+            fps=30.0,
+            device="cpu",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1143,7 +1163,6 @@ def test_episodic_records_once_per_interpolation_cycle():
         timer=CycleTimer(200.0, 2),
         control_time_s=10.0,
         dataset=dataset,
-        single_task="task",
     )
 
     assert dataset.add_frame.call_count == 4

@@ -22,6 +22,7 @@ import numpy as np
 import torch
 
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.rtc.configuration_rtc import validate_trained_rtc_horizon
 from lerobot.policies.rtc.relative import reanchor_relative_rtc_prefix
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
@@ -39,6 +40,7 @@ from .contracts import (
     FeatureSpec,
     ObservationSnapshot,
     PolicyCapabilities,
+    QueryKind,
 )
 
 
@@ -95,11 +97,10 @@ class PolicyRunner:
                 raise ValueError("Requested RTC mode differs from the deployment's effective RTC mode.")
             if not 0 < rtc_config.execution_horizon <= spec.prediction_steps:
                 raise ValueError("RTC execution_horizon must fit the policy prediction horizon.")
-            if (
-                ExecutionMode.RTC_TRAINED in rtc_modes
-                and rtc_config.execution_horizon < spec.training_max_delay
-            ):
-                raise ValueError("Trained RTC horizon must cover the checkpoint's maximum conditioned delay.")
+            if ExecutionMode.RTC_TRAINED in rtc_modes:
+                validate_trained_rtc_horizon(
+                    rtc_config.execution_horizon, spec.prediction_steps, spec.training_max_delay
+                )
             try:
                 inspect.signature(policy.predict_action_chunk).bind(
                     {}, inference_delay=0, prev_chunk_left_over=None
@@ -358,12 +359,14 @@ class PolicyRunner:
         """Use isolated processors for one bounded language request."""
         if not self.capabilities.language or self.language_processors is None:
             raise ValueError("This policy does not support text queries.")
-        if kind not in {"vqa", "next_subtask"}:
-            raise ValueError("Unsupported language query kind.")
+        try:
+            query_kind = QueryKind(kind)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("Unsupported language query kind.") from exc
         if not text.strip() or len(text) > self.max_text_input:
             raise ValueError("Query text is empty or exceeds the configured input limit.")
         batch = self._batch(observation)
-        batch[QUERY_KIND] = kind
+        batch[QUERY_KIND] = query_kind.value
         batch[QUERY_TEXT] = text
         with torch.inference_mode():
             prepared = self.language_processors[0](batch)

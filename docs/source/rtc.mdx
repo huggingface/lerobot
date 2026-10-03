@@ -97,11 +97,21 @@ for step in range(num_steps):
 - `guided` (default) applies the original Jacobian guidance during denoising and works with ordinary flow-matching checkpoints.
 - `trained` hard-inpaints the previous chunk's prefix with per-action flow timesteps. It currently requires a Pi05 checkpoint trained with `policy.rtc_training_max_delay > 0` and avoids the guidance backward pass.
 
-For trained mode, both `execution_horizon` and the rollout backend's
-`inference.queue_threshold` must be at least the checkpoint's
-`rtc_training_max_delay`, and `execution_horizon` must not exceed
-`chunk_size - rtc_training_max_delay` (the `d <= s <= H - d` bound from the RTC
-paper); rollout validates this before connecting the robot.
+Local rollout and the policy server apply the same conservative trained-mode
+admission rule: `rtc_training_max_delay <= execution_horizon <= prediction_steps - rtc_training_max_delay`.
+For Pi05, `prediction_steps` is the checkpoint's `chunk_size`. This preserves the
+existing local limit: the configured prefix covers the maximum trained delay and
+leaves at least that many predicted steps outside it. Local rollout additionally
+requires `inference.queue_threshold >= rtc_training_max_delay` before connecting
+the robot; remote request timing uses its own refill settings.
+
+Here `execution_horizon` is supplied prefix capacity, not the amount of playback
+between requests. Pi05 hard-conditions only the `inference_delay` prefix. The
+admission rule is not a latency guarantee or a claim that larger capacities must
+fail at runtime; measured overlap, remaining actions and freshness checks still
+determine whether a returned chunk can execute. A previously accepted remote-only
+configuration above the upper bound must now shorten its prefix to match local
+admission. Plain chunks and guided RTC are unaffected by this trained-only rule.
 
 **`execution_horizon`**: How many timesteps from the previous chunk to maintain consistency with. Higher values mean smoother transitions but potentially less reactivity.
 

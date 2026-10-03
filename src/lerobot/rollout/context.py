@@ -38,6 +38,7 @@ from lerobot.datasets import (
 )
 from lerobot.policies import get_policy_class, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.rtc.configuration_rtc import validate_trained_rtc_horizon
 from lerobot.processor import (
     PolicyProcessorPipeline,
     RobotAction,
@@ -107,30 +108,13 @@ def _validate_trained_rtc_rollout_config(policy_config, inference_config: RTCInf
     if not rtc.enabled or rtc.mode != "trained":
         return
     training_max_delay = int(getattr(policy_config, "rtc_training_max_delay", 0))
-    if training_max_delay <= 0:
-        raise ValueError(
-            "--inference.rtc.mode=trained requires a checkpoint trained with "
-            "--policy.rtc_training_max_delay > 0."
-        )
-    if rtc.execution_horizon < training_max_delay:
-        raise ValueError(
-            f"--inference.rtc.execution_horizon ({rtc.execution_horizon}) must be at least the "
-            f"checkpoint's rtc_training_max_delay ({training_max_delay})."
-        )
+    validate_trained_rtc_horizon(
+        rtc.execution_horizon, int(getattr(policy_config, "chunk_size", 0)), training_max_delay
+    )
     if inference_config.queue_threshold < training_max_delay:
         raise ValueError(
             f"--inference.queue_threshold ({inference_config.queue_threshold}) must be at least the "
             f"checkpoint's rtc_training_max_delay ({training_max_delay})."
-        )
-
-    # RTC requires d <= s <= H - d (arXiv 2506.07339): an execution horizon past H - d would
-    # commit actions the next chunk can no longer re-plan, so the overlap never closes.
-    chunk_size = int(getattr(policy_config, "chunk_size", 0))
-    if chunk_size and rtc.execution_horizon > chunk_size - training_max_delay:
-        raise ValueError(
-            f"--inference.rtc.execution_horizon ({rtc.execution_horizon}) must be at most "
-            f"chunk_size - rtc_training_max_delay ({chunk_size} - {training_max_delay} = "
-            f"{chunk_size - training_max_delay})."
         )
 
 

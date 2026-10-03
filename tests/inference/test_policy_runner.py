@@ -15,7 +15,7 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.inference.contracts import ExecutionMode, FeatureSpec, ObservationSnapshot
+from lerobot.inference.contracts import ExecutionMode, FeatureSpec, ObservationSnapshot, QueryKind
 from lerobot.inference.policy_runner import PolicyRunner
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.modeling_act import ACTPolicy
@@ -24,6 +24,7 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.processor import AbsoluteActionsProcessorStep, RelativeActionsProcessorStep
+from lerobot.rollout.inference.base import QueryKind as LegacyQueryKind
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE, QUERY_KIND, QUERY_TEXT
 
 
@@ -311,6 +312,20 @@ def test_language_processor_isolation_and_motion_invalidation_preserve_action_an
     runner.reset()
     assert policy.resets == 2
     assert runner._relative_step.get_cached_state() is None
+
+
+@pytest.mark.parametrize("kind", list(QueryKind))
+def test_language_query_kind_contract_preserves_public_enum_and_policy_strings(kind, monkeypatch):
+    assert LegacyQueryKind is QueryKind
+    policy = ConformingPolicy(tiny_config())
+    runner = runner_for(policy)
+
+    def generate_text(batch):
+        assert batch[QUERY_KIND] == kind.value
+        return "a cube"
+
+    monkeypatch.setattr(policy, "generate_text", generate_text)
+    assert runner.query(observation(), kind=kind.value, text="What is visible?") == "a cube"
 
 
 def test_mapping_is_not_applied_twice():

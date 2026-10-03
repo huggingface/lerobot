@@ -14,9 +14,10 @@
 
 """Inference engine configs and factory.
 
-Selection is explicit via ``--inference.type=sync|rtc|remote``. Adding a new
-backend requires registering its config subclass and dispatching it in
-:func:`create_inference_engine`.
+Selection is explicit via ``--inference.type=sync|rtc|remote``. This factory builds
+local backends with an already loaded policy. Remote inference is dispatched by
+``build_rollout_context`` to ``build_remote_rollout_context``, which establishes
+the remote session instead of loading a local policy.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from typing import Literal
 
 import draccus
 
+from lerobot.inference.contracts import ExecutionMode
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.processor import PolicyProcessorPipeline
@@ -126,8 +128,10 @@ class RemoteInferenceConfig(InferenceEngineConfig):
             raise ValueError("Remote inference requires deployment and explicit robot/action semantics")
         if self.hold_mode != "position":
             raise ValueError("Remote inference requires --inference.hold_mode=position on a supported robot")
-        if self.mode not in {"chunk", "rtc_guided", "rtc_trained"}:
-            raise ValueError(f"Unsupported remote execution mode: {self.mode!r}")
+        try:
+            ExecutionMode(self.mode)
+        except ValueError as exc:
+            raise ValueError(f"Unsupported remote execution mode: {self.mode!r}") from exc
         chunk_settings(self.chunk_merge, self.blend_steps, self.blend_weight, self.blend_components)
         if self.mode != "chunk" and self.chunk_merge != "append":
             raise ValueError("chunk_merge=aligned is available only with mode=chunk")
@@ -167,8 +171,13 @@ def create_inference_engine(
     compile_warmup_inferences: int = 2,
     shutdown_event: Event | None = None,
 ) -> InferenceEngine:
-    """Instantiate the appropriate inference engine from a config object."""
+    """Build a local engine; remote sessions are built by ``build_rollout_context``."""
     logger.info("Creating inference engine: %s", config.type)
+    if isinstance(config, RemoteInferenceConfig):
+        raise ValueError(
+            "Remote inference requires a connected RemoteClient; use build_rollout_context "
+            "(which delegates to build_remote_rollout_context) instead of create_inference_engine"
+        )
     if isinstance(config, SyncInferenceConfig):
         return SyncInferenceEngine(
             policy=policy,

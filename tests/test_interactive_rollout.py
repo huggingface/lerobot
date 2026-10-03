@@ -408,6 +408,27 @@ def test_controller_segment_end_hold_failure_is_terminal():
     assert controller.start() is False
 
 
+def test_controller_logs_segment_hold_failure_once_at_boundary(caplog):
+    from lerobot.rollout.strategies.base import BaseStrategy
+
+    controller, _events, strategy, engine, _parent, _run_started = _make_controller(lambda ctx: None)
+    robot = controller._ctx.hardware.robot_wrapper
+    robot.supports_hold = True
+    robot.hardware_failure = None
+    robot.hold.side_effect = OSError("one physical hold failure")
+    real_strategy = BaseStrategy(BaseStrategyConfig())
+    real_strategy._engine = engine
+    strategy.hold_control_state.side_effect = real_strategy.hold_control_state
+    thread = _serve_thread(controller)
+    assert controller.start()
+    _join_session(thread)
+
+    records = [record for record in caplog.records if record.exc_info]
+    assert len(records) == 1
+    assert "Could not apply segment-end hold; skipping further shutdown movement" in records[0].getMessage()
+    assert "one physical hold failure" in controller.failure_traceback
+
+
 def test_controller_hold_failure_preserves_original_strategy_failure(caplog):
     def failing_run(ctx):
         raise OSError("original observation failure")
@@ -1499,18 +1520,32 @@ def test_rtc_engine_answers_vqa_on_rtc_thread_delivered_by_control_pump():
         assert delivered[0].answer == "answer: what do you see?"
 
 
-def test_rtc_engine_get_action_raises_on_unlabeled_action():
+def test_rtc_engine_get_action_faults_on_missing_provenance():
     """An unlabeled action would silently corrupt dispatched_task and the frame labels."""
-    from lerobot.policies.rtc import ActionQueue
-    from lerobot.policies.rtc.configuration_rtc import RTCConfig
-
     engine, _policy = _make_rtc_engine()
-    queue = ActionQueue(RTCConfig(enabled=True, execution_horizon=8, max_guidance_weight=1.0))
-    queue.merge(torch.zeros(4, 2), torch.zeros(4, 2), real_delay=0)  # no task label
-    engine._action_queue = queue
+    engine._runtime.activate()
+    engine.action_queue.merge(torch.zeros(4, 2), torch.zeros(4, 2), real_delay=0)
 
-    with pytest.raises(RuntimeError, match="task provenance"):
-        engine.get_action(None)
+    assert engine.get_action(None) is None
+    assert engine.failed
+    assert "Action lacks request provenance" in engine.failure_traceback
+
+
+def test_rtc_engine_refuses_restart_while_running_and_after_stop():
+    engine, _policy = _make_rtc_engine()
+    engine.start()
+    worker = engine._rtc_thread
+    try:
+        with pytest.raises(RuntimeError, match="cannot be restarted"):
+            engine.start()
+        assert engine._rtc_thread is worker
+        assert worker.is_alive()
+    finally:
+        engine.stop()
+
+    assert not worker.is_alive()
+    with pytest.raises(RuntimeError, match="cannot be restarted"):
+        engine.start()
 
 
 def test_rtc_reset_runs_on_policy_worker_after_inflight_call_finishes():
