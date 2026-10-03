@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import numpy as np
+import pytest
 
 from lerobot.datasets import LeRobotDataset
 from lerobot.rl.crop_dataset_roi import convert_lerobot_dataset_to_cropped_lerobot_dataset
@@ -23,10 +24,18 @@ from lerobot.utils.feature_utils import dataset_to_policy_features
 IMAGE_KEY = "observation.images.front"
 
 
-def test_cropped_image_feature_shape_matches_its_names(tmp_path):
-    """The cropped feature keeps (height, width, channels) names, so its shape must be (H, W, C)."""
+@pytest.mark.parametrize(
+    ("source_shape", "names", "expected_shape"),
+    [
+        ((16, 20, 3), ["height", "width", "channels"], (8, 6, 3)),
+        ((3, 16, 20), ["channels", "height", "width"], (3, 8, 6)),
+    ],
+    ids=["hwc", "chw"],
+)
+def test_cropped_image_feature_shape_follows_its_names(tmp_path, source_shape, names, expected_shape):
+    """The cropped feature keeps its names, so its shape must keep the layout those names declare."""
     features = {
-        IMAGE_KEY: {"dtype": "image", "shape": (16, 20, 3), "names": ["height", "width", "channels"]},
+        IMAGE_KEY: {"dtype": "image", "shape": source_shape, "names": names},
         "action": {"dtype": "float32", "shape": (2,), "names": ["a", "b"]},
     }
     source = LeRobotDataset.create(
@@ -35,7 +44,7 @@ def test_cropped_image_feature_shape_matches_its_names(tmp_path):
     for _ in range(3):
         source.add_frame(
             {
-                IMAGE_KEY: np.zeros((16, 20, 3), dtype=np.uint8),
+                IMAGE_KEY: np.zeros(source_shape, dtype=np.uint8),
                 "action": np.zeros(2, dtype=np.float32),
                 "task": "pick",
             }
@@ -52,6 +61,6 @@ def test_cropped_image_feature_shape_matches_its_names(tmp_path):
     )
 
     feature = cropped.meta.info.features[IMAGE_KEY]
-    assert tuple(feature["shape"]) == (8, 6, 3)
-    assert feature["names"] == ["height", "width", "channels"]
+    assert tuple(feature["shape"]) == expected_shape
+    assert feature["names"] == names
     assert dataset_to_policy_features({IMAGE_KEY: feature})[IMAGE_KEY].shape == (3, 8, 6)
