@@ -199,9 +199,10 @@ def convert_lerobot_dataset_to_cropped_lerobot_dataset(
 
     # Update the metadata for every image key that will be cropped:
     # (Here we simply set the shape to be the final resize_size.)
+    # The feature keeps its (height, width, channels) names, so the shape is (H, W, C) as well.
     for key in crop_params_dict:
         if key in new_dataset.meta.info.features:
-            new_dataset.meta.info.features[key]["shape"] = (3, *resize_size)
+            new_dataset.meta.info.features[key]["shape"] = (*resize_size, 3)
 
     # TODO:  Directly modify the mp4 video + meta info features, instead of recreating a dataset
     prev_episode_index = 0
