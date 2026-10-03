@@ -5,7 +5,7 @@ LeRobot supports multiple hardware acceleration options for both training and in
 These options include:
 
 - **CPU**: CPU executes all computations, no dedicated accelerator is used
-- **CUDA**: acceleration with NVIDIA & AMD GPUs
+- **CUDA**: acceleration with NVIDIA GPUs, and with AMD GPUs through ROCm (see [AMD GPUs](#amd-gpus-rocm))
 - **MPS**: acceleration with Apple Silicon GPUs
 - **XPU**: acceleration with Intel integrated and discrete GPUs
 
@@ -15,6 +15,21 @@ To use particular accelerator, a suitable version of PyTorch should be installed
 
 For CPU, CUDA, and MPS backends follow instructions provided on [PyTorch installation page](https://pytorch.org/get-started/locally).
 For XPU backend, follow instructions from [PyTorch documentation](https://docs.pytorch.org/docs/stable/notes/get_start_xpu.html).
+
+### AMD GPUs (ROCm)
+
+ROCm builds of PyTorch expose the HIP runtime through the `torch.cuda` namespace, so
+`--policy.device=cuda` selects an AMD GPU and no LeRobot-side change is needed. `HIP_VISIBLE_DEVICES` is preferred over `CUDA_VISIBLE_DEVICES` when selecting specific cards.
+
+Installing LeRobot on top of an existing ROCm PyTorch needs care: LeRobot pins
+`torch<2.12`, `torchvision<0.27` and `numpy<2.3`, all below what current ROCm images
+ship, and `[tool.uv.sources]` resolves torch from the CUDA `cu128` index, so an
+unconstrained install replaces the ROCm build and leaves the GPUs unusable. Pin those
+packages with `uv pip install --override` so the rest of the tree resolves normally.
+[`docker/Dockerfile.rocm`](https://github.com/huggingface/lerobot/blob/main/docker/Dockerfile.rocm)
+does this and is the quickest way to a working environment; see
+[docker/README.md](https://github.com/huggingface/lerobot/blob/main/docker/README.md)
+for the run flags ROCm requires.
 
 ### Verifying the installation
 
