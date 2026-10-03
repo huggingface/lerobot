@@ -16,6 +16,42 @@
       "source_version": "45396ff67c3596a2fdaded5125fda5a0ac65e545",
       "title": "標註管線（Annotation Pipeline）"
     },
+    "api/cameras.mdx": {
+      "source_version": "2b8c83b96ac42020485f5b4d4507cac9f0275680",
+      "title": "相機（Cameras）"
+    },
+    "api/configs.mdx": {
+      "source_version": "4a4a9a9f5ae193c020c7f75a9626054dcc583ced",
+      "title": "設定（Configuration）"
+    },
+    "api/datasets.mdx": {
+      "source_version": "5dcba75453b85a4468fa56d280748f0d49771cc1",
+      "title": "資料集（Datasets）"
+    },
+    "api/envs.mdx": {
+      "source_version": "1552e55b39a86dac7446603961c1e671e345aed3",
+      "title": "環境（Environments）"
+    },
+    "api/motors.mdx": {
+      "source_version": "22ff6156665f5321066458f4365678753bd6a23b",
+      "title": "馬達（Motors）"
+    },
+    "api/policies.mdx": {
+      "source_version": "e21a5cc9ebc691f601a65ac64c083cacc227ab6c",
+      "title": "策略（Policies）"
+    },
+    "api/processor.mdx": {
+      "source_version": "daacc877d6e913dbdb6716800f002b673255e52b",
+      "title": "處理器（Processors）"
+    },
+    "api/robots.mdx": {
+      "source_version": "84a051a6173c08b21feb6cfe12ac64e8f4ea3f8e",
+      "title": "機器人（Robots）"
+    },
+    "api/teleoperators.mdx": {
+      "source_version": "b890b73c2ef29d379249b39ab79a37311a3a3e51",
+      "title": "遙操作器（Teleoperators）"
+    },
     "async.mdx": {
       "source_version": "af255511336055774047ec97891612e6148106fa",
       "title": "使用非同步推論（Async Inference）"
@@ -25,7 +61,8 @@
       "title": "向下相容性（Backward compatibility）"
     },
     "bring_your_own_policies.mdx": {
-      "source_version": "691d3fc810d6fe887aa343350ca6b2b1f5f747df",
+      "source_title": "Adding a Policy",
+      "source_version": "d53e36bc77d52b34b770e7a2b6058cb8331f1f39",
       "title": "新增策略（Adding a Policy）"
     },
     "cameras.mdx": {
@@ -80,6 +117,11 @@
       "source_version": "8012d62bc6e723c7e275ba5d4c944437eef63234",
       "title": "更新 Feetech 韌體"
     },
+    "flux3.mdx": {
+      "source_title": "FLUX 3 Action (flux3)",
+      "source_version": "13faddbab8614b52d816c7d78e43048a4b1a65b2",
+      "title": "FLUX 3 Action（flux3）"
+    },
     "groot.mdx": {
       "source_version": "12d67f62db09f2b70b70a267f17e613ec55e6190",
       "title": "NVIDIA GR00T"
@@ -117,7 +159,8 @@
       "title": "LeRobot"
     },
     "inference.mdx": {
-      "source_version": "63009bf0980543c00cf7b989cfe4467c69ee7020",
+      "source_title": "Policy Deployment (lerobot-rollout)",
+      "source_version": "2b2268774aedef4bcd8f1b295efd5cc066a9bc96",
       "title": "策略部署（Policy Deployment, lerobot-rollout）"
     },
     "installation.mdx": {
@@ -157,7 +200,8 @@
       "title": "LeLab - LeRobot GUI"
     },
     "lerobot-dataset-v3.mdx": {
-      "source_version": "674660ee6b8cd71d6163a6dfd741f0f9043acfab",
+      "source_title": "Using LeRobotDataset",
+      "source_version": "bdb6c1d12b38e9f4c8ea0f422fd1bbd366638f02",
       "title": "使用 LeRobotDataset"
     },
     "libero.mdx": {
@@ -181,7 +225,8 @@
       "title": "MolmoAct2"
     },
     "multi_gpu_training.mdx": {
-      "source_version": "82c8596f8041c9bf73d00b4d687927b059e7b24d",
+      "source_title": "Multi GPU training",
+      "source_version": "e5d01cc3613f088ef61fcff20d7bd127a3aed3a0",
       "title": "多 GPU 訓練"
     },
     "multi_task_dit.mdx": {
@@ -233,8 +278,9 @@
       "title": "Reachy 2"
     },
     "rebot_b601.mdx": {
-      "source_version": "adb751560c696cacadc03e29a76513f385bd4a6d",
-      "title": "reBot B601-DM"
+      "source_title": "reBot B601",
+      "source_version": "16dd1a0aac0cfaacc2ef2d4c2521f6b52352a687",
+      "title": "reBot B601"
     },
     "rename_map.mdx": {
       "source_version": "16ee6344a8d7320236cb444332dd9b3c7e507808",
@@ -301,7 +347,8 @@
       "title": "TOPReward"
     },
     "torch_accelerators.mdx": {
-      "source_version": "8af72766ae88fbfe81ed2041a5ab24d7c7ae03c6",
+      "source_title": "PyTorch accelerators",
+      "source_version": "a84c69378e02baff6c1877f53a73844a47afd3b7",
       "title": "PyTorch accelerators"
     },
     "unitree_g1.mdx": {

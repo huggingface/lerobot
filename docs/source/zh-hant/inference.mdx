@@ -49,11 +49,11 @@ lerobot-rollout \
     --duration=60
 ```
 
-| 旗標（flag）     | 描述（description）                                                    |
-| ---------------- | ---------------------------------------------------------------------- |
-| `--duration`     | 執行時間（秒，0 = 無限）                                               |
-| `--task`         | 傳給策略（policy）的任務描述（task description）                       |
-| `--display_data` | 將觀測/動作（observations/actions）串流（stream）到 Rerun 以進行視覺化 |
+| 旗標（flag）     | 描述（description）                                          | 預設值（default） |
+| ---------------- | ------------------------------------------------------------ | ----------------- |
+| `--duration`     | 執行時間（秒，0 = 無限）                                     | 0                 |
+| `--task`         | 傳給策略（policy）的任務描述（task description）             | --                |
+| `--display_data` | 將觀測/動作（observations/actions）串流到 Rerun 以進行視覺化 | false             |
 
 ### Sentry（`--strategy.type=sentry`）[[sentry---strategytypesentry]]
 
@@ -74,12 +74,12 @@ lerobot-rollout \
     --duration=3600
 ```
 
-| 旗標（flag）                           | 描述（description）                                                  |
-| -------------------------------------- | -------------------------------------------------------------------- |
-| `--strategy.upload_every_n_episodes`   | 每 N 個回合（episode）推送到 Hub（預設：5）                          |
-| `--strategy.target_video_file_size_mb` | 回合輪替（episode rotation）的目標影片檔案大小（預設：自動）         |
-| `--dataset.repo_id`                    | **必填。** 錄製資料集（recorded dataset）的 Hub 儲存庫（repository） |
-| `--dataset.push_to_hub`                | 是否在收尾（teardown）時推送到 Hub（預設：true）                     |
+| 旗標（flag）                           | 描述（description）                                                  | 預設值（default） |
+| -------------------------------------- | -------------------------------------------------------------------- | ----------------- |
+| `--strategy.upload_every_n_episodes`   | 每 N 個回合（episode）推送到 Hub                                     | 5                 |
+| `--strategy.target_video_file_size_mb` | 回合輪替（episode rotation）的目標影片檔案大小                       | auto              |
+| `--dataset.repo_id`                    | **必填。** 錄製資料集（recorded dataset）的 Hub 儲存庫（repository） | --                |
+| `--dataset.push_to_hub`                | 是否在收尾（teardown）時推送到 Hub                                   | true              |
 
 ### Highlight（`--strategy.type=highlight`）[[highlight---strategytypehighlight]]
 
@@ -328,6 +328,22 @@ lerobot-rollout \
 | `/reset`            | 停止移動、將機器人返回其啟動位置，並還原 `--task` 指令                                                                                 |
 | `/stop`             | 結束工作階段並執行一般的關閉程序                                                                                                       |
 | `/help`             | 列出指令                                                                                                                               |
+
+```text
+> /start
+Rollout running — task 'pick up the cube'. /subtask <text> to change it, ...
+> /subtask put the cube in the box
+Task: 'pick up the cube' → 'put the cube in the box' (applies from the next policy inference)
+> /vqa is the cube inside the box?
+Asked: 'is the cube inside the box?' — answering from the next observation...
+Q: is the cube inside the box?
+A: No — the cube is on the table to the left of the box.
+> /reset
+Task restored to 'pick up the cube'
+Resetting — returning the robot to its initial position...
+Robot reset — holding at initial position. /start to run.
+> /stop
+```
 
 以 `>` 開頭的行是你輸入的內容；工作階段本身不會顯示提示符號。
 

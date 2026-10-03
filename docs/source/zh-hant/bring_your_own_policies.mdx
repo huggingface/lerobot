@@ -1,4 +1,4 @@
-# 新增策略（adding a policy）
+# 新增策略（adding a policy）[[adding-a-policy]]
 
 本指南帶您實作自訂策略（custom policy），並讓它能與 LeRobot 的訓練（training）、評估（evaluation）與部署（deployment）工具搭配運作。有兩種路徑：
 
@@ -13,11 +13,11 @@
 
 ---
 
-## 策略剖析（anatomy of a policy）
+## 策略剖析（anatomy of a policy）[[anatomy-of-a-policy]]
 
 每個策略（policy）都由三個基礎構件（building blocks）組成。下方名稱以 `my_policy` 作為佔位符（placeholder），請替換成您的策略名稱（policy’s name）。這個名稱具關鍵作用：它必須與您傳給 `@PreTrainedConfig.register_subclass` 的字串、`MyPolicy.name` 類別屬性，以及 `make_<name>_pre_post_processors` 工廠函式（factory function）三者一致（各項細節見下文）。
 
-### 配置類別（configuration class）
+### 配置類別（configuration class）[[configuration-class]]
 
 繼承 [`PreTrainedConfig`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/configs/policies.py) 並註冊（register）您的策略類型（policy type）。以下是模板（template），請依您策略的架構（policy’s architecture）與訓練需求自訂參數（parameters）與方法（methods）。
 
@@ -92,7 +92,7 @@ class MyPolicyConfig(PreTrainedConfig):
 
 您傳給 `@register_subclass` 的字串（string）必須與 `MyPolicy.name`（下一節）相符，也是使用者在 CLI 上以 `--policy.type` 提供的值。除非您確實有其他需要，`get_optimizer_preset` 預設使用 `lerobot.optim` 的 `AdamW`。
 
-### 策略類別（policy class）
+### 策略類別（policy class）[[policy-class]]
 
 繼承（inherit） [`PreTrainedPolicy`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/pretrained.py) 並設定兩個類屬性（class attributes），兩者都會由 `__init_subclass__` 檢查：
 
@@ -171,7 +171,7 @@ class MyPolicy(PreTrainedPolicy):
 
 只要這一項宣告，`--parallelism.dp_shard=N` 就能直接用於您的策略（使用者仍可用 `--accelerator.fsdp.wrap_modules` 覆寫）。若沒有任何包裝來源（wrap source），分片執行（sharded runs）在設計上就會於啟動時失敗。
 
-### 處理器函式（processor functions）
+### 處理器函式（processor functions）[[processor-functions]]
 
 LeRobot 使用 `PolicyProcessorPipeline` 在您的策略（policy）前後對輸入（inputs）進行正規化（normalize）、對輸出（outputs）進行反正規化（de-normalize）。如需具體參考，請查看 [`processor_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/processor_act.py) 或 [`processor_diffusion.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/diffusion/processor_diffusion.py)。
 
@@ -198,6 +198,49 @@ def make_my_policy_pre_post_processors(
 ```
 
 **重要 — 函式命名（function naming）：** LeRobot 透過名稱探索您的處理器（processor）。此函式**必須**命名為 `make_{policy_name}_pre_post_processors`（與您傳給 `@PreTrainedConfig.register_subclass` 的字串相符）。
+
+#### 選用：調整從檢查點載入的處理器（adjusting processors loaded from a checkpoint）[[optional-adjusting-processors-loaded-from-a-checkpoint]]
+
+`make_{policy_name}_pre_post_processors` 只有在處理器從頭建構時才會執行。只要涉及檢查點（微調、恢復訓練或評估），LeRobot 會改為載入與權重並存的已序列化管線（pipelines），並套用呼叫端的覆寫（caller’s overrides）。
+
+如果您的策略（policy）必須調整那些已載入的管線，請在同一個模組中新增一個選用的第二函式，命名為 `make_{policy_name}_pre_post_processors_from_pretrained`。LeRobot 會依相同的命名慣例找到它，並用它取代通用的載入流程。對於不需要任何特殊處理的策略直接省略即可。
+
+```python
+from lerobot.processor import load_pretrained_policy_processors
+from lerobot.utils.constants import (
+    POLICY_POSTPROCESSOR_DEFAULT_NAME,
+    POLICY_PREPROCESSOR_DEFAULT_NAME,
+)
+
+
+def make_my_policy_pre_post_processors_from_pretrained(
+    config,
+    pretrained_path: str,
+    *,
+    revision: str | None = None,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    dataset_meta: Any | None = None,
+    preprocessor_overrides: dict[str, Any] | None = None,
+    postprocessor_overrides: dict[str, Any] | None = None,
+    preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
+    postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
+    preprocessor, postprocessor = load_pretrained_policy_processors(
+        pretrained_path,
+        revision=revision,
+        preprocessor_overrides=preprocessor_overrides,
+        postprocessor_overrides=postprocessor_overrides,
+        preprocessor_config_filename=preprocessor_config_filename,
+        postprocessor_config_filename=postprocessor_config_filename,
+    )
+    ...  # 將載入的管線與目前的 `config` 調整為一致
+    return preprocessor, postprocessor
+```
+
+實際範例請見 [`processor_evo1.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/evo1/processor_evo1.py)（重新填充正規化的統計量）、[`processor_groot.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/groot/processor_groot.py)（處理原始上游檢查點），以及 [`processor_molmoact2.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/molmoact2/processor_molmoact2.py)（重新命名 override keys）。
 
 ### 支援文字的策略（text-capable policies）[[text-capable-policies]]
 
@@ -278,7 +321,7 @@ class MyPolicy(PreTrainedPolicy):
 
 要發布策略最快的方式：把它打包（package）成獨立的 Python 發行套件（standalone Python distribution），並與 LeRobot 一起安裝。不需 PR、您自己掌握發布週期（release cycle），也可以用自己的命名空間（namespace）發布到 PyPI。
 
-### 套件結構（package structure）
+### 套件結構（package structure）[[package-structure]]
 
 建立一個以 `lerobot_policy_` 為前綴（重要！）並接上您策略名稱的套件：
 
@@ -293,7 +336,7 @@ lerobot_policy_my_policy/
         └── processor_my_policy.py
 ```
 
-### `pyproject.toml`
+### `pyproject.toml`[[pyprojecttoml]]
 
 ```toml
 [project]
@@ -309,7 +352,7 @@ build-backend = # 您的建置後端
 requires = # 您的建置系統
 ```
 
-### 套件的 `__init__.py`
+### 套件的 `__init__.py`[[package-initpy]]
 
 在套件的 `__init__.py` 中暴露您的類別，並防範 `lerobot` 未安裝的情況：
 
@@ -335,7 +378,7 @@ __all__ = [
 ]
 ```
 
-### 安裝與使用（install and use）
+### 安裝與使用（install and use）[[install-and-use]]
 
 ```bash
 cd lerobot_policy_my_policy
@@ -360,7 +403,7 @@ lerobot-train \
 
 當您的策略（policy）已經穩定、且將它隨函式庫一起發布有明確價值時，您可以讓它直接進入 LeRobot。請先閱讀一般性的[貢獻指南](./contributing)與 [PR 模板](https://github.com/huggingface/lerobot/blob/main/.github/PULL_REQUEST_TEMPLATE.md)，那裡列出了每個 PR 都必須符合的測試／品質（testing/quality）要求（`pre-commit run -a`、`pytest`、社群審查規則等）。以下是在這些要求之上、策略專屬（policy-specific）的部分。
 
-### In-tree 檔案結構（In-tree layout）
+### In-tree 檔案結構（In-tree layout）[[in-tree-layout]]
 
 ```
 src/lerobot/policies/my_policy/
@@ -378,7 +421,7 @@ src/lerobot/policies/my_policy/
 
 這些檔名具關鍵作用：工廠（factory）會依名稱進行延遲匯入（lazy import），而處理器（processor）則透過 `make_<policy_name>_pre_post_processors` 慣例被探索。
 
-### 連接（wiring）
+### 連接（wiring）[[wiring]]
 
 有兩個地方需要知道您的策略（policy），全都透過名稱。
 
@@ -387,7 +430,7 @@ src/lerobot/policies/my_policy/
 
 參照一個結構與您相似的現有策略；差異很小。
 
-### 大型／可選相依套件（heavy / optional dependencies）
+### 大型／可選相依套件（heavy / optional dependencies）[[heavy-optional-dependencies]]
 
 大多數策略都需要一個大型骨幹（heavy backbone）網路（transformers、diffusers，或特定的 VLM SDK）。只要既有實作存在，請優先從例如 `transformers` 或 `diffusers` 載入它，而非在專案內（in-tree）重新實作該架構。
 
@@ -417,11 +460,11 @@ class DiffusionPolicy(PreTrainedPolicy):
 
 在 [`pyproject.toml`](https://github.com/huggingface/lerobot/blob/main/pyproject.toml) 的 `[project.optional-dependencies]` 新增對應的額外相依項（matching extra），並將其納入 `all` 這個額外相依項（extra），讓 `pip install 'lerobot[all]'` 仍會安裝所有東西。
 
-### 不要複製 modeling —— 改用子類（avoid copying a modeling file — subclass it）
+### 不要複製 modeling —— 改用子類（avoid copying a modeling file — subclass it）[[avoid-copying-a-modeling-file-subclass-it]]
 
 如果您的策略（policy）需要修改 `transformers` 中已存在的骨幹（backbone；自訂條件 custom conditioning、額外輸入 extra inputs、替換某個子模組 a swapped sub-module），**請勿把它的 `modeling_*.py` 複製一份進來**。相反地，請子類化（subclass）最小的上游單元（upstream unit），只覆寫（override）有變動的部分。[`pi_gemma.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/pi_gemma.py) 是標準參考：它以約 370 行程式碼，透過子類化（subclassing） `GemmaModel`／`PaliGemmaModel` 並覆寫解碼層（decoder-layer）的 forward，把 AdaRMS 條件（conditioning）注入 PaliGemma/Gemma，而不是分叉（forking）那個約 2,000 行的 modeling 檔。對一個*已載入的*原生模型做模型手術（model surgery）也沒問題（層截斷 layer truncation、tokenizer 擴充、隱藏狀態擷取 hidden-state capture，可用範例見 `evo1/internvl3_embedder.py`、`eo1/modeling_eo1.py`、`groot/groot_n1_7.py`）。當 PR 帶著複製的 modeling 檔案（file）進來時，審查者會要求改用這個模式；唯一可接受的例外，是該模型在 `transformers` 中根本不存在。
 
-### 基準測試與發布的檢查點（benchmarks and a published checkpoint）
+### 基準測試與發布的檢查點（benchmarks and a published checkpoint）[[benchmarks-and-a-published-checkpoint]]
 
 當一個新策略（policy）附帶可運作的檢查點（checkpoint），以及至少一個你可以重現的數值（one number you can reproduce）時，會遠比較容易審查（review），也實用得多。
 
@@ -451,7 +494,7 @@ Reproduce: `lerobot-eval --policy.path=lerobot/<policy>_libero --env.type=libero
 
 若您的策略（policy）僅適用於實體機器人（real-robot-only）、沒有適用的模擬基準測試（sim benchmark），請將模擬評估替換為：Hub 上的公開訓練資料集（public training dataset）、`lerobot-train` 指令、檢查點（checkpoint），以及透過 `lerobot-rollout --policy.path=...` 在 ≥10 個回合（episode）上的實體機器人成功率（real-robot success rate）。
 
-### PR 檢查清單（PR checklist）
+### PR 檢查清單（PR checklist）[[pr-checklist]]
 
 一般性的要求列在 [`CONTRIBUTING.md`](https://github.com/huggingface/lerobot/blob/main/CONTRIBUTING.md) 與 [PR 範本](https://github.com/huggingface/lerobot/blob/main/.github/PULL_REQUEST_TEMPLATE.md)。在這些之上，審查者還會檢查：
 
@@ -470,7 +513,7 @@ Reproduce: `lerobot-eval --policy.path=lerobot/<policy>_libero --env.type=libero
 
 ---
 
-## 範例與社群貢獻（examples and community contributions）
+## 範例與社群貢獻（examples and community contributions）[[examples-and-community-contributions]]
 
 查看以下策略實作範例：
 

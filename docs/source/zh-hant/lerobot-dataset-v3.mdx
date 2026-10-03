@@ -19,6 +19,7 @@
 - **Hub 原生串流（hub-native streaming）**：使用 `StreamingLeRobotDataset` 直接從 Hub 消費資料集（consume datasets）。
 - **降低檔案系統壓力（lower file-system pressure）**：更少、更大的檔案 ⇒ 更快的初始化，並在大規模（at scale）時減少問題。
 - **統一的組織方式（unified organization）**：乾淨的目錄結構（directory layout），資料與影片皆採用一致的路徑模板（path templates）。
+- **資料集儲存後端（dataset storage backends）**：資料集也可以儲存為 [LanceDB](https://lancedb.com) 資料表（tables），以直接從物件儲存（object storage）進行隨機存取與索引（indexing）（參見 [LanceDB 資料集後端](#lancedb-dataset-backend)）。
 
 ## 安裝（installation）[[installation]]
 
@@ -335,36 +336,47 @@ dataset.push_to_hub()
 
 ## 其他格式與實作（other formats and implementations）[[other-formats-and-implementations]]
 
-### Lance[[lance]]
+### LanceDB 資料集後端[[lancedb-dataset-backend]]
 
-Lance 是適用於多模態 AI 資料集（multimodal AI datasets）的實用格式，尤其適合需要高效能 IO 與隨機存取的大規模訓練（large-scale training）。
+`v3` 資料集也可以儲存為 [LanceDB](https://lancedb.com) 資料表。LanceDB 是建構於 Lance 格式上的多模態 data lakehouse，針對 AI 存取模式設計：可快速隨機存取任一資料列及其影片位元組（bytes），並在同一批資料表上建立純量（scalar）、向量（vector）與全文索引（full-text indexes），因此 EDA、mining、curation 與訓練都能直接從物件儲存（object storage）執行。此布局會保持 `meta/` 不變，並新增一個 `frames` 資料表來存放表格資料（tabular data），以及一個 `videos` 資料表以 blob 形式保存 MP4。`meta/info.json` 中的 `"storage_format": "lance"` 會選擇對應的讀取器（reader）；`LeRobotDataset` API、項目（items）與訓練流程（training pipeline）則維持不變。
 
-`lerobot-lancedb` 套件實作了 `LeRobotLanceDataset`（用於 JPEG 影像）與 `LeRobotLanceVideoDataset`（用於 mp4 影片）。
-這兩種儲存布局皆繼承自 LeRobotDataset，並可提供資料載入的加速。
+- **從 Hub 或 HF Storage Buckets 直接訓練讓 GPU 不再空等資料。** 隨機影格（random frames）會就地讀取，且只讀取每個批次（batch）所需的位元組（bytes），因此每個批次都是全域洗牌（global shuffle），且無需先下載任何資料。
+- **轉換成本約等於複製檔案。** 影片不會重新編碼（re-encoded），因此項目（items）與來源位元完全相同（bit-identical）。DROID 可在 34 分鐘內完成轉換。
+- **零複製特徵工程（Zero-copy feature engineering）。** 可將分數（scores）、嵌入（embeddings）或修正後的標籤（corrected labels）等欄位（columns）加入訓練器（trainer）讀取的資料表中，而無需重寫影片或複製資料集，接著便能透過索引（indexes）對它們進行篩選與搜尋。讀取器（reader）會忽略它不認識的欄位。
 
-`LeRobotLanceDataset` 是 `LeRobotDataset` 的即插即用（drop-in）替代品：
+若要了解其運作方式、基準測試（benchmarks）與範例，請參閱 [LanceDB LeRobot 指南](https://docs.lancedb.com/training/lerobot)。
 
-```python
-from lerobot.datasets import LeRobotDatasetMetadata
-from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
-from lerobot_lancedb import LeRobotLanceDataset, LeRobotLanceVideoDataset
+相機特徵（camera features）必須為 video-backed。將相機影格（camera frames）以影像形式儲存的資料集不受讀取器（reader）支援，且需要在轉換前重新編碼為影片。
 
-cfg = DiffusionConfig(...)
-meta = LeRobotDatasetMetadata(root=local_dataset_path)  # 或使用 repo_id=... 從 Hub 載入元資料
-delta_timestamps = {...}
+讀取 Lance 資料集需要 `lancedb` 額外套件（extra；`pip install "lerobot[lancedb]"`）。此格式為唯讀：請以預設格式錄製與編輯資料集，再使用 [`lerobot-lancedb`](https://pypi.org/project/lerobot-lancedb/) 套件轉換它們：
 
-# 影像資料集使用 LeRobotLanceDataset
-dataset = LeRobotLanceDataset(
-    root=local_dataset_path,                            # 或使用 repo_id=... 從 Hub 串流
-    delta_timestamps=delta_timestamps,
-    return_uint8=True,
-)
-# 或影片資料集使用 LeRobotLanceVideoDataset：
-dataset = LeRobotLanceVideoDataset(
-    root=local_dataset_path,                            # 或使用 repo_id=... 從 Hub 串流
-    delta_timestamps=delta_timestamps,
-    return_uint8=True,
-)
+```bash
+pip install "lerobot-lancedb"
+lerobot-lance-convert --repo-id lerobot/pusht --out ./pusht-lance  # 或 --root <本機資料集目錄>
 ```
 
-歡迎在 [Github](https://github.com/huggingface/lerobot/issues/3608) 上參與討論，並在[這裡](https://lancedb.github.io/lerobot-lancedb/)探索 `lerobot-lancedb` 文件。
+載入時使用相同的類（class）：
+
+```python
+from lerobot.datasets import LeRobotDataset
+
+# Hub 資料集儲存庫
+dataset = LeRobotDataset("lance-format/pusht-lance")
+
+# HF Storage Bucket，就地讀取
+dataset = LeRobotDataset("my-org/pusht-lance", repo_type="bucket")
+
+# 同一個 bucket 作為 root URI（其他物件儲存 URI 的運作方式相同）
+dataset = LeRobotDataset("lerobot/pusht", root="hf://buckets/my-org/pusht-lance")
+```
+
+HF Storage Bucket 選項也可在 `lerobot-train` 中使用：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=my-org/pusht-lance \
+  --dataset.repo_type=bucket \
+  --policy.type=act
+```
+
+視覺化可搭配兩種檢視器（viewers）運作。`lerobot-dataset-viz --repo-id lance-format/pusht-lance --episode-index 0` 會如常地在 Rerun 中開啟一個回合（episode），而 `--display-mode foxglove` 則會透過 WebSocket 將其提供給 [Foxglove](https://foxglove.dev)。無論使用哪一種方式，都只會擷取畫面上顯示的影格（frames），不需要匯出或下載 MCAP。

@@ -43,7 +43,7 @@ lerobot-eval \
 
 ## 混合精度（mixed precision）[[mixed-precision]]
 
-訓練精度（training precision）由 `--accelerator.mixed_precision` 控制，其可接受 `no`（預設）與 `bf16`：
+訓練精度（training precision）由 `--accelerator.mixed_precision` 控制，其可接受 `no`（預設）、`bf16` 與 `fp16`：
 
 ```bash
 lerobot-train \
@@ -51,4 +51,22 @@ lerobot-train \
     --accelerator.mixed_precision=bf16 ...
 ```
 
-`bf16` 需要支援它的加速器。
+`fp16` 需要加速器（accelerator）：在 `--policy.device=cpu` 上會被拒絕，因為此時 accelerate 不會建立損失縮放器（loss scaler），執行作業會悄悄退回完整精度（full precision）。`bf16` 在 CPU 上也會自動轉型（autocast），因此不受此限制。
+
+`bf16` 需要硬體支援（NVIDIA GPU 上為 Ampere 或更新版本）。在較舊的加速器（accelerator）如 V100 或 T4 上，請使用 `fp16`。
+
+### fp16 與損失縮放器（loss scaler）[[fp16-and-the-loss-scaler]]
+
+`fp16` 的指數範圍（exponent range）遠小於 `bf16`，因此梯度（gradient）會在反向傳播（backward pass）前被放大，並在最佳化器步驟（optimizer step）前被縮回。LeRobot 將此工作交給 accelerate 的 `GradScaler`，它也會偵測溢出的梯度（overflowing gradient）並跳過那些最佳化器更新（optimizer updates）。在分片訓練（sharded training）下，梯度是 `DTensor`，PyTorch 會跨裝置網格（device mesh）縮減溢位旗標（overflow flag），因此某個 rank 發生溢位時，會跳過所有 rank 的更新。
+
+跳過更新是正常的，尤其是在最初的幾個步驟中，縮放值（scale）會從其初始值往下校準。這些情況在日誌中會以 `scale` 指標（metric）下降的形式呈現。縮放值會隨每個檢查點（checkpoint）一併儲存（`training_state/scaler_state.json`），並在恢復執行時還原，因此恢復後的執行作業不必重新校準。
+
+如果預設值不適合某個策略（policy），可以調整縮放器（scaler）：
+
+```bash
+lerobot-train \
+    --policy.type=act \
+    --accelerator.mixed_precision=fp16 \
+    --accelerator.grad_scaler.init_scale=1024 \
+    --accelerator.grad_scaler.growth_interval=2000 ...
+```

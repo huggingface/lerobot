@@ -83,6 +83,8 @@ torchrun --nproc-per-node=4 $(which lerobot-train) \
 
 `--parallelism.dp_shard=-1` 會依啟動器所啟動的程序數量進行分片。
 
+`--accelerator.mixed_precision` 同時支援 `bf16` 和 `fp16`。詳情請參閱[混合精度（mixed precision）](./torch_accelerators#mixed-precision)。
+
 ### 包裝單元[[wrap-units]]
 
 FSDP 會以單元為單位對模型分片（通常是重複的 transformer 區塊），並在前向/反向傳播期間一次收集一個單元。策略會透過策略類別上的 `_fsdp_wrap_modules` 宣告其包裝單元。例如，ACT 宣告 `["ACTEncoderLayer", "ACTDecoderLayer"]`，而 FastWAM 宣告 `["MoTLayer"]`。對於沒有 `_fsdp_wrap_modules` 宣告的策略，請傳入下列其中一個旗標。您可以明確指定模組類別名稱，或改用基於大小的 FSDP 包裝原則（policy）：
@@ -126,12 +128,13 @@ torchrun --nnodes=2 --nproc-per-node=8 ... $(which lerobot-train) \
 │   ├── policy_postprocessor.json  # 後處理器設定（當執行有後處理器時）
 │   └── policy_postprocessor_step_*.safetensors  # 具狀態後處理器步驟的狀態
 └── training_state/
-    ├── training_step.json  # 步數計數器、拓撲與批次語意
+    ├── optimizer_param_groups.json  # 優化器參數群組（non-sharded 執行）
+    ├── optimizer_state.safetensors  # 優化器狀態（non-sharded 執行）
+    ├── optimizer_0/  # DCP 優化器 sharded（sharded 執行）
     ├── rng_state.safetensors  # rng 狀態
     ├── scheduler_state.json  # 排程器狀態（當執行有排程器時）
-    ├── optimizer_state.safetensors  # 完整優化器狀態（非分片執行）
-    ├── optimizer_param_groups.json  # 優化器參數群組（非分片執行）
-    └── optimizer_0/  # DCP 優化器分片（分片執行）
+    ├── scaler_state.json  # fp16 損失縮放器狀態（loss-scaler state，僅 mixed_precision=fp16）
+    └── training_step.json  # 步數 + dp_world_size/batch_size/grad_accum/precision + 拓撲（topology）
 ```
 
 在單 GPU 或 DDP 訓練期間，管線會將每個 state dict 序列化為單一檔案：模型的 `model.safetensors` 和優化器的 `optimizer_state.safetensors`。
