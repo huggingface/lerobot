@@ -849,7 +849,7 @@ _TIMER_LOGGER = "lerobot.utils.cycle_timer"
 
 
 def _timer_warnings(caplog):
-    return [r for r in caplog.records if r.levelno >= logging.WARNING]
+    return [r for r in caplog.records if r.levelno >= logging.WARNING and r.name == _TIMER_LOGGER]
 
 
 def _info_messages(caplog):
@@ -1295,7 +1295,7 @@ def test_starved_engine_is_counted_through_the_real_dispatch_path(caplog):
     assert dataset.add_frame.call_count == 0
 
 
-def test_episodic_run_reports_a_summary_per_episode_and_for_the_run(caplog):
+def test_episodic_run_reports_a_summary_per_episode_and_for_the_run(caplog, clock):
     from lerobot.rollout import EpisodicStrategyConfig
     from lerobot.rollout.strategies import EpisodicStrategy
     from lerobot.utils.action_interpolator import ActionInterpolator
@@ -1303,6 +1303,8 @@ def test_episodic_run_reports_a_summary_per_episode_and_for_the_run(caplog):
     # Episodic owns one timer across the whole session (episodes used to get a
     # fresh one each), so this also covers the `restart()` that keeps a
     # re-primed interpolator from being reported as a slow episode.
+    # Use the virtual clock so the no-warning assertion below is independent of
+    # scheduler delays on a loaded CI runner.
     ctx, dataset = _make_loop_ctx(fps=200.0, multiplier=2, num_ticks=8)
     ctx.runtime.cfg.dataset = SimpleNamespace(
         single_task="task",
