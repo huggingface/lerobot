@@ -110,10 +110,14 @@ from lerobot.datasets import (
     safe_stop_image_writer,
 )
 from lerobot.processor import (
+    DataProcessorPipeline,
+    IdentityProcessorStep,
     RobotAction,
     RobotObservation,
     RobotProcessorPipeline,
     make_default_processors,
+    robot_action_observation_to_transition,
+    transition_to_robot_action,
 )
 from lerobot.robots import (  # noqa: F401
     Robot,
@@ -224,6 +228,18 @@ class RecordConfig:
 """
 
 
+def _uses_identity_action_processor(processor: RobotProcessorPipeline) -> bool:
+    """Only the standard, unmodified identity pipeline guarantees the same action space."""
+    return (
+        type(processor) is DataProcessorPipeline
+        and processor.to_transition is robot_action_observation_to_transition
+        and processor.to_output is transition_to_robot_action
+        and all(type(step) is IdentityProcessorStep for step in processor.steps)
+        and not processor.before_step_hooks
+        and not processor.after_step_hooks
+    )
+
+
 @safe_stop_image_writer
 def record_loop(
     robot: Robot,
@@ -292,6 +308,7 @@ def record_loop(
         timer = CycleTimer(fps, records_data=dataset is not None)
 
     no_action_count = 0
+    record_sent_action = _uses_identity_action_processor(robot_action_processor)
     timestamp = 0.0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
@@ -323,7 +340,7 @@ def record_loop(
 
                 # Applies a pipeline to the raw teleop action, default is IdentityProcessor
                 act_processed_teleop = teleop_action_processor((act, obs))
-                action_values = act_processed_teleop
+                action_values = act_processed_teleop.copy()
                 robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
 
             elif multi_teleop is not None:
@@ -334,7 +351,7 @@ def record_loop(
                 base_action = robot._from_keyboard_to_base_action(keyboard_action)  # type: ignore[attr-defined]
                 act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
                 act_processed_teleop = teleop_action_processor((act, obs))
-                action_values = act_processed_teleop
+                action_values = act_processed_teleop.copy()
                 robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
             else:
                 robot_action_to_send = None
@@ -355,16 +372,15 @@ def record_loop(
             continue
 
         with timer.section("send"):
-            # Send action to robot
-            # Action can eventually be clipped using `max_relative_target`,
-            # so action actually sent is saved in the dataset. action = postprocessor.process(action)
-            # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
-            _sent_action = robot.send_action(robot_action_to_send)
+            # Returned commands may include clipping, but use the robot's action space.
+            sent_action = robot.send_action(robot_action_to_send)
 
         # Write to dataset
         if dataset is not None:
             with timer.section("record"):
-                action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
+                # Matching keys alone does not guarantee matching units or coordinates.
+                recorded_action = sent_action if record_sent_action else action_values
+                action_frame = build_dataset_frame(dataset.features, recorded_action, prefix=ACTION)
                 frame = {**observation_frame, **action_frame, "task": single_task}
                 dataset.add_frame(frame)
 

@@ -15,7 +15,8 @@
 # limitations under the License.
 
 import re
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -23,7 +24,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 pytest.importorskip("deepdiff", reason="deepdiff is required (install lerobot[hardware])")
 
 from lerobot.configs.dataset import DatasetRecordConfig
-from lerobot.processor import make_default_processors
+from lerobot.processor import IdentityProcessorStep, make_default_processors
 from lerobot.robots import make_robot_from_config
 from lerobot.scripts.lerobot_calibrate import CalibrateConfig, calibrate
 from lerobot.scripts.lerobot_record import RecordConfig, record, record_loop
@@ -31,12 +32,88 @@ from lerobot.scripts.lerobot_replay import DatasetReplayConfig, ReplayConfig, re
 from lerobot.scripts.lerobot_teleoperate import TeleoperateConfig, teleoperate
 from tests.fixtures.constants import DUMMY_REPO_ID
 from tests.mocks.mock_robot import MockRobotConfig
-from tests.mocks.mock_teleop import MockTeleopConfig
+from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig
 
 
 def _ticks(summary: str) -> int:
     """Sample size out of a cadence report — every other number is an average over it."""
     return int(re.search(r"(\d+) ticks", summary).group(1))
+
+
+@pytest.mark.parametrize("action_key", ["ee.x", "motor_1.pos"])
+@pytest.mark.parametrize("processor_kind", ["callable", "converter", "hook", "step"])
+@pytest.mark.parametrize("action_scale", [1.0, 0.5])
+def test_record_loop_preserves_transformed_action_schema(
+    tmp_path: Path, action_key: str, processor_kind: str, action_scale: float
+) -> None:
+    """Motor commands may use different features from the recorded action space."""
+    robot = make_robot_from_config(
+        MockRobotConfig(
+            random_values=False,
+            static_values=[2.0, 4.0, 6.0],
+            action_scale=action_scale,
+        )
+    )
+    teleop = MockTeleop(MockTeleopConfig(random_values=False, static_values=[2.0, 4.0, 6.0]))
+    events = {"exit_early": False, "stop_recording": False, "rerecord_episode": False}
+    dataset = MagicMock()
+    dataset.fps = 30
+    dataset.features = {"action": {"dtype": "float32", "shape": (1,), "names": [action_key]}}
+    timer = MagicMock()
+
+    def finish_tick() -> None:
+        events["exit_early"] = True
+
+    def to_end_effector(pair: tuple) -> dict[str, float]:
+        return {action_key: pair[0]["motor_1.pos"] / 20.0}
+
+    def to_motor_commands(pair: tuple) -> dict[str, float]:
+        action = pair[0]
+        value = action.pop(action_key)
+        action.update({"motor_1.pos": value * 20.0, "motor_2.pos": 4.0, "motor_3.pos": 6.0})
+        return action
+
+    timer.wait.side_effect = finish_tick
+    _, motor_processor, observation_processor = make_default_processors()
+    if processor_kind == "callable":
+        motor_processor = to_motor_commands
+    elif processor_kind == "converter":
+        motor_processor.to_output = lambda transition: to_motor_commands((transition["action"], {}))
+    elif processor_kind == "hook":
+        motor_processor.after_step_hooks.append(
+            lambda index, transition: to_motor_commands((transition["action"], {}))
+        )
+    else:
+
+        class ConvertActionStep(IdentityProcessorStep):
+            def __call__(self, transition: dict) -> dict:
+                to_motor_commands((transition["action"], {}))
+                return transition
+
+        motor_processor.steps = [ConvertActionStep()]
+    robot.connect()
+    teleop.connect()
+    try:
+        with patch("lerobot.scripts.lerobot_record.time.perf_counter", return_value=0.0):
+            record_loop(
+                robot=robot,
+                events=events,
+                fps=30,
+                teleop_action_processor=to_end_effector,
+                robot_action_processor=motor_processor,
+                robot_observation_processor=observation_processor,
+                dataset=dataset,
+                teleop=teleop,
+                control_time_s=1.0,
+                single_task="Transformed action regression",
+                timer=timer,
+            )
+    finally:
+        teleop.disconnect()
+        robot.disconnect()
+
+    dataset.add_frame.assert_called_once()
+    assert dataset.add_frame.call_args.args[0]["action"].tolist() == pytest.approx([0.1])
 
 
 def _step_calls(summary: str, step: str) -> int:
@@ -108,6 +185,31 @@ def test_record_and_resume(tmp_path):
     assert dataset.meta.total_episodes == dataset.num_episodes == 2
     assert dataset.meta.total_frames == dataset.num_frames == 6
     assert dataset.meta.total_tasks == 1
+
+
+def test_record_saves_action_returned_by_robot(tmp_path):
+    robot_cfg = MockRobotConfig(action_scale=0.5, random_values=False, static_values=[2.0, 4.0, 6.0])
+    teleop_cfg = MockTeleopConfig(random_values=False, static_values=[2.0, 4.0, 6.0])
+    dataset_cfg = DatasetRecordConfig(
+        repo_id=DUMMY_REPO_ID,
+        single_task="Dummy task",
+        root=tmp_path / "sent_action",
+        num_episodes=1,
+        episode_time_s=0.1,
+        reset_time_s=0,
+        push_to_hub=False,
+    )
+
+    dataset = record(
+        RecordConfig(
+            robot=robot_cfg,
+            dataset=dataset_cfg,
+            teleop=teleop_cfg,
+            play_sounds=False,
+        )
+    )
+
+    assert dataset[0]["action"].tolist() == [1.0, 2.0, 3.0]
 
 
 def test_record_and_replay(tmp_path, cadence_log):
