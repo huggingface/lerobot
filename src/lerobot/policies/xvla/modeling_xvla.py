@@ -404,12 +404,11 @@ class XVLAPolicy(PreTrainedPolicy):
         return self._get_action_chunk(batch)
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:  # noqa: ARG002
+    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         self.eval()
-        self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
-
         if len(self._queues[ACTION]) == 0:
-            actions = self._get_action_chunk(batch)
+            # Through predict_action_chunk, so a wrapper installed on it also covers this path.
+            actions = self.predict_action_chunk(batch, noise=noise)
             self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
 
         return self._queues[ACTION].popleft()
