@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Unpack, cast
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from lerobot.utils.import_utils import _transformers_available, require_package
 
@@ -36,6 +37,7 @@ if TYPE_CHECKING or _transformers_available:
         PiGemmaForCausalLM,
         _gated_residual,
         layernorm_forward,
+        sdpa_attention_forward,
     )
 else:
     CONFIG_MAPPING = None
@@ -43,6 +45,7 @@ else:
     PiGemmaForCausalLM = None
     _gated_residual = None
     layernorm_forward = None
+    sdpa_attention_forward = None
     PaliGemmaForConditionalGenerationWithPiGemma = None
 from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import (
@@ -169,7 +172,9 @@ def _reduce_training_rtc_loss(
 
 
 # Define the complete layer computation function for gradient checkpointing
-def compute_layer_complete(inputs_embeds, attention_mask, position_ids, adarms_cond, layers, rotary_emb):
+def compute_layer_complete(
+    inputs_embeds, attention_mask, position_ids, adarms_cond, layers, rotary_emb, fp32_attention=False
+):
     query_states = []
     key_states = []
     value_states = []
@@ -204,15 +209,31 @@ def compute_layer_complete(inputs_embeds, attention_mask, position_ids, adarms_c
     batch_size = query_states.shape[0]
     paligemma_layer = layers[0]
     scaling = paligemma_layer.self_attn.scaling
-    # Attention computation
-    att_output, _ = modeling_gemma.eager_attention_forward(
-        paligemma_layer.self_attn,
-        query_states,
-        key_states,
-        value_states,
-        attention_mask,
-        scaling,
-    )
+    if fp32_attention:
+        # Large Q/K activations at low flow timesteps destabilize BF16 eager scores
+        # and can amplify reduced-precision SDPA backward as well. Run attention in
+        # FP32 with the math backend, then restore the model dtype. Opt-in so that
+        # stock PI0.5 keeps its original eager numerics.
+        attention_dtype = query_states.dtype
+        with sdpa_kernel(SDPBackend.MATH):
+            att_output, _ = sdpa_attention_forward(
+                paligemma_layer.self_attn,
+                query_states.float(),
+                key_states.float(),
+                value_states.float(),
+                attention_mask.float() if attention_mask is not None else None,
+                scaling,
+            )
+        att_output = att_output.to(attention_dtype)
+    else:
+        att_output, _ = modeling_gemma.eager_attention_forward(
+            paligemma_layer.self_attn,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            scaling,
+        )
     # Get head_dim from the current layer, not from the model
     head_dim = paligemma_layer.self_attn.head_dim
     att_output = att_output.reshape(batch_size, -1, 1 * 8 * head_dim)
@@ -280,6 +301,9 @@ class PaliGemmaWithExpertModel(
     nn.Module
 ):  # see openpi `gemma_pytorch.py: PaliGemmaWithExpertModel` this class is almost a exact copy of PaliGemmaWithExpertModel in openpi
     """PaliGemma model with action expert for PI05."""
+
+    # Run the joint-layer attention in FP32 (math backend). Off for stock PI0.5.
+    fp32_joint_attention = False
 
     def __init__(
         self,
@@ -482,6 +506,7 @@ class PaliGemmaWithExpertModel(
                         preserve_rng_state=False,
                         layers=layers,
                         rotary_emb=rotary_emb,
+                        fp32_attention=self.fp32_joint_attention,
                     )
                 else:
                     inputs_embeds = compute_layer_complete(
@@ -491,6 +516,7 @@ class PaliGemmaWithExpertModel(
                         adarms_cond,
                         layers=layers,
                         rotary_emb=rotary_emb,
+                        fp32_attention=self.fp32_joint_attention,
                     )
 
             # final norm
@@ -528,6 +554,13 @@ class PaliGemmaWithExpertModel(
 class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
     """Core PI05 PyTorch model."""
 
+    use_hf_vision_checkpointing_api = False
+    checkpoint_vision_embeddings = True
+    fp32_joint_attention = False
+    use_typed_attention_masks = False
+    use_on_device_suffix_mask = False
+    precompute_denoise_times = False
+
     def __init__(self, config: PI05Config, rtc_processor: RTCProcessor | None = None):
         super().__init__()
         self.config = config
@@ -550,6 +583,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             freeze_vision_encoder=config.freeze_vision_encoder,
             train_expert_only=config.train_expert_only,
         )
+        self.paligemma_with_expert.fp32_joint_attention = self.fp32_joint_attention
 
         self.action_in_proj = nn.Linear(config.max_action_dim, action_expert_config.width)
         self.action_out_proj = nn.Linear(action_expert_config.width, config.max_action_dim)
@@ -576,7 +610,11 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         """Enable gradient checkpointing for memory optimization."""
         self.gradient_checkpointing_enabled = True
         self.paligemma_with_expert.paligemma.model.language_model.gradient_checkpointing = True
-        self.paligemma_with_expert.paligemma.model.vision_tower.gradient_checkpointing = True
+        vision_tower = self.paligemma_with_expert.paligemma.model.vision_tower
+        if self.use_hf_vision_checkpointing_api:
+            vision_tower.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        else:
+            vision_tower.gradient_checkpointing = True
         self.paligemma_with_expert.gemma_expert.model.gradient_checkpointing = True
         logging.info("Enabled gradient checkpointing for PI05Pytorch model")
 
@@ -584,7 +622,11 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         """Disable gradient checkpointing."""
         self.gradient_checkpointing_enabled = False
         self.paligemma_with_expert.paligemma.model.language_model.gradient_checkpointing = False
-        self.paligemma_with_expert.paligemma.model.vision_tower.gradient_checkpointing = False
+        vision_tower = self.paligemma_with_expert.paligemma.model.vision_tower
+        if self.use_hf_vision_checkpointing_api:
+            vision_tower.gradient_checkpointing_disable()
+        else:
+            vision_tower.gradient_checkpointing = False
         self.paligemma_with_expert.gemma_expert.model.gradient_checkpointing = False
         logging.info("Disabled gradient checkpointing for PI05Pytorch model")
 
@@ -598,6 +640,10 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 func, *args, use_reentrant=False, preserve_rng_state=False, **kwargs
             )
         return func(*args, **kwargs)
+
+    def _prepare_attention_masks_4d(self, att_2d_masks, dtype=None):
+        """Overridable hook around the shared 4D mask helper."""
+        return prepare_attention_masks_4d(att_2d_masks, dtype=dtype)
 
     def sample_noise(self, shape, device):
         return sample_noise(shape, device)
@@ -640,6 +686,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         if not batchable:
             return [
                 self._apply_checkpoint(self._embed_one_image, img, img_mask)
+                if self.checkpoint_vision_embeddings
+                else self._embed_one_image(img, img_mask)
                 for img, img_mask in zip(images, img_masks, strict=True)
             ]
         batched = self.paligemma_with_expert.embed_image(torch.cat(images, dim=0))
@@ -726,8 +774,15 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         # Set attention masks so that image, language and state inputs do not attend to action tokens
         att_masks += [1] + ([0] * (self.config.chunk_size - 1))
-        att_masks = torch.tensor(att_masks, dtype=action_emb.dtype, device=action_emb.device)
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+
+        if self.use_on_device_suffix_mask:
+            n = len(att_masks)
+            att_masks = torch.zeros(n, dtype=action_emb.dtype, device=action_emb.device)
+            att_masks[0] = 1
+            att_masks = att_masks[None, :].expand(bsize, n)
+        else:
+            att_masks = torch.tensor(att_masks, dtype=action_emb.dtype, device=action_emb.device)
+            att_masks = att_masks[None, :].expand(bsize, len(att_masks))
 
         return action_emb, pad_masks, att_masks, adarms_cond
 
@@ -766,7 +821,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
 
-        att_2d_masks_4d = prepare_attention_masks_4d(att_2d_masks)
+        att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
 
         def forward_func(prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond):
             (_, suffix_out), _ = self.paligemma_with_expert.forward(
@@ -828,7 +883,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
-        prefix_att_2d_masks_4d = prepare_attention_masks_4d(prefix_att_2d_masks)
+        mask_dtype = prefix_embs.dtype if self.use_typed_attention_masks else None
+        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks, dtype=mask_dtype)
         self.paligemma_with_expert.paligemma.model.language_model.config._attn_implementation = "eager"  # noqa: SLF001
 
         _, past_key_values = self.paligemma_with_expert.forward(
@@ -877,6 +933,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             execution_horizon=kwargs.get("execution_horizon"),
             hard_prefix=trained_prefix,
             hard_prefix_mask=trained_prefix_mask,
+            precompute_times=self.precompute_denoise_times,
         )
 
     def denoise_step(
@@ -900,7 +957,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
         position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
 
-        full_att_2d_masks_4d = prepare_attention_masks_4d(full_att_2d_masks)
+        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
         self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
 
         past_key_values = clone_past_key_values(past_key_values)
@@ -924,6 +981,10 @@ class PI05Policy(PreTrainedPolicy):
 
     config_class = PI05Config
     name = "pi05"
+    model_class = PI05Pytorch
+    eval_after_pretrained_load = False
+    show_openpi_disclaimer = True
+    use_native_pretrained_loader = False
 
     def supports_rtc(self) -> bool:
         return True
@@ -944,7 +1005,7 @@ class PI05Policy(PreTrainedPolicy):
 
         # Initialize the core PI05 model
         self.init_rtc_processor()
-        self.model = PI05Pytorch(config, rtc_processor=self.rtc_processor)
+        self.model = self.model_class(config, rtc_processor=self.rtc_processor)
 
         # Enable gradient checkpointing if requested
         if config.gradient_checkpointing:
@@ -970,12 +1031,28 @@ class PI05Policy(PreTrainedPolicy):
         strict: bool = True,
         **kwargs,
     ) -> T:
-        """Override the from_pretrained method to handle key remapping and display important disclaimer."""
-        print(
-            "The PI05 model is a direct port of the OpenPI implementation. \n"
-            "This implementation follows the original OpenPI structure for compatibility. \n"
-            "Original implementation: https://github.com/Physical-Intelligence/openpi"
-        )
+        """Load a native LeRobot checkpoint or convert the PI05 base checkpoint."""
+        if cls.use_native_pretrained_loader:
+            return super().from_pretrained(
+                pretrained_name_or_path,
+                config=config,
+                force_download=force_download,
+                resume_download=resume_download,
+                proxies=proxies,
+                token=token,
+                cache_dir=cache_dir,
+                local_files_only=local_files_only,
+                revision=revision,
+                strict=strict,
+                **kwargs,
+            )
+
+        if cls.show_openpi_disclaimer:
+            print(
+                "The PI05 model is a direct port of the OpenPI implementation. \n"
+                "This implementation follows the original OpenPI structure for compatibility. \n"
+                "Original implementation: https://github.com/Physical-Intelligence/openpi"
+            )
         if pretrained_name_or_path is None:
             raise ValueError("pretrained_name_or_path is required")
 
@@ -1072,6 +1149,8 @@ class PI05Policy(PreTrainedPolicy):
         except Exception as e:
             print(f"Warning: Could not load state dict: {e}")
 
+        if model.eval_after_pretrained_load:
+            model.eval()
         return model
 
     def _prepare_pretrained_state_dict(self, state_dict: dict[str, Tensor]) -> dict[str, Tensor]:

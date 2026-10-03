@@ -1,0 +1,268 @@
+# FineART-VLA
+
+FineART-VLA builds on **π0.5 from Physical Intelligence** and its
+[openpi implementation](https://github.com/Physical-Intelligence/openpi),
+through LeRobot's [Pi05](./pi05) policy. It extends this foundation with a trainable PaliGemma language head and a
+runtime that alternates language generation with action generation. A single
+checkpoint can predict a low-level subtask, optionally update memory or answer
+visual questions, and condition its flow-matching action expert on that text.
+
+Use Pi05 when you only need task-conditioned actions. Use FineART-VLA when the policy
+must generate or consume intermediate language during a rollout.
+
+## How FineART-VLA differs from Pi05
+
+| Capability          | Pi05                                                   | FineART-VLA                                                                       |
+| ------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| Action model        | PaliGemma vision-language prefix + Gemma action expert | Same base architecture                                                            |
+| Language head       | Not trained for runtime generation                     | Re-enabled and trained with text cross-entropy                                    |
+| Action conditioning | Episode task                                           | Active low-level subtask plus normalized robot state                              |
+| Training targets    | Flow-matching actions                                  | Flow actions, recipe-selected text, and optional FAST action tokens               |
+| Dataset requirement | Standard images, state, actions, and task              | The same fields plus language annotations for every language capability you train |
+| Rollout             | Direct task-to-action policy                           | Hierarchical task → subtask → action loop, with optional memory and VQA           |
+
+FineART-VLA can initialize from a Pi05 checkpoint. The policy architecture remains
+compatible, while FineART-VLA builds its own processors so recipe labels and FAST
+labels are not silently replaced by the Pi05 processor stack.
+
+## Install
+
+Install LeRobot with the FineART-VLA dependencies:
+
+```bash
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[fineart_vla]"
+```
+
+The `fineart_vla` extra includes the PaliGemma/FAST dependencies. For the optional
+fused training kernels on Linux with a CUDA GPU, install `".[fineart_vla_kernels]"`
+instead. It adds `liger-kernel` and the Hugging Face `kernels` package used by the
+FlashRT backends. When Liger is installed, FineART-VLA patches transformers'
+PaliGemma RoPE/GeGLU for the whole process; set `--policy.use_liger_kernels=false`
+if you run other PaliGemma-based policies in the same process.
+
+## Prepare language-annotated data
+
+FineART-VLA does not infer supervised subtasks from a normal LeRobot dataset during
+training. The dataset must contain the language targets used by the selected
+recipe in the optional `language_persistent` and `language_events` columns.
+
+At minimum, annotate a continuous `subtask` timeline so each training frame has
+an active low-level instruction. Add `memory`, VQA, interjections, and speech
+annotations only if the recipe trains those capabilities.
+
+FineART-VLA embeds its default recipe in `FineARTVLAConfig`, like EO-1. It samples
+30% high-level task → subtask prediction and 70% low-level subtask-conditioned
+action training. Each configuration owns its recipe dictionary, and saved
+checkpoints carry that dictionary into inference.
+
+Use `--policy.recipe_path=/path/to/custom.yaml` to override the default.
+The shared recipes in `src/lerobot/configs/recipes/` retain main's semantics;
+FineART-VLA does not replace them. For goal-only training, use an inline recipe with
+one low-level user message containing `${task}`, or set `recipe=None` and
+disable text/FAST losses for the plain PI05 pipeline.
+
+The default factorizes inference as π(a|o, subtask)·π(subtask|o, task).
+A custom joint-sequence recipe needs a matching runtime processor that renders
+the task and generated assistant span with the same causal marks as training.
+The old policy-side joint prompt builder is no longer used by rollout.
+
+Rollout owns planning cadence (`--autosteer_interval_s=3`), interactive commands,
+and synchronous/RTC scheduling. FineART-VLA only generates text when queried; ordinary
+action calls never generate another subtask behind the runtime's back.
+
+Combined memory/subtask scratchpads are not the default and require a custom
+recipe plus a memory-aware runtime controller. Keep `memory_scratchpad=false`
+for ordinary subtask generation; older scratchpad checkpoints retain their
+explicit guard against passing combined responses directly to action control.
+
+Use `lerobot-annotate` to generate these columns. The repository includes a
+Hugging Face Jobs launcher that you can edit for your source and destination
+datasets. For a local annotation run, first install
+`pip install -e ".[annotations]"`:
+
+```bash
+HF_TOKEN=hf_... uv run python examples/annotations/run_hf_job.py
+```
+
+Before a long training run, inspect several episodes and verify that subtasks
+are temporally correct and cover the full demonstration. See
+[Annotation Pipeline](./annotation_pipeline) for generation and validation, and
+[Language Columns and Recipes](./language_and_recipes) for the schema and
+recipe resolver.
+
+<Tip>
+  If a dataset has no language columns, recipe rendering becomes a no-op and
+  FineART-VLA falls back to the plain Pi05 prompt path. This is useful for
+  compatibility but does not train the language planner.
+</Tip>
+
+## Train FineART-VLA
+
+This example initializes FineART-VLA from `lerobot/fineart_vla_base`, the
+checkpoint mid-trained on FineART to predict its own next subtask, and trains the
+embedded 70/30 subtask recipe.
+
+```bash
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/my_language_annotated_dataset \
+    --policy.type=fineart_vla \
+    --policy.pretrained_path=lerobot/fineart_vla_base \
+    --policy.tokenizer_max_length=256 \
+    --policy.dtype=bfloat16 \
+    --policy.device=cuda \
+    --policy.freeze_vision_encoder=false \
+    --policy.gradient_checkpointing=true \
+    --batch_size=8 \
+    --steps=30000 \
+    --output_dir=outputs/fineart_vla \
+    --job_name=fineart_vla \
+    --wandb.enable=true
+```
+
+Start with a small run and confirm that W&B examples show
+the expected prompt, text target, and action endpoints before scaling up.
+
+### Main training controls
+
+| Option                           | Default | Purpose                                                             |
+| -------------------------------- | ------: | ------------------------------------------------------------------- |
+| `policy.recipe_path`             |  `None` | Optional override of the embedded 70/30 subtask recipe              |
+| `policy.text_loss_weight`        |   `1.0` | Language-head cross-entropy weight; `0` disables text training      |
+| `policy.flow_loss_weight`        |  `10.0` | Continuous action flow-loss weight                                  |
+| `policy.enable_fast_action_loss` |  `true` | Adds discrete FAST action-token supervision                         |
+| `policy.fast_action_loss_weight` |   `1.0` | FAST cross-entropy weight                                           |
+| `policy.knowledge_insulation`    |  `true` | Blocks action-loss gradients through the VLM K/V path               |
+| `policy.flow_num_repeats`        |     `5` | Reuses one VLM prefix for independent denoising targets             |
+| `policy.lm_head_lr_scale`        |   `1.0` | Scales language-head learning rate; `1.0` uses the base rate        |
+| `policy.fast_skip_tokens`        |  `1152` | FAST id offset; skips `<seg>`+`<loc>` so VQA and FAST never collide |
+
+`fast_skip_tokens=1152` places FAST codes below PaliGemma's `<loc>` range.
+openpi's pi0-FAST convention is `128` (FAST occupies the `<loc>` ids); use that
+value only to stay weight-compatible with checkpoints trained that way, and
+avoid combining it with the VQA recipe, whose `<loc>` targets would share
+embedding rows with FAST codes.
+
+The loss weights are starting points, not dataset-independent constants. Track
+flow loss and text/FAST losses separately, and inspect generated subtasks rather
+than selecting a checkpoint from total loss alone.
+
+### Dataset-specific FAST tokenizer
+
+By default (`--policy.auto_fit_fast_tokenizer=true`), training fits a FAST
+tokenizer on the training dataset, starting from `--policy.action_tokenizer_name`,
+and caches it in `--policy.fast_tokenizer_cache_dir`. This also applies when
+fine-tuning from a checkpoint such as `lerobot/fineart_vla_base`, so the FAST
+targets match the new robot's action distribution. The fitted tokenizer is saved
+inside the checkpoint's processor artifacts, so inference reuses it. Set
+`--policy.auto_fit_fast_tokenizer=false` to use `action_tokenizer_name` unchanged.
+
+## Training performance
+
+FineART-VLA uses optimized training paths by default:
+
+- batches repeated flow targets and suffix projections instead of replaying
+  small operations in Python;
+- caches constant action masks and computes RoPE positions once per forward;
+- selects the text/FAST cross-entropy implementation from target shape and
+  sparsity;
+- skips the mathematically dead VLM/vision backward on knowledge-insulated,
+  flow-only batches;
+- uses native non-reentrant SigLIP layer checkpointing when gradient
+  checkpointing is enabled; and
+- retains the Liger RoPE/GeGLU kernels while avoiding the slower LayerNorm
+  patch at SigLIP shapes.
+
+Optional training backends are disabled by default:
+
+| Option                                 | When to try it                                                                                    |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `policy.use_flashrt_adarms=true`       | Fused adaptive RMSNorm and gated residuals on supported CUDA GPUs                                 |
+| `policy.use_compiled_text_ce=true`     | Compiled materialized-logit CE buckets                                                            |
+| `policy.use_compiled_vision=true`      | Compiled vision only when the vision pass has no gradients                                        |
+| `policy.use_flex_attention=true`       | Profiled CUDA setups with knowledge insulation and `flow_num_repeats > 1`; otherwise SDPA is used |
+| `policy.use_manual_attention=true`     | Explicitly profiled shapes where materialized attention is faster                                 |
+| `policy.manual_attention_scope=action` | Restricts manual attention to action queries                                                      |
+
+Do not enable every backend blindly. Flex and manual attention are mutually
+exclusive, and attention/AdaRMS alternatives require knowledge insulation.
+The benchmark-best configuration used compiled text CE and FlashRT AdaRMS,
+with Flex/manual attention and compiled vision disabled.
+
+## Inference performance
+
+FineART-VLA has two inference loops, and both avoid repeatedly encoding the expensive
+multimodal prefix:
+
+1. **Action denoising** encodes the image/language prefix once, reuses its KV
+   cache across flow steps, constructs action-suffix masks on-device, and
+   crops temporary suffix K/V instead of cloning the prefix cache. It creates
+   the timestep schedule on the device once per chunk, preserving the historical
+   timestep arithmetic. This implementation detail does not establish an
+   end-to-end speedup without benchmarking.
+2. **Language decoding** uses autoregressive KV caching, so each new token only
+   processes the sampled token against cached image/language keys instead of
+   rerunning the full prefix.
+
+The shared runtime runs language and actions at different rates. Increase
+`--autosteer_interval_s` when a subtask remains valid longer, or use `/subtask`
+to supply an instruction directly without language generation. A longer interval
+reduces generation cost but also slows replanning.
+
+## Run a checkpoint
+
+Use `lerobot-rollout` with the robot/camera configuration matching the checkpoint,
+`--interactive=true`, and `--autosteer_interval_s=3`. Choose
+`--inference.type=sync` or `--inference.type=rtc`. In the interactive terminal,
+`/autosteer <goal>` enables generated subtasks, `/subtask <instruction>` supplies
+one manually, and `/start` starts robot control. See [Interactive language
+control](./inference#interactive-language-control) for complete hardware setup,
+safety behavior, and recording controls. The former `--sim`, `--mode`, and
+`--high_level_hz` adapter CLI options are not part of this interface.
+
+## Troubleshooting
+
+- **Large flow-loss gradients:** FineART-VLA runs KI-off joint prefix/action attention
+  on PyTorch SDPA's math backend with FP32 attention arithmetic, casting its output back to the
+  model dtype (stock PI0.5 keeps its eager attention). This avoids reduced-precision attention, which can destabilize gradients at
+  low flow timesteps with large query/key activations. Existing checkpoints and
+  normalization layers are unchanged; KI-off still trains through VLM keys and
+  values. Monitor the separate `flow_loss`, `text_loss`, and pre-clipping gradient
+  norm rather than relying on the finite total loss alone.
+- **No text loss or generated subtasks:** confirm the selected recipe can bind
+  the annotations on sampled frames and that `policy.text_loss_weight > 0`.
+- **Subtasks look plausible but actions fail:** verify subtask boundaries,
+  normalized state/action statistics, and that low-level recipe samples are
+  present.
+- **Text collapses to repeated or location tokens:** inspect text-target
+  coverage, language-head learning rate, and the balance between flow, FAST,
+  and text losses.
+- **Out of memory:** reduce batch size first, then enable gradient
+  checkpointing. Do not enable compiled or alternative attention backends
+  without profiling their memory on your camera count.
+- **Slow rollout:** separate action latency from language latency, then tune
+  `--autosteer_interval_s` (how often a new subtask is generated) and
+  `--policy.num_inference_steps` (flow denoising steps).
+
+## Citation
+
+If you use FineART-VLA or the FineART dataset, please cite:
+
+```bibtex
+@misc{choghari2026fineart,
+  title  = {FineART: Fine-Grained Annotated Robotic Trajectory Dataset and Vision-Language-Action Model for Bimanual Manipulation},
+  author = {Choghari, Jade and Kooijmans, Pepijn and Agarwal, Mansi and Ciftci, Yusuf Umut and Doriwala, Aseem and Weaver, Catherine and Sivapurapu, Mouli and Yang, Kai and Lee, Jackson and Wolf, Thomas and Mannam, Pragna},
+  year   = {2026},
+}
+```
+
+FineART-VLA builds on [π₀.₅](https://arxiv.org/abs/2504.16054) and
+[knowledge insulation](https://arxiv.org/abs/2505.23705) from Physical Intelligence.
+
+## License
+
+This model follows the **Apache 2.0 License**, consistent with the original
+[OpenPI repository](https://github.com/Physical-Intelligence/openpi) that the PI0.5 backbone is adapted from.

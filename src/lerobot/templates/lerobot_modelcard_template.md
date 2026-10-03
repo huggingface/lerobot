@@ -47,6 +47,8 @@ FLUX 3 Action (`flux3`) is Black Forest Labs' video-action model: the FLUX.3 vid
 [LingBot-VA](https://github.com/Robbyant/lingbot-va) is an autoregressive video-action world-model policy built on the Wan2.2 video-diffusion stack. It interleaves the prediction of future video latents and robot actions in a single autoregressive sequence, feeding observed keyframes back into its KV cache for closed-loop world modeling.
 {% elif model_name == "lawam" %}
 [LaWAM](https://arxiv.org/abs/2606.15768) is a latent world action model that pairs a Qwen3-VL backbone with a latent action/world model and a flow-matching action head for dynamics-aware robot policies.
+{% elif model_name == "fineart_vla" %}
+FineART-VLA is a single end-to-end policy from Scale AI and Hugging Face that extends π₀.₅ with a trained language head: it predicts its next subtask in language (System 2) and executes it with a flow-matching action expert (System 1), using knowledge insulation to protect the pretrained VLM. It is mid-trained on the densely subtask-annotated FineART bimanual dataset.
 {% else %}
 This is a **{{ model_name }}** policy trained with [LeRobot](https://github.com/huggingface/lerobot).
 {% endif %}
@@ -90,7 +92,8 @@ This policy has been trained and pushed to the Hub using [LeRobot](https://githu
   "fastwam": "fastwam",
   "flux3": "flux3",
   "lingbot_va": "lingbot_va",
-  "lawam": "lawam"
+  "lawam": "lawam",
+  "fineart_vla": "fineart_vla"
 } %}
 {% if policy_docs.get(model_name) %}Learn how to train and run it in the [LeRobot {{ model_name }} guide](https://huggingface.co/docs/lerobot/main/en/{{ policy_docs[model_name] }}), or browse the [full documentation](https://huggingface.co/docs/lerobot/index).
 {% else %}See the [full LeRobot documentation](https://huggingface.co/docs/lerobot/index).

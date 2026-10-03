@@ -136,6 +136,7 @@ _scipy_available = is_package_available("scipy")
 _diffusers_available = is_package_available("diffusers")
 _natten_available = is_package_available("natten")
 _torchdiffeq_available = is_package_available("torchdiffeq")
+_liger_kernel_available = is_package_available("liger-kernel", import_name="liger_kernel")
 
 # Hardware SDKs
 _serial_available = is_package_available("pyserial", import_name="serial")
