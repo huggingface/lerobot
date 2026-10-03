@@ -23,6 +23,7 @@ from .constants import (
     DEFAULT_FPS,
     DEFAULT_INFERENCE_LATENCY,
     DEFAULT_OBS_QUEUE_TIMEOUT,
+    DEFAULT_OBS_SIMILARITY_ATOL,
 )
 
 # Aggregate function registry for CLI usage
@@ -64,6 +65,15 @@ class PolicyServerConfig:
         default=DEFAULT_OBS_QUEUE_TIMEOUT, metadata={"help": "Timeout for observation queue in seconds"}
     )
 
+    obs_similarity_atol: float = field(
+        default=DEFAULT_OBS_SIMILARITY_ATOL,
+        metadata={
+            "help": "L2 tolerance for the joint-space observation similarity check. Observations closer "
+            "than this are considered identical and skipped. Lower it for embodiments whose consecutive "
+            "observations are close together (e.g. slow or high-precision robots)."
+        },
+    )
+
     def __post_init__(self):
         """Validate configuration after initialization."""
         if self.port < 1 or self.port > 65535:
@@ -77,6 +87,9 @@ class PolicyServerConfig:
 
         if self.obs_queue_timeout < 0:
             raise ValueError(f"obs_queue_timeout must be non-negative, got {self.obs_queue_timeout}")
+
+        if self.obs_similarity_atol < 0:
+            raise ValueError(f"obs_similarity_atol must be non-negative, got {self.obs_similarity_atol}")
 
     @classmethod
     def from_dict(cls, config_dict: dict) -> "PolicyServerConfig":
@@ -96,6 +109,7 @@ class PolicyServerConfig:
             "fps": self.fps,
             "environment_dt": self.environment_dt,
             "inference_latency": self.inference_latency,
+            "obs_similarity_atol": self.obs_similarity_atol,
         }
 
 
