@@ -22,6 +22,7 @@ import contextlib
 import logging
 import shutil
 import tempfile
+from abc import ABC, abstractmethod
 from pathlib import Path
 
 import datasets
@@ -98,8 +99,73 @@ def _encode_video_worker(
     return temp_path
 
 
-class DatasetWriter:
-    """Encapsulates write-side state and methods for LeRobotDataset.
+class BaseDatasetWriter(ABC):
+    """Write-side data persistence contract for :class:`LeRobotDataset`.
+
+    A writer owns the complete episode persistence lifecycle for one storage
+    format: buffering frames, staging/encoding visual data, writing tabular
+    data, statistics, per-episode metadata, and finalization. It hides how the
+    dataset is physically represented (Parquet + MP4, Lance + blobs, …) behind a
+    format-independent public API so ``LeRobotDataset`` and ``lerobot-record``
+    work the same regardless of format.
+
+    Subclasses define their own constructor (their inputs legitimately differ)
+    and must set :attr:`episode_buffer` (the in-progress episode, or ``None``).
+    """
+
+    episode_buffer: dict | None
+
+    @abstractmethod
+    def add_frame(self, frame: dict) -> None:
+        """Add a single frame to the current episode buffer."""
+
+    @abstractmethod
+    def save_episode(self, episode_data: dict | None = None, parallel_encoding: bool = True) -> None:
+        """Persist the current (or provided) episode to disk."""
+
+    @abstractmethod
+    def clear_episode_buffer(self, delete_images: bool = True) -> None:
+        """Discard the current episode buffer and optionally its staged frames."""
+
+    @abstractmethod
+    def cleanup_interrupted_episode(self, episode_index: int) -> None:
+        """Remove staged data for an episode whose recording was interrupted."""
+
+    @abstractmethod
+    def finalize(self) -> None:
+        """Flush all pending work and release all resources. Must be idempotent."""
+
+    # Optional lifecycle hooks. Formats that stage frames on disk or defer visual
+    # encoding override these; the default is a no-op so a writer only implements
+    # what its storage model actually needs (mirrors BaseDatasetReader's defaults).
+    def start_image_writer(self, num_processes: int = 0, num_threads: int = 4) -> None:
+        """Start background image persistence. No-op unless the format stages frames."""
+        return
+
+    def stop_image_writer(self) -> None:
+        """Stop background image persistence. No-op unless the format stages frames."""
+        return
+
+    def flush_pending_videos(self) -> None:
+        """Flush any deferred video encoding. No-op unless the format defers encoding."""
+        return
+
+    def cancel_pending_videos(self) -> None:
+        """Cancel any in-progress video encoding without flushing. No-op by default."""
+        return
+
+    @property
+    def is_streaming_encoding(self) -> bool:
+        """Whether visual data is encoded incrementally during recording.
+
+        Format-independent hint for interruption handling. Defaults to ``False``;
+        writers that stream encode should override it.
+        """
+        return False
+
+
+class DatasetWriter(BaseDatasetWriter):
+    """Default writer serving the parquet/mp4 storage format.
 
     Owns: episode_buffer, image_writer, _pq_writer (ParquetWriter), _latest_episode,
     _current_file_start_frame, _streaming_encoder, _episodes_since_last_encoding, _recorded_frames.
@@ -627,6 +693,10 @@ class DatasetWriter:
             self.image_writer.stop()
             self.image_writer = None
 
+    @property
+    def is_streaming_encoding(self) -> bool:
+        return self._streaming_encoder is not None
+
     def _wait_image_writer(self) -> None:
         """Wait for asynchronous image writer to finish."""
         if self.image_writer is not None:
@@ -700,8 +770,6 @@ class DatasetWriter:
         self.flush_pending_videos()
         # 3. Close own parquet writer
         self.close_writer()
-        # 4. Finalize metadata (idempotent)
-        self._meta.finalize()
         self._finalized = True
 
     def __del__(self):

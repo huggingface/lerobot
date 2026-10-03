@@ -84,6 +84,8 @@ def _make_dummy_stats(features: dict) -> dict:
 
 def test_create_produces_valid_info_on_disk(tmp_path):
     """create() writes info.json and the returned object reflects the provided settings."""
+    from lerobot.datasets.storage import DEFAULT_STORAGE_FORMAT
+
     root = tmp_path / "new_ds"
     meta = LeRobotDatasetMetadata.create(
         repo_id="test/meta",
@@ -104,6 +106,9 @@ def test_create_produces_valid_info_on_disk(tmp_path):
     assert "state" in meta.features
     assert "action" in meta.features
     assert info_on_disk["fps"] == DEFAULT_FPS
+    # storage_format is always persisted (default included) so the backend is resolvable on load
+    assert meta.storage_format == DEFAULT_STORAGE_FORMAT
+    assert info_on_disk["storage_format"] == DEFAULT_STORAGE_FORMAT
 
 
 def test_create_starts_with_zero_counts(tmp_path):
