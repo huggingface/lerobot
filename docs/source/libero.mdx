@@ -29,11 +29,13 @@ pip install -e ".[libero]"
 ```
 
 <Tip>
-LIBERO requires Linux (`sys_platform == 'linux'`). LeRobot uses MuJoCo for simulation — set the rendering backend before training or evaluation:
+LIBERO requires Linux (`sys_platform == 'linux'`). LeRobot uses MuJoCo for simulation. Set the rendering backend before training or evaluation:
 
 ```bash
 export MUJOCO_GL=egl  # for headless servers (HPC, cloud)
 ```
+
+The `libero` extra pins `mujoco>=3.2.7,<3.4`. MuJoCo 3.4 and later change how `libero_spatial` task 5 settles at reset, so the bowl no longer sits on the ramekin. See [#4390](https://github.com/huggingface/lerobot/issues/4390).
 
 </Tip>
 
