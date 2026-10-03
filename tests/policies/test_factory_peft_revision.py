@@ -137,3 +137,25 @@ def test_make_policy_reads_action_names(monkeypatch, action_key, raw_names, expe
     assert cfg.action_feature_names == expected_names
     assert dataset_meta.features[action_key]["names"] == raw_names
     assert cfg.output_features[ACTION].type is FeatureType.ACTION
+
+
+def test_make_policy_refreshes_input_features_from_dataset(monkeypatch):
+    stale_feature = SimpleNamespace(type=FeatureType.STATE)
+    dataset_feature = SimpleNamespace(type=FeatureType.STATE)
+    cfg = SimpleNamespace(
+        type="mock",
+        device="cpu",
+        pretrained_path="org/base-policy",
+        use_peft=False,
+        input_features={"stale_state": stale_feature},
+        output_features={},
+    )
+    dataset_meta = SimpleNamespace(features={"observation.state": dataset_feature}, stats={})
+    policy = torch.nn.Linear(1, 1)
+    policy_class = MagicMock(return_value=policy)
+    monkeypatch.setattr(policy_factory, "get_policy_class", lambda _: policy_class)
+
+    result = policy_factory.make_policy(cfg, ds_meta=dataset_meta)
+
+    assert result is policy
+    assert cfg.input_features == {"observation.state": dataset_feature}
