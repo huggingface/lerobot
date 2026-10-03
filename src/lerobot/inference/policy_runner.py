@@ -1,13 +1,23 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """The exclusive worker's canonical policy/processor execution boundary.
 
 No transport callbacks or robot-control code belong here. A runner is used by one
-worker at a time, for both local and remote executors. Custom runners may adapt a
-policy's observation preparation or action representation at this boundary.
+remote worker at a time. Local RTC shares the post-preprocessing prediction helper,
+not this snapshot/serving adapter. Custom runners may adapt observation preparation
+or action representation at this boundary.
 """
 
 from __future__ import annotations
@@ -23,7 +33,6 @@ import torch
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.configuration_rtc import validate_trained_rtc_horizon
-from lerobot.policies.rtc.relative import reanchor_relative_rtc_prefix
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     NormalizerProcessorStep,
@@ -42,6 +51,7 @@ from .contracts import (
     PolicyCapabilities,
     QueryKind,
 )
+from .prediction import chunk_inference_context, predict_chunk
 
 
 class PolicyRunner:
@@ -81,7 +91,7 @@ class PolicyRunner:
         supports_language = policy.supports_text_generation()
         if language_enabled is True and not supports_language:
             raise ValueError("Language is enabled but this policy has no text capability.")
-        spec = policy.chunk_inference_spec()
+        spec = self._policy_spec = policy.chunk_inference_spec()
         if not spec.current_observation_only:
             raise ValueError("The default runner does not implement temporal observation sampling.")
         modes = tuple(ExecutionMode(mode) for mode in modes)
@@ -235,43 +245,30 @@ class PolicyRunner:
         if mode not in self.capabilities.modes:
             raise ValueError(f"Execution mode {mode.value!r} was not enabled by this deployment.")
         started = time.perf_counter()
-        # Guided RTC locally enables autograd for its prefix correction. no_grad
-        # permits that override; inference_mode would suppress its gradient graph.
-        with torch.inference_mode(mode is not ExecutionMode.RTC_GUIDED), torch.no_grad():
+        with chunk_inference_context(mode):
             prepared = self.preprocessor(self._batch(observation))
             preprocessed_at = time.perf_counter()
-            kwargs: dict[str, Any] = {}
-            if mode != ExecutionMode.CHUNK:
-                prefix = self._prepare_continuation(model_continuation, canonical_continuation)
-                if inference_delay < 0:
-                    raise ValueError("RTC delay must be nonnegative.")
-                if prefix is None and inference_delay:
-                    raise ValueError("RTC delay requires a real continuation prefix.")
-                if mode == ExecutionMode.RTC_TRAINED:
-                    available = 0 if model_continuation is None else len(model_continuation)
-                    if inference_delay > min(
-                        self.capabilities.training_max_delay, available, self.capabilities.rtc_horizon
-                    ):
-                        raise ValueError(
-                            "Trained RTC delay exceeds checkpoint or available continuation limits."
-                        )
-                kwargs = {"inference_delay": inference_delay, "prev_chunk_left_over": prefix}
-            predicted = self.policy.predict_action_chunk(prepared, **kwargs)
-            predicted_at = time.perf_counter()
-            self._validate_model_actions(predicted)
-            # A postprocessor may modify its argument. Preserve model coordinates
-            # before invoking the paired canonical postprocessor.
-            original = predicted.detach().clone()
-            canonical = self.postprocessor(predicted)
-            self._validate_actions(canonical)
-            steps = (
-                self.capabilities.execution_steps
-                if mode == ExecutionMode.CHUNK
-                else self.capabilities.prediction_steps
+            prediction = predict_chunk(
+                self.policy,
+                self.postprocessor,
+                prepared,
+                spec=self._policy_spec,
+                mode=mode,
+                canonical_action_dim=self.capabilities.action_feature.shape[0],
+                model_action_dim=self._model_action_dim,
+                device=self.policy.config.device or "cpu",
+                rtc_horizon=self.capabilities.rtc_horizon,
+                inference_delay=inference_delay,
+                model_continuation=model_continuation,
+                canonical_continuation=canonical_continuation,
+                relative_step=self._relative_step,
+                normalizer_step=self._normalizer_step,
             )
-            canonical = canonical[0, :steps].detach().to(device="cpu", dtype=torch.float32).clone()
+            self._model_action_dim = prediction.model_actions.shape[1]
+            self.capabilities = replace(self.capabilities, model_action_dim=self._model_action_dim)
+            canonical = prediction.canonical_actions.to(device="cpu", dtype=torch.float32).clone()
             model = (
-                original[0, :steps].detach().to(device="cpu", dtype=torch.float32).clone()
+                prediction.model_actions.to(device="cpu", dtype=torch.float32).clone()
                 if mode != ExecutionMode.CHUNK
                 else None
             )
@@ -286,74 +283,13 @@ class PolicyRunner:
                 task_version=observation.task_version,
                 observation_id=observation.observation_id,
             ),
-            execution_steps=steps,
+            execution_steps=len(canonical),
             server_durations={
                 "preprocessing": preprocessed_at - started,
-                "policy": predicted_at - preprocessed_at,
-                "postprocessing": finished - predicted_at,
+                "policy": prediction.predicted_at - preprocessed_at,
+                "postprocessing": finished - prediction.predicted_at,
             },
         )
-
-    def _validate_actions(self, actions: torch.Tensor) -> None:
-        expected = (1, self.capabilities.prediction_steps, self.capabilities.action_feature.shape[0])
-        if not isinstance(actions, torch.Tensor) or tuple(actions.shape) != expected:
-            raise ValueError(f"Policy/processor must return action shape {expected}.")
-        if not actions.is_floating_point() or not torch.isfinite(actions).all():
-            raise ValueError("Policy/processor returned non-finite or non-floating actions.")
-
-    def _validate_model_actions(self, actions: torch.Tensor) -> None:
-        """Keep model coordinates intact; only the paired processor defines canonical actions."""
-        if (
-            not isinstance(actions, torch.Tensor)
-            or actions.ndim != 3
-            or actions.shape[:2] != (1, self.capabilities.prediction_steps)
-            or actions.shape[2] <= 0
-            or not actions.is_floating_point()
-            or not torch.isfinite(actions).all()
-        ):
-            raise ValueError(
-                "Policy must return finite floating actions with its declared batch and horizon."
-            )
-        width = actions.shape[2]
-        if self._model_action_dim is not None and width != self._model_action_dim:
-            raise ValueError("Policy model action width changed after deployment warmup.")
-        if (
-            self._relative_step is not None
-            and any(mode != ExecutionMode.CHUNK for mode in self.capabilities.modes)
-            and width != self.capabilities.action_feature.shape[0]
-        ):
-            raise ValueError("Relative RTC with different model/canonical widths requires a custom runner.")
-        self._model_action_dim = width
-        self.capabilities = replace(self.capabilities, model_action_dim=width)
-
-    def _prepare_continuation(
-        self, model: torch.Tensor | None, canonical: torch.Tensor | None
-    ) -> torch.Tensor | None:
-        if model is None or model.numel() == 0:
-            return None
-        width = self._model_action_dim or self.capabilities.action_feature.shape[0]
-        if (
-            model.ndim != 2
-            or model.shape[1] != width
-            or not model.is_floating_point()
-            or not torch.isfinite(model).all()
-        ):
-            raise ValueError("Invalid model-space continuation.")
-        device = self.policy.config.device or "cpu"
-        if self._relative_step is not None:
-            if canonical is None or canonical.shape != model.shape or not torch.isfinite(canonical).all():
-                raise ValueError("Relative RTC requires matching finite canonical continuation.")
-            state = self._relative_step.get_cached_state()
-            if state is None:
-                raise ValueError("Relative RTC preprocessor did not cache the current raw state.")
-            model = reanchor_relative_rtc_prefix(
-                canonical, state, self._relative_step, self._normalizer_step, device
-            )
-        horizon = self.capabilities.rtc_horizon
-        model = model.to(device)
-        if len(model) < horizon:
-            model = torch.cat([model, model[-1:].expand(horizon - len(model), -1)])
-        return model[:horizon]
 
     def query(self, observation: ObservationSnapshot, *, kind: str, text: str) -> str:
         """Use isolated processors for one bounded language request."""

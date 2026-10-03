@@ -3,7 +3,6 @@
 # you may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
 """A complete direct-Zenoh path with real canonical processor pipelines."""
 
-import json
 import socket
 import sys
 import time
@@ -421,7 +420,7 @@ def test_cancelled_request_is_never_published(remote_server, monkeypatch, cancel
 
 
 @pytest.mark.parametrize("remote_server", ["robot"], indirect=True)
-def test_remote_context_without_weights_dispatches_and_holds_fake_robot(remote_server, monkeypatch, tmp_path):
+def test_remote_context_without_weights_dispatches_and_holds_fake_robot(remote_server, monkeypatch):
     _, remote_config = remote_server
 
     class FakeRobot:
@@ -462,8 +461,6 @@ def test_remote_context_without_weights_dispatches_and_holds_fake_robot(remote_s
     ctx = build_rollout_context(cfg, Event())
     assert ctx.policy.policy is ctx.policy.preprocessor is ctx.policy.postprocessor is None
     engine = ctx.policy.inference
-    event_path = tmp_path / "inference-events.jsonl"
-    engine.configure_event_log(event_path)
     ctx.processors.robot_action_processor = lambda pair: {key: value + 0.5 for key, value in pair[0].items()}
     interpolator = ActionInterpolator(multiplier=3)
     engine.reset()
@@ -480,6 +477,8 @@ def test_remote_context_without_weights_dispatches_and_holds_fake_robot(remote_s
                 Event().wait(0.002)
         assert canonical == {"joint_0.pos": 1.0, "joint_1.pos": 4.0, "joint_2.pos": 7.0}
         assert robot.sent[-1] == {key: value + 0.5 for key, value in canonical.items()}
+        assert engine.dispatched_task == "pick up the cube"
+        assert engine.runtime.current.request_id
 
         # Fetch the second endpoint so interpolation still has intermediate motor
         # ticks when the inference fault arrives.
@@ -495,12 +494,3 @@ def test_remote_context_without_weights_dispatches_and_holds_fake_robot(remote_s
     finally:
         engine.stop()
         robot.disconnect()
-    events = [json.loads(line) for line in event_path.read_text().splitlines()]
-    dispatched = next(event for event in events if event["event"] == "dispatch")
-    assert dispatched["canonical"]["joint_0.pos"] == 1.0
-    assert dispatched["command"]["joint_0.pos"] == 1.5
-    assert dispatched["measured"]["joint_0.pos"] == 1.0
-    assert dispatched["provenance"]["task"] == "pick up the cube"
-    assert dispatched["provenance"]["request_id"]
-    assert any(event["event"] == "fault" for event in events)
-    assert events[-1] == {"event": "writer_closed", "dropped_events": 0}

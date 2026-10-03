@@ -1,6 +1,17 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Remote rollout backend: worker-owned network exchanges, local motor permission."""
 
 from __future__ import annotations
@@ -9,18 +20,15 @@ import logging
 import time
 import traceback
 from collections import deque
-from dataclasses import asdict, replace
-from pathlib import Path
+from dataclasses import replace
 from queue import Empty, Full, Queue
 from threading import Event, RLock, Thread
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-import numpy as np
 import torch
 
 from lerobot.inference.contracts import ExecutionMode, ObservationSnapshot
-from lerobot.inference.events import EventWriter
 from lerobot.inference.execution import ChunkRuntime
 from lerobot.remote_inference.client import RemoteClient, RequestCancelled
 from lerobot.remote_inference.protocol import ErrorCode, ProtocolError
@@ -36,6 +44,14 @@ logger = logging.getLogger(__name__)
 
 
 class RemoteInferenceEngine(InferenceEngine):
+    """Run one admitted remote session with nonblocking local motion dispatch.
+
+    The worker owns network exchanges and drains bounded console diagnostics.
+    The control thread supplies observations and dispatches eligible actions;
+    operator transitions synchronize through the engine and runtime locks.
+    Instances are single-use and never reconnect or resume after a fault.
+    """
+
     def __init__(
         self,
         client: RemoteClient,
@@ -46,6 +62,17 @@ class RemoteInferenceEngine(InferenceEngine):
         task: str,
         shutdown_event: Event | None = None,
     ) -> None:
+        """Bind an admitted client and hold-capable robot without starting work.
+
+        Args:
+            client: Admitted session whose lifetime transfers to the worker.
+            config: Validated scheduling, deadlines and motion settings.
+            dataset_features: Local recording schema used to construct observations.
+            rename_map: Mapping from local observation names to checkpoint names.
+            robot_wrapper: Serialized hardware access with configured position hold.
+            task: Initial instruction shared by policy conditioning and action labels.
+            shutdown_event: Optional rollout shutdown signal, set after a fault hold.
+        """
         super().__init__(task)
         self.client = client
         self.config = config
@@ -78,7 +105,6 @@ class RemoteInferenceEngine(InferenceEngine):
         self._stop_event = Event()
         self._thread: Thread | None = None
         self._traceback: str | None = None
-        self._event_writer: EventWriter | None = None
         self._tick = 0
         self._fault_reported = False
         self._refill_horizon_warned = False
@@ -96,9 +122,6 @@ class RemoteInferenceEngine(InferenceEngine):
         self._rejected_since_summary = 0
         self._request_diagnostics: dict = {}
 
-    def configure_event_log(self, path: Path) -> None:
-        self._event_writer = EventWriter(path)
-
     def _event(self, name: str, **values) -> None:
         event = {
             "event": name,
@@ -110,13 +133,10 @@ class RemoteInferenceEngine(InferenceEngine):
             "control_tick": self._tick,
             **values,
         }
-        if self._event_writer is not None:
-            self._event_writer.write(event)
-        if name != "dispatch":
-            try:
-                self._log_events.put_nowait(event)
-            except Full:
-                self._dropped_log_events += 1
+        try:
+            self._log_events.put_nowait(event)
+        except Full:
+            self._dropped_log_events += 1
 
     def _drain_log_events(self) -> None:
         """Worker-only console output; dropping diagnostics never changes execution."""
@@ -161,8 +181,10 @@ class RemoteInferenceEngine(InferenceEngine):
                 self._request_diagnostics = event
             elif name == "result":
                 self._recent_results.append((event["turnaround_s"], event["timing_margin_s"]))
-                self._accepted_since_summary += bool(event["accepted"])
-                self._rejected_since_summary += not event["accepted"]
+                if event["accepted"]:
+                    self._accepted_since_summary += 1
+                else:
+                    self._rejected_since_summary += 1
         if self.runtime.failure is not None and not self._fault_logged:
             self._fault_logged = True
             self._log_fault(self.runtime.failure)
@@ -225,22 +247,30 @@ class RemoteInferenceEngine(InferenceEngine):
 
     @property
     def control_thread_owns_policy(self) -> bool:
+        """Return False: the control thread never runs policy computation."""
         return False
 
     @property
     def supports_text_queries(self) -> bool:
+        """Whether this admitted deployment advertises serialized language work."""
         return self.client.capabilities.language
 
     @property
     def ready(self) -> bool:
+        """Whether admission is complete and no terminal fault has been latched.
+
+        Readiness does not imply that an eligible action is already buffered.
+        """
         return bool(self.client.session_id) and not self.failed
 
     @property
     def failed(self) -> bool:
+        """Whether this session has permanently revoked policy motion."""
         return self.runtime.failure is not None
 
     @property
     def failure_traceback(self) -> str | None:
+        """Return the original worker traceback or the runtime's fault reason."""
         return self._traceback or self.runtime.failure
 
     def _fault(self, reason: str) -> None:
@@ -253,6 +283,11 @@ class RemoteInferenceEngine(InferenceEngine):
         # acknowledge_hold then signals shutdown; otherwise teardown could preempt it.
 
     def start(self) -> None:
+        """Start the session's network worker once, initially awaiting activation.
+
+        Raises:
+            RuntimeError: If this engine was already started, including after stop.
+        """
         if self._thread is not None:
             raise RuntimeError("Remote inference engine has already started")
         self._event(
@@ -311,14 +346,17 @@ class RemoteInferenceEngine(InferenceEngine):
             )
 
     def stop(self) -> None:
+        """Revoke motion and request worker shutdown with a bounded join.
+
+        The worker closes the remote client on exit. A join timeout does not
+        permit engine reuse or delay the rollout's hardware shutdown further.
+        """
         self.pause()
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=2)
             if self._thread.is_alive():
                 logger.warning("Remote worker did not stop within 2s; local hardware shutdown continues")
-        if self._event_writer is not None:
-            self._event_writer.close()
 
     def _invalidate(self, operation: str) -> None:
         with self._lock:
@@ -333,23 +371,37 @@ class RemoteInferenceEngine(InferenceEngine):
         self._event(operation)
 
     def pause(self) -> None:
+        """Invalidate motion/query intent and queue serialized server invalidation."""
         self.drop_pending_query()
         with self.runtime.lock:
             self.runtime.active = False
         self._invalidate("invalidate")
 
     def resume(self) -> None:
+        """Activate a healthy session, awaiting control acknowledgment if pending.
+
+        Raises:
+            RuntimeError: If the session faulted or shutdown has been requested.
+        """
         if self.failed or self._stop_event.is_set():
             raise RuntimeError("Faulted/closed remote sessions require a new rollout")
         with self._lock:
             self.runtime.activate(held=self._control is not None)
 
     def reset(self) -> None:
+        """Invalidate local motion and request a full server policy/processor reset."""
         self.drop_pending_query()
         self._invalidate("reset")
         self._discard_task_change()
 
     def set_task(self, task: str) -> bool:
+        """Accept a changed instruction, holding if action inference is pending.
+
+        Returns:
+            True for an accepted change; False for unchanged or invalid input.
+            Actions already accepted can retain continuity, but pending results
+            for the old task cannot be accepted after this transition.
+        """
         if error := self.text_input_error(task, instruction=True):
             logger.warning("Instruction rejected: %s", error)
             return False
@@ -367,6 +419,7 @@ class RemoteInferenceEngine(InferenceEngine):
         return True
 
     def text_input_error(self, text: str, *, instruction: bool = False) -> str | None:
+        """Return user-facing input guidance, or None when deployment limits allow it."""
         limit = self.client.descriptor["limits"]["max_input_chars"]
         if not instruction and not text.strip():
             return "Enter a non-empty question or goal."
@@ -393,11 +446,25 @@ class RemoteInferenceEngine(InferenceEngine):
         return served
 
     def start_autosteer(self, goal: str, interval_s: float) -> None:
+        """Enable serialized subtask queries for a language-capable deployment.
+
+        Args:
+            goal: High-level instruction, checked against the deployed text limit.
+            interval_s: Delay before another subtask is due after applying one.
+
+        Raises:
+            ValueError: If the deployment lacks language support or the goal is invalid.
+        """
         if not self.supports_text_queries:
             raise ValueError("This deployment does not support autosteering queries")
         super().start_autosteer(goal, interval_s)
 
     def notify_observation(self, obs: dict) -> None:
+        """Copy a control-thread capture into the worker's latest observation slot.
+
+        Uses the robot wrapper's acquisition time, filters recording-only fields,
+        and anchors aligned playback before the next policy endpoint is committed.
+        """
         sampled = self._robot.observation_time
         if sampled is None:
             sampled = time.monotonic()
@@ -421,6 +488,11 @@ class RemoteInferenceEngine(InferenceEngine):
             self._observation = snapshot
 
     def dispatch_allowed(self) -> bool:
+        """Check local motion permission and deadlines before every motor command.
+
+        Called on the control thread, including interpolation ticks. False requires
+        the strategy to clear interpolation, hold locally and acknowledge the hold.
+        """
         # Called on every motor tick, before any interpolated target is sent.
         if self.has_pending_query:
             self._request_language_hold()
@@ -454,6 +526,11 @@ class RemoteInferenceEngine(InferenceEngine):
             self._event("planned_hold", reason=reason)
 
     def acknowledge_hold(self) -> None:
+        """Confirm a successful control-thread hold and require a later capture.
+
+        After a terminal fault this signals rollout shutdown; it never clears the
+        fault or promises that a previous command physically reached its target.
+        """
         with self._lock:
             if self._hold_requested and not self._hold_acknowledged:
                 self._hold_acknowledged = True
@@ -463,6 +540,15 @@ class RemoteInferenceEngine(InferenceEngine):
             self._global_shutdown.set()
 
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
+        """Commit the next eligible canonical endpoint without network waits.
+
+        Args:
+            obs_frame: Unused; observations arrive through notify_observation.
+
+        Returns:
+            An action tensor with its dispatched task label set, or None when no
+            eligible action is available. The caller must still check dispatch permission.
+        """
         item = self.runtime.pop(control_tick=self._tick)
         if item is None:
             return None
@@ -727,24 +813,5 @@ class RemoteInferenceEngine(InferenceEngine):
                 logger.exception("Remote session close failed; presence/idle cleanup will release it")
 
     def begin_control_tick(self) -> None:
-        """Count every motor tick, including holds, for the event sidecar."""
+        """Count every motor tick, including holds, for console diagnostic context."""
         self._tick += 1
-
-    def record_dispatch(self, canonical: dict, command: dict, measured: dict) -> None:
-        super().record_dispatch(canonical, command, measured)
-        provenance = self.runtime.current
-        if provenance is None:
-            return
-        scalar_state = {
-            key: float(value)
-            for key, value in measured.items()
-            if isinstance(value, (float, int, np.number)) and np.isfinite(value)
-        }
-        self._event(
-            "dispatch",
-            provenance=asdict(provenance),
-            canonical=canonical,
-            command=command,
-            measured=scalar_state,
-            source_age_s=time.monotonic() - provenance.capture_time,
-        )

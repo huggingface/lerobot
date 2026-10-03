@@ -174,7 +174,8 @@ def test_local_rtc_rejects_invalid_canonical_or_changing_model_width(wrong_canon
             policy.width = 6
             policy.release.release()
         assert wait_for(lambda: engine.failed)
-        assert "violates" in engine.failure_traceback
+        expected_error = "must return action shape" if wrong_canonical_width else "width changed"
+        assert expected_error in engine.failure_traceback
         traceback = engine.failure_traceback
         assert "Traceback" in traceback
         assert not engine.dispatch_allowed()
@@ -349,7 +350,7 @@ def test_active_reset_discards_observation_copied_before_reset(monkeypatch):
 
 
 @pytest.mark.parametrize("pause_first", [False, True])
-def test_reset_during_text_silently_discards_answer_and_requires_fresh_actions(pause_first):
+def test_reset_during_text_reports_cancellation_and_requires_fresh_actions(pause_first):
     engine = make_engine(rtc_queue_threshold=-1)
     generating, finish = Event(), Event()
 
@@ -372,7 +373,13 @@ def test_reset_during_text_silently_discards_answer_and_requires_fresh_actions(p
         engine.resume()
         finish.set()
         assert wait_for(lambda: not engine._query_in_flight)
-        assert not engine._ready_answers
+        delivered = []
+        engine.set_answer_observer(delivered.append)
+        engine.pump_query()
+        engine.pump_query()
+        assert len(delivered) == 1
+        assert delivered[0].answer is None
+        assert "cancelled" in delivered[0].error
         assert not engine.dispatch_allowed()
         assert not engine.failed
     finally:

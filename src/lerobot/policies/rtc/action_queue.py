@@ -265,9 +265,8 @@ class ActionQueue:
                 delay = min(max(0, real_delay), max(0, self._cursor - snapshot.cursor))
 
             if self.cfg.enabled:
-                self._replace_actions_queue(original_actions, processed_actions, delay, task)
-                assert self.queue is not None
-                self._provenance_queue = [provenance] * len(self.queue)
+                queue = self._replace_actions_queue(original_actions, processed_actions, delay, task)
+                self._provenance_queue = [provenance] * len(queue)
                 return True
 
             remaining_provenance = self._provenance_queue[self.last_index :]
@@ -281,7 +280,7 @@ class ActionQueue:
         processed_actions: Tensor,
         real_delay: int,
         task: str | None,
-    ):
+    ) -> Tensor:
         """Replace the queue with new actions (RTC mode).
 
         Discards the first `real_delay` actions since they correspond to the time
@@ -303,8 +302,11 @@ class ActionQueue:
         logger.debug(f"real_delay: {real_delay}, clamped_delay: {clamped_delay}")
 
         self.last_index = 0
+        return self.queue
 
-    def _append_actions_queue(self, original_actions: Tensor, processed_actions: Tensor, task: str | None):
+    def _append_actions_queue(
+        self, original_actions: Tensor, processed_actions: Tensor, task: str | None
+    ) -> None:
         """Append new actions to the queue (non-RTC mode).
 
         Removes already-consumed actions and appends new ones, maintaining
@@ -321,8 +323,9 @@ class ActionQueue:
             self._task_queue = [task] * len(self.queue)
             return
 
+        if self.original_queue is None:
+            raise RuntimeError("Canonical action queue exists without its matching model-space queue")
         existing_tasks = self._task_queue or [None] * len(self.queue)
-        assert self.original_queue is not None
         self.original_queue = torch.cat([self.original_queue, original_actions.clone()])
         self.original_queue = self.original_queue[self.last_index :]
 

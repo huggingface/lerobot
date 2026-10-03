@@ -1,6 +1,17 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Exclusive session ownership and a single ordered policy worker.
 
 Model calls and all processor resets happen on one worker. A hung call keeps the
@@ -26,7 +37,13 @@ import torch
 
 from lerobot.inference.contracts import ExecutionMode, FeatureSpec, ObservationSnapshot, QueryKind
 from lerobot.inference.policy_runner import PolicyRunner
-from lerobot.transport.zenoh import PendingQuery, ZenohTransport
+from lerobot.transport.zenoh import (
+    BoundedQueryable,
+    BoundedSubscriber,
+    PendingQuery,
+    PresenceEvent,
+    ZenohTransport,
+)
 
 from .build_info import SOFTWARE_BUILD
 from .chunk_contract import (
@@ -75,6 +92,31 @@ class _Session:
     cleanup_reason: str | None = None
     cleanup_queue_blocked: bool = False
     last_sequence: int = -1
+
+
+@dataclass
+class _SessionChannels:
+    session_id: str
+    key: str
+    control: BoundedQueryable
+    observations: BoundedSubscriber[bytes]
+    language: BoundedSubscriber[bytes]
+    presence: BoundedSubscriber[PresenceEvent]
+    present: bool = False
+
+    def close(self) -> None:
+        self.control.close()
+        self.observations.close()
+        self.language.close()
+        self.presence.close()
+
+
+@dataclass(frozen=True)
+class _PendingReply:
+    future: Future[Envelope]
+    target: PendingQuery | str
+    # Only session controls retain their queryable until a reply has been flushed.
+    session_id: str | None = None
 
 
 class SessionWorker:
@@ -155,22 +197,34 @@ class SessionWorker:
             "cleanup_pending": session is not None and session.closing,
             "cleanup_reason": None if session is None else session.cleanup_reason,
             "inference_pending": session is not None and session.busy,
-            "admission_blocker": (
-                None
-                if session is None
-                else "unfinished_inference"
-                if session.closing and session.busy
-                else "worker_cleanup_pending"
-                if session.closing
-                else "cleanup_queue_full"
-                if session.cleanup_queue_blocked
-                else "awaiting_initial_presence"
-                if session.absent_since is not None and not session.presence_established
-                else "absence_grace"
-                if session.absent_since is not None
-                else "active_session"
-            ),
+            "admission_blocker": self._admission_blocker_locked(),
         }
+
+    def _admission_blocker_locked(self) -> str | None:
+        session = self._session
+        if session is None:
+            return None
+        if session.closing:
+            return "unfinished_inference" if session.busy else "worker_cleanup_pending"
+        if session.cleanup_queue_blocked:
+            return "cleanup_queue_full"
+        if session.absent_since is not None:
+            return "absence_grace" if session.presence_established else "awaiting_initial_presence"
+        return "active_session"
+
+    def _session_status_locked(self) -> str:
+        session = self._session
+        if self._failure is not None:
+            return "unhealthy"
+        if session is None:
+            return "idle"
+        if session.faulted:
+            return "faulted"
+        if session.closing:
+            return "closing"
+        if session.busy:
+            return "busy"
+        return "active"
 
     def _descriptor_locked(self) -> dict[str, Any]:
         capabilities = asdict(self.runner.capabilities)
@@ -189,19 +243,7 @@ class SessionWorker:
             "available": self._failure is None and self._session is None and not self._stopping.is_set(),
             "failure": self._failure,
             "session": self._session_diagnostics_locked(),
-            "session_status": (
-                "unhealthy"
-                if self._failure is not None
-                else "idle"
-                if self._session is None
-                else "faulted"
-                if self._session.faulted
-                else "closing"
-                if self._session.closing
-                else "busy"
-                if self._session.busy
-                else "active"
-            ),
+            "session_status": self._session_status_locked(),
             "limits": {
                 "action_deadline_s": self.action_deadline_s,
                 "language_deadline_s": self.language_deadline_s,
@@ -647,8 +689,10 @@ class SessionWorker:
                     finished - started,
                 )
                 self._recent_operations.append((started - queued_at, finished - started))
-                self._actions_since_summary += message.message_type is MessageType.OBSERVATION
-                self._language_since_summary += message.message_type is MessageType.LANGUAGE_REQUEST
+                if message.message_type is MessageType.OBSERVATION:
+                    self._actions_since_summary += 1
+                else:
+                    self._language_since_summary += 1
                 if finished - self._last_summary_at >= 5:
                     count = len(self._recent_operations)
                     logger.info(
@@ -774,6 +818,117 @@ class PolicyServer:
             logger.exception("Policy reply could not be encoded request=%s", response.request_id)
             return encode_message(response.error(ErrorCode.EXECUTION, "Policy reply could not be encoded"))
 
+    def _declare_session(self, session_id: str) -> _SessionChannels:
+        key = session_prefix(self.worker.deployment, self.worker.instance_id, session_id)
+        return _SessionChannels(
+            session_id=session_id,
+            key=key,
+            control=self.transport.declare_queryable(
+                key + "/control",
+                capacity=4,
+                reply_timeout=self.worker.language_deadline_s + self.worker.action_deadline_s + 30,
+            ),
+            observations=self.transport.subscribe(key + "/obs", capacity=1),
+            language=self.transport.subscribe(key + "/language/request", capacity=1),
+            presence=self.transport.subscribe_liveliness(key + "/alive"),
+        )
+
+    def _pump_queryables(
+        self,
+        queryables: list[tuple[BoundedQueryable, MessageType]],
+        outbound: list[_PendingReply],
+    ) -> None:
+        for queryable, expected in queryables:
+            try:
+                query = queryable.get(timeout=0)
+            except Empty:
+                continue
+            try:
+                message = decode_message(query.payload)
+                if message.message_type is not expected:
+                    query.reply(encode_message(message.error(ErrorCode.MALFORMED, "Wrong control surface")))
+                    continue
+                if len(outbound) >= 16:
+                    query.reply(encode_message(message.error(ErrorCode.BUSY, "Reply capacity exhausted")))
+                    continue
+                bound = message.session_id if message.message_type is MessageType.CONTROL else None
+                outbound.append(_PendingReply(self.worker.submit(message), query, bound))
+            except ProtocolError:
+                query.drop()
+                logger.warning("Rejected malformed control envelope")
+            except Exception:
+                query.drop()
+                logger.exception("Control request or reply failed")
+
+    def _pump_subscribers(self, channels: _SessionChannels, outbound: list[_PendingReply]) -> None:
+        for subscriber, expected, suffix in (
+            (channels.observations, MessageType.OBSERVATION, "/act"),
+            (channels.language, MessageType.LANGUAGE_REQUEST, "/language/result"),
+        ):
+            try:
+                payload = subscriber.get(timeout=0)
+            except Empty:
+                continue
+            try:
+                message = decode_message(payload)
+                if message.message_type is not expected or len(outbound) >= 16:
+                    self.transport.publish(
+                        channels.key + suffix,
+                        encode_message(
+                            message.error(ErrorCode.BUSY, "Invalid topic or reply capacity exhausted")
+                        ),
+                    )
+                    continue
+                outbound.append(_PendingReply(self.worker.submit(message), channels.key + suffix))
+            except ProtocolError:
+                logger.warning("Rejected malformed inference envelope")
+        while True:
+            try:
+                channels.present = channels.presence.get(timeout=0).alive
+            except Empty:
+                break
+        self.worker.expire(present=channels.present and not channels.presence.dropped)
+
+    def _flush_replies(
+        self, outbound: list[_PendingReply], channels: _SessionChannels | None
+    ) -> list[_PendingReply]:
+        pending = []
+        session_id = None if channels is None else channels.session_id
+        for reply in outbound:
+            if not reply.future.done():
+                pending.append(reply)
+                continue
+            try:
+                response = reply.future.result()
+                if response.message_type is MessageType.ACCEPTED and response.session_id != session_id:
+                    if response.session_id == self.worker.session_id:
+                        # Install the admitted session channels before acknowledging OPEN.
+                        pending.append(reply)
+                        continue
+                    response = response.error(ErrorCode.STALE, "Open operation belongs to a closed session")
+                if (
+                    response.message_type is MessageType.ACK
+                    and response.body.get("operation") == "reset"
+                    and response.generation == 0
+                ):
+                    # Only admission establishes these subscriptions. A later
+                    # reset must not stall the IO pump if the client disappears.
+                    ready_key = session_prefix(
+                        self.worker.deployment, self.worker.instance_id, response.session_id
+                    )
+                    self.transport.wait_for_subscriber(ready_key + "/act", 5.0)
+                    self.transport.wait_for_subscriber(ready_key + "/language/result", 5.0)
+                payload = self._encode_reply(response)
+                if isinstance(reply.target, PendingQuery):
+                    reply.target.reply(payload)
+                else:
+                    self.transport.publish(reply.target, payload)
+            except Exception:
+                if isinstance(reply.target, PendingQuery):
+                    reply.target.drop()
+                logger.exception("Reply failed or query deadline expired")
+        return pending
+
     def serve(self) -> None:
         """Serve bounded control, action and language channels until explicitly stopped."""
         transport, worker = self.transport, self.worker
@@ -787,148 +942,33 @@ class PolicyServer:
             worker.deployment,
             worker.instance_id,
         )
-        resources: list[Any] = []
-        session_id = None
-        session_present = False
-        # Only session-control callbacks retain that session's queryable handles.
-        # OPEN replies must never block installation of their own session channels.
-        outbound: list[tuple[Future, PendingQuery | str, str | None]] = []
+        channels: _SessionChannels | None = None
+        outbound: list[_PendingReply] = []
         try:
             while not self._stop.is_set():
-                if worker.session_id != session_id and (
-                    session_id is None or not any(bound == session_id for _, _, bound in outbound)
+                session_id = worker.session_id
+                channel_session_id = None if channels is None else channels.session_id
+                # Retain old session controls until their replies have been flushed.
+                # OPEN replies are unbound so they cannot prevent their own setup.
+                if session_id != channel_session_id and (
+                    channels is None or not any(reply.session_id == channels.session_id for reply in outbound)
                 ):
-                    for resource in resources:
-                        resource.close()
-                    resources = []
-                    session_id = worker.session_id
-                    session_present = False
-                    if session_id:
-                        key = session_prefix(worker.deployment, worker.instance_id, session_id)
-                        resources = [
-                            transport.declare_queryable(
-                                key + "/control",
-                                capacity=4,
-                                reply_timeout=worker.language_deadline_s + worker.action_deadline_s + 30,
-                            ),
-                            transport.subscribe(key + "/obs", capacity=1),
-                            transport.subscribe(key + "/language/request", capacity=1),
-                            transport.subscribe_liveliness(key + "/alive"),
-                        ]
-                queryables = [describe, opening] + resources[:1]
-                for queryable in queryables:
-                    try:
-                        query = queryable.get(timeout=0)
-                    except Empty:
-                        continue
-                    try:
-                        message = decode_message(query.payload)
-                        expected = (
-                            MessageType.DESCRIBE
-                            if queryable is describe
-                            else MessageType.OPEN
-                            if queryable is opening
-                            else MessageType.CONTROL
-                        )
-                        if message.message_type is not expected:
-                            query.reply(
-                                encode_message(message.error(ErrorCode.MALFORMED, "Wrong control surface"))
-                            )
-                            continue
-                        if len(outbound) >= 16:
-                            query.reply(
-                                encode_message(message.error(ErrorCode.BUSY, "Reply capacity exhausted"))
-                            )
-                            continue
-                        bound = message.session_id if message.message_type is MessageType.CONTROL else None
-                        outbound.append((worker.submit(message), query, bound))
-                    except ProtocolError:
-                        query.drop()
-                        logger.warning("Rejected malformed control envelope")
-                    except Exception:
-                        query.drop()
-                        logger.exception("Control request or reply failed")
-                if resources:
-                    assert session_id is not None
-                    key = session_prefix(worker.deployment, worker.instance_id, session_id)
-                    for subscriber, suffix in zip(resources[1:3], ("/act", "/language/result"), strict=True):
-                        try:
-                            payload = subscriber.get(timeout=0)
-                        except Empty:
-                            continue
-                        try:
-                            message = decode_message(payload)
-                            expected = (
-                                MessageType.OBSERVATION if suffix == "/act" else MessageType.LANGUAGE_REQUEST
-                            )
-                            if message.message_type is not expected or len(outbound) >= 16:
-                                transport.publish(
-                                    key + suffix,
-                                    encode_message(
-                                        message.error(
-                                            ErrorCode.BUSY, "Invalid topic or reply capacity exhausted"
-                                        )
-                                    ),
-                                )
-                                continue
-                            outbound.append(
-                                (
-                                    worker.submit(message),
-                                    key + suffix,
-                                    None,
-                                )
-                            )
-                        except ProtocolError:
-                            logger.warning("Rejected malformed inference envelope")
-                    while True:
-                        try:
-                            session_present = resources[3].get(timeout=0).alive
-                        except Empty:
-                            break
-                    worker.expire(present=session_present and not resources[3].dropped)
-                pending = []
-                for future, target, bound in outbound:
-                    if future.done():
-                        try:
-                            response = future.result()
-                            if (
-                                response.message_type is MessageType.ACCEPTED
-                                and response.session_id != session_id
-                            ):
-                                if response.session_id == worker.session_id:
-                                    pending.append((future, target, bound))
-                                    continue
-                                response = response.error(
-                                    ErrorCode.STALE, "Open operation belongs to a closed session"
-                                )
-                            if (
-                                response.message_type is MessageType.ACK
-                                and response.body.get("operation") == "reset"
-                                and response.generation == 0
-                            ):
-                                # Only admission establishes these subscriptions. A later
-                                # reset must not stall the IO pump if the client disappears.
-                                ready_key = session_prefix(
-                                    worker.deployment, worker.instance_id, response.session_id
-                                )
-                                transport.wait_for_subscriber(ready_key + "/act", 5.0)
-                                transport.wait_for_subscriber(ready_key + "/language/result", 5.0)
-                            payload = self._encode_reply(response)
-                            if isinstance(target, PendingQuery):
-                                target.reply(payload)
-                            else:
-                                transport.publish(target, payload)
-                        except Exception:
-                            if isinstance(target, PendingQuery):
-                                target.drop()
-                            logger.exception("Reply failed or query deadline expired")
-                    else:
-                        pending.append((future, target, bound))
-                outbound = pending
+                    if channels is not None:
+                        channels.close()
+                    channels = None if session_id is None else self._declare_session(session_id)
+                queryables = [(describe, MessageType.DESCRIBE), (opening, MessageType.OPEN)]
+                if channels is not None:
+                    queryables.append((channels.control, MessageType.CONTROL))
+                self._pump_queryables(queryables, outbound)
+                if channels is not None:
+                    self._pump_subscribers(channels, outbound)
+                outbound = self._flush_replies(outbound, channels)
                 self._stop.wait(0.002)
         finally:
-            for resource in [*resources, describe, opening]:
-                resource.close()
+            if channels is not None:
+                channels.close()
+            describe.close()
+            opening.close()
             transport.close()
             worker.close()
 

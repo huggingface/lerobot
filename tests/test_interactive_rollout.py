@@ -962,6 +962,11 @@ def test_engine_query_channel_holds_one_question_and_answers_it_once():
     assert (dropped.kind, dropped.text) == (QueryKind.VQA, "what do you see?")
     assert not engine.has_pending_query
     assert engine.drop_pending_query() is None
+    engine.pump_query()
+    assert len(delivered) == 1
+    assert delivered[0].question == "what do you see?"
+    assert "cancelled" in delivered[0].error
+    delivered.clear()
 
     engine.ask("is the cube in the box?")
     engine.pump_query({"joint.pos": 1.0})
@@ -1096,10 +1101,56 @@ def test_controller_segment_end_drops_stale_subtask_answer_and_reports_the_pendi
     assert not any(a.kind is QueryKind.NEXT_SUBTASK for a in answers)
     assert not engine.has_pending_query
     unserved = next(a for a in answers if a.question == "what do you see?")
-    assert not unserved.ok and "run ended" in unserved.error
+    assert not unserved.ok and "cancelled" in unserved.error
 
     controller.stop()
     _join_session(thread)
+
+
+@pytest.mark.parametrize("late_error", [False, True])
+def test_segment_end_reports_claimed_vqa_once_before_its_worker_returns(late_error):
+    """Stopping the chat must not wait for model generation to explain cancellation."""
+    answers = []
+    generating, finish = Event(), Event()
+    controller, _events, _strategy, engine, _parent, run_started = _make_controller(answers=answers)
+    engine.control_thread_owns_policy = False
+
+    def generate(obs, query):
+        generating.set()
+        assert finish.wait(2)
+        if late_error:
+            raise RuntimeError("obsolete failure")
+        return "obsolete answer"
+
+    engine._generate_text = generate
+    thread = _serve_thread(controller)
+    worker = Thread(target=lambda: engine._service_query({"joint.pos": 0.0}))
+    try:
+        controller.start()
+        assert run_started.wait(2)
+        assert controller.ask("what do you see?") is AskResult.QUEUED
+        worker.start()
+        assert generating.wait(2)
+        controller.stop()
+        _join_session(thread)
+        assert len(answers) == 1
+        assert answers[0].question == "what do you see?"
+        assert answers[0].answer is None
+        assert "cancelled" in answers[0].error
+        assert engine._query_in_flight
+        assert not engine.ask("another question?"), "cancellation cannot free a worker still generating"
+        engine.report_cancelled_query()
+        engine.pump_query()
+        assert len(answers) == 1
+    finally:
+        finish.set()
+        controller.stop()
+        _join_session(thread)
+        if worker.ident is not None:
+            _join_session(worker)
+    engine.pump_query()
+    assert len(answers) == 1, "late success or failure must not follow the cancellation notice"
+    assert not engine._query_in_flight
 
 
 # --- Autosteer (policy-driven subtask sequencing) ---
@@ -1573,8 +1624,25 @@ def test_rtc_observation_slot_owns_buffers_and_keeps_capture_time():
     assert engine._obs_holder["capture_time"] == engine._robot.observation_time
 
 
-def test_rtc_pause_during_text_discards_result_and_never_resumes_motion():
-    """A completed operator query cannot override a pause that arrived meanwhile."""
+@pytest.mark.parametrize("operation", ["pause", "reset"])
+def test_rtc_invalidation_reports_an_unclaimed_question_once(operation):
+    engine, _policy = _make_rtc_engine(rtc_queue_threshold=-1)
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+    assert engine.ask("what do you see?")
+    getattr(engine, operation)()
+    engine.drop_pending_query()
+    engine.pump_query()
+    engine.pump_query()
+    assert not engine.has_pending_query
+    assert len(delivered) == 1
+    assert delivered[0].answer is None
+    assert "cancelled" in delivered[0].error
+
+
+@pytest.mark.parametrize("operation", ["pause", "reset", "task"])
+def test_rtc_invalidation_during_text_reports_cancellation_without_stale_motion(operation):
+    """A completed operator query cannot override a newer execution context."""
     with _running_rtc_engine(rtc_queue_threshold=-1) as (engine, policy):
         generating, finish = Event(), Event()
 
@@ -1589,12 +1657,25 @@ def test_rtc_pause_during_text_discards_result_and_never_resumes_motion():
         engine.acknowledge_hold()
         engine.notify_observation(dict(_RTC_OBS))
         assert generating.wait(2)
-        engine.pause()
+        if operation == "task":
+            engine.set_task("new instruction")
+        else:
+            getattr(engine, operation)()
         finish.set()
         assert _wait_for(lambda: not engine._query_in_flight)
-        assert not engine._ready_answers
-        assert not engine._runtime.active
-        assert not engine.dispatch_allowed()
+        delivered = []
+        engine.set_answer_observer(delivered.append)
+        engine.pump_query()
+        engine.pump_query()
+        assert len(delivered) == 1
+        assert delivered[0].answer is None
+        assert "cancelled" in delivered[0].error
+        assert engine.action_queue.empty()
+        if operation == "pause":
+            assert not engine._runtime.active
+            assert not engine.dispatch_allowed()
+        if operation == "task":
+            assert engine.task == "new instruction"
 
 
 def test_hung_compile_warmup_faults_then_reaches_control_thread_hold():

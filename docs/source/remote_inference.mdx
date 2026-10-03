@@ -267,7 +267,7 @@ Append remains useful as a simple reference and for deployments where preserving
 
 At the default INFO level, startup/admission reports the deployment, software identity and negotiated execution settings. During action activity, a compact summary about every five seconds reports accepted/rejected results since the previous summary, mean/maximum turnaround over up to 100 recent results, estimated minimum submission headroom and current queued playback. Queued playback excludes any endpoint already committed to interpolation; headroom is a timing estimate, not measured physical progress. Failures explain their cause, expected local shutdown path and a relevant next check. Session, hold and shutdown transitions remain visible.
 
-For request-level diagnosis, add `--log_level=DEBUG` to the policy-server command and `--inference.log_level=DEBUG` to remote rollout. These expose correlation IDs, capability details, server operation timings and client event dictionaries. The event sidecar, when recording is configured, is independent of console verbosity. Its in-memory queue is bounded; its JSONL file grows with the session and is not automatically rotated.
+For request-level diagnosis, add `--log_level=DEBUG` to the policy-server command and `--inference.log_level=DEBUG` to remote rollout. These expose correlation IDs, capability details, server operation timings and client event dictionaries through application logs. Remote inference does not create diagnostic files inside recorded datasets or add logs to dataset/model uploads.
 
 <details>
 <summary>Reading detailed timing and motion diagnostics</summary>
@@ -334,7 +334,7 @@ Enable `language.enabled: true` only for a checkpoint implementing the policy la
 
 A text query creates a planned local hold before submission. The control loop keeps observing and serving operator input, while the single server worker serializes generation changes and policy calls. The answer is delivered through the control-thread observer path. A healthy active run resumes only after obtaining a fresh action chunk; a paused, stopped, reset or intervened run stays inactive. An empty/invalid completed answer is a query error; an uncertain timed-out model call faults the session. Live instructions remain message content and never change deployment routing keys.
 
-Recording stays local. Task labels follow the action actually dispatched. An asynchronous inference-event sidecar records request/task/generation/hold/fault provenance with control-tick or dataset identifiers where available; its in-memory queue is bounded and dropped event counts are reported. Logged or recorded commands do not prove physical execution.
+Recording stays local and uses the normal dataset format. Task labels follow the action actually dispatched; inference events are not dataset records or extra dataset files. Request/task/generation/hold/fault diagnostics go to application logs through bounded in-memory queues, with dropped diagnostic counts reported. Logged or recorded commands do not prove physical execution. Existing `inference_events/` files from earlier builds are not automatically deleted; remove or relocate them explicitly before uploading an older recording if needed.
 
 ## Deployment names and Zenoh addressing
 

@@ -237,14 +237,40 @@ def test_vqa_after_autosteering_uses_its_own_query_context(session):
 
 
 @pytest.mark.parametrize("operation", ["pause", "reset"])
-def test_invalidation_during_text_discards_answer_and_prevents_stale_resumption(session, operation):
+def test_invalidation_reports_an_unclaimed_question_once(session, operation):
+    engine, client = session
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+    assert engine.ask("What is visible?")
+    getattr(engine, operation)()
+    engine.drop_pending_query()
+    engine.pump_query()
+    engine.pump_query()
+    assert not client.text_started.is_set()
+    assert not engine.has_pending_query
+    assert len(delivered) == 1
+    assert delivered[0].answer is None
+    assert "cancelled" in delivered[0].error
+
+
+@pytest.mark.parametrize("operation", ["pause", "reset", "task"])
+def test_invalidation_during_text_reports_cancellation_and_prevents_stale_resumption(session, operation):
     engine, client = session
     start_query(engine, client)
-    getattr(engine, operation)()
+    if operation == "task":
+        engine.set_task("new instruction")
+    else:
+        getattr(engine, operation)()
     client.text_release.set()
     assert wait_for(lambda: not engine._query_in_flight)
-    assert not engine._ready_answers
-    assert engine.task == "initial task"
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+    engine.pump_query()
+    engine.pump_query()
+    assert len(delivered) == 1
+    assert delivered[0].answer is None
+    assert "cancelled" in delivered[0].error
+    assert engine.task == ("new instruction" if operation == "task" else "initial task")
     assert engine.runtime.queue.empty()
     assert not client.action_started.is_set()
     assert not engine.dispatch_allowed()
@@ -281,6 +307,7 @@ def test_language_errors_reach_control_thread_and_only_uncertain_timeout_faults(
     delivered = []
     engine.set_answer_observer(delivered.append)
     engine.pump_query()
+    assert len(delivered) == 1, "a terminal query error must not gain a duplicate cancellation notice"
     assert delivered[0].error
     assert engine.failed is terminal
     if terminal:

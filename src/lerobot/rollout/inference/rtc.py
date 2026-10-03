@@ -29,14 +29,15 @@ import time
 import traceback
 from copy import deepcopy
 from threading import Event, Lock, Thread
-from typing import Any, Protocol, cast
+from typing import Any
 
 import torch
 
 from lerobot.inference.contracts import ActionChunk, ActionProvenance, ExecutionMode, ObservationSnapshot
 from lerobot.inference.execution import ChunkRuntime
+from lerobot.inference.prediction import chunk_inference_context, predict_chunk
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.rtc import ActionQueue, reanchor_relative_rtc_prefix
+from lerobot.policies.rtc import ActionQueue
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.utils import prepare_observation_for_inference
 from lerobot.processor import (
@@ -72,18 +73,6 @@ class _TrainedRTCDelayExceededError(_FatalRTCInferenceError):
 # ---------------------------------------------------------------------------
 
 
-class _RTCPredictActionChunk(Protocol):
-    """Call shape of ``predict_action_chunk`` on an RTC-capable policy."""
-
-    def __call__(
-        self,
-        batch: dict[str, torch.Tensor],
-        *,
-        inference_delay: int | None,
-        prev_chunk_left_over: torch.Tensor | None,
-    ) -> torch.Tensor: ...
-
-
 def supports_rtc_inference(policy: PreTrainedPolicy) -> bool:
     """Whether a policy declares RTC support and accepts the RTC call shape."""
     supports_rtc = getattr(policy, "supports_rtc", None)
@@ -99,24 +88,6 @@ def supports_rtc_inference(policy: PreTrainedPolicy) -> bool:
     except (TypeError, ValueError):
         return False
     return True
-
-
-def _normalize_prev_actions_length(prev_actions: torch.Tensor, target_steps: int) -> torch.Tensor:
-    """Pad (holding the last action) or truncate RTC prefix actions to a fixed length.
-
-    Zero-padding would decode to the dataset mean inside the RTC guided region.
-    """
-    if prev_actions.ndim != 2:
-        raise ValueError(f"Expected 2D [T, A] tensor, got shape={tuple(prev_actions.shape)}")
-    steps, _ = prev_actions.shape
-    if steps == target_steps:
-        return prev_actions
-    if steps > target_steps:
-        return prev_actions[:target_steps]
-    if steps == 0:
-        raise ValueError("Cannot pad an empty prefix: no last action to hold.")
-    hold = prev_actions[-1:].expand(target_steps - steps, -1)
-    return torch.cat([prev_actions, hold], dim=0)
 
 
 # ---------------------------------------------------------------------------
@@ -591,7 +562,6 @@ class RTCInferenceEngine(InferenceEngine):
                     delay = 0 if inference_count == 1 else 1
                     if self._runtime.mode is ExecutionMode.RTC_TRAINED and delay:
                         delay = min(self._policy_spec.training_max_delay, self._rtc_config.execution_horizon)
-                has_previous = previous is not None and previous.numel() > 0
                 batch = prepare_observation_for_inference(
                     {key: value.copy() for key, value in observation.features.items()},
                     policy_device,
@@ -599,58 +569,26 @@ class RTCInferenceEngine(InferenceEngine):
                     self._robot.robot_type,
                 )
                 batch["task"] = [task]
-                # Match the remote runner: guidance needs a local autograd graph.
-                with torch.inference_mode(request.mode is not ExecutionMode.RTC_GUIDED), torch.no_grad():
+                with chunk_inference_context(request.mode):
                     preprocessed = self._preprocessor(batch)
-                    if has_previous and self._relative_step is not None:
-                        raw_state = self._relative_step.get_cached_state()
-                        canonical = canonical_previous
-                        if raw_state is None or canonical is None:
-                            raise RuntimeError(
-                                "Relative RTC requires a current anchor and canonical continuation"
-                            )
-                        if previous is not None and canonical.shape != previous.shape:
-                            raise ValueError(
-                                "Relative RTC requires matching model and canonical action dimensions"
-                            )
-                        previous = reanchor_relative_rtc_prefix(
-                            canonical, raw_state, self._relative_step, self._normalizer_step, policy_device
-                        )
-                    if has_previous and previous is not None:
-                        previous = _normalize_prev_actions_length(
-                            previous, self._rtc_config.execution_horizon
-                        )
-                    else:
-                        previous = None
-                    if request.mode is ExecutionMode.CHUNK:
-                        actions = self._policy.predict_action_chunk(preprocessed)
-                    else:
-                        predict = cast(_RTCPredictActionChunk, self._policy.predict_action_chunk)
-                        actions = predict(preprocessed, inference_delay=delay, prev_chunk_left_over=previous)
-                    if (
-                        actions.ndim != 3
-                        or actions.shape[0] != 1
-                        or actions.shape[1] != self._policy_spec.prediction_steps
-                        or actions.shape[2] <= 0
-                        or (self._model_action_dim is not None and actions.shape[2] != self._model_action_dim)
-                        or not actions.is_floating_point()
-                        or not torch.isfinite(actions).all()
-                    ):
-                        raise ValueError("Policy output violates its declared chunk inference contract")
-                    self._model_action_dim = actions.shape[2]
-                    original = actions.squeeze(0).clone()
-                    canonical = self._postprocessor(actions)
-                    canonical_width = self._canonical_action_dim or actions.shape[2]
-                    if (
-                        canonical.shape != (1, self._policy_spec.prediction_steps, canonical_width)
-                        or not canonical.is_floating_point()
-                        or not torch.isfinite(canonical).all()
-                    ):
-                        raise ValueError("Canonical processor output violates the chunk inference contract")
-                    processed = canonical.squeeze(0)
-                if request.mode is ExecutionMode.CHUNK:
-                    execution_steps = self._policy_spec.execution_steps
-                    original, processed = original[:execution_steps], processed[:execution_steps]
+                    prediction = predict_chunk(
+                        self._policy,
+                        self._postprocessor,
+                        preprocessed,
+                        spec=self._policy_spec,
+                        mode=request.mode,
+                        canonical_action_dim=self._canonical_action_dim,
+                        model_action_dim=self._model_action_dim,
+                        device=policy_device,
+                        rtc_horizon=self._rtc_config.execution_horizon if self._rtc_config.enabled else 0,
+                        inference_delay=delay,
+                        model_continuation=previous,
+                        canonical_continuation=canonical_previous,
+                        relative_step=self._relative_step,
+                        normalizer_step=self._normalizer_step,
+                    )
+                    original, processed = prediction.model_actions, prediction.canonical_actions
+                    self._model_action_dim = original.shape[1]
                 if inference_count < warmup_required:
                     # Warmup cannot leave motion or processor state for rollout.
                     with self._runtime.lock:

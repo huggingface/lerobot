@@ -129,6 +129,9 @@ class InferenceEngine(abc.ABC):
         # Set from the claim (``_take_query``) until the answer is published or the turn
         # is discarded, so the autosteer poll cannot queue a duplicate turn meanwhile.
         self._query_in_flight = False
+        # Kept separately from the busy flag: a controller can report cancellation
+        # before a blocked worker finishes, without allowing another query to run.
+        self._claimed_query: PolicyQuery | None = None
         # Answers awaiting delivery; a queue so an undelivered one is never overwritten.
         self._ready_answers: deque[QueryAnswer] = deque()
         self._answer_observer: Callable[[QueryAnswer], None] | None = None
@@ -300,14 +303,49 @@ class InferenceEngine(abc.ABC):
         return goal
 
     def drop_pending_query(self) -> PolicyQuery | None:
-        """Discard an unserved query, returning it (or ``None``).
+        """Discard an unserved query and queue one VQA cancellation notice.
 
-        Called when a run segment ends, so the query is not served against a completely
-        different scene the next time the robot starts.
+        Returns the dropped query (or ``None``). Called when a run context ends, so
+        the query is not served against a different scene the next time the robot
+        starts. The control-thread pump delivers the notice; autosteer stays silent.
         """
         with self._query_lock:
             dropped, self._pending_query = self._pending_query, None
+            if dropped is not None and dropped.kind is QueryKind.VQA:
+                self._ready_answers.append(
+                    QueryAnswer(
+                        question=dropped.text,
+                        error="cancelled: the run changed before it could be answered",
+                        kind=dropped.kind,
+                    )
+                )
         return dropped
+
+    def report_cancelled_query(self) -> None:
+        """Queue one cancellation notice for a claimed VQA whose run context ended.
+
+        Callable from the controller or policy worker after invalidation. The worker
+        retains the busy slot until it finishes; observers still run only from the
+        control-thread pump. Obsolete autosteer turns produce no announcement.
+        """
+        with self._query_lock:
+            query = self._claimed_query
+            if query is not None and query.kind is QueryKind.VQA:
+                self._claimed_query = None
+                self._ready_answers.append(
+                    QueryAnswer(
+                        question=query.text,
+                        error="cancelled: the instruction or run changed while it was being answered",
+                        kind=query.kind,
+                    )
+                )
+
+    def _discard_invalid_query(self) -> None:
+        """Finish an obsolete worker turn, reporting only an unanswered operator VQA."""
+        self.report_cancelled_query()
+        with self._query_lock:
+            self._query_in_flight = False
+            self._claimed_query = None
 
     @property
     @abc.abstractmethod
@@ -374,6 +412,7 @@ class InferenceEngine(abc.ABC):
             query, self._pending_query = self._pending_query, None
             if query is not None:
                 self._query_in_flight = True
+                self._claimed_query = query
             return query
 
     def _service_query(self, obs_processed: dict | None) -> bool:
@@ -390,8 +429,7 @@ class InferenceEngine(abc.ABC):
         try:
             text = self._generate_text(obs_processed, query)
             if not self._query_context_valid(query):
-                with self._query_lock:
-                    self._query_in_flight = False
+                self._discard_invalid_query()
                 return True
             if not isinstance(text, str) or not text.strip():
                 # Fail here so garbage becomes an error answer instead of steering the
@@ -401,8 +439,7 @@ class InferenceEngine(abc.ABC):
                 )
         except Exception as e:
             if not self._query_context_valid(query):
-                with self._query_lock:
-                    self._query_in_flight = False
+                self._discard_invalid_query()
                 return True
             logger.exception("Policy text query failed (%s) for %r", query.kind.value, query.text)
             if query.kind is QueryKind.NEXT_SUBTASK and not self._fail_subtask(query):
@@ -422,7 +459,8 @@ class InferenceEngine(abc.ABC):
         """Whether a completed query may be applied or published by this backend.
 
         Async engines additionally validate execution generation, instruction, and
-        operator intent. Obsolete success and error answers are both discarded.
+        operator intent. Obsolete success and error payloads are discarded; VQA
+        cancellation is reported once without exposing the old answer.
         """
         return True
 
@@ -443,6 +481,7 @@ class InferenceEngine(abc.ABC):
                 self._autosteer_goal = None
             else:
                 self._query_in_flight = False  # no answer will be published
+                self._claimed_query = None
         if live:
             logger.info("Autosteer stopped (goal was '%s') — planning failed", query.text)
         else:
@@ -475,6 +514,7 @@ class InferenceEngine(abc.ABC):
                 self._autosteer_waiting_for_motion = True
             else:
                 self._query_in_flight = False  # no answer will be published
+                self._claimed_query = None
         if not live:
             logger.info(
                 "Discarding autosteer subtask %r — the sequencer stopped while it was being generated",
@@ -521,8 +561,11 @@ class InferenceEngine(abc.ABC):
 
     def _publish_answer(self, answer: QueryAnswer) -> None:
         with self._query_lock:
+            cancelled = self._query_in_flight and self._claimed_query is None
             self._query_in_flight = False
-            self._ready_answers.append(answer)
+            self._claimed_query = None
+            if not cancelled:
+                self._ready_answers.append(answer)
 
     def _deliver_answer(self) -> None:
         with self._query_lock:

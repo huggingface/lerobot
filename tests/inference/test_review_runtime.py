@@ -1,13 +1,10 @@
 """Regression checks for playback budgets and atomic lifecycle transitions."""
 
-import json
-
 import numpy as np
 import pytest
 import torch
 
 from lerobot.inference.contracts import ActionChunk, ActionProvenance, ExecutionMode, ObservationSnapshot
-from lerobot.inference.events import EventWriter
 from lerobot.inference.execution import ChunkRuntime
 from lerobot.policies.rtc.action_queue import ActionQueue
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
@@ -88,19 +85,6 @@ def test_append_provenance_stays_with_actions_after_partial_consumption():
     assert [queue.get_with_provenance()[2] for _ in range(4)] == [a, b, b, b]
 
 
-def test_invalid_event_does_not_stop_subsequent_telemetry(tmp_path):
-    path = tmp_path / "events.jsonl"
-    writer = EventWriter(path)
-    writer.write({"bad": np.float32(1)})
-    writer.write({"bad": float("nan")})
-    writer.write({"event": "later"})
-    writer.close()
-    assert [json.loads(line) for line in path.read_text().splitlines()] == [
-        {"event": "later"},
-        {"event": "writer_closed", "dropped_events": 2},
-    ]
-
-
 def test_misaligned_provenance_is_rejected_before_dispatch():
     queue = ActionQueue(RTCConfig(enabled=False))
     values = torch.zeros(3, 2)
@@ -108,6 +92,16 @@ def test_misaligned_provenance_is_rejected_before_dispatch():
     queue._provenance_queue.append(ActionProvenance(2.0, "B"))
     with pytest.raises(RuntimeError, match="provenance"):
         queue.get_with_provenance()
+
+
+def test_append_rejects_missing_model_queue_before_mutation():
+    queue = ActionQueue(RTCConfig(enabled=False))
+    values = torch.zeros(3, 2)
+    queue.merge(values, values, 0)
+    queue.original_queue = None
+    with pytest.raises(RuntimeError, match="matching model-space queue"):
+        queue.merge(values + 1, values + 1, 0)
+    torch.testing.assert_close(queue.queue, values)
 
 
 @pytest.mark.parametrize("transition", ["commit", "clear"])

@@ -1,7 +1,16 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """Descriptor-based rollout setup: no policy or checkpoint is loaded on the client."""
 
@@ -55,6 +64,24 @@ def build_remote_rollout_context(
     robot_action_processor: RobotProcessorPipeline | None = None,
     robot_observation_processor: RobotProcessorPipeline | None = None,
 ) -> RolloutContext:
+    """Connect hardware and admit remote inference without loading a local policy.
+
+    The caller owns the returned context and must stop its engine and disconnect
+    hardware during teardown. Failed setup closes each connected resource
+    independently. Recording uses the normal dataset schema and never adds
+    inference diagnostic files.
+
+    Args:
+        cfg: Rollout configuration with remote inference and a supported robot.
+        shutdown_event: Shared signal used by the controller and inference engine.
+        teleop_action_processor: Optional teleoperator-to-canonical pipeline.
+        robot_action_processor: Optional canonical-to-hardware command pipeline.
+        robot_observation_processor: Optional hardware-to-canonical observation pipeline.
+
+    Returns:
+        A connected, admitted context with an unstarted remote engine and no local
+        policy, policy preprocessor or policy postprocessor.
+    """
     config = cfg.inference
     if not isinstance(config, RemoteInferenceConfig) or cfg.robot is None:
         raise ValueError("Remote rollout requires remote inference and robot configuration")
@@ -151,8 +178,6 @@ def build_remote_rollout_context(
             task=task,
             shutdown_event=shutdown_event,
         )
-        if dataset is not None:
-            engine.configure_event_log(dataset.root / "inference_events" / f"{client.session_id}.jsonl")
         logger.info(
             "Remote rollout admitted: deployment=%s instance=%s mode=%s",
             config.deployment,

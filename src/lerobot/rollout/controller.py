@@ -30,7 +30,7 @@ from enum import Enum
 from threading import Event, Lock
 from typing import TYPE_CHECKING
 
-from .inference import QueryAnswer, QueryKind
+from .inference import QueryAnswer
 
 if TYPE_CHECKING:
     from .context import RolloutContext
@@ -445,15 +445,13 @@ class RolloutController:
                 self._running.clear()
                 # The sequencer cannot outlive the segment: its plan progress lives in the policy.
                 engine.stop_autosteer()
-                dropped = engine.drop_pending_query()
+                engine.drop_pending_query()
                 # Else the idle pump would announce a subtask after the sequencer ended; VQA stays.
                 engine.drop_ready_subtask_answers()
-            # Only an operator question is worth reporting.
-            if dropped is not None and dropped.kind is QueryKind.VQA:
-                self._emit(
-                    RolloutEvent.QUERY_ANSWERED,
-                    QueryAnswer(question=dropped.text, error="the run ended before it could be answered"),
-                )
+                engine.report_cancelled_query()
+            # Deliver before a terminal /stop leaves the serve loop, including a
+            # claimed VQA whose model call has not returned yet.
+            engine.pump_query()
         if engine.failed or self._strategy_failure_traceback is not None:
             return  # the serve loop emits the failure event and shuts down
         if not (
