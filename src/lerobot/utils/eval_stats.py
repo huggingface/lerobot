@@ -183,3 +183,51 @@ def fisher_exact(k_a: int, n_a: int, k_b: int, n_b: int) -> float:
         if log_p <= threshold:
             p_value += math.exp(log_p)
     return min(1.0, p_value)
+
+
+def newcombe_interval(
+    k_a: int, n_a: int, k_b: int, n_b: int, confidence: float = 0.95
+) -> tuple[float, float]:
+    """Newcombe's hybrid score interval for the difference of two independent proportions.
+
+    Method 10 of Newcombe (1998): each proportion gets its own Wilson interval and the two are
+    combined, so the result keeps Wilson's behaviour near 0% and 100% and at small `n`. This is the
+    interval to quote for "policy A minus policy B on this task".
+
+    Args:
+        k_a (`int`):
+            Successes of A.
+        n_a (`int`):
+            Episodes evaluated for A.
+        k_b (`int`):
+            Successes of B.
+        n_b (`int`):
+            Episodes evaluated for B.
+        confidence (`float`, *optional*, defaults to `0.95`):
+            Coverage of the interval.
+
+    Returns:
+        `tuple[float, float]`: Lower and upper bound of `p_a - p_b`, as proportions in [-1, 1].
+
+    Raises:
+        ValueError: If either pair of counts is impossible or either `n` is 0.
+
+    Example:
+        ```python
+        >>> from lerobot.utils.eval_stats import newcombe_interval
+        >>> low, high = newcombe_interval(9, 10, 3, 10)
+        >>> round(low, 3), round(high, 3)
+        (0.171, 0.809)
+        ```
+    """
+    _check_counts(k_a, n_a)
+    _check_counts(k_b, n_b)
+    if n_a == 0 or n_b == 0:
+        raise ValueError("both sides need at least one evaluated episode")
+    p_a, p_b = k_a / n_a, k_b / n_b
+    l_a, u_a = wilson_interval(k_a, n_a, confidence)
+    l_b, u_b = wilson_interval(k_b, n_b, confidence)
+    d = p_a - p_b
+    low = d - math.sqrt((p_a - l_a) ** 2 + (u_b - p_b) ** 2)
+    high = d + math.sqrt((u_a - p_a) ** 2 + (p_b - l_b) ** 2)
+    return (max(-1.0, low), min(1.0, high))
