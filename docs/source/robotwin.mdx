@@ -11,15 +11,15 @@ RoboTwin 2.0 is a **large-scale dual-arm manipulation benchmark** built on the S
 
 ## Overview
 
-| Property      | Value                                                    |
-| ------------- | -------------------------------------------------------- |
-| Tasks         | 50 dual-arm manipulation tasks                           |
-| Robot         | Aloha-AgileX bimanual (14 DOF, 7 per arm)                |
-| Action space  | 14-dim joint-space, continuous in `[-1, 1]`              |
-| Cameras       | `head_camera`, `left_camera`, `right_camera`             |
-| Simulator     | SAPIEN (not MuJoCo)                                      |
-| Eval protocol | 100 episodes/task, 50 demo_clean demonstrations          |
-| Eval settings | **Easy** (`demo_clean`) and **Hard** (`demo_randomized`) |
+| Property      | Value                                                                                                         |
+| ------------- | ------------------------------------------------------------------------------------------------------------- |
+| Tasks         | 50 dual-arm manipulation tasks                                                                                |
+| Robot         | Aloha-AgileX bimanual (14 DOF, 7 per arm)                                                                     |
+| Action modes  | `joint` (default): 14-d absolute qpos (`[-10, 10]` arms, `[0, 1]` grippers); `ee`: 16-d `[-1, 1]` pose deltas |
+| Cameras       | `head_camera`, `left_camera`, `right_camera`                                                                  |
+| Simulator     | SAPIEN (not MuJoCo)                                                                                           |
+| Eval protocol | 100 episodes/task, 50 demo_clean demonstrations                                                               |
+| Eval settings | **Easy** (`demo_clean`) and **Hard** (`demo_randomized`)                                                      |
 
 ## Available tasks
 
@@ -56,7 +56,7 @@ The RoboTwin 2.0 dataset is available in **LeRobot v3.0 format** on the Hugging 
 lerobot/robotwin_unified
 ```
 
-It contains over 100,000 pre-collected trajectories across all 50 tasks (79.6 GB, Apache 2.0 license). No format conversion is needed — it is already in the correct LeRobot v3.0 schema with video observations and action labels.
+The LeRobot conversion contains 27,500 episodes and 6,075,103 frames (79.5 GB, Apache 2.0 license). The broader upstream RoboTwin release advertises over 100,000 trajectories, but that count does not describe this Hub dataset. No format conversion is needed — it is already in the correct LeRobot v3.0 schema with video observations and action labels.
 
 You can load it directly with the HF Datasets library:
 
@@ -206,11 +206,16 @@ Key parameters for `RoboTwinEnvConfig`:
 | -------------------- | ---------------------------------------- | ---------------------------------- |
 | `task`               | `"beat_block_hammer"`                    | Comma-separated task name(s)       |
 | `fps`                | `25`                                     | Simulation FPS                     |
-| `episode_length`     | `300`                                    | Max steps per episode              |
+| `episode_length`     | `1200`                                   | Max steps per episode              |
 | `obs_type`           | `"pixels_agent_pos"`                     | `"pixels"` or `"pixels_agent_pos"` |
 | `camera_names`       | `"head_camera,left_camera,right_camera"` | Comma-separated active cameras     |
 | `observation_height` | `240`                                    | Camera pixel height                |
 | `observation_width`  | `320`                                    | Camera pixel width                 |
+| `action_mode`        | `"joint"`                                | `"joint"` or `"ee"`                |
+
+In the default `joint` mode, each action contains six absolute joint targets and one normalized gripper target per arm. The Aloha-AgileX runtime asset bounds the joint coordinates to `[-10, 10]` and the grippers to `[0, 1]`. The Hub dataset stores absolute next-step qpos targets; the wrapper does not normalize joint targets to `[-1, 1]`.
+
+The optional `ee` mode keeps its separate 16-dimensional `[-1, 1]` action space for per-arm `xyz + quaternion + gripper` deltas, which are composed onto the episode's initial end-effector poses before CuRobo IK.
 
 ## Leaderboard submission
 
