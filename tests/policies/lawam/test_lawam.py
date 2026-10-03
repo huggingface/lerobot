@@ -54,6 +54,7 @@ from lerobot.policies.lawam.vlas.flowmatching_expert import (
     ConditionalFlowMatchingHead,
     build_time_grid,
 )
+from lerobot.policies.lawam.vlas.lawam import LatentWorldPolicyBackend
 from lerobot.policies.lawam.vlas.qwen3vl import (
     freeze_qwen3vl,
     keep_first_n_llm_layers,
@@ -930,3 +931,102 @@ def test_select_action_uses_action_queue_before_refill() -> None:
     assert first.shape == (1, 7)
     assert second.shape == (1, 7)
     assert not torch.equal(first, second)
+
+
+def make_noise_flow_head() -> ConditionalFlowMatchingHead:
+    torch.manual_seed(0)
+    flow = ConditionalFlowMatchingHead(
+        ConditionalFlowMatchingConfig(
+            action_dim=4,
+            hidden_dim=8,
+            num_layers=2,
+            attention_heads=2,
+            num_inference_steps=2,
+            vlm_dim=8,
+            vision_dim=8,
+            num_vision_tokens=2,
+            use_state=False,
+            num_embodiments=32,
+            interleave_self_attention=True,
+            use_alternate_vldit=False,
+        )
+    )
+    flow.action_horizon = 5
+    flow.effective_action_horizon = 3
+    return flow.eval()
+
+
+def make_flow_inputs() -> dict:
+    generator = torch.Generator().manual_seed(1)
+    return {
+        "h_t": torch.randn(2, 2, 8, generator=generator),
+        "h_t1_star": torch.randn(2, 2, 8, generator=generator),
+        "h_vlm": torch.randn(2, 3, 8, generator=generator),
+        "state": torch.zeros(2, 8),
+        "state_mask": torch.zeros(2, 8, dtype=torch.bool),
+        "action_hz": torch.full((2,), 20.0),
+        "embodiment_id": torch.full((2,), 25, dtype=torch.long),
+        "attention_mask": torch.ones(2, 3, dtype=torch.bool),
+    }
+
+
+def test_flow_same_noise_gives_same_actions() -> None:
+    flow = make_noise_flow_head()
+    noise = torch.randn(2, 5, 4, generator=torch.Generator().manual_seed(2))
+    noise_before = noise.clone()
+
+    first = flow.sample_actions_cfg(**make_flow_inputs(), noise=noise)
+    second = flow.sample_actions_cfg(**make_flow_inputs(), noise=noise)
+
+    assert torch.equal(first, second)
+    assert torch.equal(noise, noise_before)
+
+
+def test_flow_default_noise_matches_explicit_draw() -> None:
+    flow = make_noise_flow_head()
+
+    torch.manual_seed(3)
+    default = flow.sample_actions_cfg(**make_flow_inputs())
+
+    torch.manual_seed(3)
+    noise = torch.randn(size=(2, 5, 4), dtype=torch.float32, device="cpu")
+    explicit = flow.sample_actions_cfg(**make_flow_inputs(), noise=noise)
+
+    assert torch.equal(default, explicit)
+
+
+def test_backend_predict_action_forwards_noise_to_flow() -> None:
+    flow = make_noise_flow_head()
+    inputs = make_flow_inputs()
+    backend = SimpleNamespace(
+        flow=flow,
+        _run_shared_encoding_infer=lambda **kwargs: SimpleNamespace(
+            h_t=inputs["h_t"], h_t1_pred=inputs["h_t1_star"], h_vlm=inputs["h_vlm"]
+        ),
+    )
+    batch = {key: inputs[key] for key in ("state", "state_mask", "action_hz", "embodiment_id")}
+    batch["attention_mask"] = inputs["attention_mask"].long()
+    noise = torch.randn(2, 5, 4)
+
+    actions = LatentWorldPolicyBackend.predict_action(backend, batch=batch, noise=noise)
+
+    assert torch.equal(actions, flow.sample_actions_cfg(**inputs, noise=noise))
+
+
+def test_predict_action_chunk_and_select_action_forward_noise(monkeypatch) -> None:
+    policy, native_model = make_policy()
+    received = []
+    predict_action = native_model.predict_action
+
+    def recording_predict_action(batch, **kwargs):
+        received.append(kwargs.get("noise"))
+        return predict_action(batch, **kwargs)
+
+    monkeypatch.setattr(native_model, "predict_action", recording_predict_action)
+    noise = torch.randn(1, 4, 32)
+
+    policy.predict_action_chunk(make_prepared_batch(batch_size=1), noise=noise)
+    policy.select_action(make_prepared_batch(batch_size=1), noise=noise)
+
+    assert len(received) == 2
+    assert all(value is noise for value in received)

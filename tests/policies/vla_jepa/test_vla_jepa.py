@@ -185,6 +185,58 @@ def test_predict_action_chunk_always_finite(patch_vla_jepa_external_models: None
         assert torch.isfinite(chunk).all(), f"non-finite actions with seed={seed}"
 
 
+def make_noise(seed: int) -> Tensor:
+    generator = torch.Generator().manual_seed(seed)
+    return torch.randn(BATCH_SIZE, ACTION_HORIZON, ACTION_DIM, generator=generator)
+
+
+@torch.no_grad()
+def test_predict_action_chunk_same_noise_gives_same_actions(patch_vla_jepa_external_models: None) -> None:
+    set_seed_all(42)
+    policy = VLAJEPAPolicy(make_config())
+    batch = make_inference_batch()
+    noise = make_noise(seed=1)
+    noise_before = noise.clone()
+
+    first = policy.predict_action_chunk(batch, noise=noise)
+    second = policy.predict_action_chunk(batch, noise=noise)
+
+    assert torch.equal(first, second)
+    assert torch.equal(noise, noise_before)
+
+
+@torch.no_grad()
+def test_predict_action_chunk_default_noise_matches_explicit_draw(
+    patch_vla_jepa_external_models: None,
+) -> None:
+    set_seed_all(42)
+    policy = VLAJEPAPolicy(make_config())
+    batch = make_inference_batch()
+
+    set_seed_all(3)
+    default = policy.predict_action_chunk(batch)
+
+    set_seed_all(3)
+    noise = torch.randn(BATCH_SIZE, ACTION_HORIZON, ACTION_DIM, dtype=torch.float32, device="cpu")
+    explicit = policy.predict_action_chunk(batch, noise=noise)
+
+    assert torch.equal(default, explicit)
+
+
+@torch.no_grad()
+def test_select_action_uses_noise_for_a_new_chunk(patch_vla_jepa_external_models: None) -> None:
+    set_seed_all(42)
+    policy = VLAJEPAPolicy(make_config())
+    batch = make_inference_batch()
+    noise = make_noise(seed=4)
+    expected = policy.predict_action_chunk(batch, noise=noise)
+
+    policy.reset()
+    action = policy.select_action(batch, noise=noise)
+
+    assert torch.equal(action, expected[:, 0])
+
+
 # ---------------------------------------------------------------------------
 # Action queue behaviour
 # ---------------------------------------------------------------------------
