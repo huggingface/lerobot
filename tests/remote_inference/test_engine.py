@@ -536,8 +536,10 @@ def test_only_aligned_retarget_bypasses_refill_without_reusing_capture(session):
     assert request.observation.task_version == 1
     assert request.observation.action_cursor == 0
     assert request.playback_at_submission == pytest.approx(0.4)
-    assert wait_for(lambda: engine.runtime.pending is None)
-    assert engine.runtime.queue.snapshot().provenance[0].task == "new goal"
+    # Acceptance clears pending before replacing the queue. Wait for the
+    # observable replacement, not an unsynchronized intermediate runtime field.
+    assert wait_for(lambda: engine.runtime.queue.snapshot().provenance[0].request_id == request.request_id)
+    assert [source.task for source in engine.runtime.queue.snapshot().provenance] == ["new goal"] * 4
 
 
 @pytest.mark.parametrize("measured", [False, True], ids=["configured", "latency-floor"])
