@@ -57,6 +57,14 @@ def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedd
     return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=-1)
 
 
+# Kept out of torch.compile graphs: inductor fuses these cumsum ops into a
+# split-scan triton kernel that is miscompiled at small dynamic shapes —
+# silent NaN loss at compile_mode=default (torch 2.11 and 2.13) and a CUDA
+# illegal memory access with fused-attention graphs at max-autotune
+# (torch 2.11; fixed in >= 2.12). Affects SmolVLA, PI0, and PI05 whenever
+# `compile_model=true`. Costs one graph break.
+# see: https://github.com/pytorch/pytorch/issues/180221
+@torch.compiler.disable
 def make_att_2d_masks(pad_masks: Tensor, att_masks: Tensor) -> Tensor:  # see openpi (exact copy)
     """Copied from big_vision.
 
