@@ -1,0 +1,385 @@
+# 多任务 DiT 策略
+
+多任务扩散 Transformer（DiT）策略是原始扩散策略架构的演进版本，它利用大型 DiT 结合文本和视觉条件进行多任务机器人学习。此实现支持扩散和流匹配两种目标函数来生成动作，使机器人能够在语言指令条件下执行多样化的操作任务。
+
+## 模型概述
+
+该模型使用：
+
+- **CLIP 视觉编码器**：处理来自多个相机视角的 RGB 图像
+- **CLIP 文本编码器**：编码语言任务指令（冻结权重，带有可学习的投影层）
+- **扩散 Transformer**：基于观测和语言条件预测动作序列
+- **双目标函数**：支持扩散（DDPM/DDIM）和流匹配两种动作生成方式
+
+这个模型令人兴奋之处在于，仅用约 450M 参数和显著更少的训练量，就能实现极高的灵巧性，可与数十亿参数的 VLA 模型竞争。
+
+## 安装要求
+
+多任务 DiT 策略有额外的依赖项。使用以下命令安装：
+
+```bash
+pip install lerobot[multi_task_dit]
+```
+
+这将安装所有必要的依赖项，包括用于 CLIP 模型的 HuggingFace Transformers 库。
+
+## 使用方法
+
+要在 LeRobot 配置中使用多任务 DiT，指定策略类型为：
+
+```python
+policy.type=multi_task_dit
+```
+
+## 训练
+
+### 基本训练命令
+
+以下是在你的数据集上训练多任务 DiT 的完整训练命令：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=YOUR_DATASET \
+  --output_dir=./outputs/multitask_dit_training \
+  --batch_size=32 \
+  --steps=5000 \
+  --save_freq=500 \
+  --log_freq=100 \
+  --policy.type=multi_task_dit \
+  --policy.device=cuda \
+  --policy.repo_id="HF_USER/multitask-dit-your-robot" \
+  --wandb.enable=true
+```
+
+### 推荐超参数和数据集详情（30Hz 控制频率）
+
+为了获得可靠的性能，可以从以下建议的默认超参数开始：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=YOUR_DATASET \
+  --output_dir=./outputs/mutitask_dit_training \
+  --batch_size=320 \
+  --steps=30000 \
+  --policy.type=multi_task_dit \
+  --policy.device=cuda \
+  --policy.horizon=32 \
+  --policy.n_action_steps=24 \
+  --policy.objective=diffusion \
+  --policy.noise_scheduler_type=DDPM \
+  --policy.num_train_timesteps=100 \
+  --policy.repo_id="HF_USER/multitask-dit-your-robot" \
+  --wandb.enable=true
+```
+
+**关键参数：**
+
+- **Batch Size**：192-320 - 如果你的 GPU 能支持，这将带来最佳的训练动态
+- **Horizon**：32 - 要预测的动作步数，30Hz 下约 1.0 秒
+- **n_action_steps**：24 - 30Hz 下约 0.8 秒
+- **Objective**：`diffusion` - 从扩散开始，如果生成质量不佳可以尝试流匹配
+- **Training Steps**：单任务推荐 >30k 步
+
+### 训练配置参数
+
+#### 目标函数选择
+
+在扩散和流匹配之间选择：
+
+```bash
+# 扩散目标函数（默认）
+--policy.objective=diffusion \
+--policy.noise_scheduler_type=DDPM \  # 或 "DDIM"
+--policy.num_train_timesteps=100 \
+--policy.num_inference_steps=10 \  # 更快的推理
+--policy.beta_schedule=squaredcos_cap_v2 \  # 噪声调度类型
+--policy.prediction_type=epsilon \  # "epsilon"（预测噪声）或 "sample"（预测干净样本）
+--policy.clip_sample=true \  # 去噪过程中裁剪样本
+--policy.clip_sample_range=1.0  # 裁剪范围 [-x, x]
+
+# 流匹配目标函数
+--policy.objective=flow_matching \
+--policy.timestep_sampling_strategy=beta \  # 或 "uniform" | beta 采样策略在实践中表现更好
+--policy.num_integration_steps=100 \
+--policy.integration_method=euler \  # 或 "rk4"
+--policy.sigma_min=0.0  # 流插值路径中的最小噪声
+```
+
+#### Transformer 架构
+
+根据数据集大小调整模型容量：
+
+```bash
+# 小数据集（< 100 个样本）
+--policy.num_layers=4 \
+--policy.hidden_dim=512 \
+--policy.num_heads=8  # 理想情况下应为 hidden_dim // 64
+
+# 中等数据集（100-5k 个样本）- 默认
+--policy.num_layers=6 \
+--policy.hidden_dim=512 \
+--policy.num_heads=8  # 理想情况下应为 hidden_dim // 64
+
+# 大数据集（> 5k 个样本）
+--policy.num_layers=8 \
+--policy.hidden_dim=512 \
+--policy.num_heads=8   # 理想情况下应为 hidden_dim // 64
+```
+
+**位置编码选项：**
+
+该模型支持两种动作序列位置编码方法：
+
+```bash
+# 旋转位置嵌入（RoPE）- 默认，推荐
+--policy.use_rope=true \
+--policy.rope_base=10000.0  # RoPE 的基础频率
+
+# 绝对位置编码
+--policy.use_positional_encoding=true  # 为 true 时禁用 RoPE
+```
+
+**其他 Transformer 参数：**
+
+```bash
+--policy.dropout=0.1  # DiT 块的 Dropout 率（0.0-1.0）
+--policy.timestep_embed_dim=256  # 时间步嵌入维度
+```
+
+#### 视觉编码器配置
+
+```bash
+# 使用不同的 CLIP 模型以获得更强的表达能力，但会增加推理时间
+# 根据任务复杂度和数据集大小尝试更大或更小的模型
+--policy.vision_encoder_name=openai/clip-vit-large-patch14
+
+# 为每个相机使用独立的视觉编码器
+# 当相机特性差异较大时有用，但要注意增加的 VRAM 占用
+--policy.use_separate_rgb_encoder_per_camera=true
+
+# 图像预处理
+--policy.image_resize_shape=[XXX,YYY] \ # 你可能需要调整图像大小以提高推理速度
+--policy.image_crop_shape=[224,224] \
+--policy.image_crop_is_random=true  # 训练时随机裁剪，推理时中心裁剪
+```
+
+#### 文本编码器配置
+
+```bash
+# 使用不同的 CLIP 文本编码器模型
+# 与视觉编码器相同：根据任务复杂度和数据集大小尝试更大或更小的模型
+--policy.text_encoder_name=openai/clip-vit-large-patch14
+```
+
+#### 学习率配置
+
+视觉编码器使用单独的学习率乘数，建议从 1/10 开始：
+
+```bash
+--policy.optimizer_lr=2e-5 \
+--policy.vision_encoder_lr_multiplier=0.1  # 视觉编码器 LR = 0.1 * optimizer_lr
+```
+
+### 训练调优指南
+
+#### 1. 带 Beta 采样的流匹配
+
+此处的原始扩散实现基于 [TRI 的 LBM 论文](https://arxiv.org/abs/2507.05331)中描述的工作。
+
+此外，我们实现了流匹配目标函数，在 [Boston Dynamics 博客文章](https://bostondynamics.com/blog/large-behavior-models-atlas-find-new-footing/)中有高层描述。
+
+考虑测试流匹配目标函数并评估你的任务的性能差异：
+
+```bash
+--policy.objective=flow_matching \
+--policy.timestep_sampling_strategy=beta \
+--policy.timestep_sampling_alpha=1.5 \
+--policy.timestep_sampling_beta=1.0 \
+--policy.timestep_sampling_s=0.999
+```
+
+这并非在所有用例中都是灵丹妙药，但偶尔会产生更平滑、更一致的动作。
+
+#### 2. Transformer 层数
+
+根据数据集大小匹配模型容量：
+
+- **小数据集**（< 100 个样本）：减少到 4 层
+- **大数据集**（> 5k 个样本）：增加到 8 层
+
+#### 3. `horizon` 调优
+
+模型对你选择的 horizon 可能很敏感。从基于控制频率的约 1 秒 horizon 开始：
+
+- **30 Hz 频率**：`horizon=30`
+- **10 Hz 频率**：`horizon=10`
+
+然后尝试从此处增加。horizon 决定了模型预测未来动作的距离。
+
+#### 4. `n_action_steps` 敏感性
+
+模型对 `n_action_steps` 也可能非常敏感。从基于控制频率的约 0.8 秒开始调优：
+
+- **较低值**：更敏感但对于长期任务可能不够稳定
+- **较高值**：更适合长期执行但开环失败时恢复能力有限
+
+### 推理调优
+
+为了更快的推理，使用 DDIM 和更少的采样步数：
+
+```bash
+--policy.noise_scheduler_type=DDIM \
+--policy.num_inference_steps=10
+```
+
+### 恢复训练
+
+从检查点恢复训练：
+
+```bash
+lerobot-train \
+  --config_path=./outputs/mutitask_dit_training/checkpoints/last/pretrained_model/train_config.json \
+  --resume=true
+```
+
+检查点目录应包含 `model.safetensors` 和 `config.json` 文件（训练期间自动保存）。恢复时，配置从检查点加载，因此无需指定其他参数。
+
+## 常见失败模式和调试
+
+训练这些模型可能很棘手。以下是常见的失败模式和调试方法：
+
+### 空闲/无运动
+
+模型可能在推理过程中"崩溃"，导致静止或无运动。可能发生在以下情况：
+
+1. **训练数据不足**：如果你只有 20-50 个样本，尝试大致翻倍数据集大小。当你有超过 300 个样本后，如果仍然出现此问题，任务可能过于复杂。
+
+2. **多个相似任务**：当你的数据集包含多个相似任务（如捡起 2 个不同物体）时，模型可能过度依赖语言条件，而语言条件可能不够丰富。
+
+**调试建议：**
+
+- 增加数据集大小（翻倍直到超过 300 个样本）
+- 训练更长时间，最多到 100k 步，即使损失已经平稳
+- 检查模型是否接收到正确的语言指令，或增加指令多样性
+
+### 执行错误的任务
+
+有时机器人会完全忽略你的指令，执行其他任务。这通常只在你训练了多个任务时发生。
+
+**可能的原因：**
+
+- 语言指令模糊
+- 特定任务的训练数据不足
+- 多任务数据集中相似任务之间的模型混淆
+
+**调试建议：**
+
+- 验证语言指令的具体性，特别是多个任务之间的描述是否相似
+- 检查训练数据集中的任务分布，为失败/被忽略的任务增加权重
+- 考虑特定任务的微调
+
+### 训练不稳定
+
+如果训练损失不稳定或发散：
+
+- 尝试在 `1e-5` 到 `3e-4` 之间调整学习率
+- 如果可能，增加 batch size
+- 检查数据集归一化是否正确
+- 验证图像预处理是否正常工作
+
+## 性能考量
+
+### GPU 要求
+
+- **推理**：建议至少 RTX 5070 Ti（或同等 GPU）以获得合理的速度性能
+- **训练**：需要足够 VRAM 来加载 >64 的 batch size 的 GPU，具体取决于图像观测的数量等
+
+### Batch Size 建议
+
+- **最低**：64（低于此值可能导致训练不稳定）
+- **推荐**：256-320（最佳性能，需要更大的 GPU）
+
+## 示例：在自定义数据集上训练
+
+以下是在自定义数据集上训练的完整示例：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=YOUR_DATASET \
+  --output_dir=./outputs/mutitask_dit_training \
+  --batch_size=320 \
+  --steps=30000 \
+  --save_freq=1000 \
+  --log_freq=100 \
+  --env_eval_freq=1000 \
+  --policy.type=multi_task_dit \
+  --policy.device=cuda \
+  --policy.horizon=32 \
+  --policy.n_action_steps=24 \
+  --policy.objective=diffusion \
+  --policy.noise_scheduler_type=DDPM \
+  --policy.num_layers=6 \
+  --policy.hidden_dim=512 \
+  --policy.vision_encoder_name=openai/clip-vit-base-patch16 \
+  --policy.image_resize_shape=[320,240] \
+  --policy.image_crop_shape=[224,224] \
+  --policy.repo_id="HF_USER/multitask-dit-your-robot" \
+  --wandb.enable=true \
+  --wandb.project=multitask_dit
+```
+
+## Libero 结果
+
+```
+python -m lerobot.scripts.lerobot_train \
+  --dataset.repo_id=HuggingFaceVLA/libero \
+  --policy.type=multi_task_dit \
+  --policy.push_to_hub=false \
+  --output_dir="./outputs/multitask_dit_libero" \
+  --job_name="multitask-dit-libero" \
+  --wandb.enable=true \
+  --wandb.project=multitask_dit_libero \
+  --dataset.image_transforms.enable=true \
+  --dataset.image_transforms.max_num_transforms=4 \
+  --dataset.image_transforms.tfs='{"brightness":{"type":"ColorJitter","kwargs":{"brightness":[0.75,1.25]}},"contrast":{"type":"ColorJitter","kwargs":{"contrast":[0.6,1.4]}},"saturation":{"type":"ColorJitter","kwargs":{"saturation":[0.8,1.2]}},"hue":{"type":"ColorJitter","kwargs":{"hue":[-0.05,0.05]}},"sharpness":{"type":"SharpnessJitter","kwargs":{"sharpness":[0.6,1.4]}},"rotation":{"type":"RandomRotation","kwargs":{"degrees":[-5,5]}},"translation":{"type":"RandomAffine","kwargs":{"degrees":0,"translate":[0.1,0.1]}}}' \
+  --dataset.video_backend=torchcodec \
+  --policy.use_amp=true \
+  --policy.horizon=48 \
+  --policy.n_obs_steps=2 \
+  --policy.use_rope=true \
+  --policy.use_positional_encoding=false \
+  --policy.hidden_dim=768 \
+  --policy.num_layers=8 \
+  --policy.num_heads=12 \
+  --policy.dropout=0.1 \
+  --policy.timestep_embed_dim=256 \
+  --policy.objective=diffusion \
+  --policy.optimizer_lr=3e-4 \
+  --policy.optimizer_weight_decay=0 \
+  --policy.scheduler_warmup_steps=0 \
+  --policy.vision_encoder_name=openai/clip-vit-base-patch16 \
+  --policy.image_resize_shape=[256,256] \
+  --policy.image_crop_is_random=true \
+  --policy.text_encoder_name=openai/clip-vit-base-patch16 \
+  --policy.vision_encoder_lr_multiplier=0.1 \
+  --policy.device=cuda \
+  --num_workers=8 \
+  --save_freq=4000 \
+  --log_freq=100 \
+  --steps=100000 \
+  --batch_size=320
+```
+
+结果：
+
+| LIBERO Spatial | LIBERO Object | LIBERO Goal | LIBERO 10 | 平均  |
+| -------------- | ------------- | ----------- | --------- | ----- |
+| 87.0           | 98.2          | 93.8        | 83.2      | 90.6  |
+
+## 参考资料
+
+有关技术实现和架构的更多详情，请参阅：
+
+- [A Careful Examination of Large Behavior Models for Multitask Dexterous Manipulation](https://arxiv.org/abs/2507.05331)
+- [Large Behavior Models and Atlas Find New Footing](https://bostondynamics.com/blog/large-behavior-models-atlas-find-new-footing/)
+- [Dissecting and Open-Sourcing Multitask Diffusion Transformer Policy](https://brysonkjones.substack.com/p/dissecting-and-open-sourcing-multitask-diffusion-transformer-policy)

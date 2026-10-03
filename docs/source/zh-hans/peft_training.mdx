@@ -1,0 +1,47 @@
+# 使用 🤗 PEFT 进行参数高效微调
+
+[🤗 PEFT](https://github.com/huggingface/peft)（Parameter-Efficient Fine-Tuning，参数高效微调）是一个用于高效调整大型预训练模型（如预训练策略：SmolVLA、π₀ 等）以适应新任务的库，无需训练模型的所有参数，同时获得可比的性能。
+
+安装 `lerobot[peft]` 可选包以启用 PEFT 支持。
+
+要了解所有可能的适配方法，请参阅 [🤗 PEFT 文档](https://huggingface.co/docs/peft/index)。
+
+## 训练 SmolVLA
+
+在本节中，我们将展示如何在 libero 数据集上使用 PEFT 训练预训练的 SmolVLA 策略。为简洁起见，我们仅在 `libero_spatial` 子集上训练。我们将使用 `lerobot/smolvla_base` 作为模型进行参数高效微调：
+
+```
+lerobot-train \
+ --policy.path=lerobot/smolvla_base \
+ --policy.repo_id=your_hub_name/my_libero_smolvla \
+ --dataset.repo_id=HuggingFaceVLA/libero \
+ --policy.output_features=null \
+ --policy.input_features=null \
+ --policy.optimizer_lr=1e-3 \
+ --policy.scheduler_decay_lr=1e-4 \
+ --env.type=libero \
+ --env.task=libero_spatial \
+ --steps=100000 \
+ --batch_size=32 \
+ --peft.method_type=LORA \
+ --peft.r=64 \
+ --peft.lora_alpha=64
+```
+
+注意 `--peft.method_type` 参数可以让您选择使用哪种 PEFT 方法。这里我们使用 [LoRA](https://huggingface.co/docs/peft/main/en/package_reference/lora)（Low-Rank Adapter，低秩适配器），这可能是迄今为止最流行的微调方法。低秩适配意味着我们只微调一个具有相对较低秩的矩阵，而不是完整的权重矩阵。这个秩可以使用 `--peft.r` 参数指定，LoRA 缩放因子使用 `--peft.lora_alpha`（其中 `scaling = lora_alpha / r`）。秩越高，您越接近完全微调。
+
+还有更复杂的方法具有更多参数。这些目前尚不支持，如果您想看到支持特定的 PEFT 方法，请提出 issue。
+
+默认情况下，PEFT 将针对 SmolVLA 中 LM 专家的 `q_proj` 和 `v_proj` 层。它还将针对状态和动作投影矩阵，因为它们最可能是任务相关的。如果您需要针对不同的层，可以使用 `--peft.target_modules` 指定要针对的层。您可以参考相应 PEFT 方法的文档查看支持的输入，例如 [LoRA 的 target_modules 文档](https://huggingface.co/docs/peft/main/en/package_reference/lora#peft.LoraConfig.target_modules)。通常支持后缀列表或正则表达式。例如，要针对 `lm_expert` 的 MLP 而不是 `q` 和 `v` 投影，使用：
+
+```
+--peft.target_modules='(model\.vlm_with_expert\.lm_expert\..*\.(down|gate|up)_proj|.*\.(state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out))'
+```
+
+如果您需要完全微调某一层而不仅仅是适配它，可以向 `--peft.full_training_modules` 参数提供层后缀列表：
+
+```
+--peft.full_training_modules=["state_proj"]
+```
+
+与完全微调使用的学习率相比，学习率和计划目标学习率通常可以放大 10 倍（例如，正常为 1e-4，使用 LoRA 则为 1e-3）。

@@ -1,0 +1,164 @@
+# 多 GPU 训练
+
+本指南介绍如何使用 [Hugging Face Accelerate](https://huggingface.co/docs/accelerate) 在多个 GPU 上训练策略。
+
+## 安装
+
+`accelerate` 包含在 `training` 扩展中。使用以下命令安装：
+
+```bash
+pip install 'lerobot[training]'
+```
+
+## 使用多 GPU 训练
+
+有两种方式启动训练：
+
+### 方式一：不使用配置文件（直接指定参数）
+
+你可以在命令中直接指定所有参数，无需运行 `accelerate config`：
+
+```bash
+accelerate launch \
+  --multi_gpu \
+  --num_processes=2 \
+  $(which lerobot-train) \
+  --dataset.repo_id=${HF_USER}/my_dataset \
+  --policy.type=act \
+  --policy.repo_id=${HF_USER}/my_trained_policy \
+  --output_dir=outputs/train/act_multi_gpu \
+  --job_name=act_multi_gpu \
+  --wandb.enable=true
+```
+
+**关键 accelerate 参数：**
+
+- `--multi_gpu`：启用多 GPU 训练
+- `--num_processes=2`：使用的 GPU 数量
+- `--mixed_precision=fp16`：使用 fp16 混合精度（如果支持可用 `bf16`）
+
+### 方式二：使用 accelerate config
+
+如果你希望保存配置，可以选择运行以下命令来为你的硬件配置 accelerate：
+
+```bash
+accelerate config
+```
+
+这个交互式设置会询问你关于训练环境的问题（GPU 数量、混合精度设置等），并保存配置供以后使用。对于单机多 GPU 的简单设置，推荐使用以下配置：
+
+- 计算环境：This machine（本机）
+- 机器数量：1
+- 进程数量：（你想使用的 GPU 数量）
+- 使用的 GPU ID：（留空则使用所有 GPU）
+- 混合精度：fp16 或 bf16（推荐用于更快训练）
+
+然后启动训练：
+
+```bash
+accelerate launch $(which lerobot-train) \
+  --dataset.repo_id=${HF_USER}/my_dataset \
+  --policy.type=act \
+  --policy.repo_id=${HF_USER}/my_trained_policy \
+  --output_dir=outputs/train/act_multi_gpu \
+  --job_name=act_multi_gpu \
+  --wandb.enable=true
+```
+
+## 工作原理
+
+当你使用 accelerate 启动训练时：
+
+1. **自动检测**：LeRobot 自动检测是否在 accelerate 下运行
+2. **数据分发**：你的批次会自动在 GPU 之间分配
+3. **梯度同步**：梯度在反向传播期间跨 GPU 同步
+4. **单进程日志记录**：只有主进程会记录到 wandb 并保存检查点
+
+## 学习率和训练步数缩放
+
+**重要：** LeRobot **不会**根据 GPU 数量自动缩放学习率或训练步数。这让你完全控制训练超参数。
+
+### 为什么不自动缩放？
+
+许多分布式训练框架会根据 GPU 数量自动缩放学习率（例如 `lr = base_lr × num_gpus`）。
+但 LeRobot 保持你指定的学习率不变。
+
+### 何时以及如何缩放
+
+如果你想在多 GPU 时缩放超参数，需要手动操作：
+
+**学习率缩放：**
+
+```bash
+# 示例：2 个 GPU，线性 LR 缩放
+# 基础 LR：1e-4，2 个 GPU -> 2e-4
+accelerate launch --num_processes=2 $(which lerobot-train) \
+  --optimizer.lr=2e-4 \
+  --dataset.repo_id=lerobot/pusht \
+  --policy.type=act
+```
+
+**训练步数缩放：**
+
+由于有效批次大小 `bs` 随多 GPU 增加（batch_size × num_gpus），你可能需要按比例减少训练步数：
+
+```bash
+# 示例：2 个 GPU，有效批次大小增大 2 倍
+# 原始：batch_size=8, steps=100000
+# 2 个 GPU：batch_size=8（总计 16），steps=50000
+accelerate launch --num_processes=2 $(which lerobot-train) \
+  --batch_size=8 \
+  --steps=50000 \
+  --dataset.repo_id=lerobot/pusht \
+  --policy.type=act
+```
+
+## 使用 FSDP 训练大模型
+
+DDP 在每个 GPU 上复制完整模型，所以如果一个模型在单个 GPU 上放不下，DDP 也放不下。对于大模型，使用 **FSDP**（Fully Sharded Data Parallel，全分片数据并行），它会将参数、梯度和优化器状态分片到多个 GPU。参见 [accelerate FSDP 指南](https://huggingface.co/docs/accelerate/usage_guides/fsdp) 了解背景知识。
+
+使用 FSDP 在 4 个 GPU（1 台机器）上启动 LeRobot 训练的示例：
+
+```bash
+accelerate launch --config_file fsdp.yaml --num_processes=4 $(which lerobot-train) \
+  --dataset.repo_id=${HF_USER}/my_dataset \
+  --policy.type=<your_policy> \
+  --output_dir=outputs/train/my_policy_fsdp
+```
+
+最小 `fsdp.yaml` 配置（FSDP1；分片参数/梯度/优化器 — 相当于 ZeRO-3）：
+
+```yaml
+compute_environment: LOCAL_MACHINE
+distributed_type: FSDP
+mixed_precision: bf16
+num_machines: 1
+num_processes: 4
+fsdp_config:
+  fsdp_version: 1
+  fsdp_sharding_strategy: FULL_SHARD # 参数 + 梯度 + 优化器 (ZeRO-3)
+  fsdp_auto_wrap_policy: TRANSFORMER_BASED_WRAP
+  fsdp_transformer_layer_cls_to_wrap: <YourTransformerBlock> # 要分片的重复块类
+  fsdp_use_orig_params: true # 必需：优化器在 prepare 之前构建
+  fsdp_state_dict_type: FULL_STATE_DICT
+```
+
+将 `fsdp_transformer_layer_cls_to_wrap` 设置为模型的重复 transformer 块类，这样每个块都作为独立单元分片。`fsdp_use_orig_params: true` 是必需的，因为 LeRobot 在 `accelerator.prepare()` 之前构建优化器。
+
+### FSDP 检查点
+
+LeRobot 在所有 rank 上收集完整的 state dict，主进程将其写入为单个 `model.safetensors`，可以像往常一样用 `Policy.from_pretrained(...)` 加载。需要注意两点：
+
+- **检查点存储 fp32 权重。** 在混合精度（`bf16`/`fp16`）下，FSDP 保持 fp32 主副本，检查点保存 fp32 权重（磁盘上约为 bf16 大小的 2 倍），这样训练可以一致地从 fp32 优化器状态恢复；`from_pretrained` 在加载时会转换回策略的 dtype。FSDP 特有的注意事项：fp32 检查点会在转换前以全精度加载到目标设备，所以在 GPU 显存紧张时加载推理可能会 OOM，即使 bf16 模型能放下——先在 CPU 上加载，或离线将 `model.safetensors` 转换为部署 dtype。
+- 分片的优化器状态会收集成完整的（与世界大小无关的）state dict，并与模型一起保存在相同的 `optimizer_state.safetensors` / `optimizer_param_groups.json` 格式中，所以**支持从检查点恢复**，使用 `--resume=true`。恢复时会将模型和优化器状态重新分片到_当前_FSDP 拓扑，所以你可以在不同数量的 GPU 上恢复 FSDP 检查点。注意数据采样器只有在世界大小和批次大小与原始运行匹配时才是样本精确的（否则会记录警告）；优化器/模型状态本身不受影响。
+
+## 注意事项
+
+- `lerobot-train` 中的 `--policy.use_amp` 标志仅在**不**使用 accelerate 时使用。使用 accelerate 时，混合精度由 accelerate 的配置控制。
+- 训练日志、检查点和 hub 上传仅由主进程完成，以避免冲突。非主进程的控制台日志记录被禁用以防止重复输出。
+- 有效批次大小为 `batch_size × num_gpus`。如果使用 4 个 GPU，`--batch_size=8`，则有效批次大小为 32。
+- 学习率调度在多进程间能正确处理——LeRobot 设置 `step_scheduler_with_optimizer=False` 以防止 accelerate 根据进程数调整调度器步数。
+- 保存或推送模型时，LeRobot 会自动从 accelerate 的分布式包装器中解包模型，以确保兼容性。
+- WandB 集成自动仅在主进程上初始化，防止创建多个运行记录。
+
+如需更高级的配置和问题排查，参见 [Accelerate 文档](https://huggingface.co/docs/accelerate)。如果你想了解如何在大量 GPU 上训练，请查看这个很棒的指南：[Ultrascale Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook)。
