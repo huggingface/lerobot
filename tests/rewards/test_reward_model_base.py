@@ -379,13 +379,13 @@ def test_reward_model_generate_model_card_renders_expected_fields(_offline_model
     assert "--reward_model.type=" in body  # reward-model-specific usage block
 
 
-def test_reward_model_generate_model_card_uses_default_license(_offline_model_card):
-    """When config.license is None the card falls back to apache-2.0."""
+def test_reward_model_generate_model_card_leaves_an_unknown_license_out(_offline_model_card):
+    """When config.license is None and there is no Hub parent, the card states no license."""
     model, _ = _make_dummy_reward_model()
 
     card = generate_model_card(model.config, cfg=_make_train_cfg("user/my_dataset"))
 
-    assert card.data.license == "apache-2.0"
+    assert card.data.license is None
 
 
 def test_publish_trained_model_uploads_expected_reward_files(monkeypatch, _offline_model_card):
