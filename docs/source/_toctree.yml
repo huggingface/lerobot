@@ -37,6 +37,8 @@
 - sections:
   - local: lerobot-dataset-v3
     title: Using LeRobotDataset
+  - local: training_dataset_streaming
+    title: Training Dataset Streaming
   - local: porting_datasets_v3
     title: Porting Large Datasets
   - local: using_dataset_tools

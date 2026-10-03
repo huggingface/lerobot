@@ -20,11 +20,34 @@ import importlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+# Root parsing is shared with the streaming primitives, which cannot depend on this package.
+from lerobot.streaming.location import (
+    LocationKind,
+    StorageLocation,
+    hf_bucket_uri,
+    hf_dataset_uri,
+)
+
 if TYPE_CHECKING:
     from .dataset_metadata import LeRobotDatasetMetadata
     from .dataset_reader import BaseDatasetReader
 
 DEFAULT_STORAGE_FORMAT = "lerobot"
+
+__all__ = [
+    "DEFAULT_STORAGE_FORMAT",
+    "LocationKind",
+    "StorageLocation",
+    "dataset_location",
+    "hf_bucket_uri",
+    "hf_dataset_uri",
+    "is_bucket_root",
+    "is_remote_uri",
+    "load_dataset_metadata",
+    "localize_remote_root",
+    "make_dataset_reader",
+    "register_dataset_reader",
+]
 
 # Supported non-default storage formats and the module implementing each.
 # Modules are imported lazily so their optional dependencies stay optional;
@@ -50,7 +73,37 @@ register_dataset_reader("lance", "lerobot.datasets.lance_backend")
 
 def is_remote_uri(root: str | Path) -> bool:
     """True for object-store style roots (``hf://…``, ``file://…``, …)."""
-    return "://" in str(root)
+    return StorageLocation.parse(root).is_remote
+
+
+def dataset_location(
+    repo_id: str, root: str | Path | None = None, repo_type: str = "dataset"
+) -> StorageLocation:
+    """Where a dataset's files live: an explicit ``root``, else its Hub repository or bucket."""
+    if root is not None:
+        return StorageLocation.parse(root)
+    return StorageLocation.parse(hf_bucket_uri(repo_id) if repo_type == "bucket" else hf_dataset_uri(repo_id))
+
+
+def is_bucket_root(repo_id: str, root: str | Path | None) -> bool:
+    """True when ``root`` is the ``hf://buckets/OWNER/BUCKET`` URI of ``repo_id``'s bucket.
+
+    The inverse of ``LeRobotDataset`` deriving ``hf://buckets/{repo_id}`` from
+    ``repo_type="bucket"``: streaming readers treat such a root as bucket mode.
+    """
+    if root is None:
+        return False
+    location = StorageLocation.parse(root)
+    if location.kind is not LocationKind.HF_BUCKET:
+        return False
+    if location.path_in_repo:
+        raise ValueError(
+            f"Expected a bucket root of the form {hf_bucket_uri('OWNER/BUCKET')}, got {str(root)!r}. "
+            "Datasets stored under a bucket sub-directory are not supported yet."
+        )
+    if location.repo_id != repo_id:
+        raise ValueError(f"Bucket root {str(root)!r} does not match repo_id {repo_id!r}.")
+    return True
 
 
 def _reader_module(storage_format: str):

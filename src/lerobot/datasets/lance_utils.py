@@ -45,7 +45,7 @@ from lerobot.utils.import_utils import _lancedb_available, require_package
 if TYPE_CHECKING or _lancedb_available:
     import lancedb
 
-from .storage import is_remote_uri
+from .storage import StorageLocation, hf_dataset_uri, is_remote_uri
 
 # Byte-index columns on the videos table: map a frame window to its byte ranges so a
 # batch's video fetch can be batched. Assume constant frame rate; mp4-only.
@@ -251,7 +251,7 @@ def _storage_options(
     db_uri: str, storage_options: dict | None, revision: str | None, token: str | bool | None = None
 ) -> dict:
     options = dict(storage_options or {})
-    if db_uri.startswith("hf://"):
+    if StorageLocation.parse(db_uri).is_hf:
         if "token" not in options:
             if isinstance(token, str):
                 options["token"] = token
@@ -362,5 +362,5 @@ def resolve_lance_root(
     if (root_path / f"{FRAMES_TABLE}.lance").exists():
         return str(root_path), root_path
     if repo_id is not None:
-        return f"hf://datasets/{repo_id}", root_path
+        return hf_dataset_uri(repo_id), root_path
     raise FileNotFoundError(f"No '{FRAMES_TABLE}.lance' table under {root_path}.")

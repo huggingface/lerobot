@@ -47,7 +47,7 @@ from .io_utils import (
     write_tasks,
 )
 from .language import DEFAULT_TOOLS, LANGUAGE_COLUMNS
-from .storage import DEFAULT_STORAGE_FORMAT
+from .storage import DEFAULT_STORAGE_FORMAT, dataset_location, hf_bucket_uri
 from .utils import (
     DEFAULT_EPISODES_PATH,
     check_version_compatibility,
@@ -264,7 +264,7 @@ class LeRobotDatasetMetadata:
         if self.repo_type == "bucket":
             self.root.mkdir(parents=True, exist_ok=True)
             sync_bucket(
-                f"hf://buckets/{self.repo_id}/meta",
+                hf_bucket_uri(self.repo_id, "meta"),
                 str(self.root / "meta"),
                 delete=True,
                 quiet=True,
@@ -301,9 +301,7 @@ class LeRobotDatasetMetadata:
     @property
     def url_root(self) -> str:
         """Hugging Face Hub URL root for this dataset."""
-        if self.repo_type == "bucket":
-            return f"hf://buckets/{self.repo_id}"
-        return f"hf://datasets/{self.repo_id}"
+        return dataset_location(self.repo_id, repo_type=self.repo_type).uri
 
     @property
     def _version(self) -> packaging.version.Version:
