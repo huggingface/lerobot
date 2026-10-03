@@ -226,6 +226,85 @@ def test_slow_action_finishes_before_language_begins_and_cannot_restore_motion(s
     assert client.max_active_calls == 1
 
 
+@pytest.mark.parametrize("acknowledge_first", [False, True])
+@pytest.mark.parametrize("autosteer", [False, True])
+def test_instruction_hold_language_upgrade_preserves_ack_control_and_deadline(
+    session, acknowledge_first, autosteer
+):
+    engine, _ = session
+    now = [time.monotonic()]
+    engine.runtime.clock = lambda: now[0]
+    engine.resume()
+    engine._robot.observation_time = now[0]
+    engine.notify_observation({"a.pos": 0.0, "b.pos": 0.0})
+    assert engine.runtime.begin(engine._observation) is not None
+    assert engine.set_task("new task")
+    generation, control, started = engine.runtime.generation, engine._control, engine._hold_started
+    if acknowledge_first:
+        engine.acknowledge_hold()
+    now[0] += 0.5
+    if autosteer:
+        engine.start_autosteer("pick", 1)
+        engine.pump_query({})
+    else:
+        assert engine.ask("what?")
+    assert engine._hold_reason == "language"
+    assert engine._hold_acknowledged == acknowledge_first
+    assert engine.runtime.generation == generation
+    assert engine._control == control
+    assert engine._hold_started == started
+    engine.acknowledge_hold()
+    started = engine._hold_started
+    instruction_budget = engine.config.action_timeout_s + engine.config.handshake_timeout_s
+    now[0] = started + instruction_budget + 1
+    for _ in range(3):
+        assert not engine.dispatch_allowed()
+        engine.acknowledge_hold()
+        assert engine._hold_started == started
+    assert not engine.failed, "language work must receive its longer budget"
+    now[0] = started + instruction_budget + engine.config.language_timeout_s + 0.1
+    assert not engine.dispatch_allowed()
+    assert engine.failed
+    assert "Planned language hold deadline exceeded" in engine.failure_traceback
+
+
+def test_upgraded_language_hold_requires_fresh_query_and_action_observations(session):
+    engine, client = session
+    client.action_release.clear()
+    engine.resume()
+    capture(engine)
+    engine.start()
+    assert client.action_started.wait(2)
+    assert engine.set_task("new task")
+    generation = engine.runtime.generation
+    assert engine.ask("what?")
+    client.action_release.set()
+    assert not client.control_started.wait(0.02), "generation control must wait for the motor hold"
+    engine.acknowledge_hold()
+    assert client.control_started.wait(2)
+    assert not client.text_started.wait(0.02), "language cannot reuse the pre-hold capture"
+    capture(engine)
+    assert client.text_started.wait(2)
+    assert engine.runtime.generation == generation
+    assert engine.runtime.queue.empty(), "old-task inference cannot restore motion"
+    assert engine._control is None
+    engine.resume()
+    assert engine.runtime.held, "idempotent resume must preserve an acknowledged language hold"
+    client.text_release.set()
+    assert wait_for(lambda: not engine._hold_requested)
+    assert len(client.requests) == 1, "actions need a post-query capture"
+    client.action_started.clear()
+    capture(engine)
+    assert client.action_started.wait(2)
+    assert client.requests[1].observation.capture_time > engine._query_observation.capture_time
+    assert client.requests[1].observation.task == "new task"
+    assert wait_for(lambda: engine.runtime.queue.qsize() > 0)
+    assert engine.get_action(None) is not None
+    assert engine.dispatched_task == "new task"
+    assert not engine.failed
+    assert client.max_active_calls == 1
+
+
 def test_vqa_after_autosteering_uses_its_own_query_context(session):
     engine, client = session
     engine.start_autosteer("goal", 10)
@@ -295,12 +374,15 @@ def test_cancelled_same_text_autosteer_intent_cannot_apply_old_subtask(session):
     assert engine.autosteer_goal == "goal"
 
 
-@pytest.mark.parametrize("terminal", [False, True])
-def test_language_errors_reach_control_thread_and_only_uncertain_timeout_faults(session, terminal):
+@pytest.mark.parametrize("error_kind", ["execution", "timeout", "presence"])
+def test_language_errors_reach_control_thread_and_uncertain_execution_faults(session, error_kind):
     engine, client = session
-    client.query_error = (
-        TimeoutError("hung language") if terminal else ProtocolError(ErrorCode.EXECUTION, "empty answer")
-    )
+    terminal = error_kind != "execution"
+    client.query_error = {
+        "execution": ProtocolError(ErrorCode.EXECUTION, "empty answer"),
+        "timeout": TimeoutError("hung language"),
+        "presence": ConnectionError("Server presence lost during language query; session cannot recover"),
+    }[error_kind]
     start_query(engine, client)
     client.text_release.set()
     assert wait_for(lambda: bool(engine._ready_answers))

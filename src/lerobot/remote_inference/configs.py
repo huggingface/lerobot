@@ -56,7 +56,6 @@ class LanguageConfig:
     """Bounded, serialized text generation under a planned local hold."""
 
     enabled: bool = False
-    motion_during_query: str = "hold"
     deadline_s: float = 60.0
     max_input_chars: int = 4096
     max_output_chars: int = 8192
@@ -108,8 +107,6 @@ class ServerConfig:
         validate_blendable_components(self.action_feature, self.execution.blendable_components)
         if self.execution.blendable_components and "chunk" not in self.execution.supported_modes:
             raise ValueError("blendable_components requires the chunk execution mode")
-        if self.language.motion_during_query != "hold":
-            raise ValueError("Only planned holds during language generation are supported")
         for name in ("max_input_chars", "max_output_chars"):
             value = getattr(self.language, name)
             if type(value) is not int or value <= 0:

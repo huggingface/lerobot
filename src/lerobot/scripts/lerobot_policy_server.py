@@ -35,6 +35,7 @@ from lerobot.inference.contracts import ExecutionMode, ObservationSnapshot
 from lerobot.inference.policy_runner import PolicyRunner
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.processor import RenderRuntimeMessagesStep
 from lerobot.remote_inference.build_info import SOFTWARE_BUILD
 from lerobot.remote_inference.configs import ServerConfig
 from lerobot.remote_inference.protocol import PROTOCOL_VERSION
@@ -99,6 +100,28 @@ def _inference_identity(cfg: ServerConfig, policy_cfg: PreTrainedConfig) -> dict
             "max_output_chars": cfg.language.max_output_chars,
         },
     }
+
+
+def _subtask_prompt_unavailable_reason(runner: PolicyRunner) -> str | None:
+    """Check known saved renderers without treating model failures as missing support.
+
+    Custom language processors still need to pass normal next-subtask warmup.
+    The protocol's language flag describes text generation, not every prompt kind.
+    """
+    if runner.language_processors is None:
+        return None
+    for step in runner.language_processors[0].steps:
+        if not isinstance(step, RenderRuntimeMessagesStep):
+            continue
+        if step.recipe is None:
+            return "the saved runtime message renderer has no checkpoint recipe"
+        try:
+            step.recipe.prompt_turns("subtask")
+        except ValueError as exc:
+            # This recipe inspection raises only when its assistant target is absent.
+            # Keep processor execution and model generation outside this handler.
+            return str(exc)
+    return None
 
 
 def load_deployment(cfg: ServerConfig) -> tuple[PolicyRunner, str]:
@@ -183,9 +206,19 @@ def load_deployment(cfg: ServerConfig) -> tuple[PolicyRunner, str]:
                     canonical_continuation=None if previous is None else previous.canonical_actions,
                 )
         if cfg.language.enabled:
-            # Warm both supported prompt paths; reset erases planner warmup state.
+            # Reset below erases planner warmup state. Unsupported saved subtask
+            # prompts must not prevent action + VQA deployments from starting.
             runner.query(warmup, kind="vqa", text="Describe the scene.")
-            runner.query(warmup, kind="next_subtask", text="Describe the next task.")
+            reason = _subtask_prompt_unavailable_reason(runner)
+            if reason is None:
+                runner.query(warmup, kind="next_subtask", text="Describe the next task.")
+            else:
+                logger.warning(
+                    "Skipping next-subtask warmup: %s. Actions and VQA remain available; "
+                    "do not enable autosteer for this deployment. Use a checkpoint with a saved "
+                    "recipe supervising ${subtask} to enable next-subtask generation.",
+                    reason.rstrip("."),
+                )
     finally:
         runner.reset(full=True)
     return runner, identity

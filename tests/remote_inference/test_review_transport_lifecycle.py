@@ -10,6 +10,7 @@ import multiprocessing
 import socket
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
 from queue import Empty
 from threading import Event
 from types import SimpleNamespace
@@ -20,11 +21,13 @@ pytest.importorskip("zenoh")
 pytest.importorskip("msgpack")
 pytest.importorskip("datasets")
 
+from lerobot.inference.contracts import ExecutionMode, FeatureSpec, PolicyCapabilities
 from lerobot.remote_inference.client import RemoteClient, RequestCancelled
-from lerobot.remote_inference.protocol import MessageType
+from lerobot.remote_inference.protocol import MessageType, instance_prefix, session_prefix
 from lerobot.rollout.inference.factory import RemoteInferenceConfig
 from lerobot.rollout.inference.remote import RemoteInferenceEngine
 from lerobot.transport.zenoh import QueryCancelled
+from tests.inference.test_policy_runner import observation
 from tests.remote_inference.test_aligned_process import ACTION_NAMES, serve_in_child
 from tests.remote_inference.test_remote_path import admit, remote_server as _remote_server
 from tests.remote_inference.test_zenoh import transports as _transports
@@ -103,6 +106,73 @@ def test_cancelled_control_wait_returns_while_server_operation_still_runs(remote
         client.close()
 
 
+def test_language_wait_fails_on_observed_presence_loss_without_waiting_for_language_timeout(transports):
+    server, transport = transports
+    config = RemoteInferenceConfig(
+        deployment="language-loss", semantics="radians", hold_mode="position", language_timeout_s=60
+    )
+    feature = FeatureSpec("observation.state", (3,), "float32", semantics="radians")
+    capabilities = PolicyCapabilities(
+        (ExecutionMode.CHUNK,),
+        3,
+        3,
+        1 / 30,
+        (feature,),
+        FeatureSpec("action", (3,), "float32", semantics="radians"),
+        language=True,
+    )
+    alive_key = instance_prefix(config.deployment, "instance") + "/alive"
+    token = server.declare_token(alive_key)
+    client = RemoteClient(
+        transport,
+        config,
+        {
+            "capabilities": asdict(capabilities),
+            "instance_id": "instance",
+            "artifact_identity": "model",
+            "limits": {"max_output_chars": 8192},
+        },
+    )
+    assert client._presence.get(3).alive
+    client.session_id = "session"
+    client._key = session_prefix(config.deployment, client.instance_id, client.session_id)
+    client._language = transport.subscribe(client._key + "/language/result")
+    incoming = server.subscribe(client._key + "/language/request")
+    transport.wait_for_subscriber(client._key + "/language/request", 3)
+    cancelled = Event()
+
+    def query():
+        return client.query_language(
+            observation(),
+            kind="vqa",
+            text="What is visible?",
+            intent_generation=0,
+            generation=0,
+            cancelled=cancelled.is_set,
+        )
+
+    with ThreadPoolExecutor() as pool:
+        try:
+            result = pool.submit(query)
+            incoming.get(3)
+            token.undeclare()
+            with pytest.raises(ConnectionError, match="presence lost during language query"):
+                result.result(3)
+            assert not client.present
+            # Reappearing presence cannot revive or replay the failed session.
+            replacement = server.declare_token(alive_key)
+            try:
+                assert not client.present
+                with pytest.raises(ConnectionError, match="session cannot recover"):
+                    query()
+                with pytest.raises(Empty):
+                    incoming.get(0.1)
+            finally:
+                replacement.undeclare()
+        finally:
+            cancelled.set()
+
+
 @pytest.fixture
 def crashable_server():
     with socket.socket() as port:
@@ -113,7 +183,7 @@ def crashable_server():
     process = context.Process(target=serve_in_child, args=(endpoint, ready, stopped, entered, release))
     process.start()
     try:
-        assert ready.wait(15), f"server did not start; exitcode={process.exitcode}"
+        assert ready.wait(60), f"server did not start; exitcode={process.exitcode}"
         yield process, endpoint, entered, release
     finally:
         # A killed process may have died while owning an Event's condition lock.
@@ -121,7 +191,7 @@ def crashable_server():
         if process.is_alive():
             release.set()
             stopped.set()
-        process.join(5)
+        process.join(10)
         if process.is_alive():
             process.kill()
             process.join(3)

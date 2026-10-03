@@ -170,6 +170,7 @@ class RTCInferenceEngine(InferenceEngine):
         self._reset_pending = False
         self._hold_requested = False
         self._hold_acknowledged = Event()
+        self._hold_started = 0.0
         self._language_deadline: float | None = None
         self._hold_reason = "Language request"
         self._active_query_generation = 0
@@ -314,10 +315,12 @@ class RTCInferenceEngine(InferenceEngine):
             self._task_version += 1
             with self._obs_lock, self._runtime.lock:
                 pending = self._runtime.pending
+                # Warmup queues no motion and its control loop cannot acknowledge a hold.
                 needs_hold = (
                     pending is not None
                     and pending.observation.task_version != self._task_version
                     and self._policy_active.is_set()
+                    and self.ready
                     and bool(getattr(self._robot, "supports_hold", False))
                 )
             # Keep the task lock through invalidation so an old result cannot be
@@ -398,12 +401,19 @@ class RTCInferenceEngine(InferenceEngine):
 
     def _request_hold(self, reason: str, timeout_s: float) -> None:
         with self._obs_lock:
-            if not self._hold_requested:
-                self._runtime.invalidate(held=True)
-                self._hold_requested = True
-                self._hold_acknowledged.clear()
-                self._language_deadline = self._runtime.clock() + timeout_s
-                self._hold_reason = reason
+            if self._hold_requested:
+                if self._hold_reason == "Instruction change" and reason == "Language request":
+                    # This is still the same physical hold and invalidated generation.
+                    # Widen its budget once, without renewing it on every motor tick.
+                    self._language_deadline = self._hold_started + max(self._action_timeout_s, timeout_s)
+                    self._hold_reason = reason
+                return
+            self._runtime.invalidate(held=True)
+            self._hold_requested = True
+            self._hold_acknowledged.clear()
+            self._hold_started = self._runtime.clock()
+            self._language_deadline = self._hold_started + timeout_s
+            self._hold_reason = reason
 
     # ------------------------------------------------------------------
     # Text queries

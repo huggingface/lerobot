@@ -386,7 +386,7 @@ class RemoteInferenceEngine(InferenceEngine):
         if self.failed or self._stop_event.is_set():
             raise RuntimeError("Faulted/closed remote sessions require a new rollout")
         with self._lock:
-            self.runtime.activate(held=self._control is not None)
+            self.runtime.activate(held=self._control is not None or self._hold_requested)
 
     def reset(self) -> None:
         """Invalidate local motion and request a full server policy/processor reset."""
@@ -500,7 +500,7 @@ class RemoteInferenceEngine(InferenceEngine):
             hold_timeout = self.config.action_timeout_s + self.config.handshake_timeout_s
             if self._hold_reason == "language":
                 hold_timeout += self.config.language_timeout_s
-            if self._hold_requested and time.monotonic() - self._hold_started > hold_timeout:
+            if self._hold_requested and self.runtime.clock() - self._hold_started > hold_timeout:
                 self._fault(f"Planned {self._hold_reason} hold deadline exceeded")
         allowed = self.runtime.dispatch_allowed()
         if self.runtime.failure is not None:
@@ -513,12 +513,18 @@ class RemoteInferenceEngine(InferenceEngine):
     def _request_hold(self, reason: str) -> None:
         """Invalidate an operator-triggered transition before fresh resumption."""
         with self._lock:
-            if not self.runtime.active or self._hold_requested or self.failed:
+            if not self.runtime.active or self.failed:
+                return
+            if self._hold_requested:
+                if self._hold_reason == "instruction change" and reason == "language":
+                    # Keep the existing acknowledgment, freshness gate and time anchor;
+                    # repeated query checks must not renew the language hold budget.
+                    self._hold_reason = reason
                 return
             generation = self.runtime.invalidate(held=True)
             self._hold_requested = True
             self._hold_acknowledged = False
-            self._hold_started = time.monotonic()
+            self._hold_started = self.runtime.clock()
             self._hold_reason = reason
             self._observation = None
             operation = "reset" if self._control is not None and self._control[0] == "reset" else "invalidate"
@@ -534,7 +540,7 @@ class RemoteInferenceEngine(InferenceEngine):
         with self._lock:
             if self._hold_requested and not self._hold_acknowledged:
                 self._hold_acknowledged = True
-                self._hold_started = time.monotonic()
+                self._hold_started = self.runtime.clock()
                 self._observation = None  # require capture after the control-thread hold
         if self.failed and self._global_shutdown is not None:
             self._global_shutdown.set()

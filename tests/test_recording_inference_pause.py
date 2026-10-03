@@ -8,8 +8,10 @@ import torch
 
 pytest.importorskip("datasets")
 
-from lerobot.rollout.configs import DAggerStrategyConfig
+from lerobot.rollout.configs import DAggerStrategyConfig, HighlightStrategyConfig
+from lerobot.rollout.ring_buffer import RolloutRingBuffer
 from lerobot.rollout.strategies.dagger import DAggerEvents, DAggerPhase, DAggerStrategy
+from lerobot.rollout.strategies.highlight import HighlightStrategy
 from lerobot.utils.action_interpolator import ActionInterpolator
 from tests.inference.test_aligned_execution import initial, result, runtime, sample
 from tests.test_rollout import _make_loop_ctx, _make_sentry
@@ -131,3 +133,62 @@ def test_continuous_rotation_applies_pause_before_saving(kind):
     assert saves
     # The initial start is the only resume: shutdown during save wins.
     ctx.policy.inference.resume.assert_called_once()
+
+
+@pytest.mark.parametrize("operation", ["drain", "save"])
+@pytest.mark.parametrize("outcome", ["complete", "shutdown", "error"])
+def test_highlight_toggle_invalidates_motion_before_blocking_recording_work(operation, outcome):
+    strategy = HighlightStrategy(HighlightStrategyConfig())
+
+    def on_tick(tick):
+        if tick == 3:
+            strategy._save_requested.set()
+
+    ctx, dataset = _make_loop_ctx(fps=200, multiplier=2, num_ticks=8, on_tick=on_tick)
+    engine = ctx.policy.inference
+    engine.control_thread_owns_policy = False
+    engine.failed = False
+    ctx.hardware.robot_wrapper.supports_hold = True
+    ctx.hardware.robot_wrapper.hardware_failure = None
+    strategy._engine = engine
+    strategy._interpolator = ActionInterpolator(multiplier=2)
+    strategy._ring = RolloutRingBuffer(max_seconds=10, max_memory_mb=1, fps=200)
+    if operation == "save":
+        strategy._recording_live.set()
+    blocked = False
+    notifications_at_pause = 0
+
+    def block_once(*_args):
+        nonlocal blocked, notifications_at_pause
+        if blocked:
+            return
+        blocked = True
+        engine.pause.assert_called_once()
+        ctx.hardware.robot_wrapper.hold.assert_called_once()
+        assert strategy._cached_obs_processed is None
+        assert strategy._interpolator.needs_new_action()
+        notifications_at_pause = engine.notify_observation.call_count
+        if outcome == "shutdown":
+            ctx.runtime.shutdown_event.set()
+        elif outcome == "error":
+            raise OSError("disk full")
+
+    if operation == "drain":
+        dataset.add_frame.side_effect = block_once
+    else:
+        dataset.save_episode.side_effect = block_once
+
+    if outcome == "error":
+        with pytest.raises(OSError, match="disk full"):
+            strategy.run(ctx)
+    else:
+        strategy.run(ctx)
+
+    assert blocked
+    if outcome == "complete":
+        assert engine.resume.call_count == 2
+        fresh = engine.notify_observation.call_args_list[notifications_at_pause].args[0]
+        assert fresh["m.pos"] > 3
+    else:
+        # An error or shutdown during the operation must not restart the worker.
+        engine.resume.assert_called_once()

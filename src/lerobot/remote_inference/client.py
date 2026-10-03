@@ -478,6 +478,11 @@ class RemoteClient:
         while time.monotonic() - started <= timeout:
             if cancelled():
                 raise RequestCancelled()
+            # Language runs under a planned hold, so observed server loss should
+            # end that wait promptly. Action playback keeps its existing local
+            # buffer/freshness/deadline bounds rather than stopping on this signal.
+            if request.message_type is MessageType.LANGUAGE_REQUEST and not self.present:
+                raise ConnectionError("Server presence lost during language query; session cannot recover")
             if channel.oversized or channel.dropped:
                 raise ProtocolError(
                     ErrorCode.MALFORMED, "Inference reply channel overflow or oversized message"

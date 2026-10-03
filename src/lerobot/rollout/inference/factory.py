@@ -125,7 +125,10 @@ class RemoteInferenceConfig(InferenceEngineConfig):
         if self.zenoh_mode not in {"peer", "client"}:
             raise ValueError("zenoh_mode must be peer (direct) or client (router)")
         if not self.deployment or not self.semantics:
-            raise ValueError("Remote inference requires deployment and explicit robot/action semantics")
+            raise ValueError(
+                "Remote inference requires --inference.deployment and explicit robot/action "
+                "semantics via --inference.semantics"
+            )
         if self.hold_mode != "position":
             raise ValueError("Remote inference requires --inference.hold_mode=position on a supported robot")
         try:

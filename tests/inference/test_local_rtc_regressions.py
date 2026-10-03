@@ -19,6 +19,7 @@ import torch
 pytest.importorskip("datasets", reason="rollout requires the dataset extra")
 
 from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.inference.contracts import ObservationSnapshot
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
@@ -261,6 +262,116 @@ def test_language_deadline_uses_runtime_clock_and_latches_until_restart():
     assert shutdown.is_set()
     engine.resume()
     assert not engine._runtime.active
+
+
+def test_task_change_during_compile_warmup_needs_no_hold_acknowledgment():
+    engine = make_engine(use_torch_compile=True, compile_warmup_inferences=1)
+    engine.start()
+    try:
+        engine.resume()
+        observe(engine)
+        assert wait_for(lambda: len(engine._policy.calls) == 1)
+        assert not engine.ready
+        assert engine._runtime.pending is not None
+        assert engine.set_task("new task")
+        assert not engine._hold_requested
+        assert engine._language_deadline is None
+        # The control thread only waits for readiness here; it does not acknowledge holds.
+        engine._policy.release.release(3)
+        assert wait_for(lambda: engine.ready)
+        assert wait_for(lambda: len(engine._policy.calls) == 4)
+        assert engine.action_queue.empty(), "warmup results must never become motion"
+        assert engine._runtime.pending.observation.task == "new task"
+        assert not engine.failed
+        engine._policy.release.release()
+        assert wait_for(lambda: engine.action_queue.qsize() > 0)
+        assert engine.get_action(None) is not None
+        assert engine.dispatched_task == "new task"
+    finally:
+        stop(engine)
+
+
+@pytest.mark.parametrize("acknowledge_first", [False, True])
+@pytest.mark.parametrize("autosteer", [False, True])
+@pytest.mark.parametrize("action_timeout,language_timeout", [(2, 8), (8, 2)])
+def test_instruction_hold_language_upgrade_preserves_ack_and_bounded_budget(
+    acknowledge_first, autosteer, action_timeout, language_timeout
+):
+    engine = make_engine(action_timeout_s=action_timeout, language_timeout_s=language_timeout)
+    now = [100.0]
+    engine._runtime.clock = lambda: now[0]
+    engine.resume()
+    assert engine._runtime.begin(ObservationSnapshot({}, now[0], "pick", 0)) is not None
+    assert engine.set_task("new task")
+    generation, started = engine._runtime.generation, now[0]
+    if acknowledge_first:
+        engine.acknowledge_hold()
+    now[0] += 0.5
+    if autosteer:
+        engine.start_autosteer("pick", 1)
+        engine.pump_query({})
+    else:
+        assert engine.ask("what?")
+    assert engine._hold_reason == "Language request"
+    assert engine._hold_acknowledged.is_set() == acknowledge_first
+    assert engine._runtime.generation == generation
+    deadline = started + max(action_timeout, language_timeout)
+    assert engine._language_deadline == deadline
+    now[0] = deadline - 0.1
+    for _ in range(3):
+        assert not engine.dispatch_allowed()
+        engine.acknowledge_hold()
+        assert engine._language_deadline == deadline
+    assert not engine.failed
+    now[0] = deadline + 0.1
+    assert not engine.dispatch_allowed()
+    assert engine.failed
+    assert "Language request deadline exceeded" in engine.failure_traceback
+
+
+def test_upgraded_language_hold_requires_fresh_query_and_action_observations():
+    engine = make_engine()
+    generating, finish = Event(), Event()
+    text_observations = []
+
+    def text(batch):
+        text_observations.append(batch["observation.state"].clone())
+        generating.set()
+        assert finish.wait(3)
+        return "answer"
+
+    engine._policy.generate_text = text
+    engine.start()
+    try:
+        engine.resume()
+        observe(engine, 1)
+        assert wait_for(lambda: len(engine._policy.calls) == 1)
+        assert engine.set_task("new task")
+        generation = engine._runtime.generation
+        assert engine.ask("what?")
+        engine._policy.release.release()
+        assert not generating.wait(0.02), "language cannot precede the control-thread hold"
+        engine.acknowledge_hold()
+        assert engine._runtime.generation == generation
+        assert not generating.wait(0.02), "language cannot reuse the pre-hold capture"
+        observe(engine, 2)
+        assert generating.wait(3)
+        assert engine.action_queue.empty(), "old-task inference cannot restore motion"
+        torch.testing.assert_close(text_observations[0], torch.full((1, 2), 2.0))
+        finish.set()
+        assert wait_for(lambda: not engine._hold_requested)
+        assert len(engine._policy.calls) == 1, "actions need a post-query capture"
+        observe(engine, 3)
+        assert wait_for(lambda: len(engine._policy.calls) == 2)
+        torch.testing.assert_close(engine._policy.action_observations[1], torch.full((1, 2), 3.0))
+        engine._policy.release.release()
+        assert wait_for(lambda: engine.action_queue.qsize() > 0)
+        assert engine.get_action(None) is not None
+        assert engine.dispatched_task == "new task"
+        assert not engine.failed
+    finally:
+        finish.set()
+        stop(engine)
 
 
 def test_pause_cancels_pending_language_hold_and_its_deadline():

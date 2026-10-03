@@ -48,8 +48,9 @@ class HighlightStrategy(RolloutStrategy):
     3. The episode is saved and the ring buffer resumes capturing.
 
     Requires ``streaming_encoding=True`` (enforced in config validation)
-    so that ``dataset.add_frame`` is a non-blocking queue put — flushing
-    the entire ring buffer in one tick must not stall the control loop.
+    to keep normal frame encoding off the control thread. Ring-buffer drains
+    and episode saves can still block: asynchronous inference is paused and
+    its buffered motion invalidated across these operator-triggered operations.
     """
 
     config: HighlightStrategyConfig
@@ -163,13 +164,15 @@ class HighlightStrategy(RolloutStrategy):
                                             "Flushing ring buffer (%d frames) + starting live recording",
                                             len(ring),
                                         )
-                                        for buffered_frame in ring.drain():
-                                            dataset.add_frame(buffered_frame)
+                                        with self._pause_for_recording(ctx):
+                                            for buffered_frame in ring.drain():
+                                                dataset.add_frame(buffered_frame)
                                         self._recording_live.set()
                                     else:
-                                        dataset.add_frame(frame)
-                                        with self._episode_lock:
-                                            dataset.save_episode()
+                                        with self._pause_for_recording(ctx):
+                                            dataset.add_frame(frame)
+                                            with self._episode_lock:
+                                                dataset.save_episode()
                                         logger.info("Episode saved (total: %d)", dataset.num_episodes)
                                         log_say(
                                             f"Episode {dataset.num_episodes} saved",

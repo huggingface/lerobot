@@ -24,7 +24,6 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.processor import AbsoluteActionsProcessorStep, RelativeActionsProcessorStep
-from lerobot.rollout.inference.base import QueryKind as LegacyQueryKind
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE, QUERY_KIND, QUERY_TEXT
 
 
@@ -316,7 +315,6 @@ def test_language_processor_isolation_and_motion_invalidation_preserve_action_an
 
 @pytest.mark.parametrize("kind", list(QueryKind))
 def test_language_query_kind_contract_preserves_public_enum_and_policy_strings(kind, monkeypatch):
-    assert LegacyQueryKind is QueryKind
     policy = ConformingPolicy(tiny_config())
     runner = runner_for(policy)
 
