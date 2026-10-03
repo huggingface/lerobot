@@ -108,13 +108,12 @@ jobs:
       - name: "Tier 1 — Test: base"
         run: uv run pytest tests -vv --maxfail=10
 
-      # ── Tier 2: Dataset and remote inference ──────────────
-      # Exercise the codec and real Zenoh loopback/process tests on every PR.
-      # Rollout integration also needs datasets, independently of remote serving.
-      - name: "Tier 2 — Install: dataset + remote"
-        run: uv sync --locked --extra test --extra dataset --extra remote
+      # ── Tier 2: Dataset ──────────────────────────────────
+      # Transport/codec integration runs in Full Tests with the all extra.
+      - name: "Tier 2 — Install: dataset"
+        run: uv sync --locked --extra test --extra dataset
 
-      - name: "Tier 2 — Test: dataset + remote"
+      - name: "Tier 2 — Test: dataset"
         run: uv run pytest tests -vv --maxfail=10
 
       # ── Tier 3: Hardware ─────────────────────────────────

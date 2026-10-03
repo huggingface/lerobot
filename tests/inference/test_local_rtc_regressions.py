@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -187,6 +189,27 @@ def test_local_rtc_rejects_invalid_canonical_or_changing_model_width(wrong_canon
 
 
 def test_compile_warmup_exercises_prefix_and_delay_without_queueing_motion():
+    # PyTorch 2.11's CUDA build without a GPU registers a worker-owned fake CUDA
+    # guard globally. Exiting the compiling thread leaves a dangling guard for
+    # later tests (c10/core/impl/DeviceGuardImplInterface.cpp). Keep real threaded
+    # compilation and its assertions, but contain that upstream state in a child.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from tests.inference.test_local_rtc_regressions import _check_compile_warmup; "
+            "_check_compile_warmup()",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _check_compile_warmup():
     torch._dynamo.reset()
     graphs = []
 
@@ -362,7 +385,9 @@ def test_upgraded_language_hold_requires_fresh_query_and_action_observations():
         assert wait_for(lambda: not engine._hold_requested)
         assert len(engine._policy.calls) == 1, "actions need a post-query capture"
         observe(engine, 3)
-        assert wait_for(lambda: len(engine._policy.calls) == 2)
+        # The worker clones the observation after publishing its call metadata.
+        # Wait for the value inspected below, not the earlier metadata append.
+        assert wait_for(lambda: len(engine._policy.action_observations) == 2)
         torch.testing.assert_close(engine._policy.action_observations[1], torch.full((1, 2), 3.0))
         engine._policy.release.release()
         assert wait_for(lambda: engine.action_queue.qsize() > 0)
