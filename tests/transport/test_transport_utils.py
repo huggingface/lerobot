@@ -429,21 +429,18 @@ def test_python_object_to_bytes_none():
         "Unicode: 你好世界 🌍",
         True,
         False,
-        b"byte string",
         [],
         [1, 2, 3],
         [1, "two", 3.0, True, None],
         {},
         {"key": "value", "number": 123, "nested": {"a": 1}},
-        (),
-        (1, 2, 3),
     ],
 )
 @skip_if_package_missing("grpcio", "grpc")
 def test_python_object_to_bytes_simple_types(obj):
+    """Test converting JSON-serializable Python types round-trips intact."""
     from lerobot.transport.utils import bytes_to_python_object, python_object_to_bytes
 
-    """Test converting simple Python types."""
     data = python_object_to_bytes(obj)
     reconstructed = bytes_to_python_object(data)
     assert reconstructed == obj
@@ -451,28 +448,17 @@ def test_python_object_to_bytes_simple_types(obj):
 
 
 @skip_if_package_missing("grpcio", "grpc")
-def test_python_object_to_bytes_with_tensors():
-    from lerobot.transport.utils import bytes_to_python_object, python_object_to_bytes
+def test_python_object_to_bytes_rejects_non_json():
+    """python_object_to_bytes is JSON-only (CVE-2026-25874).
 
-    """Test converting objects containing PyTorch tensors."""
-    obj = {
-        "tensor": torch.randn(5, 5),
-        "list_with_tensor": [1, 2, torch.randn(3, 3), "string"],
-        "nested": {
-            "tensor1": torch.randn(2, 2),
-            "tensor2": torch.tensor([1, 2, 3]),
-        },
-    }
+    Objects that are not JSON-serializable, such as tensors, must raise rather
+    than fall back to a pickle-based encoding that could execute code when
+    deserialized over the unauthenticated gRPC channel.
+    """
+    from lerobot.transport.utils import python_object_to_bytes
 
-    data = python_object_to_bytes(obj)
-    reconstructed = bytes_to_python_object(data)
-
-    assert torch.allclose(obj["tensor"], reconstructed["tensor"])
-    assert reconstructed["list_with_tensor"][0] == 1
-    assert reconstructed["list_with_tensor"][3] == "string"
-    assert torch.allclose(obj["list_with_tensor"][2], reconstructed["list_with_tensor"][2])
-    assert torch.allclose(obj["nested"]["tensor1"], reconstructed["nested"]["tensor1"])
-    assert torch.equal(obj["nested"]["tensor2"], reconstructed["nested"]["tensor2"])
+    with pytest.raises(TypeError):
+        python_object_to_bytes({"tensor": torch.randn(3, 3)})
 
 
 @skip_if_package_missing("grpcio", "grpc")
