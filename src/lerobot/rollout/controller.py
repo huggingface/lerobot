@@ -268,6 +268,7 @@ class RolloutController:
             if self._stopped.is_set():
                 return
             self._start_requested.clear()  # last command wins, see reset()
+            self._ctx.policy.inference.stop_autosteer()
             self._stop_requested.set()
             self._segment_stop.set()
             self._wake.set()

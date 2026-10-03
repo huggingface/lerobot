@@ -205,7 +205,9 @@ class InteractiveSession:
     def _report_answer(self, answer: QueryAnswer) -> None:
         """Render a resolved text query (an operator question or an autosteer turn)."""
         if answer.kind is QueryKind.NEXT_SUBTASK:
-            if answer.ok:
+            if answer.ok and answer.held:
+                self._print(f"Autosteer holds {answer.answer!r} — nothing sent to the policy")
+            elif answer.ok:
                 # The engine has already applied it via set_task; just announce.
                 self._print(f"Autosteer subtask: {answer.answer!r}")
             else:
