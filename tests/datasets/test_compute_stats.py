@@ -576,6 +576,18 @@ def test_get_feature_stats_fixed_quantiles():
     assert expected_quantile_keys.issubset(set(stats.keys()))
 
 
+def test_get_feature_stats_custom_quantile_list():
+    """Test that a custom quantile_list is honoured when computing from multiple samples."""
+    data = np.random.default_rng(0).normal(0, 1, (1000, 3))
+
+    stats = get_feature_stats(data, axis=0, keepdims=False, quantile_list=[0.05, 0.95])
+
+    quantile_keys = {key for key in stats if key.startswith("q")}
+    assert quantile_keys == {"q05", "q95"}
+    np.testing.assert_allclose(stats["q05"], np.quantile(data, 0.05, axis=0), atol=0.05)
+    np.testing.assert_allclose(stats["q95"], np.quantile(data, 0.95, axis=0), atol=0.05)
+
+
 def test_get_feature_stats_unsupported_axis_error():
     """Test error for unsupported axis configuration."""
     data = np.random.normal(0, 1, (10, 5))
