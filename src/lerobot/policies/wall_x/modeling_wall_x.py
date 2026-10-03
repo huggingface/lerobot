@@ -57,6 +57,7 @@ from lerobot.utils.import_utils import (
 )
 from lerobot.utils.language import require_single_text_output
 
+from ..common.flow_matching import FlowConvention, euler_integrate
 from ..pretrained import PreTrainedPolicy
 from ..utils import populate_queues
 from .configuration_wall_x import WallXConfig
@@ -66,7 +67,6 @@ from .qwen_model.vision_attention import VisionAttentionBackend
 
 if TYPE_CHECKING or _wallx_deps_available:
     from peft import LoraConfig, get_peft_model
-    from torchdiffeq import odeint
     from transformers import AutoProcessor, BatchFeature
     from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
         Qwen2_5_VisionTransformerPretrainedModel,
@@ -82,7 +82,6 @@ if TYPE_CHECKING or _wallx_deps_available:
 else:
     LoraConfig = None
     get_peft_model = None
-    odeint = None
     AutoProcessor = None
     BatchFeature = None
     # Conditional base: when transformers is unavailable the class still parses
@@ -1370,13 +1369,13 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
             )
             dof_mask = dof_mask.to(inputs_embeds.device).to(torch.float32)
 
-            def step(timestep, noisy_action):
+            def step(noisy_action, timestep):
                 """
                 Single denoising step for diffusion process.
 
                 Args:
-                    timestep: Current diffusion timestep
                     noisy_action: Current noisy action estimate
+                    timestep: Current diffusion timestep, shape ``(batch_size,)``
 
                 Returns:
                     torch.Tensor: Predicted clean action
@@ -1384,8 +1383,6 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
                 action_mask = input_ids == self.action_token_id_set["action_token_id"]
                 assert action_mask.any(), "No action token found in input_ids"
 
-                # Prepare timestep for batch processing
-                timestep = timestep.unsqueeze(0).repeat(noisy_action.shape[0])
                 action_embed = self.action_preprocessor.step(
                     timestep=timestep, noisy_action=noisy_action, dof_mask=dof_mask
                 )
@@ -1419,7 +1416,9 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
                 pred = self.action_preprocessor.action_proj_back(action_hidden_states)
                 return pred.reshape(batch_size, pred_horizon, action_dim)
 
-            # Perform ODE integration for diffusion sampling
+            # Perform ODE integration for diffusion sampling. Wall-X pins its schedule to an
+            # explicit float32 linspace whose steps are not bit-identical to `step / n`, so the
+            # grid is handed to the shared solver rather than reconstructed from `num_steps`.
             times = torch.linspace(
                 0,
                 1,
@@ -1427,11 +1426,14 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
                 device=inputs_embeds.device,
                 dtype=torch.float32,
             )
-            action_trajectory = odeint(step, noisy_action, times, method="euler")
 
-            # Extract final predicted action
             # Removed unnormalization step for now
-            predict_action = action_trajectory[-1]
+            predict_action = euler_integrate(
+                step,
+                noisy_action,
+                convention=FlowConvention.NOISE_AT_ZERO,
+                time_grid=times,
+            )
             output["predict_action"] = predict_action
 
             # Process ground truth actions if available
