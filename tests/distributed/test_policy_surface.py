@@ -21,8 +21,8 @@ import pytest
 import torch
 from torch import nn
 
-from lerobot.configs.accelerator import FSDPConfig
-from lerobot.distributed import set_fsdp_wrap_modules, strip_accelerate_cp_hooks
+from lerobot.configs.accelerator import CompileConfig, FSDPConfig
+from lerobot.distributed import apply_torch_compile, set_fsdp_wrap_modules, strip_accelerate_cp_hooks
 from lerobot.policies.pretrained import PreTrainedPolicy
 
 
@@ -124,3 +124,94 @@ class TestSetFsdpWrapModules:
 
     def test_non_sharded_run_is_noop(self):
         set_fsdp_wrap_modules(_accelerator_with(None), _UndeclaredPolicy())
+
+
+class _RegionPolicy(nn.Module):
+    """Declares a compile region and selects a parameter group by name, the way ACT does."""
+
+    _compile_regions = ("model",)
+
+    def __init__(self):
+        super().__init__()
+        self.model = nn.Sequential()
+        self.model.backbone = nn.Linear(2, 2)
+        self.model.trunk = nn.Linear(2, 2)
+        self.head = nn.Linear(2, 2)
+
+    def backbone_group(self) -> list[nn.Parameter]:
+        return [p for n, p in self.named_parameters() if n.startswith("model.backbone")]
+
+
+class _NoRegionPolicy(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.model = nn.Linear(2, 2)
+
+
+class TestApplyTorchCompile:
+    def test_act_declares_a_region_it_owns(self):
+        """The declared region names must track the modeling code — this test pins the drift."""
+        from lerobot.policies.act.modeling_act import ACTPolicy
+
+        assert ACTPolicy._compile_regions == ("model",)
+        assert "model" in ACTPolicy.__init__.__code__.co_names
+
+    def test_disabled_returns_the_policy_untouched(self):
+        policy = _RegionPolicy()
+        model = policy.model
+        assert apply_torch_compile(policy, CompileConfig(enabled=False)) is policy
+        assert policy.model is model
+
+    def test_auto_follows_the_declaration(self):
+        declared = apply_torch_compile(_RegionPolicy(), CompileConfig())
+        assert isinstance(declared.model, torch._dynamo.eval_frame.OptimizedModule)
+
+        plain = _NoRegionPolicy()
+        model = plain.model
+        assert apply_torch_compile(plain, CompileConfig()) is plain
+        assert plain.model is model
+
+    def test_regional_wraps_only_the_declared_region(self):
+        policy = _RegionPolicy()
+        head = policy.head
+        apply_torch_compile(policy, CompileConfig(enabled=True))
+        assert isinstance(policy.model, torch._dynamo.eval_frame.OptimizedModule)
+        assert policy.head is head
+
+    def test_the_wrapper_keeps_the_same_parameter_objects(self):
+        policy = _RegionPolicy()
+        before = dict(policy.named_parameters())
+        apply_torch_compile(policy, CompileConfig(enabled=True))
+        after = {n.replace("_orig_mod.", ""): p for n, p in policy.named_parameters()}
+        assert after.keys() == before.keys()
+        assert all(after[n] is p for n, p in before.items())
+
+    def test_a_group_selected_by_name_is_lost_after_compile(self):
+        """Why lerobot_train builds the optimizer before compiling: the wrapper renames parameters."""
+        policy = _RegionPolicy()
+        assert len(policy.backbone_group()) == 2
+
+        apply_torch_compile(policy, CompileConfig(enabled=True))
+        assert policy.backbone_group() == []
+        assert any("model._orig_mod.backbone" in n for n, _ in policy.named_parameters())
+
+    def test_the_train_script_builds_the_optimizer_first(self):
+        """Guards the order the test above makes necessary."""
+        import inspect
+
+        from lerobot.scripts import lerobot_train
+
+        source = inspect.getsource(lerobot_train.train)
+        assert source.index("make_optimizer_and_scheduler(") < source.index("apply_torch_compile(")
+
+    def test_the_train_script_leaves_a_sharded_run_uncompiled(self):
+        """`enabled=None` is auto, which the config documents as off for a sharded run. `validate`
+        only rejects an explicit `enabled=True`, so the call site has to carry the auto half."""
+        import inspect
+
+        from lerobot.scripts import lerobot_train
+
+        source = inspect.getsource(lerobot_train.train)
+        call = source.index("apply_torch_compile(")
+        guard = source.rindex("if not cfg.parallelism.is_sharded:", 0, call)
+        assert source[guard:call].count("\n") == 1, "the guard must be the line before the call"
