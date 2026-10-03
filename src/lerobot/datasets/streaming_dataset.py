@@ -480,17 +480,18 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         return Backtrackable(dataset, history=lookback, lookahead=lookahead)
 
     def _make_timestamps_from_indices(
-        self, start_ts: float, indices: dict[str, list[int]] | None = None
+        self, start_timestamps: dict[str, float], indices: dict[str, list[int]] | None = None
     ) -> dict[str, list[float]]:
         if indices is not None:
             return {
                 key: (
-                    start_ts + torch.tensor(indices[key]) / self.fps
+                    start_timestamps[key] + torch.tensor(indices[key]) / self.fps
                 ).tolist()  # NOTE: why not delta_timestamps directly?
-                for key in indices
+                for key in self.meta.video_keys
+                if key in indices
             }
         else:
-            return dict.fromkeys(self.meta.video_keys, [start_ts])
+            return {key: [start_timestamps[key]] for key in self.meta.video_keys}
 
     def _make_padding_camera_frame(self, camera_key: str):
         """Variable-shape padding frame for given camera keys, given in (H, W, C)"""
@@ -537,15 +538,16 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         # Get episode index from the item
         ep_idx = item["episode_index"]
 
-        # "timestamp" restarts from 0 for each episode, whereas we need a global timestep within the single .mp4 file (given by index/fps)
-        current_ts = item["index"] / self.fps
-
         episode_boundaries_ts = {
             key: (
                 self.meta.episodes[ep_idx][f"videos/{key}/from_timestamp"],
                 self.meta.episodes[ep_idx][f"videos/{key}/to_timestamp"],
             )
             for key in self.meta.video_keys
+        }
+        # Convert the episode-local timestamp to each video file's coordinate space.
+        current_timestamps = {
+            key: episode_boundaries_ts[key][0] + float(item["timestamp"]) for key in self.meta.video_keys
         }
 
         # Apply delta querying logic if necessary
@@ -556,11 +558,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         # Load video frames, when needed
         if len(self.meta.video_keys) > 0:
-            original_timestamps = self._make_timestamps_from_indices(current_ts, self.delta_indices)
+            original_timestamps = self._make_timestamps_from_indices(current_timestamps, self.delta_indices)
 
             # Some timestamps might not result available considering the episode's boundaries
             query_timestamps = self._get_query_timestamps(
-                current_ts, self.delta_indices, episode_boundaries_ts
+                current_timestamps, self.delta_indices, episode_boundaries_ts
             )
             video_frames = self._query_videos(query_timestamps, ep_idx)
 
@@ -597,12 +599,12 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
     def _get_query_timestamps(
         self,
-        current_ts: float,
+        current_timestamps: dict[str, float],
         query_indices: dict[str, list[int]] | None,
         episode_boundaries_ts: dict[str, tuple[float, float]],
     ) -> dict[str, list[float]]:
         query_timestamps = {}
-        keys_to_timestamps = self._make_timestamps_from_indices(current_ts, query_indices)
+        keys_to_timestamps = self._make_timestamps_from_indices(current_timestamps, query_indices)
         for key in self.meta.video_keys:
             if query_indices is not None and key in query_indices:
                 timestamps = keys_to_timestamps[key]
@@ -612,7 +614,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 ).tolist()
 
             else:
-                query_timestamps[key] = [current_ts]
+                query_timestamps[key] = [current_timestamps[key]]
 
         return query_timestamps
 
