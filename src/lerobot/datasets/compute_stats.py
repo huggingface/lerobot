@@ -19,9 +19,11 @@ import logging
 from collections.abc import Sequence
 
 import numpy as np
+import torch
 
 from lerobot.configs import is_depth_map
 from lerobot.processor import RelativeActionsProcessorStep
+from lerobot.processor.relative_action_processor import to_relative_actions
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .io_utils import load_image_as_numpy
@@ -688,20 +690,25 @@ def _compute_relative_chunk_batch(
     all_states: np.ndarray,
     chunk_size: int,
     relative_mask: np.ndarray,
+    se3_pose_groups: Sequence[Sequence[int]] | None = None,
 ) -> np.ndarray:
     """Vectorised relative-action computation for a batch of start indices.
 
     Returns an ``(N * chunk_size, action_dim)`` float32 array.
+
+    Delegates to ``to_relative_actions`` so these statistics describe exactly the values the
+    normalizer will see at train time -- in particular, pose groups are composed in SE(3)
+    rather than subtracted.
     """
     if len(start_indices) == 0:
         return np.empty((0, all_actions.shape[1]), dtype=np.float32)
     offsets = np.arange(chunk_size)
     frame_idx = start_indices[:, None] + offsets[None, :]
-    chunks = all_actions[frame_idx].copy()
-    states = all_states[start_indices]
-    mask_dim = len(relative_mask)
-    chunks[:, :, :mask_dim] -= states[:, None, :mask_dim] * relative_mask[None, None, :]
-    return chunks.reshape(-1, all_actions.shape[1])
+    chunks = torch.from_numpy(all_actions[frame_idx])
+    states = torch.from_numpy(all_states[start_indices])
+    mask = [bool(flag) for flag in relative_mask]
+    relative = to_relative_actions(chunks, states, mask, se3_pose_groups)
+    return relative.reshape(-1, all_actions.shape[1]).numpy()
 
 
 def compute_relative_action_stats(
@@ -710,6 +717,7 @@ def compute_relative_action_stats(
     chunk_size: int,
     exclude_joints: list[str] | None = None,
     num_workers: int = 0,
+    se3_pose_groups: Sequence[Sequence[int]] | None = None,
 ) -> dict[str, np.ndarray]:
     """Compute normalization statistics for relative actions over the full dataset.
 
@@ -782,6 +790,7 @@ def compute_relative_action_stats(
                     all_states,
                     chunk_size,
                     relative_mask,
+                    se3_pose_groups,
                 )
                 for batch in batches
             ]
@@ -790,7 +799,9 @@ def compute_relative_action_stats(
     else:
         for batch in batches:
             running_stats.update(
-                _compute_relative_chunk_batch(batch, all_actions, all_states, chunk_size, relative_mask)
+                _compute_relative_chunk_batch(
+                    batch, all_actions, all_states, chunk_size, relative_mask, se3_pose_groups
+                )
             )
 
     stats = running_stats.get_statistics()
