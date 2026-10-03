@@ -87,6 +87,8 @@
     title: Multitask DiT Policy
   - local: walloss
     title: WALL-OSS
+  - local: dm05
+    title: DM05
   title: "Policies"
 - sections:
   - local: sarm
