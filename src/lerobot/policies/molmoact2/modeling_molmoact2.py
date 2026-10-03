@@ -34,6 +34,7 @@ import types
 from collections import deque
 from collections.abc import Iterator
 from contextlib import nullcontext, suppress
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -44,6 +45,7 @@ from safetensors.torch import load_file as load_safetensors_file
 from torch import Tensor
 from torch.distributions import Beta
 
+from lerobot.inference.contracts import ChunkPolicySpec
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import (
@@ -641,6 +643,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
     def supports_rtc(self) -> bool:
         return self.config.inference_action_mode == "continuous"
+
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Direct chunk prediction returns the checkpoint's configured playback slice."""
+        spec = super().chunk_inference_spec()
+        return replace(spec, prediction_steps=self.config.n_action_steps)
 
     def __init__(
         self,

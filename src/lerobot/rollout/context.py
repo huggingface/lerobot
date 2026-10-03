@@ -226,7 +226,12 @@ class HardwareContext:
 
 @dataclass
 class PolicyContext:
-    """Loaded policy and its inference engine."""
+    """Inference engine and optional local policy resources.
+
+    Remote inference leaves ``policy``, ``preprocessor`` and ``postprocessor``
+    as ``None``: those resources live on the server. Strategies use ``inference``
+    for policy work and ``ProcessorContext`` for robot-side processing.
+    """
 
     policy: PreTrainedPolicy | None
     preprocessor: PolicyProcessorPipeline | None
@@ -589,21 +594,33 @@ def build_rollout_context(
         cfg.inference.type if hasattr(cfg.inference, "type") else "sync",
     )
     task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
-    inference_strategy = create_inference_engine(
-        cfg.inference,
-        policy=policy,
-        preprocessor=preprocessor,
-        postprocessor=postprocessor,
-        robot_wrapper=robot_wrapper,
-        dataset_features=dataset_features,
-        ordered_action_keys=ordered_action_keys,
-        task=task_str,
-        fps=cfg.fps,
-        device=cfg.device,
-        use_torch_compile=torch_compile_active,
-        compile_warmup_inferences=cfg.compile_warmup_inferences,
-        shutdown_event=shutdown_event,
-    )
+    try:
+        inference_strategy = create_inference_engine(
+            cfg.inference,
+            policy=policy,
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            robot_wrapper=robot_wrapper,
+            dataset_features=dataset_features,
+            ordered_action_keys=ordered_action_keys,
+            task=task_str,
+            fps=cfg.fps,
+            device=cfg.device,
+            use_torch_compile=torch_compile_active,
+            compile_warmup_inferences=cfg.compile_warmup_inferences,
+            shutdown_event=shutdown_event,
+        )
+    except BaseException:
+        # Context construction precedes the CLI's strategy teardown guard. A
+        # rejected engine must release the devices it already connected without
+        # masking the original contract/configuration error.
+        for device in (teleop, robot):
+            if device is not None and device.is_connected:
+                try:
+                    device.disconnect()
+                except Exception:
+                    logger.exception("Device cleanup failed after inference engine construction failed")
+        raise
 
     # --- 8. Assemble ---------------------------------------------------
     logger.info("Rollout context assembled successfully")

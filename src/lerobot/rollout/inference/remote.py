@@ -74,6 +74,7 @@ class RemoteInferenceEngine(InferenceEngine):
         self._hold_requested = False
         self._hold_acknowledged = False
         self._hold_started = 0.0
+        self._hold_reason = "language"
         self._query_observation: ObservationSnapshot | None = None
         self._query_generation = 0
         self._stop_event = Event()
@@ -83,6 +84,7 @@ class RemoteInferenceEngine(InferenceEngine):
         self._tick = 0
         self._fault_reported = False
         self._refill_horizon_warned = False
+        self._age_budget_warned = False
         # Bounded scalar history for cadence diagnostics; do not retain captures.
         self._last_request: tuple[int, float, int, int] | None = None
         # Console handlers may block. Control-thread events only enter this bounded
@@ -146,7 +148,7 @@ class RemoteInferenceEngine(InferenceEngine):
                     self.config.startup_timeout_s,
                 )
             elif name == "planned_hold":
-                logger.info("Remote language query: requesting a local hold before text inference")
+                logger.info("Remote %s: requesting a local hold before fresh resumption", event["reason"])
             elif name == "language_result":
                 logger.info(
                     "Remote language query completed (%s, %.3fs); action resumption requires a fresh observation",
@@ -197,7 +199,10 @@ class RemoteInferenceEngine(InferenceEngine):
                 "compare refill headroom with that delay before changing the setting."
             )
         elif "observation" in reason.lower() or "stale" in reason.lower():
-            hint = "Check observation acquisition age, processing/queue delay and oldest blended-contributor age."
+            hint = (
+                "Check max_observation_age_s against execution horizon plus queued playback/turnaround; "
+                "also inspect acquisition delay and oldest blended-contributor age."
+            )
         elif "deadline" in reason.lower() or "timeout" in reason.lower():
             hint = "Check server completion and connectivity; increasing a timeout cannot replenish an empty buffer."
         else:
@@ -270,6 +275,25 @@ class RemoteInferenceEngine(InferenceEngine):
     def _warn_refill_horizon(self) -> None:
         """Report saturation once, including when the measured latency floor grows."""
         horizon = self.client.capabilities.execution_steps * self.runtime.interval
+        minimum_age = (
+            horizon + min(horizon, self.runtime.effective_refill)
+            if self.config.chunk_merge == "append" and self.config.mode == "chunk"
+            else max(0.0, horizon - self.runtime.effective_refill)
+        )
+        if not self._age_budget_warned and self.runtime.max_age <= minimum_age + self.runtime.interval:
+            self._age_budget_warned = True
+            logger.warning(
+                "max_observation_age_s=%.3fs leaves insufficient playback margin: mode=%s merge=%s "
+                "horizon=%.3fs effective_refill=%.3fs estimated playback source age=%.3fs before "
+                "capture/inference/jitter margin. Increase the explicit age budget or shorten the "
+                "execution slice; aligned replacement and blending require their own measured margin.",
+                self.runtime.max_age,
+                self.config.mode,
+                self.config.chunk_merge,
+                horizon,
+                self.runtime.effective_refill,
+                minimum_age,
+            )
         if (
             self.config.chunk_merge == "aligned"
             and not self._refill_horizon_warned
@@ -293,12 +317,14 @@ class RemoteInferenceEngine(InferenceEngine):
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=2)
+            if self._thread.is_alive():
+                logger.warning("Remote worker did not stop within 2s; local hardware shutdown continues")
         if self._event_writer is not None:
             self._event_writer.close()
 
     def _invalidate(self, operation: str) -> None:
         with self._lock:
-            generation = self.runtime.invalidate()
+            generation = self.runtime.invalidate(held=True)
             self._observation = None
             self._hold_requested = False
             self._hold_acknowledged = False
@@ -309,15 +335,16 @@ class RemoteInferenceEngine(InferenceEngine):
         self._event(operation)
 
     def pause(self) -> None:
-        self.runtime.active = False
+        self.drop_pending_query()
+        with self.runtime.lock:
+            self.runtime.active = False
         self._invalidate("invalidate")
 
     def resume(self) -> None:
         if self.failed or self._stop_event.is_set():
             raise RuntimeError("Faulted/closed remote sessions require a new rollout")
-        with self.runtime.lock:
-            self.runtime.active = True
-            self.runtime.started_at = time.monotonic()
+        with self._lock:
+            self.runtime.activate(held=self._control is not None)
 
     def reset(self) -> None:
         self.drop_pending_query()
@@ -325,19 +352,35 @@ class RemoteInferenceEngine(InferenceEngine):
         self._discard_task_change()
 
     def set_task(self, task: str) -> bool:
-        if len(task) > self.client.descriptor["limits"]["max_input_chars"]:
-            raise ValueError("Instruction exceeds deployed text limit")
-        changed = super().set_task(task)
-        if changed:
-            self._event("task", task=task, task_version=self.task_version)
-        return changed
+        if error := self.text_input_error(task, instruction=True):
+            logger.warning("Instruction rejected: %s", error)
+            return False
+        # Acceptance takes the task lock before deciding eligibility. A result
+        # accepted before the change remains valid buffered continuity.
+        with self._lock, self._task_lock:
+            if task == self._task:
+                return False
+            self._task = task
+            self._task_changed = True
+            self._task_version += 1
+            if self.runtime.pending is not None:
+                self._request_hold("instruction change")
+            self._event("task", task=task, task_version=self._task_version)
+        return True
+
+    def text_input_error(self, text: str, *, instruction: bool = False) -> str | None:
+        limit = self.client.descriptor["limits"]["max_input_chars"]
+        if not instruction and not text.strip():
+            return "Enter a non-empty question or goal."
+        if len(text) > limit:
+            return (
+                f"Text contains {len(text)} characters; this deployment's limit is {limit}. "
+                "Shorten it and try again."
+            )
+        return None
 
     def _queue_query(self, query: PolicyQuery) -> bool:
-        if (
-            not self.supports_text_queries
-            or self.failed
-            or not 0 < len(query.text) <= self.client.descriptor["limits"]["max_input_chars"]
-        ):
+        if not self.supports_text_queries or self.failed or self.text_input_error(query.text) is not None:
             return False
         queued = super()._queue_query(query)
         if queued:
@@ -352,11 +395,8 @@ class RemoteInferenceEngine(InferenceEngine):
         return served
 
     def start_autosteer(self, goal: str, interval_s: float) -> None:
-        if (
-            not self.supports_text_queries
-            or not 0 < len(goal) <= self.client.descriptor["limits"]["max_input_chars"]
-        ):
-            raise ValueError("Unsupported or oversized autosteering query")
+        if not self.supports_text_queries:
+            raise ValueError("This deployment does not support autosteering queries")
         super().start_autosteer(goal, interval_s)
 
     def notify_observation(self, obs: dict) -> None:
@@ -368,6 +408,8 @@ class RemoteInferenceEngine(InferenceEngine):
         if len(mapped) != len(frame):
             self._fault("Feature mapping contains a collision")
             return
+        expected = {feature.name for feature in self.client.capabilities.features}
+        mapped = {key: value for key, value in mapped.items() if key in expected}
         # Mapping is applied once here; server processors require an empty rename map.
         with self._task_lock:
             task, version = self._task, self._task_version
@@ -385,18 +427,21 @@ class RemoteInferenceEngine(InferenceEngine):
         if self.has_pending_query:
             self._request_language_hold()
         with self._lock:
-            if self._hold_requested and time.monotonic() - self._hold_started > (
-                self.config.language_timeout_s
-                + self.config.action_timeout_s
-                + self.config.handshake_timeout_s
-            ):
-                self._fault("Planned language hold deadline exceeded")
+            hold_timeout = self.config.action_timeout_s + self.config.handshake_timeout_s
+            if self._hold_reason == "language":
+                hold_timeout += self.config.language_timeout_s
+            if self._hold_requested and time.monotonic() - self._hold_started > hold_timeout:
+                self._fault(f"Planned {self._hold_reason} hold deadline exceeded")
         allowed = self.runtime.dispatch_allowed()
         if self.runtime.failure is not None:
             self._fault(self.runtime.failure)
         return allowed
 
     def _request_language_hold(self) -> None:
+        self._request_hold("language")
+
+    def _request_hold(self, reason: str) -> None:
+        """Invalidate an operator-triggered transition before fresh resumption."""
         with self._lock:
             if not self.runtime.active or self._hold_requested or self.failed:
                 return
@@ -404,10 +449,11 @@ class RemoteInferenceEngine(InferenceEngine):
             self._hold_requested = True
             self._hold_acknowledged = False
             self._hold_started = time.monotonic()
+            self._hold_reason = reason
             self._observation = None
             operation = "reset" if self._control is not None and self._control[0] == "reset" else "invalidate"
             self._control = (operation, generation)
-            self._event("planned_hold")
+            self._event("planned_hold", reason=reason)
 
     def acknowledge_hold(self) -> None:
         with self._lock:
@@ -463,6 +509,13 @@ class RemoteInferenceEngine(InferenceEngine):
             )
         ):
             raise RequestCancelled("Query superseded by newer operator intent")
+        # A completed language response can fit the output budget yet be too
+        # large to use as the next instruction. Reject inside the query service
+        # path, outside transport-fault handling, before changing any task state.
+        if query.kind is QueryKind.NEXT_SUBTASK and (
+            error := self.text_input_error(answer, instruction=True)
+        ):
+            raise ValueError(f"Generated subtask cannot be used as an instruction: {error}")
         self._event(
             "language_result",
             intent_generation=query.intent_generation,
@@ -516,10 +569,20 @@ class RemoteInferenceEngine(InferenceEngine):
                         self._stop_event.wait(0.002)
                         continue
                     operation, generation = control
-                    self.client.control(operation, generation)
+                    try:
+                        self.client.control(
+                            operation,
+                            generation,
+                            cancelled=lambda: self._stop_event.is_set() or self.failed,
+                        )
+                    except RequestCancelled:
+                        continue
                     with self._lock:
                         if self._control == control:
                             self._control = None
+                            if not self._hold_requested:
+                                self.runtime.release_hold(generation)
+                                self._observation = None
                     continue
                 if not self.runtime.active or observation is None:
                     self.runtime.check_deadlines()
@@ -546,15 +609,16 @@ class RemoteInferenceEngine(InferenceEngine):
                         continue
                     self._service_query({})
                     with self._lock:
-                        if self.runtime.generation == generation and not self.failed:
-                            self.runtime.held = False
-                            self.runtime.started_at = time.monotonic()
+                        if self.runtime.release_hold(generation):
                             self._hold_requested = False
                             self._hold_acknowledged = False
                             self._observation = None  # action always gets a post-query capture
                     continue
                 if self.has_pending_query or not self.client.present:
                     self.runtime.check_deadlines()
+                    self._stop_event.wait(0.002)
+                    continue
+                if not self.runtime.should_request(task_version=self.task_version):
                     self._stop_event.wait(0.002)
                     continue
                 with self._lock:
@@ -564,9 +628,10 @@ class RemoteInferenceEngine(InferenceEngine):
                         and not self._hold_requested
                     ):
                         with self._task_lock:
-                            observation = replace(
-                                observation, task=self._task, task_version=self._task_version
-                            )
+                            if observation.task_version != self._task_version:
+                                observation = replace(
+                                    observation, task=self._task, task_version=self._task_version
+                                )
                         request = self.runtime.begin(observation)
                     else:
                         request = None
@@ -648,8 +713,11 @@ class RemoteInferenceEngine(InferenceEngine):
                 self._fault(self.runtime.failure)
             self._drain_log_events()
             try:
-                self.client.close()
-                logger.info("Remote session closed; server acknowledged session release")
+                acknowledged = self.client.close()
+                if acknowledged is False:
+                    logger.info("Remote transport closed without a server acknowledgement")
+                else:
+                    logger.info("Remote session closed; server acknowledged session release")
             except (TimeoutError, ProtocolError) as exc:
                 logger.warning(
                     "Remote session close was not acknowledged (%s); transport was closed and server "

@@ -158,6 +158,15 @@ class DAggerEvents:
             self._phase = new_phase
             return old_phase, new_phase
 
+    def permits_autonomous_motion(self) -> bool:
+        """Do not resume a recording pause over a queued operator transition."""
+        with self._lock:
+            return (
+                self._phase == DAggerPhase.AUTONOMOUS
+                and self._pending_transition is None
+                and not self.stop_recording.is_set()
+            )
+
     def reset(self) -> None:
         """Reset all transient state for a fresh session."""
         with self._lock:
@@ -482,7 +491,10 @@ class DAggerStrategy(RolloutStrategy):
                     # episode boundary lands on a clean autonomous frame.
                     elapsed = time.perf_counter() - episode_start
                     if elapsed >= episode_duration_s and phase != DAggerPhase.CORRECTING:
-                        with self._episode_lock:
+                        with (
+                            self._pause_for_recording(ctx, resume_allowed=events.permits_autonomous_motion),
+                            self._episode_lock,
+                        ):
                             dataset.save_episode()
                         episodes_since_push += 1
                         self._needs_push.set()
@@ -594,7 +606,12 @@ class DAggerStrategy(RolloutStrategy):
 
                         # Correction ended -> save episode (blocking if not streaming)
                         if old_phase == DAggerPhase.CORRECTING and new_phase == DAggerPhase.PAUSED:
-                            with self._episode_lock:
+                            with (
+                                self._pause_for_recording(
+                                    ctx, resume_allowed=events.permits_autonomous_motion
+                                ),
+                                self._episode_lock,
+                            ):
                                 dataset.save_episode()
                             recorded += 1
                             self._needs_push.set()

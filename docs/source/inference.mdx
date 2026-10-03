@@ -259,6 +259,10 @@ lerobot-rollout \
 
 `SentryStrategy` (recording, interactive-safe) and `BaseStrategy` (no recording) are the reference implementations to copy from; `send_next_action`, `safe_push_to_hub` and `estimate_max_episode_seconds` from `lerobot.rollout.strategies` are the helpers they build on.
 
+For asynchronous backends, the dispatch contract is mandatory. Publish each captured observation with `engine.notify_observation(obs_processed)`, call `send_next_action(...)` on **every autonomous motor tick**, including interpolation and held ticks, then call `engine.pump_query(obs_processed)`. Calling only `engine.get_action()` bypasses the permission and hold handshake: a planned text query can wait indefinitely, and a terminal fault may never signal shutdown.
+
+If you implement dispatch yourself, preserve the helper's order: `begin_control_tick()`, `dispatch_allowed()` before pulling an action and again before sending, interpolation invalidation plus a supported local hold and `acknowledge_hold()` when denied, and `record_dispatch()` after sending. Never acknowledge a hold that failed. Inspect `send_next_action` for the processor and provenance details. Remote contexts have `ctx.policy.policy`, `preprocessor` and `postprocessor` set to `None`; use `ctx.policy.inference` and the robot-side pipelines in `ctx.processors`.
+
 ---
 
 ## Inference Backends
@@ -305,14 +309,25 @@ See the [Real-Time Chunking](./rtc) guide for details on tuning RTC parameters.
 Local RTC and remote inference share chunk scheduling, atomic continuation snapshots,
 per-action task/source provenance and consumption-aware merging. A queue pop commits an
 endpoint to interpolation; it does not imply that the robot has reached that endpoint.
-Both asynchronous backends require a supported local position-hold implementation and
-reject mixed actuator modes that do not have one. Synchronous inference is unchanged.
+Remote inference requires a supported local position-hold implementation. Ordinary local
+RTC remains available on existing robots without that opt-in, but planned language holds
+and in-flight instruction-change holds require it. No stop semantics are inferred for
+unsupported actuator modes. Synchronous inference is unchanged.
 
 Local RTC also exposes `--inference.max_observation_age_s`, `--inference.action_timeout_s`,
 `--inference.startup_timeout_s` and `--inference.language_timeout_s`. These bound stale
 motion and outstanding work; their defaults are provisional validation settings. Measure
 the chosen model and hardware before selecting a playback/age budget. A terminal fault
-invalidates interpolation, holds locally, and skips automatic homing at teardown.
+invalidates interpolation, requests a supported local hold, then honors
+`--return_to_initial_position` (default true) before disconnecting, unless local hardware
+I/O has failed. It never resumes policy execution automatically.
+
+An instruction change during local inference uses a planned hold and a fresh capture on
+robots supporting that hold. Without hold support, the obsolete result is still rejected;
+insufficient remaining playback can therefore fault the run. Pause before changing the
+instruction when the robot's configured pause/stop behavior is appropriate for the setup.
+With compilation enabled, RTC warms initial and prefixed calls, including a representative
+nonzero delay, before motion. Arbitrary later task/shape changes may still trigger recompilation.
 
 ---
 

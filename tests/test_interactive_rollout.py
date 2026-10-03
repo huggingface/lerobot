@@ -1410,10 +1410,12 @@ def _running_rtc_engine(rtc_queue_threshold: int = 30, chunk_len: int = 10):
         engine.stop()
 
 
-def test_rtc_engine_dispatched_task_tracks_chunk_provenance_across_set_task():
+@pytest.mark.parametrize("supports_hold", [False, True])
+def test_rtc_engine_dispatched_task_tracks_chunk_provenance_across_set_task(supports_hold):
     """``dispatched_task`` may only advance to the new instruction when an action from a
     chunk conditioned on it is popped — that is what frame provenance rests on."""
     with _running_rtc_engine() as (engine, policy):
+        engine._robot.supports_hold = supports_hold
         policy.allow_one_inference()  # first chunk, conditioned on "task A"
         assert _wait_for(lambda: len(policy.predicted_tasks) == 1)
         assert _wait_for(lambda: engine.get_action(None) is not None)
@@ -1424,11 +1426,21 @@ def test_rtc_engine_dispatched_task_tracks_chunk_provenance_across_set_task():
         assert _wait_for(policy.in_inference.is_set)
         assert engine.set_task("task B") is True
 
-        # Leftovers still serve under the old label.
-        assert engine.get_action(None) is not None
+        # An in-flight retarget revokes old motion through a planned local hold.
+        # The dispatched label changes only once a new-task action actually runs.
+        if supports_hold:
+            assert engine.get_action(None) is None
+            assert not engine.dispatch_allowed()
+            engine.acknowledge_hold()
+            engine.notify_observation(dict(_RTC_OBS))
+        else:
+            assert engine.get_action(None) is not None
         assert engine.dispatched_task == "task A"
 
         policy.allow_one_inference()  # the in-flight chunk (still task A) lands
+        if supports_hold:
+            assert _wait_for(lambda: not engine._hold_requested)
+            engine.notify_observation(dict(_RTC_OBS))
         policy.allow_one_inference()  # the next chunk is conditioned on task B
         assert _wait_for(lambda: len(policy.predicted_tasks) == 3)
         assert policy.predicted_tasks == ["task A", "task A", "task B"]

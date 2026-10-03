@@ -12,6 +12,7 @@ import pytest
 
 pytest.importorskip("zenoh")
 pytest.importorskip("msgpack")
+pytest.importorskip("datasets")
 
 from lerobot.remote_inference.codec import decode_message, encode_message
 from lerobot.remote_inference.protocol import (

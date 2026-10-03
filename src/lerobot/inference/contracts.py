@@ -45,7 +45,12 @@ class FeatureSpec:
         """Reject unsupported modalities and ambiguous feature metadata."""
         object.__setattr__(self, "shape", tuple(self.shape))
         object.__setattr__(self, "names", tuple(self.names))
-        if not self.name or not self.semantics.strip():
+        if (
+            not isinstance(self.name, str)
+            or not self.name.strip()
+            or not isinstance(self.semantics, str)
+            or not self.semantics.strip()
+        ):
             raise ValueError("Feature names and explicit semantic conventions are required.")
         if self.kind not in {"tensor", "rgb"}:
             raise ValueError(f"Unsupported feature modality: {self.kind!r}")
@@ -57,6 +62,8 @@ class FeatureSpec:
             raise ValueError("RGB features require HWC uint8 with three channels.")
         if self.names and (len(self.shape) != 1 or len(self.names) != self.shape[0]):
             raise ValueError("Ordered component names must match a one-dimensional feature.")
+        if any(not isinstance(name, str) or not name.strip() for name in self.names):
+            raise ValueError("Feature component names must be nonempty strings.")
         if len(set(self.names)) != len(self.names):
             raise ValueError("Feature component names must be unique.")
 
@@ -99,6 +106,7 @@ class PolicyCapabilities:
     current_observation_only: bool = True
     retains_session_state: bool = True
     action_representation: str = "canonical"
+    model_action_dim: int | None = None
 
     def __post_init__(self) -> None:
         """Validate lengths, interval, and feature identity."""
@@ -108,6 +116,10 @@ class PolicyCapabilities:
             raise ValueError("A valid mode and execution length are required.")
         if len({feature.name for feature in self.features}) != len(self.features):
             raise ValueError("Duplicate observation feature names.")
+        if self.model_action_dim is not None and (
+            type(self.model_action_dim) is not int or self.model_action_dim <= 0
+        ):
+            raise ValueError("Model action dimension must be a positive integer.")
 
 
 @dataclass(frozen=True)

@@ -109,69 +109,38 @@ def test_inference_config_types():
 
 
 def test_trained_rtc_retries_chunk_when_measured_delay_exceeds_conditioning():
-    from lerobot.rollout.inference.rtc import _trained_rtc_chunk_can_merge
+    from lerobot.inference.execution import trained_overlap_valid
 
-    assert not _trained_rtc_chunk_can_merge(
-        conditioned_delay=2,
-        measured_delay=3,
-        training_max_delay=4,
-        has_previous_actions=True,
-    )
-    assert _trained_rtc_chunk_can_merge(
-        conditioned_delay=2,
-        measured_delay=5,
-        training_max_delay=4,
-        has_previous_actions=False,
-    )
+    assert not trained_overlap_valid(conditioned=2, measured=3, maximum=4, has_previous=True)
+    assert trained_overlap_valid(conditioned=2, measured=5, maximum=4, has_previous=False)
 
 
 def test_trained_rtc_bootstraps_first_overlap_with_checkpoint_capacity():
-    from lerobot.rollout.inference.rtc import _estimate_rtc_delay
+    from lerobot.inference.contracts import ExecutionMode
+    from lerobot.inference.execution import estimate_delay
 
-    assert (
-        _estimate_rtc_delay(
-            latency=0,
-            time_per_step=1 / 30,
-            mode="trained",
-            training_max_delay=10,
-            has_previous_actions=False,
-        )
-        == 0
-    )
-    assert (
-        _estimate_rtc_delay(
-            latency=0,
-            time_per_step=1 / 30,
-            mode="trained",
-            training_max_delay=10,
-            has_previous_actions=True,
-        )
-        == 10
-    )
+    assert estimate_delay(0, 1 / 30, ExecutionMode.RTC_TRAINED, 10, available=0) == 0
+    assert estimate_delay(0, 1 / 30, ExecutionMode.RTC_TRAINED, 10, available=20) == 10
 
 
 def test_trained_rtc_discards_chunk_measured_above_checkpoint_support():
     """A latency spike past the trained delay discards the chunk; it must not kill the rollout."""
-    from lerobot.rollout.inference.rtc import _trained_rtc_chunk_can_merge
+    from lerobot.inference.execution import trained_overlap_valid
 
-    assert not _trained_rtc_chunk_can_merge(
-        conditioned_delay=3,
-        measured_delay=5,
-        training_max_delay=4,
-        has_previous_actions=True,
-    )
+    assert not trained_overlap_valid(conditioned=3, measured=5, maximum=4, has_previous=True)
 
 
 def test_trained_rtc_clamps_prefix_to_checkpoint_and_queue():
     """Conditioning past the queue tail would hard-inpaint zero padding, so clamp instead."""
-    from lerobot.rollout.inference.rtc import _clamp_trained_rtc_delay
+    from lerobot.inference.contracts import ExecutionMode
+    from lerobot.inference.execution import estimate_delay
 
     # Queue tail is the binding limit.
-    assert _clamp_trained_rtc_delay(conditioned_delay=4, available_steps=2, training_max_delay=10) == 2
+    assert estimate_delay(4 / 30, 1 / 30, ExecutionMode.RTC_TRAINED, 10, available=2) == 2
     # Trained capacity is the binding limit.
-    assert _clamp_trained_rtc_delay(conditioned_delay=12, available_steps=30, training_max_delay=10) == 10
+    assert estimate_delay(12 / 30, 1 / 30, ExecutionMode.RTC_TRAINED, 10, available=30) == 10
     # Neither binds.
-    assert _clamp_trained_rtc_delay(conditioned_delay=4, available_steps=30, training_max_delay=10) == 4
+    assert estimate_delay(4 / 30, 1 / 30, ExecutionMode.RTC_TRAINED, 10, available=30) == 4
 
 
 @pytest.mark.parametrize(

@@ -276,6 +276,9 @@ def rollout(cfg: RolloutConfig):
         if cfg.display_data:
             shutdown_visualization(cfg.display_mode)
 
+    if ctx.policy.inference.failed:
+        logger.error("Rollout ended by an inference fault: %s", ctx.policy.inference.failure_traceback)
+        raise SystemExit(1)
     logger.info("Rollout finished")
 
 

@@ -123,6 +123,7 @@ class ChunkRuntime:
         self.has_executed = False
         self.started_at = clock()
         self.turnarounds: deque[float] = deque(maxlen=100)
+        self._initial_turnaround = 0.0
         self._completed = 0
         self._last_anchor: tuple[int, float, int] | None = None
         self._last_action: torch.Tensor | None = None
@@ -133,7 +134,7 @@ class ChunkRuntime:
     @property
     def turnaround(self) -> float:
         """Largest complete action turnaround in the recent steady-state window."""
-        return max(self.turnarounds, default=0.0)
+        return max(self.turnarounds, default=self._initial_turnaround)
 
     @property
     def effective_refill(self) -> float:
@@ -168,6 +169,31 @@ class ChunkRuntime:
             self._last_dispatch_request = ""
             self.started_at = self.clock()
             return self.generation
+
+    def activate(self, *, held: bool = False) -> bool:
+        """Activate a healthy run and atomically arm its startup budget."""
+        with self.lock:
+            if self.failure is not None:
+                return False
+            self.active = True
+            self.held = held
+            self.started_at = self.clock()
+            return True
+
+    def deactivate(self) -> None:
+        """Revoke motion and pending work atomically without clearing a fault."""
+        with self.lock:
+            self.active = False
+            self.invalidate(held=True)
+
+    def release_hold(self, expected_generation: int) -> bool:
+        """Arm fresh resumption only for the same healthy, active generation."""
+        with self.lock:
+            if self.failure is not None or not self.active or self.generation != expected_generation:
+                return False
+            self.started_at = self.clock()
+            self.held = False
+            return True
 
     def fault(self, reason: str) -> None:
         """Latch a terminal fault; invalidate does not clear this latch."""
@@ -275,6 +301,10 @@ class ChunkRuntime:
             self._completed += 1
             if self._completed > 1:  # cold start is not a steady-state action latency
                 self.turnarounds.append(elapsed)
+            else:
+                # Until a warm measurement exists, reserving less than the only
+                # observed turnaround can deterministically starve request two.
+                self._initial_turnaround = elapsed
             if now - request.observation.capture_time > self.max_age:
                 self.fault("Action result source observation is too old")
                 return False

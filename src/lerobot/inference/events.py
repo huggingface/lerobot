@@ -41,7 +41,12 @@ class EventWriter:
                     except Empty:
                         stream.flush()
                         continue
-                    stream.write(json.dumps(event, allow_nan=False) + "\n")
+                    try:
+                        encoded = json.dumps(event, allow_nan=False)
+                    except (TypeError, ValueError):
+                        self.dropped += 1
+                        continue
+                    stream.write(encoded + "\n")
                 stream.write(json.dumps({"event": "writer_closed", "dropped_events": self.dropped}) + "\n")
         except Exception:
             logger.exception("Inference sidecar writer failed: %s", self.path)

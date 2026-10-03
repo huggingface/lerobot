@@ -9,6 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytest.importorskip("datasets")
+
 from lerobot.inference.contracts import ExecutionMode
 from lerobot.remote_inference.chunk_contract import (
     CHUNK_ALIGNMENT,

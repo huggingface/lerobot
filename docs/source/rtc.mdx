@@ -185,16 +185,16 @@ lerobot-rollout \
     --device=cuda
 ```
 
-## How It Differs from the Async Inference in LeRobot
+## How RTC relates to remote inference
 
 Both RTC and [asynchronous remote inference](./remote_inference) improve real-time robot control, but they solve different problems.
 
-| Aspect        | Async Inference                                                            | RTC                                                 |
-| ------------- | -------------------------------------------------------------------------- | --------------------------------------------------- |
-| **Problem**   | Idle frames while waiting for inference                                    | Discontinuities between action chunks               |
-| **Solution**  | Decouple prediction from execution                                         | Guide new chunks to continue smoothly from previous |
-| **Benefit**   | No waiting, continuous action                                              | Smooth transitions, natural motion                  |
-| **Best Used** | Async inference is best used with large models with high inference latency | Flow-matching based policies                        |
+| Aspect           | Remote inference                                              | RTC                                                   |
+| ---------------- | ------------------------------------------------------------- | ----------------------------------------------------- |
+| **Purpose**      | Run inference in another process or on another computer       | Condition predictions on the remaining trajectory     |
+| **Execution**    | Local buffered playback, optional alignment and blending      | Guided or trained continuation for supported policies |
+| **Relationship** | Can serve plain chunks or RTC                                 | Can execute locally or through the remote backend     |
+| **Limits**       | Latency, freshness and buffer coverage still constrain motion | Requires the policy's declared RTC contract           |
 
 Remote inference can use RTC when the checkpoint supports the negotiated RTC mode. Plain chunks also support optional cursor alignment and blending; see the [remote inference guide](./remote_inference) for modes, compatibility and tuning.
 

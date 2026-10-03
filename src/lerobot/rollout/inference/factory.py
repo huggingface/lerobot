@@ -105,7 +105,7 @@ class RemoteInferenceConfig(InferenceEngineConfig):
     blend_steps: int = 0
     blend_weight: float = 0.5
     blend_components: list[str] = field(default_factory=list)
-    max_observation_age_s: float = 2.0
+    max_observation_age_s: float = 5.0
     handshake_timeout_s: float = 10.0
     action_timeout_s: float = 5.0
     language_timeout_s: float = 60.0

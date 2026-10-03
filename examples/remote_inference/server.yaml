@@ -20,7 +20,7 @@ language:
   deadline_s: 60.0
 zenoh:
   mode: peer
-  listen_endpoints: [tcp/0.0.0.0:7447]
+  listen_endpoints: [tcp/127.0.0.1:7447]
 semantics: so101-degrees-gripper-percent-v1
 robot_type: so101_follower
 features:

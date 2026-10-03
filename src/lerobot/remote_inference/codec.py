@@ -11,6 +11,7 @@ caller's responsibility, before an asynchronous encoder accesses reused sensor b
 
 import io
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -272,6 +273,32 @@ def _unique_map(pairs: list[tuple[Any, Any]]) -> dict[str, Any]:
     return result
 
 
+class _UnpackBudget:
+    """Stop MessagePack as containers complete, before building the whole tree.
+
+    Each child container has already been counted by its own hook. Scalar values
+    are counted by their parent; map keys remain bounded by the per-map and string
+    limits. At most one bounded container is materialized before its hook runs.
+    """
+
+    def __init__(self, limits: CodecLimits):
+        self.limits = limits
+        self.nodes = 0
+
+    def _count(self, values: Iterable[Any]) -> None:
+        self.nodes += 1 + sum(not isinstance(value, (list, dict)) for value in values)
+        if self.nodes > self.limits.max_nodes:
+            raise _malformed("Message node count exceeds limit during parsing")
+
+    def sequence(self, items: list[Any]) -> list[Any]:
+        self._count(items)
+        return items
+
+    def mapping(self, pairs: list[tuple[Any, Any]]) -> dict[str, Any]:
+        self._count(value for _, value in pairs)
+        return _unique_map(pairs)
+
+
 def _reject_extension(code: int, data: bytes) -> None:
     raise _malformed("MessagePack extensions are unsupported")
 
@@ -300,11 +327,13 @@ def _unpack_envelope(payload: bytes, limits: CodecLimits) -> tuple[Envelope, Any
     if not isinstance(payload, bytes) or len(payload) > limits.max_payload_bytes:
         raise _malformed("Encoded message exceeds byte limit or is not bytes")
     try:
+        budget = _UnpackBudget(limits)
         record = msgpack.unpackb(
             payload,
             raw=False,
             strict_map_key=True,
-            object_pairs_hook=_unique_map,
+            object_pairs_hook=budget.mapping,
+            list_hook=budget.sequence,
             ext_hook=_reject_extension,
             max_str_len=limits.max_string_bytes,
             max_bin_len=limits.max_payload_bytes,

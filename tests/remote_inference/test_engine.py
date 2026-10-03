@@ -12,6 +12,8 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+pytest.importorskip("datasets")
+
 from lerobot.inference.contracts import (
     ActionChunk,
     ActionProvenance,
@@ -71,7 +73,7 @@ class ControlledClient:
             with self._lock:
                 self.active_calls -= 1
 
-    def control(self, operation, generation):
+    def control(self, operation, generation, *, cancelled=None):
         with self.call(operation, generation):
             self.control_started.set()
 
@@ -292,6 +294,9 @@ def test_reset_after_loop_snapshot_cannot_submit_before_control_ack(session):
 
     client.on_presence = reset_during_presence_check
     engine.start()
+    assert client.control_started.wait(2)
+    assert wait_for(lambda: engine._control is None)
+    capture(engine)
     assert client.action_started.wait(2)
     assert client.calls[0] == ("reset", 1)
     assert client.calls[1] == ("action", 1)

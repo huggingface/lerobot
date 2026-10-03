@@ -65,6 +65,9 @@ def build_remote_rollout_context(
     teleop = None
     try:
         descriptor = client.descriptor
+        task = cfg.dataset.single_task if cfg.dataset else cfg.task
+        if len(task) > descriptor["limits"]["max_input_chars"]:
+            raise ValueError("Initial instruction exceeds the deployed text limit")
         capabilities = descriptor["capabilities"]
         expected = tuple(FeatureSpec(**feature) for feature in capabilities["features"])
         action = FeatureSpec(**capabilities["action_feature"])
@@ -122,10 +125,13 @@ def build_remote_rollout_context(
         if len(mapped) != sum(name.startswith("observation.") for name in features):
             raise ValueError("Observation feature mapping is not one-to-one")
         expected_names = {feature.name for feature in expected}
-        if set(mapped) != expected_names:
+        if not expected_names.issubset(mapped):
             raise ValueError(
                 f"Remote observation features differ: expected {expected_names}, got {set(mapped)}"
             )
+        extra_features = set(mapped) - expected_names
+        if extra_features:
+            logger.info("Observations retained locally for recording only: %s", sorted(extra_features))
         client.admit(
             features=tuple(
                 _feature_spec(feature.name, mapped[feature.name], feature.semantics) for feature in expected
@@ -142,7 +148,7 @@ def build_remote_rollout_context(
             dataset_features=features,
             rename_map=cfg.rename_map,
             robot_wrapper=wrapper,
-            task=cfg.task,
+            task=task,
             shutdown_event=shutdown_event,
         )
         if dataset is not None:
@@ -165,9 +171,16 @@ def build_remote_rollout_context(
             ),
         )
     except BaseException:
-        client.close()
-        if teleop is not None and teleop.is_connected:
-            teleop.disconnect()
-        if robot is not None and robot.is_connected:
-            robot.disconnect()
+        # Each cleanup is independent; preserve the setup failure even if the
+        # server disappeared or one connected device cannot disconnect.
+        try:
+            client.close()
+        except Exception:
+            logger.exception("Could not close remote client after rollout setup failed")
+        for name, resource in (("teleoperator", teleop), ("robot", robot)):
+            try:
+                if resource is not None and resource.is_connected:
+                    resource.disconnect()
+            except Exception:
+                logger.exception("Could not close %s after rollout setup failed", name)
         raise

@@ -11,6 +11,8 @@ from unittest.mock import Mock
 import pytest
 import torch
 
+pytest.importorskip("datasets")
+
 from lerobot.rollout.configs import BaseStrategyConfig, RolloutConfig
 from lerobot.rollout.inference import InferenceEngine, RemoteInferenceConfig
 from lerobot.rollout.robot_wrapper import ThreadSafeRobot

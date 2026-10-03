@@ -20,6 +20,7 @@ import abc
 import contextlib
 import logging
 import math
+from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING
 
 from lerobot.configs.dataset import DatasetRecordConfig
@@ -75,6 +76,13 @@ class RolloutStrategy(abc.ABC):
 
     One-shot strategies (``supports_interactive = False``, the default) are
     free to finalize on ``run()`` exit, e.g. via ``VideoEncodingManager``.
+
+    Every autonomous motor tick must use :func:`send_next_action`, including
+    ticks spent holding or interpolating. It enforces dispatch permission,
+    invalidates interpolation when permission is revoked, acknowledges the
+    supported local hold, and records dispatch provenance. Calling only
+    ``engine.get_action()`` bypasses these asynchronous lifecycle guarantees.
+    Custom dispatch implementations must honor the same per-tick protocol.
     """
 
     def __init__(self, config: RolloutStrategyConfig) -> None:
@@ -167,6 +175,34 @@ class RolloutStrategy(abc.ABC):
                 logger.exception("Segment-end hold failed; skipping further shutdown movement")
                 raise
             self._require_engine().acknowledge_hold()
+
+    @contextlib.contextmanager
+    def _pause_for_recording(
+        self, ctx: RolloutContext, *, resume_allowed: Callable[[], bool] | None = None
+    ) -> Iterator[None]:
+        """Invalidate async motion across a blocking mid-run save; resume from a fresh capture.
+
+        Call only inside an active run. Strategies with operator-controlled phases
+        supply their current permission to resume. Save/hold failures propagate and
+        leave inference paused; shutdown, takeover and faults never trigger resumption.
+        """
+        engine = self._require_engine()
+        if engine.control_thread_owns_policy:
+            yield
+            return
+        was_autonomous = resume_allowed is None or resume_allowed()
+        engine.pause()
+        self.hold_control_state(ctx.hardware)
+        logger.info("Inference paused for episode save; buffered motion invalidated")
+        yield
+        if (
+            was_autonomous
+            and not ctx.runtime.shutdown_event.is_set()
+            and not engine.failed
+            and (resume_allowed is None or resume_allowed())
+        ):
+            engine.resume()
+            logger.info("Episode save complete; inference resumes from the next fresh observation")
 
     def _process_observation_and_notify(
         self, processors: ProcessorContext, obs_raw: RobotObservation
@@ -348,6 +384,12 @@ class RolloutStrategy(abc.ABC):
         of every tick — the text-query channel only advances through it, and a
         multi-second generation must not sit inside the action path.
 
+        Publish each captured observation with ``engine.notify_observation``
+        and dispatch through :func:`send_next_action` on every autonomous motor
+        tick, even when no new action is expected. Do not skip the dispatch
+        gate on interpolation or held ticks: hold acknowledgments unblock
+        planned language work and propagate terminal faults to shutdown.
+
         Each ``run()`` call builds its own ``CycleTimer`` and reports it through
         ``timer.log_run_summary()`` from its ``finally``: a fresh timer's start-up
         exemption is what absorbs the interpolator that ``reset_control_state()``
@@ -453,6 +495,12 @@ def send_next_action(
     interpolator, and sends the interpolated action through the
     ``robot_action_processor`` to the robot.  Works identically for
     sync and async backends — the rollout strategy never needs to branch.
+
+    Call once per autonomous motor tick, including interpolation and held ticks.
+    This is the strategy's dispatch boundary: it starts the diagnostic tick,
+    checks permission before pulling and sending, clears interpolation on a
+    denial, performs a supported local hold, acknowledges it, and records the
+    dispatched command. A direct ``get_action`` call does not replace it.
 
     When *timer* is given, the engine pull and the robot send are timed as the
     ``infer`` and ``send`` steps of its cadence summary, and a tick with no action

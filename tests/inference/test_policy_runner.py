@@ -195,6 +195,7 @@ def test_runner_guided_rtc_allows_real_autograd_on_successor_chunk():
 
 
 def test_local_guided_rtc_allows_real_autograd_on_successor_chunk():
+    pytest.importorskip("datasets")
     from lerobot.rollout.inference.rtc import RTCInferenceEngine
 
     config = tiny_config()
@@ -394,6 +395,7 @@ def test_deployment_can_disable_text_and_cannot_enable_an_unsupported_head():
 
 
 def test_real_act_plain_async_matches_runner_and_honors_execution_slice():
+    pytest.importorskip("datasets")
     from lerobot.rollout.inference.rtc import RTCInferenceEngine
 
     policy = ACTPolicy(tiny_config())

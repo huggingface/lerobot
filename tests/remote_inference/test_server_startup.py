@@ -8,6 +8,7 @@ from lerobot.inference.contracts import FeatureSpec
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.remote_inference.configs import ExecutionConfig, ModelConfig, ServerConfig
 from lerobot.scripts.lerobot_policy_server import artifact_identity, load_deployment
+from lerobot.transport.zenoh import ZenohConfig
 from tests.inference.test_policy_runner import observation, processors, tiny_config
 
 
@@ -22,6 +23,7 @@ def test_server_loads_saved_act_and_processors_warms_and_resets(tmp_path):
         deployment="test",
         model=ModelConfig(str(tmp_path)),
         execution=ExecutionConfig(action_fps=30, warmup_calls=1),
+        zenoh=ZenohConfig(listen_endpoints=["tcp/127.0.0.1:7447"]),
         semantics="radians-v1",
         features=[FeatureSpec(key, (3,), "float32", semantics="radians-v1") for key in config.input_features],
         action_feature=FeatureSpec("action", (3,), "float32", semantics="radians-v1"),

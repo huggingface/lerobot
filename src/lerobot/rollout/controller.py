@@ -82,6 +82,9 @@ class AskResult(Enum):
     UNSUPPORTED = "unsupported"
     """Rejected: the policy has no text head; unlike the others, permanent for the session."""
 
+    INVALID = "invalid"
+    """Rejected: invalid text; :meth:`RolloutController.text_input_error` explains how to fix it."""
+
 
 class RolloutEvent(Enum):
     """Lifecycle notifications emitted by :class:`RolloutController`.
@@ -283,10 +286,18 @@ class RolloutController:
         controller is stopping or stopped.  Stops :meth:`autosteer`, which would overwrite this instruction.
         """
         with self._control_lock:
-            if self._stopped.is_set() or self._stop_requested.is_set():
+            if (
+                self._stopped.is_set()
+                or self._stop_requested.is_set()
+                or self.text_input_error(task, instruction=True) is not None
+            ):
                 return False
             self._ctx.policy.inference.stop_autosteer()
             return self._ctx.policy.inference.set_task(task)
+
+    def text_input_error(self, text: str, *, instruction: bool = False) -> str | None:
+        """Return the active engine's text rejection reason without changing its state."""
+        return self._ctx.policy.inference.text_input_error(text, instruction=instruction)
 
     def ask(self, question: str) -> AskResult:
         """Queue a question about what the robot currently sees.
@@ -294,11 +305,14 @@ class RolloutController:
         Returns immediately; the answer arrives as a :attr:`RolloutEvent.QUERY_ANSWERED` event, and
         the policy is never touched on the caller's thread.  Rejected with
         :attr:`AskResult.UNSUPPORTED` (no text head), :attr:`AskResult.NOT_RUNNING` (no segment
-        running, so no observation to answer from), or :attr:`AskResult.BUSY` (channel taken).
+        running, so no observation to answer from), :attr:`AskResult.INVALID` (text fails
+        validation), or :attr:`AskResult.BUSY` (channel taken).
         """
         # A static capability: checked first, and outside the control lock.
         if not self._ctx.policy.inference.supports_text_queries:
             return AskResult.UNSUPPORTED
+        if self.text_input_error(question) is not None:
+            return AskResult.INVALID
         with self._control_lock:
             # Same lock _run_segment clears _running under, so a question is never left orphaned.
             if not self._running.is_set():
@@ -322,6 +336,8 @@ class RolloutController:
         """
         if not self._ctx.policy.inference.supports_text_queries:
             return AskResult.UNSUPPORTED
+        if self.text_input_error(goal) is not None:
+            return AskResult.INVALID
         with self._control_lock:
             if not self._running.is_set():
                 return AskResult.NOT_RUNNING

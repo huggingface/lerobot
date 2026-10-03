@@ -11,6 +11,7 @@ from lerobot.inference.contracts import ExecutionMode, FeatureSpec, PolicyCapabi
 
 CHUNK_ALIGNMENT = "chunk_alignment_v1"
 CHUNK_BLENDING = "chunk_blending_v1"
+RTC_MODEL_SPACE = "rtc_model_space_v1"
 
 
 def chunk_settings(

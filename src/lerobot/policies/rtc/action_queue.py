@@ -110,6 +110,8 @@ class ActionQueue:
             if self.queue is None or self.last_index >= len(self.queue):
                 return None
 
+            if self._provenance_queue and len(self._provenance_queue) != len(self.queue):
+                raise RuntimeError("ActionQueue provenance is out of sync with actions")
             if self._task_queue is not None and len(self._task_queue) != len(self.queue):
                 # A mismatch means some mutation broke the action/task lockstep.
                 raise RuntimeError(

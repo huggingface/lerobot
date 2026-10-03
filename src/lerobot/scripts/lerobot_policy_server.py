@@ -9,9 +9,10 @@ import json
 import logging
 import signal
 from collections.abc import Callable
-from dataclasses import asdict
+from copy import deepcopy
+from dataclasses import asdict, fields, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 from huggingface_hub import snapshot_download
@@ -62,17 +63,57 @@ def artifact_identity(paths: dict[str, Path], effective: dict) -> str:
     return "sha256:" + digest.hexdigest()
 
 
+def _inference_identity(cfg: ServerConfig, policy_cfg: PreTrainedConfig) -> dict:
+    """Pin checkpoint contents and inference semantics independently of deployment location."""
+    policy = asdict(policy_cfg)
+    policy.pop("pretrained_path", None)
+    policy.pop("device", None)
+    uses_rtc = any(mode != ExecutionMode.CHUNK for mode in cfg.execution.supported_modes)
+    return {
+        "policy": policy,
+        "semantics": cfg.semantics,
+        "robot_type": cfg.robot_type,
+        "features": [asdict(feature) for feature in cfg.features],
+        "action_feature": None if cfg.action_feature is None else asdict(cfg.action_feature),
+        "execution": {
+            "supported_modes": sorted(cfg.execution.supported_modes),
+            "action_fps": cfg.execution.action_fps,
+            "rtc": asdict(cfg.execution.rtc) if uses_rtc else None,
+            "blendable_components": sorted(cfg.execution.blendable_components),
+        },
+        "language": {
+            "enabled": cfg.language.enabled,
+            "max_input_chars": cfg.language.max_input_chars,
+            "max_output_chars": cfg.language.max_output_chars,
+        },
+    }
+
+
 def load_deployment(cfg: ServerConfig) -> tuple[PolicyRunner, str]:
     """Resolve contents, load canonical processors and reset all warmed model paths."""
+    cfg.zenoh.validate()
     if cfg.action_feature is None:
         raise ValueError("An explicit action feature is required")
     path = resolve_artifact(cfg.model.repo_or_path, cfg.model.revision)
     artifacts = {"checkpoint": path}
     policy_cfg = PreTrainedConfig.from_pretrained(path)
+    execution_steps = cfg.execution.n_action_steps
+    if execution_steps is not None:
+        if "n_action_steps" not in {field.name for field in fields(policy_cfg)}:
+            raise ValueError("This checkpoint config has no configurable n_action_steps execution slice")
+        prediction_steps = getattr(policy_cfg, "chunk_size", None)
+        if isinstance(prediction_steps, int) and execution_steps > prediction_steps:
+            raise ValueError("execution.n_action_steps exceeds the checkpoint prediction horizon")
+        # Re-run the policy's own config validation without modifying saved files.
+        overrides: dict[str, Any] = {"n_action_steps": execution_steps}
+        policy_cfg = replace(policy_cfg, **overrides)
     policy_cfg.pretrained_path = path
     policy_cfg.device = cfg.model.device
-    if hasattr(policy_cfg, "rtc_config"):
-        policy_cfg.rtc_config = cfg.execution.rtc
+    modes = tuple(ExecutionMode(mode) for mode in cfg.execution.supported_modes)
+    if any(mode != ExecutionMode.CHUNK for mode in modes):
+        # Some RTC-capable policy configs obtain this runtime attribute locally
+        # rather than declaring a saved field. The runner still verifies support.
+        policy_cfg.rtc_config = deepcopy(cfg.execution.rtc)
     policy_class = get_policy_class(policy_cfg.type)
     if policy_cfg.use_peft:
         require_package("peft", extra="peft")
@@ -99,17 +140,15 @@ def load_deployment(cfg: ServerConfig) -> tuple[PolicyRunner, str]:
         action_interval=1 / cfg.execution.action_fps,
         features=tuple(cfg.features),
         action_feature=cfg.action_feature,
-        modes=tuple(ExecutionMode(mode) for mode in cfg.execution.supported_modes),
+        modes=modes,
         robot_type=cfg.robot_type,
         language_enabled=cfg.language.enabled,
         max_text_input=cfg.language.max_input_chars,
         max_text_output=cfg.language.max_output_chars,
     )
-    serving_identity = asdict(cfg)
-    # Console verbosity is not a serving contract and must not change an
-    # existing --inference.expected_artifact pin, including its default value.
-    serving_identity.pop("log_level")
-    identity = artifact_identity(artifacts, {"serving": serving_identity, "policy": asdict(policy_cfg)})
+    if execution_steps is not None and runner.capabilities.execution_steps != execution_steps:
+        raise ValueError("Loaded policy does not honor the requested execution.n_action_steps slice")
+    identity = artifact_identity(artifacts, _inference_identity(cfg, policy_cfg))
     warmup = ObservationSnapshot(
         {feature.name: np.zeros(feature.shape, dtype=feature.dtype) for feature in cfg.features},
         0.0,

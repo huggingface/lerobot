@@ -9,7 +9,7 @@ import logging
 import math
 import time
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from queue import Empty
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -26,10 +26,21 @@ from lerobot.inference.contracts import (
     PolicyCapabilities,
 )
 from lerobot.inference.execution import ChunkRequest
-from lerobot.transport.zenoh import BoundedSubscriber, PresenceToken, ZenohConfig, ZenohTransport
+from lerobot.transport.zenoh import (
+    BoundedSubscriber,
+    PresenceToken,
+    QueryCancelled,
+    ZenohConfig,
+    ZenohTransport,
+)
 
 from .build_info import SOFTWARE_BUILD
-from .chunk_contract import chunk_settings, required_chunk_capabilities, validate_chunk_contract
+from .chunk_contract import (
+    RTC_MODEL_SPACE,
+    chunk_settings,
+    required_chunk_capabilities,
+    validate_chunk_contract,
+)
 from .codec import RGBImage, decode_message, encode_message, peek_envelope
 from .protocol import (
     PROTOCOL_VERSION,
@@ -60,6 +71,18 @@ def parse_capabilities(value: dict[str, Any]) -> PolicyCapabilities:
     value["action_feature"] = FeatureSpec(**value["action_feature"])
     value["modes"] = tuple(ExecutionMode(mode) for mode in value["modes"])
     return PolicyCapabilities(**value)
+
+
+def _compare_feature(actual: FeatureSpec, expected: FeatureSpec) -> None:
+    """Identify the first incompatible field without dumping unrelated schemas."""
+    for field in fields(FeatureSpec):
+        actual_value, expected_value = getattr(actual, field.name), getattr(expected, field.name)
+        if actual_value != expected_value:
+            raise ProtocolError(
+                ErrorCode.INCOMPATIBLE,
+                f"Feature {expected.name!r} field {field.name!r} differs: "
+                f"client={actual_value!r}, server={expected_value!r}",
+            )
 
 
 class RemoteClient:
@@ -100,14 +123,30 @@ class RemoteClient:
                 config_file=config.zenoh_config_path,
                 open_timeout_s=config.handshake_timeout_s,
             )
-        ).open()
+        )
         try:
+            try:
+                transport.open()
+            except Exception as exc:
+                raise ConnectionError(
+                    f"Cannot open remote connection to {config.endpoint!r} "
+                    f"for deployment {config.deployment!r}: {exc}. "
+                    "Check that the server/router is running and the endpoint, network access "
+                    "and Zenoh security configuration are correct."
+                ) from exc
             request = Envelope(MessageType.DESCRIBE, request_id=uuid4().hex)
-            replies = transport.query(
-                deployment_prefix(config.deployment) + "/describe",
-                encode_message(request),
-                config.handshake_timeout_s,
-            )
+            try:
+                replies = transport.query(
+                    deployment_prefix(config.deployment) + "/describe",
+                    encode_message(request),
+                    config.handshake_timeout_s,
+                )
+            except TimeoutError as exc:
+                raise TimeoutError(
+                    f"Deployment {config.deployment!r} did not answer discovery at {config.endpoint!r} "
+                    f"within {config.handshake_timeout_s:g} s. Check server readiness, "
+                    "--inference.deployment and the Zenoh routing/permissions."
+                ) from exc
             descriptors: dict[str, dict] = {}
             for payload in replies:
                 response = decode_message(payload)
@@ -125,6 +164,13 @@ class RemoteClient:
                     raise ProtocolError(ErrorCode.INCOMPATIBLE, "Deployment is not ready or identity differs")
                 if config.instance is None or response.instance_id == config.instance:
                     descriptors[response.instance_id] = descriptor
+            if not descriptors:
+                raise ProtocolError(
+                    ErrorCode.INCOMPATIBLE,
+                    f"No ready instance for deployment {config.deployment!r} at {config.endpoint!r} "
+                    f"matches --inference.instance={config.instance!r}; "
+                    "check server readiness, deployment name and instance selection",
+                )
             if len(descriptors) != 1:
                 raise ProtocolError(
                     ErrorCode.INCOMPATIBLE,
@@ -147,8 +193,25 @@ class RemoteClient:
             transport.close()
             raise
 
-    def _query(self, key: str, request: Envelope, timeout: float, expected: MessageType) -> Envelope:
-        replies = self.transport.query(key, encode_message(request), timeout)
+    def _query(
+        self,
+        key: str,
+        request: Envelope,
+        timeout: float,
+        expected: MessageType,
+        *,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> Envelope:
+        try:
+            replies = (
+                self.transport.query(key, encode_message(request), timeout)
+                if cancelled is None
+                else self.transport.query(key, encode_message(request), timeout, cancelled=cancelled)
+            )
+        except QueryCancelled as exc:
+            if not self.present:
+                raise ConnectionError("Server presence was lost during control acknowledgement") from exc
+            raise RequestCancelled(str(exc)) from exc
         if len(replies) != 1:
             raise TimeoutError("Expected one control reply within its deadline")
         response = decode_message(replies[0])
@@ -194,14 +257,36 @@ class RemoteClient:
     ) -> None:
         """Validate the robot contract and acquire one exclusive session."""
         caps = self.capabilities
-        if (
-            features != caps.features
-            or action_feature != caps.action_feature
-            or semantics != self.descriptor["semantics"]
-            or not math.isclose(action_interval, caps.action_interval, rel_tol=1e-6)
-            or ExecutionMode(mode) not in caps.modes
-        ):
-            raise ProtocolError(ErrorCode.INCOMPATIBLE, "Robot features, conventions, cadence or mode differ")
+        names, expected_names = (
+            tuple(feature.name for feature in features),
+            tuple(feature.name for feature in caps.features),
+        )
+        if names != expected_names:
+            raise ProtocolError(
+                ErrorCode.INCOMPATIBLE,
+                f"Observation feature names/order differ: client={names!r}, server={expected_names!r}. "
+                "Check robot cameras, --rename_map and the server feature contract",
+            )
+        for feature, expected in zip(features, caps.features, strict=True):
+            _compare_feature(feature, expected)
+        _compare_feature(action_feature, caps.action_feature)
+        if semantics != self.descriptor["semantics"]:
+            raise ProtocolError(
+                ErrorCode.INCOMPATIBLE,
+                f"Semantic convention differs: client={semantics!r}, server={self.descriptor['semantics']!r}",
+            )
+        if not math.isclose(action_interval, caps.action_interval, rel_tol=1e-6):
+            raise ProtocolError(
+                ErrorCode.INCOMPATIBLE,
+                f"Policy action interval differs: client={action_interval:g} s, "
+                f"server={caps.action_interval:g} s. Use --fps={1 / caps.action_interval:g}",
+            )
+        if mode not in caps.modes:
+            raise ProtocolError(
+                ErrorCode.INCOMPATIBLE,
+                f"Execution mode {mode!r} is not supported; "
+                f"server modes={tuple(str(mode) for mode in caps.modes)!r}",
+            )
         required = required_chunk_capabilities(self.chunk_settings)
         if required:
             if mode != ExecutionMode.CHUNK:
@@ -218,6 +303,12 @@ class RemoteClient:
                 )
             except ValueError as exc:
                 raise ProtocolError(ErrorCode.INCOMPATIBLE, str(exc)) from exc
+        if mode != ExecutionMode.CHUNK and caps.model_action_dim not in (None, caps.action_feature.shape[0]):
+            if RTC_MODEL_SPACE not in self.descriptor.get("execution_contracts", []):
+                raise ProtocolError(
+                    ErrorCode.UNSUPPORTED, "Server lacks the distinct RTC model-space contract"
+                )
+            required.append(RTC_MODEL_SPACE)
         request = Envelope(
             MessageType.OPEN,
             self.instance_id,
@@ -310,7 +401,9 @@ class RemoteClient:
             self._present = False
         return self._present
 
-    def control(self, operation: str, generation: int) -> None:
+    def control(
+        self, operation: str, generation: int, *, cancelled: Callable[[], bool] | None = None
+    ) -> None:
         """Wait for a worker-applied control acknowledgement on the network thread."""
         request = Envelope(
             MessageType.CONTROL,
@@ -324,7 +417,15 @@ class RemoteClient:
         timeout = self.config.handshake_timeout_s + max(
             limits.get("action_deadline_s", 0), limits.get("language_deadline_s", 0)
         )
-        response = self._query(self._key + "/control", request, timeout, MessageType.ACK)
+        if operation == "close":
+            timeout = min(self.config.handshake_timeout_s, 1.0)
+        response = self._query(
+            self._key + "/control",
+            request,
+            timeout,
+            MessageType.ACK,
+            cancelled=lambda: (cancelled is not None and cancelled()) or not self.present,
+        )
         if (
             response.body.get("operation") != operation
             or response.body.get("applied_generation") != generation
@@ -427,7 +528,7 @@ class RemoteClient:
             raise ProtocolError(ErrorCode.MALFORMED, "Invalid canonical action chunk")
         if request.mode is not ExecutionMode.CHUNK and (
             not isinstance(model, np.ndarray)
-            or model.shape != actions.shape
+            or model.shape != (steps, caps.model_action_dim or caps.action_feature.shape[0])
             or model.dtype.name != "float32"
             or not np.isfinite(model).all()
         ):
@@ -497,13 +598,15 @@ class RemoteClient:
             raise ProtocolError(ErrorCode.MALFORMED, "Invalid language answer context or length")
         return answer
 
-    def close(self) -> None:
+    def close(self) -> bool:
         """Close the admitted session and transport; never reconnect or replay work."""
         if self._closed:
-            return
+            return False
         self._closed = True
         try:
-            if self.session_id:
+            if self.session_id and self.present:
                 self.control("close", self.generation)
+                return True
+            return False
         finally:
             self.transport.close()

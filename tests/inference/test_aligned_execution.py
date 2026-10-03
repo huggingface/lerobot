@@ -131,12 +131,12 @@ def test_waiting_for_playback_does_not_reserve_an_old_capture():
     assert rt.pop()[0].tolist() == [11, 111]
 
 
-def test_aligned_refill_floor_uses_steady_turnaround_and_excludes_startup():
+def test_aligned_refill_floor_seeds_from_startup_then_uses_steady_turnaround():
     rt, clock = runtime(refill_seconds=0.01)
     first = rt.begin(sample(rt, clock))
     clock.now += 0.8
     assert rt.accept(first, result(first), task_version=0)
-    assert rt.effective_refill == pytest.approx(0.1)
+    assert rt.effective_refill == pytest.approx(0.9)
     for _ in range(5):
         rt.pop()
     request = rt.begin(sample(rt, clock))

@@ -114,6 +114,15 @@ class InferenceEngine(abc.ABC):
     ``notify_observation`` / ``pause`` / ``resume`` have a no-op default
     so rollout strategies can invoke them unconditionally.
 
+    Safe dispatch
+    -------------
+    ``get_action`` alone is not a safe motor-dispatch API. Custom strategies should use
+    ``rollout.strategies.core.send_next_action``: it invokes ``begin_control_tick``, checks
+    ``dispatch_allowed`` before pulling and sending actions, invalidates interpolation
+    on transitions, applies a supported hold and acknowledges it, and calls
+    ``record_dispatch`` after a send. Hooks with no-op defaults must still be invoked so
+    asynchronous backends can enforce their lifecycle and freshness guarantees.
+
     Subclasses must call ``super().__init__(task=...)``.
     """
 
@@ -247,11 +256,25 @@ class InferenceEngine(abc.ABC):
         Callable from any thread.  Returns ``False`` when one is already pending: the
         channel holds a single query at a time.
         """
-        if not question.strip() or len(question) > 4096:
+        if self.text_input_error(question) is not None:
             return False
         return self._queue_query(
             PolicyQuery(kind=QueryKind.VQA, text=question, task_version=self.task_version)
         )
+
+    def text_input_error(self, text: str, *, instruction: bool = False) -> str | None:
+        """Return an operator-facing rejection reason, or ``None`` for valid input.
+
+        Local task instructions retain their existing unrestricted length; text queries
+        require 1–4096 characters. Remote backends use the deployment's advertised limit
+        for both instructions and queries. Validation must not change task or query state.
+        """
+        if not instruction:
+            if not text.strip():
+                return "Enter a non-empty question or goal."
+            if len(text) > 4096:
+                return f"Text contains {len(text)} characters; the limit is 4096. Shorten it and try again."
+        return None
 
     def start_autosteer(self, goal: str, interval_s: float) -> None:
         """Drive the task from ``goal``, re-planning every ``interval_s`` seconds.
@@ -261,8 +284,8 @@ class InferenceEngine(abc.ABC):
         progress lives in the policy.  The interval is measured from when a subtask is
         *applied*, so a slow generation cannot starve the robot of motion.
         """
-        if not goal.strip() or len(goal) > 4096:
-            raise ValueError("Autosteer goal must contain 1–4096 characters")
+        if error := self.text_input_error(goal):
+            raise ValueError(error)
         with self._query_lock:
             self._autosteer_generation += 1
             if self._pending_query is not None and self._pending_query.kind is QueryKind.NEXT_SUBTASK:

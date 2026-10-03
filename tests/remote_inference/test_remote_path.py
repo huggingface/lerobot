@@ -10,11 +10,13 @@ from dataclasses import replace
 from threading import Event, Thread
 from types import SimpleNamespace
 
-import msgpack
 import pytest
 import torch
 
 pytest.importorskip("zenoh")
+pytest.importorskip("datasets")
+pytest.importorskip("msgpack")
+import msgpack
 
 from lerobot.inference.contracts import ExecutionMode, FeatureSpec
 from lerobot.inference.execution import ChunkRuntime

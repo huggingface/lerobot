@@ -29,6 +29,10 @@ class TransportError(RuntimeError):
     pass
 
 
+class QueryCancelled(TransportError):  # noqa: N818
+    """A local caller stopped waiting; remote execution may still be running."""
+
+
 @dataclass
 class ZenohConfig:
     mode: Literal["peer", "client"] = "peer"
@@ -38,8 +42,8 @@ class ZenohConfig:
     max_payload_bytes: int = 32 * 1024 * 1024
     open_timeout_s: float = 10.0
 
-    def build(self) -> "zenoh.Config":
-        require_package("eclipse-zenoh", "remote", import_name="zenoh")
+    def validate(self) -> None:
+        """Reject invalid explicit topology without importing or opening Zenoh."""
         if self.mode not in ("peer", "client"):
             raise ValueError("Zenoh mode must be peer (direct) or client (router)")
         if not (self.connect_endpoints or self.listen_endpoints):
@@ -49,6 +53,10 @@ class ZenohConfig:
         if type(self.max_payload_bytes) is not int or self.max_payload_bytes <= 0:
             raise ValueError("max_payload_bytes must be positive")
         _timeout(self.open_timeout_s)
+
+    def build(self) -> "zenoh.Config":
+        self.validate()
+        require_package("eclipse-zenoh", "remote", import_name="zenoh")
         config = zenoh.Config.from_file(self.config_file) if self.config_file else zenoh.Config()
         # TLS, certificate and ACL settings in the supplied JSON5 are preserved.
         for key, value in {
@@ -59,6 +67,7 @@ class ZenohConfig:
             "scouting/gossip/enabled": False,
             "transport/shared_memory/enabled": False,
             "connect/timeout_ms": int(self.open_timeout_s * 1000),
+            "connect/exit_on_failure": True,
         }.items():
             config.insert_json5(key, json.dumps(value))
         return config
@@ -151,27 +160,31 @@ class PendingQuery:
         self._lock = threading.Lock()
 
     def reply(self, payload: bytes) -> bool:
-        _payload(payload, self._owner.max_payload_bytes)
         with self._lock:
             query, self._query = self._query, None
         if query is None:
             return False
         try:
+            _payload(payload, self._owner.max_payload_bytes)
             if time.monotonic() > self.deadline:
                 return False
             # Zenoh 1.9 inherits the query's DROP congestion policy for replies.
             query.reply(self.key, payload)
             return True
         finally:
-            query.drop()
-            self._owner._release(self)
+            try:
+                query.drop()
+            finally:
+                self._owner._release(self)
 
     def drop(self) -> None:
         with self._lock:
             query, self._query = self._query, None
         if query is not None:
-            query.drop()
-            self._owner._release(self)
+            try:
+                query.drop()
+            finally:
+                self._owner._release(self)
 
     @property
     def expired(self) -> bool:
@@ -291,17 +304,29 @@ class ZenohTransport:
         channel._on_close = lambda: self._channels.discard(channel)
         return channel
 
-    def query(self, key: str, payload: bytes, timeout: float, max_replies: int = 16) -> list[bytes]:
+    def query(
+        self,
+        key: str,
+        payload: bytes,
+        timeout: float,
+        max_replies: int = 16,
+        *,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> list[bytes]:
         """Collect replies within a deadline, retaining at most max_replies bounded payloads."""
         _payload(payload, self.config.max_payload_bytes)
         _timeout(timeout)
         if type(max_replies) is not int or not 1 <= max_replies <= 128:
             raise ValueError("max_replies must be between 1 and 128")
+        if cancelled is not None and cancelled():
+            raise QueryCancelled("Query wait cancelled before publication")
         deadline = time.monotonic() + timeout
         # A freshly opened connection may precede routing declaration propagation.
         # Wait before issuing the operation; never replay stateful queries.
         with self.session.declare_querier(key) as querier:
             while not cast(zenoh.MatchingStatus, querier.matching_status).matching:
+                if cancelled is not None and cancelled():
+                    raise QueryCancelled("Query wait cancelled before publication")
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise TimeoutError(f"No queryable for {key} before setup deadline")
@@ -310,7 +335,7 @@ class ZenohTransport:
         replies: list[bytes] = []
         errors: list[str] = []
         finished = threading.Event()
-        cancelled = zenoh.CancellationToken()
+        cancellation_token = zenoh.CancellationToken()
 
         def receive(reply: zenoh.Reply) -> None:
             if errors:
@@ -330,6 +355,10 @@ class ZenohTransport:
                 return
             replies.append(value.to_bytes())
 
+        if cancelled is not None and cancelled():
+            raise QueryCancelled("Query wait cancelled before publication")
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"Zenoh query deadline expired before publication for {key}")
         self.session.get(
             key,
             zenoh.handlers.Callback(receive, drop=finished.set, indirect=False),
@@ -338,11 +367,18 @@ class ZenohTransport:
             target=zenoh.QueryTarget.ALL,
             consolidation=zenoh.ConsolidationMode.NONE,
             congestion_control=zenoh.CongestionControl.DROP,
-            cancellation_token=cancelled,
+            cancellation_token=cancellation_token,
         )
-        if not finished.wait(timeout):
-            cancelled.cancel()
-            raise TimeoutError(f"Zenoh query deadline expired for {key}")
+        try:
+            while not finished.is_set():
+                if cancelled is not None and cancelled():
+                    raise QueryCancelled("Query wait cancelled; remote operation may still be running")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f"Zenoh query deadline expired for {key}")
+                finished.wait(min(remaining, 0.02))
+        finally:
+            cancellation_token.cancel()
         if errors:
             if "timeout" in errors[0].lower():
                 raise TimeoutError(f"Zenoh query deadline expired for {key}")

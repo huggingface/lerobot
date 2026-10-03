@@ -15,6 +15,7 @@ from __future__ import annotations
 import inspect
 import time
 from copy import deepcopy
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
@@ -72,6 +73,7 @@ class PolicyRunner:
         self.robot_type = robot_type
         self.max_text_input = max_text_input
         self.max_text_output = max_text_output
+        self._model_action_dim: int | None = None
         if max_text_input <= 0 or max_text_output <= 0:
             raise ValueError("Text input and output bounds must be positive.")
         supports_language = policy.supports_text_generation()
@@ -145,15 +147,6 @@ class PolicyRunner:
                 self._relative_step.action_names = list(action_names)
             elif self._relative_step.exclude_joints:
                 raise ValueError("Relative joint exclusions require ordered canonical action names.")
-            state_feature = next((feature for feature in features if feature.name == OBS_STATE), None)
-            if (
-                state_feature is not None
-                and state_feature.names
-                and action_names
-                and set(state_feature.names) == set(action_names)
-                and state_feature.names != action_names
-            ):
-                raise ValueError("Relative-action state and action component order must be aligned.")
         self.language_processors = language_processors
         if self.capabilities.language and language_processors is None:
             # Copy the PAIR at once: AbsoluteActions must still point to its own
@@ -191,6 +184,18 @@ class PolicyRunner:
             raise ValueError("Canonical action feature differs from policy output_features.")
         if action.kind != "tensor" or len(action.shape) != 1 or action.dtype != "float32":
             raise ValueError("The default runner requires a one-dimensional float32 action representation.")
+        checkpoint_names = getattr(self.policy.config, "action_feature_names", None)
+        if checkpoint_names and tuple(checkpoint_names) != action.names:
+            raise ValueError("Canonical action component order differs from checkpoint action_feature_names.")
+        state = next((feature for feature in self.capabilities.features if feature.name == OBS_STATE), None)
+        if (
+            state is not None
+            and state.names
+            and action.names
+            and set(state.names) == set(action.names)
+            and state.names != action.names
+        ):
+            raise ValueError("State and action component order must be aligned.")
 
     def _batch(self, observation: ObservationSnapshot) -> dict[str, Any]:
         if set(observation.features) != {feature.name for feature in self.capabilities.features}:
@@ -252,7 +257,7 @@ class PolicyRunner:
                 kwargs = {"inference_delay": inference_delay, "prev_chunk_left_over": prefix}
             predicted = self.policy.predict_action_chunk(prepared, **kwargs)
             predicted_at = time.perf_counter()
-            self._validate_actions(predicted)
+            self._validate_model_actions(predicted)
             # A postprocessor may modify its argument. Preserve model coordinates
             # before invoking the paired canonical postprocessor.
             original = predicted.detach().clone()
@@ -295,13 +300,43 @@ class PolicyRunner:
         if not actions.is_floating_point() or not torch.isfinite(actions).all():
             raise ValueError("Policy/processor returned non-finite or non-floating actions.")
 
+    def _validate_model_actions(self, actions: torch.Tensor) -> None:
+        """Keep model coordinates intact; only the paired processor defines canonical actions."""
+        if (
+            not isinstance(actions, torch.Tensor)
+            or actions.ndim != 3
+            or actions.shape[:2] != (1, self.capabilities.prediction_steps)
+            or actions.shape[2] <= 0
+            or not actions.is_floating_point()
+            or not torch.isfinite(actions).all()
+        ):
+            raise ValueError(
+                "Policy must return finite floating actions with its declared batch and horizon."
+            )
+        width = actions.shape[2]
+        if self._model_action_dim is not None and width != self._model_action_dim:
+            raise ValueError("Policy model action width changed after deployment warmup.")
+        if (
+            self._relative_step is not None
+            and any(mode != ExecutionMode.CHUNK for mode in self.capabilities.modes)
+            and width != self.capabilities.action_feature.shape[0]
+        ):
+            raise ValueError("Relative RTC with different model/canonical widths requires a custom runner.")
+        self._model_action_dim = width
+        self.capabilities = replace(self.capabilities, model_action_dim=width)
+
     def _prepare_continuation(
         self, model: torch.Tensor | None, canonical: torch.Tensor | None
     ) -> torch.Tensor | None:
         if model is None or model.numel() == 0:
             return None
-        width = self.capabilities.action_feature.shape[0]
-        if model.ndim != 2 or model.shape[1] != width or not torch.isfinite(model).all():
+        width = self._model_action_dim or self.capabilities.action_feature.shape[0]
+        if (
+            model.ndim != 2
+            or model.shape[1] != width
+            or not model.is_floating_point()
+            or not torch.isfinite(model).all()
+        ):
             raise ValueError("Invalid model-space continuation.")
         device = self.policy.config.device or "cpu"
         if self._relative_step is not None:

@@ -26,12 +26,13 @@ import torch
 
 from lerobot.inference.contracts import ExecutionMode, FeatureSpec, ObservationSnapshot
 from lerobot.inference.policy_runner import PolicyRunner
-from lerobot.transport.zenoh import ZenohTransport
+from lerobot.transport.zenoh import PendingQuery, ZenohTransport
 
 from .build_info import SOFTWARE_BUILD
 from .chunk_contract import (
     CHUNK_ALIGNMENT,
     CHUNK_BLENDING,
+    RTC_MODEL_SPACE,
     chunk_settings,
     required_chunk_capabilities,
     validate_blendable_components,
@@ -116,9 +117,12 @@ class SessionWorker:
             and runner.capabilities.action_representation == "canonical"
             else []
         )
+        if runner.capabilities.model_action_dim not in (None, runner.capabilities.action_feature.shape[0]):
+            self.execution_contracts.append(RTC_MODEL_SPACE)
         self._lock = Lock()
         self._commands: Queue[tuple[Envelope, Future[Envelope], float]] = Queue(maxsize=8)
         self._session: _Session | None = None
+        self._failure: str | None = None
         self._opens: OrderedDict[str, Future[Envelope]] = OrderedDict()
         self._seen: OrderedDict[str, None] = OrderedDict()
         self._controls: OrderedDict[str, Future[Envelope]] = OrderedDict()
@@ -168,20 +172,26 @@ class SessionWorker:
         }
 
     def _descriptor_locked(self) -> dict[str, Any]:
+        capabilities = asdict(self.runner.capabilities)
+        if capabilities["model_action_dim"] in (None, self.runner.capabilities.action_feature.shape[0]):
+            capabilities.pop("model_action_dim")
         return {
             "deployment": self.deployment,
             "instance_id": self.instance_id,
             "artifact_identity": self.artifact_identity,
             "software": asdict(SOFTWARE_BUILD),
             "semantics": self.semantics,
-            "capabilities": asdict(self.runner.capabilities),
+            "capabilities": capabilities,
             "execution_contracts": list(self.execution_contracts),
             "blendable_components": list(self.blendable_components),
-            "ready": not self._stopping.is_set(),
-            "available": self._session is None and not self._stopping.is_set(),
+            "ready": self._failure is None and not self._stopping.is_set(),
+            "available": self._failure is None and self._session is None and not self._stopping.is_set(),
+            "failure": self._failure,
             "session": self._session_diagnostics_locked(),
             "session_status": (
-                "idle"
+                "unhealthy"
+                if self._failure is not None
+                else "idle"
                 if self._session is None
                 else "faulted"
                 if self._session.faulted
@@ -225,6 +235,8 @@ class SessionWorker:
                     return future
                 if message.instance_id != self.instance_id:
                     raise ProtocolError(ErrorCode.STALE, "Server instance does not match")
+                if self._failure is not None:
+                    raise ProtocolError(ErrorCode.EXECUTION, self._failure)
                 if message.message_type is MessageType.OPEN:
                     if not message.request_id:
                         raise ProtocolError(ErrorCode.MALFORMED, "Open operation ID is required")
@@ -313,7 +325,15 @@ class SessionWorker:
                     else:
                         raise ProtocolError(ErrorCode.MALFORMED, "Unexpected request message type")
                 self._commands.put_nowait((message, future, time.monotonic()))
-            except (ProtocolError, ValueError, KeyError, TypeError, Full) as exc:
+            except (
+                ProtocolError,
+                ValueError,
+                KeyError,
+                TypeError,
+                AttributeError,
+                OverflowError,
+                Full,
+            ) as exc:
                 code = (
                     exc.code
                     if isinstance(exc, ProtocolError)
@@ -350,7 +370,13 @@ class SessionWorker:
             validate_chunk_contract(settings, caps, self.blendable_components)
         except ValueError as exc:
             raise ProtocolError(ErrorCode.INCOMPATIBLE, str(exc)) from exc
-        if required != required_chunk_capabilities(settings):
+        expected = required_chunk_capabilities(settings)
+        if body.get("mode") != ExecutionMode.CHUNK and caps.model_action_dim not in (
+            None,
+            caps.action_feature.shape[0],
+        ):
+            expected.append(RTC_MODEL_SPACE)
+        if required != expected:
             raise ProtocolError(ErrorCode.INCOMPATIBLE, "Required capabilities differ from chunk_settings")
         if settings["chunk_merge"] == "aligned" and body.get("mode") != ExecutionMode.CHUNK:
             raise ProtocolError(ErrorCode.INCOMPATIBLE, "Aligned merge requires chunk execution")
@@ -419,27 +445,45 @@ class SessionWorker:
                 raise ProtocolError(ErrorCode.MALFORMED, "Invalid RTC delay")
             for name in ("model_continuation", "canonical_continuation"):
                 value = body.get(name)
+                width = (
+                    caps.model_action_dim or caps.action_feature.shape[0]
+                    if name == "model_continuation"
+                    else caps.action_feature.shape[0]
+                )
                 if value is not None and (
                     not isinstance(value, np.ndarray)
                     or value.ndim != 2
-                    or value.shape[1:] != caps.action_feature.shape
+                    or value.shape[1:] != (width,)
                     or value.dtype.name != caps.action_feature.dtype
                     or len(value) > caps.prediction_steps
                     or not np.isfinite(value).all()
                 ):
                     raise ProtocolError(ErrorCode.MALFORMED, "Invalid continuation")
             model, canonical = body.get("model_continuation"), body.get("canonical_continuation")
-            if model is not None and canonical is not None and model.shape != canonical.shape:
+            if model is not None and canonical is not None and len(model) != len(canonical):
                 raise ProtocolError(ErrorCode.MALFORMED, "Continuation spaces must cover identical steps")
 
+    def _reset_runner(self, *, full: bool) -> None:
+        """A failed reset leaves model state unknown; only a server restart recovers it."""
+        try:
+            self.runner.reset(full=full)
+        except Exception as exc:
+            with self._lock:
+                self._failure = "Policy reset failed; deployment is unavailable until the server restarts"
+                if self._session is not None:
+                    self._session.faulted = True
+            raise RuntimeError(self._failure) from exc
+
     def _execute(self, message: Envelope) -> Envelope:
+        if self._failure is not None:
+            return message.error(ErrorCode.EXECUTION, self._failure)
         session = self._session
         if session is None:
             return message.error(ErrorCode.STALE, "Session closed")
         if message.message_type is not MessageType.OPEN and message.session_id != session.identity:
             return message.error(ErrorCode.STALE, "Session ownership changed before execution")
         if message.message_type is MessageType.OPEN:
-            self.runner.reset(full=True)
+            self._reset_runner(full=True)
             session.ready = True
             self._recent_operations.clear()
             self._actions_since_summary = self._language_since_summary = 0
@@ -462,7 +506,7 @@ class SessionWorker:
             if operation == "close" or (
                 operation in {"reset", "invalidate"} and message.generation > session.generation
             ):
-                self.runner.reset(full=operation != "invalidate")
+                self._reset_runner(full=operation != "invalidate")
                 session.generation = message.generation
             response = message.reply(
                 MessageType.ACK, {"operation": operation, "applied_generation": session.generation}
@@ -498,7 +542,12 @@ class SessionWorker:
             identity.update({key: body[key] for key in ("observation_cursor", "cursor")})
         if message.message_type is MessageType.LANGUAGE_REQUEST:
             answer = self.runner.query(observation, kind=body["kind"], text=body["text"])
-            if not isinstance(answer, str) or not answer.strip() or len(answer) > self.max_output_chars:
+            if (
+                not isinstance(answer, str)
+                or not answer.strip()
+                or len(answer) > self.max_output_chars
+                or len(answer.encode("utf-8")) > CodecLimits().max_string_bytes
+            ):
                 raise ValueError("Policy returned an invalid or oversized text answer")
             elapsed = time.monotonic() - started
             if elapsed > self.language_deadline_s:
@@ -643,7 +692,7 @@ class SessionWorker:
         """Bound initial presence and later absence; release only through the worker."""
         with self._lock:
             session = self._session
-            if session is None or session.closing:
+            if session is None or session.closing or self._failure is not None:
                 return
             now = time.monotonic()
             if present:
@@ -718,6 +767,15 @@ class PolicyServer:
         self.transport = transport
         self._stop = Event()
 
+    @staticmethod
+    def _encode_reply(response: Envelope) -> bytes:
+        """Return a correlated failure if a completed policy reply cannot be encoded."""
+        try:
+            return encode_message(response)
+        except ProtocolError:
+            logger.exception("Policy reply could not be encoded request=%s", response.request_id)
+            return encode_message(response.error(ErrorCode.EXECUTION, "Policy reply could not be encoded"))
+
     def serve(self) -> None:
         """Serve bounded control, action and language channels until explicitly stopped."""
         transport, worker = self.transport, self.worker
@@ -736,7 +794,7 @@ class PolicyServer:
         session_present = False
         # Only session-control callbacks retain that session's queryable handles.
         # OPEN replies must never block installation of their own session channels.
-        outbound: list[tuple[Future, Any, str | None]] = []
+        outbound: list[tuple[Future, PendingQuery | str, str | None]] = []
         try:
             while not self._stop.is_set():
                 if worker.session_id != session_id and (
@@ -785,10 +843,13 @@ class PolicyServer:
                             )
                             continue
                         bound = message.session_id if message.message_type is MessageType.CONTROL else None
-                        outbound.append((worker.submit(message), query.reply, bound))
+                        outbound.append((worker.submit(message), query, bound))
                     except ProtocolError:
                         query.drop()
                         logger.warning("Rejected malformed control envelope")
+                    except Exception:
+                        query.drop()
+                        logger.exception("Control request or reply failed")
                 if resources:
                     assert session_id is not None
                     key = session_prefix(worker.deployment, worker.instance_id, session_id)
@@ -815,7 +876,7 @@ class PolicyServer:
                             outbound.append(
                                 (
                                     worker.submit(message),
-                                    lambda data, key=key + suffix: transport.publish(key, data),
+                                    key + suffix,
                                     None,
                                 )
                             )
@@ -828,34 +889,43 @@ class PolicyServer:
                             break
                     worker.expire(present=session_present and not resources[3].dropped)
                 pending = []
-                for future, reply, bound in outbound:
+                for future, target, bound in outbound:
                     if future.done():
-                        response = future.result()
-                        if (
-                            response.message_type is MessageType.ACCEPTED
-                            and response.session_id != session_id
-                        ):
-                            if response.session_id == worker.session_id:
-                                pending.append((future, reply, bound))
-                                continue
-                            response = response.error(
-                                ErrorCode.STALE, "Open operation belongs to a closed session"
-                            )
                         try:
+                            response = future.result()
+                            if (
+                                response.message_type is MessageType.ACCEPTED
+                                and response.session_id != session_id
+                            ):
+                                if response.session_id == worker.session_id:
+                                    pending.append((future, target, bound))
+                                    continue
+                                response = response.error(
+                                    ErrorCode.STALE, "Open operation belongs to a closed session"
+                                )
                             if (
                                 response.message_type is MessageType.ACK
                                 and response.body.get("operation") == "reset"
+                                and response.generation == 0
                             ):
+                                # Only admission establishes these subscriptions. A later
+                                # reset must not stall the IO pump if the client disappears.
                                 ready_key = session_prefix(
                                     worker.deployment, worker.instance_id, response.session_id
                                 )
                                 transport.wait_for_subscriber(ready_key + "/act", 5.0)
                                 transport.wait_for_subscriber(ready_key + "/language/result", 5.0)
-                            reply(encode_message(response))
+                            payload = self._encode_reply(response)
+                            if isinstance(target, PendingQuery):
+                                target.reply(payload)
+                            else:
+                                transport.publish(target, payload)
                         except Exception:
+                            if isinstance(target, PendingQuery):
+                                target.drop()
                             logger.exception("Reply failed or query deadline expired")
                     else:
-                        pending.append((future, reply, bound))
+                        pending.append((future, target, bound))
                 outbound = pending
                 self._stop.wait(0.002)
         finally:

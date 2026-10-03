@@ -15,6 +15,7 @@ import torch
 
 pytest.importorskip("zenoh")
 pytest.importorskip("msgpack")
+pytest.importorskip("datasets")
 
 from lerobot.inference.contracts import ExecutionMode, FeatureSpec
 from lerobot.inference.execution import ChunkRuntime

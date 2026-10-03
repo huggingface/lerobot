@@ -9,6 +9,9 @@ from types import SimpleNamespace
 
 import pytest
 
+pytest.importorskip("datasets")
+pytest.importorskip("msgpack")
+
 from lerobot.inference.contracts import ExecutionMode, FeatureSpec, PolicyCapabilities
 from lerobot.remote_inference.client import RemoteClient
 from lerobot.remote_inference.codec import decode_message, encode_message
