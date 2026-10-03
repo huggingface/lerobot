@@ -16,6 +16,10 @@ Converted from [ginwind/VLA-JEPA](https://huggingface.co/ginwind/VLA-JEPA).
 
 At inference time only the Qwen backbone and action head are used; the world model is not needed.
 
+### World-model training compatibility
+
+The correction to pairwise rotary frequencies keeps the world predictor's parameter names and shapes unchanged. Existing checkpoints continue to load, but predictor outputs and world-model training losses change relative to the earlier frequency-block repetition. Pretrained world-model quality needs separate evaluation when continuing training.
+
 ---
 
 ## Citation
