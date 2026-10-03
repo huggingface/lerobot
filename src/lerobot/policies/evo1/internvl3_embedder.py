@@ -111,7 +111,7 @@ class InternVL3Embedder(nn.Module):
         image_size=448,
         device="cuda",
         num_language_layers: int | None = 14,
-        model_dtype: str | torch.dtype = "bfloat16",
+        model_dtype: torch.dtype = torch.bfloat16,
         use_flash_attn: bool = True,
         max_text_length: int = 1024,
         enable_gradient_checkpointing: bool = True,
@@ -130,11 +130,6 @@ class InternVL3Embedder(nn.Module):
         require_package("transformers", extra="evo1")
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, **hub_kwargs)
-        if isinstance(model_dtype, str):
-            try:
-                model_dtype = getattr(torch, model_dtype)
-            except AttributeError as exc:
-                raise ValueError(f"Unsupported EVO1 vlm_dtype '{model_dtype}'") from exc
         self.model_dtype = model_dtype
 
         attn_implementation = (
