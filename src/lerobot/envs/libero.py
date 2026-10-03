@@ -32,7 +32,7 @@ from libero.libero.envs import OffScreenRenderEnv
 
 from lerobot.lerobot_types import RobotObservation
 
-from .utils import _LazyAsyncVectorEnv, parse_camera_names
+from .utils import _LazyAsyncVectorEnv, freeze_after_episode_end, parse_camera_names
 
 
 def _get_suite(name: str) -> benchmark.Benchmark:
@@ -522,11 +522,20 @@ def create_libero_envs(
                     cached_metadata = lazy.metadata
                 out[suite_name][tid] = lazy
             elif is_sync:
+                # `_LazyAsyncVectorEnv` applies this wrapper on the async path only, so
+                # until now the sync path had neither its saving nor its side effect.
+                # Sync is the default (`use_async_envs=False`, and async additionally
+                # requires n_envs > 1), which left the default path both simulating
+                # finished sub-envs and letting Gymnasium's NEXT_STEP autoreset reach
+                # `LiberoEnv.reset()` -- one extra `init_state_id += _reset_stride` per
+                # early termination. The initial-state sequence then depended on when
+                # each slot happened to finish.
                 out[suite_name][tid] = gym.vector.SyncVectorEnv(
-                    fns, autoreset_mode=gym.vector.AutoresetMode.NEXT_STEP
+                    [freeze_after_episode_end(fn) for fn in fns],
+                    autoreset_mode=gym.vector.AutoresetMode.NEXT_STEP,
                 )
             else:
-                out[suite_name][tid] = env_cls(fns)
+                out[suite_name][tid] = env_cls([freeze_after_episode_end(fn) for fn in fns])
             print(f"Built vec env | suite={suite_name} | task_id={tid} | n_envs={n_envs}")
 
     return {suite: dict(task_map) for suite, task_map in out.items()}
