@@ -1043,7 +1043,9 @@ def make_lingbot_vla_v2_pre_post_processors_from_pretrained(
     # than canonical_cameras — same rule as ``make_lingbot_vla_v2_pre_post_processors``.
     # Falls back to the checkpoint's saved value when input_features has no cameras.
     image_cameras = [
-        key.replace(f"{OBS_IMAGES}.", "") for key in (config.input_features or {}) if key.startswith(f"{OBS_IMAGES}.")
+        key.replace(f"{OBS_IMAGES}.", "")
+        for key in (config.input_features or {})
+        if key.startswith(f"{OBS_IMAGES}.")
     ]
     _overrides(
         IMAGE_STEP,
