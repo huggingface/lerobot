@@ -230,7 +230,7 @@ class _NormalizationMixin:
             key, stat_name = flat_key.rsplit(".", 1)
             # Load to the processor's configured device.
             self._tensor_stats.setdefault(key, {})[stat_name] = tensor.to(
-                dtype=torch.float32, device=self.device
+                dtype=self.dtype, device=self.device
             )
         self._reshape_visual_stats()
 
@@ -241,7 +241,9 @@ class _NormalizationMixin:
             self.stats[key] = {}
             for stat_name, tensor in tensor_dict.items():
                 # Convert tensor back to python/numpy format
-                self.stats[key][stat_name] = from_tensor_to_numpy(tensor)
+                # NumPy cannot represent bfloat16; float32 preserves its values exactly.
+                numpy_tensor = tensor.float() if tensor.dtype == torch.bfloat16 else tensor
+                self.stats[key][stat_name] = from_tensor_to_numpy(numpy_tensor)
 
     def get_config(self) -> dict[str, Any]:
         """
