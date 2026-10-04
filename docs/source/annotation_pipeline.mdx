@@ -237,6 +237,7 @@ Every module is on by default and can be toggled independently (set to
 | `--interjections.max_interjections_per_episode` | `3`     | Cap on interjection/speech pairs per episode.              |
 | `--vqa.vqa_emission_hz`                         | `1.0`   | How often VQA pairs are emitted.                           |
 | `--vqa.restrict_to_default_camera`              | `false` | Ground VQA only on `--vlm.camera_key` (else every camera). |
+| `--vqa.coordinate_scale`                        | `1000`  | VLM bbox/keypoint grid, stored as [0, 1] (`none` = px).    |
 | `--executor.episode_parallelism`                | `16`    | Episodes processed concurrently within each phase.         |
 
 ## Contributing new modules
@@ -316,8 +317,8 @@ while debugging.
   tool-call-only atom
   (`tool_calls=[{type:function, function:{name:"say", arguments:{text:...}}}]`).
 - **`vqa`.** ECoT ([Zawalski 2024](https://arxiv.org/abs/2407.08693)) for
-  grounded features (pixel bounding boxes `[x_min, y_min, x_max, y_max]`,
-  keypoints) and Steerable VLA Policies
+  grounded features (bounding boxes `[x_min, y_min, x_max, y_max]` and
+  keypoints, stored as [0, 1] image fractions) and Steerable VLA Policies
   ([Zhao 2025](https://arxiv.org/abs/2509.07626)) for multi-abstraction
   grounding. Pi0.7 also grounds answers across abstraction levels.
 
