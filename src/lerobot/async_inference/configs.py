@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -69,14 +70,18 @@ class PolicyServerConfig:
         if self.port < 1 or self.port > 65535:
             raise ValueError(f"Port must be between 1 and 65535, got {self.port}")
 
-        if self.environment_dt <= 0:
-            raise ValueError(f"environment_dt must be positive, got {self.environment_dt}")
+        if not math.isfinite(self.fps) or self.fps <= 0:
+            raise ValueError(f"fps must be finite and positive, got {self.fps}")
 
-        if self.inference_latency < 0:
-            raise ValueError(f"inference_latency must be non-negative, got {self.inference_latency}")
+        if not math.isfinite(self.inference_latency) or self.inference_latency < 0:
+            raise ValueError(
+                f"inference_latency must be finite and non-negative, got {self.inference_latency}"
+            )
 
-        if self.obs_queue_timeout < 0:
-            raise ValueError(f"obs_queue_timeout must be non-negative, got {self.obs_queue_timeout}")
+        if not math.isfinite(self.obs_queue_timeout) or self.obs_queue_timeout < 0:
+            raise ValueError(
+                f"obs_queue_timeout must be finite and non-negative, got {self.obs_queue_timeout}"
+            )
 
     @classmethod
     def from_dict(cls, config_dict: dict) -> "PolicyServerConfig":
@@ -170,11 +175,11 @@ class RobotClientConfig:
         if not self.client_device:
             raise ValueError("client_device cannot be empty")
 
-        if self.chunk_size_threshold < 0 or self.chunk_size_threshold > 1:
+        if not math.isfinite(self.chunk_size_threshold) or not 0 <= self.chunk_size_threshold <= 1:
             raise ValueError(f"chunk_size_threshold must be between 0 and 1, got {self.chunk_size_threshold}")
 
-        if self.fps <= 0:
-            raise ValueError(f"fps must be positive, got {self.fps}")
+        if not math.isfinite(self.fps) or self.fps <= 0:
+            raise ValueError(f"fps must be finite and positive, got {self.fps}")
 
         if self.actions_per_chunk <= 0:
             raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
