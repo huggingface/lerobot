@@ -2310,8 +2310,8 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         # The Qwen3-VL backbone builds in bfloat16 while our added projection/AdaRMSNorm
         # heads build in float32. Cast the whole model to one dtype so the dual streams
         # stay consistent (mixed dtypes raise "mat1 and mat2 must have the same dtype").
-        model_dtype = getattr(torch, getattr(self.config, "dtype", "bfloat16"))
-        if isinstance(model_dtype, torch.dtype) and model_dtype.is_floating_point:
+        model_dtype = self.config.dtype if isinstance(self.config.dtype, torch.dtype) else torch.bfloat16
+        if model_dtype.is_floating_point:
             self.model.to(model_dtype)
 
         # Opt-in torch.compile for the denoise inner loop (see config docs).
