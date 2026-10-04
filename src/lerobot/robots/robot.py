@@ -16,6 +16,7 @@ import abc
 import builtins
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import draccus
 
@@ -24,6 +25,9 @@ from lerobot.motors import MotorCalibration
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, ROBOTS
 
 from .config import RobotConfig
+
+if TYPE_CHECKING:
+    from lerobot.cameras import Camera
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +49,13 @@ class Robot(abc.ABC):
     # Set these in ALL subclasses
     config_class: builtins.type[RobotConfig]
     name: str
+
+    # Declared here so the shared failed-connect cleanup can resolve them. Subclasses narrow
+    # `config` to their own config type, and `bus` covers transports as different as serial
+    # motor buses, CAN controllers and SDK handles, so both stay loosely typed. A robot that
+    # owns no bus simply leaves it unset.
+    config: Any
+    bus: Any = None
 
     def __init__(self, config: RobotConfig):
         self.robot_type = self.name
@@ -86,7 +97,10 @@ class Robot(abc.ABC):
 
         Failures here are logged rather than raised so they cannot mask it.
         """
-        for cam in getattr(self, "cameras", {}).values():
+        # Read through getattr: UnitreeG1 exposes `cameras` as a read-only property, which
+        # mypy refuses to reconcile with a writeable attribute declared on this base class.
+        cameras: dict[str, Camera] = getattr(self, "cameras", {})
+        for cam in cameras.values():
             try:
                 if cam.is_connected:
                     cam.disconnect()
@@ -101,7 +115,7 @@ class Robot(abc.ABC):
         Override this when the bus does not follow the ``disconnect(disable_torque)``
         shape, as is the case for CAN-backed robots that hold a controller handle.
         """
-        bus = getattr(self, "bus", None)
+        bus = self.bus
         if bus is None:
             return
 

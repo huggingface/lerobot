@@ -368,43 +368,24 @@ class UnitreeG1(Robot):
             raise
 
     def _release_after_failed_connect(self) -> None:
-        """Stops the threads and cameras that connect() had already started.
+        """Releases whatever connect() had already started.
+
+        disconnect() is undecorated here and already stops both threads, tears down the
+        sim env including its image-publish subprocess, and releases the cameras, so it is
+        reused rather than kept as a second copy that could drift from it.
 
         The subscribe thread is not a daemon, so leaving it running blocks interpreter
         exit rather than letting the original error surface.
         """
-        self._shutdown_event.set()
-
-        for thread, label in (
-            (self._controller_thread, "Controller"),
-            (self.subscribe_thread, "Subscribe"),
-        ):
-            if thread is None:
-                continue
-            thread.join(timeout=2.0)
-            if thread.is_alive():
-                logger.warning(f"{label} thread did not stop cleanly after {self} failed to connect.")
-
-        self._controller_thread = None
-        self.subscribe_thread = None
-
-        for cam in self._cameras.values():
-            try:
-                if cam.is_connected:
-                    cam.disconnect()
-            except Exception:
-                logger.exception(f"Failed to disconnect {cam} after {self} failed to connect.")
-
-        if self.sim_env is not None:
-            try:
-                self.sim_env.close()
-            except Exception:
-                logger.exception(f"Failed to close the sim env after {self} failed to connect.")
-            self.sim_env = None
-            self._env_wrapper = None
-
-        # Cleared last so a later connect() attempt starts from a usable state.
-        self._shutdown_event.clear()
+        try:
+            self.disconnect()
+        except Exception:
+            logger.exception(f"Failed to release devices after {self} failed to connect.")
+        finally:
+            self._controller_thread = None
+            self.subscribe_thread = None
+            # Cleared last so a later connect() attempt starts from a usable state.
+            self._shutdown_event.clear()
 
     def _connect(self) -> None:
         # Initialize DDS channel and simulation environment
@@ -538,9 +519,15 @@ class UnitreeG1(Robot):
             self.sim_env = None
             self._env_wrapper = None
 
-        # Disconnect cameras
+        # Disconnect cameras. Guarded per camera so one failure cannot strand the rest,
+        # and so this is safe to reuse from the failed-connect path where a camera that
+        # never finished connecting would otherwise raise.
         for cam in self._cameras.values():
-            cam.disconnect()
+            try:
+                if cam.is_connected:
+                    cam.disconnect()
+            except Exception as e:
+                logger.warning(f"Error disconnecting camera: {e}")
 
     def get_observation(self) -> RobotObservation:
         with self._lowstate_lock:

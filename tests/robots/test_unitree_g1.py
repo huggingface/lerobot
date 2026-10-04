@@ -259,6 +259,37 @@ def test_connect_releases_cameras_and_threads_when_a_camera_fails(make_robot):
     assert not robot._shutdown_event.is_set()
 
 
+def test_connect_tears_down_sim_image_publish_process_when_a_camera_fails(make_robot):
+    # disconnect() force-kills the image publish subprocess before closing sim_env; the
+    # failed-connect path has to do the same or it leaks the subprocess (see #4645).
+    factory, _ = make_robot
+    robot = factory()
+
+    proc = MagicMock(name="image_publish_process")
+    proc.process.is_alive.side_effect = [True, False]
+    sim_env = MagicMock(name="sim_env")
+    sim_env.simulator.sim_env.image_publish_process = proc
+    env_wrapper = {"hub_env": [MagicMock(envs=[sim_env])]}
+
+    bad_cam = MagicMock(name="bad_cam")
+    bad_cam.is_connected = False
+    bad_cam.connect.side_effect = ConnectionError("Failed to open bad_cam.")
+    robot._cameras = {"bad": bad_cam}
+
+    with (
+        patch("lerobot.envs.make_env", return_value=env_wrapper),
+        pytest.raises(ConnectionError, match="bad_cam"),
+    ):
+        robot.connect()
+
+    proc.stop_event.set.assert_called_once_with()
+    proc.process.terminate.assert_called_once_with()
+    sim_env.close.assert_called_once_with()
+    assert robot.sim_env is None
+    assert robot.subscribe_thread is None
+    assert not robot._shutdown_event.is_set()
+
+
 class TestInitialState:
     def test_starts_disconnected(self, make_robot):
         factory, _ = make_robot

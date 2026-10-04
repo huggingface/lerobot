@@ -161,9 +161,7 @@ class RebotB601Follower(Robot):
                 else self.bus.add_robstride_motor
             )
             for motor_name, (send_id, recv_id) in self._motor_can_ids.items():
-                self.motors[motor_name] = add_motor(
-                    send_id, recv_id, self.profile.motor_models[motor_name]
-                )
+                self.motors[motor_name] = add_motor(send_id, recv_id, self.profile.motor_models[motor_name])
 
             self._reset_gripper_impedance_state()
 
