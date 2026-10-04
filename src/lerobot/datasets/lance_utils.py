@@ -26,7 +26,9 @@ depend on ``av``/``io``/``bisect`` and are reusable outside Lance.
 from __future__ import annotations
 
 import bisect
+import hashlib
 import io
+import json
 import multiprocessing
 import os
 import re
@@ -242,15 +244,42 @@ VIDEOS_TABLE = "videos"
 META_TABLE = "meta"
 VIDEO_BLOB_COLUMN = "video_bytes"
 
+# Only connection routing belongs in the metadata cache identity. Credentials and
+# request tuning must not change cache paths or become part of the digest.
+_METADATA_ROUTING_OPTIONS = {
+    "endpoint",
+    "endpoint_url",
+    "region",
+    "default_region",
+    "virtual_hosted_style_request",
+    "aws_endpoint",
+    "aws_endpoint_url",
+    "aws_region",
+    "aws_default_region",
+    "aws_virtual_hosted_style_request",
+    "account_name",
+    "azure_storage_account_name",
+    "azure_storage_endpoint",
+    "azure_endpoint",
+    "oss_endpoint",
+    "oss_region",
+    "tos_endpoint",
+    "tos_region",
+    "cos_endpoint",
+    "cos_region",
+}
+
 
 def to_lance_column(key: str) -> str:
     return key.replace(".", "_")
 
 
 def _storage_options(
-    db_uri: str, storage_options: dict | None, revision: str | None, token: str | bool | None = None
-) -> dict:
+    db_uri: str, storage_options: dict[str, str] | None, revision: str | None, token: str | bool | None = None
+) -> dict[str, str]:
     options = dict(storage_options or {})
+    if any(key.lower() == "revision" for key in options):
+        raise ValueError("storage_options must not contain 'revision'; use the revision argument instead.")
     if db_uri.startswith("hf://"):
         if "token" not in options:
             if isinstance(token, str):
@@ -266,7 +295,7 @@ def _storage_options(
 
 def _connect(
     db_uri: str,
-    storage_options: dict | None,
+    storage_options: dict[str, str] | None,
     revision: str | None = None,
     token: str | bool | None = None,
 ):
@@ -321,6 +350,8 @@ def localize_root(
     revision: str | None = None,
     token: str | bool | None = None,
     force_cache_sync: bool = False,
+    *,
+    storage_options: dict[str, str] | None = None,
 ) -> Path:
     """Materialize ``meta/`` for a remote Lance dataset and return the local dir holding it.
 
@@ -328,7 +359,12 @@ def localize_root(
     tables are never downloaded.
     """
     _, local_root = resolve_lance_root(
-        repo_id, root, revision=revision, token=token, force_cache_sync=force_cache_sync
+        repo_id,
+        root,
+        storage_options=storage_options,
+        revision=revision,
+        token=token,
+        force_cache_sync=force_cache_sync,
     )
     return local_root
 
@@ -336,7 +372,7 @@ def localize_root(
 def resolve_lance_root(
     repo_id: str | None,
     root: str | Path | None,
-    storage_options: dict | None = None,
+    storage_options: dict[str, str] | None = None,
     revision: str | None = None,
     token: str | bool | None = None,
     force_cache_sync: bool = False,
@@ -347,6 +383,16 @@ def resolve_lance_root(
         # Key the cache by revision too: an hf:// root at a non-default revision must not
         # reuse (or overwrite) another revision's materialized meta.
         cache_key = f"{db_uri}@{revision}" if revision else db_uri
+        # The same URI can name different datasets on different object stores.
+        # Preserve the existing path when no explicit routing options are set.
+        routing_options = {
+            key.lower(): value
+            for key, value in (storage_options or {}).items()
+            if key.lower() in _METADATA_ROUTING_OPTIONS
+        }
+        if routing_options:
+            identity = json.dumps(routing_options, sort_keys=True, separators=(",", ":"))
+            cache_key += "-" + hashlib.sha256(identity.encode()).hexdigest()[:16]
         local_root = HF_LEROBOT_HOME / "remote" / re.sub(r"[^A-Za-z0-9._-]+", "_", cache_key)
         if force_cache_sync:
             shutil.rmtree(local_root / "meta", ignore_errors=True)

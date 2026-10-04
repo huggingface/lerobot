@@ -22,6 +22,7 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import lerobot.datasets.factory as factory_module
 import lerobot.datasets.streaming_dataset as streaming_dataset_module
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
@@ -512,11 +513,14 @@ def test_streaming_repo_type_routes_load_dataset(repo_type, expected_source, exp
     """repo_type='bucket' loads parquet from hf://buckets/...; 'dataset' keeps the Hub-repo path."""
     captured = {}
     token = "hf_test_token"
+    storage_options = {"endpoint": "https://storage.example.com", "region": "eu-west-1"}
+    expected_storage_options = storage_options.copy()
 
     def fake_load_dataset(source, **kwargs):
         captured["source"] = source
         captured["data_files"] = kwargs.get("data_files")
         captured["token"] = kwargs.get("token")
+        captured["storage_options"] = kwargs.get("storage_options")
         raise _StopConstructionError
 
     with (
@@ -525,11 +529,65 @@ def test_streaming_repo_type_routes_load_dataset(repo_type, expected_source, exp
         patch("lerobot.datasets.streaming_dataset.load_dataset", fake_load_dataset),
         pytest.raises(_StopConstructionError),
     ):
-        StreamingLeRobotDataset(DUMMY_REPO_ID, repo_type=repo_type, token=token)
+        StreamingLeRobotDataset(
+            DUMMY_REPO_ID, repo_type=repo_type, token=token, storage_options=storage_options
+        )
 
     assert captured["source"] == expected_source.format(repo_id=DUMMY_REPO_ID)
     assert captured["data_files"] == expected_data_files.format(repo_id=DUMMY_REPO_ID)
     assert captured["token"] == token
+    storage_options["region"] = "changed-after-construction"
+    assert captured["storage_options"] == expected_storage_options
+
+
+def test_streaming_storage_options_rejects_revision():
+    with pytest.raises(ValueError, match="storage_options.*revision"):
+        StreamingLeRobotDataset(DUMMY_REPO_ID, storage_options={"revision": "main"})
+
+
+def test_factory_forwards_storage_options_to_streaming(monkeypatch):
+    storage_options = {"endpoint": "https://storage.example.com", "region": "eu-west-1"}
+    meta = SimpleNamespace(
+        storage_format="lerobot",
+        total_episodes=1,
+        camera_keys=[],
+        depth_keys=[],
+        stats={},
+    )
+    dataset_config = SimpleNamespace(
+        repo_id=DUMMY_REPO_ID,
+        repo_type="dataset",
+        root=None,
+        revision=None,
+        episodes=None,
+        exclude_episodes=None,
+        image_transforms=SimpleNamespace(enable=False),
+        video_backend="pyav",
+        depth_output_unit="mm",
+        streaming=True,
+        use_imagenet_stats=False,
+        storage_options=storage_options,
+    )
+    config = SimpleNamespace(
+        dataset=dataset_config,
+        trainable_config=object(),
+        rename_map=None,
+        num_workers=4,
+        tolerance_s=1e-4,
+    )
+    captured = {}
+
+    def make_streaming_dataset(*args, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(meta=meta)
+
+    monkeypatch.setattr(factory_module, "load_dataset_metadata", lambda *args, **kwargs: meta)
+    monkeypatch.setattr(factory_module, "resolve_delta_timestamps", lambda *args, **kwargs: None)
+    monkeypatch.setattr(factory_module, "StreamingLeRobotDataset", make_streaming_dataset)
+
+    factory_module.make_dataset(config)
+
+    assert captured["storage_options"] == storage_options
 
 
 def test_bucket_metadata_url_root(tmp_path):
