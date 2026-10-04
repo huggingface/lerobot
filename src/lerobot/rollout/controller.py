@@ -80,7 +80,7 @@ class AskResult(Enum):
     """Rejected: another question or autosteer turn holds the single-slot channel."""
 
     UNSUPPORTED = "unsupported"
-    """Rejected: the policy has no text head; unlike the others, permanent for the session."""
+    """Rejected: text queries are unavailable for this policy/robot setup."""
 
     INVALID = "invalid"
     """Rejected: invalid text; :meth:`RolloutController.text_input_error` explains how to fix it."""
@@ -304,7 +304,7 @@ class RolloutController:
 
         Returns immediately; the answer arrives as a :attr:`RolloutEvent.QUERY_ANSWERED` event, and
         the policy is never touched on the caller's thread.  Rejected with
-        :attr:`AskResult.UNSUPPORTED` (no text head), :attr:`AskResult.NOT_RUNNING` (no segment
+        :attr:`AskResult.UNSUPPORTED` (capability unavailable), :attr:`AskResult.NOT_RUNNING` (no segment
         running, so no observation to answer from), :attr:`AskResult.INVALID` (text fails
         validation), or :attr:`AskResult.BUSY` (channel taken).
         """

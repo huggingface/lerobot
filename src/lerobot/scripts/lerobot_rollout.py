@@ -262,11 +262,13 @@ def rollout(cfg: RolloutConfig):
         f"{cfg.duration}s" if cfg.duration > 0 else "infinite",
     )
 
+    session: InteractiveSession | None = None
     try:
         strategy.setup(ctx)
         if cfg.interactive:
             logger.info("Rollout setup complete — starting interactive session (robot idle until /start)")
-            InteractiveSession(strategy, ctx).run()
+            session = InteractiveSession(strategy, ctx)
+            session.run()
         else:
             logger.info("Rollout setup complete, starting rollout...")
             strategy.run(ctx)
@@ -277,8 +279,9 @@ def rollout(cfg: RolloutConfig):
         if cfg.display_data:
             shutdown_visualization(cfg.display_mode)
 
-    if ctx.policy.inference.failed:
-        logger.error("Rollout ended by an inference fault: %s", ctx.policy.inference.failure_traceback)
+    failure = session.controller if session is not None else ctx.policy.inference
+    if failure.failed:
+        logger.error("Rollout ended by a terminal fault: %s", failure.failure_traceback)
         raise SystemExit(1)
     logger.info("Rollout finished")
 

@@ -68,9 +68,16 @@ def local_prediction(monkeypatch, policy, *, relative=False, previous=None, cano
     return engine, result
 
 
-@pytest.mark.parametrize("mode", list(ExecutionMode))
+@pytest.mark.parametrize(
+    "mode,prefix_steps",
+    [(ExecutionMode.CHUNK, 0)]
+    + [
+        (mode, steps)
+        for mode in (ExecutionMode.RTC_GUIDED, ExecutionMode.RTC_TRAINED)
+        for steps in (0, 2, 4, 6)
+    ],
+)
 @pytest.mark.parametrize("relative", [False, True])
-@pytest.mark.parametrize("prefix_steps", [0, 2, 4, 6])
 def test_local_and_remote_prefix_context_and_execution_slice_match(monkeypatch, mode, relative, prefix_steps):
     config = tiny_config()
     config.rtc_training_max_delay = 3

@@ -156,6 +156,7 @@ def test_starvation_discards_old_result_and_pre_ack_capture_then_resumes_fresh(
 
 
 @pytest.mark.parametrize("transition", ["expiry", "reset", "stop"])
+@pytest.mark.parametrize("backend", ["local_rtc", "blended"], indirect=True)
 def test_starvation_late_result_cannot_restore_motion_after_transition(
     backend: SimpleNamespace, transition: str
 ) -> None:
@@ -195,6 +196,7 @@ def test_starvation_late_result_cannot_restore_motion_after_transition(
 
 
 @pytest.mark.parametrize("awaiting_capture", [False, True])
+@pytest.mark.parametrize("backend", ["local_rtc", "blended"], indirect=True)
 def test_language_request_during_starvation_cannot_renew_grace(
     backend: SimpleNamespace, awaiting_capture: bool
 ) -> None:
@@ -218,6 +220,7 @@ def test_language_request_during_starvation_cannot_renew_grace(
     assert runtime.queue.empty()
 
 
+@pytest.mark.parametrize("backend", ["local_rtc", "blended"], indirect=True)
 def test_fresh_recovery_result_arriving_after_grace_cannot_restore_motion(backend: SimpleNamespace) -> None:
     engine, runtime = backend.engine, backend.runtime
     exhaust_with_old_inference_pending(backend)

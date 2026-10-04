@@ -101,6 +101,8 @@
     title: Policy Deployment (lerobot-rollout)
   - local: remote_inference
     title: Asynchronous Remote Inference
+  - local: remote_inference_reference
+    title: Remote Configuration and Networking
   - local: rtc
     title: Real-Time Chunking (RTC)
   title: "Inference"

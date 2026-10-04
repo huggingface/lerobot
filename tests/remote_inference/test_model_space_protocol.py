@@ -24,7 +24,7 @@ from lerobot.remote_inference.codec import decode_message, encode_message
 from lerobot.remote_inference.protocol import ErrorCode, MessageType, ProtocolError
 from lerobot.remote_inference.server import SessionWorker
 from lerobot.transport.zenoh import BoundedSubscriber
-from tests.inference.test_policy_review_contracts import PaddedPolicy, make_runner
+from tests.inference.test_policy_contracts import PaddedPolicy, make_runner
 from tests.inference.test_policy_runner import ConformingPolicy, observation, tiny_config
 from tests.remote_inference.test_session import assert_error, open_request
 

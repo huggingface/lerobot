@@ -12,13 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The exclusive worker's canonical policy/processor execution boundary.
-
-No transport callbacks or robot-control code belong here. A runner is used by one
-remote worker at a time. Local RTC shares the post-preprocessing prediction helper,
-not this snapshot/serving adapter. Custom runners may adapt observation preparation
-or action representation at this boundary.
-"""
+"""Exclusive worker boundary for snapshot preparation, chunk prediction and text generation."""
 
 from __future__ import annotations
 

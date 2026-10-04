@@ -20,9 +20,9 @@ from lerobot.transport.zenoh import ZenohConfig
 from tests.inference.test_policy_runner import ConformingPolicy, observation, processors, tiny_config
 
 
-@pytest.fixture
-def deployment(tmp_path):
-    checkpoint = tmp_path / "checkpoint"
+@pytest.fixture(scope="module")
+def deployment(tmp_path_factory):
+    checkpoint = tmp_path_factory.mktemp("deployment") / "checkpoint"
     config = tiny_config()
     ACTPolicy(config).save_pretrained(checkpoint)
     pre, post = processors(config)

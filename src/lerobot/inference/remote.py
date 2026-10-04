@@ -494,10 +494,9 @@ class RemoteInferenceEngine(InferenceEngine):
             self._observation = snapshot
 
     def dispatch_allowed(self) -> bool:
-        """Check local motion permission and deadlines before every motor command.
+        """Check deadlines and motion permission on every control-thread tick.
 
-        Called on the control thread, including interpolation ticks. False requires
-        the strategy to clear interpolation, hold locally and acknowledge the hold.
+        False requires interpolation invalidation, local hold and acknowledgment.
         """
         # Called on every motor tick, before any interpolated target is sent.
         if self.has_pending_query:
@@ -560,14 +559,9 @@ class RemoteInferenceEngine(InferenceEngine):
             self._global_shutdown.set()
 
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
-        """Commit the next eligible canonical endpoint without network waits.
+        """Pop an eligible endpoint and its task label; observations arrive separately.
 
-        Args:
-            obs_frame: Unused; observations arrive through notify_observation.
-
-        Returns:
-            An action tensor with its dispatched task label set, or None when no
-            eligible action is available. The caller must still check dispatch permission.
+        Returns None when unavailable. The caller must still check dispatch permission.
         """
         item = self.runtime.pop(control_tick=self._tick)
         if self.runtime.starvation_deadline is not None and self.runtime.held:

@@ -12,13 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Real-Time Chunking inference engine.
-
-A background thread produces action chunks asynchronously via
-:meth:`policy.predict_action_chunk`.  The main control loop polls
-``get_action`` for the next ready action; observations flow the other
-way via ``notify_observation``.
-"""
+"""Local asynchronous RTC prediction with serialized policy and processor ownership."""
 
 from __future__ import annotations
 
@@ -93,12 +87,9 @@ def supports_rtc_inference(policy: PreTrainedPolicy) -> bool:
 
 
 class RTCInferenceEngine(InferenceEngine):
-    """Async RTC inference: a background thread produces action chunks.
+    """Background RTC prediction with control-thread capture and action consumption.
 
-    ``get_action`` pops the next action from the shared queue (or
-    returns ``None`` if the queue is empty).  The main loop should call
-    ``notify_observation`` every tick and ``pause``/``resume`` around
-    human-intervention phases.
+    Notify each capture; pause/resume around intervention and honor dispatch gates.
     """
 
     def __init__(

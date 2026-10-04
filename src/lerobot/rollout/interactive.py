@@ -291,7 +291,10 @@ class InteractiveSession:
         if result is AskResult.QUEUED:
             self._print(f"Asked: {question!r} — answering from the next observation...")
         elif result is AskResult.UNSUPPORTED:
-            self._print("This policy has no text head — it cannot answer questions.")
+            self._print(
+                "Text queries are unavailable for this policy/robot setup — "
+                "check policy text support and the robot's local hold capability."
+            )
         elif result is AskResult.NOT_RUNNING:
             self._print("Not running — /start first so the policy has a live view to answer from.")
         elif result is AskResult.BUSY:
@@ -321,7 +324,10 @@ class InteractiveSession:
             return
         result = self.controller.autosteer(goal)
         if result is AskResult.UNSUPPORTED:
-            self._print("This policy has no text head — it cannot plan subtasks.")
+            self._print(
+                "Autosteering is unavailable for this policy/robot setup — "
+                "check policy text support and the robot's local hold capability."
+            )
         elif result is AskResult.NOT_RUNNING:
             self._print("Not running — /start first so the policy has a live view to plan from.")
         elif result is AskResult.INVALID:

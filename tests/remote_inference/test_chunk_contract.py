@@ -34,6 +34,7 @@ def client_config(**kwargs):
 
 def test_client_defaults_match_implicit_legacy_chunk_contract():
     config = client_config()
+    assert (config.chunk_merge, config.blend_steps, config.blend_components) == ("append", 0, [])
     assert (
         chunk_settings(config.chunk_merge, config.blend_steps, config.blend_weight, config.blend_components)
         == default_chunk_settings()
@@ -113,11 +114,6 @@ def admit(client):
 def test_invalid_client_settings_fail_before_connect(kwargs):
     with pytest.raises(ValueError):
         client_config(**kwargs)
-
-
-def test_append_remains_default():
-    config = client_config()
-    assert (config.chunk_merge, config.blend_steps, config.blend_components) == ("append", 0, [])
 
 
 @pytest.mark.parametrize("components", [["missing"], ["shoulder.pos", "shoulder.pos"], [""]])

@@ -12,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Inference engine ABC.
-
-Rollout strategies consume actions through this small interface so they
-do not need to know whether inference happens inline on the control thread
-or asynchronously in a background thread (RTC).
-"""
+"""Inference lifecycle, task ownership and serialized language-query interface."""
 
 from __future__ import annotations
 
@@ -40,11 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 class InferenceRobot(Protocol):
-    """Robot metadata and hold capability consumed by inference backends.
-
-    Rollout supplies its serialized hardware wrapper. Keeping this structural
-    interface here lets backends run without importing rollout or its dataset tools.
-    """
+    """Hardware metadata and waiting capability, without a dependency on rollout."""
 
     @property
     def action_features(self) -> dict[str, Any]:
@@ -106,53 +97,15 @@ class QueryAnswer:
 
 
 class InferenceEngine(abc.ABC):
-    """Abstract backend for producing actions during rollout.
+    """Rollout backend with thread-safe task/query submission and exclusive policy ownership.
 
-    Subclasses decide whether inference happens inline on the control
-    thread or asynchronously in a background thread.  The contract is
-    minimal so additional backends can be plugged in without touching
-    rollout strategies.
+    Async backends receive captures through ``notify_observation``; sync uses
+    ``get_action(obs_frame)``. Serve queries on the policy owner and deliver answers
+    through ``pump_query`` on the control thread. Subclasses must call ``super``.
 
-    Lifecycle
-    ---------
-    ``start`` — prepare the backend (e.g. launch a background thread).
-    ``stop`` — shut the backend down cleanly.
-    ``reset`` — clear episode-scoped state (policy hidden state, queues…).
-
-    Action production
-    -----------------
-    ``get_action(obs_frame)`` — return the next action tensor, or
-    ``None`` if none is available (e.g. async queue empty).  Sync
-    backends always compute from ``obs_frame``; async backends ignore
-    it (they receive observations via ``notify_observation``).
-
-    Task
-    ----
-    ``set_task`` is callable from any thread; subclasses pick the value up on their own
-    inference thread via :meth:`_take_task`, so policy state is never mutated across threads.
-
-    Text queries
-    ------------
-    ``ask`` is callable from any thread and never touches the policy: queries are served
-    by :meth:`_service_query` on the thread owning the policy (see
-    :attr:`control_thread_owns_policy`), and answers reach observers only from
-    :meth:`pump_query` on the control thread.
-
-    Optional hooks
-    --------------
-    ``notify_observation`` / ``pause`` / ``resume`` have a no-op default
-    so rollout strategies can invoke them unconditionally.
-
-    Safe dispatch
-    -------------
-    ``get_action`` alone is not a safe motor-dispatch API. Custom strategies should use
-    ``rollout.strategies.core.send_next_action``: it invokes ``begin_control_tick``, checks
-    ``dispatch_allowed`` before pulling and sending actions, invalidates interpolation
-    on transitions, applies a supported hold and acknowledges it, and calls
-    ``record_dispatch`` after a send. Hooks with no-op defaults must still be invoked so
-    asynchronous backends can enforce their lifecycle and freshness guarantees.
-
-    Subclasses must call ``super().__init__(task=...)``.
+    ``get_action`` alone does not authorize motor dispatch. Strategies must use
+    ``send_next_action`` or preserve its per-tick permission, interpolation
+    invalidation, local hold/acknowledgment and applied-command notification.
     """
 
     def __init__(self, task: str = "") -> None:
@@ -227,12 +180,10 @@ class InferenceEngine(abc.ABC):
 
     @property
     def dispatched_task(self) -> str:
-        """Instruction that generated the most recently returned action.
+        """Task attached to the last returned action, used for recording labels.
 
-        Trails :attr:`task` (the *requested* instruction) while actions from a previous
-        instruction are still being consumed; recording strategies label frames with it.
-        Only meaningful on the control thread right after ``get_action``; after a reset it
-        holds the requested task.
+        Read on the control thread after ``get_action``; it can lag the requested
+        task while eligible old actions finish. Reset restores the requested task.
         """
         with self._task_lock:
             return self._dispatched_task
@@ -243,11 +194,7 @@ class InferenceEngine(abc.ABC):
             self._dispatched_task = task
 
     def _discard_task_change(self) -> None:
-        """Drop a pending task-change edge, e.g. from ``reset`` (state is already cleared).
-
-        Also re-primes ``dispatched_task``: with queued actions gone, the next dispatched
-        action can only come from the current instruction.
-        """
+        """Clear the task-change edge and restore the requested task as the recording label."""
         with self._task_lock:
             self._task_changed = False
             self._dispatched_task = self._task
@@ -260,11 +207,7 @@ class InferenceEngine(abc.ABC):
 
     @property
     def supports_text_queries(self) -> bool:
-        """True when this backend's policy can serve text queries.
-
-        Default False, so a backend without a text path never accepts a query it cannot
-        serve; callers check this before queueing.
-        """
+        """Whether this backend accepts policy text queries; false by default."""
         return False
 
     def set_answer_observer(self, observer: Callable[[QueryAnswer], None] | None) -> None:
@@ -285,11 +228,7 @@ class InferenceEngine(abc.ABC):
             return self._autosteer_goal
 
     def ask(self, question: str) -> bool:
-        """Queue a free-form ``question`` for the policy's text head.
-
-        Callable from any thread.  Returns ``False`` when one is already pending: the
-        channel holds a single query at a time.
-        """
+        """Queue one operator VQA from any thread; reject invalid input or a busy channel."""
         if self.text_input_error(question) is not None:
             return False
         return self._queue_query(
@@ -297,11 +236,9 @@ class InferenceEngine(abc.ABC):
         )
 
     def text_input_error(self, text: str, *, instruction: bool = False) -> str | None:
-        """Return an operator-facing rejection reason, or ``None`` for valid input.
+        """Validate without mutation: local queries allow 1–4096 characters.
 
-        Local task instructions retain their existing unrestricted length; text queries
-        require 1–4096 characters. Remote backends use the deployment's advertised limit
-        for both instructions and queries. Validation must not change task or query state.
+        Local instructions are unrestricted; remote overrides use deployment limits.
         """
         if not instruction:
             if not text.strip():
@@ -311,12 +248,10 @@ class InferenceEngine(abc.ABC):
         return None
 
     def start_autosteer(self, goal: str, interval_s: float) -> None:
-        """Drive the task from ``goal``, re-planning every ``interval_s`` seconds.
+        """Request subtasks for a fixed goal; callable from any thread.
 
-        Callable from any thread.  Each turn asks the policy for the next subtask and
-        applies it through :meth:`set_task`; every query re-sends the same goal, so plan
-        progress lives in the policy.  The interval is measured from when a subtask is
-        *applied*, so a slow generation cannot starve the robot of motion.
+        The interval starts when a subtask is applied. At least one action must
+        dispatch before another turn; planner progress belongs to the policy.
         """
         if error := self.text_input_error(goal):
             raise ValueError(error)
@@ -344,12 +279,7 @@ class InferenceEngine(abc.ABC):
         return goal
 
     def drop_pending_query(self) -> PolicyQuery | None:
-        """Discard an unserved query and queue one VQA cancellation notice.
-
-        Returns the dropped query (or ``None``). Called when a run context ends, so
-        the query is not served against a different scene the next time the robot
-        starts. The control-thread pump delivers the notice; autosteer stays silent.
-        """
+        """Discard an unclaimed query at run end; return it and queue one VQA cancellation notice."""
         with self._query_lock:
             dropped, self._pending_query = self._pending_query, None
             if dropped is not None and dropped.kind is QueryKind.VQA:
@@ -564,35 +494,20 @@ class InferenceEngine(abc.ABC):
         return live
 
     def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
-        """Run the policy's text head on ``obs_processed``.  Backend-specific.
-
-        Implementations build the batch, stamp it with :meth:`_mark_query`, preprocess it,
-        and call ``policy.generate_text``.
-        """
+        """Generate text on the policy-owning thread using the backend's processor path."""
         raise NotImplementedError(
             f"{type(self).__name__} does not support text queries — no /vqa or /autosteer on this backend."
         )
 
     @staticmethod
     def _mark_query(batch: dict, query: PolicyQuery) -> dict:
-        """Stamp ``batch`` with the query's kind and text, for the preprocessor.
-
-        Call between ``prepare_observation_for_inference`` and the preprocessor pipeline.
-        ``QUERY_KIND`` / ``QUERY_TEXT`` are allowlisted complementary data, so they land
-        beside ``task``: a policy-specific ``ComplementaryDataProcessorStep`` can read the
-        kind there and rewrite ``QUERY_TEXT`` into its prompt format.
-        """
+        """Add complementary query kind/text after observation preparation, before preprocessing."""
         batch[QUERY_KIND] = query.kind.value
         batch[QUERY_TEXT] = query.text
         return batch
 
     def drop_ready_subtask_answers(self) -> None:
-        """Discard undelivered ``NEXT_SUBTASK`` answers.
-
-        Called at segment end, right after stopping the sequencer, so no later
-        announcement describes a sequencer that no longer drives anything.  VQA answers
-        stay deliverable.
-        """
+        """Discard undelivered subtask announcements at segment end; preserve VQA answers."""
         with self._query_lock:
             kept = [a for a in self._ready_answers if a.kind is not QueryKind.NEXT_SUBTASK]
             dropped = len(self._ready_answers) - len(kept)

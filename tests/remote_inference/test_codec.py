@@ -12,6 +12,7 @@ import torch
 pytest.importorskip("msgpack")
 import msgpack
 
+from lerobot.remote_inference import codec
 from lerobot.remote_inference.codec import CodecLimits, RGBImage, decode_message, encode_message
 from lerobot.remote_inference.protocol import (
     Envelope,
@@ -190,3 +191,59 @@ def test_peek_correlates_malformed_obsolete_body_without_allocating(monkeypatch)
     assert header.request_id == "request"
     with pytest.raises(ProtocolError):
         decode_message(packed_record(invalid))
+
+
+@pytest.mark.parametrize("read", [codec.decode_message, codec.peek_envelope])
+@pytest.mark.parametrize("nested", [[], {}])
+def test_aggregate_nodes_are_bounded_during_unpacking(read, nested, monkeypatch):
+    envelope = msgpack.unpackb(codec.encode_message(Envelope(MessageType.DESCRIBE)), raw=False)
+    # Every individual container is within the item bound. The aggregate is not.
+    envelope["body"] = {"groups": [[nested for _ in range(8)] for _ in range(8)]}
+    payload = msgpack.packb(envelope, use_bin_type=True)
+    limits = replace(codec.CodecLimits(), max_container_items=16, max_nodes=24)
+    completed = []
+    sequence = codec._UnpackBudget.sequence
+
+    def count_sequence(self, items):
+        completed.append(len(items))
+        return sequence(self, items)
+
+    monkeypatch.setattr(codec._UnpackBudget, "sequence", count_sequence)
+    monkeypatch.setattr(codec, "_decode_value", lambda *args: pytest.fail("reached full body decoding"))
+    with pytest.raises(ProtocolError, match="node count.*parsing"):
+        read(payload, limits)
+    # The outer groups list is never completed: parsing stopped within its children.
+    assert len(completed) < 64
+
+
+def test_wire_node_budget_accepts_small_mixed_containers():
+    source = Envelope(MessageType.DESCRIBE, body={"values": [[], {}, [1], {"value": 2}]})
+    encoded = codec.encode_message(source)
+    decoded = codec.decode_message(encoded, replace(codec.CodecLimits(), max_nodes=32))
+    assert decoded == source
+
+
+def test_noncanonical_boolean_wire_bytes_are_rejected():
+    source = Envelope(MessageType.DESCRIBE, body={"mask": np.array([False, True])})
+    envelope = msgpack.unpackb(codec.encode_message(source), raw=False)
+    envelope["body"]["mask"]["data"] = bytes([0, 2])
+    with pytest.raises(ProtocolError, match="Boolean tensor bytes must be 0 or 1") as exc:
+        codec.decode_message(msgpack.packb(envelope, use_bin_type=True))
+    assert exc.value.code is ErrorCode.MALFORMED
+
+
+@pytest.mark.parametrize("as_tensor", [False, True])
+def test_boolean_encoding_normalizes_valid_local_backing_bytes(as_tensor):
+    storage = np.array([[0, 9, 2], [255, 9, 1]], dtype=np.uint8)
+    mask = storage.view(np.bool_)[:, ::2]  # Valid bool values, noncanonical and noncontiguous storage.
+    values = torch.from_numpy(mask) if as_tensor else mask
+    encoded = codec.encode_message(Envelope(MessageType.DESCRIBE, body={"mask": values}))
+    envelope = msgpack.unpackb(encoded, raw=False)
+    assert envelope["body"]["mask"]["data"] == b"\x00\x01\x01\x01"
+    decoded = codec.decode_message(encoded).body["mask"]
+    np.testing.assert_array_equal(decoded, [[False, True], [True, True]])
+    assert decoded.dtype == np.bool_
+    assert decoded.flags.writeable
+    assert decoded.tobytes() == b"\x00\x01\x01\x01"
+    torch.testing.assert_close(torch.from_numpy(decoded).eq(True), torch.from_numpy(decoded))
+    np.testing.assert_array_equal(storage, [[0, 9, 2], [255, 9, 1]])

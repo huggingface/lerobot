@@ -273,8 +273,6 @@ Wrap known blocking mid-run recording work in `self._pause_for_recording(ctx)`, 
 
 Select a backend with `--inference.type=<name>`. Local synchronous and RTC inference use the policy configured below. The [remote backend](./remote_inference) obtains its policy contract from a server and does not load weights on the robot computer.
 
-For extensions, `lerobot.inference` is the public package for backend configurations, engines and shared scheduling contracts. `lerobot.remote_inference` owns the remote protocol, deployment and session implementation; `lerobot.rollout` owns the robot loop, strategies, interpolation and recording. Import public inference symbols from the package rather than its implementation files. The optional remote dependencies are needed only when the remote backend or server is used.
-
 ### Sync (default)
 
 One policy call per control tick. The main loop blocks until the action is computed.
@@ -313,57 +311,53 @@ lerobot-rollout \
 
 See the [Real-Time Chunking](./rtc) guide for details on tuning RTC parameters.
 
-Local RTC (`--inference.type=rtc`) runs a background inference thread inside the rollout
-process, without transport. Two processes on the same machine still use
-`--inference.type=remote`. Local RTC and remote inference share chunk scheduling, atomic continuation snapshots,
-per-action task/source provenance and consumption-aware merging. A queue pop commits an
-endpoint to interpolation; it does not imply that the robot has reached that endpoint.
-Remote inference requires a supported local position-hold implementation. Ordinary local
-RTC remains available on existing robots without that opt-in, but recoverable starvation,
-planned language holds and in-flight instruction-change holds require it. No stop semantics are inferred for
-unsupported actuator modes. Synchronous inference and its existing pause behavior remain
-unchanged. Camera-only shutdown handling also applies to synchronous rollouts on drivers
-that provide the camera-independent position-read contract.
+Local RTC runs in a background thread in the rollout process, without transport. A
+server and client on the same computer use `--inference.type=remote` instead.
+See the [remote guide](./remote_inference) for chunk alignment/blending and the
+[waiting behavior](./remote_inference#what-the-robot-does-while-waiting-or-stopping)
+shared by asynchronous backends.
 
-Local RTC also exposes `--inference.max_observation_age_s`, `--inference.action_timeout_s`,
-`--inference.startup_timeout_s` and `--inference.language_timeout_s`. These bound stale
-motion and outstanding work; their defaults are provisional validation settings. Measure
-the chosen model and hardware before selecting a playback/age budget. A terminal fault
-invalidates interpolation, requests a supported local hold, then honors
-`--return_to_initial_position` (default true) before disconnecting, unless local hardware
-I/O has failed. It never resumes policy execution automatically.
+**Waiting requires a supported robot.** Ordinary local RTC remains available without
+that capability, but planned text/instruction-change pauses and recoverable starvation
+need it. With support, an empty buffer can retain the last applied target for
+`action_starvation_grace_s` (default 1 second), including the time needed to drain old
+inference and predict from a fresh capture. Zero grace or an unsupported robot faults
+immediately on exhaustion. Grace never extends expired request or freshness limits.
 
-**Behavior change for existing local RTC users:** after motion has begun, a supported
-robot can wait up to `--inference.action_starvation_grace_s` (default **1 second**) when
-another endpoint is needed and no usable action is available. A committed endpoint can
-finish interpolation before the grace starts. The wait retains the last applied target,
-discards the old trajectory continuation and requires a fresh post-wait observation and
-prediction. An old in-flight call must drain first; its result cannot restart motion.
-The grace includes that drain and fresh inference and is not extended by packets or
-unusable results. Setting the grace to zero, or using a robot without the waiting
-contract, preserves immediate terminal starvation failure. Startup and planned holds
-retain their separate bounds. Absolute deadlines, stale actions and other terminal
-faults still terminate immediately; grace does not override them. A larger timeout
-cannot supply missing actions, and frequent waits call for tuning playback and latency.
+Local RTC exposes these additional budgets through `--inference.`:
 
-RTC trims the actions already consumed while inference ran. The **remaining post-trim
-playback** must still cover the next inference plus timing margin. For example, a
-50-action prediction at 30 Hz spans 1.67 seconds, but consuming 30 actions during a
-one-second inference leaves only 20 actions (0.67 seconds). Another one-second inference
-cannot finish in time even if requested immediately. Increasing
-`--inference.queue_threshold` helps only when enough usable horizon remains. Measure
-turnaround and trimmed playback; use a longer supported prediction horizon, reduce
-inference latency or validate a lower action rate when the horizon is insufficient.
+| Parameter               | Default | Meaning                                      |
+| ----------------------- | ------- | -------------------------------------------- |
+| `max_observation_age_s` | `5 s`   | Maximum source age through action execution  |
+| `action_timeout_s`      | `10 s`  | Outstanding action request                   |
+| `startup_timeout_s`     | `120 s` | Initial preparation and fresh-action startup |
+| `language_timeout_s`    | `120 s` | Planned language operation                   |
 
-An instruction change during local inference uses a planned hold and a fresh capture on
-robots supporting that hold. Without hold support, the obsolete result is still rejected;
-insufficient remaining playback can therefore fault the run. Pause before changing the
-instruction when the robot's configured pause/stop behavior is appropriate for the setup.
-With compilation enabled, RTC warms initial and prefixed calls, including a representative
-nonzero delay, before motion. `--compile_warmup_inferences` has a configured default of 2,
-but enabled RTC requires at least **3** calls; startup logs show the effective count. All
-calls must fit `--inference.startup_timeout_s`. Arbitrary later task/shape changes may
-still trigger recompilation and exhaust playback or an operation deadline.
+These are starting values, not measured hardware guarantees. RTC must retain enough
+**post-trim playback** for another inference and timing margin. Raising
+`queue_threshold` cannot help if inference routinely consumes the usable prediction
+horizon; reduce latency or validate a longer horizon/different action frequency.
+
+A terminal fault never automatically resumes policy motion. With usable actuator
+feedback/control, shutdown honors `--return_to_initial_position` (default true) and
+disconnects. Supported camera-only failures can still return using actuator-only
+feedback. Synchronous policy execution and its existing pause behavior are unchanged;
+the camera-only shutdown handling also applies to synchronous rollouts.
+
+<details>
+<summary>Compilation and instruction changes</summary>
+
+RTC compilation warms both initial and prefixed calls, including a representative
+nonzero delay, before motion. Although `--compile_warmup_inferences` defaults to 2,
+enabled RTC requires at least 3; startup logs report the effective count. Warmup must
+fit `startup_timeout_s`. Later instructions that change tensor shapes can trigger
+recompilation and exceed playback or an operation deadline.
+
+A task change during inference discards the obsolete result. Supported robots pause
+and request fresh actions; without that waiting capability, remaining actions can run
+out. Prefer changing tasks between runs on those robots.
+
+</details>
 
 ---
 
@@ -535,6 +529,8 @@ In [interactive sessions](#interactive-sessions) each `/start` segment owns its 
 ---
 
 ## Programmatic Usage
+
+For extensions, `lerobot.inference` is the public package for backend configurations, engines and shared scheduling contracts. `lerobot.remote_inference` owns the remote protocol, deployment and session implementation; `lerobot.rollout` owns the robot loop, strategies, interpolation and recording. Import public inference symbols from the package rather than its implementation files. The optional remote dependencies are needed only when the remote backend or server is used.
 
 For custom deployments (e.g. with kinematics processors), use the rollout module API directly:
 

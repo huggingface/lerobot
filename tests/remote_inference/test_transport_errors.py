@@ -1,7 +1,7 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
-"""Review regressions for bounded replies, connection diagnostics and admission."""
+"""Bounded replies, connection diagnostics and admission errors."""
 
 import json
 import socket

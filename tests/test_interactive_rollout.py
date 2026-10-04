@@ -388,6 +388,35 @@ def test_controller_strategy_failure_reaches_the_failure_surface():
     assert "robot io broke" in controller.failure_traceback
 
 
+def test_interactive_cli_strategy_failure_exits_nonzero_after_teardown(monkeypatch):
+    from lerobot.scripts import lerobot_rollout
+
+    def failing_run(ctx):
+        raise OSError("robot io broke")
+
+    ctx, strategy, engine, parent, _ = _make_ctx(failing_run)
+    cfg = ctx.runtime.cfg
+    cfg.interactive = True
+    cfg.inference = SimpleNamespace()
+    cfg.robot = SimpleNamespace(type="test_robot")
+    cfg.strategy = strategy.config
+    monkeypatch.setattr(lerobot_rollout, "init_logging", lambda **_: None)
+    monkeypatch.setattr(
+        lerobot_rollout, "ProcessSignalHandler", lambda **_: SimpleNamespace(shutdown_event=parent)
+    )
+    monkeypatch.setattr(lerobot_rollout, "build_rollout_context", lambda *_: ctx)
+    monkeypatch.setattr(lerobot_rollout, "create_strategy", lambda _: strategy)
+    with _pipe_stream() as (reader, _):
+        session = InteractiveSession(strategy, ctx, input_stream=reader)
+        session.controller.start()
+        monkeypatch.setattr(lerobot_rollout, "InteractiveSession", lambda *_: session)
+        with pytest.raises(SystemExit) as stopped:
+            lerobot_rollout.rollout.__wrapped__(cfg)
+    assert stopped.value.code == 1
+    assert not engine.failed
+    strategy.teardown.assert_called_once_with(ctx)
+
+
 def test_controller_segment_end_hold_failure_is_terminal():
     controller, events, strategy, engine, _parent, _run_started = _make_controller(lambda ctx: None)
     strategy.hold_control_state.side_effect = OSError("final hold failed")

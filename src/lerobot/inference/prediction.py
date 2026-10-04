@@ -115,12 +115,10 @@ def predict_chunk(
     relative_step: RelativeActionsProcessorStep | None = None,
     normalizer_step: NormalizerProcessorStep | None = None,
 ) -> ChunkPrediction:
-    """Predict under the shared chunk/RTC contract after owner-specific preprocessing.
+    """Predict and validate under exclusive policy/processor ownership.
 
-    Call only from the exclusive policy/processor owner. That owner retains the
-    first validated model width across calls; canonical width may differ because
-    its postprocessor can crop model padding. Relative RTC needs matching widths.
-    No observation conversion, queue mutation, generation or transport lives here.
+    Retain the first model width across calls. Canonical postprocessing may crop
+    padding; relative RTC requires matching widths. This function owns no scheduling.
     """
     with chunk_inference_context(mode):
         if mode is ExecutionMode.CHUNK:

@@ -122,7 +122,7 @@ def tls_router(tmp_path):
 
     router = os.environ.get("LEROBOT_ZENOHD")
     if not router:
-        pytest.skip("Set LEROBOT_ZENOHD to a zenohd 1.9.0 binary for router/security validation")
+        pytest.skip("Set LEROBOT_ZENOHD to a supported zenohd binary for router/security validation")
     openssl = shutil.which("openssl")
     if not openssl:
         pytest.skip("openssl is needed to create ephemeral test certificates")
