@@ -15,6 +15,8 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import torch
+
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import (
     CosineDecayWithWarmupSchedulerConfig,
@@ -162,7 +164,7 @@ class LingbotVLAV2Config(PreTrainedConfig):
     # while our added heads default to float32; we cast everything to this single dtype
     # after build so the streams stay consistent (mixed dtypes break the custom AdaRMSNorm
     # linears under autocast). lerobot-train also reads this to drive Accelerate autocast.
-    dtype: str = "bfloat16"
+    dtype: torch.dtype | None = torch.bfloat16
     # Canonical joint vocabulary (name -> dim) and per-joint normalization mode. These
     # define the unified cross-embodiment layout the checkpoint was trained with and
     # MUST match it. Defaults mirror the v2 55-D canonical vector.
