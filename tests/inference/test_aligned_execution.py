@@ -6,8 +6,7 @@ import numpy as np
 import pytest
 import torch
 
-from lerobot.inference.contracts import ActionChunk, ActionProvenance, ExecutionMode, ObservationSnapshot
-from lerobot.inference.execution import ChunkRuntime
+from lerobot.inference import ActionChunk, ActionProvenance, ChunkRuntime, ExecutionMode, ObservationSnapshot
 from tests.inference.test_execution import Clock
 from tests.inference.test_policy_runner import ConformingPolicy, observation, runner_for, tiny_config
 

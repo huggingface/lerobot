@@ -12,7 +12,7 @@ import pytest
 pytest.importorskip("datasets")
 pytest.importorskip("msgpack")
 
-from lerobot.inference.contracts import ExecutionMode, FeatureSpec, PolicyCapabilities
+from lerobot.inference import ExecutionMode, FeatureSpec, PolicyCapabilities, RemoteInferenceConfig
 from lerobot.remote_inference.client import RemoteClient
 from lerobot.remote_inference.codec import decode_message, encode_message
 from lerobot.remote_inference.protocol import (
@@ -22,7 +22,6 @@ from lerobot.remote_inference.protocol import (
     MessageType,
     ProtocolError,
 )
-from lerobot.rollout.inference import RemoteInferenceConfig
 from lerobot.scripts import lerobot_rollout
 
 

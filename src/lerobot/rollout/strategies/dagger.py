@@ -60,6 +60,7 @@ from lerobot.common.control_utils import (
 )
 from lerobot.datasets import VideoEncodingManager
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
+from lerobot.inference import InferenceEngine
 from lerobot.lerobot_types import RobotAction
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils.action_interpolator import ActionInterpolator
@@ -72,7 +73,6 @@ from lerobot.utils.utils import log_say
 
 from ..configs import DAggerKeyboardConfig, DAggerPedalConfig, DAggerStrategyConfig
 from ..context import RolloutContext
-from ..inference import InferenceEngine
 from .core import (
     RolloutStrategy,
     estimate_max_episode_seconds,

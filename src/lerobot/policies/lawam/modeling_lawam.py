@@ -23,7 +23,7 @@ import torch
 from torch import Tensor, nn
 
 from lerobot.configs import FeatureType
-from lerobot.inference.contracts import ChunkPolicySpec, FeatureSpec
+from lerobot.inference import ChunkPolicySpec, FeatureSpec
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE

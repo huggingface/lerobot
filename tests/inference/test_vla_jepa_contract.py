@@ -14,8 +14,7 @@ import torch
 from torch import nn
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.inference.contracts import ExecutionMode, FeatureSpec, ObservationSnapshot
-from lerobot.inference.policy_runner import PolicyRunner
+from lerobot.inference import ExecutionMode, FeatureSpec, ObservationSnapshot, PolicyRunner
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import prepare_observation_for_inference
 from lerobot.policies.vla_jepa.configuration_vla_jepa import VLAJEPAConfig

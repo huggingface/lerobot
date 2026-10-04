@@ -36,6 +36,13 @@ from lerobot.datasets import (
     aggregate_pipeline_dataset_features,
     create_initial_features,
 )
+from lerobot.inference import (
+    InferenceEngine,
+    RemoteInferenceConfig,
+    RTCInferenceConfig,
+    create_inference_engine,
+    supports_rtc_inference,
+)
 from lerobot.policies import get_policy_class, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.configuration_rtc import validate_trained_rtc_horizon
@@ -55,13 +62,6 @@ from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_fea
 from lerobot.utils.import_utils import _peft_available, require_package
 
 from .configs import RolloutConfig
-from .inference import (
-    InferenceEngine,
-    RemoteInferenceConfig,
-    RTCInferenceConfig,
-    create_inference_engine,
-)
-from .inference.rtc import supports_rtc_inference
 from .robot_wrapper import ThreadSafeRobot
 
 if TYPE_CHECKING or _peft_available:
@@ -446,8 +446,6 @@ def build_rollout_context(
 
     # Store the initial joint positions so we can return to a safe pose on shutdown.
     robot_wrapper = ThreadSafeRobot(robot)
-    if is_rtc and robot.supports_position_hold:
-        robot_wrapper.configure_position_hold()
     initial_obs = robot_wrapper.get_observation()
     initial_position = {k: v for k, v in initial_obs.items() if k.endswith(".pos")}
     logger.info("Captured initial robot position (%d keys)", len(initial_position))

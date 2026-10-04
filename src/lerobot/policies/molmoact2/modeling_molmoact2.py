@@ -45,7 +45,7 @@ from safetensors.torch import load_file as load_safetensors_file
 from torch import Tensor
 from torch.distributions import Beta
 
-from lerobot.inference.contracts import ChunkPolicySpec
+from lerobot.inference import ChunkPolicySpec
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import (

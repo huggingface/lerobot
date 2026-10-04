@@ -25,9 +25,10 @@ from lerobot.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
 )
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_already_connected
+from lerobot.utils.errors import DeviceNotConnectedError
 
-from ..robot import Robot
+from ..robot import CameraObservationError, Robot
 from ..utils import ensure_safe_goal_position
 from .config_so_follower import SOFollowerRobotConfig
 
@@ -201,8 +202,10 @@ class SOFollower(Robot):
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
-    @check_if_not_connected
-    def get_observation(self) -> RobotObservation:
+    def get_position_observation(self) -> dict[str, float]:
+        """Read fresh actuator positions even if a camera has failed."""
+        if not self.bus.is_connected:
+            raise DeviceNotConnectedError(f"{self} motors are not connected")
         # Read arm position
         start = time.perf_counter()
         obs_dict = self.bus.sync_read("Present_Position", num_retry=self.config.num_read_retries)
@@ -210,23 +213,30 @@ class SOFollower(Robot):
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
-        # Capture images from cameras
-        for cam_key, cam in self.cameras.items():
-            if getattr(cam, "use_rgb", True):
-                start = time.perf_counter()
-                obs_dict[cam_key] = cam.read_latest()
-                dt_ms = (time.perf_counter() - start) * 1e3
-                logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+        return obs_dict
 
-            if isinstance(cam, DepthCamera) and cam.use_depth:
-                start = time.perf_counter()
-                obs_dict[f"{cam_key}_depth"] = cam.read_latest_depth()
-                dt_ms = (time.perf_counter() - start) * 1e3
-                logger.debug(f"{self} read {cam_key} depth: {dt_ms:.1f}ms")
+    def get_observation(self) -> RobotObservation:
+        obs_dict: RobotObservation = self.get_position_observation()
+
+        # Classify only camera acquisition failures; motor failures propagate as-is.
+        for cam_key, cam in self.cameras.items():
+            try:
+                if getattr(cam, "use_rgb", True):
+                    start = time.perf_counter()
+                    obs_dict[cam_key] = cam.read_latest()
+                    dt_ms = (time.perf_counter() - start) * 1e3
+                    logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+
+                if isinstance(cam, DepthCamera) and cam.use_depth:
+                    start = time.perf_counter()
+                    obs_dict[f"{cam_key}_depth"] = cam.read_latest_depth()
+                    dt_ms = (time.perf_counter() - start) * 1e3
+                    logger.debug(f"{self} read {cam_key} depth: {dt_ms:.1f}ms")
+            except Exception as exc:
+                raise CameraObservationError(f"Camera {cam_key!r} failed: {exc}") from exc
 
         return obs_dict
 
-    @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
         """Command arm to move to a target joint configuration.
 
@@ -241,6 +251,10 @@ class SOFollower(Robot):
             RobotAction: the action sent to the motors, potentially clipped.
         """
 
+        # Position commands remain available for shutdown after a camera failure.
+        if not self.bus.is_connected:
+            raise DeviceNotConnectedError(f"{self} motors are not connected")
+
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
         # Cap goal position when too far away from present position.
@@ -254,11 +268,14 @@ class SOFollower(Robot):
         self.bus.sync_write("Goal_Position", goal_pos)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
-    @check_if_not_connected
-    def disconnect(self):
+    def disconnect(self) -> None:
+        # A disconnected camera must not prevent actuator cleanup.
+        if not self.bus.is_connected:
+            raise DeviceNotConnectedError(f"{self} motors are not connected")
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
-            cam.disconnect()
+            if cam.is_connected:
+                cam.disconnect()
 
         logger.info(f"{self} disconnected.")
 

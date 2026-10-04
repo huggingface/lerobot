@@ -17,12 +17,9 @@ pytest.importorskip("zenoh")
 pytest.importorskip("msgpack")
 pytest.importorskip("datasets")
 
-from lerobot.inference.contracts import ExecutionMode, FeatureSpec
-from lerobot.inference.execution import ChunkRuntime
-from lerobot.inference.policy_runner import PolicyRunner
+from lerobot.inference import ChunkRuntime, ExecutionMode, FeatureSpec, PolicyRunner, RemoteInferenceConfig
 from lerobot.remote_inference.client import RemoteClient
 from lerobot.remote_inference.server import PolicyServer, SessionWorker
-from lerobot.rollout.inference.factory import RemoteInferenceConfig
 from lerobot.transport.zenoh import ZenohConfig, ZenohTransport
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
 from tests.inference.test_policy_runner import ConformingPolicy, observation, processors, tiny_config

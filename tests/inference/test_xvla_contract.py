@@ -8,8 +8,7 @@ import pytest
 import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.inference.contracts import ExecutionMode, ObservationSnapshot
-from lerobot.inference.policy_runner import PolicyRunner
+from lerobot.inference import ExecutionMode, ObservationSnapshot, PolicyRunner
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import prepare_observation_for_inference
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig

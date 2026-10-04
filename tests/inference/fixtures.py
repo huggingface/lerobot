@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from lerobot.inference.contracts import FeatureSpec
+from lerobot.inference import FeatureSpec
 
 
 @dataclass(frozen=True)

@@ -33,13 +33,8 @@ from typing import Any
 
 import torch
 
-from lerobot.inference.contracts import ActionChunk, ActionProvenance, ExecutionMode, ObservationSnapshot
-from lerobot.inference.execution import ChunkRuntime
-from lerobot.inference.prediction import chunk_inference_context, predict_chunk
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.rtc import ActionQueue
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.policies.utils import prepare_observation_for_inference
+from lerobot.policies import PreTrainedPolicy, prepare_observation_for_inference
+from lerobot.policies.rtc import ActionQueue, RTCConfig
 from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
@@ -47,8 +42,10 @@ from lerobot.processor import (
 )
 from lerobot.utils.feature_utils import build_dataset_frame
 
-from ..robot_wrapper import ThreadSafeRobot
-from .base import InferenceEngine, PolicyQuery, QueryKind
+from .base import InferenceEngine, InferenceRobot, PolicyQuery, QueryKind
+from .contracts import ActionChunk, ActionProvenance, ExecutionMode, ObservationSnapshot
+from .execution import ChunkRuntime
+from .prediction import chunk_inference_context, predict_chunk
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +106,7 @@ class RTCInferenceEngine(InferenceEngine):
         policy: PreTrainedPolicy,
         preprocessor: PolicyProcessorPipeline,
         postprocessor: PolicyProcessorPipeline,
-        robot_wrapper: ThreadSafeRobot,
+        robot_wrapper: InferenceRobot,
         rtc_config: RTCConfig,
         dataset_features: dict,
         task: str,
@@ -123,7 +120,9 @@ class RTCInferenceEngine(InferenceEngine):
         action_timeout_s: float = 10.0,
         startup_timeout_s: float = 120.0,
         language_timeout_s: float = 120.0,
+        action_starvation_grace_s: float = 1.0,
     ) -> None:
+        """Own local asynchronous policy work and configure supported waiting."""
         super().__init__(task=task)
         self._policy = policy
         self._policy_spec = policy.chunk_inference_spec()
@@ -164,6 +163,7 @@ class RTCInferenceEngine(InferenceEngine):
             # action-latency measurement or a steady-state request deadline.
             action_timeout_s=startup_timeout_s if use_torch_compile else action_timeout_s,
             startup_timeout_s=startup_timeout_s,
+            action_starvation_grace_s=action_starvation_grace_s,
             training_max_delay=self._policy_spec.training_max_delay,
         )
         self._runtime.queue.cfg = rtc_config
@@ -175,8 +175,15 @@ class RTCInferenceEngine(InferenceEngine):
         self._hold_reason = "Language request"
         self._active_query_generation = 0
         self._language_preprocessor, self._language_postprocessor = deepcopy((preprocessor, postprocessor))
-        if isinstance(robot_wrapper, ThreadSafeRobot) and robot_wrapper.inner.supports_position_hold:
+        if getattr(robot_wrapper, "supports_position_hold", False):
             robot_wrapper.configure_position_hold()
+        if not getattr(robot_wrapper, "supports_hold", False):
+            self._runtime.starvation_grace = 0.0
+            if action_starvation_grace_s:
+                logger.warning(
+                    "Local RTC action-starvation grace is unavailable without supported robot hold; "
+                    "buffer exhaustion remains terminal"
+                )
 
         self._obs_holder: dict[str, Any] = {}
         self._obs_lock = Lock()
@@ -361,6 +368,8 @@ class RTCInferenceEngine(InferenceEngine):
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
         """Pop the next action from the RTC queue (ignores ``obs_frame``)."""
         queued = self._runtime.pop()
+        if self._runtime.starvation_deadline is not None and self._runtime.held:
+            self._request_hold("Action starvation", self._runtime.starvation_grace)
         if queued is None:
             return None
         action, provenance = queued
@@ -392,6 +401,7 @@ class RTCInferenceEngine(InferenceEngine):
         with self._obs_lock:
             if self._hold_requested and not self._hold_acknowledged.is_set():
                 self._obs_holder["obs"] = None
+                self._runtime.acknowledge_starvation_hold()
                 self._hold_acknowledged.set()
         if self.failed and self._global_shutdown_event is not None:
             self._global_shutdown_event.set()
@@ -402,17 +412,23 @@ class RTCInferenceEngine(InferenceEngine):
     def _request_hold(self, reason: str, timeout_s: float) -> None:
         with self._obs_lock:
             if self._hold_requested:
-                if self._hold_reason == "Instruction change" and reason == "Language request":
+                if (
+                    self._hold_reason in {"Instruction change", "Action starvation"}
+                    and reason == "Language request"
+                ):
                     # This is still the same physical hold and invalidated generation.
                     # Widen its budget once, without renewing it on every motor tick.
                     self._language_deadline = self._hold_started + max(self._action_timeout_s, timeout_s)
                     self._hold_reason = reason
                 return
-            self._runtime.invalidate(held=True)
+            if reason != "Action starvation":
+                self._runtime.invalidate(held=True, preserve_starvation=True)
             self._hold_requested = True
             self._hold_acknowledged.clear()
             self._hold_started = self._runtime.clock()
-            self._language_deadline = self._hold_started + timeout_s
+            self._language_deadline = (
+                None if reason == "Action starvation" else self._hold_started + timeout_s
+            )
             self._hold_reason = reason
 
     # ------------------------------------------------------------------
@@ -503,6 +519,16 @@ class RTCInferenceEngine(InferenceEngine):
             warmup_previous: tuple[torch.Tensor, torch.Tensor] | None = None
             consecutive_discards = 0
             while not self._shutdown_event.is_set() and not self.failed:
+                with self._runtime.lock:
+                    wait_events = list(self._runtime.wait_events)
+                    self._runtime.wait_events.clear()
+                for event in wait_events:
+                    if event["event"] == "waiting":
+                        logger.warning(
+                            "RTC actions exhausted; retaining last target for up to %.3fs", event["grace_s"]
+                        )
+                    else:
+                        logger.info("RTC fresh actions ready after %.3fs waiting", event["wait_s"])
                 # Reset is ordered behind any model call already executing. The
                 # control thread has already revoked its old generation locally.
                 with self._obs_lock:
@@ -528,6 +554,19 @@ class RTCInferenceEngine(InferenceEngine):
                         obs = self._obs_holder.get("obs")
                         generation = self._runtime.generation
                         self._active_query_generation = generation
+                        self._runtime.complete_starvation_invalidation(generation)
+                        starvation = self._hold_reason == "Action starvation"
+                    if starvation:
+                        self._policy.drop_queued_actions()
+                        with self._obs_lock:
+                            if self._hold_reason == "Action starvation" and self._runtime.release_hold(
+                                generation
+                            ):
+                                self._hold_requested = False
+                                self._hold_acknowledged.clear()
+                                self._language_deadline = None
+                                self._obs_holder["obs"] = None
+                        continue
                     if obs is None:
                         time.sleep(_RTC_IDLE_SLEEP_S)
                         continue

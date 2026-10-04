@@ -28,15 +28,15 @@ from uuid import uuid4
 import numpy as np
 import torch
 
-from lerobot.inference.contracts import (
+from lerobot.inference import (
     ActionChunk,
     ActionProvenance,
+    ChunkRequest,
     ExecutionMode,
     FeatureSpec,
     ObservationSnapshot,
     PolicyCapabilities,
 )
-from lerobot.inference.execution import ChunkRequest
 from lerobot.transport.zenoh import (
     BoundedSubscriber,
     PresenceToken,
@@ -67,7 +67,7 @@ from .protocol import (
 )
 
 if TYPE_CHECKING:
-    from lerobot.rollout.inference.factory import RemoteInferenceConfig
+    from lerobot.inference import RemoteInferenceConfig
 
 logger = logging.getLogger(__name__)
 

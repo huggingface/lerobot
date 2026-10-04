@@ -22,8 +22,8 @@ def _without_grpc(code: str) -> subprocess.CompletedProcess[str]:
 def test_remote_modules_import_without_grpc() -> None:
     result = _without_grpc("""
         from lerobot.transport.zenoh import ZenohConfig, ZenohTransport
-        from lerobot.remote_inference.client import RemoteClient
-        from lerobot.remote_inference.configs import ServerConfig
+        from lerobot.remote_inference import RemoteClient
+        from lerobot.remote_inference import ServerConfig
         from lerobot.scripts.lerobot_policy_server import main
 
         assert 'lerobot.transport.services_pb2' not in sys.modules

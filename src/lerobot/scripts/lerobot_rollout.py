@@ -174,7 +174,8 @@ from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.configs import parser
-from lerobot.remote_inference.protocol import AdmissionDeniedError, ErrorCode, ProtocolError
+from lerobot.inference import RemoteInferenceConfig
+from lerobot.remote_inference import AdmissionDeniedError, ErrorCode, ProtocolError
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -199,7 +200,6 @@ from lerobot.rollout import (
     build_rollout_context,
     create_strategy,
 )
-from lerobot.rollout.inference.factory import RemoteInferenceConfig
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,

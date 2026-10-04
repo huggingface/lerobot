@@ -13,8 +13,9 @@ import torch
 
 pytest.importorskip("datasets")
 
+from lerobot.inference import InferenceEngine, RemoteInferenceConfig
+from lerobot.robots import CameraObservationError, Robot
 from lerobot.rollout.configs import BaseStrategyConfig, RolloutConfig
-from lerobot.rollout.inference import InferenceEngine, RemoteInferenceConfig
 from lerobot.rollout.robot_wrapper import ThreadSafeRobot
 from lerobot.rollout.strategies.base import BaseStrategy
 from lerobot.rollout.strategies.core import send_next_action
@@ -35,6 +36,9 @@ class PositionRobot:
     def get_observation(self):
         self.reads += 1
         return {"joint.pos": self.position}
+
+    def get_position_observation(self):
+        raise NotImplementedError
 
     def send_action(self, action):
         self.sent.append(action.copy())
@@ -106,12 +110,14 @@ def test_hold_clears_interpolation_on_a_tick_without_a_queue_pull():
     send_next_action(obs, obs, ctx, interpolator)
     assert not interpolator.needs_new_action()
     assert engine.pulls == 2
+    applied_before_hold = robot.sent[-1].copy()
 
     engine.allowed = False
     assert send_next_action(obs, obs, ctx, interpolator) is None
     assert engine.pulls == 2
     assert interpolator.needs_new_action()
-    assert robot.sent[-1] == {"joint.pos": 7.0}
+    assert robot.sent[-1] == applied_before_hold
+    assert applied_before_hold != {"joint.pos": 7.0}
     assert robot.reads == 1
     assert engine.holds == 1
 
@@ -347,7 +353,9 @@ def test_terminal_fault_shutdown_orders_hold_stop_home_disconnect(monkeypatch):
     strategy._interpolator.add(torch.tensor([123.0]))
     strategy._cached_obs_processed = {"joint.pos": 123.0}
     events = []
-    monkeypatch.setattr(robot, "send_action", lambda action: events.append(("action", action.copy())))
+    monkeypatch.setattr(
+        robot, "send_action", lambda action: events.append(("action", action.copy())) or action
+    )
     monkeypatch.setattr(engine, "stop", lambda: events.append(("engine_stop", None)))
     monkeypatch.setattr(robot, "disconnect", lambda: events.append(("disconnect", None)))
     monkeypatch.setattr("lerobot.rollout.strategies.core.precise_sleep", lambda _: None)
@@ -360,7 +368,7 @@ def test_terminal_fault_shutdown_orders_hold_stop_home_disconnect(monkeypatch):
     assert strategy._cached_obs_processed is None
 
 
-def test_hold_freezes_first_measured_pose_and_rejects_velocity_modes():
+def test_hold_before_first_command_retains_initial_measured_pose_and_rejects_velocity_modes():
     wrapper = ThreadSafeRobot(PositionRobot())
     wrapper.configure_position_hold()
     wrapper.get_observation()
@@ -372,6 +380,79 @@ def test_hold_freezes_first_measured_pose_and_rejects_velocity_modes():
     wrapper.inner.action_features = {"joint.pos": float, "base.vel": float}
     with pytest.raises(ValueError, match="position-hold"):
         wrapper.configure_position_hold()
+
+
+def test_hold_retains_actual_clipped_target_and_gripper_instead_of_new_measurements(monkeypatch):
+    robot = PositionRobot()
+    robot.action_features = {"joint.pos": float, "gripper.pos": float}
+    wrapper = ThreadSafeRobot(robot)
+    wrapper.configure_position_hold()
+    sent = []
+
+    def clipped_send(action):
+        sent.append(action.copy())
+        return {"joint.pos": min(action["joint.pos"], 8.0), "gripper.pos": action["gripper.pos"]}
+
+    monkeypatch.setattr(robot, "send_action", clipped_send)
+    actual = wrapper.send_action({"joint.pos": 20.0, "gripper.pos": 4.0})
+    actual["gripper.pos"] = 99.0  # The retained command must be a private snapshot.
+    monkeypatch.setattr(robot, "get_observation", lambda: {"joint.pos": 3.0, "gripper.pos": 50.0})
+    wrapper.get_observation()
+    wrapper.hold()
+    wrapper.hold()
+    assert sent == [
+        {"joint.pos": 20.0, "gripper.pos": 4.0},
+        {"joint.pos": 8.0, "gripper.pos": 4.0},
+        {"joint.pos": 8.0, "gripper.pos": 4.0},
+    ]
+
+
+def test_repeated_hold_retains_each_driver_returned_target(monkeypatch):
+    robot = PositionRobot()
+    wrapper = ThreadSafeRobot(robot)
+    wrapper.configure_position_hold()
+    wrapper.get_observation()
+    sent = []
+
+    def clipped_send(action):
+        sent.append(action.copy())
+        return {"joint.pos": action["joint.pos"] - 1.0}
+
+    monkeypatch.setattr(robot, "send_action", clipped_send)
+    wrapper.hold()
+    wrapper.hold()
+    assert sent == [{"joint.pos": 7.0}, {"joint.pos": 6.0}]
+
+
+@pytest.mark.parametrize("observation", [None, {}, {"joint.pos": float("nan")}])
+def test_first_hold_requires_complete_finite_measured_positions(observation, monkeypatch):
+    robot = PositionRobot()
+    wrapper = ThreadSafeRobot(robot)
+    wrapper.configure_position_hold()
+    if observation is not None:
+        monkeypatch.setattr(robot, "get_observation", lambda: observation)
+        wrapper.get_observation()
+    with pytest.raises(RuntimeError, match="Position hold requires"):
+        wrapper.hold()
+    assert robot.sent == []
+
+
+@pytest.mark.parametrize("bad_return", [None, {}, {"joint.pos": float("nan")}])
+@pytest.mark.parametrize("operation", ["hold", "send_action"])
+def test_hold_never_substitutes_requested_action_for_invalid_driver_return(
+    bad_return, operation, monkeypatch
+):
+    robot = PositionRobot()
+    wrapper = ThreadSafeRobot(robot)
+    wrapper.configure_position_hold()
+    wrapper.get_observation()
+    monkeypatch.setattr(robot, "send_action", lambda action: bad_return)
+    with pytest.raises(RuntimeError, match="Position hold requires"):
+        if operation == "hold":
+            wrapper.hold()
+        else:
+            wrapper.send_action({"joint.pos": 2.0})
+    assert wrapper.hardware_failure is not None
 
 
 def test_omx_hold_uses_position_driver_without_an_extra_sensor_read():
@@ -399,6 +480,74 @@ def test_omx_hold_uses_position_driver_without_an_extra_sensor_read():
     assert reads == ["Present_Position"]
     assert writes == [("Goal_Position", measured), ("Goal_Position", measured)]
     assert not robot.config.use_degrees
+
+
+@pytest.mark.parametrize("driver", ["omx", "so"])
+@pytest.mark.parametrize("camera_connected", [True, False])
+def test_camera_failure_allows_motor_only_homing_and_disconnect(driver, camera_connected, monkeypatch):
+    if driver == "omx":
+        from lerobot.robots.omx_follower import OmxFollower, OmxFollowerConfig
+
+        robot = OmxFollower.__new__(OmxFollower)
+        robot.config = OmxFollowerConfig(port="unused")
+    else:
+        from lerobot.robots.so_follower import SOFollower, SOFollowerRobotConfig
+
+        robot = SOFollower.__new__(SOFollower)
+        robot.config = SOFollowerRobotConfig(port="unused")
+    robot.id = "camera_failure_test"
+    robot.robot_type = robot.name
+    motor_reads = Mock(return_value={"joint": 7.0})
+    motor_writes = Mock()
+    motor_disconnect = Mock()
+    robot.bus = SimpleNamespace(
+        motors={"joint": None},
+        is_connected=True,
+        sync_read=motor_reads,
+        sync_write=motor_writes,
+        disconnect=motor_disconnect,
+    )
+    camera = SimpleNamespace(
+        is_connected=camera_connected,
+        read_latest=Mock(side_effect=OSError("camera disappeared")),
+        disconnect=Mock(),
+    )
+    robot.cameras = {"front": camera}
+    wrapper = ThreadSafeRobot(robot)
+    wrapper.configure_position_hold()
+    with pytest.raises(CameraObservationError, match="camera disappeared"):
+        wrapper.get_observation()
+    assert wrapper.hardware_failure is None
+    assert wrapper.camera_failure is not None
+    context = SimpleNamespace(robot_wrapper=wrapper, initial_position={"joint.pos": 0.0}, teleop=None)
+    monkeypatch.setattr("lerobot.rollout.strategies.core.precise_sleep", lambda _: None)
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._teardown_hardware(context)
+    assert motor_reads.call_count == 2  # Capture, then a fresh camera-independent return read.
+    camera.read_latest.assert_called_once()
+    assert motor_writes.call_args.args == ("Goal_Position", {"joint": 0.0})
+    motor_disconnect.assert_called_once_with(robot.config.disable_torque_on_disconnect)
+    assert camera.disconnect.call_count == int(camera_connected)
+
+
+@pytest.mark.parametrize("failure", [NotImplementedError("no motor-only read"), OSError("motor read failed")])
+def test_camera_failure_does_not_allow_homing_without_successful_motor_feedback(failure, monkeypatch):
+    ctx, robot = make_dispatch_context(GateEngine())
+    wrapper = ctx.hardware.robot_wrapper
+    failed_camera = Mock(side_effect=CameraObservationError("camera read failed"))
+    monkeypatch.setattr(robot, "get_observation", failed_camera)
+    monkeypatch.setattr(robot, "get_position_observation", Mock(side_effect=failure))
+    with pytest.raises(CameraObservationError):
+        wrapper.get_observation()
+    assert not BaseStrategy.return_to_initial_position(ctx.hardware)
+    assert robot.sent == []
+    failed_camera.assert_called_once()  # Never fall back to reading the failed camera.
+    assert (wrapper.hardware_failure is not None) == isinstance(failure, OSError)
+
+
+def test_default_motor_only_read_is_conservative():
+    with pytest.raises(NotImplementedError, match="camera-independent"):
+        Robot.get_position_observation(PositionRobot())
 
 
 def test_same_text_autosteer_restart_discards_previous_intent():

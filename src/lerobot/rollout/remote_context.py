@@ -20,9 +20,9 @@ import logging
 from threading import Event
 
 from lerobot.datasets import aggregate_pipeline_dataset_features, create_initial_features
-from lerobot.inference.contracts import FeatureSpec
+from lerobot.inference import FeatureSpec, RemoteInferenceConfig, RemoteInferenceEngine
 from lerobot.processor import RobotProcessorPipeline, make_default_processors
-from lerobot.remote_inference.client import RemoteClient
+from lerobot.remote_inference import RemoteClient
 from lerobot.robots import make_robot_from_config
 from lerobot.teleoperators import make_teleoperator_from_config
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
@@ -38,8 +38,6 @@ from .context import (
     _align_to_checkpoint_order,
     _build_rollout_dataset,
 )
-from .inference import RemoteInferenceConfig
-from .inference.remote import RemoteInferenceEngine
 from .robot_wrapper import ThreadSafeRobot
 
 logger = logging.getLogger(__name__)

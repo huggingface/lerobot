@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from lerobot.inference.contracts import FeatureSpec
+from lerobot.inference import FeatureSpec
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.processor import RenderRuntimeMessagesStep
 from lerobot.remote_inference.configs import ExecutionConfig, LanguageConfig, ModelConfig, ServerConfig

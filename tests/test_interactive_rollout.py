@@ -32,6 +32,8 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+# Front-end and engine internals, imported from their defining modules.
+from lerobot.inference import PolicyQuery  # noqa: E402
 from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
 from lerobot.rollout import (  # noqa: E402
     AskResult,
@@ -45,9 +47,6 @@ from lerobot.rollout import (  # noqa: E402
     RolloutEvent,
     RolloutStrategy,
 )
-
-# Front-end and engine internals, imported from their defining modules.
-from lerobot.rollout.inference import PolicyQuery  # noqa: E402
 from lerobot.rollout.interactive import InteractiveCommand, parse_command  # noqa: E402
 
 
@@ -695,7 +694,7 @@ def test_session_subtask_sets_and_reports_task(capsys):
 
 def test_sync_engine_uses_new_task_and_flushes_precomputed_actions():
     """A /subtask switch must reach the policy and drop stale queued actions."""
-    from lerobot.rollout.inference import SyncInferenceEngine
+    from lerobot.inference import SyncInferenceEngine
 
     policy = MagicMock()
     policy.config.use_amp = False
@@ -1173,7 +1172,7 @@ class _FakeClock:
 def engine_clock(monkeypatch):
     """Replace the engine module's clock so interval tests cannot race real time."""
     clock = _FakeClock()
-    monkeypatch.setattr("lerobot.rollout.inference.base.time", SimpleNamespace(perf_counter=clock))
+    monkeypatch.setattr("lerobot.inference.base.time", SimpleNamespace(perf_counter=clock))
     return clock
 
 
@@ -1444,8 +1443,8 @@ class _StubChunkPolicy:
 
 
 def _make_rtc_engine(rtc_queue_threshold: int = 30, chunk_len: int = 10, **engine_kwargs):
+    from lerobot.inference import RTCInferenceEngine
     from lerobot.policies.rtc.configuration_rtc import RTCConfig
-    from lerobot.rollout.inference import RTCInferenceEngine
 
     policy = _StubChunkPolicy(chunk_len=chunk_len)
     engine = RTCInferenceEngine(
@@ -1531,7 +1530,7 @@ def test_rtc_engine_reset_discards_chunk_from_inflight_inference(caplog):
 
         engine.reset()  # bumps the epoch, clears queue and observation
 
-        with caplog.at_level(logging.INFO, logger="lerobot.rollout.inference.rtc"):
+        with caplog.at_level(logging.INFO, logger="lerobot.inference.rtc"):
             policy.allow_one_inference()  # the stale chunk completes now
             assert _wait_for(lambda: any("Discarding action chunk" in r.getMessage() for r in caplog.records))
         assert engine.action_queue.qsize() == 0

@@ -18,12 +18,11 @@ pytest.importorskip("zenoh")
 pytest.importorskip("msgpack")
 pytest.importorskip("datasets")
 
-from lerobot.inference.contracts import ExecutionMode, FeatureSpec, PolicyCapabilities
+from lerobot.inference import ExecutionMode, FeatureSpec, PolicyCapabilities, RemoteInferenceConfig
 from lerobot.remote_inference.client import RemoteClient
 from lerobot.remote_inference.codec import encode_message
 from lerobot.remote_inference.protocol import Envelope, ErrorCode, MessageType, ProtocolError
 from lerobot.remote_inference.server import PolicyServer
-from lerobot.rollout.inference.factory import RemoteInferenceConfig
 from lerobot.transport.zenoh import (
     BoundedQueryable,
     PendingQuery,

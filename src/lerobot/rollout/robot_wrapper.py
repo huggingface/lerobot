@@ -21,7 +21,7 @@ import time
 from threading import Lock
 from typing import Any
 
-from lerobot.robots import Robot
+from lerobot.robots import CameraObservationError, Robot
 
 
 class ThreadSafeRobot:
@@ -40,9 +40,10 @@ class ThreadSafeRobot:
         self._lock = Lock()
         self._position_hold_enabled = False
         self._observed_positions: dict[str, float] = {}
-        self._held_action: dict[str, float] | None = None
+        self._last_applied_action: dict[str, float] | None = None
         self._observation_time: float | None = None
         self._hardware_failure: str | None = None
+        self._camera_failure: str | None = None
 
     # -- Lock-protected I/O --------------------------------------------------
 
@@ -56,6 +57,10 @@ class ThreadSafeRobot:
                     for key in self.action_features
                     if key.endswith(".pos") and key in observation
                 }
+            except CameraObservationError as exc:
+                if self._camera_failure is None:
+                    self._camera_failure = f"{type(exc).__name__}: {exc}"
+                raise
             except Exception as exc:
                 self._record_hardware_failure("get_observation", exc)
                 raise
@@ -70,24 +75,60 @@ class ThreadSafeRobot:
 
     def send_action(self, action: dict[str, Any] | Any) -> Any:
         with self._lock:
-            self._held_action = None
             try:
-                return self._robot.send_action(action)
+                applied_action = self._robot.send_action(action)
+                if self._position_hold_enabled:
+                    self._last_applied_action = self._validated_positions(applied_action)
+                return applied_action
             except Exception as exc:
                 self._record_hardware_failure("send_action", exc)
                 raise
 
     def _record_hardware_failure(self, operation: str, error: Exception) -> None:
-        # Caller owns the I/O lock. Preserve the first failure, including camera
-        # errors during observation, so shutdown never assumes healthy hardware.
+        # Caller owns the I/O lock. Unknown observation failures may include
+        # actuator failures and therefore prohibit any shutdown movement.
         if self._hardware_failure is None:
             self._hardware_failure = f"{operation}: {type(error).__name__}: {error}"
 
     @property
     def hardware_failure(self) -> str | None:
-        """First failed local I/O operation; not cleared by an inference reset."""
+        """First actuator or unclassified I/O failure; never cleared by inference reset."""
         with self._lock:
             return self._hardware_failure
+
+    @property
+    def camera_failure(self) -> str | None:
+        """A driver-classified camera error; motor health must still be checked for homing."""
+        with self._lock:
+            return self._camera_failure
+
+    def get_position_observation(self) -> dict[str, Any]:
+        """Read current positions for homing, without retrying a failed camera."""
+        with self._lock:
+            try:
+                try:
+                    return self._robot.get_position_observation()
+                except NotImplementedError:
+                    if self._camera_failure is not None:
+                        raise
+                    return self._robot.get_observation()
+            except CameraObservationError as exc:
+                if self._camera_failure is None:
+                    self._camera_failure = f"{type(exc).__name__}: {exc}"
+                raise
+            except NotImplementedError:
+                raise
+            except Exception as exc:
+                self._record_hardware_failure("get_position_observation", exc)
+                raise
+
+    def _validated_positions(self, action: Any) -> dict[str, float]:
+        if not isinstance(action, dict) or set(action) != set(self.action_features):
+            raise RuntimeError("Position hold requires the applied position target for every actuator")
+        positions = {key: float(value) for key, value in action.items()}
+        if not all(math.isfinite(value) for value in positions.values()):
+            raise RuntimeError("Position hold requires finite position targets for every actuator")
+        return positions
 
     def configure_position_hold(self) -> None:
         """Enable the explicit, robot-supported position hold; reject mixed control modes."""
@@ -103,25 +144,27 @@ class ThreadSafeRobot:
     def supports_hold(self) -> bool:
         return self._position_hold_enabled
 
-    def hold(self) -> None:
-        """Hold the last observed pose without camera reads, network waits, or inference.
+    @property
+    def supports_position_hold(self) -> bool:
+        """Whether this robot declares position-target retention support."""
+        return self._robot.supports_position_hold
 
-        The first held pose stays fixed until ordinary dispatch resumes. This is an
-        actuator command, not a guarantee that hardware has stopped or achieved it.
+    def hold(self) -> None:
+        """Refresh the last applied position targets without camera reads or inference.
+
+        Driver-returned targets include interpolation and safety clipping. Before
+        any command, use the last finite measured pose. The robot may still settle
+        toward these targets; this is not an instantaneous physical stop.
         """
         with self._lock:
             if not self._position_hold_enabled:
                 raise RuntimeError("Local hold was not configured for this robot")
             try:
-                if self._held_action is None:
-                    if set(self._observed_positions) != set(self.action_features) or not all(
-                        math.isfinite(value) for value in self._observed_positions.values()
-                    ):
-                        raise RuntimeError(
-                            "Cannot hold without a finite observed position for every actuator"
-                        )
-                    self._held_action = self._observed_positions.copy()
-                self._robot.send_action(self._held_action)
+                target = self._last_applied_action
+                if target is None:
+                    target = self._validated_positions(self._observed_positions)
+                applied_action = self._robot.send_action(target.copy())
+                self._last_applied_action = self._validated_positions(applied_action)
             except Exception as exc:
                 self._record_hardware_failure("hold", exc)
                 raise

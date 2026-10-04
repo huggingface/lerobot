@@ -24,7 +24,7 @@ from safetensors.torch import load_file
 from torch import Tensor, nn
 
 from lerobot.configs.types import FeatureType
-from lerobot.inference.contracts import ChunkPolicySpec, FeatureSpec
+from lerobot.inference import ChunkPolicySpec, FeatureSpec
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.utils import log_model_loading_keys, populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE

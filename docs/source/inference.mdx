@@ -159,7 +159,7 @@ lerobot-rollout \
 
 Foot pedal input is also supported via `--strategy.input_device=pedal`. Configure pedal codes with `--strategy.pedal.*` flags.
 
-Where the robot supports the rollout position hold, a pause commands its last measured pose. It does not preserve the previous commanded target: on proportional position servos this can reduce the error-dependent holding torque, so the arm can sag under gravity or the gripper can lose grip. Validate pause behavior on the actual robot; this software hold is not a guarantee of retained grip or physical immobility.
+Where the robot supports the rollout position hold, a pause refreshes the last position target actually applied by the driver, including its clipping and the gripper target. Before the first command, a validated measured pose supplies the target. This preserves the commanded position error instead of changing the target to the measured pose; the robot can finish settling toward that target while policy trajectory advancement stops. Validate loaded-arm and gripper behavior on the actual robot; this software hold does not guarantee retained grip or physical immobility.
 
 | Flag                                 | Description                                                                                                                                                    |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -273,6 +273,8 @@ Wrap known blocking mid-run recording work in `self._pause_for_recording(ctx)`, 
 
 Select a backend with `--inference.type=<name>`. Local synchronous and RTC inference use the policy configured below. The [remote backend](./remote_inference) obtains its policy contract from a server and does not load weights on the robot computer.
 
+For extensions, `lerobot.inference` is the public package for backend configurations, engines and shared scheduling contracts. `lerobot.remote_inference` owns the remote protocol, deployment and session implementation; `lerobot.rollout` owns the robot loop, strategies, interpolation and recording. Import public inference symbols from the package rather than its implementation files. The optional remote dependencies are needed only when the remote backend or server is used.
+
 ### Sync (default)
 
 One policy call per control tick. The main loop blocks until the action is computed.
@@ -300,23 +302,28 @@ lerobot-rollout \
     --device=cuda
 ```
 
-| Flag                                        | Description                                                                    |
-| ------------------------------------------- | ------------------------------------------------------------------------------ |
-| `--inference.rtc.execution_horizon`         | Steps to blend with previous chunk (default: varies by policy)                 |
-| `--inference.rtc.mode`                      | `guided` (default) or trained-prefix `trained` for compatible Pi05 checkpoints |
-| `--inference.rtc.max_guidance_weight`       | Consistency enforcement strength (default: varies by policy)                   |
-| `--inference.rtc.prefix_attention_schedule` | Blend schedule: `LINEAR`, `EXP`, `ONES`, `ZEROS`                               |
-| `--inference.queue_threshold`               | Backpressure threshold; trained RTC requires at least its maximum delay        |
+| Flag                                        | Description                                                                                         |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `--inference.rtc.execution_horizon`         | Steps to blend with previous chunk (default: varies by policy)                                      |
+| `--inference.rtc.mode`                      | `guided` (default) or trained-prefix `trained` for compatible Pi05 checkpoints                      |
+| `--inference.rtc.max_guidance_weight`       | Consistency enforcement strength (default: varies by policy)                                        |
+| `--inference.rtc.prefix_attention_schedule` | Blend schedule: `LINEAR`, `EXP`, `ONES`, `ZEROS`                                                    |
+| `--inference.queue_threshold`               | Backpressure threshold; trained RTC requires at least its maximum delay                             |
+| `--inference.action_starvation_grace_s`     | Wait for fresh motion after starvation on a supported robot (default `1.0`; `0` faults immediately) |
 
 See the [Real-Time Chunking](./rtc) guide for details on tuning RTC parameters.
 
-Local RTC and remote inference share chunk scheduling, atomic continuation snapshots,
+Local RTC (`--inference.type=rtc`) runs a background inference thread inside the rollout
+process, without transport. Two processes on the same machine still use
+`--inference.type=remote`. Local RTC and remote inference share chunk scheduling, atomic continuation snapshots,
 per-action task/source provenance and consumption-aware merging. A queue pop commits an
 endpoint to interpolation; it does not imply that the robot has reached that endpoint.
 Remote inference requires a supported local position-hold implementation. Ordinary local
-RTC remains available on existing robots without that opt-in, but planned language holds
-and in-flight instruction-change holds require it. No stop semantics are inferred for
-unsupported actuator modes. Synchronous inference is unchanged.
+RTC remains available on existing robots without that opt-in, but recoverable starvation,
+planned language holds and in-flight instruction-change holds require it. No stop semantics are inferred for
+unsupported actuator modes. Synchronous inference and its existing pause behavior remain
+unchanged. Camera-only shutdown handling also applies to synchronous rollouts on drivers
+that provide the camera-independent position-read contract.
 
 Local RTC also exposes `--inference.max_observation_age_s`, `--inference.action_timeout_s`,
 `--inference.startup_timeout_s` and `--inference.language_timeout_s`. These bound stale
@@ -326,11 +333,18 @@ invalidates interpolation, requests a supported local hold, then honors
 `--return_to_initial_position` (default true) before disconnecting, unless local hardware
 I/O has failed. It never resumes policy execution automatically.
 
-**Behavior change for existing local RTC users:** after motion has begun, exhausting the
-active action buffer is a terminal fault, not a recoverable tick that waits for more
-actions. Startup and explicitly planned holds have their own bounded waiting paths;
-ordinary starvation does not enter a hold-and-retry grace period. A larger timeout
-cannot supply missing actions.
+**Behavior change for existing local RTC users:** after motion has begun, a supported
+robot can wait up to `--inference.action_starvation_grace_s` (default **1 second**) when
+another endpoint is needed and no usable action is available. A committed endpoint can
+finish interpolation before the grace starts. The wait retains the last applied target,
+discards the old trajectory continuation and requires a fresh post-wait observation and
+prediction. An old in-flight call must drain first; its result cannot restart motion.
+The grace includes that drain and fresh inference and is not extended by packets or
+unusable results. Setting the grace to zero, or using a robot without the waiting
+contract, preserves immediate terminal starvation failure. Startup and planned holds
+retain their separate bounds. Absolute deadlines, stale actions and other terminal
+faults still terminate immediately; grace does not override them. A larger timeout
+cannot supply missing actions, and frequent waits call for tuning playback and latency.
 
 RTC trims the actions already consumed while inference ran. The **remaining post-trim
 playback** must still cover the next inference plus timing margin. For example, a
@@ -418,7 +432,7 @@ Sessions work over SSH and on headless machines — no display server needed.
 
 **Recording while interactive.** `--strategy.type=sentry` also accepts `--interactive=true` and records continuously while you steer: each `/start`…`/reset` segment saves complete episodes plus one final partial episode, and the dataset stays open until shutdown. Frames carry the task provenance of the action actually sent, so actions already queued or interpolated under the old task keep the old label.
 
-Blocking mid-run episode saves pause asynchronous inference, invalidate queued/interpolated actions and request a supported local hold. They resume from a fresh capture only if the run remains active and healthy. The same protection applies to DAgger saves and Highlight ring-buffer drains/saves. These planned recording pauses do not make ordinary buffer exhaustion recoverable.
+Blocking mid-run episode saves pause asynchronous inference, invalidate queued/interpolated actions and request a supported local hold. They resume from a fresh capture only if the run remains active and healthy. The same protection applies to DAgger saves and Highlight ring-buffer drains/saves. Recording pauses and ordinary starvation share the physical waiting behavior, but their deadlines and reasons for resumption remain separate.
 
 ```bash
 lerobot-rollout \
@@ -526,7 +540,7 @@ For custom deployments (e.g. with kinematics processors), use the rollout module
 
 ```python
 from lerobot.rollout import BaseStrategyConfig, RolloutConfig, build_rollout_context
-from lerobot.rollout.inference import SyncInferenceConfig
+from lerobot.inference import SyncInferenceConfig
 from lerobot.rollout.strategies import BaseStrategy
 from lerobot.utils.process import ProcessSignalHandler
 

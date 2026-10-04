@@ -31,15 +31,17 @@ from huggingface_hub import snapshot_download
 
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.inference.contracts import ExecutionMode, ObservationSnapshot
-from lerobot.inference.policy_runner import PolicyRunner
+from lerobot.inference import ExecutionMode, ObservationSnapshot, PolicyRunner
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import RenderRuntimeMessagesStep
-from lerobot.remote_inference.build_info import SOFTWARE_BUILD
-from lerobot.remote_inference.configs import ServerConfig
-from lerobot.remote_inference.protocol import PROTOCOL_VERSION
-from lerobot.remote_inference.server import PolicyServer, SessionWorker
+from lerobot.remote_inference import (
+    PROTOCOL_VERSION,
+    SOFTWARE_BUILD,
+    PolicyServer,
+    ServerConfig,
+    SessionWorker,
+)
 from lerobot.transport.zenoh import ZenohTransport
 from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
 from lerobot.utils.utils import init_logging

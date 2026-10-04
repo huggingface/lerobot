@@ -10,8 +10,8 @@ import pytest
 pytest.importorskip("datasets")
 pytest.importorskip("msgpack")
 
+from lerobot.inference import RemoteInferenceConfig
 from lerobot.rollout import remote_context
-from lerobot.rollout.inference import RemoteInferenceConfig
 from tests.remote_inference.test_engine import ControlledClient
 
 
@@ -79,7 +79,7 @@ def test_remote_recording_does_not_add_inference_diagnostics_to_dataset(setup, t
     ctx = remote_context.build_remote_rollout_context(cfg, Event())
     engine = ctx.policy.inference
     try:
-        with caplog.at_level("DEBUG", logger="lerobot.rollout.inference.remote"):
+        with caplog.at_level("DEBUG", logger="lerobot.inference.remote"):
             engine._event("request", task=engine.task)
             engine._drain_log_events()
         assert "Remote inference" in caplog.text

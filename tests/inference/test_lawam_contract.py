@@ -8,8 +8,7 @@ import torch
 from torch import nn
 
 from lerobot.configs import FeatureType, PolicyFeature
-from lerobot.inference.contracts import ExecutionMode, ObservationSnapshot
-from lerobot.inference.policy_runner import PolicyRunner
+from lerobot.inference import ExecutionMode, ObservationSnapshot, PolicyRunner
 from lerobot.policies.lawam.configuration_lawam import LaWAMConfig
 from lerobot.policies.lawam.modeling_lawam import LaWAMPolicy
 from lerobot.policies.lawam.processor_lawam import LaWAMResizeImagesProcessorStep

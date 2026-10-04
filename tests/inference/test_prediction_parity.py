@@ -7,10 +7,8 @@ import torch
 
 pytest.importorskip("datasets", reason="local rollout imports the dataset integration")
 
-from lerobot.inference.contracts import ExecutionMode
-from lerobot.inference.prediction import predict_chunk
+from lerobot.inference import ExecutionMode, RTCInferenceEngine, predict_chunk
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.rollout.inference.rtc import RTCInferenceEngine
 from lerobot.utils.constants import OBS_ENV_STATE, OBS_STATE
 from tests.inference.test_policy_runner import (
     ConformingPolicy,

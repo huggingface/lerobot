@@ -18,16 +18,13 @@ pytest.importorskip("datasets")
 pytest.importorskip("msgpack")
 import msgpack
 
-from lerobot.inference.contracts import ExecutionMode, FeatureSpec
-from lerobot.inference.execution import ChunkRuntime
-from lerobot.inference.policy_runner import PolicyRunner
+from lerobot.inference import ChunkRuntime, ExecutionMode, FeatureSpec, PolicyRunner, RemoteInferenceConfig
 from lerobot.remote_inference.client import RemoteClient, RequestCancelled
 from lerobot.remote_inference.codec import encode_message
 from lerobot.remote_inference.protocol import Envelope, ErrorCode, MessageType, ProtocolError
 from lerobot.remote_inference.server import PolicyServer, SessionWorker
 from lerobot.rollout.configs import RolloutConfig
 from lerobot.rollout.context import build_rollout_context
-from lerobot.rollout.inference.factory import RemoteInferenceConfig
 from lerobot.rollout.strategies.core import send_next_action
 from lerobot.transport.zenoh import ZenohConfig, ZenohTransport
 from lerobot.utils.action_interpolator import ActionInterpolator
@@ -486,9 +483,10 @@ def test_remote_context_without_weights_dispatches_and_holds_fake_robot(remote_s
         engine.notify_observation(obs)
         assert send_next_action(obs, obs, ctx, interpolator) is not None
         assert not interpolator.needs_new_action()
+        last_applied = robot.sent[-1].copy()
         engine._fault("test server failure")
         assert send_next_action(obs, obs, ctx, interpolator) is None
-        assert robot.sent[-1] == dict.fromkeys(robot.action_features, 1.0)
+        assert robot.sent[-1] == last_applied
         assert ctx.runtime.shutdown_event.is_set()
         assert interpolator.needs_new_action()
     finally:

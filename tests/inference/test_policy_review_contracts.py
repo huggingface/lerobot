@@ -10,8 +10,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from lerobot.inference.contracts import ExecutionMode, FeatureSpec
-from lerobot.inference.policy_runner import PolicyRunner
+from lerobot.inference import ExecutionMode, FeatureSpec, PolicyRunner
 from lerobot.policies.evo1.processor_evo1 import Evo1ActionProcessorStep
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE

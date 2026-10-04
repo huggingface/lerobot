@@ -5,10 +5,9 @@ import torch
 
 pytest.importorskip("datasets")
 
-from lerobot.inference.contracts import ExecutionMode
+from lerobot.inference import ExecutionMode, RTCInferenceConfig
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.rollout.context import _validate_trained_rtc_rollout_config
-from lerobot.rollout.inference import RTCInferenceConfig
 from tests.inference.test_policy_runner import ConformingPolicy, observation, runner_for, tiny_config
 
 

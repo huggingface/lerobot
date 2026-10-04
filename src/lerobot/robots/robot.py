@@ -25,6 +25,14 @@ from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, ROBOTS
 from .config import RobotConfig
 
 
+class CameraObservationError(RuntimeError):
+    """An observation failed specifically while reading a camera, not an actuator.
+
+    Drivers must raise this only around camera acquisition after successful motor
+    feedback. Unknown observation failures must keep their original exception.
+    """
+
+
 # TODO(aliberts): action/obs typing such as Generic[ObsType, ActType] similar to gym.Env ?
 # https://github.com/Farama-Foundation/Gymnasium/blob/3287c869f9a48d99454306b0d4b4ec537f0f35e3/gymnasium/core.py#L23
 class Robot(abc.ABC):
@@ -42,7 +50,8 @@ class Robot(abc.ABC):
     # Set these in ALL subclasses
     config_class: builtins.type[RobotConfig]
     name: str
-    # Opt-in for integrations that can hold by commanding a cached measured pose.
+    # Opt-in for retaining the last applied position targets (including gripper).
+    # Before the first command, a finite measured pose establishes the targets.
     # Mixed velocity/torque robots require their own stop implementation.
     supports_position_hold: bool = False
 
@@ -192,6 +201,16 @@ class Robot(abc.ABC):
         """
 
         pass
+
+    def get_position_observation(self) -> dict[str, float]:
+        """Read actuator positions without requiring cameras or other sensors.
+
+        Optional shutdown capability: implementations must read fresh motor
+        feedback, using the same names and units as their position actions. The
+        default deliberately rejects camera-independent homing; callers may use
+        normal observations only when no camera failure has been reported.
+        """
+        raise NotImplementedError(f"{self.robot_type} has no camera-independent position read")
 
     @abc.abstractmethod
     def send_action(self, action: RobotAction) -> RobotAction:

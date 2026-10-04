@@ -15,8 +15,7 @@ import torch
 pytest.importorskip("datasets")
 pytest.importorskip("msgpack")
 
-from lerobot.inference.contracts import ExecutionMode
-from lerobot.inference.execution import ChunkRequest
+from lerobot.inference import ChunkRequest, ExecutionMode, RemoteInferenceConfig
 from lerobot.policies.rtc.action_queue import QueueSnapshot
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.remote_inference.chunk_contract import RTC_MODEL_SPACE
@@ -24,7 +23,6 @@ from lerobot.remote_inference.client import RemoteClient
 from lerobot.remote_inference.codec import decode_message, encode_message
 from lerobot.remote_inference.protocol import ErrorCode, MessageType, ProtocolError
 from lerobot.remote_inference.server import SessionWorker
-from lerobot.rollout.inference.factory import RemoteInferenceConfig
 from lerobot.transport.zenoh import BoundedSubscriber
 from tests.inference.test_policy_review_contracts import PaddedPolicy, make_runner
 from tests.inference.test_policy_runner import ConformingPolicy, observation, tiny_config

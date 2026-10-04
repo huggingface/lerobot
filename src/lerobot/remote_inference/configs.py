@@ -18,8 +18,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Literal
 
-from lerobot.inference.contracts import ExecutionMode, FeatureSpec
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.inference import ExecutionMode, FeatureSpec
+from lerobot.policies.rtc import RTCConfig
 from lerobot.transport.zenoh import ZenohConfig
 
 from .chunk_contract import validate_blendable_components

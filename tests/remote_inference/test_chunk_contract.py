@@ -11,7 +11,7 @@ import pytest
 
 pytest.importorskip("datasets")
 
-from lerobot.inference.contracts import ExecutionMode
+from lerobot.inference import ExecutionMode, RemoteInferenceConfig
 from lerobot.remote_inference.chunk_contract import (
     CHUNK_ALIGNMENT,
     CHUNK_BLENDING,
@@ -24,7 +24,6 @@ from lerobot.remote_inference.client import RemoteClient
 from lerobot.remote_inference.configs import ExecutionConfig, ModelConfig, ServerConfig
 from lerobot.remote_inference.protocol import ErrorCode, MessageType, ProtocolError
 from lerobot.remote_inference.server import SessionWorker
-from lerobot.rollout.inference.factory import RemoteInferenceConfig
 from tests.inference.test_policy_runner import ConformingPolicy, runner_for, tiny_config
 from tests.remote_inference.test_session import action_request, assert_error, open_request
 

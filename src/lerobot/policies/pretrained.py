@@ -29,7 +29,7 @@ from safetensors.torch import load_model as load_model_as_safetensor
 from torch import Tensor, nn
 
 from lerobot.configs import FeatureType, PreTrainedConfig
-from lerobot.inference.contracts import ChunkPolicySpec, ExecutionMode, FeatureSpec
+from lerobot.inference import ChunkPolicySpec, ExecutionMode, FeatureSpec
 from lerobot.optim.optimizers import OptimizerParams
 from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import resolve_safetensors_device
@@ -321,7 +321,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """
         config = self.config
         if config.n_obs_steps != 1:
-            raise ValueError("Chunk serving requires n_obs_steps=1; observation history is unsupported.")
+            raise ValueError("Chunk inference requires n_obs_steps=1; observation history is unsupported.")
         for field_name in (
             "observation_delta_indices",
             "image_observation_delta_indices",
@@ -329,12 +329,12 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         ):
             indices = getattr(config, field_name, None)
             if indices is not None and list(indices) != [0]:
-                raise ValueError(f"Chunk serving cannot sample temporal history ({field_name}).")
+                raise ValueError(f"Chunk inference cannot sample temporal history ({field_name}).")
         if getattr(config, "temporal_ensemble_coeff", None) is not None:
-            raise ValueError("Chunk serving does not support temporal ensembling.")
+            raise ValueError("Chunk inference does not support temporal ensembling.")
         if getattr(config, "use_visual_memory", False) or getattr(config, "use_proprioceptive_memory", False):
             raise ValueError(
-                "Chunk serving cannot sample observation memory at the required control cadence."
+                "Chunk inference cannot sample observation memory at the required control cadence."
             )
         prediction_steps = getattr(config, "chunk_size", None)
         if not isinstance(prediction_steps, int) or prediction_steps <= 0:

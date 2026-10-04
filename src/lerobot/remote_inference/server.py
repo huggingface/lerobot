@@ -35,8 +35,7 @@ from uuid import uuid4
 import numpy as np
 import torch
 
-from lerobot.inference.contracts import ExecutionMode, FeatureSpec, ObservationSnapshot, QueryKind
-from lerobot.inference.policy_runner import PolicyRunner
+from lerobot.inference import ExecutionMode, FeatureSpec, ObservationSnapshot, PolicyRunner, QueryKind
 from lerobot.transport.zenoh import (
     BoundedQueryable,
     BoundedSubscriber,

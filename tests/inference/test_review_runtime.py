@@ -4,8 +4,7 @@ import numpy as np
 import pytest
 import torch
 
-from lerobot.inference.contracts import ActionChunk, ActionProvenance, ExecutionMode, ObservationSnapshot
-from lerobot.inference.execution import ChunkRuntime
+from lerobot.inference import ActionChunk, ActionProvenance, ChunkRuntime, ExecutionMode, ObservationSnapshot
 from lerobot.policies.rtc.action_queue import ActionQueue
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 

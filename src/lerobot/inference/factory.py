@@ -31,14 +31,13 @@ from typing import Literal
 
 import draccus
 
-from lerobot.inference.contracts import ExecutionMode
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.policies import PreTrainedPolicy
+from lerobot.policies.rtc import RTCConfig
 from lerobot.processor import PolicyProcessorPipeline
-from lerobot.remote_inference.chunk_contract import chunk_settings
+from lerobot.remote_inference import chunk_settings
 
-from ..robot_wrapper import ThreadSafeRobot
-from .base import InferenceEngine
+from .base import InferenceEngine, InferenceRobot
+from .contracts import ExecutionMode
 from .rtc import RTCInferenceEngine
 from .sync import SyncInferenceEngine
 
@@ -59,6 +58,7 @@ class InferenceEngineConfig(draccus.ChoiceRegistry, abc.ABC):
 
     @property
     def type(self) -> str:
+        """Return the CLI registry name for this backend."""
         return self.get_choice_name(self.__class__)
 
 
@@ -81,6 +81,12 @@ class RTCInferenceConfig(InferenceEngineConfig):
     action_timeout_s: float = 10.0
     startup_timeout_s: float = 120.0
     language_timeout_s: float = 120.0
+    action_starvation_grace_s: float = 1.0
+
+    def __post_init__(self) -> None:
+        """Validate the bounded local waiting budget."""
+        if not math.isfinite(self.action_starvation_grace_s) or self.action_starvation_grace_s < 0:
+            raise ValueError("Action starvation grace must be finite and nonnegative")
 
 
 @InferenceEngineConfig.register_subclass("remote")
@@ -112,6 +118,7 @@ class RemoteInferenceConfig(InferenceEngineConfig):
     action_timeout_s: float = 5.0
     language_timeout_s: float = 60.0
     startup_timeout_s: float = 10.0
+    action_starvation_grace_s: float = 1.0
     encoding: Literal["raw", "jpeg"] = "raw"
     jpeg_quality: int = 90
     zenoh_config_path: str | None = None
@@ -120,8 +127,11 @@ class RemoteInferenceConfig(InferenceEngineConfig):
     log_level: Literal["INFO", "DEBUG"] = "INFO"
 
     def __post_init__(self) -> None:
+        """Validate transport, scheduling and explicit robot consent settings."""
         if self.log_level not in {"INFO", "DEBUG"}:
             raise ValueError("Remote log_level must be INFO or DEBUG")
+        if not math.isfinite(self.action_starvation_grace_s) or self.action_starvation_grace_s < 0:
+            raise ValueError("Action starvation grace must be finite and nonnegative")
         if self.zenoh_mode not in {"peer", "client"}:
             raise ValueError("zenoh_mode must be peer (direct) or client (router)")
         if not self.deployment or not self.semantics:
@@ -164,7 +174,7 @@ def create_inference_engine(
     policy: PreTrainedPolicy,
     preprocessor: PolicyProcessorPipeline,
     postprocessor: PolicyProcessorPipeline,
-    robot_wrapper: ThreadSafeRobot,
+    robot_wrapper: InferenceRobot,
     dataset_features: dict,
     ordered_action_keys: list[str],
     task: str,
@@ -210,6 +220,7 @@ def create_inference_engine(
             action_timeout_s=config.action_timeout_s,
             startup_timeout_s=config.startup_timeout_s,
             language_timeout_s=config.language_timeout_s,
+            action_starvation_grace_s=config.action_starvation_grace_s,
             shutdown_event=shutdown_event,
         )
     raise ValueError(f"Unknown inference engine type: {type(config).__name__}")

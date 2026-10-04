@@ -30,7 +30,7 @@ from enum import Enum
 from threading import Event, Lock
 from typing import TYPE_CHECKING
 
-from .inference import QueryAnswer
+from lerobot.inference import QueryAnswer
 
 if TYPE_CHECKING:
     from .context import RolloutContext
@@ -114,7 +114,7 @@ class RolloutEvent(Enum):
 
     QUERY_ANSWERED = "query_answered"
     """A text query resolved (an :meth:`RolloutController.ask` question or an autosteer turn); the
-    payload is a :class:`~lerobot.rollout.inference.QueryAnswer`, check ``ok`` before ``answer``."""
+    payload is a :class:`~lerobot.inference.QueryAnswer`, check ``ok`` before ``answer``."""
 
     ENGINE_FAILED = "engine_failed"
     """The engine hit an unrecoverable error; ``serve()`` is returning.  Read

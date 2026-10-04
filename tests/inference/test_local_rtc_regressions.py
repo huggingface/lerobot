@@ -21,14 +21,12 @@ import torch
 pytest.importorskip("datasets", reason="rollout requires the dataset extra")
 
 from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.inference.contracts import ObservationSnapshot
+from lerobot.inference import ObservationSnapshot, RTCInferenceEngine, rtc
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.rollout import RolloutConfig, context
-from lerobot.rollout.inference import rtc
-from lerobot.rollout.inference.rtc import RTCInferenceEngine
 from lerobot.rollout.robot_wrapper import ThreadSafeRobot
 from tests.mocks.mock_robot import MockRobot, MockRobotConfig
 

@@ -31,8 +31,8 @@ from typing import Any
 import numpy as np
 import torch
 
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.rtc.configuration_rtc import validate_trained_rtc_horizon
+from lerobot.policies import PreTrainedPolicy
+from lerobot.policies.rtc import validate_trained_rtc_horizon
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     NormalizerProcessorStep,

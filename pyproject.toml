@@ -259,7 +259,7 @@ lawam = [
 
 # Features
 # Remote inference: pinned binding validated by the direct loopback transport tests.
-remote = ["eclipse-zenoh==1.9.0", "msgpack>=1.1.0,<2.0.0"]
+remote = ["eclipse-zenoh>=1.9.0,<1.11.0", "msgpack>=1.1.0,<2.0.0"]
 peft = ["lerobot[transformers-dep]", "lerobot[peft-dep]"]
 
 # Annotation pipeline (lerobot-annotate). The only backend is ``openai``,

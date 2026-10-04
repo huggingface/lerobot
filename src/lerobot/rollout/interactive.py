@@ -31,11 +31,11 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING
 
+from lerobot.inference import QueryAnswer, QueryKind
 from lerobot.utils.stdin_input import StdinCommandListener
 from lerobot.utils.utils import log_say
 
 from .controller import AskResult, RolloutController, RolloutEvent
-from .inference import QueryAnswer, QueryKind
 
 if TYPE_CHECKING:
     from .context import RolloutContext

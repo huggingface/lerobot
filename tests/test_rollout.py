@@ -47,10 +47,10 @@ def test_rollout_top_level_imports():
 
 
 def test_inference_submodule_imports():
-    import lerobot.rollout.inference
+    import lerobot.inference
 
-    for name in lerobot.rollout.inference.__all__:
-        assert hasattr(lerobot.rollout.inference, name), f"Missing export: {name}"
+    for name in lerobot.inference.__all__:
+        assert hasattr(lerobot.inference, name), f"Missing export: {name}"
 
 
 def test_strategies_submodule_imports():
@@ -109,15 +109,14 @@ def test_inference_config_types():
 
 
 def test_trained_rtc_retries_chunk_when_measured_delay_exceeds_conditioning():
-    from lerobot.inference.execution import trained_overlap_valid
+    from lerobot.inference import trained_overlap_valid
 
     assert not trained_overlap_valid(conditioned=2, measured=3, maximum=4, has_previous=True)
     assert trained_overlap_valid(conditioned=2, measured=5, maximum=4, has_previous=False)
 
 
 def test_trained_rtc_bootstraps_first_overlap_with_checkpoint_capacity():
-    from lerobot.inference.contracts import ExecutionMode
-    from lerobot.inference.execution import estimate_delay
+    from lerobot.inference import ExecutionMode, estimate_delay
 
     assert estimate_delay(0, 1 / 30, ExecutionMode.RTC_TRAINED, 10, available=0) == 0
     assert estimate_delay(0, 1 / 30, ExecutionMode.RTC_TRAINED, 10, available=20) == 10
@@ -125,15 +124,14 @@ def test_trained_rtc_bootstraps_first_overlap_with_checkpoint_capacity():
 
 def test_trained_rtc_discards_chunk_measured_above_checkpoint_support():
     """A latency spike past the trained delay discards the chunk; it must not kill the rollout."""
-    from lerobot.inference.execution import trained_overlap_valid
+    from lerobot.inference import trained_overlap_valid
 
     assert not trained_overlap_valid(conditioned=3, measured=5, maximum=4, has_previous=True)
 
 
 def test_trained_rtc_clamps_prefix_to_checkpoint_and_queue():
     """Conditioning past the queue tail would hard-inpaint zero padding, so clamp instead."""
-    from lerobot.inference.contracts import ExecutionMode
-    from lerobot.inference.execution import estimate_delay
+    from lerobot.inference import ExecutionMode, estimate_delay
 
     # Queue tail is the binding limit.
     assert estimate_delay(4 / 30, 1 / 30, ExecutionMode.RTC_TRAINED, 10, available=2) == 2
@@ -153,9 +151,9 @@ def test_trained_rtc_clamps_prefix_to_checkpoint_and_queue():
     ],
 )
 def test_trained_rtc_rollout_requires_capacity_for_max_delay(execution_horizon, queue_threshold, match):
+    from lerobot.inference import RTCInferenceConfig
     from lerobot.policies.rtc.configuration_rtc import RTCConfig
     from lerobot.rollout.context import _validate_trained_rtc_rollout_config
-    from lerobot.rollout.inference import RTCInferenceConfig
 
     policy_config = SimpleNamespace(type="pi05", rtc_training_max_delay=4, chunk_size=20)
     inference_config = RTCInferenceConfig(
@@ -168,9 +166,9 @@ def test_trained_rtc_rollout_requires_capacity_for_max_delay(execution_horizon, 
 
 
 def test_trained_rtc_rollout_accepts_valid_capacity():
+    from lerobot.inference import RTCInferenceConfig
     from lerobot.policies.rtc.configuration_rtc import RTCConfig
     from lerobot.rollout.context import _validate_trained_rtc_rollout_config
-    from lerobot.rollout.inference import RTCInferenceConfig
 
     policy_config = SimpleNamespace(type="pi05", rtc_training_max_delay=4, chunk_size=50)
     inference_config = RTCInferenceConfig(
@@ -614,8 +612,8 @@ def test_create_inference_engine_sync():
 
 
 def test_create_inference_engine_remote_explains_session_construction():
+    from lerobot.inference import RemoteInferenceConfig
     from lerobot.rollout import create_inference_engine
-    from lerobot.rollout.inference.factory import RemoteInferenceConfig
 
     config = RemoteInferenceConfig(deployment="test", semantics="radians-v1", hold_mode="position")
     with pytest.raises(ValueError, match="connected RemoteClient; use build_rollout_context"):

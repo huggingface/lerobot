@@ -28,16 +28,14 @@ from uuid import uuid4
 
 import torch
 
-from lerobot.inference.contracts import ExecutionMode, ObservationSnapshot
-from lerobot.inference.execution import ChunkRuntime
-from lerobot.remote_inference.client import RemoteClient, RequestCancelled
-from lerobot.remote_inference.protocol import ErrorCode, ProtocolError
+from lerobot.remote_inference import ErrorCode, ProtocolError, RemoteClient, RequestCancelled
 from lerobot.utils.feature_utils import build_dataset_frame
 
-from .base import InferenceEngine, PolicyQuery, QueryAnswer, QueryKind
+from .base import InferenceEngine, InferenceRobot, PolicyQuery, QueryAnswer, QueryKind
+from .contracts import ExecutionMode, ObservationSnapshot
+from .execution import ChunkRuntime
 
 if TYPE_CHECKING:
-    from ..robot_wrapper import ThreadSafeRobot
     from .factory import RemoteInferenceConfig
 
 logger = logging.getLogger(__name__)
@@ -58,7 +56,7 @@ class RemoteInferenceEngine(InferenceEngine):
         config: RemoteInferenceConfig,
         dataset_features: dict,
         rename_map: dict[str, str],
-        robot_wrapper: ThreadSafeRobot,
+        robot_wrapper: InferenceRobot,
         task: str,
         shutdown_event: Event | None = None,
     ) -> None:
@@ -87,6 +85,7 @@ class RemoteInferenceEngine(InferenceEngine):
             max_observation_age_s=config.max_observation_age_s,
             action_timeout_s=config.action_timeout_s,
             startup_timeout_s=config.startup_timeout_s,
+            action_starvation_grace_s=config.action_starvation_grace_s,
             training_max_delay=client.capabilities.training_max_delay,
             chunk_merge=config.chunk_merge,
             blend_steps=config.blend_steps,
@@ -152,7 +151,7 @@ class RemoteInferenceEngine(InferenceEngine):
                 logger.info(
                     "Remote execution: mode=%s merge=%s blend_steps=%s incoming_weight=%.2f; "
                     "action_rate=%.1f Hz horizon=%.3fs refill=%.3fs (effective=%.3fs); "
-                    "max_source_age=%.3fs action_timeout=%.3fs startup_timeout=%.3fs",
+                    "max_source_age=%.3fs action_timeout=%.3fs startup_timeout=%.3fs starvation_grace=%.3fs",
                     self.config.mode,
                     self.config.chunk_merge,
                     self.config.blend_steps,
@@ -164,9 +163,16 @@ class RemoteInferenceEngine(InferenceEngine):
                     self.config.max_observation_age_s,
                     self.config.action_timeout_s,
                     self.config.startup_timeout_s,
+                    self.config.action_starvation_grace_s,
                 )
             elif name == "planned_hold":
                 logger.info("Remote %s: requesting a local hold before fresh resumption", event["reason"])
+            elif name == "waiting":
+                logger.warning(
+                    "Remote actions exhausted; retaining last target for up to %.3fs", event["grace_s"]
+                )
+            elif name == "resumed":
+                logger.info("Remote fresh actions ready after %.3fs waiting", event["wait_s"])
             elif name == "language_result":
                 logger.info(
                     "Remote language query completed (%s, %.3fs); action resumption requires a fresh observation",
@@ -500,7 +506,11 @@ class RemoteInferenceEngine(InferenceEngine):
             hold_timeout = self.config.action_timeout_s + self.config.handshake_timeout_s
             if self._hold_reason == "language":
                 hold_timeout += self.config.language_timeout_s
-            if self._hold_requested and self.runtime.clock() - self._hold_started > hold_timeout:
+            if (
+                self._hold_requested
+                and self._hold_reason != "action starvation"
+                and self.runtime.clock() - self._hold_started > hold_timeout
+            ):
                 self._fault(f"Planned {self._hold_reason} hold deadline exceeded")
         allowed = self.runtime.dispatch_allowed()
         if self.runtime.failure is not None:
@@ -516,12 +526,16 @@ class RemoteInferenceEngine(InferenceEngine):
             if not self.runtime.active or self.failed:
                 return
             if self._hold_requested:
-                if self._hold_reason == "instruction change" and reason == "language":
+                if self._hold_reason in {"instruction change", "action starvation"} and reason == "language":
                     # Keep the existing acknowledgment, freshness gate and time anchor;
                     # repeated query checks must not renew the language hold budget.
                     self._hold_reason = reason
                 return
-            generation = self.runtime.invalidate(held=True)
+            generation = (
+                self.runtime.generation
+                if reason == "action starvation"
+                else self.runtime.invalidate(held=True, preserve_starvation=True)
+            )
             self._hold_requested = True
             self._hold_acknowledged = False
             self._hold_started = self.runtime.clock()
@@ -540,7 +554,7 @@ class RemoteInferenceEngine(InferenceEngine):
         with self._lock:
             if self._hold_requested and not self._hold_acknowledged:
                 self._hold_acknowledged = True
-                self._hold_started = self.runtime.clock()
+                self.runtime.acknowledge_starvation_hold()
                 self._observation = None  # require capture after the control-thread hold
         if self.failed and self._global_shutdown is not None:
             self._global_shutdown.set()
@@ -556,6 +570,8 @@ class RemoteInferenceEngine(InferenceEngine):
             eligible action is available. The caller must still check dispatch permission.
         """
         item = self.runtime.pop(control_tick=self._tick)
+        if self.runtime.starvation_deadline is not None and self.runtime.held:
+            self._request_hold("action starvation")
         if item is None:
             return None
         action, provenance = item
@@ -646,6 +662,12 @@ class RemoteInferenceEngine(InferenceEngine):
                 with self.runtime.lock:
                     dispatch_events = list(self.runtime.dispatch_events)
                     self.runtime.dispatch_events.clear()
+                    wait_events = list(self.runtime.wait_events)
+                    self.runtime.wait_events.clear()
+                for event in wait_events:
+                    self._event(
+                        event["event"], **{key: value for key, value in event.items() if key != "event"}
+                    )
                 for event in dispatch_events:
                     self._event("first_dispatch", **event)
                 with self._lock:
@@ -670,10 +692,24 @@ class RemoteInferenceEngine(InferenceEngine):
                     with self._lock:
                         if self._control == control:
                             self._control = None
+                            self.runtime.complete_starvation_invalidation(generation)
                             if not self._hold_requested:
                                 self.runtime.release_hold(generation)
                                 self._observation = None
                     continue
+                if hold_ready:
+                    with self._lock:
+                        if (
+                            self._control is None
+                            and self._hold_requested
+                            and self._hold_acknowledged
+                            and self._hold_reason == "action starvation"
+                            and self.runtime.release_hold(self.runtime.generation)
+                        ):
+                            self._hold_requested = False
+                            self._hold_acknowledged = False
+                            self._observation = None
+                            continue
                 if not self.runtime.active or observation is None:
                     self.runtime.check_deadlines()
                     self._stop_event.wait(0.002)

@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from lerobot.inference.contracts import ExecutionMode, FeatureSpec
+from lerobot.inference import ExecutionMode, FeatureSpec
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.remote_inference.configs import ExecutionConfig, ModelConfig, ServerConfig

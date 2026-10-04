@@ -10,8 +10,8 @@ import pytest
 
 pytest.importorskip("datasets", reason="interactive rollout requires lerobot[dataset]")
 
+from lerobot.inference import QueryKind
 from lerobot.rollout.controller import AskResult, RolloutController
-from lerobot.rollout.inference.base import QueryKind
 from lerobot.rollout.interactive import InteractiveSession
 from tests import test_interactive_rollout as interactive_helpers
 from tests.remote_inference import test_engine as engine_helpers

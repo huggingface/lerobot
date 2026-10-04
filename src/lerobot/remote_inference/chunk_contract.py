@@ -17,7 +17,7 @@
 import math
 from typing import Any
 
-from lerobot.inference.contracts import ExecutionMode, FeatureSpec, PolicyCapabilities
+from lerobot.inference import ExecutionMode, FeatureSpec, PolicyCapabilities
 
 CHUNK_ALIGNMENT = "chunk_alignment_v1"
 CHUNK_BLENDING = "chunk_blending_v1"

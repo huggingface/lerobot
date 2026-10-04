@@ -15,8 +15,7 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.inference.contracts import ExecutionMode, FeatureSpec, ObservationSnapshot, QueryKind
-from lerobot.inference.policy_runner import PolicyRunner
+from lerobot.inference import ExecutionMode, FeatureSpec, ObservationSnapshot, PolicyRunner, QueryKind
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.act.processor_act import make_act_pre_post_processors
@@ -196,7 +195,7 @@ def test_runner_guided_rtc_allows_real_autograd_on_successor_chunk():
 
 def test_local_guided_rtc_allows_real_autograd_on_successor_chunk():
     pytest.importorskip("datasets")
-    from lerobot.rollout.inference.rtc import RTCInferenceEngine
+    from lerobot.inference import RTCInferenceEngine
 
     config = tiny_config()
     config.rtc_config = RTCConfig(execution_horizon=4)
@@ -409,7 +408,7 @@ def test_deployment_can_disable_text_and_cannot_enable_an_unsupported_head():
 
 def test_real_act_plain_async_matches_runner_and_honors_execution_slice():
     pytest.importorskip("datasets")
-    from lerobot.rollout.inference.rtc import RTCInferenceEngine
+    from lerobot.inference import RTCInferenceEngine
 
     policy = ACTPolicy(tiny_config())
     expected = runner_for(policy).predict(observation()).canonical_actions

@@ -21,11 +21,15 @@ pytest.importorskip("zenoh")
 pytest.importorskip("msgpack")
 pytest.importorskip("datasets")
 
-from lerobot.inference.contracts import ExecutionMode, FeatureSpec, PolicyCapabilities
+from lerobot.inference import (
+    ExecutionMode,
+    FeatureSpec,
+    PolicyCapabilities,
+    RemoteInferenceConfig,
+    RemoteInferenceEngine,
+)
 from lerobot.remote_inference.client import RemoteClient, RequestCancelled
 from lerobot.remote_inference.protocol import MessageType, instance_prefix, session_prefix
-from lerobot.rollout.inference.factory import RemoteInferenceConfig
-from lerobot.rollout.inference.remote import RemoteInferenceEngine
 from lerobot.transport.zenoh import QueryCancelled
 from tests.inference.test_policy_runner import observation
 from tests.remote_inference.test_aligned_process import ACTION_NAMES, serve_in_child
@@ -212,6 +216,7 @@ def test_server_process_death_latches_presence_exhausts_motion_and_skips_close_a
         max_observation_age_s=10,
         handshake_timeout_s=3,
         action_timeout_s=5,
+        action_starvation_grace_s=0,  # Explicit fail-fast policy; grace recovery is covered separately.
     )
     client = RemoteClient.connect(config)
     shutdown = Event()

@@ -22,8 +22,7 @@ from copy import copy
 
 import torch
 
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.utils import prepare_observation_for_inference
+from lerobot.policies import PreTrainedPolicy, prepare_observation_for_inference
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.utils.constants import OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
@@ -52,6 +51,7 @@ class SyncInferenceEngine(InferenceEngine):
         device: str | None,
         robot_type: str,
     ) -> None:
+        """Own the local policy and processors used for synchronous calls."""
         super().__init__(task=task)
         self._policy = policy
         self._preprocessor = preprocessor

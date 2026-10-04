@@ -28,13 +28,52 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from threading import Lock
+from typing import Any, Protocol
 
 import torch
 
-from lerobot.inference.contracts import QueryKind as QueryKind
 from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT
 
+from .contracts import QueryKind as QueryKind
+
 logger = logging.getLogger(__name__)
+
+
+class InferenceRobot(Protocol):
+    """Robot metadata and hold capability consumed by inference backends.
+
+    Rollout supplies its serialized hardware wrapper. Keeping this structural
+    interface here lets backends run without importing rollout or its dataset tools.
+    """
+
+    @property
+    def action_features(self) -> dict[str, Any]:
+        """Return the robot's named actuator features."""
+        ...
+
+    @property
+    def robot_type(self) -> str:
+        """Return the robot type used to condition the policy."""
+        ...
+
+    @property
+    def observation_time(self) -> float | None:
+        """Return the monotonic sample bound of the latest observation."""
+        ...
+
+    @property
+    def supports_hold(self) -> bool:
+        """Return whether local waiting behavior is configured."""
+        ...
+
+    @property
+    def supports_position_hold(self) -> bool:
+        """Return whether the robot declares compatible position control."""
+        ...
+
+    def configure_position_hold(self) -> None:
+        """Validate and enable the robot's local waiting behavior."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -117,6 +156,7 @@ class InferenceEngine(abc.ABC):
     """
 
     def __init__(self, task: str = "") -> None:
+        """Initialize task ownership and serialized language-query bookkeeping."""
         self._task = task
         self._task_changed = False
         self._task_version = 0
@@ -175,6 +215,7 @@ class InferenceEngine(abc.ABC):
 
     @property
     def query_intent_generation(self) -> int:
+        """Return the generation used to discard superseded query results."""
         with self._query_lock:
             return self._autosteer_generation
 

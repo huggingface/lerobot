@@ -197,6 +197,10 @@ lerobot-rollout \
 
 ## How RTC relates to remote inference
 
+`--inference.type=rtc` is local RTC: inference runs in a background thread in the rollout process and uses no transport. Running a policy server and a robot client as separate processes on the same machine uses the remote backend instead.
+
+After usable playback ends, both asynchronous backends can retain the last applied position target on a supported robot for `--inference.action_starvation_grace_s` (default `1.0`). Recovery requires a fresh capture and prediction within that grace, including any time spent draining an old call. Zero grace, unsupported waiting, stale actions or expired operation deadlines terminate the run. See [rollout waiting behavior](./inference#inference-backends) for the migration details. This bounded recovery does not change RTC's prefix, delay or freshness checks.
+
 Both RTC and [asynchronous remote inference](./remote_inference) improve real-time robot control, but they solve different problems.
 
 | Aspect           | Remote inference                                              | RTC                                                   |

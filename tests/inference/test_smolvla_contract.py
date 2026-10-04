@@ -7,8 +7,7 @@ import pytest
 import torch
 
 from lerobot.configs import FeatureType, PolicyFeature
-from lerobot.inference.contracts import ObservationSnapshot
-from lerobot.inference.policy_runner import PolicyRunner
+from lerobot.inference import ObservationSnapshot, PolicyRunner
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy

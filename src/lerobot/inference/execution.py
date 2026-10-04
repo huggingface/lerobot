@@ -33,8 +33,7 @@ from uuid import uuid4
 
 import torch
 
-from lerobot.policies.rtc.action_queue import ActionQueue, QueueSnapshot
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.policies.rtc import ActionQueue, QueueSnapshot, RTCConfig
 
 from .contracts import ActionChunk, ActionProvenance, ActionSource, ExecutionMode, ObservationSnapshot
 
@@ -80,6 +79,7 @@ class ChunkRuntime:
         max_observation_age_s: float,
         action_timeout_s: float,
         startup_timeout_s: float,
+        action_starvation_grace_s: float = 0.0,
         training_max_delay: int = 0,
         chunk_merge: str = "append",
         blend_steps: int = 0,
@@ -93,6 +93,8 @@ class ChunkRuntime:
                 raise ValueError("Execution intervals, ages and deadlines must be finite and positive")
         if not math.isfinite(refill_seconds) or refill_seconds < 0:
             raise ValueError("Refill playback threshold must be finite and nonnegative")
+        if not math.isfinite(action_starvation_grace_s) or action_starvation_grace_s < 0:
+            raise ValueError("Action starvation grace must be finite and nonnegative")
         if chunk_merge not in {"append", "aligned"} or (
             chunk_merge != "append" and mode is not ExecutionMode.CHUNK
         ):
@@ -119,6 +121,10 @@ class ChunkRuntime:
         self.max_age = max_observation_age_s
         self.action_timeout = action_timeout_s
         self.startup_timeout = startup_timeout_s
+        self.starvation_grace = action_starvation_grace_s
+        self.starvation_deadline: float | None = None
+        self._starvation_request_deadline: float | None = None
+        self._starvation_capture_after: float | None = None
         self.training_max_delay = training_max_delay
         self.clock = clock
         self.lock = RLock()
@@ -138,6 +144,7 @@ class ChunkRuntime:
         self._last_action: torch.Tensor | None = None
         self._last_dispatch_request = ""
         self.dispatch_events: deque[dict] = deque(maxlen=128)
+        self.wait_events: deque[dict] = deque(maxlen=128)
         self.last_accept: dict = {}
 
     @property
@@ -164,9 +171,16 @@ class ChunkRuntime:
                 execution_generation=self.generation,
             )
 
-    def invalidate(self, *, held: bool = False) -> int:
+    def invalidate(self, *, held: bool = False, preserve_starvation: bool = False) -> int:
         """Revoke old motion locally and return the new execution generation."""
         with self.lock:
+            waiting_deadline = self.starvation_deadline if preserve_starvation else None
+            pending_deadline = self._starvation_request_deadline if preserve_starvation else None
+            if waiting_deadline is not None and self.pending is not None:
+                deadline = self.pending.submitted_at + self.action_timeout
+                pending_deadline = (
+                    min(pending_deadline, deadline) if pending_deadline is not None else deadline
+                )
             self.generation += 1
             self.queue.clear()
             self.pending = None
@@ -177,7 +191,36 @@ class ChunkRuntime:
             self._last_action = None
             self._last_dispatch_request = ""
             self.started_at = self.clock()
+            self.starvation_deadline = waiting_deadline
+            self._starvation_request_deadline = pending_deadline
+            self._starvation_capture_after = None
             return self.generation
+
+    def _wait_for_actions(self) -> None:
+        """Revoke exhausted motion without forgetting an outstanding call's deadline."""
+        if not self.starvation_grace:
+            self.fault("Active motion buffer exhausted")
+            return
+        pending_deadline = (
+            self.pending.submitted_at + self.action_timeout if self.pending is not None else None
+        )
+        self.invalidate(held=True)
+        self.starvation_deadline = self.clock() + self.starvation_grace
+        self._starvation_request_deadline = pending_deadline
+        self.wait_events.append({"event": "waiting", "grace_s": self.starvation_grace})
+
+    def acknowledge_starvation_hold(self) -> None:
+        """Require capture after the first successful motor-thread waiting command."""
+        with self.lock:
+            if self.starvation_deadline is not None and self._starvation_capture_after is None:
+                self._starvation_capture_after = self.clock()
+
+    def complete_starvation_invalidation(self, generation: int) -> None:
+        """Retire the old call deadline only after serialized worker invalidation."""
+        with self.lock:
+            self.check_deadlines()
+            if not self.failure and generation == self.generation:
+                self._starvation_request_deadline = None
 
     def activate(self, *, held: bool = False) -> bool:
         """Activate a healthy run and atomically arm its startup budget."""
@@ -198,6 +241,7 @@ class ChunkRuntime:
     def release_hold(self, expected_generation: int) -> bool:
         """Arm fresh resumption only for the same healthy, active generation."""
         with self.lock:
+            self.check_deadlines()
             if self.failure is not None or not self.active or self.generation != expected_generation:
                 return False
             self.started_at = self.clock()
@@ -215,9 +259,18 @@ class ChunkRuntime:
     def check_deadlines(self) -> None:
         """Enforce local action/startup bounds even while network work is blocked."""
         with self.lock:
-            if self.failure or not self.active or self.held:
+            if self.failure or not self.active:
                 return
             now = self.clock()
+            if self.starvation_deadline is not None:
+                if self._starvation_request_deadline is not None and now > self._starvation_request_deadline:
+                    self.fault("Action request deadline exceeded while waiting for fresh actions")
+                    return
+                if now > self.starvation_deadline:
+                    self.fault("Active motion buffer exhausted: action starvation grace expired")
+                    return
+            if self.held:
+                return
             if self.pending is not None and now - self.pending.submitted_at > self.action_timeout:
                 self.fault("Action request deadline exceeded")
             elif not self.has_executed and now - self.started_at > self.startup_timeout:
@@ -260,6 +313,11 @@ class ChunkRuntime:
             age = self.clock() - observation.capture_time
             if age < 0 or age > self.max_age:
                 return None  # wait for a fresh capture; startup/dispatch deadlines still apply
+            if self.starvation_deadline is not None and (
+                self._starvation_capture_after is None
+                or observation.capture_time < self._starvation_capture_after
+            ):
+                return None
             snapshot = self.queue.snapshot()
             if self.chunk_merge == "aligned":
                 if (
@@ -376,16 +434,24 @@ class ChunkRuntime:
                 ),
             )
             if self.chunk_merge == "aligned":
-                return self._accept_aligned(request, actions, provenance, now)
-            accepted = self.queue.merge(
-                model,
-                actions,
-                measured,
-                task=provenance.task,
-                provenance=provenance,
-                snapshot=request.continuation,
-            )
+                accepted = self._accept_aligned(request, actions, provenance, now)
+            else:
+                accepted = self.queue.merge(
+                    model,
+                    actions,
+                    measured,
+                    task=provenance.task,
+                    provenance=provenance,
+                    snapshot=request.continuation,
+                )
             self.last_accept["accepted"] = accepted
+            if accepted and self.starvation_deadline is not None:
+                self.wait_events.append(
+                    {"event": "resumed", "wait_s": now - (self.starvation_deadline - self.starvation_grace)}
+                )
+                self.starvation_deadline = None
+                self._starvation_capture_after = None
+                self._starvation_request_deadline = None
             return accepted
 
     @staticmethod
@@ -489,7 +555,7 @@ class ChunkRuntime:
             item = self.queue.get_with_provenance()
             if item is None:
                 if self.has_executed:
-                    self.fault("Active motion buffer exhausted")
+                    self._wait_for_actions()
                 return None
             action, _, provenance = item
             if provenance is None:
