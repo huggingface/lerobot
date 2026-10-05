@@ -138,7 +138,12 @@ def test_training_entrypoint_only_rebuilds_for_language_finetuning(
     elif recipe_mode != "absent":
         config.recipe = recipe if recipe_mode == "builtin" else None
     cfg = SimpleNamespace(
-        trainable_config=config, policy=config, resume=resume, rename_map={}, is_reward_model_training=False
+        trainable_config=config,
+        policy=config,
+        resume=resume,
+        resume_pretrained_dir=tmp_path if resume else None,
+        rename_map={},
+        is_reward_model_training=False,
     )
     load = MagicMock(wraps=factory.PolicyProcessorPipeline.from_pretrained)
     monkeypatch.setattr(factory.PolicyProcessorPipeline, "from_pretrained", load)
@@ -213,7 +218,12 @@ def test_finetuning_preserves_statistics_adapted_by_policy_factory(monkeypatch, 
 
     config.recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="${task}", stream="low_level")])
     cfg = SimpleNamespace(
-        trainable_config=config, policy=config, resume=False, rename_map={}, is_reward_model_training=False
+        trainable_config=config,
+        policy=config,
+        resume=False,
+        resume_pretrained_dir=None,
+        rename_map={},
+        is_reward_model_training=False,
     )
     pre, post = _run_training_until_processors(monkeypatch, cfg, _stats(20.0))
     torch.testing.assert_close(
@@ -262,6 +272,7 @@ def test_fresh_training_preserves_relative_action_links_and_batch_renaming(
         trainable_config=config,
         policy=config,
         resume=False,
+        resume_pretrained_dir=None,
         rename_map={"observation.old_state": "observation.state"},
         is_reward_model_training=False,
     )

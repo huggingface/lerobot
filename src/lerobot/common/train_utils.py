@@ -760,23 +760,24 @@ def build_card_context(
     return context
 
 
-def _hub_base_model(model_cfg: PreTrainedConfig | RewardModelConfig) -> str | None:
-    """The Hub repo the model was fine-tuned from; a local checkpoint names none (as in transformers)."""
+def _hub_parent(model_cfg: PreTrainedConfig | RewardModelConfig) -> tuple[str | None, str | None]:
+    """The Hub repo the model was fine-tuned from and its `license:` tag, as in transformers.
+
+    `pretrained_path` only counts as a parent once the Hub confirms the repo, so a local
+    checkpoint, a path from another machine, or no network give no parent rather than an
+    invalid `base_model`.
+    """
     pretrained_path = model_cfg.pretrained_path
-    if pretrained_path is None or os.path.isdir(pretrained_path):
-        return None
-    return str(pretrained_path)
-
-
-def _hub_license(repo_id: str) -> str | None:
-    """The `license:` tag of a Hub repo, or None when it has none or cannot be reached (as in transformers)."""
-    if is_offline_mode():
-        return None
+    if pretrained_path is None or os.path.isdir(pretrained_path) or is_offline_mode():
+        return None, None
     try:
-        info = model_info(repo_id)
+        info = model_info(str(pretrained_path))
     except (httpx.HTTPError, HFValidationError, OfflineModeIsEnabled):
-        return None
-    return next((tag.removeprefix("license:") for tag in info.tags or [] if tag.startswith("license:")), None)
+        return None, None
+    license_tag = next(
+        (tag.removeprefix("license:") for tag in info.tags or [] if tag.startswith("license:")), None
+    )
+    return info.id, license_tag
 
 
 def generate_model_card(
@@ -807,8 +808,8 @@ def generate_model_card(
     model_type = model_cfg.type
     # Like transformers' TrainingSummary: an unset license inherits the base repo's, and an
     # unknown one is left out of the card rather than guessed.
-    base_model = _hub_base_model(model_cfg)
-    card_license = model_cfg.license or (base_model and _hub_license(base_model)) or None
+    base_model, parent_license = _hub_parent(model_cfg)
+    card_license = model_cfg.license or parent_license
 
     if isinstance(model_cfg, RewardModelConfig):
         tags = {"robotics", "lerobot", "reward-model", model_type}

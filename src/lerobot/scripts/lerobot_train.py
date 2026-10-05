@@ -520,6 +520,9 @@ def train(cfg: TrainPipelineConfig) -> None:
     # IS the recorded value: DCP-bearing formats skip the safetensors load here and stream the
     # sharded weights in after prepare (resume_after_prepare).
     defer_weight_load = cfg.resume and cfg.checkpoint_format.wants_dcp
+    # On resume the weights and processors come from the checkpoint, while `pretrained_path`
+    # keeps naming the model the run started from (the published card's `base_model`).
+    resume_pretrained_dir = cfg.resume_pretrained_dir
     # validate() guarantees exactly one of `policy` / `reward_model` is set.
     active_cfg = cfg.trainable_config
     if isinstance(active_cfg, RewardModelConfig):
@@ -529,6 +532,7 @@ def train(cfg: TrainPipelineConfig) -> None:
 
         policy = make_reward_model(
             cfg=active_cfg,
+            pretrained_path=resume_pretrained_dir,
             dataset_stats=dataset.meta.stats,
             dataset_meta=dataset.meta,
         )
@@ -545,6 +549,7 @@ def train(cfg: TrainPipelineConfig) -> None:
             ds_meta=dataset.meta,
             rename_map=cfg.rename_map,
             defer_weight_load=defer_weight_load,
+            pretrained_path=resume_pretrained_dir,
         )
 
     peft_model = None
@@ -564,7 +569,7 @@ def train(cfg: TrainPipelineConfig) -> None:
     accelerator.wait_for_everyone()
 
     # --- processors (overrides built once, as one typed mapping) -------------------------------
-    processor_pretrained_path = active_cfg.pretrained_path
+    processor_pretrained_path = resume_pretrained_dir or active_cfg.pretrained_path
     if not cfg.resume and getattr(active_cfg, "recipe", None) is not None:
         if processor_pretrained_path is not None and is_main_process():
             logging.warning(

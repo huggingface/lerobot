@@ -505,3 +505,29 @@ def test_reward_model_push_model_to_hub_shim_warns_and_publishes(monkeypatch, _o
     assert CONFIG_NAME in all_files
     assert TRAIN_CONFIG_NAME in all_files
     assert "README.md" in all_files
+
+
+def test_make_reward_model_loads_resume_weights_and_keeps_the_parent(monkeypatch):
+    """A resume loads the checkpoint, while `pretrained_path` keeps naming the fine-tuned-from model."""
+    import lerobot.rewards.factory as reward_factory
+
+    cfg = SimpleNamespace(
+        type="mock", device="cpu", pretrained_path="user/base-reward", pretrained_revision=None
+    )
+    seen_while_building = []
+
+    def from_pretrained(**kwargs):
+        seen_while_building.append(cfg.pretrained_path)
+        model = torch.nn.Linear(1, 1)
+        model.config = cfg
+        return model
+
+    monkeypatch.setattr(
+        reward_factory, "get_reward_model_class", lambda _: SimpleNamespace(from_pretrained=from_pretrained)
+    )
+
+    model = reward_factory.make_reward_model(cfg, pretrained_path="run/checkpoints/000002/pretrained_model")
+
+    assert seen_while_building == ["run/checkpoints/000002/pretrained_model"]
+    assert cfg.pretrained_path == "user/base-reward"
+    assert model.config.pretrained_path == "user/base-reward"

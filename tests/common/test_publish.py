@@ -19,7 +19,9 @@ import logging
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
+from huggingface_hub.utils import validate_repo_id
 
 import lerobot.common.train_utils as train_utils
 import lerobot.utils.hub as hub
@@ -134,7 +136,7 @@ class TestGenerateModelCard:
 
         def fake_model_info(repo_id):
             looked_up.append(repo_id)
-            return SimpleNamespace(tags=["robotics", "license:gemma"])
+            return SimpleNamespace(id=repo_id, tags=["robotics", "license:gemma"])
 
         monkeypatch.setattr(train_utils, "model_info", fake_model_info)
         policy = make_dummy_policy(repo_id="user/policy")
@@ -147,6 +149,28 @@ class TestGenerateModelCard:
 
         policy.config.license = "mit"
         assert generate_model_card(policy.config, cfg=make_cfg(), dataset_meta=None).data.license == "mit"
+
+    @pytest.mark.parametrize(
+        "stale_path",
+        ["outputs/train/run/checkpoints/000002/pretrained_model", "/home/user/run", "outputs/run"],
+    )
+    def test_stale_local_parent_is_not_a_base_model(self, monkeypatch, stale_path):
+        """A `pretrained_path` from another machine must not reach the card, which the Hub would reject."""
+        monkeypatch.setattr(train_utils.ModelCard, "validate", lambda self: None)
+        monkeypatch.setattr(train_utils, "is_offline_mode", lambda: False)
+
+        def model_info_without_network(repo_id):
+            # Malformed ids fail validation before any request; a well-formed one is a missing repo.
+            validate_repo_id(repo_id)
+            raise httpx.HTTPStatusError("404", request=None, response=None)
+
+        monkeypatch.setattr(train_utils, "model_info", model_info_without_network)
+        policy = make_dummy_policy(repo_id="user/policy")
+        policy.config.pretrained_path = Path(stale_path)
+
+        card = generate_model_card(policy.config, cfg=make_cfg(), dataset_meta=None)
+        assert card.data.base_model is None
+        assert card.data.license is None
 
     def test_local_parent_is_not_a_base_model(self, monkeypatch, tmp_path):
         monkeypatch.setattr(train_utils.ModelCard, "validate", lambda self: None)
