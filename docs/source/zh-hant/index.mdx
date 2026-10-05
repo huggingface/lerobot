@@ -44,7 +44,38 @@
 
 ## 開始使用[[get-started]]
 
-初次接觸嗎？請先[安裝 LeRobot](./installation)，然後選擇你的路徑：
+初次接觸嗎？在安裝任何東西之前，先看看 LeRobot 資料集長什麼樣子：
+
+<div class="border dark:border-gray-700 rounded-lg p-4 my-6 flex flex-col md:flex-row gap-4 items-center shadow">
+  <a
+    target="_blank"
+    href="https://huggingface.co/spaces/lerobot/visualize_dataset?path=/lerobot/svla_so101_pickplace/episode_0"
+    class="shrink-0"
+  >
+    <img
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/visualizer-episode-v2.webp"
+      alt="LeRobot 資料集視覺化工具正在播放 SO-101 資料集"
+      width="320"
+    />
+  </a>
+  <div>
+    <div class="text-lg font-semibold mb-1">👀 先看看資料集</div>
+    <!-- prettier-ignore -->
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      在 <a
+        target="_blank"
+        href="https://huggingface.co/spaces/lerobot/visualize_dataset"
+      >LeRobot 資料集視覺化工具</a>中開啟 <a
+        target="_blank"
+        href="https://huggingface.co/spaces/lerobot/visualize_dataset?path=/lerobot/svla_so101_pickplace/episode_0"
+      ><code>lerobot/svla_so101_pickplace</code></a>，即可逐影格（frame by frame）觀看其相機錄影，並與機器人的狀態及動作並列對照，無需安裝任何東西。它適用於 Hub 上的任何 LeRobot 資料集，包括你自己的資料集。請參閱<a
+        href="./using_dataset_tools#explore-a-dataset-in-the-browser"
+      >如何使用它</a>。
+    </p>
+  </div>
+</div>
+
+準備好自己試試看了嗎？請[安裝 LeRobot](./installation)，然後選擇你的路徑：
 
 <div class="grid grid-cols-1 md:grid-cols-3 gap-4 my-6">
   <div class="border dark:border-gray-700 rounded-lg p-4 shadow">
@@ -69,7 +100,7 @@
     <p class="text-gray-700 dark:text-gray-300 text-sm">
       組裝並校正完成後，可依照<a href="./il_robots">模仿學習教學</a>
       錄製資料集並訓練你的第一個策略——或者完全跳過 CLI，改用
-      <a href="./lelab">LeLab</a>，這是一款為相同工作流程 提供的瀏覽器 GUI。
+      <a href="./lelab">LeLab</a>，這是一款為相同工作流程提供的瀏覽器 GUI。
     </p>
   </div>
   <div class="border dark:border-gray-700 rounded-lg p-4 shadow">
@@ -78,6 +109,13 @@
       即使沒有機器人，你仍然可以訓練與評估策略：
     </p>
     <ul class="text-gray-700 dark:text-gray-300 text-sm list-disc pl-5 mb-2">
+      <li>
+        在
+        <a href="https://huggingface.co/spaces/lerobot/visualize_dataset">
+          資料集視覺化工具
+        </a>
+        中探索任何資料集
+      </li>
       <li>
         使用 Hub 上現有的
         <a href="https://huggingface.co/datasets?other=LeRobot">

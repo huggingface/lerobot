@@ -24,6 +24,7 @@
 ```python
 # configuration_my_policy.py
 from dataclasses import dataclass, field
+import torch
 from lerobot.configs import PreTrainedConfig
 from lerobot.optim import AdamWConfig
 from lerobot.optim import CosineDecayWithWarmupSchedulerConfig
@@ -40,6 +41,8 @@ class MyPolicyConfig(PreTrainedConfig):
         hidden_dim: 策略網路的隱藏維度
         # 在此新增您的策略特定參數
     """
+
+    dtype: torch.dtype | None = torch.bfloat16
 
     horizon: int = 50
     n_action_steps: int = 50
@@ -90,7 +93,7 @@ class MyPolicyConfig(PreTrainedConfig):
         return None
 ```
 
-您傳給 `@register_subclass` 的字串（string）必須與 `MyPolicy.name`（下一節）相符，也是使用者在 CLI 上以 `--policy.type` 提供的值。除非您確實有其他需要，`get_optimizer_preset` 預設使用 `lerobot.optim` 的 `AdamW`。
+您傳給 `@register_subclass` 的字串（string）必須與 `MyPolicy.name`（下一節）相符，也是使用者在 CLI 上以 `--policy.type` 提供的值。除非您確實有其他需要，`get_optimizer_preset` 預設使用 `lerobot.optim` 的 `AdamW`。`PreTrainedConfig` 已宣告 `dtype: torch.dtype | None`；若要為您的策略提供預設精度（default precision），請以 `torch.dtype` 值重新宣告它（例如 `dtype: torch.dtype | None = torch.bfloat16`）。
 
 ### 策略類別（policy class）[[policy-class]]
 

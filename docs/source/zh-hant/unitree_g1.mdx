@@ -307,7 +307,7 @@ lerobot-rollout \
 
 ## 第 5 部分：SONIC 全身控制（Latent-Token Policies）[[part-5-sonic-whole-body-control-latent-token-policies]]
 
-LeRobot 現在將 NVIDIA 的 [SONIC](https://github.com/NVIDIA/sonic) 全身部署堆疊的**解碼器**部分移植為 `SonicWholeBodyController`。策略不再直接命令關節，而是在每個控制週期輸出 64 維的 **latent motion token**（`motion_token.{i}.pos`）；SONIC 解碼器會將該符元加上近期的本體感覺歷史（proprioception history）映射為殘差動作（residual action），該動作經縮放後加到站立姿勢（standing pose）上，為全部 29 個自由度產生 50 Hz 的關節位置目標。
+LeRobot 現在將 NVIDIA 的 [SONIC](https://nvlabs.github.io/GEAR-SONIC/) 全身部署堆疊的**解碼器**部分移植為 `SonicWholeBodyController`。策略不再直接命令關節，而是在每個控制週期輸出 64 維的 **latent motion token**（`motion_token.{i}.pos`）；SONIC 解碼器會將該符元加上近期的本體感覺歷史（proprioception history）映射為殘差動作（residual action），該動作經縮放後加到站立姿勢（standing pose）上，為全部 29 個自由度產生 50 Hz 的關節位置目標。
 
 該控制器會從 [`lerobot/sonic_decoder`](https://huggingface.co/lerobot/sonic_decoder) 載入其 ONNX 解碼器與所有部署常數（PD 增益、`default_angles`、`action_scale` 以及中性符元）。該儲存庫也隨附一個蒸餾後的低延遲解碼器，可透過控制器的 `policy_type="low_latency"` 參數選用（預設為 `"default"`）。
 

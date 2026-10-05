@@ -1,4 +1,4 @@
-# 標註管線（annotation pipeline）
+# 標註管線（annotation pipeline）[[annotation-pipeline]]
 
 `lerobot-annotate` 會以視覺語言模型（vision-language model, VLM）觀看每個回合的
 影片（each episode’s video），並將自然語言標註（natural-language annotations）寫回你的資料集（dataset）。它會從
@@ -11,7 +11,7 @@
 記憶（memory）、插話（interjections）、語音與視覺問答（visual Q&A），供策略（policy）
 訓練使用。
 
-## 各部分如何組合（how the pieces fit together）
+## 各部分如何組合（how the pieces fit together）[[how-it-fits-together]]
 
 ```text
   your dataset                  lerobot-annotate
@@ -44,9 +44,9 @@
 
 三個模組（`plan`、`interjections`、`vqa`）全都與**同一個**共用的
 VLM 溝通。每個模組會將其輸出暫存（stages）到磁碟，由驗證器（validator）檢查，再由
-單一寫入器（writer ）原地重寫資料集分片（rewrites the dataset shards in place）。
+單一寫入器（writer）原地重寫資料集分片（rewrites the dataset shards in place）。
 
-## 管線產生什麼（what the pipeline produces）
+## 管線產生什麼（what the pipeline produces）[[what-the-pipeline-produces]]
 
 每個模組會發出幾種標註（樣式 style），導向兩個語言欄位（language columns）
 其中之一：
@@ -61,7 +61,7 @@ VLM 溝通。每個模組會將其輸出暫存（stages）到磁碟，由驗證�
 | 語音工具呼叫原子（`style=null`、`say`）         | `language_events`     | `interjections` |
 | `vqa`（user / assistant 配對）                  | `language_events`     | `vqa`           |
 
-### 子任務如何產生（how tasks are generated）
+### 子任務如何產生（how subtasks are generated）[[how-subtasks-are-generated]]
 
 `plan` 模組（module）不會一次就向 VLM 索取子任務（subtasks）。相反地
 它使用一個兩步驟的**描述（describe） → 分段（segment）**流程（flow）：
@@ -71,14 +71,14 @@ VLM 溝通。每個模組會將其輸出暫存（stages）到磁碟，由驗證�
 2. **分段（segment）** — 將該描述（description）回饋回去（fed back in），VLM 便將
    回合（episode）切分為連續的原子子任務（consecutive atomic subtasks）。
 
-兩個階段都將回合（episode）視為**帶時間戳的拼貼表（timestamped contact sheets ）** — 以
-`frames_per_second`（預設 0.5 秒）取樣的影格（frames sampled），打包成 JPEG
-網格（grids），並將每個影格的時間（frame’s time）烙印在其角落（burned into its corner），使 VLM 能直接
-引用確切的邊界時間（boundary times）。這在視覺 tokens （vision tokens）上遠比每個影格一張影像（one image per frame）便宜，
-因此取樣（sampling）可以保持密集（dense）；長於
+兩個階段都將回合（episode）視為**帶時間戳的拼貼表（timestamped contact sheets）** — 以
+`frames_per_second`（預設 0.5 秒）取樣的影格（frames），打包成 JPEG
+網格（grids），並將每個影格的時間（frame time）烙印在其角落，使 VLM 能直接
+引用確切的邊界時間（boundary times）。這在視覺 token（vision tokens）上遠比每個影格一張影像（one image per frame）便宜，
+因此取樣（sampling）可以保持密集；長於
 `max_frames_per_prompt` 的回合（episode）會以相同密度（density）切分為視窗（windows）再
 合併（merged）。兩個提示也帶有一個因果的**事件邊界（event-boundary）**定義（當某物件被握住/
-被釋放/到達新位置/一個蓋子（a lid）改變狀態（state）/內容物移動時，
+被釋放/到達新位置/一個蓋子（lid）改變狀態/內容物移動時，
 一個新事件便開始），以更精準地確定裁切點（cuts）落在何處。
 
 此外，可選地還有第三個**種子重標記（seeded-relabel）**階段（`--plan.subtask_seeded_relabel`），
@@ -91,9 +91,9 @@ contact sheets）重新檢視該區間，並以第一次的標籤（first label�
 覆蓋範圍，因此**每個影格恰好有一個作用中的子任務（every frame has exactly one active subtask）**。
 生產環境的設定（production settings，單一攝影機、帶時間戳的拼貼表 timestamped contact sheets、
 自動視窗化的子任務產生 auto-windowed subtask generation）請參閱
-[在 Hugging Face Jobs 上執行](#%E5%9C%A8-hugging-face-jobs-%E4%B8%8A%E5%9F%B7%E8%A1%8Crunning-on-hugging-face-jobs)。
+[在 Hugging Face Jobs 上執行](#running-on-hugging-face-jobs)。
 
-### 工具（tools）
+### 工具（tools）[[tools]]
 
 寫入器（writer）**不會**在 parquet 中新增 `tools` 欄位（column）。工具
 目錄（tool catalog）改為位於 `meta/info.json["tools"]`（請參閱[工具](./tools)）。
@@ -108,7 +108,7 @@ contact sheets）重新檢視該區間，並以第一次的標籤（first label�
 [工具（Tools）](./tools)文件將那些部分標記為
 尚未實作（not-yet-implemented）。
 
-## 在 Hugging Face Jobs 上執行（running on Hugging Face Jobs）
+## 在 Hugging Face Jobs 上執行（running on Hugging Face Jobs）[[running-on-hugging-face-jobs]]
 
 標註一個真實資料集（dataset）需要一顆大到足以提供 VLM 服務的 GPU，因此
 `lerobot-annotate` 可以把自己派送（dispatch）到
@@ -153,7 +153,7 @@ pod 結束時被丟棄。
 
 </Tip>
 
-### 工作選項（job options）
+### 工作選項（job options）[[job-options]]
 
 | 旗標（flag）        | 預設                      | 作用（what it does）                                                          |
 | ------------------- | ------------------------- | ----------------------------------------------------------------------------- |
@@ -172,13 +172,13 @@ pod 結束時被丟棄。
 `--root` 指的是只有你機器上才有的目錄）。只存在於你本機快取（local cache）中的
 資料集（dataset）會先被推送到一個**私有（private）** repo。
 
-## 主要選項（key options）
+## 主要選項（key options）[[key-options]]
 
 以下是你最常會用到的旗標（flag）。其他所有內容請執行
 `lerobot-annotate --help`；預設值是針對
 簡短的操作回合（short manipulation episodes）調校的。
 
-### 資料集輸入 / 輸出（dataset input / output）
+### 資料集輸入 / 輸出（dataset input / output）[[dataset-in-out]]
 
 | 旗標（flag）      | 預設    | 作用（What it does）                                                                                   |
 | ----------------- | ------- | ------------------------------------------------------------------------------------------------------ |
@@ -189,10 +189,10 @@ pod 結束時被丟棄。
 | `--only_episodes` | 全部    | 只標註（annotation）這些回合索引（episode indices，適合測試執行）。                                    |
 | `--seed`          | `1729`  | 為挑選插話時間戳（interjection timestamps）與 VQA 問題類型（question types）的 RNG 設定種子（seeds）。 |
 
-### 執行哪些模組（which modules run）
+### 執行哪些模組（which modules run）[[which-modules-run]]
 
 每個模組預設皆為開啟，且可獨立切換（設為
-`false` 以跳過它，例如一次只迭代 iterate 一個模組）：
+`false` 以跳過它，例如一次只迭代一個模組）：
 
 | 旗標（flag）              | 預設   | 關閉的內容（turns off）             |
 | ------------------------- | ------ | ----------------------------------- |
@@ -200,7 +200,7 @@ pod 結束時被丟棄。
 | `--interjections.enabled` | `true` | interjections + speech atom         |
 | `--vqa.enabled`           | `true` | VQA pairs                           |
 
-### VLM（`--vlm.*`）
+### VLM（`--vlm.*`）[[the-vlm---vlm]]
 
 | 旗標（flag）               | 預設               | 作用（what it does）                                                                                                 |
 | -------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------- |
@@ -214,7 +214,7 @@ pod 結束時被丟棄。
 | `--vlm.temperature`        | `0.2`              | 取樣溫度（sampling temperature）。                                                                                   |
 | `--vlm.reasoning_effort`   | `null`             | 思考預算提示（thinking-budget hint，`low`/`medium`/`high`），轉送給 OpenAI 相容伺服器（OpenAI-compatible servers）。 |
 
-### 子任務 / 規劃 / 記憶（subtask / plan / memory, `--plan.*`）
+### 子任務 / 規劃 / 記憶（subtask / plan / memory, `--plan.*`）[[subtasks-plan-memory---plan]]
 
 | 旗標（flag）                    | 預設       | 作用（what it does）                                                                                                                                                                                                            |
 | ------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -230,19 +230,20 @@ pod 結束時被丟棄。
 | `--plan.n_task_rephrasings`     | `10`       | 要發出（emit）多少個 `task_aug` 改寫（rephrasings，`0` 停用）。                                                                                                                                                                 |
 | `--plan.derive_task_from_video` | `if_short` | 直接使用資料集任務（dataset task, `off`）、僅在缺失/過短時使用（`if_short`），或一律從影片重新推導（`always`）。                                                                                                                |
 
-### 插話（interjections） + VQA
+### 插話（interjections） + VQA [[interjections-vqa]]
 
 | 旗標（flag）                                    | 預設    | 作用（what it does）                                                              |
 | ----------------------------------------------- | ------- | --------------------------------------------------------------------------------- |
 | `--interjections.max_interjections_per_episode` | `3`     | 每個回合插話/語音對（interjection/speech pairs per episode）的上限。              |
 | `--vqa.vqa_emission_hz`                         | `1.0`   | VQA 對發出的頻率（how often VQA pairs are emitted）。                             |
 | `--vqa.restrict_to_default_camera`              | `false` | 僅在 `--vlm.camera_key` 上立基（ground） VQA（否則每個攝影機皆立基）。            |
+| `--vqa.coordinate_scale`                        | `1000`  | VLM bbox/keypoint 網格，儲存為 [0, 1]（`none` = px）。                            |
 | `--executor.episode_parallelism`                | `16`    | 每個階段內同時處理的回合數（episodes processed concurrently within each phase）。 |
 
-## 貢獻新模組（contributing a new module）
+## 貢獻新模組（contributing new modules）[[contributing-new-modules]]
 
 此管線（pipeline）的設計是為了成長（built to grow），且**非常歡迎貢獻** —
-全新的模組（brand-new module，例如軌跡追 trajectory traces 蹤或可供性 affordance）、新的提示
+全新的模組（brand-new module，例如軌跡痕跡 trajectory traces 或可供性 affordances）、新的提示
 模板（prompt template）、更聰明的立基流程（grounding flow），或對既有
 `plan` / `interjections` / `vqa` 模組的品質修正（quality fixes）。
 
@@ -252,42 +253,41 @@ pod 結束時被丟棄。
 樹（staging tree），並以自身的階段（own phase）接入執行器（executor）。有想法嗎？請在
 [repo](https://github.com/huggingface/lerobot) 上開啟 issue 或 PR。
 
-## 配方如何消費輸出（how recipes consume the output）
+## 配方如何消費輸出（how recipes consume the output）[[how-recipes-consume-the-output]]
 
 這些標註（annotations）是設計來供配方（recipe）讀取的（請參閱
-[語言欄位與配方 language columns and recipes](./language_and_recipes)）。通常：
+[語言欄位與配方（language columns and recipes）](./language_and_recipes)）。通常：
 
-- 低階（low-level ） / 高階（high-level） / 記憶更新分支（memory-update branches）會從 `language_persistent` 讀取
+- 低階（low-level）/ 高階（high-level）/ 記憶更新分支（memory-update branches）會從 `language_persistent` 讀取
   `subtask` / `plan` / `memory`。
 - 插話回應分支（interjection-response branch）會讀取 `interjection` 事件（events），加上
-  配對（paired）的 speech atom（透過 `tool_calls_from` 合併為一個 assistant 回合 turn），
+  配對（paired）的 speech atom（透過 `tool_calls_from` 合併為一個 assistant 回合（turn）），
   以及在相同時間戳（timestamp）的相符 `plan` 更新。
 - VQA 分支（branch）會從 `language_events` 讀取 `(vqa, user)` 與
   `(vqa, assistant)` 對（pairs）。
 
-## 為何將狀態與事件分開（why separate state and events）
+## 為何將狀態與事件分開（why state and events are split）[[why-state-and-events-are-split]]
 
 有兩個概念形塑了此設計：
 
 1. **持續狀態（persistent state） vs. 確切事件（exact events）。** 持續列（persistent rows, `subtask`、
-   `plan`、`memory`）適用於整個回合（episode），回答「現在
-   什麼是真的（what’s true right now）？」。事件列（event rows, `interjection`、`vqa`、語音 speech）只出現在
+   `plan`、`memory`）適用於整個回合（episode），回答「現在什麼是真的（what’s true right now）？」。事件列（event rows, `interjection`、`vqa`、語音 speech）只出現在
    時間戳（timestamp）相符的那一個影格（frame）上。時間戳是直接
-   從來源 parquet （source parquet ）複製而來，絕不以浮點數（floating point）重新計算。
+   從來源 parquet（source parquet）複製而來，絕不以浮點數（floating point）重新計算。
 2. **一次 VLM 遍歷（one VLM pass）。** 三個模組全共用單一 VLM 用戶端（與
    工作的 vLLM 伺服器 server 溝通的 OpenAI 相容用戶端 client），因此你
    每個資料集（dataset）只需付出一次模型載入（model load），而非三次。
 
-## 重新執行單一模組（re-running a single module）
+## 重新執行單一模組（re-running a single module）[[re-running-a-single-module]]
 
-每個模組會將其原始輸出（raw output）暫存（stages ）到
+每個模組會將其原始輸出（raw output）暫存（stages）到
 `<root>/.annotate_staging/episode_{N:06d}/<module>.jsonl`。這讓
 提示迭代變得便宜（make prompt iteration cheap）：重新執行一個模組（re-running one module）只會覆寫（overwrites）其自身的
 JSONL，之後由寫入器（writer）重新組合（recomposes）出最終的 parquet（final parquet）。用 `--plan.enabled=false`
 停用你不想要的模組（同理也有
 `--interjections.enabled` / `--vqa.enabled`），即可一次測試一個。
 
-## 驗證器檢查什麼（what the validator checks）
+## 驗證器檢查什麼（what the validator checks）[[what-the-validator-checks]]
 
 在寫入器（writer）執行之前，`StagingValidator` 會確認：
 
@@ -302,7 +302,7 @@ JSONL，之後由寫入器（writer）重新組合（recomposes）出最終的 p
 任何錯誤都會中止（aborts）寫入器（writer）。除錯（debugging）時可傳入 `--skip_validation=true` 以
 覆寫（override）此行為。
 
-## 每個模組的構想來自何處（where each module's ideas come from）
+## 每個模組的構想來自何處（where each module's ideas come from）[[where-each-modules-ideas-come-from]]
 
 - **`plan` — 子任務（subtasks）。** Hi Robot（[Shi 2025](https://arxiv.org/abs/2502.19417)）
   提供原子粒度（atom granularity，拿起一片生菜、把碗放到
@@ -316,8 +316,8 @@ JSONL，之後由寫入器（writer）重新組合（recomposes）出最終的 p
   僅含工具呼叫的原子
   （tool-call-only atom，`tool_calls=[{type:function, function:{name:"say", arguments:{text:...}}}]`）。
 - **`vqa`。** ECoT（[Zawalski 2024](https://arxiv.org/abs/2407.08693)）提供
-  立基特徵（grounded features，像素邊界框 pixel bounding boxes `[x_min, y_min, x_max, y_max]`、
-  關鍵點 keypoints）以及 Steerable VLA Policies
+  grounded features（bounding boxes `[x_min, y_min, x_max, y_max]` 與
+  keypoints，儲存為 [0, 1] image fractions）以及 Steerable VLA Policies
   （[Zhao 2025](https://arxiv.org/abs/2509.07626)）提供多抽象層級的
   立基（multi-abstraction grounding）。Pi0.7 也會跨抽象層級為答案立基（grounds answers across abstraction levels）。
 
@@ -325,7 +325,7 @@ JSONL，之後由寫入器（writer）重新組合（recomposes）出最終的 p
 `src/lerobot/annotations/steerable_pipeline/prompts/` 的提示模板（prompt template），而非
 從頭改寫（rewriting from scratch）。
 
-## 大致的成本（roughly how much it costs）
+## 大致的成本（roughly how much it costs）[[roughly-how-much-it-costs]]
 
 每個回合（episode），管線（pipeline）大約會進行 `max_steps` 次規劃呼叫（plan calls）、
 `max_interjections_per_episode` 次插話呼叫（interjection calls），以及
@@ -334,6 +334,6 @@ JSONL，之後由寫入器（writer）重新組合（recomposes）出最終的 p
 約 50 次 VLM 呼叫（calls）。
 
 儲存維持很小（storage stays small）：`language_persistent` 每個回合（episode）最多數十 KB
-（parquet 會以字典編碼那個跨影格重複的單一項目，parquet dictionary-encodes the one entry that repeats across frames），
+（parquet 會對跨影格重複的那一筆項目進行 dictionary-encodes），
 而 `language_events` 在大多數影格（frame）上是空的，其大小會隨
 發出的數量（emissions）而縮放，而非 `num_frames × num_emissions`。

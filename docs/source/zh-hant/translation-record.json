@@ -13,7 +13,8 @@
       "title": "新增基準測試（Adding a New Benchmark）"
     },
     "annotation_pipeline.mdx": {
-      "source_version": "45396ff67c3596a2fdaded5125fda5a0ac65e545",
+      "source_title": "Annotation Pipeline",
+      "source_version": "611ebb000f96eaa772ab492088c23295e1979a39",
       "title": "標註管線（Annotation Pipeline）"
     },
     "api/cameras.mdx": {
@@ -62,7 +63,7 @@
     },
     "bring_your_own_policies.mdx": {
       "source_title": "Adding a Policy",
-      "source_version": "d53e36bc77d52b34b770e7a2b6058cb8331f1f39",
+      "source_version": "3924eeb615237a1565be036c04620fed609633f9",
       "title": "新增策略（Adding a Policy）"
     },
     "cameras.mdx": {
@@ -102,15 +103,18 @@
       "title": "在模擬中控制與訓練機器人（LeIsaac）"
     },
     "eo1.mdx": {
-      "source_version": "a4c510037a2945ce9e26e51fe8fe980e2829424c",
+      "source_title": "EO-1",
+      "source_version": "d606f2b29d18ecce0c7fe1d12ca2b78d0fc070cb",
       "title": "EO-1"
     },
     "evo1.mdx": {
-      "source_version": "f5f2c377b65c160488bb8fcfdeec758079ef8110",
+      "source_title": "EVO1",
+      "source_version": "224828304473fd7a10ea12235efa408355487216",
       "title": "EVO1"
     },
     "fastwam.mdx": {
-      "source_version": "307833333fbef5074af1cd822c85888cee7fdc0c",
+      "source_title": "FastWAM",
+      "source_version": "8dac5e37a093a7c8926a0fb8bc5be50da42d432f",
       "title": "FastWAM"
     },
     "feetech.mdx": {
@@ -147,7 +151,8 @@
       "title": "Hope Jr"
     },
     "il_robots.mdx": {
-      "source_version": "853dd0d56384edc797e2a452dc818802a8a727b5",
+      "source_title": "Imitation Learning for Robots",
+      "source_version": "61de0a3cb0990980bb9db97a660f69575c633cb6",
       "title": "機器人的模仿學習（Imitation Learning）"
     },
     "implement_your_own_processor.mdx": {
@@ -155,7 +160,8 @@
       "title": "實作你自己的處理器（implementing your own processor）"
     },
     "index.mdx": {
-      "source_version": "a8aa86df6f777b0a67e672bded8778dcc87707a0",
+      "source_title": "LeRobot",
+      "source_version": "28cd533194ed4af1cd65e07c8c0cb367bfa98806",
       "title": "LeRobot"
     },
     "inference.mdx": {
@@ -201,7 +207,7 @@
     },
     "lerobot-dataset-v3.mdx": {
       "source_title": "Using LeRobotDataset",
-      "source_version": "bdb6c1d12b38e9f4c8ea0f422fd1bbd366638f02",
+      "source_version": "975cc6b64576d83f6daa73edcd81c37d47bb8aa0",
       "title": "使用 LeRobotDataset"
     },
     "libero.mdx": {
@@ -291,7 +297,8 @@
       "title": "RoboCasa365"
     },
     "robocerebra.mdx": {
-      "source_version": "9776bd40f215f766062a0144b4dfba14186f29e1",
+      "source_title": "RoboCerebra",
+      "source_version": "705f38e836043b311a1bc6dc4d08ad525894c168",
       "title": "RoboCerebra"
     },
     "robometer.mdx": {
@@ -352,11 +359,13 @@
       "title": "PyTorch accelerators"
     },
     "unitree_g1.mdx": {
-      "source_version": "09e0b49685623fb3211b460c435d9870ec7fbd75",
+      "source_title": "Unitree G1",
+      "source_version": "64aa535f393297155c6a078c4530a3fd3a459ebf",
       "title": "Unitree G1"
     },
     "using_dataset_tools.mdx": {
-      "source_version": "0993cbcaecb353d3864a0eb20761799b2a7e0113",
+      "source_title": "Using the Dataset Tools",
+      "source_version": "e566c4ad70eb2386a2d217a347ad952cb83d0991",
       "title": "使用資料集工具"
     },
     "video_encoding_parameters.mdx": {

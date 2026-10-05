@@ -343,10 +343,10 @@ if __name__ == "__main__":
 
 #### 資料集上傳（dataset upload）[[dataset-upload]]
 
-在本機端，您的資料集（dataset）儲存在此資料夾中：`~/.cache/huggingface/lerobot/{repo-id}`。資料錄製（data recording）結束後，您的資料集將被上傳到您的 Hugging Face 頁面（例如 `https://huggingface.co/datasets/${HF_USER}/so101_test`），您可以執行以下命令取得該連結：
+在本機端，您的資料集（dataset）儲存在此資料夾中：`~/.cache/huggingface/lerobot/{repo-id}`。資料錄製（data recording）結束後，您的資料集將被上傳到您的 Hugging Face 頁面（例如 `https://huggingface.co/datasets/${HF_USER}/record-test`），您可以執行以下命令取得該連結：
 
 ```bash
-echo https://huggingface.co/datasets/${HF_USER}/so101_test
+echo https://huggingface.co/datasets/${HF_USER}/record-test
 ```
 
 您的資料集（dataset）會自動標上 `LeRobot` 標籤，方便社群輕鬆找到它，您也可以新增自訂標籤（例如此處加上 `tutorial`）。
@@ -441,11 +441,13 @@ Cadence summary — whole run, 2 episodes · target 30 Hz (33.3 ms budget per ti
 
 ## 視覺化資料集（visualize a dataset）[[visualize-a-dataset]]
 
-若您已使用 `--control.push_to_hub=true` 將資料集（dataset）上傳至 Hub，可透過複製貼上下方指令所提供的儲存庫（repository） ID，用於[線上視覺化您的資料集（visualize your dataset online）](https://huggingface.co/spaces/lerobot/visualize_dataset)：
+您的資料集（dataset）預設會上傳到 Hub（除非您傳入 `--dataset.push_to_hub=False`），因此您可以直接在 [LeRobot 資料集視覺化工具](https://huggingface.co/spaces/lerobot/visualize_dataset) 中開啟它：在其首頁輸入您的儲存庫 ID，或使用以下命令印出的連結直接前往第一個回合（episode）：
 
 ```bash
-echo ${HF_USER}/so101_test
+echo "https://huggingface.co/spaces/lerobot/visualize_dataset?path=/${HF_USER}/record-test/episode_0"
 ```
+
+在視覺化工具上登入即可開啟私有資料集。請參閱[在瀏覽器中探索資料集](./using_dataset_tools#explore-a-dataset-in-the-browser)以取得逐步說明。
 
 ## 回合重播（replay an episode）[[replay-an-episode]]
 
@@ -511,7 +513,7 @@ robot.disconnect()
 
 ```bash
 lerobot-train \
-  --dataset.repo_id=${HF_USER}/so101_test \
+  --dataset.repo_id=${HF_USER}/record-test \
   --policy.type=act \
   --output_dir=outputs/train/act_so101_test \
   --job_name=act_so101_test \
@@ -522,7 +524,7 @@ lerobot-train \
 
 讓我們說明這個指令：
 
-1. 我們透過 `--dataset.repo_id=${HF_USER}/so101_test` 提供了資料集（dataset）作為引數（argument）。
+1. 我們透過 `--dataset.repo_id=${HF_USER}/record-test` 提供了稍早錄製的資料集（dataset）作為引數（argument）。
 2. 我們透過 `policy.type=act` 提供了策略（policy）。這會從 [`configuration_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/configuration_act.py) 載入設定。重要的是，此策略會自動適配您機器人的馬達狀態（motor states）、馬達動作（motor actions）和攝影機（例如 `laptop` 和 `phone`），這些資訊已儲存在您的資料集（dataset）中。
 3. 我們提供了 `policy.device=cuda`，因為我們在 Nvidia GPU 上訓練（training），但您可以使用 `policy.device=mps` 在 Apple silicon 上訓練。
 4. 我們提供了 `wandb.enable=true` 以使用 [Weights and Biases](https://docs.wandb.ai/quickstart) 來視覺化訓練圖表（training plots）。這是選用的，但如果您要使用，請確保已執行 `wandb login` 並完成登入。
@@ -559,13 +561,13 @@ Hugging Face Jobs 讓您能輕鬆選擇硬體並在雲端執行訓練（training
 
 ```bash
 lerobot-train \
-  --dataset.repo_id=${HF_USER}/so101_test \
+  --dataset.repo_id=${HF_USER}/record-test \
   --policy.type=act \
   --policy.repo_id=${HF_USER}/my_policy \
   --job.target=a10g-small
 ```
 
-使用 `hf jobs hardware` 可列出可用的 flavor 與定價。該執行會將日誌（logs）串流到您的終端機；按 Ctrl-C 可卸離（detach ，Job 會繼續在雲端執行）。重新連接或取消請使用：
+使用 `hf jobs hardware` 可列出可用的 flavor 與定價。該執行會將日誌（logs）串流到您的終端機；按 Ctrl-C 可卸離（detach，Job 會繼續在雲端執行）。重新連接或取消請使用：
 
 ```bash
 hf jobs logs <job-id>
@@ -654,7 +656,7 @@ lerobot-rollout \
 
 - `base`：不錄製資料的自主 rollout（適合快速評估）
 - `sentry`：持續錄製（continuous recording）並自動上傳（適合大規模評估）
-- `highlight`：使用環形緩衝區錄製（ring buffer recording）並以按鍵儲存（keystroke save，適合擷取有趣的事件）
+- `highlight`：使用環形緩衝區錄製（ring buffer recording）並以按鍵儲存（keystroke save），適合擷取有趣的事件
 - `dagger`：人在迴圈（human-in-the-loop）中的資料收集（參見 [HIL 資料收集](./hil_data_collection)）
 - `episodic`：以回合為導向的策略錄製（episode-oriented policy recording），回合之間有重置階段（reset phases）
 
