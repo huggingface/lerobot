@@ -101,6 +101,7 @@ from lerobot.robots import (  # noqa: F401
     rebot_b601_follower,
     so_follower,
     unitree_g1 as unitree_g1_robot,
+    yam_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
