@@ -9,6 +9,8 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+import torch
+
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
@@ -286,7 +288,9 @@ class G05Config(PreTrainedConfig):
     discrete_action: bool = True
     continuous_action: bool = False
     return_continuous_action: bool = False
-    model_weights_to_bf16: bool = True
+    # torch.bfloat16 runs the released mixed precision on CUDA (BF16 weights with the author's FP32
+    # islands, BF16 autocast); torch.float32 keeps every weight in FP32.
+    dtype: torch.dtype | None = torch.bfloat16
 
     policy_action_dim: int = 20
     policy_state_dim: int = 20
@@ -319,6 +323,7 @@ class G05Config(PreTrainedConfig):
     processor_metadata: dict[str, Any] = field(default_factory=dict)
     prompt_template: str = ""
     use_language_recipe: bool = False
+    # A recipe YAML read once into `recipe` when the config is built; it is not saved.
     recipe_path: str | None = None
     recipe: dict[str, Any] | None = field(default_factory=_g05_default_recipe)
     cot_bbox_camera: str | None = None
@@ -350,12 +355,18 @@ class G05Config(PreTrainedConfig):
     def __post_init__(self) -> None:
         """Resolve the recipe override and validate the configured fields."""
         super().__post_init__()
-        if self.recipe is not None or self.recipe_path is not None:
-            # Import only for recipes: the datasets package requires optional extras.
+        if self.dtype not in (torch.bfloat16, torch.float32):
+            raise ValueError(f"dtype must be torch.bfloat16 or torch.float32, got {self.dtype!r}.")
+        if self.recipe_path is not None:
+            # The file is read once and stored inline, and the path is dropped, so a saved
+            # checkpoint keeps the recipe it was trained with even if the file changes later.
+            # Import only here: the datasets package requires optional extras.
             from lerobot.datasets.recipe import resolve_recipe_override
 
             resolved = resolve_recipe_override(self.recipe, self.recipe_path)
             self.recipe = asdict(resolved) if resolved is not None else None
+            self.recipe_path = None
+            self.use_language_recipe = True
         # An empty slot becomes an optional camera, which the image step zero-fills.
         empty = {
             index: f"observation.images.empty_{index}"
@@ -395,7 +406,7 @@ class G05Config(PreTrainedConfig):
                 or (slot_sizes[index] if index < len(slot_sizes) else (256, 256))
                 for index, key in enumerate(self.camera_keys)
             }
-        if self.recipe is not None and self.recipe_path is None:
+        if self.recipe is not None:
             for component in [self.recipe, *(self.recipe.get("blend") or {}).values()]:
                 bindings = component.get("bindings") or {}
                 if _DEFAULT_BBOX_BINDING.fullmatch(bindings.get("bbox", "")):
@@ -572,13 +583,13 @@ class G05Config(PreTrainedConfig):
 
     @property
     def language_recipe_enabled(self) -> bool:
-        """Whether training requested the built-in recipe or an external override.
+        """Whether training uses a language recipe (built-in, or read from ``recipe_path``).
 
         Recipe steps and projected dataset stats only exist on freshly built
         pipelines, so this also decides whether a pretrained checkpoint's saved
         pipelines are rebuilt instead of loaded.
         """
-        return self.use_language_recipe or self.recipe_path is not None
+        return self.use_language_recipe
 
     @property
     def observation_delta_indices(self) -> list[int]:
