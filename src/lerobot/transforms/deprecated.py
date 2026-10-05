@@ -42,6 +42,7 @@ from .transforms import (
     BatchedTransform,
     ImageTransformConfig,
     PerSampleTransform,
+    apply_to_frames,
     make_batched_transform_from_config,
 )
 
@@ -94,14 +95,7 @@ class _OneSample(nn.Module):
         if images.shape[-3] not in (1, 3):
             raise ValueError(f"Expected 1 or 3 channels, got shape {tuple(images.shape)}.")
         frames = images.unsqueeze(0) if images.ndim == 3 else images
-        if frames.dtype == torch.uint8:
-            work = frames.to(torch.float32) / 255.0
-        elif frames.is_floating_point():
-            work = frames.to(torch.float32)
-        else:
-            raise TypeError(f"Expected uint8 or floating point images, got {images.dtype}.")
-        out = self.batched(work.unsqueeze(0), generator=generator).squeeze(0)
-        out = (out * 255.0).round_().to(torch.uint8) if frames.dtype == torch.uint8 else out.to(frames.dtype)
+        out = apply_to_frames(self.batched, frames.unsqueeze(0), generator).squeeze(0)
         return out.squeeze(0) if images.ndim == 3 else out
 
 

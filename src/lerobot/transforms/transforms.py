@@ -53,7 +53,7 @@ class JPEGCompression(Transform):
         return {"quality": int(torch.randint(self.quality[0], self.quality[1] + 1, (1,)).item())}
 
     def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
-        if not isinstance(inpt, torch.Tensor) or not inpt.is_floating_point():
+        if not isinstance(inpt, torch.Tensor) or not (inpt.is_floating_point() or inpt.dtype == torch.uint8):
             return inpt
         if inpt.ndim < 3:
             raise ValueError(f"JPEGCompression expects [..., C, H, W] input, but got shape {inpt.shape}.")
@@ -63,11 +63,14 @@ class JPEGCompression(Transform):
             raise ValueError(f"JPEGCompression expects 1 or 3 channels, but got {channels}.")
 
         flat_input = inpt.reshape(-1, channels, height, width)
-        flat_uint8 = (flat_input.clamp(0.0, 1.0) * 255).round().to(torch.uint8).cpu()
+        if inpt.dtype != torch.uint8:
+            flat_input = (flat_input.clamp(0.0, 1.0) * 255).round().to(torch.uint8)
         decoded_frames = [
-            decode_image(encode_jpeg(frame, quality=params["quality"])) for frame in flat_uint8.unbind()
+            decode_image(encode_jpeg(frame, quality=params["quality"])) for frame in flat_input.cpu().unbind()
         ]
-        output = torch.stack(decoded_frames).to(device=inpt.device, dtype=inpt.dtype) / 255.0
+        output = torch.stack(decoded_frames).to(inpt.device)
+        if inpt.is_floating_point():
+            output = output.to(inpt.dtype) / 255.0
         return output.reshape(inpt.shape)
 
 
@@ -462,6 +465,71 @@ def warp_batched(frames: Tensor, theta: Tensor, interpolation: str, fill: list[f
     return flat.reshape(batch_size, num_frames, channels, height, width)
 
 
+def apply_to_frames(
+    transform: "BatchedTransform",
+    frames: Tensor,
+    generator: torch.Generator | None = None,
+    run: Callable[[Tensor, dict[str, Any]], Tensor] | None = None,
+    chunk_size: int | None = None,
+) -> Tensor:
+    """Apply a batched transform to `uint8` or floating point frames, returning the input's dtype.
+
+    The math runs on `float32` frames in `[0, 1]`. Some arguments are in the input's own pixel scale, as in
+    torchvision: `fill` of the affine transforms, and anything a wrapped per-sample transform takes. So every
+    parameter dict records whether the frames were `uint8`, and the transforms that need it read the flag.
+
+    Args:
+        transform (`BatchedTransform`):
+            The transform to draw parameters from and apply.
+        frames (`torch.Tensor`):
+            `(B, N, C, H, W)` frames, `uint8` in `[0, 255]` or floating point in `[0, 1]`.
+        generator (`torch.Generator`, *optional*):
+            Generator to draw the parameters from; the device's default generator if `None`.
+        run (`Callable`, *optional*):
+            What applies the drawn parameters, e.g. a compiled `transform.transform`. Defaults to it.
+        chunk_size (`int`, *optional*):
+            Apply to at most this many samples at a time; the parameters are drawn for the whole batch first.
+
+    Returns:
+        `torch.Tensor`: The transformed frames, in the input's dtype.
+    """
+    uint8_input = frames.dtype == torch.uint8
+    if uint8_input:
+        work = frames.to(torch.float32) / 255.0
+    elif frames.is_floating_point():
+        work = frames.to(torch.float32)
+    else:
+        raise TypeError(f"Expected uint8 or floating point images, got {frames.dtype}.")
+    params = _tag_params(transform.make_params(work.shape, work.device, generator), uint8_input)
+    run = run or transform.transform
+    batch_size = work.shape[0]
+    if chunk_size is None or batch_size <= chunk_size:
+        out = run(work, params)
+    else:
+        out = torch.cat(
+            [
+                run(work[start : start + chunk_size], slice_params(params, start, start + chunk_size))
+                for start in range(0, batch_size, chunk_size)
+            ],
+            dim=0,
+        )
+    if uint8_input:
+        return (out * 255.0).round_().clamp_(0, 255).to(torch.uint8)
+    return out.to(frames.dtype)
+
+
+def _tag_params(params: Any, uint8_input: bool) -> Any:
+    """Record `uint8_input` in every dict of a parameter tree drawn by `make_params`."""
+    if isinstance(params, dict):
+        return {
+            **{key: _tag_params(value, uint8_input) for key, value in params.items()},
+            "uint8_input": uint8_input,
+        }
+    if isinstance(params, list):
+        return [_tag_params(value, uint8_input) for value in params]
+    return params
+
+
 def slice_params(params: dict[str, Any], start: int, end: int) -> dict[str, Any]:
     """Select samples `start:end` of every per-sample parameter, recursing into nested dicts and lists.
 
@@ -733,7 +801,11 @@ class BatchedRandomAffine(BatchedTransform):
         theta = inverse_affine_matrix_batched(
             params["angle"], params["translate"], params["scale"], params["shear"], center
         )
-        return warp_batched(frames, theta, self.interpolation, self.fill)
+        # `fill` is in the input's pixel scale, as in torchvision; the frames here are always in [0, 1].
+        fill = self.fill
+        if fill is not None and params.get("uint8_input", False):
+            fill = [value / 255.0 for value in fill]
+        return warp_batched(frames, theta, self.interpolation, fill)
 
 
 class BatchedRandomRotation(BatchedTransform):
@@ -780,6 +852,7 @@ class BatchedRandomRotation(BatchedTransform):
             "translate": torch.zeros(batch_size, 2, device=frames.device),
             "scale": torch.ones(batch_size, device=frames.device),
             "shear": torch.zeros(batch_size, 2, device=frames.device),
+            "uint8_input": params.get("uint8_input", False),
         }
         return self.affine.transform(frames, affine_params)
 
@@ -1291,7 +1364,8 @@ class PerSampleTransform(BatchedTransform):
 
     Args:
         transform (`Callable[[Tensor], Tensor]`):
-            The per-sample transform, taking one sample's float `(N, C, H, W)` frames in `[0, 1]`.
+            The per-sample transform, taking one sample's `(N, C, H, W)` frames in the dtype the caller
+            passed to `BatchedImageTransforms`: `uint8` in `[0, 255]` or floats in `[0, 1]`.
     """
 
     def __init__(self, transform: Callable[[Tensor], Tensor]) -> None:
@@ -1306,10 +1380,16 @@ class PerSampleTransform(BatchedTransform):
 
     @torch.compiler.disable
     def transform(self, frames: Tensor, params: dict[str, Any]) -> Tensor:
+        # The wrapped transform's own arguments (`fill`, a solarize threshold, ...) are in the pixel scale of
+        # the caller's input, so it is handed that input's dtype rather than the [0, 1] working copy.
+        uint8_input = params.get("uint8_input", False)
         outputs = []
         for sample, seed in zip(frames.unbind(0), params["seed"].tolist(), strict=True):
+            if uint8_input:
+                sample = (sample * 255.0).round_().clamp_(0, 255).to(torch.uint8)
             with _seeded_default_generators(seed, frames.device):
-                outputs.append(self.per_sample(sample))
+                out = self.per_sample(sample)
+            outputs.append(out.to(frames.dtype) / 255.0 if uint8_input else out)
         return torch.stack(outputs)
 
 
@@ -1552,28 +1632,7 @@ class BatchedImageTransforms(nn.Module):
         if images.shape[-3] not in (1, 3):
             raise ValueError(f"Expected 1 or 3 channels, got shape {tuple(images.shape)}.")
         frames = images.unsqueeze(1) if images.ndim == 4 else images
-        if frames.dtype == torch.uint8:
-            work = frames.to(torch.float32) / 255.0
-        elif frames.is_floating_point():
-            work = frames.to(torch.float32)
-        else:
-            raise TypeError(f"Expected uint8 or floating point images, got {images.dtype}.")
-        params = self.tf.make_params(work.shape, work.device, generator)
-        batch_size = work.shape[0]
-        if self.chunk_size is None or batch_size <= self.chunk_size:
-            out = self._transform(work, params)
-        else:
-            out = torch.cat(
-                [
-                    self._transform(
-                        work[start : start + self.chunk_size],
-                        slice_params(params, start, start + self.chunk_size),
-                    )
-                    for start in range(0, batch_size, self.chunk_size)
-                ],
-                dim=0,
-            )
-        out = (out * 255.0).round_().to(torch.uint8) if frames.dtype == torch.uint8 else out.to(frames.dtype)
+        out = apply_to_frames(self.tf, frames, generator, run=self._transform, chunk_size=self.chunk_size)
         return out.squeeze(1) if images.ndim == 4 else out
 
 

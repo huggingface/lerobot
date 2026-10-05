@@ -323,3 +323,13 @@ def test_compiled_step_matches_the_eager_step():
         for compile_model in (False, True)
     ]
     torch.testing.assert_close(outputs[0], outputs[1], atol=1e-5, rtol=0)
+
+
+def test_unseeded_steps_draw_different_augmentations():
+    """A fresh `torch.Generator` starts from a fixed seed; unseeded steps (one per rank) must not share it."""
+    batch = {CAM_A: torch.rand(4, 2, 3, 8, 8, generator=torch.Generator().manual_seed(0))}
+    outputs = [
+        ImageAugmentationProcessorStep(config=ImageTransformsConfig(enable=True)).observation(dict(batch))
+        for _ in range(2)
+    ]
+    assert not torch.equal(outputs[0][CAM_A], outputs[1][CAM_A])

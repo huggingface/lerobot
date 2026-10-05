@@ -86,6 +86,8 @@ class ImageAugmentationProcessorStep(ObservationProcessorStep):
         generator = torch.Generator(device=device)
         if self.seed is not None:
             generator.manual_seed(self.seed)
+        else:
+            generator.seed()  # a fresh generator starts from a fixed seed; unseeded runs must not share it
         return generator
 
     def _selected_keys(self, observation: RobotObservation) -> list[str]:

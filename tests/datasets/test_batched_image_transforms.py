@@ -471,3 +471,51 @@ def test_compile_does_not_change_the_augmentation(frames):
         frames.to(device), torch.Generator(device).manual_seed(5)
     )
     torch.testing.assert_close(eager, compiled, atol=1e-5, rtol=0)
+
+
+def _only(type_name: str, **kwargs) -> ImageTransformsConfig:
+    return ImageTransformsConfig(
+        enable=True, max_num_transforms=1, tfs={"only": ImageTransformConfig(type=type_name, kwargs=kwargs)}
+    )
+
+
+@pytest.mark.parametrize(
+    ("type_name", "kwargs"),
+    [
+        ("RandomRotation", {"degrees": (45.0, 45.0)}),
+        ("RandomAffine", {"degrees": (45.0, 45.0)}),
+    ],
+)
+def test_fill_is_in_the_input_pixel_scale(type_name, kwargs):
+    """`fill=255` on uint8 frames fills white, as in torchvision, and matches `fill=1.0` on the same frames as floats."""
+    frames8 = torch.full((1, 3, 32, 32), 100, dtype=torch.uint8)
+    out8 = BatchedImageTransforms(_only(type_name, fill=[255, 0, 128], **kwargs))(frames8)
+    assert out8[0, :, 0, 0].tolist() == [255, 0, 128]  # a corner the rotation leaves uncovered
+    out_float = BatchedImageTransforms(_only(type_name, fill=[1.0, 0.0, 128 / 255], **kwargs))(
+        frames8 / 255.0
+    )
+    torch.testing.assert_close(out8, (out_float * 255).round().to(torch.uint8), atol=1, rtol=0)
+
+
+def test_per_sample_transforms_see_the_input_dtype():
+    """A wrapped torchvision transform takes its pixel-scale arguments in the caller's dtype, as before batching."""
+    frames8 = torch.arange(256, dtype=torch.uint8).repeat(3, 1).view(1, 3, 16, 16)
+    out = BatchedImageTransforms(_only("RandomSolarize", threshold=128, p=1.0))(frames8)
+    torch.testing.assert_close(out, F.solarize(frames8, threshold=128))
+
+
+def test_jpeg_compression_applies_to_uint8_frames():
+    frames8 = torch.randint(0, 256, (1, 3, 32, 32), dtype=torch.uint8, generator=_generator(0))
+    out = BatchedImageTransforms(_only("JPEGCompression", quality=(10, 10)))(frames8)
+    assert out.dtype == torch.uint8 and not torch.equal(out, frames8)
+
+
+def test_deprecated_front_end_interprets_fill_in_the_input_pixel_scale():
+    from lerobot.transforms import make_transform_from_config
+
+    with pytest.warns(FutureWarning):
+        transform = make_transform_from_config(
+            ImageTransformConfig(type="RandomRotation", kwargs={"degrees": (45.0, 45.0), "fill": 255})
+        )
+    out = transform(torch.full((3, 32, 32), 100, dtype=torch.uint8))
+    assert out[:, 0, 0].tolist() == [255, 255, 255]
