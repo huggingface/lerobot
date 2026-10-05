@@ -65,7 +65,9 @@ learning rate used for full fine-tuning (e.g., 1e-4 normal, so 1e-3 using LoRA).
 
 ## Other policies
 
-The same `--peft.*` flags work for any pre-trained policy. Some policies (SmolVLA, π₀, π₀.₅) ship
-built-in default `target_modules`, so `--peft.method_type=LORA` is enough. Others do not, and will
-ask you to pass `--peft.target_modules` explicitly — for example LingBot-VA, whose recommended
+The same `--peft.*` flags work for any pre-trained policy. Some policies (e.g. SmolVLA, π₀, π₀.₅, MolmoAct2)
+ship built-in default `target_modules`, so `--peft.method_type=LORA` is enough. Others do not, and will
+ask you to pass `--peft.target_modules` explicitly, for example LingBot-VA, whose recommended
 targets are documented in its [dedicated guide](./lingbot_va#training--fine-tuning).
+
+`--policy.use_peft=true` on its own is equivalent to `--peft.method_type=LORA` with the default settings.

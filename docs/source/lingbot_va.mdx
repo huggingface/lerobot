@@ -127,7 +127,7 @@ lerobot-train \
 Unlike SmolVLA / π₀, LingBot-VA does not ship built-in default LoRA targets, so you must pass
 `--peft.target_modules` explicitly. Only `self.transformer` (the dual-stream Wan transformer) is
 trainable; the example above adapts the query/value projections of both its self-attention
-(`attn1`) and cross-attention (`attn2`) blocks — the standard LoRA target set. Broaden it (e.g.
+(`attn1`) and cross-attention (`attn2`) blocks, the standard LoRA target set. Broaden it (e.g.
 add `to_k`/`to_out`, or the `ffn` layers) if you need a higher-capacity adapter. Passing
 `--peft.method_type` implies PEFT, so `--policy.use_peft=true` is not required.
 
