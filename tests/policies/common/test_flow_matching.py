@@ -572,6 +572,14 @@ def test_euler_integrate_rejects_missing_and_conflicting_step_counts():
         euler_integrate(fn, noise, time_grid=torch.zeros(1))
 
 
+@pytest.mark.parametrize("convention", ["noise_at_one", "noise_at_zero", "noise_at_on", None])
+def test_euler_integrate_rejects_a_convention_that_is_not_the_enum(convention):
+    # FlowConvention is a str enum, so "noise_at_one" == NOISE_AT_ONE, yet the `is` check
+    # would send it down the NOISE_AT_ZERO branch.
+    with pytest.raises(TypeError, match="convention must be a FlowConvention"):
+        euler_integrate(lambda x_t, time: torch.ones_like(x_t), torch.ones(1, 4, 1), 2, convention=convention)
+
+
 # ---------------------------------------------------------------------------
 # Step indices stay on the host, schedules stay on the device
 # ---------------------------------------------------------------------------
@@ -1037,26 +1045,3 @@ def test_wallx_loop_equivalence(num_inference_timesteps):
     assert torch.equal(out, ref)
     # The explicit grid is honored bit-for-bit; `step / n` would differ here for n = 3 and 7.
     assert torch.equal(torch.stack(seen_times), times[:-1])
-
-
-@pytest.mark.parametrize("num_inference_timesteps", [3, 7, 10])
-def test_wallx_loop_equivalence_against_real_torchdiffeq(num_inference_timesteps):
-    odeint = pytest.importorskip("torchdiffeq").odeint
-    model = _wallx_model(seed=14)
-    torch.manual_seed(15)
-    noisy_action = torch.randn(2, 6, 4)
-    times = torch.linspace(0, 1, num_inference_timesteps + 1, dtype=torch.float32)
-
-    ref = odeint(
-        lambda timestep, action: model(action, timestep.unsqueeze(0).repeat(action.shape[0])),
-        noisy_action,
-        times,
-        method="euler",
-    )[-1]
-    out = euler_integrate(
-        model,
-        noisy_action,
-        convention=FlowConvention.NOISE_AT_ZERO,
-        time_grid=times,
-    )
-    assert torch.equal(out, ref)

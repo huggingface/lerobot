@@ -218,7 +218,6 @@ wallx = [
     "lerobot[transformers-dep]",
     "lerobot[peft-dep]",
     "lerobot[scipy-dep]",
-    "torchdiffeq>=0.2.4,<0.3.0",
     "lerobot[qwen-vl-utils-dep]",
 ]
 pi = ["lerobot[transformers-dep]", "lerobot[scipy-dep]", "lerobot[sentencepiece-dep]"]

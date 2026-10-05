@@ -1797,7 +1797,6 @@ class WallXPolicy(PreTrainedPolicy):
     def __init__(self, config: WallXConfig, **kwargs: Any) -> None:
         require_package("transformers", extra="wallx")
         require_package("peft", extra="wallx")
-        require_package("torchdiffeq", extra="wallx")
         require_package("qwen-vl-utils", extra="wallx", import_name="qwen_vl_utils")
         super().__init__(config)
         config.validate_features()
