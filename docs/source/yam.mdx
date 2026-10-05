@@ -8,17 +8,17 @@ The `bi_yam_follower` integration supports two standard YAM v1 arms with linear 
 uv sync --locked --extra yam --extra molmoact2 --extra dataset
 ```
 
-Prepare the two SocketCAN interfaces at 1 Mbit/s using your adapter's instructions. Verify which physical arm each interface controls; `expected_adapter_serial` can guard against USB enumeration swapping the arms. Never run another robot controller on these interfaces at the same time.
-
-USB reconnection or a power cycle can leave the interfaces down (`Network is down`). For automatic startup setup, run this helper before calibration or rollout, substituting your adapter serials:
+Prepare both SocketCAN interfaces at 1 Mbit/s classic CAN before calibration or control:
 
 ```bash
-uv run --no-sync python examples/yam/prepare_can.py \
-  --left-port=can0 --left-serial=LEFT_ADAPTER_SERIAL \
-  --right-port=can1 --right-serial=RIGHT_ADAPTER_SERIAL
+uv run --no-sync lerobot-setup-can \
+  --mode=setup --interfaces=can0,can1 \
+  --bitrate=1000000 --use_fd=false
 ```
 
-It verifies both identities, enables only down interfaces at 1 Mbit/s classic CAN, and leaves healthy active interfaces unchanged. It refuses to reset an active interface with a wrong bitrate or error state. It uses `sudo -n` only for network setup; if authentication is required, run `sudo -v` in your terminal first. The helper sends no motor commands and does not clear motor faults. In a launcher, chain it with `&&` so rollout starts only after setup succeeds.
+`--mode=setup` brings each Linux CAN interface down, configures it, and brings it back up. It sends no motor commands. Run it only when no robot controller is using the interfaces.
+
+Verify which physical arm each interface controls. `expected_adapter_serial` can detect left/right adapter swaps when the robot connects.
 
 A motor-reported `0xD` (communication lost) is different from an interface being down. Do not mask it by automatically clearing faults or restarting the CAN bus during control.
 
