@@ -1901,7 +1901,7 @@ class G05Policy(PreTrainedPolicy):
         result = super().to(*args, **kwargs)
         explicit_dtype = "dtype" in kwargs or any(isinstance(arg, torch.dtype | Tensor) for arg in args)
         if (
-            self.config.model_weights_to_bf16
+            self.config.dtype == torch.bfloat16
             and not explicit_dtype
             and next(self.backend.parameters()).device.type == "cuda"
         ):
@@ -2289,7 +2289,7 @@ class G05Policy(PreTrainedPolicy):
         with torch.autocast(
             device_type=device.type,
             dtype=torch.bfloat16,
-            enabled=self.config.model_weights_to_bf16 and device.type == "cuda",
+            enabled=self.config.dtype == torch.bfloat16 and device.type == "cuda",
         ):
             result = predict(prepared) if callable(predict) else self.backend(prepared)
         if isinstance(result, Tensor):
@@ -2358,7 +2358,7 @@ class G05Policy(PreTrainedPolicy):
         with torch.autocast(
             device_type=device.type,
             dtype=torch.bfloat16,
-            enabled=self.config.model_weights_to_bf16 and device.type == "cuda",
+            enabled=self.config.dtype == torch.bfloat16 and device.type == "cuda",
         ):
             result = self.backend(prepared)
         if isinstance(result, tuple) and len(result) == 2:
