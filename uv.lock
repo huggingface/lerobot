@@ -3566,8 +3566,10 @@ xvla = [
     { name = "transformers" },
 ]
 yam = [
+    { name = "cmeel-tinyxml2" },
+    { name = "cmeel-urdfdom" },
     { name = "motorbridge" },
-    { name = "mujoco" },
+    { name = "placo" },
     { name = "python-can" },
 ]
 
@@ -3688,6 +3690,7 @@ requires-dist = [
     { name = "lerobot", extras = ["pi"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["placo-dep"], marker = "extra == 'hilserl'" },
     { name = "lerobot", extras = ["placo-dep"], marker = "extra == 'kinematics'" },
+    { name = "lerobot", extras = ["placo-dep"], marker = "extra == 'yam'" },
     { name = "lerobot", extras = ["pusht"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["pygame-dep"], marker = "extra == 'gamepad'" },
     { name = "lerobot", extras = ["pygame-dep"], marker = "extra == 'hopejr'" },
@@ -3757,7 +3760,6 @@ requires-dist = [
     { name = "mock-serial", marker = "sys_platform != 'win32' and extra == 'test'", specifier = ">=0.0.1,<0.1.0" },
     { name = "motorbridge", marker = "extra == 'motorbridge-dep'", specifier = ">=0.5,<0.6" },
     { name = "motorbridge-smart-servo", marker = "extra == 'motorbridge-smart-servo-dep'", specifier = ">=0.0.4,<0.1.0" },
-    { name = "mujoco", marker = "extra == 'yam'", specifier = ">=3.2.0,<4.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=2.0.0,<3.0.0" },
     { name = "num2words", marker = "extra == 'smolvla'", specifier = ">=0.5.14,<0.6.0" },
     { name = "numpy", specifier = ">=2.0.0,<2.3.0" },
@@ -3771,6 +3773,7 @@ requires-dist = [
     { name = "peft", marker = "extra == 'peft-dep'", specifier = ">=0.18.0,<1.0.0" },
     { name = "pillow", specifier = ">=10.0.0,<13.0.0" },
     { name = "placo", marker = "extra == 'placo-dep'", specifier = ">=0.9.6,<0.9.16" },
+    { name = "placo", marker = "extra == 'yam'", specifier = ">=0.9.15,<0.9.16" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.7.0,<5.0.0" },
     { name = "protobuf", marker = "extra == 'grpcio-dep'", specifier = ">=6.31.1,<8.0.0" },
     { name = "protobuf", marker = "extra == 'reachy2'", specifier = "<=6.32.0" },
