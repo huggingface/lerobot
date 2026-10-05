@@ -1,6 +1,6 @@
 # Template: verify bounds, units, directions, camera paths and calibration before use.
-# Cartesian move_to is the default. Download the pinned YAM model and set BOTH
-# urdf_path entries as described in docs/source/agent_rollout.mdx (keep assets).
+# Cartesian move_to uses the bundled FK/IK URDF. Run from the repository root,
+# or make both urdf_path entries absolute. See docs/source/agent_rollout.mdx.
 # Provider fields below are one explicit example, not backend defaults.
 interactive: true
 fps: 10
@@ -23,7 +23,7 @@ inference:
     centre. Left and right coordinates are in separate arm-local base frames.
   cartesian:
     left:
-      urdf_path: /absolute/path/to/i2rt/i2rt/robot_models/arm/yam/v1/yam.urdf
+      urdf_path: examples/agent_rollout/urdf/yam.urdf
       target_frame_name: gripper
       joints:
         left_joint_0.pos: joint1
@@ -44,7 +44,7 @@ inference:
       linear_speed: 0.03
       angular_speed: 0.15
     right:
-      urdf_path: /absolute/path/to/i2rt/i2rt/robot_models/arm/yam/v1/yam.urdf
+      urdf_path: examples/agent_rollout/urdf/yam.urdf
       target_frame_name: gripper
       joints:
         right_joint_0.pos: joint1

@@ -27,7 +27,7 @@ export OPENAI_API_KEY
 
 Copy an example and configure its **entire robot action contract** before starting:
 
-Both examples default to **Cartesian end-effector control** through `move_to`, using LeRobot's URDF-based FK/IK. Download the matching model below and replace the absolute `urdf_path` placeholders before launching.
+Both examples default to **Cartesian end-effector control** through `move_to`, using LeRobot's URDF-based FK/IK. Their FK/IK URDFs are bundled under `examples/agent_rollout/urdf`; no model download is needed. Run the examples from the repository root, or set absolute `urdf_path` values when launching elsewhere.
 
 - [SO follower example](https://github.com/huggingface/lerobot/blob/main/examples/agent_rollout/so_follower.yaml): SO-101 `gripper_frame_link`, with native degrees converted to URDF radians and a 0–100 gripper.
 - [Bimanual YAM example](https://github.com/huggingface/lerobot/blob/main/examples/agent_rollout/yam.yaml): independent arm-local `gripper` flange frames, native radians and calibrated 0–1 grippers. Requires the separate `bi_yam_follower` integration; this backend does not install a YAM driver.
@@ -97,34 +97,20 @@ Set `fps` to the command rate and keep `interpolation_multiplier=1`: the agent a
 
 ## URDF models and end-effector control
 
-Cartesian mode reuses LeRobot's existing `RobotKinematics` (Placo). The examples already supply the tool link, native-to-model joint mapping, workspace template and frame description. Download the matching **URDF and its adjacent `assets` directory** from the official model repository; Placo needs the meshes when loading the model. No inspect-robots hardware driver or separate MuJoCo solver is installed.
+Cartesian mode reuses LeRobot's existing `RobotKinematics` (Placo). The examples already supply the tool link, native-to-model joint mapping, workspace template and frame description. The bundled URDFs retain the official links, joints, transforms, limits and inertial parameters, with visual and collision elements removed. They load directly in Placo without external mesh files. Source revisions, modification notices and upstream licenses are included in `examples/agent_rollout/urdf`. No inspect-robots hardware driver or separate MuJoCo solver is installed.
 
-The example mappings were checked against these pinned model revisions:
+The bundled models are derived from these pinned revisions:
 
 | Example | Official model                                                                                                                      | Root → controlled link             | Joint mapping                                                       |
 | ------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------- |
 | SO-101  | [SO-ARM100, `5f6d2b8`](https://github.com/TheRobotStudio/SO-ARM100/tree/5f6d2b876a53a4872e405b991dd925556c9e38a4/Simulation/SO101)  | `base_link` → `gripper_frame_link` | Five named arm joints, degrees × π/180                              |
 | YAM     | [I2RT, `120c3c8`](https://github.com/i2rt-robotics/i2rt/tree/120c3c81400171174604e503943f8d1ebc891058/i2rt/robot_models/arm/yam/v1) | `base` → `gripper`                 | Each arm's `joint_0.pos`…`joint_5.pos` → `joint1`…`joint6`, radians |
 
-For SO-101, download the model with a sparse checkout (choose a destination outside the LeRobot checkout):
+The SO example uses `examples/agent_rollout/urdf/so101_new_calib.urdf`. This model uses the new SO-101 calibration convention; verify its joint zeros against your calibrated robot. Both YAM arms use `examples/agent_rollout/urdf/yam.urdf`. These paths resolve from the **working directory**, not the YAML file's directory.
 
-```bash
-git clone --filter=blob:none --no-checkout https://github.com/TheRobotStudio/SO-ARM100.git /absolute/path/to/SO-ARM100
-git -C /absolute/path/to/SO-ARM100 sparse-checkout set Simulation/SO101
-git -C /absolute/path/to/SO-ARM100 checkout 5f6d2b876a53a4872e405b991dd925556c9e38a4
-```
+For rendering or simulation with geometry, use the original URDF and adjacent `assets` directory from the upstream links above. The bundled models provide FK/IK only and contain no visual or collision geometry.
 
-Set the SO example's `inference.cartesian.arm.urdf_path` to `/absolute/path/to/SO-ARM100/Simulation/SO101/so101_new_calib.urdf`. This model uses the new SO-101 calibration convention; verify its joint zeros against your calibrated robot.
-
-For YAM:
-
-```bash
-git clone --filter=blob:none --no-checkout https://github.com/i2rt-robotics/i2rt.git /absolute/path/to/i2rt
-git -C /absolute/path/to/i2rt sparse-checkout set i2rt/robot_models/arm/yam/v1
-git -C /absolute/path/to/i2rt checkout 120c3c81400171174604e503943f8d1ebc891058
-```
-
-Set **both** YAM `urdf_path` entries to `/absolute/path/to/i2rt/i2rt/robot_models/arm/yam/v1/yam.urdf`. The controlled `gripper` link is the arm's **flange**, not the grasp centre between the fingertips. To command a calibrated fingertip TCP, add a fixed tool link with your measured transform to a local copy of the URDF and change `target_frame_name`. Do not substitute a finger link: its prismatic joint is outside the arm's IK chain. Left and right targets use separate arm-local base frames, even when they share the same model file; they are not coordinates in a common world frame.
+For YAM, the controlled `gripper` link is the arm's **flange**, not the grasp centre between the fingertips. To command a calibrated fingertip TCP, add a fixed tool link with your measured transform to a local copy of the URDF and change `target_frame_name`. Do not substitute a finger link: its prismatic joint is outside the arm's IK chain. Left and right targets use separate arm-local base frames, even when they share the same model file; they are not coordinates in a common world frame.
 
 The SO-101 has **five arm degrees of freedom**, so position and orientation cannot all vary independently. Its example allows relative yaw, pitch and roll changes, but arbitrary six-dimensional poses can still be unreachable. The YAM example pins pitch and roll to the orientation measured at `/start`. For either robot, replace the workspace bounds and describe the physical base axes and camera placement for your rig. An XYZ box alone is not a reachable-workspace or collision guarantee.
 

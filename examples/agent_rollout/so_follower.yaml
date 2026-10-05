@@ -1,6 +1,6 @@
 # Template: verify bounds, units, directions, camera paths and calibration before use.
-# Cartesian move_to is the default. Download the pinned SO-101 model and set
-# urdf_path as described in docs/source/agent_rollout.mdx (keep its assets directory).
+# Cartesian move_to uses the bundled FK/IK URDF. Run from the repository root,
+# or make urdf_path absolute. See docs/source/agent_rollout.mdx for model details.
 # Provider fields below are one explicit example, not backend defaults.
 interactive: true
 fps: 10
@@ -23,7 +23,7 @@ inference:
     orientation when needed and do not assume arbitrary six-dimensional poses are reachable.
   cartesian:
     arm:
-      urdf_path: /absolute/path/to/SO-ARM100/Simulation/SO101/so101_new_calib.urdf
+      urdf_path: examples/agent_rollout/urdf/so101_new_calib.urdf
       target_frame_name: gripper_frame_link
       joints:
         shoulder_pan.pos: shoulder_pan

@@ -613,10 +613,10 @@ def test_checked_in_examples_decode_agent_contracts():
         cfg = draccus.decode(InferenceEngineConfig, value["inference"])
         assert isinstance(cfg, AgentInferenceConfig)
         assert len(cfg.axes) == dimensions
-        # Model paths are operator-supplied; config decoding must work offline.
         assert set(cfg.cartesian) == arm_names
         mapped = []
         for arm in cfg.cartesian.values():
+            assert Path(arm.urdf_path).is_file()
             mapped.extend(arm.joints)
             mapped.append(arm.gripper)
             for key in arm.joints:
@@ -624,6 +624,58 @@ def test_checked_in_examples_decode_agent_contracts():
                 assert arm.joint_scale.get(key, 1.0) == pytest.approx(expected_scale)
         assert len(mapped) == len(set(mapped)) == dimensions
         assert set(mapped) == set(cfg.axes)
+
+
+@pytest.mark.parametrize(
+    "name,initial,expected_xyz",
+    [
+        ("so_follower", [0, -20, 60, -40, 0], [0.32295354, -0.00000942, 0.14132871]),
+        ("yam", [0.3, 1.0, 1.2, 0.1, 0.2, 0.0], [0.20230780, 0.05518244, 0.47530688]),
+    ],
+)
+def test_bundled_example_models_execute_cartesian_motion(name, initial, expected_xyz):
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    import draccus
+    import yaml
+    from inspect_robots_agent._tools import build_toolset
+
+    from lerobot.rollout.inference.factory import InferenceEngineConfig
+
+    pytest.importorskip("placo")
+    value = yaml.safe_load(Path(f"examples/agent_rollout/{name}.yaml").read_text())
+    cfg = draccus.decode(InferenceEngineConfig, value["inference"])
+    adapter = RobotAdapter(
+        cfg, list(cfg.axes), {**dict.fromkeys(cfg.axes, float), "cam": (8, 8, 3)}, name, value["fps"]
+    )
+    pose = {}
+    for arm in cfg.cartesian.values():
+        pose.update(zip(arm.joints, initial, strict=True))
+        pose[arm.gripper] = 50.0 if name == "so_follower" else 0.5
+    adapter.reset(pose)
+    obs = adapter.observation({**pose, "cam": raw()["cam"]}, "raise tool", 0, [])
+    targets = {}
+    for arm_name, kin in adapter.arms.items():
+        # Independently checked with MuJoCo using the pinned original URDFs.
+        np.testing.assert_allclose(kin.observe(pose)[:3], expected_xyz, atol=1e-6)
+        targets[f"{arm_name}_z"] = float(expected_xyz[2] + 0.01)
+    tools = build_toolset(
+        adapter.info.action_space, adapter.info.observation_space, adapter.fps, pre_check=adapter.pre_check
+    )
+    result = tools.execute(
+        SimpleNamespace(name="move_to", arguments=json.dumps({"targets": targets, "note": "Raise 1 cm"})),
+        obs,
+    )
+    assert result.error is None
+    assert result.chunk is not None
+    joints = adapter.translate(np.stack([action.data for action in result.chunk.actions]))
+    final = dict(zip(adapter.keys, joints[-1], strict=True))
+    for kin in adapter.arms.values():
+        np.testing.assert_allclose(
+            kin.observe(final), [*expected_xyz[:2], expected_xyz[2] + 0.01, 0, 0, 0], atol=0.0002
+        )
+        assert final[kin.config.gripper] == pose[kin.config.gripper]
 
 
 def test_encoder_residual_is_reported_but_never_commanded_outside_bounds(tmp_path):
