@@ -16,12 +16,14 @@
 """Contract tests for LeRobotDatasetMetadata."""
 
 import json
+from unittest.mock import patch
 
 import numpy as np
 import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import lerobot.datasets.dataset_metadata as dataset_metadata_module
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.utils import INFO_PATH
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_ROBOT_TYPE
@@ -344,6 +346,45 @@ def test_save_episode_updates_stats(tmp_path):
     # Stats should contain at least the user-defined feature keys
     for key in SIMPLE_FEATURES:
         assert key in meta.stats
+
+
+@pytest.mark.parametrize(
+    "file_size_mb, expected_file_indices",
+    [
+        # Each row stays far below the 100 MB limit: everything fits in the first file.
+        (10.0, [0, 0, 0, 0, 0, 0]),
+        # One 60 MB row leaves no room for a second one: every episode gets its own file.
+        (60.0, [0, 1, 2, 3, 4, 5]),
+    ],
+)
+def test_episodes_metadata_rollover_counts_rows_not_frames(tmp_path, file_size_mb, expected_file_indices):
+    """The episodes parquet holds one row per episode, so episode length must not affect rollover."""
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/meta_rollover",
+        fps=DEFAULT_FPS,
+        features=SIMPLE_FEATURES,
+        root=tmp_path / "meta_rollover",
+        use_videos=False,
+        metadata_buffer_size=1,
+        data_files_size_in_mb=100,
+    )
+    meta.save_episode_tasks(["Task 1"])
+    stats = _make_dummy_stats(meta.features)
+
+    file_indices = []
+    with patch.object(dataset_metadata_module, "get_file_size_in_mb", return_value=file_size_mb):
+        for ep_idx in range(len(expected_file_indices)):
+            meta.save_episode(
+                episode_index=ep_idx,
+                episode_length=50,
+                episode_tasks=["Task 1"],
+                episode_stats=stats,
+                episode_metadata={},
+            )
+            file_indices.append(meta.latest_episode["meta/episodes/file_index"][0])
+    meta.finalize()
+
+    assert file_indices == expected_file_indices
 
 
 # ── Chunk settings ───────────────────────────────────────────────────

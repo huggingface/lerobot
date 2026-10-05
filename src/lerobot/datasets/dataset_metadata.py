@@ -123,6 +123,7 @@ class LeRobotDatasetMetadata:
         else:
             self.root = HF_LEROBOT_HOME / repo_id
         self._pq_writer: pq.ParquetWriter | None = None
+        self._rows_in_current_file = 0
         self.latest_episode: dict | None = None
         self._metadata_buffer: list[dict] = []
         self._metadata_buffer_size = metadata_buffer_size
@@ -185,6 +186,7 @@ class LeRobotDatasetMetadata:
             table = table.select(self._pq_writer.schema.names)
 
         self._pq_writer.write_table(table)
+        self._rows_in_current_file += table.num_rows
 
         self.latest_episode = self._metadata_buffer[-1]
         self._metadata_buffer.clear()
@@ -197,6 +199,7 @@ class LeRobotDatasetMetadata:
         if writer is not None:
             writer.close()
             self._pq_writer = None
+        self._rows_in_current_file = 0
 
     def finalize(self) -> None:
         """Flush metadata buffer and close the parquet writer.
@@ -618,11 +621,13 @@ class LeRobotDatasetMetadata:
 
             if Path(latest_path).exists():
                 latest_size_in_mb = get_file_size_in_mb(Path(latest_path))
-                latest_num_frames = self.latest_episode["episode_index"][0]
+                # One row per episode: estimate from the rows already written to this file,
+                # and count the rows still buffered for it plus the new one.
+                rows_in_file = self._rows_in_current_file
+                av_size_per_row = latest_size_in_mb / rows_in_file if rows_in_file > 0 else 0.0
+                pending_rows = len(self._metadata_buffer) + 1
 
-                av_size_per_frame = latest_size_in_mb / latest_num_frames if latest_num_frames > 0 else 0.0
-
-                if latest_size_in_mb + av_size_per_frame * num_frames >= self.data_files_size_in_mb:
+                if latest_size_in_mb + av_size_per_row * pending_rows >= self.data_files_size_in_mb:
                     # Size limit is reached, flush buffer and prepare new parquet file
                     self._flush_metadata_buffer()
                     chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.chunks_size)
@@ -866,6 +871,7 @@ class LeRobotDatasetMetadata:
         write_info(obj.info, obj.root)
         obj.revision = None
         obj._pq_writer = None
+        obj._rows_in_current_file = 0
         obj.latest_episode = None
         obj._metadata_buffer = []
         obj._metadata_buffer_size = metadata_buffer_size
