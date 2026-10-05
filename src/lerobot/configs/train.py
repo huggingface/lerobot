@@ -14,6 +14,7 @@
 import builtins
 import datetime as dt
 import json
+import logging
 import multiprocessing
 import os
 import tempfile
@@ -285,9 +286,20 @@ class TrainPipelineConfig(HubMixin):
 
         active_cfg = self.trainable_config
 
-        # Keep the policy-level `use_peft` flag in sync with the presence of a `--peft.*` config.
-        if self.peft is not None and self.policy is not None:
+        # `--peft.*` and `--policy.use_peft=true` both request PEFT training: normalize them so that
+        # `make_policy` and the training loop see the same thing.
+        if self.policy is not None and (self.peft is not None or self.policy.use_peft):
+            if self.policy.pretrained_path is None and not self.resume:
+                raise ValueError(
+                    "Training from scratch using PEFT is unlikely to yield good results. "
+                    "Supply a `--policy.path` to fine-tune an existing model."
+                )
             self.policy.use_peft = True
+            if self.peft is None:
+                logging.info(
+                    "`policy.use_peft=true` without `--peft.*` options: using the default PEFT config."
+                )
+                self.peft = PeftConfig()
 
         if self.rename_map and active_cfg.pretrained_path is None:
             raise ValueError(

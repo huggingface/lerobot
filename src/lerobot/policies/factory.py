@@ -19,11 +19,14 @@ from __future__ import annotations
 import importlib
 import inspect
 import logging
+import os
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
 import torch
+from huggingface_hub import hf_hub_download
+from huggingface_hub.errors import EntryNotFoundError
 
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDatasetMetadata
@@ -51,6 +54,8 @@ if TYPE_CHECKING or _peft_available:
 else:
     PeftConfig = None
     PeftModel = None
+
+PEFT_ADAPTER_CONFIG_NAME = "adapter_config.json"
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
@@ -218,8 +223,8 @@ def make_pre_post_processors(
     )
 
 
-def _has_peft_adapter_config(
-    pretrained_path: str,
+def has_peft_adapter_config(
+    pretrained_path: str | Path,
     revision: str | None = None,
 ) -> bool:
     """Return whether ``pretrained_path`` points to an existing PEFT adapter.
@@ -231,22 +236,19 @@ def _has_peft_adapter_config(
     * loading/resuming a previously trained adapter (config lives at ``pretrained_path``)
     * starting a *fresh* PEFT fine-tune on top of a base model
 
-    Works for both local directories and Hub repo ids.
+    Works for both local directories and Hub repo ids. Hub repos go through the local cache, so
+    a cached adapter is recognised offline. Only a missing ``adapter_config.json`` means "not an
+    adapter": any other Hub error (unknown repo, auth, network) is raised as-is.
     """
-    import os
-
-    adapter_config_name = "adapter_config.json"
-
+    pretrained_path = str(pretrained_path)
     if os.path.isdir(pretrained_path):
-        return os.path.isfile(os.path.join(pretrained_path, adapter_config_name))
-
-    from huggingface_hub import file_exists
-    from huggingface_hub.errors import HfHubHTTPError
+        return os.path.isfile(os.path.join(pretrained_path, PEFT_ADAPTER_CONFIG_NAME))
 
     try:
-        return file_exists(pretrained_path, adapter_config_name, revision=revision)
-    except (HfHubHTTPError, OSError):
+        hf_hub_download(pretrained_path, PEFT_ADAPTER_CONFIG_NAME, revision=revision)
+    except EntryNotFoundError:  # also raised offline when the file is not cached
         return False
+    return True
 
 
 def make_policy(
@@ -378,7 +380,7 @@ def make_policy(
     load_existing_adapter = (
         cfg.pretrained_path
         and cfg.use_peft
-        and _has_peft_adapter_config(str(cfg.pretrained_path), cfg.pretrained_revision)
+        and has_peft_adapter_config(cfg.pretrained_path, cfg.pretrained_revision)
     )
 
     if cfg.pretrained_path and not load_existing_adapter:

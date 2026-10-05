@@ -37,6 +37,7 @@ from lerobot.datasets import (
     create_initial_features,
 )
 from lerobot.policies import get_policy_class, make_pre_post_processors
+from lerobot.policies.factory import has_peft_adapter_config
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import (
     PolicyProcessorPipeline,
@@ -285,7 +286,8 @@ def _load_pretrained_policy(policy_config: PreTrainedConfig) -> PreTrainedPolicy
     pretrained_revision = policy_config.pretrained_revision
     policy_class = get_policy_class(policy_config.type)
 
-    if not policy_config.use_peft:
+    # A `use_peft=True` config can still point at a base model (see `has_peft_adapter_config`).
+    if not (policy_config.use_peft and has_peft_adapter_config(pretrained_path, pretrained_revision)):
         return policy_class.from_pretrained(
             pretrained_path,
             config=policy_config,

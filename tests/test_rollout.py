@@ -367,6 +367,30 @@ def test_load_pretrained_policy_passes_revision(monkeypatch):
     )
 
 
+def test_load_pretrained_policy_use_peft_on_base_model_loads_base(monkeypatch):
+    # A `use_peft=True` config pointing at a base model (no adapter_config.json) loads it normally.
+    import lerobot.rollout.context as rollout_context
+
+    policy_config = SimpleNamespace(
+        type="mock",
+        use_peft=True,
+        pretrained_path="user/base-policy",
+        pretrained_revision="base-sha",
+    )
+    policy_class = MagicMock()
+    monkeypatch.setattr(rollout_context, "get_policy_class", lambda _: policy_class)
+    monkeypatch.setattr(rollout_context, "has_peft_adapter_config", lambda *args: False)
+
+    policy = rollout_context._load_pretrained_policy(policy_config)
+
+    assert policy is policy_class.from_pretrained.return_value
+    policy_class.from_pretrained.assert_called_once_with(
+        "user/base-policy",
+        config=policy_config,
+        revision="base-sha",
+    )
+
+
 def test_load_pretrained_peft_policy_keeps_adapter_and_base_revisions_separate(monkeypatch):
     import lerobot.rollout.context as rollout_context
 
@@ -380,6 +404,8 @@ def test_load_pretrained_peft_policy_keeps_adapter_and_base_revisions_separate(m
     base_policy = MagicMock()
     policy_class.from_pretrained.return_value = base_policy
     monkeypatch.setattr(rollout_context, "get_policy_class", lambda _: policy_class)
+    # "user/adapter" is a fake repo id: pin the adapter check instead of reaching the Hub.
+    monkeypatch.setattr(rollout_context, "has_peft_adapter_config", lambda *args: True)
 
     peft_config = SimpleNamespace(
         base_model_name_or_path="user/base-policy",
