@@ -14,8 +14,8 @@ LeRobot owns the hardware connection, control thread, interactive session and da
 ## Install and configure
 
 ```bash
-uv sync --extra dataset --extra agent
-# Add --extra agent-ik for Cartesian control, plus your robot's hardware extra.
+uv sync --extra dataset --extra agent --extra agent-ik
+# Also add your robot's hardware extra.
 ```
 
 Export the provider key in the terminal running rollout. Keys are read through `inference.api_key_env`; do not put them in command-line arguments or config files.
@@ -27,8 +27,10 @@ export OPENAI_API_KEY
 
 Copy an example and configure its **entire robot action contract** before starting:
 
-- [SO follower example](https://github.com/huggingface/lerobot/blob/main/examples/agent_rollout/so_follower.yaml): native degrees plus a 0–100 gripper.
-- [Bimanual YAM example](https://github.com/huggingface/lerobot/blob/main/examples/agent_rollout/yam.yaml): native radians plus calibrated 0–1 grippers. Requires the separate `bi_yam_follower` integration; this backend does not install a YAM driver.
+Both examples default to **Cartesian end-effector control** through `move_to`, using LeRobot's URDF-based FK/IK. Download the matching model below and replace the absolute `urdf_path` placeholders before launching.
+
+- [SO follower example](https://github.com/huggingface/lerobot/blob/main/examples/agent_rollout/so_follower.yaml): SO-101 `gripper_frame_link`, with native degrees converted to URDF radians and a 0–100 gripper.
+- [Bimanual YAM example](https://github.com/huggingface/lerobot/blob/main/examples/agent_rollout/yam.yaml): independent arm-local `gripper` flange frames, native radians and calibrated 0–1 grippers. Requires the separate `bi_yam_follower` integration; this backend does not install a YAM driver.
 
 Every action needs finite `minimum`, `maximum`, `max_speed` (native units/second), `tracking_tolerance` (maximum measured-command discrepancy), `unit` and `description`. Bounds in the examples are starting templates, **not a calibration of your robot or workspace**. Supply camera placement and positive motion directions in `robot_notes`. Hardware limits still apply. `measurement_tolerance` (default 0.001 native units) permits small encoder residuals just outside a bound; measured observations stay unmodified, while commanded targets remain inside the bounds.
 
@@ -64,7 +66,7 @@ inference:
   service_tier: null
 ```
 
-Keep the robot-specific axes, cameras and optional Cartesian mapping from your rig config. HF tokens need Inference Providers permission. See [HF chat completion](https://huggingface.co/docs/inference-providers/tasks/chat-completion), [Gemini compatibility](https://ai.google.dev/gemini-api/docs/openai), and [Claude Messages](https://platform.claude.com/docs/en/api/messages) for provider requirements.
+Keep the robot-specific axes, cameras and Cartesian mapping from your rig config. HF tokens need Inference Providers permission. See [HF chat completion](https://huggingface.co/docs/inference-providers/tasks/chat-completion), [Gemini compatibility](https://ai.google.dev/gemini-api/docs/openai), and [Claude Messages](https://platform.claude.com/docs/en/api/messages) for provider requirements.
 
 `effort: null` omits the setting and preserves the provider's default; the string `"none"` explicitly requests no thinking where supported. `service_tier` is optional and only supported by upstream's Responses transport. No OpenAI-specific reasoning or tier options are injected into Claude, Gemini or HF requests. `max_retries` controls upstream retries; a successful request with your account is still required to verify model access. Offline provider tests validate serialization and conversation replay, not account access.
 
@@ -73,7 +75,7 @@ Keep the robot-specific axes, cameras and optional Cartesian mapping from your r
 ## One agent turn
 
 1. `/start` supplies fresh camera images, measured state and the task. Merely initializing the engine does not request agent motion; robot connection may still perform that driver's normal setup/calibration.
-2. The model calls `move_joints` or, with Cartesian configuration, `move_to`. Each call names only the dimensions to change and includes a short human-readable `note` explaining the observation and intent.
+2. The model calls `move_to` in the supplied Cartesian examples (`move_joints` when explicitly configured for joint mode). Only the movement tool for the configured mode is exposed. Each call names only the dimensions to change and includes a short human-readable `note` explaining the observation and intent.
 3. Inspect-robots generates the timed waypoints locally. The model does not choose an arbitrary duration or send motor packets. `max_speed_frac` follows upstream semantics; explicit axis `max_speed` supplies the per-step ceiling. Motion calls have the upstream ten-second cap.
 4. LeRobot validates the whole plan before queuing it, then sends one native command per tick through its robot action processor. While the API is thinking, the active control loop re-sends the last target. Measured tracking error and missing fresh observations stop dispatch.
 5. After the motion and `settle_s`, the agent receives new images and measured state. The upstream conversation reports the prior target, execution steps and residual; rejected/interrupted moves are reported as interventions.
@@ -93,34 +95,40 @@ Set `fps` to the command rate and keep `interpolation_multiplier=1`: the agent a
 
 `/vqa` and `/autosteer` belong to the VLA/text-planner path and are not enabled for this backend. With `images=on_demand`, the upstream agent also has its `take_pic` tool; otherwise each turn carries all camera views.
 
-## Optional end-effector control
+## URDF models and end-effector control
 
-Joint mode works with compatible LeRobot **position-commanding** robots without a kinematics model. Cartesian mode reuses LeRobot's existing `RobotKinematics` (Placo) with an accurate URDF, a tool link, explicit native-to-model joint mapping, Cartesian workspace bounds, and a frame description. No inspect-robots hardware driver or separate MuJoCo solver is installed. Velocity/torque actions and omitted mobile-base channels are rejected rather than silently ignored.
+Cartesian mode reuses LeRobot's existing `RobotKinematics` (Placo). The examples already supply the tool link, native-to-model joint mapping, workspace template and frame description. Download the matching **URDF and its adjacent `assets` directory** from the official model repository; Placo needs the meshes when loading the model. No inspect-robots hardware driver or separate MuJoCo solver is installed.
 
-Add `inference.cartesian` to your rig config, covering every arm joint and gripper. This fragment illustrates one arm; replace the path, joint names and bounds for your model:
+The example mappings were checked against these pinned model revisions:
 
-```yaml
-inference:
-  cartesian:
-    left:
-      urdf_path: /absolute/path/to/your_arm.urdf
-      target_frame_name: gripper_frame_link
-      joints:
-        left_joint_0.pos: joint1
-        left_joint_1.pos: joint2
-        left_joint_2.pos: joint3
-        left_joint_3.pos: joint4
-        left_joint_4.pos: joint5
-        left_joint_5.pos: joint6
-      gripper: left_gripper.pos
-      frame_description: "Arm-local base: +X forward, +Y left, +Z up. Verify against this model and rig."
-      position_low: [0.15, -0.25, 0.04]
-      position_high: [0.50, 0.25, 0.40]
-      angle_low: [-1.0, 0.0, 0.0]
-      angle_high: [1.0, 0.0, 0.0]
-      linear_speed: 0.03
-      angular_speed: 0.15
+| Example | Official model                                                                                                                      | Root → controlled link             | Joint mapping                                                       |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------- |
+| SO-101  | [SO-ARM100, `5f6d2b8`](https://github.com/TheRobotStudio/SO-ARM100/tree/5f6d2b876a53a4872e405b991dd925556c9e38a4/Simulation/SO101)  | `base_link` → `gripper_frame_link` | Five named arm joints, degrees × π/180                              |
+| YAM     | [I2RT, `120c3c8`](https://github.com/i2rt-robotics/i2rt/tree/120c3c81400171174604e503943f8d1ebc891058/i2rt/robot_models/arm/yam/v1) | `base` → `gripper`                 | Each arm's `joint_0.pos`…`joint_5.pos` → `joint1`…`joint6`, radians |
+
+For SO-101, download the model with a sparse checkout (choose a destination outside the LeRobot checkout):
+
+```bash
+git clone --filter=blob:none --no-checkout https://github.com/TheRobotStudio/SO-ARM100.git /absolute/path/to/SO-ARM100
+git -C /absolute/path/to/SO-ARM100 sparse-checkout set Simulation/SO101
+git -C /absolute/path/to/SO-ARM100 checkout 5f6d2b876a53a4872e405b991dd925556c9e38a4
 ```
+
+Set the SO example's `inference.cartesian.arm.urdf_path` to `/absolute/path/to/SO-ARM100/Simulation/SO101/so101_new_calib.urdf`. This model uses the new SO-101 calibration convention; verify its joint zeros against your calibrated robot.
+
+For YAM:
+
+```bash
+git clone --filter=blob:none --no-checkout https://github.com/i2rt-robotics/i2rt.git /absolute/path/to/i2rt
+git -C /absolute/path/to/i2rt sparse-checkout set i2rt/robot_models/arm/yam/v1
+git -C /absolute/path/to/i2rt checkout 120c3c81400171174604e503943f8d1ebc891058
+```
+
+Set **both** YAM `urdf_path` entries to `/absolute/path/to/i2rt/i2rt/robot_models/arm/yam/v1/yam.urdf`. The controlled `gripper` link is the arm's **flange**, not the grasp centre between the fingertips. To command a calibrated fingertip TCP, add a fixed tool link with your measured transform to a local copy of the URDF and change `target_frame_name`. Do not substitute a finger link: its prismatic joint is outside the arm's IK chain. Left and right targets use separate arm-local base frames, even when they share the same model file; they are not coordinates in a common world frame.
+
+The SO-101 has **five arm degrees of freedom**, so position and orientation cannot all vary independently. Its example allows relative yaw, pitch and roll changes, but arbitrary six-dimensional poses can still be unreachable. The YAM example pins pitch and roll to the orientation measured at `/start`. For either robot, replace the workspace bounds and describe the physical base axes and camera placement for your rig. An XYZ box alone is not a reachable-workspace or collision guarantee.
+
+To explicitly use joint control, remove `inference.cartesian` (or set it to `{}`). The existing native `axes` contracts remain required in both modes: in Cartesian mode they validate the IK-generated commands; in joint mode they define `move_joints`. Joint mode needs no URDF or `agent-ik` extra and supports compatible LeRobot position-commanding robots. Velocity/torque actions and omitted mobile-base channels are rejected rather than silently ignored.
 
 For bimanual control also map `right` with its own base frame. Both groups must be disjoint and together cover every native action. Each arm maps exactly the moving joints between its URDF root and tool link, in explicit order. The base and other branches (such as fingers) are held fixed during IK. Cartesian tool chains currently require independently actuated, limited **revolute** joints; prismatic, continuous, floating and mimic joints in that chain are rejected. Joint-only mode does not impose this URDF restriction.
 
@@ -132,7 +140,7 @@ The convention follows [inspect-robots-yam](https://github.com/robocurve/inspect
 R_target = Rz(yaw) × Ry(-pitch) × Rx(roll) × R_start
 ```
 
-Positive pitch is about **negative base Y**. Pitch and roll default to pinned zero targets; widen their bounds to permit orientation changes. Observations still report measured residual orientation. Upstream linearly interpolates XYZ and the relative Euler coordinates, without angle wrapping. LeRobot solves IK for **each Cartesian waypoint**, seeded from the preceding joint solution; it does not interpolate a single endpoint IK solution through joint space. `ik_max_iters` defaults to 50. The adapter applies the intersection of native and URDF joint limits and independently checks the resulting FK position and orientation against the target tolerances. A failed IK, joint limit or native speed check rejects the whole tool motion and lets the agent repair its proposal. Under-actuated arms may not reach the requested full pose and should use joint mode when necessary.
+Positive pitch is about **negative base Y**. Pitch and roll default to pinned zero targets when their bounds are omitted; the SO-101 example explicitly widens them to permit orientation changes. Observations still report measured residual orientation. Upstream linearly interpolates XYZ and the relative Euler coordinates, without angle wrapping. LeRobot solves IK for **each Cartesian waypoint**, seeded from the preceding joint solution; it does not interpolate a single endpoint IK solution through joint space. `ik_max_iters` defaults to 50. The adapter applies the intersection of native and URDF joint limits and independently checks the resulting FK position and orientation against the target tolerances. A failed IK, joint limit or native speed check rejects the whole tool motion and lets the agent repair its proposal. Under-actuated arms may not reach the requested full pose and should use joint mode when necessary.
 
 This differs from the standalone YAM driver's incremental joint clamping/resynchronization. The adapter has no mesh collision checker or automatic camera-to-base calibration. FK describes the gripper in its base frame; it does not convert image pixels to a grasp position. Include measured calibration in `robot_notes` if available and retain its provenance.
 

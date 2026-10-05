@@ -1,6 +1,6 @@
 # Template: verify bounds, units, directions, camera paths and calibration before use.
-# Joint mode needs no URDF. For Cartesian control, see docs/source/agent_rollout.mdx:
-# use LeRobot RobotKinematics with a tool link and explicit degree-to-radian mapping.
+# Cartesian move_to is the default. Download the pinned SO-101 model and set
+# urdf_path as described in docs/source/agent_rollout.mdx (keep its assets directory).
 # Provider fields below are one explicit example, not backend defaults.
 interactive: true
 fps: 10
@@ -19,6 +19,36 @@ inference:
   robot_notes: Replace these notes with verified joint directions, camera placement,
     table height and frame/calibration information for your rig. RGB camera images
     do not establish a metric camera-to-base transform.
+    The SO-101 has five arm joints, so XYZ and orientation are coupled; adjust
+    orientation when needed and do not assume arbitrary six-dimensional poses are reachable.
+  cartesian:
+    arm:
+      urdf_path: /absolute/path/to/SO-ARM100/Simulation/SO101/so101_new_calib.urdf
+      target_frame_name: gripper_frame_link
+      joints:
+        shoulder_pan.pos: shoulder_pan
+        shoulder_lift.pos: shoulder_lift
+        elbow_flex.pos: elbow_flex
+        wrist_flex.pos: wrist_flex
+        wrist_roll.pos: wrist_roll
+      joint_scale:
+        shoulder_pan.pos: 0.017453292519943295
+        shoulder_lift.pos: 0.017453292519943295
+        elbow_flex.pos: 0.017453292519943295
+        wrist_flex.pos: 0.017453292519943295
+        wrist_roll.pos: 0.017453292519943295
+      gripper: gripper.pos
+      frame_description: Tool gripper_frame_link in the URDF base_link frame.
+        Verify the model joint zeros against your new-calibration SO-101 and
+        describe the base axes relative to your table and cameras before use.
+      # Workspace template in metres, not a calibrated reachable/collision-free region.
+      position_low: [-0.35, -0.35, 0.02]
+      position_high: [0.35, 0.35, 0.50]
+      # Allow orientation changes because this arm has only five arm DOFs.
+      angle_low: [-1.0, -1.0, -1.0]
+      angle_high: [1.0, 1.0, 1.0]
+      linear_speed: 0.01
+      angular_speed: 0.15
   axes:
     shoulder_pan.pos:
       minimum: -90

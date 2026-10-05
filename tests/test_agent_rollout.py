@@ -290,6 +290,37 @@ def test_cartesian_waypoints_preserve_line_and_negative_pitch_convention(tmp_pat
     assert np.linalg.norm(joints[-1] - adapter.vector(pose)) > 0.01
 
 
+def test_cartesian_adapter_binds_upstream_move_to(tmp_path):
+    from types import SimpleNamespace
+
+    from inspect_robots_agent._tools import build_toolset
+
+    adapter, pose = cartesian_adapter(tmp_path)
+    obs = adapter.observation({**pose, "cam": raw()["cam"]}, "move", 0, [])
+    tools = build_toolset(
+        adapter.info.action_space,
+        adapter.info.observation_space,
+        adapter.fps,
+        pre_check=adapter.pre_check,
+    )
+    names = {tool["function"]["name"] for tool in tools.schemas()}
+    assert "move_to" in names
+    assert "move_joints" not in names
+    initial = obs.state["command_state"]
+    target_z = float(initial[2] + 0.01)
+    result = tools.execute(
+        SimpleNamespace(
+            name="move_to", arguments=json.dumps({"targets": {"arm_z": target_z}, "note": "Raise 1 cm"})
+        ),
+        obs,
+    )
+    assert result.error is None
+    assert result.chunk is not None
+    joints = adapter.translate(np.stack([action.data for action in result.chunk.actions]))
+    actual = adapter.arms["arm"].observe(dict(zip(adapter.keys, joints[-1], strict=True)))
+    np.testing.assert_allclose(actual, [*initial[:2], target_z, *initial[3:]], atol=0.0002)
+
+
 def test_ik_rejects_path_before_any_dispatch(tmp_path):
     adapter, _ = cartesian_adapter(tmp_path)
     assert adapter.pre_check(np.array([[0.99, 0, 0.2, 0, 0, 0]]))
@@ -577,15 +608,22 @@ def test_checked_in_examples_decode_agent_contracts():
 
     from lerobot.rollout.inference.factory import InferenceEngineConfig
 
-    for name, dimensions in (("so_follower", 6), ("yam", 14)):
+    for name, dimensions, arm_names in (("so_follower", 6, {"arm"}), ("yam", 14, {"left", "right"})):
         value = yaml.safe_load(Path(f"examples/agent_rollout/{name}.yaml").read_text())
         cfg = draccus.decode(InferenceEngineConfig, value["inference"])
         assert isinstance(cfg, AgentInferenceConfig)
         assert len(cfg.axes) == dimensions
-        adapter = RobotAdapter(
-            cfg, list(cfg.axes), {**dict.fromkeys(cfg.axes, float), "cam": (8, 8, 3)}, name, value["fps"]
-        )
-        assert adapter.info.action_space.shape == (dimensions,)
+        # Model paths are operator-supplied; config decoding must work offline.
+        assert set(cfg.cartesian) == arm_names
+        mapped = []
+        for arm in cfg.cartesian.values():
+            mapped.extend(arm.joints)
+            mapped.append(arm.gripper)
+            for key in arm.joints:
+                expected_scale = np.pi / 180 if cfg.axes[key].unit == "degrees" else 1.0
+                assert arm.joint_scale.get(key, 1.0) == pytest.approx(expected_scale)
+        assert len(mapped) == len(set(mapped)) == dimensions
+        assert set(mapped) == set(cfg.axes)
 
 
 def test_encoder_residual_is_reported_but_never_commanded_outside_bounds(tmp_path):

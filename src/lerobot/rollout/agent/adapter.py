@@ -116,7 +116,10 @@ class RobotAdapter:
                 self.command_high,
                 ActionSemantics(
                     control_mode="eef_abs_pose" if self.arms else "joint_pos",
-                    rotation_repr="euler_xyz" if self.arms else "none",
+                    # Match inspect-robots-yam: named scalar yaw/pitch/roll
+                    # targets, not a packed rotation representation. The agent
+                    # rejects euler_xyz; the frame convention is in docs above.
+                    rotation_repr="none",
                     gripper="continuous",
                     dim_labels=tuple(self.labels),
                     max_step=tuple(
