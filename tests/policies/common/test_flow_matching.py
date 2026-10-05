@@ -28,6 +28,7 @@ asserted bit-identical (``torch.equal`` / ``atol=0``) to it on the same RNG stre
 import pytest
 import torch
 
+from lerobot.policies.common import flow_matching
 from lerobot.policies.common.flow_matching import (
     _beta_distribution,
     device_beta_sampler,
@@ -83,27 +84,23 @@ def test_sample_noise_seeded():
     assert n1.dtype == torch.float32 and n1.shape == (2, 8, 4)
 
 
-# --- Cached Beta concentrations must stay on CPU ------------------------------------------
+# --- Beta concentrations must stay on CPU --------------------------------------------------
 
 
 def test_beta_concentrations_are_cpu_under_a_non_cpu_default_device():
-    # Regression: the cache means one construction under an ambient default device would be
-    # reused forever, and Beta's _sample_dirichlet has no meta (or MPS) kernel.
+    # Regression: Beta's _sample_dirichlet has no meta (or MPS) kernel, so the concentrations
+    # must not follow an ambient default device.
     alpha, beta = 1.7, 1.3
-    _beta_distribution.cache_clear()
-    try:
-        with torch.device("meta"):
-            dist = _beta_distribution(alpha, beta)
-        assert dist.concentration1.device.type == "cpu"
-        assert dist.concentration0.device.type == "cpu"
+    with torch.device("meta"):
+        dist = _beta_distribution(alpha, beta)
+    assert dist.concentration1.device.type == "cpu"
+    assert dist.concentration0.device.type == "cpu"
 
-        with torch.device("meta"):
-            sample = sample_beta(alpha, beta, 16, "cpu")
-        assert sample.device.type == "cpu"
-        assert sample.shape == (16,) and sample.dtype == torch.float32
-        assert sample.min() >= 0.0 and sample.max() <= 1.0
-    finally:
-        _beta_distribution.cache_clear()
+    with torch.device("meta"):
+        sample = sample_beta(alpha, beta, 16, "cpu")
+    assert sample.device.type == "cpu"
+    assert sample.shape == (16,) and sample.dtype == torch.float32
+    assert sample.min() >= 0.0 and sample.max() <= 1.0
 
 
 def test_unpinned_concentrations_would_have_broken_under_meta():
@@ -113,15 +110,6 @@ def test_unpinned_concentrations_would_have_broken_under_meta():
     assert unpinned.concentration1.device.type == "meta"
     with pytest.raises(NotImplementedError):
         unpinned.sample((4,))
-
-
-def test_beta_distribution_is_cached_per_concentration_pair():
-    _beta_distribution.cache_clear()
-    try:
-        assert _beta_distribution(1.5, 1.0) is _beta_distribution(1.5, 1.0)
-        assert _beta_distribution(1.5, 1.0) is not _beta_distribution(2.0, 2.0)
-    finally:
-        _beta_distribution.cache_clear()
 
 
 # --- sample_noise dtype and distribution ---------------------------------------------------
@@ -292,18 +280,16 @@ def test_wall_x_recipe_keeps_its_device_side_rng_stream():
     assert torch.equal(time, expected)
 
 
-def test_wall_x_recipe_never_draws_from_the_cached_cpu_distribution():
+def test_wall_x_recipe_never_draws_from_the_cpu_distribution(monkeypatch):
     # Device-independent proof that wall_x still samples on its own device: the shared CPU
     # distribution is never even constructed, so the CPU generator is not advanced.
+    def fail(*args):
+        raise AssertionError("the shared CPU Beta distribution must not be built")
+
+    monkeypatch.setattr(flow_matching, "_beta_distribution", fail)
     device = torch.device("cpu")
-    _beta_distribution.cache_clear()
-    try:
-        sample = sample_beta(1.5, 1.0, 64, device, sampler=device_beta_sampler(device))
-        assert sample.shape == (64,)
-        assert _beta_distribution.cache_info().currsize == 0
-        assert _beta_distribution.cache_info().misses == 0
-    finally:
-        _beta_distribution.cache_clear()
+    sample = sample_beta(1.5, 1.0, 64, device, sampler=device_beta_sampler(device))
+    assert sample.shape == (64,)
 
 
 def test_device_beta_sampler_builds_concentrations_on_the_requested_device():
@@ -320,7 +306,7 @@ def test_device_beta_sampler_builds_concentrations_on_the_requested_device():
     assert sample.shape == (8,)
 
 
-def test_injected_sampler_bypasses_the_cached_cpu_distribution():
+def test_injected_sampler_bypasses_the_cpu_distribution():
     draws = torch.linspace(0.0, 1.0, 8)
     sample = sample_beta(1.5, 1.0, 8, "cpu", sampler=lambda alpha, beta, bsize: draws)
     assert torch.equal(sample, draws)

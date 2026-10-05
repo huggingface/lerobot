@@ -28,7 +28,6 @@ them does not affect checkpoints.
 """
 
 from collections.abc import Callable
-from functools import cache
 from typing import TYPE_CHECKING, Literal
 
 import torch
@@ -41,15 +40,13 @@ BetaSampler = Callable[[float, float, int], Tensor]
 """Draws ``bsize`` raw ``Beta(alpha, beta)`` samples as ``(alpha, beta, bsize) -> (bsize,)``."""
 
 
-@cache
 def _beta_distribution(alpha: float, beta: float) -> "torch.distributions.Beta":
-    """Cached ``Beta(alpha, beta)`` whose concentrations are pinned to CPU.
+    """``Beta(alpha, beta)`` whose concentrations are pinned to CPU.
 
-    Beta sampling goes through ``_sample_dirichlet``, which is unimplemented on MPS, so the
-    draw happens on CPU and the result is moved afterwards. The concentrations are built
-    with an explicit ``device="cpu"`` rather than the ambient default device: because this
-    function is cached, a single construction inside a ``torch.device(...)`` context would
-    otherwise be reused for every later call.
+    Beta sampling goes through ``_sample_dirichlet``, which is unimplemented on MPS and meta,
+    so the draw happens on CPU and the result is moved afterwards. The concentrations are
+    built with an explicit ``device="cpu"`` rather than the ambient default device, so a
+    call inside a ``torch.device(...)`` context still samples on CPU.
     """
     alpha_t = torch.tensor(alpha, device="cpu", dtype=torch.float32)
     beta_t = torch.tensor(beta, device="cpu", dtype=torch.float32)
@@ -95,7 +92,7 @@ def sample_beta(
         dtype: Cast applied together with the device move. ``None`` (default) keeps the
             sampler's float32, the openpi convention. Pass the action dtype to reproduce a
             ``.to(device, dtype=...)`` that precedes the caller's own transform (groot).
-        sampler: Optional hook replacing the cached CPU distribution, for callers that must
+        sampler: Optional hook replacing the CPU distribution, for callers that must
             preserve a different RNG stream (see ``device_beta_sampler``).
     """
     if sampler is not None:
