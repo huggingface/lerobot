@@ -354,6 +354,7 @@ lerobot-train \
 | `policy.action_head`                        | Uses the checkpoint's `flow` or `actioncodec` action path         |
 | `policy.runtime_system`                     | Selects direct System 1 or unified System 2 reasoning and action  |
 | `policy.runtime_cot_fields`                 | System 2 chain of thought: `["subtask"]` or `["bbox", "subtask"]` |
+| `policy.dtype`                              | `bfloat16` (released mixed precision on CUDA) or `float32`        |
 | `policy.chunk_size`                         | Number of actions predicted in each chunk                         |
 | `policy.n_action_steps`                     | Number of actions executed before replanning                      |
 | `policy.use_language_recipe`                | Enable G0.5's built-in language-supervision recipe                |

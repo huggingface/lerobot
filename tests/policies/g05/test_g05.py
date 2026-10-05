@@ -26,12 +26,14 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5VisionRotaryEmbedding,
 )
 
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.g05.configuration_g05 import (
     G05_CAMERA_PROFILES,
     G05_EMBODIMENT_MAPPINGS,
     G05Config,
+    _g05_default_recipe,
     derive_g05_slots,
     make_g05_prompt_template,
 )
@@ -2094,6 +2096,33 @@ def test_training_sequences_drop_the_state_token_with_proprio_dropout():
 def test_proprio_dropout_p_must_be_a_probability():
     with pytest.raises(ValueError, match="proprio_dropout_p"):
         G05Config(proprio_dropout_p=1.5)
+
+
+def test_recipe_path_is_read_once_so_a_saved_config_keeps_its_recipe(tmp_path: Path):
+    pytest.importorskip("datasets", reason="recipe files require lerobot[dataset]")
+    import yaml
+
+    recipe = _g05_default_recipe()
+    recipe["blend"]["cot"]["weight"] = 7.0
+    recipe_file = tmp_path / "recipe.yaml"
+    recipe_file.write_text(yaml.safe_dump(recipe))
+
+    config = G05Config(device="cpu", predict_cot=True, recipe_path=str(recipe_file))
+    assert config.recipe_path is None
+    assert config.language_recipe_enabled
+    assert config.recipe["blend"]["cot"]["weight"] == 7.0
+
+    config.save_pretrained(tmp_path / "checkpoint")
+    recipe["blend"]["cot"]["weight"] = 1.0
+    recipe_file.write_text(yaml.safe_dump(recipe))
+    loaded = PreTrainedConfig.from_pretrained(tmp_path / "checkpoint")
+    assert loaded.recipe_path is None
+    assert loaded.recipe["blend"]["cot"]["weight"] == 7.0
+
+
+def test_dtype_must_be_bfloat16_or_float32():
+    with pytest.raises(ValueError, match="dtype"):
+        G05Config(dtype=torch.float16)
 
 
 def test_mrope_positions_are_built_on_the_host_and_returned_on_the_token_device():
