@@ -45,13 +45,13 @@ X-VLA shows that generalist robot intelligence does not require increasingly com
 After installing LeRobot, install the X-VLA dependencies:
 
 ```bash
-pip install -e .[xvla]
+pip install -e ".[xvla]"
 ```
 
-After the new release, you'll be able to do:
+If you installed LeRobot from PyPI instead:
 
 ```bash
-pip install lerobot[xvla]
+pip install 'lerobot[xvla]'
 ```
 
 ## Quick Start
@@ -136,7 +136,7 @@ lerobot-train \
   --policy.freeze_vision_encoder=false \
   --policy.freeze_language_encoder=false \
   --policy.train_policy_transformer=true \
-  --policy.train_soft_prompts=true \
+  --policy.train_soft_prompts=true
 ```
 
 ### Training Parameters Explained
@@ -345,6 +345,7 @@ If your robot has a unique action space, you can create a custom action mode:
 
 ```python
 from lerobot.policies.xvla.action_hub import BaseActionSpace, register_action
+import torch
 import torch.nn as nn
 
 @register_action("my_custom_robot")
