@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 from lerobot.utils.constants import ACTION
 
-from .converters import from_tensor_to_numpy, to_tensor
+from .converters import to_tensor
 from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry
 
 
@@ -240,10 +240,10 @@ class _NormalizationMixin:
         for key, tensor_dict in self._tensor_stats.items():
             self.stats[key] = {}
             for stat_name, tensor in tensor_dict.items():
-                # Convert tensor back to python/numpy format
+                # Preserve singleton dimensions when to() reconstructs the tensors.
                 # NumPy cannot represent bfloat16; float32 preserves its values exactly.
                 numpy_tensor = tensor.float() if tensor.dtype == torch.bfloat16 else tensor
-                self.stats[key][stat_name] = from_tensor_to_numpy(numpy_tensor)
+                self.stats[key][stat_name] = numpy_tensor.detach().cpu().numpy()
 
     def get_config(self) -> dict[str, Any]:
         """
