@@ -37,12 +37,12 @@ from lerobot.utils.import_utils import require_package
 from ..common.vla_utils import pad_vector
 from ..pretrained import ActionSelectKwargs, PreTrainedPolicy, T
 from .configuration_dm05 import DM05Config
-from .constants import MODEL_INPUT_PREFIX
 from .core.adapter import (
     flatten_feature_names,
     import_dm05_core,
 )
 from .core.utils import build_action_prefix_mask, validate_action_prefill_pair
+from .processor_dm05 import MODEL_INPUT_PREFIX
 
 logger = logging.getLogger(__name__)
 

@@ -32,12 +32,6 @@ pytest.importorskip("transformers")
 from lerobot.common.train_utils import generate_model_card, publish_trained_model
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.policies.dm05.configuration_dm05 import DM05Config
-from lerobot.policies.dm05.constants import MODEL_INPUT_PREFIX, STATE_BINS
-from lerobot.policies.dm05.conversion_dm05 import (
-    DM05ClipNormalizedProcessorStep,
-    DM05StateBinsProcessorStep,
-    DM05TokenizerProcessorStep,
-)
 from lerobot.policies.dm05.core.modeling import (
     DM05CoreModelConfig,
     DM05ForCausalLM,
@@ -45,7 +39,14 @@ from lerobot.policies.dm05.core.modeling import (
 )
 from lerobot.policies.dm05.core.tokenization import DM05Tokenization
 from lerobot.policies.dm05.modeling_dm05 import DM05Policy, prepare_compiled_suffix_inputs
-from lerobot.policies.dm05.processor_dm05 import make_dm05_pre_post_processors
+from lerobot.policies.dm05.processor_dm05 import (
+    MODEL_INPUT_PREFIX,
+    STATE_BINS,
+    DM05ClipNormalizedProcessorStep,
+    DM05StateBinsProcessorStep,
+    DM05TokenizerProcessorStep,
+    make_dm05_pre_post_processors,
+)
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
