@@ -56,6 +56,10 @@ class RolloutStrategyConfig(draccus.ChoiceRegistry, abc.ABC):
     # Whether the strategy honours the restartable-run() contract that
     # ``--interactive=true`` requires (see ``RolloutStrategy``).
     supports_interactive: ClassVar[bool] = False
+    # Whether the strategy can run through the inference engine without a VLA
+    # policy/processors and end its run normally when the agent completes.
+    # Independent of the restartable contract required by interactive mode.
+    supports_agent_inference: ClassVar[bool] = False
     # "none": any --dataset.* flag is rejected.  "optional": a dataset is created when
     # --dataset.* flags are given (``ctx.data.dataset`` may be None).  "required":
     # --dataset.repo_id is mandatory.
@@ -90,6 +94,7 @@ class BaseStrategyConfig(RolloutStrategyConfig):
     """Autonomous rollout with no data recording."""
 
     supports_interactive: ClassVar[bool] = True
+    supports_agent_inference: ClassVar[bool] = True
 
 
 @RolloutStrategyConfig.register_subclass("sentry")
@@ -106,6 +111,7 @@ class SentryStrategyConfig(RolloutStrategyConfig):
     """
 
     supports_interactive: ClassVar[bool] = True
+    supports_agent_inference: ClassVar[bool] = True
     dataset_mode: ClassVar[str] = "required"
 
     upload_every_n_episodes: int = 5
@@ -415,8 +421,13 @@ class RolloutConfig:
         if isinstance(self.inference, AgentInferenceConfig):
             if self.policy is not None or self.planner is not None or self.use_torch_compile:
                 raise ValueError("Agent inference owns its VLM: omit policy, planner and torch.compile")
-            if self.strategy.type not in ("base", "sentry") or self.teleop is not None:
-                raise ValueError("Agent inference currently supports base/sentry without teleoperation")
+            if not strategy.supports_agent_inference:
+                raise ValueError(
+                    f"{strategy.type} strategy does not support agent inference: "
+                    "its config must declare supports_agent_inference=True"
+                )
+            if self.teleop is not None:
+                raise ValueError("Agent inference currently runs without teleoperation: omit --teleop.*")
             if self.interpolation_multiplier != 1:
                 raise ValueError(
                     "Agent tools already interpolate: use interpolation_multiplier=1 and set fps directly"

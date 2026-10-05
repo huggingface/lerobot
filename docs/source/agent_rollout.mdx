@@ -4,6 +4,8 @@
 
 LeRobot owns the hardware connection, control thread, interactive session and dataset recording. The VLM worker receives copied RGB images and measured positions. It never has a robot handle or permission to run arbitrary Python.
 
+Base and sentry strategies support this backend. A [third-party strategy](./inference#bring-your-own-strategy) can opt in with `supports_agent_inference: ClassVar[bool] = True` on its config. It must run through the inference engine without a VLA policy or policy processors and end normally when the engine reports completion. This is separate from `supports_interactive`, which is also required for interactive sessions. Teleoperation remains unsupported for agent inference.
+
 | Responsibility                                                      | Owner                |
 | ------------------------------------------------------------------- | -------------------- |
 | Provider clients, prompt, conversation and tool calls               | inspect-robots-agent |

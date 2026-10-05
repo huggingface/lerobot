@@ -546,6 +546,78 @@ def test_config_allows_no_vla_and_rejects_double_interpolation(tmp_path, monkeyp
         replace(cfg, interpolation_multiplier=2)
 
 
+@pytest.mark.parametrize("interactive", [False, True])
+def test_agent_strategy_external_opt_in(tmp_path, monkeypatch, interactive):
+    from dataclasses import dataclass, fields
+    from typing import ClassVar
+
+    from lerobot.rollout.configs import RolloutConfig, RolloutStrategyConfig
+    from tests.mocks.mock_robot import MockRobotConfig
+
+    @RolloutStrategyConfig.register_subclass("test_agent_external")
+    @dataclass
+    class ExternalConfig(RolloutStrategyConfig):
+        supports_interactive: ClassVar[bool] = True
+        supports_agent_inference: ClassVar[bool] = True
+
+    monkeypatch.setattr("sys.argv", ["lerobot-rollout"])
+    try:
+        cfg = RolloutConfig(
+            robot=MockRobotConfig(),
+            strategy=ExternalConfig(),
+            inference=config(tmp_path),
+            interactive=interactive,
+        )
+        assert cfg.policy is None
+        assert "supports_agent_inference" not in {f.name for f in fields(cfg.strategy)}
+        monkeypatch.setattr(ExternalConfig, "supports_agent_inference", False)
+        with pytest.raises(ValueError, match="supports_agent_inference"):
+            replace(cfg)
+    finally:
+        RolloutStrategyConfig.get_known_choices().pop("test_agent_external")
+
+
+def test_agent_strategy_capability_defaults_and_inheritance(tmp_path, monkeypatch):
+    from dataclasses import dataclass
+
+    from lerobot.rollout.configs import BaseStrategyConfig, RolloutConfig, RolloutStrategyConfig
+    from tests.mocks.mock_robot import MockRobotConfig
+
+    @RolloutStrategyConfig.register_subclass("test_agent_base_extension")
+    @dataclass
+    class BaseExtensionConfig(BaseStrategyConfig):
+        pass
+
+    monkeypatch.setattr("sys.argv", ["lerobot-rollout"])
+    try:
+        assert RolloutStrategyConfig.supports_agent_inference is False
+        cfg = RolloutConfig(
+            robot=MockRobotConfig(), strategy=BaseExtensionConfig(), inference=config(tmp_path)
+        )
+        assert cfg.strategy.supports_agent_inference is True
+    finally:
+        RolloutStrategyConfig.get_known_choices().pop("test_agent_base_extension")
+
+
+@pytest.mark.parametrize("strategy_name", ["base", "sentry"])
+def test_agent_builtin_strategies_still_reject_teleop(tmp_path, monkeypatch, strategy_name):
+    from lerobot.configs.dataset import DatasetRecordConfig
+    from lerobot.rollout.configs import RolloutConfig, RolloutStrategyConfig
+    from tests.mocks.mock_robot import MockRobotConfig
+    from tests.mocks.mock_teleop import MockTeleopConfig
+
+    monkeypatch.setattr("sys.argv", ["lerobot-rollout"])
+    strategy = RolloutStrategyConfig.get_choice_class(strategy_name)()
+    cfg = RolloutConfig(
+        robot=MockRobotConfig(),
+        strategy=strategy,
+        dataset=DatasetRecordConfig(repo_id="local/agent_test") if strategy_name == "sentry" else None,
+        inference=config(tmp_path),
+    )
+    with pytest.raises(ValueError, match="without teleoperation"):
+        replace(cfg, teleop=MockTeleopConfig())
+
+
 def test_agent_context_builds_before_hardware_without_vla_loading(tmp_path, monkeypatch):
     from lerobot.robots.so_follower.config_so_follower import SO101FollowerConfig
     from lerobot.rollout import context
