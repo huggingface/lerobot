@@ -73,7 +73,7 @@ def test_from_pretrained_raises_when_no_root_config_and_no_checkpoints(monkeypat
 @pytest.mark.parametrize("pass_dir", [False, True])
 def test_resolve_resume_checkpoint_accepts_file_or_pretrained_model_dir(tmp_path, monkeypatch, pass_dir):
     """`--config_path` may point at the checkpoint's train_config.json or at its
-    pretrained_model/ directory; both must resolve `resume_pretrained_dir` to the
+    pretrained_model/ directory; both must resolve `checkpoint_path` to the step directory above the
     pretrained_model/ directory (regression test for the directory case, which
     previously resolved one level too high and failed on model.safetensors)."""
     pretrained_dir = tmp_path / "checkpoints" / "000002" / "pretrained_model"
@@ -90,7 +90,6 @@ def test_resolve_resume_checkpoint_accepts_file_or_pretrained_model_dir(tmp_path
 
     cfg._resolve_resume_checkpoint()
 
-    assert cfg.resume_pretrained_dir == pretrained_dir
     # The model the run was fine-tuned from survives the resume, for the published card.
     assert cfg.policy.pretrained_path == Path("user/base_model")
     assert cfg.checkpoint_path == pretrained_dir.parent

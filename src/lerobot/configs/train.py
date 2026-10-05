@@ -194,13 +194,6 @@ class TrainPipelineConfig(HubMixin):
             return self.reward_model  # type: ignore[return-value]
         return self.policy  # type: ignore[return-value]
 
-    @property
-    def resume_pretrained_dir(self) -> Path | None:
-        """The checkpoint's `pretrained_model/` dir a resumed run loads weights and processors from."""
-        if not self.resume or self.checkpoint_path is None:
-            return None
-        return Path(self.checkpoint_path) / PRETRAINED_MODEL_DIR
-
     def _resolve_pretrained_from_cli(self) -> None:
         """Resolve the pretrained source passed on the CLI into a loaded config.
 
@@ -264,7 +257,7 @@ class TrainPipelineConfig(HubMixin):
                 self.output_dir = Path("outputs/train") / f"{now:%Y-%m-%d}/{now:%H-%M-%S}_resume"
             self.checkpoint_path = resolve_resume_checkpoint(config_path, self.output_dir)
         # `pretrained_path` keeps naming the model the run started from (the model card's
-        # `base_model`); the resumed weights and processors load from `resume_pretrained_dir`.
+        # `base_model`); the resumed weights and processors load from `checkpoint_path`.
 
     def validate(self) -> None:
         available_contexts = multiprocessing.get_all_start_methods()

@@ -125,9 +125,10 @@ def test_training_entrypoint_only_rebuilds_for_language_finetuning(
 ):
     config = _act_config()
     pre, post = factory.make_pre_post_processors(config, dataset_stats=_stats(10.0))
-    pre.save_pretrained(tmp_path)
-    post.save_pretrained(tmp_path)
-    config.pretrained_path = str(tmp_path)
+    checkpoint_dir = tmp_path / "pretrained_model"
+    pre.save_pretrained(checkpoint_dir)
+    post.save_pretrained(checkpoint_dir)
+    config.pretrained_path = str(checkpoint_dir)
     from lerobot.datasets.recipe import MessageTurn, TrainingRecipe, resolve_recipe_override
 
     recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="${task}", stream="low_level")])
@@ -141,7 +142,7 @@ def test_training_entrypoint_only_rebuilds_for_language_finetuning(
         trainable_config=config,
         policy=config,
         resume=resume,
-        resume_pretrained_dir=tmp_path if resume else None,
+        checkpoint_path=tmp_path if resume else None,
         rename_map={},
         is_reward_model_training=False,
     )
@@ -221,7 +222,7 @@ def test_finetuning_preserves_statistics_adapted_by_policy_factory(monkeypatch, 
         trainable_config=config,
         policy=config,
         resume=False,
-        resume_pretrained_dir=None,
+        checkpoint_path=None,
         rename_map={},
         is_reward_model_training=False,
     )
@@ -272,7 +273,7 @@ def test_fresh_training_preserves_relative_action_links_and_batch_renaming(
         trainable_config=config,
         policy=config,
         resume=False,
-        resume_pretrained_dir=None,
+        checkpoint_path=None,
         rename_map={"observation.old_state": "observation.state"},
         is_reward_model_training=False,
     )

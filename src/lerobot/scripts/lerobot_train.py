@@ -522,7 +522,9 @@ def train(cfg: TrainPipelineConfig) -> None:
     defer_weight_load = cfg.resume and cfg.checkpoint_format.wants_dcp
     # On resume the weights and processors come from the checkpoint, while `pretrained_path`
     # keeps naming the model the run started from (the published card's `base_model`).
-    resume_pretrained_dir = cfg.resume_pretrained_dir
+    resume_pretrained_dir = (
+        cfg.checkpoint_path / PRETRAINED_MODEL_DIR if cfg.resume and cfg.checkpoint_path is not None else None
+    )
     # validate() guarantees exactly one of `policy` / `reward_model` is set.
     active_cfg = cfg.trainable_config
     if isinstance(active_cfg, RewardModelConfig):
