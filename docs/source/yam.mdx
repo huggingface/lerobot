@@ -1,6 +1,6 @@
-# Bimanual YAM
+# YAM
 
-The `bi_yam_follower` integration supports two standard YAM v1 arms with linear DM4310 grippers on Linux SocketCAN. Like [reBot B601](rebot_b601), it uses `motorbridge.Controller` and its Damiao motor API. Each arm has its own classic CAN interface at 1 Mbit/s: motor IDs 1–7, feedback IDs 17–23, three 4340 motors followed by four 4310 motors. Other grippers and modified encoder zeros need separate validation.
+The `yam_follower` and `bi_yam_follower` integrations support one or two standard YAM v1 arms with linear DM4310 grippers on Linux SocketCAN. Like [reBot B601](rebot_b601), they use `motorbridge.Controller` and its Damiao motor API. Each arm needs its own classic CAN interface at 1 Mbit/s: motor IDs 1–7, feedback IDs 17–23, three 4340 motors followed by four 4310 motors. Other grippers and modified encoder zeros need separate validation.
 
 ## Install and calibrate
 
@@ -8,7 +8,15 @@ The `bi_yam_follower` integration supports two standard YAM v1 arms with linear 
 uv sync --locked --extra yam --extra molmoact2 --extra dataset
 ```
 
-Prepare both SocketCAN interfaces at 1 Mbit/s classic CAN before calibration or control:
+Prepare each SocketCAN interface at 1 Mbit/s classic CAN before calibration or control. For one arm:
+
+```bash
+uv run --no-sync lerobot-setup-can \
+  --mode=setup --interfaces=can0 \
+  --bitrate=1000000 --use_fd=false
+```
+
+For two arms:
 
 ```bash
 uv run --no-sync lerobot-setup-can \
@@ -18,11 +26,19 @@ uv run --no-sync lerobot-setup-can \
 
 `--mode=setup` brings each Linux CAN interface down, configures it, and brings it back up. It sends no motor commands. Run it only when no robot controller is using the interfaces.
 
-Verify which physical arm each interface controls. `expected_adapter_serial` can detect left/right adapter swaps when the robot connects.
+For a bimanual setup, verify which physical arm each interface controls. `expected_adapter_serial` can detect left/right adapter swaps when the robot connects.
 
 A motor-reported `0xD` (communication lost) is different from an interface being down. Do not mask it by automatically clearing faults or restarting the CAN bus during control.
 
-With the arms supported, measure the gripper endpoints:
+With each arm supported, measure its gripper endpoints. For one arm:
+
+```bash
+uv run --no-sync lerobot-calibrate \
+  --robot.type=yam_follower --robot.id=yam \
+  --robot.port=can0
+```
+
+For two arms:
 
 ```bash
 uv run --no-sync lerobot-calibrate \
@@ -30,15 +46,15 @@ uv run --no-sync lerobot-calibrate \
   --robot.left_arm.port=can0 --robot.right_arm.port=can1
 ```
 
-Follow the closed/open prompts. Calibration reads feedback only: it does not enable torque, move the grippers, or change the factory joint zeros. It saves standard LeRobot calibration records; an existing `bi_yam_follower/bimanual_yam.json` from the earlier YAM integration remains compatible. Either raw gripper polarity is supported. Explicit `gripper_closed_rad` and `gripper_open_rad` override the saved endpoints.
+Follow the closed/open prompts. A bimanual calibration handles the left arm and then the right arm. Calibration reads feedback only: it does not enable torque, move the grippers, or change the factory joint zeros. The bimanual robot saves one standard single-arm calibration record for each side, using the derived IDs `bimanual_yam_left` and `bimanual_yam_right`. Either raw gripper polarity is supported. Explicit `gripper_closed_rad` and `gripper_open_rad` override the saved endpoints.
 
 ## Control and units
 
-The observation and action order is `left_joint_0.pos` through `left_joint_5.pos`, `left_gripper.pos`, then the corresponding right-arm fields. Joints are **absolute radians**; each gripper is **0 closed, 1 open**. These are not reBot's degree-valued features. End-effector policies require a separately configured IK processor.
+For one arm, the observation and action order is `joint_0.pos` through `joint_5.pos`, then `gripper.pos`. The bimanual robot prefixes the same fields with `left_` and `right_`. Joints are **absolute radians**; each gripper is **0 closed, 1 open**. These are not reBot's degree-valued features. End-effector policies require a separately configured IK processor.
 
-`read_only` defaults to `true`. With `read_only=false`, connecting validates both arms and cameras before enabling impedance control at the measured pose. This begins holding immediately; interactive `/start` begins policy actions. There is no automatic startup homing. By default, the six joints must be within 0.2 radians of the factory folded zero pose; gripper opening is unrestricted within its calibrated stroke. Set `initial_position_rad` and `initial_tolerance_rad` for a verified alternative starting pose.
+`read_only` defaults to `true`. With `read_only=false`, connecting validates every configured arm and camera before enabling impedance control at the measured pose. This begins holding immediately; interactive `/start` begins policy actions. There is no automatic startup homing. By default, the six joints must be within 0.2 radians of the factory folded zero pose; gripper opening is unrestricted within its calibrated stroke. Set `initial_position_rad` and `initial_tolerance_rad` for a verified alternative starting pose.
 
-A robot-owned servo loop maintains position stiffness and gravity feed-forward while inference runs. It limits joint/gripper target speed, joint tracking error, and gripper proportional torque. If commands expire, it captures and holds the measured position once. Faults or missing feedback stop both arms; this can remove their support. A return motion is never attempted using stale feedback.
+Each arm has a robot-owned servo loop that maintains position stiffness and gravity feed-forward while inference runs. It limits joint/gripper target speed, joint tracking error, and gripper proportional torque. If commands expire, it captures and holds the measured position once. A fault or missing feedback stops the arm; in a bimanual setup it stops both arms. This can remove their support. A return motion is never attempted using stale feedback.
 
 Motorbridge 0.5 returns cached positions without timestamps. A receive-only `python-can` subscriber therefore checks kernel receive timestamps for all seven motors. It sends no packets and does not decode positions; motorbridge owns motor communication and position decoding. The Python servo is not a hard real-time controller. Before connecting, it collects and freezes the preloaded Python heap to keep cyclic GC scans of the large model from delaying the servo. New allocations remain collectable. The freeze is shared across YAM instances and released after the last disconnect, unless a caller already owned a freeze. This is process-wide GC behavior, not a real-time scheduling guarantee. Feedback requests wait for a fresh reply within the existing deadline; timeout errors include per-motor ages and servo cycle timing.
 
