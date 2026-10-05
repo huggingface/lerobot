@@ -19,8 +19,6 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-import torch
-
 from lerobot.utils.import_utils import require_package
 
 
@@ -60,13 +58,6 @@ def import_dm05_core():
     from .modeling import DM05CoreModelConfig, DM05ForCausalLM
 
     return DM05CoreModelConfig, DM05ForCausalLM
-
-
-def resolve_torch_dtype(dtype: str) -> torch.dtype:
-    """Resolve a DM05 dtype string to a torch dtype."""
-    if dtype in {"bfloat16", "float32"}:
-        return getattr(torch, dtype)
-    raise ValueError(f"Unsupported dtype: {dtype}")
 
 
 def normalize_task_batch(task: Any, batch_size: int, default_task: str) -> list[str]:

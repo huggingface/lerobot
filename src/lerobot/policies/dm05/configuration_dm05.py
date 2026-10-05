@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import torch
+
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
@@ -78,7 +80,7 @@ class DM05Config(PreTrainedConfig):
     # is optional and may be unavailable on some training environments.
     use_liger_kernel: bool = False
 
-    dtype: str = "bfloat16"
+    dtype: torch.dtype | None = torch.bfloat16
     vlm_gradient_checkpointing: bool | None = None
     ae_gradient_checkpointing: bool | None = None
     ae_gradient_checkpointing_layers: int | None = None
@@ -158,8 +160,8 @@ class DM05Config(PreTrainedConfig):
             raise ValueError("action_attn_implementation must be one of {auto, eager, sdpa, flex_attention}.")
         if self.compile_suffix_pad_length is not None and self.compile_suffix_pad_length <= 0:
             raise ValueError("compile_suffix_pad_length must be positive or None")
-        if self.dtype not in {"bfloat16", "float32"}:
-            raise ValueError(f"dtype must be 'bfloat16' or 'float32', got {self.dtype!r}")
+        if self.dtype not in (torch.bfloat16, torch.float32):
+            raise ValueError(f"dtype must be torch.bfloat16 or torch.float32, got {self.dtype!r}")
         if self.ae_gradient_checkpointing_layers is not None and self.ae_gradient_checkpointing_layers < 1:
             raise ValueError("ae_gradient_checkpointing_layers must be >= 1 or None")
         if self.tokenizer_max_length is not None and self.tokenizer_max_length <= 0:

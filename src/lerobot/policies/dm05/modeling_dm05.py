@@ -23,7 +23,7 @@ import logging
 import os
 from collections import deque
 from pathlib import Path
-from typing import Any, Unpack
+from typing import Any, Unpack, cast
 
 import torch
 import torch.nn.functional as torch_nn_functional
@@ -41,7 +41,6 @@ from .constants import MODEL_INPUT_PREFIX
 from .core.adapter import (
     flatten_feature_names,
     import_dm05_core,
-    resolve_torch_dtype,
 )
 from .core.utils import build_action_prefix_mask, validate_action_prefill_pair
 
@@ -231,7 +230,7 @@ class DM05Policy(PreTrainedPolicy):
             )
 
         core_config_cls, core_model_cls = import_dm05_core()
-        torch_dtype = resolve_torch_dtype(config.dtype)
+        torch_dtype = cast(torch.dtype, config.dtype)
         if str(config.device) == "cuda" and torch.cuda.is_available():
             local_rank = os.environ.get("LOCAL_RANK")
             if local_rank is not None:
