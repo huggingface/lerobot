@@ -34,7 +34,7 @@ from lerobot.utils.import_utils import require_package
 
 from ..robot import Robot
 from .config_bi_yam_follower import JOINT_LIMITS, MOTOR_NAMES, YAM_FEATURE_NAMES, BiYamFollowerConfig
-from .yam_arm import GravityCompensation, YamArm, decode_positions, validate_target, verify_adapter
+from .yam_arm import YamArm, decode_positions, validate_target, verify_adapter
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,11 @@ class BiYamFollower(Robot):
             raise ValueError("Run lerobot-calibrate with this robot.id to measure both gripper endpoints")
         try:
             if calibrate:
-                # Collect/freeze the preloaded model before any hardware is opened.
+                if not self.config.read_only:
+                    for arm in self.arms.values():
+                        if arm.config.gravity_compensation:
+                            arm.load_gravity_model()
+                # Collect/freeze the preloaded models before any hardware is opened.
                 _ControlGC.acquire()
                 self._gc_acquired = True
             for arm in self.arms.values():
@@ -145,8 +149,6 @@ class BiYamFollower(Robot):
                         > cfg.initial_gripper_tolerance
                     ):
                         raise ValueError(f"{side} gripper is outside the initial pose tolerance")
-                    if cfg.gravity_compensation:
-                        arm.gravity = GravityCompensation()
                 arm.target = arm.position.copy()
                 arm.command = arm.position.copy()
                 arm.updated_at = arm.commanded_at = time.monotonic()

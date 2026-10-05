@@ -19,8 +19,8 @@ from lerobot.robots.bi_yam_follower import (
 )
 from lerobot.robots.bi_yam_follower.config_bi_yam_follower import MOTOR_NAMES, YamArmConfig
 from lerobot.robots.bi_yam_follower.yam_arm import (
-    GravityCompensation,
     YamArm,
+    _gravity_torque,
     decode_positions,
     encode_positions,
 )
@@ -126,12 +126,13 @@ def test_fresh_feedback_accepts_stationary_motors():
     assert len(arm.read(0.2)) == 7
 
 
-def test_slew_gripper_torque_and_gravity_feedforward():
+def test_slew_gripper_torque_and_gravity_feedforward(monkeypatch):
     arm = YamArm(arm_config(max_gripper_speed_s=2))
     arm.position = np.array([0, 0.5, 0.5, 0, 0, 0, 0.5])
     arm.command = arm.position.copy()
     arm.target = arm.position + 0.1
-    arm.gravity = SimpleNamespace(torque=lambda p: np.ones(6))
+    arm.gravity_model = object()
+    monkeypatch.setattr(arm_module, "_gravity_torque", lambda model, position: np.ones(6))
     packet = arm.command_packet(arm.position, 0.01)
     assert packet["joint_0"] == pytest.approx((0.003, 0, 80, 5, 1))
     assert packet["joint_1"][-1] == pytest.approx(1.1)
@@ -157,23 +158,14 @@ def test_default_gripper_slew_preserves_torque_bound(direction, polarity):
     assert (packet[0] - raw_measured) * packet[2] == pytest.approx(direction * polarity * 0.5)
 
 
-def test_gravity_matches_potential_energy_gradient():
-    pytest.importorskip("mujoco")
-    model = GravityCompensation()
+def test_gravity_matches_mujoco_reference():
+    pytest.importorskip("placo")
+    arm = YamArm(arm_config())
+    arm.load_gravity_model()
+    assert arm.gravity_model is not None
     pose = np.array([0.2, 1.0, 1.1, -0.5, 0.3, -0.2, 0.5])
-    torque = model.torque(pose)
-    expected = []
-    for i in range(6):
-        energies = []
-        for delta in (-1e-5, 1e-5):
-            shifted = pose.copy()
-            shifted[i] += delta
-            model.torque(shifted)
-            energies.append(
-                float(-np.sum(model.model.body_mass[:, None] * model.data.xipos * model.model.opt.gravity))
-            )
-        expected.append((energies[1] - energies[0]) / 2e-5)
-    np.testing.assert_allclose(torque, expected, atol=1e-6)
+    expected = [0.0, -1.3779441132, 5.9408414183, 1.0582110186, -0.0023627509, -0.0002296899]
+    np.testing.assert_allclose(_gravity_torque(arm.gravity_model, pose), expected, atol=1e-9)
 
 
 def ready(robot):
@@ -243,6 +235,19 @@ def test_calibration_connect_never_enables_motors(robot, monkeypatch):
     robot.disconnect()
 
 
+def test_gravity_models_load_before_hardware(robot, monkeypatch):
+    mock_arm_io(robot, monkeypatch)
+    robot.config.read_only = False
+    events = []
+    for side, arm in robot.arms.items():
+        arm.config.gravity_compensation = True
+        arm.load_gravity_model = MagicMock(side_effect=lambda side=side: events.append(f"{side}:model"))
+        arm.connect.side_effect = lambda side=side: events.append(f"{side}:connect")
+    robot.connect()
+    robot.disconnect()
+    assert events[:4] == ["left:model", "right:model", "left:connect", "right:connect"]
+
+
 def test_bad_second_arm_pose_never_enables_first(robot, monkeypatch):
     mock_arm_io(robot, monkeypatch)
     robot.config.read_only = False
@@ -291,6 +296,7 @@ def test_calibration_preserves_factory_zeros_and_polarity(robot, monkeypatch):
 def test_installed_optional_dependencies_allow_construction(tmp_path):
     pytest.importorskip("motorbridge")
     pytest.importorskip("can")
+    pytest.importorskip("placo")
     bot = BiYamFollower(BiYamFollowerConfig(id="imports", calibration_dir=tmp_path))
     assert not bot.is_connected
 

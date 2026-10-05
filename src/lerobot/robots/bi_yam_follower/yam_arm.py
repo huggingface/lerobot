@@ -16,6 +16,8 @@
 
 """Motorbridge YAM motor mapping, unit conversion, and per-arm impedance targets."""
 
+from __future__ import annotations
+
 import math
 import time
 from pathlib import Path
@@ -26,7 +28,7 @@ import numpy as np
 from lerobot.utils.import_utils import (
     _can_available,
     _motorbridge_available,
-    _mujoco_available,
+    _placo_available,
     require_package,
 )
 
@@ -38,8 +40,14 @@ if TYPE_CHECKING or _motorbridge_available:
 if TYPE_CHECKING or _can_available:
     import can
 
-if TYPE_CHECKING or _mujoco_available:
-    import mujoco
+if TYPE_CHECKING or _placo_available:
+    import placo
+
+
+_MODEL_ARM_JOINTS = tuple(f"joint{i}" for i in range(1, 7))
+_MODEL_GRIPPER_JOINTS = ("joint7", "joint8")
+_MODEL_GRIPPER_STROKE_M = 0.0475
+_GRAVITY_MODEL_PATH = Path(__file__).parent / "assets/yam_linear.xml"
 
 
 def verify_adapter(config: YamArmConfig) -> None:
@@ -90,18 +98,15 @@ def validate_target(values: np.ndarray, *, feedback: bool = False) -> None:
             raise ValueError(f"YAM joint/gripper {i} target {value} outside [{lower}, {upper}]")
 
 
-class GravityCompensation:
-    def __init__(self) -> None:
-        require_package("mujoco", extra="yam")
-        self.model = mujoco.MjModel.from_xml_path(str(Path(__file__).parent / "assets/yam_linear.xml"))
-        self.data = mujoco.MjData(self.model)
-
-    def torque(self, positions: np.ndarray) -> np.ndarray:
-        self.data.qpos[:6] = positions[:6]
-        self.data.qpos[6:] = positions[6] * 0.0475
-        self.data.qvel[:] = 0
-        mujoco.mj_forward(self.model, self.data)
-        return self.data.qfrc_bias[:6].copy()
+def _gravity_torque(model: placo.RobotWrapper, positions: np.ndarray) -> np.ndarray:
+    for name, position in zip(_MODEL_ARM_JOINTS, positions[:6], strict=True):
+        model.set_joint(name, float(position))
+    opening = float(positions[6]) * _MODEL_GRIPPER_STROKE_M
+    for name in _MODEL_GRIPPER_JOINTS:
+        model.set_joint(name, opening)
+    model.update_kinematics()
+    torques = model.static_gravity_compensation_torques_dict("base")
+    return np.asarray([torques[name] for name in _MODEL_ARM_JOINTS])
 
 
 class YamArm:
@@ -118,9 +123,14 @@ class YamArm:
         self.updated_at = 0.0
         self.commanded_at = 0.0
         self.command_timed_out = False
-        self.gravity: GravityCompensation | None = None
+        self.gravity_model: placo.RobotWrapper | None = None
         self.enabled = False
         self.last_feedback: dict[int, float] = {}
+
+    def load_gravity_model(self) -> None:
+        require_package("placo", extra="yam")
+        if self.gravity_model is None:
+            self.gravity_model = placo.RobotWrapper(str(_GRAVITY_MODEL_PATH), placo.Flags.mjcf)
 
     def connect(self) -> None:
         # motorbridge 0.5 exposes cached states but not their timestamps. A passive
@@ -232,7 +242,7 @@ class YamArm:
         raw_goal[6] = np.clip(
             raw_goal[6], raw_position[6] - gripper_error_rad, raw_position[6] + gripper_error_rad
         )
-        gravity = np.zeros(6) if self.gravity is None else self.gravity.torque(position)
+        gravity = np.zeros(6) if self.gravity_model is None else _gravity_torque(self.gravity_model, position)
         gravity *= np.asarray(cfg.gravity_factors) * np.asarray(cfg.joint_signs)
         gravity = np.clip(gravity, -10.0, 10.0)
         kp, kd = [*cfg.kp, cfg.gripper_kp], [*cfg.kd, cfg.gripper_kd]
