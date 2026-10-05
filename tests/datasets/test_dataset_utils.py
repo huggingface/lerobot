@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -29,6 +30,9 @@ from huggingface_hub import DatasetCard
 import lerobot.datasets.utils as dataset_utils
 from lerobot.datasets.io_utils import hf_transform_to_torch
 from lerobot.datasets.utils import (
+    BackwardCompatibilityError,
+    ForwardCompatibilityError,
+    check_version_compatibility,
     create_lerobot_dataset_card,
     get_repo_versions,
     get_safe_version,
@@ -241,3 +245,45 @@ def test_shift_timestamps_and_task_name():
     assert dataset_utils.shift_timestamps([0.0, 0.5], 10.0) == [10.0, 10.5]
     tasks = pd.DataFrame({"task_index": [0, 1]}, index=["pick", "place"])
     assert dataset_utils.task_name(tasks, torch.tensor(1)) == "place"
+
+
+def _future_warnings(caplog):
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if "please update your current version of lerobot" in r.getMessage()
+    ]
+
+
+def test_older_dataset_same_major_is_silent(caplog):
+    """#4851: a v3.0 dataset read by v3.1 code must not ask to update lerobot."""
+    with caplog.at_level(logging.WARNING, logger="lerobot.datasets.utils"):
+        check_version_compatibility("user/dataset", "v3.0", "v3.1")
+
+    assert _future_warnings(caplog) == []
+
+
+def test_newer_dataset_same_major_asks_to_update_lerobot(caplog):
+    """#4851: a v3.1 dataset read by v3.0 code must warn (it used to be silent)."""
+    with caplog.at_level(logging.WARNING, logger="lerobot.datasets.utils"):
+        check_version_compatibility("user/dataset", "v3.1", "v3.0")
+
+    assert len(_future_warnings(caplog)) == 1
+
+
+def test_newer_major_dataset_raises_forward_compatibility_error():
+    """#4851: a v4.0 dataset cannot be read by v3.0 code (it used to be silent)."""
+    with pytest.raises(ForwardCompatibilityError):
+        check_version_compatibility("user/dataset", "v4.0", "v3.0")
+
+
+def test_newer_major_dataset_only_warns_when_major_is_not_enforced(caplog):
+    with caplog.at_level(logging.WARNING, logger="lerobot.datasets.utils"):
+        check_version_compatibility("user/dataset", "v4.0", "v3.0", enforce_breaking_major=False)
+
+    assert len(_future_warnings(caplog)) == 1
+
+
+def test_older_major_dataset_still_raises_conversion_error():
+    with pytest.raises(BackwardCompatibilityError):
+        check_version_compatibility("user/dataset", "v2.1", "v3.0")
