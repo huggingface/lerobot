@@ -42,8 +42,8 @@ from lerobot.policies.pi0 import PI0Policy, PI0Config
 from lerobot.configs import RTCAttentionSchedule
 from lerobot.policies.rtc import RTCConfig, ActionQueue
 
-# Load Pi0 with RTC enabled
-policy_cfg = PI0Config()
+# Load the Pi0 config so RTC can be enabled before the policy is built
+policy_cfg = PI0Config.from_pretrained("lerobot/pi0_base")
 
 # Enable RTC
 policy_cfg.rtc_config = RTCConfig(
@@ -54,7 +54,7 @@ policy_cfg.rtc_config = RTCConfig(
 )
 
 # Load the policy
-policy = PI0Policy.from_pretrained("lerobot/pi0_base", policy_cfg=policy_cfg, device="cuda")
+policy = PI0Policy.from_pretrained("lerobot/pi0_base", config=policy_cfg).to("cuda")
 
 # Now use predict_action_chunk with RTC parameters
 inference_delay = 4  # How many steps of inference latency, this value should be calculated based on the inference latency of the policy
@@ -206,9 +206,10 @@ RTC includes built-in debug tracking to help you understand what's happening dur
 # Enable debug tracking
 policy_cfg.rtc_config.debug = True
 policy_cfg.rtc_config.debug_maxlen = 100
+policy.init_rtc_processor()  # re-create the RTC processor so the new debug settings take effect
 
 # After inference, access debug data
-debug_data = policy.rtc_processor.get_debug_data()
+debug_data = policy.rtc_processor.get_all_debug_steps()
 
 # Visualize denoising steps, corrections, etc.
 from lerobot.policies.rtc.debug_visualizer import RTCDebugVisualizer

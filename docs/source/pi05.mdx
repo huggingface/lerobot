@@ -337,7 +337,9 @@ To use relative actions, first recompute your dataset stats in relative space vi
 ```bash
 lerobot-edit-dataset \
     --repo_id your_dataset \
+    --new_repo_id your_dataset \
     --operation.type recompute_stats \
+    --operation.overwrite true \
     --operation.relative_action true \
     --operation.chunk_size 50 \
     --operation.relative_exclude_joints "['gripper']" \
