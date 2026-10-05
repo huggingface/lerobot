@@ -246,11 +246,12 @@ dataset = LeRobotDataset(
 
 ### Available transform types
 
-LeRobot provides several transform types:
+The `type` of a transform can be any class from `torchvision.transforms.v2`, for example:
 
 - **`ColorJitter`**: Adjusts brightness, contrast, saturation, and hue
-- **`SharpnessJitter`**: Randomly adjusts image sharpness
 - **`Identity`**: No transformation (useful for testing)
+
+LeRobot also adds its own transforms: `SharpnessJitter`, `GaussianNoise`, `MotionBlur`, `JPEGCompression`, `GaussianPatchBrightness`, `RandomShadow`, `CoarseDropout`, `GammaCorrection` and `PlanckianJitter`. When a name exists in both, LeRobot's version is used: `GaussianNoise` is LeRobot's transform (argument `std`), not the torchvision one (`mean`, `sigma`, `clip`).
 
 You can also use any `torchvision.transforms.v2` transform by passing it directly to the `image_transforms` parameter.
 
