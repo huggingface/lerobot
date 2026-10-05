@@ -185,6 +185,10 @@ class InteractiveSession:
                 "Rollout run ended on its own (duration reached). Robot is holding position — "
                 "/start to run again, /reset to return to initial position, /stop to shut down."
             )
+        elif event is RolloutEvent.AGENT_COMPLETED:
+            self._print(
+                f"Agent completed: {payload.answer if payload else ''}. Use /start for a new attempt."
+            )
         elif event is RolloutEvent.RESET_STARTED:
             log_say("Resetting robot to initial position", self._play_sounds)
             self._print("Resetting — returning the robot to its initial position...")

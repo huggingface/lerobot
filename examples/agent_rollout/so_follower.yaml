@@ -1,0 +1,103 @@
+# Template: verify bounds, units, directions, camera paths and calibration before use.
+# Cartesian move_to uses the bundled FK/IK URDF. Run from the repository root,
+# or make urdf_path absolute. See docs/source/agent_rollout.mdx for model details.
+# Provider fields below are one explicit example, not backend defaults.
+interactive: true
+fps: 10
+interpolation_multiplier: 1
+duration: 0
+task: Put all colored cubes in the green bin.
+inference:
+  type: agent
+  model: gpt-6.1-sol
+  base_url: https://api.openai.com/v1
+  api_key_env: OPENAI_API_KEY
+  wire: responses
+  effort: low
+  max_llm_calls: 100
+  log_dir: outputs/agent-rollout
+  robot_notes: Replace these notes with verified joint directions, camera placement,
+    table height and frame/calibration information for your rig. RGB camera images
+    do not establish a metric camera-to-base transform.
+    The SO-101 has five arm joints, so XYZ and orientation are coupled; adjust
+    orientation when needed and do not assume arbitrary six-dimensional poses are reachable.
+  cartesian:
+    arm:
+      urdf_path: examples/agent_rollout/urdf/so101_new_calib.urdf
+      target_frame_name: gripper_frame_link
+      joints:
+        shoulder_pan.pos: shoulder_pan
+        shoulder_lift.pos: shoulder_lift
+        elbow_flex.pos: elbow_flex
+        wrist_flex.pos: wrist_flex
+        wrist_roll.pos: wrist_roll
+      joint_scale:
+        shoulder_pan.pos: 0.017453292519943295
+        shoulder_lift.pos: 0.017453292519943295
+        elbow_flex.pos: 0.017453292519943295
+        wrist_flex.pos: 0.017453292519943295
+        wrist_roll.pos: 0.017453292519943295
+      gripper: gripper.pos
+      frame_description: Tool gripper_frame_link in the URDF base_link frame.
+        Verify the model joint zeros against your new-calibration SO-101 and
+        describe the base axes relative to your table and cameras before use.
+      # Workspace template in metres, not a calibrated reachable/collision-free region.
+      position_low: [-0.35, -0.35, 0.02]
+      position_high: [0.35, 0.35, 0.50]
+      # Allow orientation changes because this arm has only five arm DOFs.
+      angle_low: [-1.0, -1.0, -1.0]
+      angle_high: [1.0, 1.0, 1.0]
+      linear_speed: 0.01
+      angular_speed: 0.15
+  axes:
+    shoulder_pan.pos:
+      minimum: -90
+      maximum: 90
+      max_speed: 10
+      unit: degrees
+      description: shoulder_pan position; verify positive direction and bounds on
+        your calibrated arm
+      tracking_tolerance: 5
+    shoulder_lift.pos:
+      minimum: -90
+      maximum: 90
+      max_speed: 10
+      unit: degrees
+      description: shoulder_lift position; verify positive direction and bounds on
+        your calibrated arm
+      tracking_tolerance: 5
+    elbow_flex.pos:
+      minimum: -90
+      maximum: 90
+      max_speed: 10
+      unit: degrees
+      description: elbow_flex position; verify positive direction and bounds on your
+        calibrated arm
+      tracking_tolerance: 5
+    wrist_flex.pos:
+      minimum: -90
+      maximum: 90
+      max_speed: 10
+      unit: degrees
+      description: wrist_flex position; verify positive direction and bounds on your
+        calibrated arm
+      tracking_tolerance: 5
+    wrist_roll.pos:
+      minimum: -90
+      maximum: 90
+      max_speed: 10
+      unit: degrees
+      description: wrist_roll position; verify positive direction and bounds on your
+        calibrated arm
+      tracking_tolerance: 5
+    gripper.pos:
+      minimum: 0
+      maximum: 100
+      max_speed: 30
+      unit: percent
+      description: 0 closed, 100 open after calibration
+      tracking_tolerance: 10
+robot:
+  type: so101_follower
+  port: /dev/ttyACM0
+  use_degrees: true

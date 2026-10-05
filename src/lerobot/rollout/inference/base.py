@@ -544,6 +544,16 @@ class InferenceEngine(abc.ABC):
         """Resume background inference.  Default: no-op."""
 
     @property
+    def completion(self) -> str | None:
+        """Normal agent completion (done/give_up), distinct from inference failure."""
+        return None
+
+    @property
+    def return_home_on_completion(self) -> bool:
+        """Whether a normal agent completion requests an interactive return home."""
+        return False
+
+    @property
     def ready(self) -> bool:
         """True once the backend can produce actions (e.g. warmup done)."""
         return True

@@ -486,19 +486,20 @@ def test_session_flow_over_the_command_stream():
         strategy.teardown.assert_not_called()
 
 
-def test_session_unknown_input_does_not_start(capsys):
+@pytest.mark.parametrize("command", ["/frobnicate", "/feedback Try the blue cube"])
+def test_session_unknown_input_does_not_start(capsys, command):
     with _pipe_stream() as (reader, _writer):
         session, strategy, _engine, _parent, _run_started = _make_session(reader)
         thread = _start_session_thread(session)
 
-        session._handle_line("/frobnicate")
+        session._handle_line(command)
         session._handle_line("hello robot")
         session._handle_line("/help")
         time.sleep(0.05)
         strategy.run.assert_not_called()
 
         out = capsys.readouterr().out
-        assert "/frobnicate" in out
+        assert f"Unknown command '{command.split()[0]}'" in out
         assert "commands start with '/'" in out
 
         session._handle_line("/stop")
@@ -1798,3 +1799,34 @@ def test_planner_gate_opens_even_when_first_reply_holds():
     assert delivered[0].held
     assert not engine.hold_for_planner()  # an accepted reply ends the wait, even a hold
     engine.stop_autosteer()
+
+
+@pytest.mark.parametrize("home", [False, True])
+def test_direct_agent_completion_keeps_session_open_and_optionally_returns_home(monkeypatch, home):
+    completion = {"reason": None}
+    monkeypatch.setattr(_FakeEngine, "completion", property(lambda self: completion["reason"]))
+    monkeypatch.setattr(_FakeEngine, "return_home_on_completion", property(lambda self: home))
+
+    def run(ctx):
+        completion["reason"] = "done: cubes placed in the bin"
+        ctx.runtime.shutdown_event.set()
+
+    answers = []
+    controller, events, strategy, engine, parent, _ = _make_controller(run, answers)
+    thread = _serve_thread(controller)
+    try:
+        assert controller.start()
+        assert _wait_for(lambda: RolloutEvent.AGENT_COMPLETED in events)
+        assert not controller.failed
+        assert not parent.is_set()
+        assert not controller.stopped
+        if home:
+            assert _wait_for(lambda: RolloutEvent.RESET_DONE in events)
+            strategy.return_to_initial_position.assert_called_once()
+        else:
+            strategy.return_to_initial_position.assert_not_called()
+        assert any(answer.answer == completion["reason"] for answer in answers)
+        assert RolloutEvent.SEGMENT_ENDED not in events  # not misreported as a duration cutoff
+    finally:
+        controller.stop()
+        _join_session(thread)

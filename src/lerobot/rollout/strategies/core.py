@@ -414,6 +414,10 @@ def send_next_action(
         with section("infer"):
             obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
             action_tensor = engine.get_action(obs_frame)
+        if engine.completion is not None:
+            logger.info("Agent completed: %s", engine.completion)
+            ctx.runtime.shutdown_event.set()
+            return None
         if action_tensor is not None:
             interpolator.add(action_tensor.cpu())
 
