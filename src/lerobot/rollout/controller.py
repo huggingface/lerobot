@@ -290,13 +290,6 @@ class RolloutController:
             self._ctx.policy.inference.stop_autosteer()
             return self._ctx.policy.inference.set_task(task)
 
-    def add_feedback(self, text: str) -> bool:
-        """Interrupt an agent motion with guidance for its next observation."""
-        with self._control_lock:
-            if not self.running or self._stopped.is_set() or self._stop_requested.is_set():
-                return False
-            return self._ctx.policy.inference.add_feedback(text)
-
     def ask(self, question: str) -> AskResult:
         """Queue a question about what the robot currently sees.
 

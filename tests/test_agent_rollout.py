@@ -140,7 +140,7 @@ def test_native_tools_move_then_done_and_record_harness(tmp_path):
     assert "test-not-a-real-key" not in (directory / "config.json").read_text()
 
 
-@pytest.mark.parametrize("cancel", ["reset", "feedback", "task", "pause", "stop"])
+@pytest.mark.parametrize("cancel", ["reset", "task", "pause", "stop"])
 def test_late_completion_is_discarded_single_flight(tmp_path, cancel):
     entered, release = threading.Event(), threading.Event()
     calls = []
@@ -160,9 +160,7 @@ def test_late_completion_is_discarded_single_flight(tmp_path, cancel):
         for _ in range(5):
             tick(e)
         assert len(calls) == 1
-        if cancel == "feedback":
-            assert e.add_feedback("Try the blue cube")
-        elif cancel == "task":
+        if cancel == "task":
             e.set_task("Pick the blue cube")
         else:
             getattr(e, cancel)()
@@ -173,28 +171,6 @@ def test_late_completion_is_discarded_single_flight(tmp_path, cancel):
         assert not e.failed
     finally:
         release.set()
-        e.stop()
-
-
-def test_feedback_reaches_native_conversation(tmp_path):
-    requests = []
-
-    def handler(request):
-        requests.append(json.loads(request.content))
-        return response("move_joints", {"targets": {"j.pos": 0.1}, "note": "Inspect approach."})
-
-    e = engine(tmp_path, handler)
-    e.start()
-    e.resume()
-    try:
-        tick(e)
-        wait_for(lambda: bool(e._queue))
-        assert e.add_feedback("The blue cube is the target now")
-        tick(e)
-        wait_for(lambda: len(requests) == 2)
-        assert "The blue cube is the target now" in json.dumps(requests[1])
-        assert "interrupted" in json.dumps(requests[1])
-    finally:
         e.stop()
 
 
@@ -291,7 +267,7 @@ def cartesian_adapter(tmp_path):
     pose["q2.pos"] = -0.6
     pose["q4.pos"] = 0.3
     adapter.reset(pose)
-    adapter.observation({**pose, "cam": raw()["cam"]}, "move", 0, [], [])
+    adapter.observation({**pose, "cam": raw()["cam"]}, "move", 0, [])
     return adapter, pose
 
 
@@ -409,7 +385,7 @@ def test_bimanual_ik_preserves_native_gripper_ranges(tmp_path):
     cfg = replace(config(tmp_path), axes=axes, cartesian=arms)
     adapter = RobotAdapter(cfg, list(axes), {**dict.fromkeys(axes, float), "cam": (8, 8, 3)}, "bimanual", 10)
     adapter.reset(pose)
-    obs = adapter.observation({**pose, "cam": raw()["cam"]}, "hold", 0, [], [])
+    obs = adapter.observation({**pose, "cam": raw()["cam"]}, "hold", 0, [])
     target = obs.state["command_state"].copy()
     target[6], target[13] = 0.55, 45.0
     command = dict(zip(adapter.keys, adapter.translate(target[None, :])[0], strict=True))
@@ -511,9 +487,9 @@ def test_provider_images_tools_and_conversation(tmp_path, model, url, key_env, w
     e = engine(tmp_path, handler, cfg, env={key_env: "provider-test-key"} if key_env else {})
     try:
         e.agent.reset(Scene(id="test", instruction="Pick cube"))
-        first = e.agent.act(e.adapter.observation(raw(), "Pick cube", 0, [], []))
+        first = e.agent.act(e.adapter.observation(raw(), "Pick cube", 0, []))
         assert first.actions and not first.actions[0].meta.get("request_stop")
-        second = e.agent.act(e.adapter.observation(raw(0.1), "Pick cube", len(first), [], []))
+        second = e.agent.act(e.adapter.observation(raw(0.1), "Pick cube", len(first), []))
         assert second.actions[0].meta.get("request_stop")
         assert "Approach." in json.dumps(requests[1])
         if model == "gemini-test":
@@ -618,7 +594,7 @@ def test_encoder_residual_is_reported_but_never_commanded_outside_bounds(tmp_pat
     e = engine(tmp_path, lambda _: response("done", {"summary": "ok"}), cfg)
     e.resume()
     assert tick(e, -0.0001907377).item() == 0.0
-    obs = e.adapter.observation(raw(-0.0001907377), "task", 0, [], [])
+    obs = e.adapter.observation(raw(-0.0001907377), "task", 0, [])
     assert obs.state["command_state"][0] < 0
     with pytest.raises(ValueError, match="outside"):
         tick(e, -0.01)

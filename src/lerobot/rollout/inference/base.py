@@ -543,10 +543,6 @@ class InferenceEngine(abc.ABC):
     def resume(self) -> None:  # noqa: B027
         """Resume background inference.  Default: no-op."""
 
-    def add_feedback(self, text: str) -> bool:
-        """Submit operator guidance to a native-tool agent; unsupported by default."""
-        return False
-
     @property
     def completion(self) -> str | None:
         """Normal agent completion (done/give_up), distinct from inference failure."""

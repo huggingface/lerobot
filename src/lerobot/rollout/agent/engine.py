@@ -96,14 +96,13 @@ class AgentInferenceEngine(InferenceEngine):
         self._paused = True
         self._generation = self._session = 0
         self._queue: deque[np.ndarray] = deque()
-        self._request: tuple[int, int, dict, str, int, list[dict], list[dict]] | None = None
+        self._request: tuple[int, int, dict, str, int, list[dict]] | None = None
         self._inflight = False
         self._latest: dict | None = None
         self._observed_at = 0.0
         self._held: np.ndarray | None = None
         self._due = 0.0
         self._steps = 0
-        self._feedback: list[dict] = []
         self._approvals: list[dict] = []
         self._completion: str | None = None
         self._failure: str | None = None
@@ -161,22 +160,20 @@ class AgentInferenceEngine(InferenceEngine):
             # An HTTP request may still be finishing. It cannot publish or command hardware.
             self._thread.join(timeout=1)
 
-    def _invalidate(self, *, new_session: bool) -> None:
+    def _invalidate(self) -> None:
         self._generation += 1
         self._queue.clear()
         self._request = None
         self._completion = None
         self._due = 0.0
-        if new_session:
-            self._session += 1
-            self._steps = 0
-            self._held = None
-            self._feedback.clear()
-            self._approvals.clear()
+        self._session += 1
+        self._steps = 0
+        self._held = None
+        self._approvals.clear()
 
     def reset(self) -> None:
         with self._lock:
-            self._invalidate(new_session=True)
+            self._invalidate()
             self._paused = True
             self._latest = None
         self._discard_task_change()
@@ -196,22 +193,8 @@ class AgentInferenceEngine(InferenceEngine):
         with self._lock:
             changed = super().set_task(task)
             # Even reasserting the same goal is an explicit new attempt.
-            self._invalidate(new_session=True)
+            self._invalidate()
             return changed
-
-    def add_feedback(self, text: str) -> bool:
-        with self._lock:
-            if self._paused or self._closed.is_set() or not text.strip():
-                return False
-            self._invalidate(new_session=False)
-            self._feedback.append({"t": self._steps, "text": text, "source": "operator"})
-            self._approvals.append(
-                {
-                    "t": self._steps,
-                    "detail": "Operator feedback interrupted the preceding motion/reply. Only measured state shows what actually executed.",
-                }
-            )
-            return True
 
     def notify_observation(self, obs: dict) -> None:
         with self._lock:
@@ -244,10 +227,8 @@ class AgentInferenceEngine(InferenceEngine):
                     raw,
                     self.task,
                     self._steps,
-                    self._feedback[:],
                     self._approvals[:],
                 )
-                self._feedback.clear()
                 self._approvals.clear()
                 self._wake.set()
             self._set_dispatched_task(self.task)
@@ -276,7 +257,7 @@ class AgentInferenceEngine(InferenceEngine):
                     if request is None or self._paused:
                         continue
                     self._inflight = True
-                generation, requested_session, raw, task, steps, feedback, approvals = request
+                generation, requested_session, raw, task, steps, approvals = request
                 try:
                     if requested_session != session:
                         if record is not None:
@@ -291,7 +272,7 @@ class AgentInferenceEngine(InferenceEngine):
                         self.adapter.reset(raw)
                         self.agent.on_trial_start(record.scene_id, 0, str(self._directory), self._run_id)
                     assert record is not None
-                    observation = self.adapter.observation(raw, task, steps, feedback, approvals)
+                    observation = self.adapter.observation(raw, task, steps, approvals)
                     turn += 1
                     for name, frame in observation.images.items():
                         # Use an index rather than a user-supplied camera name as a path component.

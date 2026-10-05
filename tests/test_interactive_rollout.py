@@ -486,19 +486,20 @@ def test_session_flow_over_the_command_stream():
         strategy.teardown.assert_not_called()
 
 
-def test_session_unknown_input_does_not_start(capsys):
+@pytest.mark.parametrize("command", ["/frobnicate", "/feedback Try the blue cube"])
+def test_session_unknown_input_does_not_start(capsys, command):
     with _pipe_stream() as (reader, _writer):
         session, strategy, _engine, _parent, _run_started = _make_session(reader)
         thread = _start_session_thread(session)
 
-        session._handle_line("/frobnicate")
+        session._handle_line(command)
         session._handle_line("hello robot")
         session._handle_line("/help")
         time.sleep(0.05)
         strategy.run.assert_not_called()
 
         out = capsys.readouterr().out
-        assert "/frobnicate" in out
+        assert f"Unknown command '{command.split()[0]}'" in out
         assert "commands start with '/'" in out
 
         session._handle_line("/stop")

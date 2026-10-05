@@ -83,16 +83,15 @@ Set `fps` to the command rate and keep `interpolation_multiplier=1`: the agent a
 
 ```text
 /start
-/feedback The red cube is further left in the top image. Recheck the wrist camera.
 /subtask Pick up the blue cube and place it in the green bin.
 /reset
 /start
 /stop
 ```
 
-`/feedback` interrupts queued motion and supplies guidance while keeping the conversation. `/subtask` starts a fresh conversation for the new goal. `/reset` stops the segment, restores the launch task and runs the existing LeRobot return routine. On this branch `/stop` ends the session and teardown uses `return_to_initial_position`; it is not the custom YAM pilot's keep-holding command. Pending replies, motions and completion results are discarded after reset, pause, feedback, task changes or shutdown. At most one provider call is in flight.
+`/subtask` starts a fresh conversation for the new goal. `/reset` stops the segment, restores the launch task and runs the existing LeRobot return routine. On this branch `/stop` ends the session and teardown uses `return_to_initial_position`; it is not the custom YAM pilot's keep-holding command. Pending replies, motions and completion results are discarded after reset, pause, task changes or shutdown. At most one provider call is in flight.
 
-`/vqa` and `/autosteer` belong to the VLA/text-planner path and are not enabled for this backend. Use `/feedback` for operator guidance. With `images=on_demand`, the upstream agent also has its `take_pic` tool; otherwise each turn carries all camera views.
+`/vqa` and `/autosteer` belong to the VLA/text-planner path and are not enabled for this backend. With `images=on_demand`, the upstream agent also has its `take_pic` tool; otherwise each turn carries all camera views.
 
 ## Optional end-effector control
 

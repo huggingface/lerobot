@@ -151,7 +151,7 @@ class RobotAdapter:
         for kin in self.arms.values():
             kin.reset(pose)
 
-    def observation(self, raw: dict, task: str, steps: int, feedback: list, approvals: list) -> Observation:
+    def observation(self, raw: dict, task: str, steps: int, approvals: list) -> Observation:
         self.vector(raw)
         self.pose = {k: float(raw[k]) for k in self.keys}
         if self.arms:
@@ -175,7 +175,7 @@ class RobotAdapter:
             images=images,
             state={"command_state": values},
             instruction=task,
-            extra={"env_step": steps, "operator_messages": feedback, "approvals": approvals},
+            extra={"env_step": steps, "approvals": approvals},
         )
 
     def translate(self, waypoints: np.ndarray) -> list[np.ndarray]:

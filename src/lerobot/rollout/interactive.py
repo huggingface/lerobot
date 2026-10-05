@@ -129,11 +129,6 @@ class InteractiveSession:
         self._commands: dict[str, tuple[Callable[[InteractiveCommand], None], str, str]] = {
             "start": (self._cmd_start, "", "start (or restart) the policy control loop"),
             "subtask": (self._cmd_subtask, " <text>", "set the instruction the policy follows"),
-            "feedback": (
-                self._cmd_feedback,
-                " <text>",
-                "send guidance to the direct agent, interrupting its current motion",
-            ),
             "vqa": (self._cmd_vqa, " <text>", "ask the policy a question about what it sees"),
             "autosteer": (
                 self._cmd_autosteer,
@@ -288,12 +283,6 @@ class InteractiveSession:
         else:
             # set_task also refuses while stopping; "unchanged" would imply it was applied.
             self._print("Can't change the task — the session is stopping.")
-
-    def _cmd_feedback(self, cmd: InteractiveCommand) -> None:
-        if not self.controller.add_feedback(cmd.args):
-            self._print("Feedback requires a running direct agent and nonempty text.")
-        else:
-            self._print("Feedback queued; pending motion/reply discarded.")
 
     def _cmd_vqa(self, cmd: InteractiveCommand) -> None:
         # Strip quotes first, so /vqa "" prints the usage hint instead of queueing an empty question.
