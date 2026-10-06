@@ -223,6 +223,29 @@ def test_streaming_applies_rgb_transforms_and_preserves_uint8(
         assert torch.equal(sample[camera_key], reference[camera_key])
 
 
+def test_streaming_applies_rgb_transforms_on_decode_threads(tmp_path: Path, lerobot_dataset_factory) -> None:
+    root = tmp_path / "dataset"
+    lerobot_dataset_factory(root=root, repo_id=DUMMY_REPO_ID, total_episodes=2, total_frames=10)
+    thread_names: set[str] = set()
+
+    def record_thread(image: torch.Tensor) -> torch.Tensor:
+        thread_names.add(threading.current_thread().name)
+        return image
+
+    streaming = StreamingLeRobotDataset(
+        DUMMY_REPO_ID,
+        root=root,
+        shuffle=False,
+        buffer_size=2,
+        image_transforms=record_thread,
+        decode_threads=2,
+    )
+
+    assert len(list(streaming)) == 10
+    assert thread_names
+    assert all(name.startswith("lerobot-decode") for name in thread_names), thread_names
+
+
 def test_streaming_honors_episode_subset(tmp_path: Path, lerobot_dataset_factory) -> None:
     root = tmp_path / "dataset"
     map_dataset = lerobot_dataset_factory(

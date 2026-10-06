@@ -496,7 +496,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                     episode_index,
                     frame_index,
                     video_cache=video_cache,
-                    apply_image_transforms=False,
                 )
 
             def update_frontier() -> None:
@@ -558,7 +557,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 if not decoded_futures:
                     continue
                 item = decoded_futures.popleft().result()
-                self._apply_image_transforms(item)
                 self._state_offset += 1
                 yield item
             self._active_epoch = epoch + 1 if self.shuffle else 0
@@ -703,7 +701,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         frame_index: int,
         *,
         video_cache: EpisodeByteCache | None,
-        apply_image_transforms: bool = True,
     ) -> dict[str, Any]:
         """Assemble an anchor's temporal windows, padding masks and decoded camera frames."""
         episode_dataset = episode_data.dataset
@@ -765,8 +762,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                         frames = frames.to(torch.float32) / 255.0
                 item[video_key] = frames.squeeze(0)
 
-        if apply_image_transforms:
-            self._apply_image_transforms(item)
+        # Runs on the decode thread, so augmentation parallelizes with decoding.
+        self._apply_image_transforms(item)
 
         for key, stored_unit in self._image_depth_units.items():
             if key in item and stored_unit is not None and stored_unit != self._depth_output_unit:
