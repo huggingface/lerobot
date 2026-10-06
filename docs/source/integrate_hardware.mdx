@@ -53,7 +53,7 @@ from lerobot.robots import RobotConfig
 class MyCoolRobotConfig(RobotConfig):
     port: str
     cameras: dict[str, CameraConfig] = field(
-        default_factory={
+        default_factory=lambda: {
             "cam_1": OpenCVCameraConfig(
                 index_or_path=2,
                 fps=30,
@@ -73,9 +73,11 @@ Here we'll create a simple 5-DoF robot with one camera. It could be a simple arm
 
 <!-- prettier-ignore-start -->
 ```python
+from typing import Any
+
 from lerobot.cameras import make_cameras_from_configs
-from lerobot.motors import Motor, MotorNormMode
-from lerobot.motors.feetech import FeetechMotorsBus
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode
+from lerobot.motors.feetech import FeetechMotorsBus, OperatingMode
 from lerobot.robots import Robot
 
 class MyCoolRobot(Robot):
@@ -84,6 +86,7 @@ class MyCoolRobot(Robot):
 
     def __init__(self, config: MyCoolRobotConfig):
         super().__init__(config)
+        self.config = config
         self.bus = FeetechMotorsBus(
             port=self.config.port,
             motors={
