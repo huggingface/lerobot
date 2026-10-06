@@ -282,17 +282,12 @@ class G05Tokenizer:
             ids = [self.state_token_id] * count
             labels = [IGNORE_INDEX] * count
             token_type = G05TokenType.PROPRIO
-        elif segment.processor == "action" and action_ids is not None:
-            ids = list(action_ids)
-            labels = ids.copy()
-            token_type = G05TokenType.ACTION
         elif segment.processor == "action":
-            if action_codec is None:
+            if action_ids is None:
                 raise RuntimeError(
-                    "This G0.5 training template includes ActionCodec targets, but the "
-                    "checkpoint has no native ActionCodec sidecar loaded."
+                    "This G0.5 template has an ActionCodec target but the sample has no action."
                 )
-            ids = action_codec.encode_for_language(value)
+            ids = list(action_ids)
             labels = ids.copy()
             token_type = G05TokenType.ACTION
         else:
@@ -409,10 +404,14 @@ class G05Tokenizer:
             and any(segment.processor == "action" for segment in self._parse(sample["template"]))
         ]
         action_ids: list[list[int] | None] = [None] * len(samples)
-        encode = getattr(action_codec, "encode_batch_for_language", None)
-        if targets and callable(encode):
-            for index, ids in zip(
-                targets, encode([samples[index]["action"] for index in targets]), strict=True
-            ):
-                action_ids[index] = ids
+        if not targets:
+            return action_ids
+        if action_codec is None:
+            raise RuntimeError(
+                "This G0.5 training template includes ActionCodec targets, but the "
+                "checkpoint has no native ActionCodec sidecar loaded."
+            )
+        encoded = action_codec.encode_batch_for_language([samples[index]["action"] for index in targets])
+        for index, ids in zip(targets, encoded, strict=True):
+            action_ids[index] = ids
         return action_ids
