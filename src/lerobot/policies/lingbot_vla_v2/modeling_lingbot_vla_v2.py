@@ -2343,13 +2343,36 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         """Reset the rolling action queue used by select_action."""
         self._queues = {ACTION: deque(maxlen=self.config.n_action_steps)}
 
-    def get_optim_params(self) -> dict[str, torch.nn.Parameter]:
-        # Frozen parameters never receive a gradient, so the optimizer would only
-        # carry them along unused. Filtering here keeps optimizer state memory at
-        # the trainable subset — with PEFT that is ~0.2B adapter params instead of 6B.
-        # Name-keyed so the optimizer preset can group by FQN (lingbot_adamw's MoE
-        # expert-LR scaling matches `...layers.<N>.mlp.experts...` by name).
-        return {name: p for name, p in self.named_parameters() if p.requires_grad}
+    def get_optim_params(self) -> list[dict]:
+        """Param groups with a separate LR for the MoE experts (standard AdamW).
+
+        Returns two groups: the MoE expert params (scaled LR when use_moe_expert_lr)
+        and everything else at the base LR. Frozen params are excluded — with PEFT that
+        is ~0.2B adapter params instead of 6B.
+        """
+        cfg = self.config
+        expert_lr_scale = 1.0
+        if cfg.use_moe and cfg.use_moe_expert_lr and cfg.token_top_k > 0:
+            expert_lr_scale = (cfg.token_num_experts / cfg.token_top_k) ** 0.5
+
+        expert_params = []
+        base_params = []
+        for name, p in self.named_parameters():
+            if not p.requires_grad:
+                continue
+            if ".mlp.experts." in name:
+                expert_params.append(p)
+            else:
+                base_params.append(p)
+
+        groups = []
+        if base_params:
+            groups.append({"params": base_params, "lr": cfg.optimizer_lr})
+        if expert_params:
+            groups.append({"params": expert_params, "lr": cfg.optimizer_lr * expert_lr_scale})
+        if not groups:
+            raise ValueError("No trainable LingBot parameters")
+        return groups
 
     # ==================== Distillation teachers (native depth / DINO-video) ====================
     # Port of the upstream trainer's per-micro-batch teacher block (tasks/vla/
