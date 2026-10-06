@@ -8,10 +8,12 @@
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 
+import dataclasses
 import json
 import struct
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,6 +38,7 @@ from lerobot.streaming.mp4 import (
     _stts,
     _tkhd,
     _vmhd,
+    fetch_mp4_index,
     parse_mp4_index,
     synthesize_mp4,
     synthesized_mp4_size,
@@ -105,6 +108,77 @@ def test_parser_accepts_co64_chunk_offsets():
     mp4 = parse_mp4_index("test.mp4", _minimal_mp4([10_000, 10_050, 10_025], use_co64=True))
 
     np.testing.assert_array_equal(mp4.sample_offsets, np.array([10_000, 10_050, 10_025]))
+
+
+def _sized_mp4(sample_count: int, *, moov_first: bool) -> bytes:
+    """Encode a valid MP4 whose movie box grows with the sample count, before or after the payload."""
+    ftyp = _box(b"ftyp", b"isom\0\0\2\0isomiso2mp41")
+    sizes = np.full(sample_count, 10, dtype=np.int64)
+
+    def moov_for(payload_start: int) -> bytes:
+        stsd_body = struct.pack(">II", 0, 1) + struct.pack(">I4s", 16, b"avc1") + b"\0" * 8
+        offsets = _stco([payload_start + 10 * i for i in range(sample_count)])
+        stbl = _box(
+            b"stbl",
+            _box(b"stsd", stsd_body)
+            + _stts(np.full(sample_count, 1000, dtype=np.int64))
+            + _stsc_one_sample_per_chunk(sample_count)
+            + _stsz(sizes)
+            + offsets
+            + _stss(np.array([1], dtype=np.int64)),
+        )
+        minf = _box(b"minf", _vmhd() + _dinf() + stbl)
+        mdia = _box(b"mdia", _mdhd(1000, 1000 * sample_count) + _hdlr() + minf)
+        trak = _box(b"trak", _tkhd(1, 1000 * sample_count, 64, 48) + mdia)
+        return _box(b"moov", _mvhd(1000, 1000 * sample_count, 2) + trak)
+
+    mdat = _box(b"mdat", b"x" * (10 * sample_count))
+    if moov_first:
+        moov_size = len(moov_for(0))
+        return ftyp + moov_for(len(ftyp) + moov_size + 8) + mdat
+    return ftyp + mdat + moov_for(len(ftyp) + 8)
+
+
+def _counting_reader(source: bytes) -> tuple[list[tuple[int, int]], Callable[[str, int, int], bytes]]:
+    calls: list[tuple[int, int]] = []
+
+    def read_range(_path: str, offset: int, length: int) -> bytes:
+        calls.append((offset, length))
+        return source[offset : offset + length]
+
+    return calls, read_range
+
+
+def _assert_same_index(actual, expected) -> None:
+    for field in dataclasses.fields(expected):
+        got, want = getattr(actual, field.name), getattr(expected, field.name)
+        if isinstance(want, np.ndarray):
+            np.testing.assert_array_equal(got, want)
+        else:
+            assert got == want, field.name
+
+
+@pytest.mark.parametrize("header_probe_bytes", [64, 4096, 1 << 20])
+def test_header_probe_reads_a_large_faststart_moov_exactly(header_probe_bytes):
+    source = _sized_mp4(20_000, moov_first=True)
+    calls, read_range = _counting_reader(source)
+
+    index = fetch_mp4_index("v.mp4", read_range, file_size=len(source), header_probe_bytes=header_probe_bytes)
+
+    _assert_same_index(index, parse_mp4_index("v.mp4", source))
+    assert len(calls) <= 2
+    assert sum(length for _offset, length in calls) <= max(header_probe_bytes, index.mdat_payload_offset + 16)
+
+
+def test_header_probe_reads_a_trailing_moov_from_the_tail_without_the_payload():
+    source = _sized_mp4(200_000, moov_first=False)
+    calls, read_range = _counting_reader(source)
+
+    index = fetch_mp4_index("v.mp4", read_range, file_size=len(source), header_probe_bytes=4096)
+
+    _assert_same_index(index, parse_mp4_index("v.mp4", source))
+    payload_end = index.mdat_payload_offset + index.mdat_payload_size
+    assert calls == [(0, 4096), (payload_end, len(source) - payload_end)]
 
 
 def _fake_cache(

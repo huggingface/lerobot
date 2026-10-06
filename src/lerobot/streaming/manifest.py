@@ -25,6 +25,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from lerobot.streaming.mp4 import (
+    DEFAULT_HEADER_PROBE_BYTES,
     Mp4Index,
     Mp4SampleSlice,
     fetch_mp4_index,
@@ -122,7 +123,7 @@ class EpisodeVideoManifest:
         episode_indices: list[int] | range | None = None,
         range_backend: str = "fsspec",
         workers: int = 8,
-        header_probe_bytes: int = 4 * 1024 * 1024,
+        header_probe_bytes: int = DEFAULT_HEADER_PROBE_BYTES,
         max_probe_bytes: int = 64 * 1024 * 1024,
         keyframe_pad_s: float = 0.1,
         keyframe_pad_fraction: float = 0.05,
@@ -262,7 +263,7 @@ class EpisodeVideoManifest:
         spec: SidecarSpec,
         range_backend: str = "native-http",
         workers: int = 8,
-        header_probe_bytes: int = 4 * 1024 * 1024,
+        header_probe_bytes: int = DEFAULT_HEADER_PROBE_BYTES,
         max_probe_bytes: int = 64 * 1024 * 1024,
         token: str | bool | None = None,
     ) -> None:

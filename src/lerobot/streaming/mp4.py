@@ -19,6 +19,10 @@ from typing import Any, Literal, overload
 import numpy as np
 from numpy.typing import NDArray
 
+# First read when indexing a source MP4. A faststart movie box is usually a few hundred KiB;
+# larger boxes cost one more exact read.
+DEFAULT_HEADER_PROBE_BYTES = 512 * 1024
+
 
 @dataclass(frozen=True)
 class Box:
@@ -204,32 +208,45 @@ def fetch_mp4_index(
     read_range: Callable[[str, int, int], bytes],
     *,
     file_size: int,
-    header_probe_bytes: int = 4 * 1024 * 1024,
+    header_probe_bytes: int = DEFAULT_HEADER_PROBE_BYTES,
     max_probe_bytes: int = 64 * 1024 * 1024,
 ) -> Mp4Index:
-    """Fetch enough source bytes to parse a complete MP4 video-track index."""
-    probe_size = min(header_probe_bytes, file_size)
+    """Fetch enough source bytes to parse a complete MP4 video-track index.
+
+    Box headers give exact sizes, so the prefix grows to the end of a truncated box instead of
+    doubling, and a movie box stored after the media payload is read from the tail at once.
+    """
+    probe_limit = min(max_probe_bytes, file_size)
+    data = read_range(path, 0, min(header_probe_bytes, probe_limit))
     while True:
-        data = read_range(path, 0, probe_size)
         top = list(iter_boxes(data, 0, len(data), absolute_base=0, allow_truncated=True))
         has_mdat = any(box.type == b"mdat" for box in top)
-        has_moov = any(box.type == b"moov" and box.end <= len(data) for box in top)
+        moov_box = next((box for box in top if box.type == b"moov"), None)
+        has_moov = moov_box is not None and moov_box.end <= len(data)
         if has_mdat and has_moov:
             return parse_mp4_index(path, data, file_size=file_size)
-        if probe_size >= min(max_probe_bytes, file_size):
-            if has_mdat and not has_moov:
-                tail_index = _fetch_tail_moov_index(path, read_range, data, top, file_size, max_probe_bytes)
-                if tail_index is not None:
-                    return tail_index
+        if has_mdat and moov_box is None:
+            # The payload comes first: probing further would read media bytes, not the index.
+            tail_index = _fetch_tail_moov_index(path, read_range, data, top, file_size, max_probe_bytes)
+            if tail_index is not None:
+                return tail_index
+        if (has_mdat and moov_box is None) or len(data) >= probe_limit:
             missing = []
             if not has_mdat:
                 missing.append("mdat")
             if not has_moov:
                 missing.append("moov")
             raise ValueError(
-                f"Could not find complete {'/'.join(missing)} in first {probe_size} bytes of {path}"
+                f"Could not find complete {'/'.join(missing)} in first {len(data)} bytes of {path}"
             )
-        probe_size = min(probe_size * 2, max_probe_bytes, file_size)
+        last_box = top[-1] if top else None
+        # Read the rest of a truncated box plus the largest possible next box header.
+        truncated = last_box is not None and last_box.end > len(data)
+        target = last_box.end + 16 if truncated and last_box is not None else 2 * len(data)
+        chunk = read_range(path, len(data), min(target, probe_limit) - len(data))
+        if not chunk:
+            raise ValueError(f"Empty range read at byte {len(data)} of {path}")
+        data += chunk
 
 
 def _fetch_tail_moov_index(
