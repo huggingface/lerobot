@@ -25,7 +25,6 @@ import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
 
 from lerobot.configs import FeatureType, PolicyFeature
-from lerobot.processor import IsaaclabArenaProcessorStep, LiberoProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import (
@@ -126,6 +125,8 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
 
     def get_env_processors(self):
         """Return (preprocessor, postprocessor) for this env. Default: identity."""
+        from lerobot.processor import PolicyProcessorPipeline
+
         return PolicyProcessorPipeline(steps=[]), PolicyProcessorPipeline(steps=[])
 
 
@@ -446,6 +447,8 @@ class LiberoEnv(EnvConfig):
         )
 
     def get_env_processors(self):
+        from lerobot.processor import LiberoProcessorStep, PolicyProcessorPipeline
+
         return (
             PolicyProcessorPipeline(steps=[LiberoProcessorStep()]),
             PolicyProcessorPipeline(steps=[]),
@@ -715,6 +718,8 @@ class IsaaclabArenaEnv(HubEnvConfig):
         return {}
 
     def get_env_processors(self):
+        from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipeline
+
         state_keys = tuple(k.strip() for k in (self.state_keys or "").split(",") if k.strip())
         camera_keys = tuple(k.strip() for k in (self.camera_keys or "").split(",") if k.strip())
         if not state_keys and not camera_keys:

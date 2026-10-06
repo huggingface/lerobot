@@ -1532,3 +1532,34 @@ def test_sync_engine_without_a_relative_step_binds_nothing():
     policy.config.use_amp = False
     assert bind_relative_anchor(policy, MagicMock(steps=[])) is None
     _build_sync_engine(policy, MagicMock(steps=[]), MagicMock())  # must not raise
+
+
+@pytest.mark.parametrize("multiplier", [1, 3])
+def test_send_next_action_sends_the_same_values_for_numpy_actions(multiplier):
+    """An engine may return NumPy actions; the robot then gets what tensors would give it."""
+    import numpy as np
+
+    from lerobot.rollout.strategies.core import send_next_action
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    chunk = [[0.1, -2.5, 3.0], [1.7, 0.3, -0.9]]
+
+    def run(convert):
+        actions = iter([convert(a) for a in chunk])
+        sent = []
+        ctx = SimpleNamespace(
+            policy=SimpleNamespace(
+                inference=SimpleNamespace(get_action=lambda obs_frame: next(actions, None))
+            ),
+            data=SimpleNamespace(dataset_features={}, ordered_action_keys=["x", "y", "z"]),
+            processors=SimpleNamespace(robot_action_processor=lambda pair: pair[0]),
+            hardware=SimpleNamespace(robot_wrapper=SimpleNamespace(send_action=sent.append)),
+        )
+        interpolator = ActionInterpolator(multiplier=multiplier)
+        for _ in range(len(chunk) * multiplier):
+            send_next_action({}, {}, ctx, interpolator)
+        return sent
+
+    expected = run(torch.tensor)
+    assert len(expected) == 1 + multiplier
+    assert run(lambda a: np.array(a, dtype=np.float32)) == expected
