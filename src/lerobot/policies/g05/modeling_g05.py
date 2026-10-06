@@ -9,7 +9,6 @@ from __future__ import annotations
 import itertools
 import json
 import math
-import time
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -67,7 +66,6 @@ from lerobot.utils.language import semantic_message_content_text
 from .action_codec_g05 import G05NativeActionCodec
 from .configuration_g05 import (
     G05_COT_PROMPTS,
-    G05_POLICY_PARTS,
     G05Config,
     make_g05_cot_prompt_template,
     make_g05_prompt_template,
@@ -869,7 +867,7 @@ class G05NativeBackend(nn.Module):
             device=frames.device,
         )
 
-        temporal_frequency = int(getattr(tower.config, "temporal_freq", 0))
+        temporal_frequency = tower.config.temporal_freq
         if num_frames > 1 and temporal_frequency > 0:
             timesteps = torch.arange(-(num_frames - 1), 1, device=frames.device)
             temporal_pe = _temporal_embedding(timesteps, hidden_states.shape[-1]).to(hidden_states.dtype)
@@ -882,7 +880,7 @@ class G05NativeBackend(nn.Module):
                 ),
                 diagonal=1,
             )
-            drop_layer = int(getattr(tower.config, "token_drop_layer", None) or len(tower.blocks)) - 1
+            drop_layer = int(tower.config.token_drop_layer or len(tower.blocks)) - 1
         else:
             temporal_pe = temporal_mask = None
             drop_layer = -1
@@ -938,7 +936,7 @@ class G05NativeBackend(nn.Module):
 
         if frames.shape[1] == 1:
             return self._encode_camera_transformers(frames)
-        temporal_frequency = int(getattr(self.model.vision_tower.config, "temporal_freq", 0))
+        temporal_frequency = self.model.vision_tower.config.temporal_freq
         if temporal_frequency <= 0:
             raise ValueError(
                 "multi-frame G0.5 vision requires a checkpoint with temporal_freq > 0; "
@@ -1106,15 +1104,11 @@ class G05NativeBackend(nn.Module):
         token_types: Tensor,
         positions: Tensor,
         cache,
-        active_mask: Tensor | None = None,
+        active_mask: Tensor,
     ) -> tuple[Tensor, Tensor, Tensor]:
-        """Decode one generated token."""
+        """Decode one generated token for the rows still generating (``active_mask``)."""
         embeddings = self.model.vlm.embed(token_ids[:, None])
         batch_size = token_ids.shape[0]
-        if active_mask is None:
-            active_mask = torch.ones(batch_size, dtype=torch.bool, device=token_ids.device)
-        elif active_mask.shape != (batch_size,):
-            raise ValueError("active_mask must have shape [batch]")
         next_positions = positions.amax(dim=-1, keepdim=True) + 1
         prefix_length = token_types.shape[1]
         prefix_mask = (token_types == G05TokenType.PADDING).to(embeddings.dtype)
@@ -1519,7 +1513,6 @@ class G05NativeBackend(nn.Module):
 
     def predict_action(self, batch: Mapping[str, Any]) -> dict[str, Any]:
         """Predict one action chunk, optionally with chain of thought."""
-        start = time.monotonic()
         samples = list(batch["samples"])
         pixel_values = batch["pixel_values"]
         first_image = next(iter(pixel_values.values()))
@@ -1546,10 +1539,12 @@ class G05NativeBackend(nn.Module):
                 stop_token_ids=(self.processor.eov_token_id, self.processor.eos_token_id),
                 # Action codes only follow <EOV>; sampled inside the CoT they end up as the
                 # text of a subtask (seen on SO-101 autosteer).
-                suppressed_tokens=_action_token_range(self.processor),
+                suppressed_tokens=(
+                    self.processor.action_token_begin,
+                    self.processor.action_token_end_with_markers,
+                ),
             )
             sequence.token_types = token_types
-            result["generated_ids"] = cot_generation.token_ids
             result["cot_text"] = [
                 _clean_cot_text(
                     self.processor.decode(
@@ -1601,27 +1596,20 @@ class G05NativeBackend(nn.Module):
                     forced_first_tokens=(cot_generation.stop_tokens if cot_generation is not None else None),
                 )
                 decoded_actions = []
-                decoded_tokens = []
-                absent_keys = []
                 for token_row in action_generation.token_ids:
                     is_action = (token_row >= self.processor.action_token_begin) & (
                         token_row < self.processor.action_token_end_with_markers
                     )
                     action_tokens = token_row[is_action]
-                    decoded, absent = self.action_tokenizer.decode_language_tokens(
+                    decoded = self.action_tokenizer.decode_language_tokens(
                         action_tokens,
                         horizon=int(self.model_config["fm"]["horizon_steps"]),
                         action_dim=int(self.model_config["fm"]["action_dim"]),
                     )
                     decoded_actions.append(decoded)
-                    decoded_tokens.append(action_tokens)
-                    absent_keys.append(absent)
                 result["ar_action"] = torch.stack(decoded_actions)
-                result["decoded_action_tokens"] = decoded_tokens
-                result["ar_absent_keys"] = absent_keys
                 if ACTION not in result:
                     result[ACTION] = result["ar_action"]
-        result["_timing"] = {"forward_inference_total_ms": (time.monotonic() - start) * 1000}
         return result
 
     def forward(self, batch: Mapping[str, Any]) -> tuple[Tensor, dict[str, Tensor]]:
@@ -1712,17 +1700,9 @@ def _native_backend(config: G05Config, checkpoint_dir: str | Path | None) -> nn.
             "predict_cot": config.predict_cot,
             "discrete_action": config.discrete_action,
             "continuous_action": config.continuous_action,
-            "return_continuous_action": config.return_continuous_action,
         }
     )
     return G05NativeBackend.from_config(model_config, checkpoint_dir)
-
-
-def _action_token_range(processor: Any) -> tuple[int, int] | None:
-    """``[begin, end)`` ids of the ActionCodec codes and group markers, when the vocabulary has them."""
-    begin = getattr(processor, "action_token_begin", None)
-    end = getattr(processor, "action_token_end_with_markers", None)
-    return (int(begin), int(end)) if begin is not None and end is not None else None
 
 
 def _clean_cot_text(text: str) -> str:
@@ -1883,17 +1863,6 @@ class G05Policy(PreTrainedPolicy):
         apply_fp32_params = getattr(self.backend, "apply_fp32_params", None)
         if callable(apply_fp32_params):
             apply_fp32_params()
-        if self.config.predict_cot:
-            # The author Qwen3.5 final norm is an FP32 island and its fused CE
-            # kernel disables autocast, so the tied output projection must be
-            # FP32 as well. Otherwise CoT training reaches FLCE with FP32 hidden
-            # states and a BF16 weight and fails before computing text loss.
-            model = getattr(self.backend, "model", None)
-            vlm = getattr(model, "vlm", None)
-            output_proj = getattr(vlm, "output_proj", None)
-            weight = getattr(output_proj, "weight", None)
-            if isinstance(weight, nn.Parameter):
-                weight.data = weight.data.float()
 
     def to(self, *args, **kwargs) -> G05Policy:
         """Apply the released inference precision and move the ActionCodec sidecar."""
@@ -2140,13 +2109,6 @@ class G05Policy(PreTrainedPolicy):
             state = state.unsqueeze(0)
         batch_size = state.shape[0]
         tasks = self._task_values(batch, task, batch_size)
-        state_mask = batch.get("proprio_dim_is_pad")
-        if state_mask is None:
-            state_mask = torch.zeros(
-                batch_size, self.config.policy_state_dim, dtype=torch.bool, device=state.device
-            )
-        elif isinstance(state_mask, Tensor) and state_mask.ndim == 1:
-            state_mask = state_mask.unsqueeze(0).expand(batch_size, -1)
 
         pixel_values: dict[str, Tensor] = {}
         for key in self.config.camera_order:
@@ -2186,10 +2148,7 @@ class G05Policy(PreTrainedPolicy):
                 # unchanged; checkpoint-specific chat formatting occurs downstream.
                 "command": raw_task,
                 "embodiment": self.config.embodiment,
-                "proprio": {
-                    "value": proprio,
-                    "proprio_dim_is_pad": state_mask[index],
-                },
+                "proprio": {"value": proprio},
             }
             frequency = self.config.processor_metadata.get("frequency")
             if frequency is not None:
@@ -2251,9 +2210,6 @@ class G05Policy(PreTrainedPolicy):
                     )
                 else:
                     action_payload["action_op_mask"] = ~action_dim_is_pad[index]
-                action_payload["parts_meta"] = batch.get(
-                    "action_parts_meta", G05_POLICY_PARTS[self.config.policy_action_dim]
-                )
                 sample["action"] = action_payload
             samples.append(sample)
         prepared = dict(batch)
@@ -2266,7 +2222,6 @@ class G05Policy(PreTrainedPolicy):
         self,
         batch: Mapping[str, Any],
         *,
-        task: str | None = None,
         system_mode: str | None = None,
     ) -> tuple[Tensor, dict[str, Any]]:
         """Run inference in the requested system mode."""
@@ -2276,8 +2231,6 @@ class G05Policy(PreTrainedPolicy):
             raise ValueError("G0.5 system_mode must be 'system1' or 'system2'.")
         if system_mode == "system2" and not self.config.predict_cot:
             raise ValueError("G0.5 System 2 requires predict_cot=True in the packaged checkpoint.")
-        if task is not None:
-            raise ValueError("G0.5 task overrides must run through the policy input processor.")
         prepared = dict(batch)
         preprocessed_predict_cot = bool(prepared.get(G05_RUNTIME_PREDICT_COT, False))
         if preprocessed_predict_cot != (system_mode == "system2"):
@@ -2303,23 +2256,10 @@ class G05Policy(PreTrainedPolicy):
             action = result.get(ACTION)
         if not isinstance(action, Tensor):
             raise ValueError(f"G0.5 {self.config.action_head} output is missing its action tensor.")
-        metadata_keys: tuple[str, ...] = ("decoded_action_tokens", "ar_absent_keys", "_timing")
-        if system_mode == "system2":
-            metadata_keys = ("cot_text", "generated_ids", *metadata_keys)
-        metadata = {key: result[key] for key in metadata_keys if key in result}
+        metadata = (
+            {"cot_text": result["cot_text"]} if system_mode == "system2" and "cot_text" in result else {}
+        )
         return action, metadata
-
-    @torch.no_grad()
-    def predict_action_chunk_with_runtime(
-        self,
-        batch: dict[str, Any],
-        *,
-        task: str,
-        system_mode: str | None = None,
-    ) -> tuple[Tensor, dict[str, Any]]:
-        """Run the selected system and return its action plus same-pass telemetry."""
-
-        return self._run_inference(batch, task=task, system_mode=system_mode)
 
     @torch.no_grad()
     def predict_action_chunk(
