@@ -184,7 +184,24 @@ def test_default_gripper_slew_preserves_torque_bound(robot, direction, polarity)
     assert (packet[0] - raw_measured) * packet[2] == pytest.approx(direction * polarity * 0.5)
 
 
-def test_gravity_matches_mujoco_reference(robot):
+def test_command_packet_clamps_tracking_limits_and_gravity(robot, monkeypatch):
+    # Characterizes the full control step so refactors must reproduce it exactly.
+    robot.config.joint_signs[1] = -1
+    robot.position = np.array([0.5, 0.0, 1.0, 0, 0, 0, 0.5])
+    robot.command = np.array([0.9, 0.0, 1.0, 0, 0, 0, 0.5])
+    robot.target = np.array([0.9, -0.2, 1.5, 0, 0, 0, 1.0])
+    monkeypatch.setattr(robot, "_gravity_torque", lambda position: np.array([20.0, 2, 1, 1, 1, 1]))
+    packet = robot._command_packet(robot.position, 0.05)
+    # joint_0 tracking band, joint_1 lower limit, joint_2 slew; the gripper slews freely.
+    np.testing.assert_allclose(robot.command, [0.65, 0.0, 1.015, 0, 0, 0, 1.0])
+    assert packet["joint_0"] == pytest.approx((0.65, 0, 80, 5, 10.0))  # gravity clipped to 10 Nm
+    assert packet["joint_1"] == pytest.approx((0.0, 0, 80, 5, -2.2))  # factor 1.1, sign -1
+    assert packet["joint_2"] == pytest.approx((1.015, 0, 80, 5, 1.1))
+    assert packet["joint_3"] == pytest.approx((0.0, 0, 10, 1.5, 1.2))
+    assert packet["gripper"] == pytest.approx((3.2, 0, 5, 0.005, 0))  # 0.1 rad torque band
+
+
+def test_gravity_matches_reference_torques(robot):
     pytest.importorskip("placo")
     robot.config.read_only = False
     robot.config.gravity_compensation = True
