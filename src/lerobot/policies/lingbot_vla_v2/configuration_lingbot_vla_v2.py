@@ -19,8 +19,8 @@ import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import (
+    AdamWConfig,
     CosineDecayWithWarmupSchedulerConfig,
-    LingbotAdamWConfig,
 )
 from lerobot.utils.constants import ACTION, OBS_STATE
 
@@ -581,20 +581,15 @@ class LingbotVLAV2Config(PreTrainedConfig):
                     f"Either reduce action dimension or increase max_action_dim in config."
                 )
 
-    def get_optimizer_preset(self) -> LingbotAdamWConfig:
-        expert_lr_scale = 1.0
-        if self.use_moe and self.use_moe_expert_lr and self.token_top_k > 0:
-            expert_lr_scale = (self.token_num_experts / self.token_top_k) ** 0.5
+    def get_optimizer_preset(self) -> AdamWConfig:
         if self.optimizer_type != "adamw":
             raise ValueError(f"optimizer_type must be 'adamw', got {self.optimizer_type!r}.")
-        return LingbotAdamWConfig(
+        return AdamWConfig(
             lr=self.optimizer_lr,
             betas=self.optimizer_betas,
             eps=self.optimizer_eps,
             weight_decay=self.optimizer_weight_decay,
             grad_clip_norm=self.optimizer_grad_clip_norm,
-            expert_lr_scale=expert_lr_scale,
-            fused=getattr(self, "optimizer_fused", False),
         )
 
     def get_scheduler_preset(self):
