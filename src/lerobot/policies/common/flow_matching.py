@@ -34,7 +34,7 @@ passing the same one to both remains the caller's responsibility.
 
 import enum
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Literal, NamedTuple
+from typing import TYPE_CHECKING, Literal
 
 import torch
 from torch import Tensor
