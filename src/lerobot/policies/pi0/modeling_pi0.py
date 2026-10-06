@@ -570,7 +570,6 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             max_period=self.config.max_period,
             device=timestep.device,
         )
-        time_emb = time_emb.type(dtype=timestep.dtype)
 
         # Fuse timestep + action information using an MLP
         def action_proj_func(noisy_actions):
@@ -578,6 +577,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)
 
+        time_emb = time_emb.to(dtype=action_emb.dtype)
         time_emb = time_emb[:, None, :].expand_as(action_emb)
         action_time_emb = torch.cat([action_emb, time_emb], dim=2)
 
