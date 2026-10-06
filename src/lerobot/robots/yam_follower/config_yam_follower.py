@@ -151,8 +151,8 @@ class YamFollowerConfig(RobotConfig, YamArmConfig):
         read_only (`bool`, *optional*, defaults to `True`): Read feedback without ever enabling torque; `send_action` raises. Disable only after checking the CAN port, encoder frame and gripper calibration.
         control_frequency (`float`, *optional*, defaults to 100.0): Rate of the background servo loop in Hz, between 20 and 250.
         feedback_timeout_s (`float`, *optional*, defaults to 0.2): Maximum age of each motor reply. The foreground check allows two such intervals plus one servo period; long Python scheduling stalls can still stop the servo.
-        freeze_gc (`bool`, *optional*, defaults to `True`): Freeze existing cyclic-GC objects while the servo runs. This affects the whole Python process; disable it if the host application manages GC itself.
         command_timeout_s (`float`, *optional*, defaults to 1.0): When no action arrives for this long, the arm holds its current pose.
+        freeze_gc (`bool`, *optional*, defaults to `True`): Freeze existing cyclic-GC objects while the servo runs. This affects the whole Python process; disable it if the host application manages GC itself.
         id (`str | None`, *optional*): Name of this arm; it selects the calibration file.
         calibration_dir (`pathlib.Path | None`, *optional*): Directory of calibration files. Gripper endpoints are stored as DM MIT position counts encoding raw radians; calibration never changes joint zeros.
     """
